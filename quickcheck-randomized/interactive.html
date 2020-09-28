@@ -1,0 +1,163 @@
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Plots for the rule that uses Bayes</title>
+
+<script src='doc/plotly-latest.min.js'></script>
+<script language=javascript>
+function go4(divid, n, xs, ys1, ys2, ys3, ys4, title, xtitle) {
+  traces = [{
+      x: xs,
+      y: ys1,
+      type: 'scatter',
+      mode: n >= 1000 ? 'lines' : 'lines+markers',
+      name: '',
+      hovertemplate: '%{y: .17f}',
+    },{
+      x: xs,
+      y: ys2,
+      type: 'scatter',
+      mode: n >= 1000 ? 'lines' : 'lines+markers',
+      name: '',
+      hovertemplate: '%{y: .17f}',
+    },{
+      x: xs,
+      y: ys3,
+      type: 'scatter',
+      mode: n >= 1000 ? 'lines' : 'lines+markers',
+      name: '',
+      hovertemplate: '%{y: .17f}',
+    },{
+      x: xs,
+      y: ys4,
+      type: 'scatter',
+      mode: n >= 1000 ? 'lines' : 'lines+markers',
+      name: '',
+      hovertemplate: '%{y: .17f}',
+    }]
+
+  layout = {
+    'title': title,
+    'xaxis': {'title': xtitle, 'range': [0, n]},
+    'yaxis': {'title': 'Probability', 'showgrid': true, 'range': [0,1]},
+    'autosize': false,
+    'showlegend': false,
+//   'colorway': ['#2ca02c','#d62728'],
+    'width': 1200,
+    'height': 400,
+//    'margin': {'r': 400},
+    }
+  document.write('<div id="' + divid + '"></div>');
+  Plotly.newPlot(divid, {'data': traces, 'layout': layout});
+}
+
+function go2(divid, n, xs, ys1, ys2, title, xtitle) {
+  traces = [{
+      x: xs,
+      y: ys1,
+      type: 'scatter',
+      mode: n >= 1000 ? 'lines' : 'lines+markers',
+      name: '',
+      hovertemplate: '%{y: .17f}',
+    },{
+      x: xs,
+      y: ys2,
+      type: 'scatter',
+      mode: n >= 1000 ? 'lines' : 'lines+markers',
+      name: '',
+      hovertemplate: '%{y: .17f}',
+    }]
+
+  layout = {
+    'title': title,
+    'xaxis': {'title': xtitle, 'range': [0, n]},
+    'yaxis': {'title': 'Probability', 'showgrid': true, 'range': [0,1]},
+    'autosize': false,
+    'showlegend': false,
+//   'colorway': ['#2ca02c','#d62728'],
+    'width': 1200,
+    'height': 400,
+//    'margin': {'r': 400},
+    }
+  document.write('<div id="' + divid + '"></div>');
+  Plotly.newPlot(divid, {'data': traces, 'layout': layout});
+}
+
+function go3nn(divid, n, xs, ys1, ys2, ys3, title, xtitle) {
+  traces = [{
+      x: xs,
+      y: ys1,
+      type: 'scatter',
+      mode: n >= 1000 ? 'lines' : 'lines+markers',
+      name: '',
+      hovertemplate: '%{y: .17f}',
+    },{
+      x: xs,
+      y: ys2,
+      type: 'scatter',
+      mode: n >= 1000 ? 'lines' : 'lines+markers',
+      name: '',
+      hovertemplate: '%{y: .17f}',
+    },{
+      x: xs,
+      y: ys3,
+      type: 'scatter',
+      mode: n >= 1000 ? 'lines' : 'lines+markers',
+      name: '',
+      hovertemplate: '%{y: .17f}',
+    }]
+
+  layout = {
+    'title': title,
+    'xaxis': {'title': xtitle, 'range': [0, n]},
+    'yaxis': {'title': 'Probability', 'showgrid': true, 'range': 'nonnegative'},
+    'autosize': false,
+    'showlegend': false,
+//   'colorway': ['#2ca02c','#d62728'],
+    'width': 1200,
+    'height': 400,
+//    'margin': {'r': 400},
+    }
+  document.write('<div id="' + divid + '"></div>');
+  Plotly.newPlot(divid, {'data': traces, 'layout': layout});
+}
+
+function go1(divid, ys) {
+  xs = ys.slice().map((x, ind) => ind);
+    
+  traces = [{
+      x: xs,
+      y: ys,
+      type: 'scatter',
+      mode: 'lines',
+      name: '',
+    }]
+
+  layout = {
+    'title': 'An experiment',
+    'xaxis': {'title': 'Number of tosses', 'showgrid': true, 'rangemode': 'nonnegative'},
+    'yaxis': {'title': 'Number of heads', 'showgrid': true, 'rangemode': 'nonnegative'},
+    'autosize': true,
+    'showlegend': false,
+    'width': 1200,
+    'height': 400,
+//    'margin': {'r': 400},
+    }
+
+  document.write('<div id="' + divid + '"></div>');
+  Plotly.newPlot(divid, {'data': traces, 'layout': layout});
+}
+
+function intervals(okLo, okHi, goodLo, goodHi) {
+    document.write(
+      '<p><ul style="font-size: 20pt;">' +
+      '<li><code>isGood = (' + goodLo + ',' + goodHi + ']</code></li>' +
+      '<li><code>isOk &nbsp; = (' + okLo + ',' + okHi + ']</code></li>' +
+      '</ul></p>'
+    );
+}
+</script>
+</head>
+<script src='./catch'></script>
+</body>
+</html>
