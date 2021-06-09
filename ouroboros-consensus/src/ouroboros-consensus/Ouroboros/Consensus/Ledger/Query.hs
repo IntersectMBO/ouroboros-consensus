@@ -39,6 +39,7 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..),
                      headerStateBlockNo, headerStatePoint)
+import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query.Version
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -62,6 +63,7 @@ queryName query = case query of
   GetSystemStart  -> "GetSystemStart"
   GetChainBlockNo -> "GetChainBlockNo"
   GetChainPoint   -> "GetChainPoint"
+  GetLedgerConfig -> "GetLedgerConfig"
 
 -- | Different queries supported by the ledger for all block types, indexed
 -- by the result type.
@@ -87,6 +89,13 @@ data Query blk result where
   -- Supported by 'QueryVersion' >= 'QueryVersion2'.
   GetChainPoint :: Query blk (Point blk)
 
+  -- | Get the ledger config.
+  --
+  -- This constructor is supported by 'QueryVersion' >= 'QueryVersion2'.
+  -- Serialisation of the @LedgerConfig blk@ result is versioned by the
+  -- @BlockNodeToClientVersion blk@.
+  GetLedgerConfig :: Query blk (LedgerConfig blk)
+
 instance (ShowProxy (BlockQuery blk)) => ShowProxy (Query blk) where
   showProxy (Proxy :: Proxy (Query blk)) = "Query (" ++ showProxy (Proxy @(BlockQuery blk)) ++ ")"
 
@@ -95,6 +104,7 @@ instance (ShowQuery (BlockQuery blk), StandardHash blk) => ShowQuery (Query blk)
   showResult GetSystemStart          = show
   showResult GetChainBlockNo         = show
   showResult GetChainPoint           = show
+  showResult GetLedgerConfig         = const "LedgerConfig{..}"
 
 instance Eq (SomeSecond BlockQuery blk) => Eq (SomeSecond Query blk) where
   SomeSecond (BlockQuery blockQueryA) == SomeSecond (BlockQuery blockQueryB)
@@ -110,11 +120,15 @@ instance Eq (SomeSecond BlockQuery blk) => Eq (SomeSecond Query blk) where
   SomeSecond GetChainPoint == SomeSecond GetChainPoint  = True
   SomeSecond GetChainPoint == _                         = False
 
+  SomeSecond GetLedgerConfig == SomeSecond GetLedgerConfig = True
+  SomeSecond GetLedgerConfig == _                          = False
+
 instance Show (SomeSecond BlockQuery blk) => Show (SomeSecond Query blk) where
   show (SomeSecond (BlockQuery blockQueryA))  = "Query " ++ show (SomeSecond blockQueryA)
   show (SomeSecond GetSystemStart)            = "Query GetSystemStart"
   show (SomeSecond GetChainBlockNo)           = "Query GetChainBlockNo"
   show (SomeSecond GetChainPoint)             = "Query GetChainPoint"
+  show (SomeSecond GetLedgerConfig)           = "Query GetLedgerConfig"
 
 
 -- | Exception thrown in the encoders
@@ -138,32 +152,49 @@ queryEncodeNodeToClient ::
   -> SomeSecond Query blk
   -> Encoding
 queryEncodeNodeToClient codecConfig queryVersion blockVersion (SomeSecond query)
-  = case query of
-      BlockQuery blockQuery ->
-        requireVersion QueryVersion1 $ mconcat
-          [ encodeListLen 2
-          , encodeWord8 0
-          , encodeBlockQuery blockQuery
-          ]
+  = case queryVersion of
+    -- In "version 0" we only support BlockQuery and add no extra wrapping so
+    -- that it's backwards compatible with when there were no top level queries.
+    TopLevelQueryDisabled ->
+      case query of
+        BlockQuery blockQuery ->
+          encodeBlockQuery blockQuery
+        _ ->
+          throw $ QueryEncoderUnsupportedQuery (SomeSecond query) queryVersion
 
-      GetSystemStart ->
-        requireVersion QueryVersion1 $ mconcat
-          [ encodeListLen 1
-          , encodeWord8 1
-          ]
+    -- From version 1 onwards, we use normal constructor tags
+    _ ->
+      case query of
+        BlockQuery blockQuery ->
+          requireVersion QueryVersion1 $ mconcat
+            [ encodeListLen 2
+            , encodeWord8 0
+            , encodeBlockQuery blockQuery
+            ]
 
-      GetChainBlockNo ->
-        requireVersion QueryVersion2 $ mconcat
-          [ encodeListLen 1
-          , encodeWord8 2
-          ]
+        GetSystemStart ->
+          requireVersion QueryVersion1 $ mconcat
+            [ encodeListLen 1
+            , encodeWord8 1
+            ]
 
-      GetChainPoint ->
-        requireVersion QueryVersion2 $ mconcat
-          [ encodeListLen 1
-          , encodeWord8 3
-          ]
+        GetChainBlockNo ->
+          requireVersion QueryVersion2 $ mconcat
+            [ encodeListLen 1
+            , encodeWord8 2
+            ]
 
+        GetChainPoint ->
+          requireVersion QueryVersion2 $ mconcat
+            [ encodeListLen 1
+            , encodeWord8 3
+            ]
+
+        GetLedgerConfig ->
+          requireVersion QueryVersion2 $ mconcat
+            [ encodeListLen 1
+            , encodeWord8 4
+            ]
   where
     requireVersion :: QueryVersion -> a -> a
     requireVersion expectedVersion a =
@@ -200,6 +231,7 @@ queryDecodeNodeToClient codecConfig queryVersion blockVersion
           (1, 1) -> requireVersion QueryVersion1 $ SomeSecond GetSystemStart
           (1, 2) -> requireVersion QueryVersion2 $ SomeSecond GetChainBlockNo
           (1, 3) -> requireVersion QueryVersion2 $ SomeSecond GetChainPoint
+          (1, 4) -> requireVersion QueryVersion2 $ SomeSecond GetLedgerConfig
           _      -> fail $ "Query: invalid size and tag" <> show (size, tag)
 
     requireVersion :: QueryVersion -> SomeSecond Query blk -> Decoder s (SomeSecond Query blk)
@@ -220,6 +252,7 @@ queryDecodeNodeToClient codecConfig queryVersion blockVersion
 
 instance ( SerialiseResult blk (BlockQuery blk)
          , Serialise (HeaderHash blk)
+         , SerialiseNodeToClient blk (LedgerConfig blk)
          ) => SerialiseResult blk (Query blk) where
   encodeResult codecConfig blockVersion (BlockQuery blockQuery) result
     = encodeResult codecConfig blockVersion blockQuery result
@@ -229,6 +262,8 @@ instance ( SerialiseResult blk (BlockQuery blk)
     = toCBOR result
   encodeResult _ _ GetChainPoint result
     = encodePoint encode result
+  encodeResult codecConfig blockVersion GetLedgerConfig result
+    = encodeNodeToClient codecConfig blockVersion result
 
   decodeResult codecConfig blockVersion (BlockQuery query)
     = decodeResult codecConfig blockVersion query
@@ -238,6 +273,8 @@ instance ( SerialiseResult blk (BlockQuery blk)
     = fromCBOR
   decodeResult _ _ GetChainPoint
     = decodePoint decode
+  decodeResult codecConfig blockVersion GetLedgerConfig
+    = decodeNodeToClient @blk @(LedgerConfig blk) codecConfig blockVersion
 
 instance SameDepIndex (BlockQuery blk) => SameDepIndex (Query blk) where
   sameDepIndex (BlockQuery blockQueryA) (BlockQuery blockQueryB)
@@ -256,6 +293,10 @@ instance SameDepIndex (BlockQuery blk) => SameDepIndex (Query blk) where
     = Just Refl
   sameDepIndex GetChainPoint _
     = Nothing
+  sameDepIndex GetLedgerConfig GetLedgerConfig
+    = Just Refl
+  sameDepIndex GetLedgerConfig _
+    = Nothing
 
 deriving instance Show (BlockQuery blk result) => Show (Query blk result)
 
@@ -271,6 +312,7 @@ answerQuery cfg query st = case query of
   GetSystemStart -> getSystemStart (topLevelConfigBlock (getExtLedgerCfg cfg))
   GetChainBlockNo -> headerStateBlockNo (headerState st)
   GetChainPoint -> headerStatePoint (headerState st)
+  GetLedgerConfig -> topLevelConfigLedger (getExtLedgerCfg cfg)
 
 -- | Different queries supported by the ledger, indexed by the result type.
 data family BlockQuery blk :: Type -> Type
