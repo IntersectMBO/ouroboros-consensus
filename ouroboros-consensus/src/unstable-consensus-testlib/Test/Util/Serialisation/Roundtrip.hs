@@ -249,6 +249,7 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
               , (1 , mkEntry version GetSystemStart )
               , (1 , mkEntry version GetChainBlockNo)
               , (1 , mkEntry version GetChainPoint  )
+              , (1 , mkEntry version GetLedgerConfig)
               ]
 
       arbitraryBlockQuery :: QueryVersion

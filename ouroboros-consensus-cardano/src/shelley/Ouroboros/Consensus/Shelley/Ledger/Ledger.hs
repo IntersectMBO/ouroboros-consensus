@@ -113,9 +113,29 @@ instance ShelleyBasedEra era => NoThunks (ShelleyLedgerError era)
 -------------------------------------------------------------------------------}
 
 data ShelleyLedgerConfig era = ShelleyLedgerConfig {
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Ledger.hs
       shelleyLedgerCompactGenesis     :: !(CompactGenesis (EraCrypto era))
       -- | Derived from 'shelleyLedgerGenesis' but we store a cached version
       -- because it used very often.
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/Ledger/Ledger.hs
+      shelleyLedgerCompactGenesis     :: !(CompactGenesis era)
+      -- | Derived from 'shelleyLedgerGenesis' but we store a cached version
+      -- because it used very often.
+=======
+      shelleyLedgerCompactGenesis     :: !(CompactGenesis era)
+      -- | Derived from 'shelleyLedgerCompactGenesis' but we store a cached
+      -- version because it used very often.
+      --
+      -- The 'EpochInfo' in this 'SL.Globals' value is a 'fixedEpochInfo' when
+      -- 'ShelleyBlock' is the top-level block; this is a consequence of the
+      -- Shelley ledger rules having no way to change the epoch size or slot
+      -- length. In contrast, this 'EpochInfo' can have much richer structure
+      -- when the top-level block is a 'HardForkBlock' that contains
+      -- 'ShelleyBlock'. Such a 'ShelleyLedgerConfig' will have been /completed/
+      -- by the HFC to contain an 'EpochInfo' with the most information possible
+      -- based on the past hard forks (and possibly also the next hard fork, if
+      -- its occurrence is already known).
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/Ledger/Ledger.hs
     , shelleyLedgerGlobals            :: !SL.Globals
     , shelleyLedgerTranslationContext :: !(Core.TranslationContext era)
     }

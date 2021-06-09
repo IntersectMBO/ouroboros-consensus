@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StandaloneDeriving    #-}
@@ -23,11 +24,16 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   , translateChainDepStateAcrossShelley
   ) where
 
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Cardano.Slotting.EpochInfo (hoistEpochInfo)
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
+=======
+import           Codec.Serialise (Serialise (decode), encode)
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
 import           Control.Monad (guard)
 import           Control.Monad.Except (runExcept, throwError, withExceptT)
 import qualified Data.Map.Strict as Map
@@ -38,7 +44,24 @@ import qualified Data.Text as T (pack)
 import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
+import           GHC.Natural (Natural)
 import           NoThunks.Class (NoThunks)
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
+
+import           Cardano.Slotting.EpochInfo (hoistEpochInfo)
+
+=======
+
+import           Cardano.Binary
+import           Cardano.Slotting.EpochInfo (epochInfoSize,
+                     epochInfoSlotToRelativeTime, fixedEpochInfo,
+                     hoistEpochInfo)
+import           Cardano.Slotting.Time
+
+import           Cardano.Ledger.BaseTypes
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
@@ -46,16 +69,47 @@ import qualified Ouroboros.Consensus.Forecast as Forecast
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
 import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
+import           Ouroboros.Consensus.HardFork.Combinator.Util.InPairs
+                     (RequiringBoth (..), ignoringBoth)
+import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
+=======
+import           Ouroboros.Consensus.HardFork.Combinator.Util.InPairs
+                     (RequiringBoth (..), ignoringBoth)
+import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot),
+                     dummyEpochInfo, toPureEpochInfo)
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
 import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol, ledgerViewForecastAt)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
 import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.TPraos hiding (PraosCrypto)
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto)
 import qualified Ouroboros.Consensus.Protocol.Translate as Proto
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
+import           Ouroboros.Consensus.TypeFamilyWrappers
+
+import qualified Cardano.Ledger.Era as SL
+import qualified Cardano.Ledger.Shelley.API as SL
+
+import qualified Cardano.Protocol.TPraos.API as SL
+import           Ouroboros.Consensus.Protocol.TPraos
+=======
+import           Ouroboros.Consensus.Node.Run (SerialiseNodeToClientConstraints)
+import           Ouroboros.Consensus.Node.Serialisation
+import           Ouroboros.Consensus.TypeFamilyWrappers
+
+import qualified Cardano.Ledger.Era as SL
+import qualified Cardano.Ledger.Shelley.API as SL
+
+import qualified Cardano.Protocol.TPraos.API as SL
+import           Ouroboros.Consensus.Protocol.TPraos
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/ShelleyHFC.hs
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
@@ -229,15 +283,123 @@ instance ShelleyCompatible proto era => HasPartialLedgerConfig (ShelleyBlock pro
   type PartialLedgerConfig (ShelleyBlock proto era) = ShelleyPartialLedgerConfig era
 
   -- Replace the dummy 'EpochInfo' with the real one
-  completeLedgerConfig _ epochInfo (ShelleyPartialLedgerConfig cfg _) =
+  completeLedgerConfig _ ei (ShelleyPartialLedgerConfig cfg _) =
       cfg {
           shelleyLedgerGlobals = (shelleyLedgerGlobals cfg) {
               SL.epochInfo =
                   hoistEpochInfo
                     (runExcept . withExceptT (T.pack . show))
-                    epochInfo
+                    ei
             }
         }
+
+-- | This instance uses the invariant that the 'EpochInfo' in a
+-- 'ShelleyLedgerConfig' is fixed i.e. has a constant 'EpochSize' and
+-- 'SlotLength'. This is not true in the case of the HFC in a
+-- 'ShelleyPartialLedgerConfig', but that is handled correctly in the respective
+-- 'SerialiseNodeToClient' instance for 'ShelleyPartialLedgerConfig'.
+instance ShelleyBasedEra era
+      => SerialiseNodeToClient (ShelleyBlock era) (ShelleyLedgerConfig era) where
+  decodeNodeToClient ccfg version = do
+    enforceSize "ShelleyLedgerConfig" 3
+    partialConfig <- decodeNodeToClient
+      @_
+      @(ShelleyPartialLedgerConfig era)
+      ccfg
+      version
+    epochSize     <- fromCBOR @EpochSize
+    slotLength    <- decode @SlotLength
+    return $ completeLedgerConfig
+      (Proxy @(ShelleyBlock era))
+      (fixedEpochInfo epochSize slotLength)
+      partialConfig
+
+  encodeNodeToClient ccfg version ledgerConfig = mconcat [
+      encodeListLen 3
+    , encodeNodeToClient
+        @_
+        @(ShelleyPartialLedgerConfig era)
+        ccfg
+        version
+        (toPartialLedgerConfig (Proxy @(ShelleyBlock era)) ledgerConfig)
+    , toCBOR @EpochSize epochSize
+    , encode @SlotLength slotLength
+    ]
+    where
+      unwrap          = either
+                        (error "ShelleyLedgerConfig contains a non-fixed EpochInfo")
+                        id
+      ei              = epochInfoWithErr (shelleyLedgerGlobals ledgerConfig)
+      epochSize       = unwrap $ epochInfoSize ei 0
+      RelativeTime t1 = unwrap $ epochInfoSlotToRelativeTime ei 1
+      slotLength      = mkSlotLength t1
+
+-- | This instance uses the invariant that the 'EpochInfo' in a
+-- 'ShelleyPartialLedgerConfig' is always just a dummy value.
+instance ShelleyBasedEra era
+      => SerialiseNodeToClient (ShelleyBlock era) (ShelleyPartialLedgerConfig era) where
+  decodeNodeToClient ccfg version = do
+    enforceSize "ShelleyPartialLedgerConfig era" 14
+    ShelleyPartialLedgerConfig
+      <$> ( ShelleyLedgerConfig
+        <$> fromCBOR @(CompactGenesis era)
+        <*> (SL.Globals
+              (toPureEpochInfo dummyEpochInfo)
+              <$> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Word64
+              <*> fromCBOR @Natural
+              <*> fromCBOR @Word64
+              <*> fromCBOR @ActiveSlotCoeff
+              <*> fromCBOR @SL.Network
+              <*> fromCBOR @SystemStart
+            )
+        <*> fromCBOR @(SL.TranslationContext era)
+      )
+      <*> decodeNodeToClient @(ShelleyBlock era) @TriggerHardFork ccfg version
+
+  encodeNodeToClient ccfg version
+    (ShelleyPartialLedgerConfig
+      (ShelleyLedgerConfig
+        myCompactGenesis
+        (SL.Globals
+          _epochInfo
+          slotsPerKESPeriod'
+          stabilityWindow'
+          randomnessStabilisationWindow'
+          securityParameter'
+          maxKESEvo'
+          quorum'
+          maxMajorPV'
+          maxLovelaceSupply'
+          activeSlotCoeff'
+          networkId'
+          systemStart'
+        )
+        translationContext
+      )
+      triggerHardFork
+    )
+      = encodeListLen 14
+        <> toCBOR @(CompactGenesis era) myCompactGenesis
+        <> toCBOR @Word64 slotsPerKESPeriod'
+        <> toCBOR @Word64 stabilityWindow'
+        <> toCBOR @Word64 randomnessStabilisationWindow'
+        <> toCBOR @Word64 securityParameter'
+        <> toCBOR @Word64 maxKESEvo'
+        <> toCBOR @Word64 quorum'
+        <> toCBOR @Natural maxMajorPV'
+        <> toCBOR @Word64 maxLovelaceSupply'
+        <> toCBOR @ActiveSlotCoeff activeSlotCoeff'
+        <> toCBOR @SL.Network networkId'
+        <> toCBOR @SystemStart systemStart'
+        <> toCBOR @(SL.TranslationContext era) translationContext
+        <> encodeNodeToClient @(ShelleyBlock era) @TriggerHardFork ccfg version triggerHardFork
+
+instance ShelleyBasedEra era => SerialiseNodeToClientConstraints (ShelleyBlock era)
 
 -- | Forecast from a Shelley-based era to the next Shelley-based era.
 forecastAcrossShelley ::

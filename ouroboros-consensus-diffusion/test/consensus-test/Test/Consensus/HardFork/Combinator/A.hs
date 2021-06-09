@@ -24,7 +24,7 @@ module Test.Consensus.HardFork.Combinator.A (
   , safeFromTipA
   , stabilityWindowA
     -- * Additional types
-  , PartialLedgerConfigA (..)
+  , LedgerConfigA (..)
   , TxPayloadA (..)
     -- * Type family instances
   , BlockConfig (..)
@@ -45,15 +45,46 @@ import           Control.Monad.Except (runExcept)
 import qualified Data.Binary as B
 import           Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
+<<<<<<< HEAD:ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/HardFork/Combinator/A.hs
 import           Data.Functor.Identity (Identity)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-test/test-consensus/Test/Consensus/HardFork/Combinator/A.hs
+import           Data.Functor.Identity (Identity)
+import           Data.Map (Map)
+import qualified Data.Map as Map
+=======
+import           Data.Map (Map)
+import qualified Data.Map as Map
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-test/test-consensus/Test/Consensus/HardFork/Combinator/A.hs
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Void
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
+<<<<<<< HEAD:ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/HardFork/Combinator/A.hs
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-test/test-consensus/Test/Consensus/HardFork/Combinator/A.hs
+
+import           Cardano.Slotting.EpochInfo
+
+import           Test.Util.Time (dawnOfTime)
+
+import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
+                     wrapCBORinCBOR)
+import           Ouroboros.Network.Magic
+
+=======
+
+import           Cardano.Binary
+
+import           Test.Util.Time (dawnOfTime)
+
+import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
+                     wrapCBORinCBOR)
+import           Ouroboros.Network.Magic
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-test/test-consensus/Test/Consensus/HardFork/Combinator/A.hs
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
@@ -189,15 +220,31 @@ newtype instance Ticked (LedgerState BlockA) = TickedLedgerStateA {
     }
   deriving NoThunks via OnlyCheckWhnfNamed "TickedLgrA" (Ticked (LedgerState BlockA))
 
-data PartialLedgerConfigA = LCfgA {
+data LedgerConfigA = LCfgA {
       lcfgA_k           :: SecurityParam
     , lcfgA_systemStart :: SystemStart
     , lcfgA_forgeTxs    :: Map SlotNo [GenTx BlockA]
     }
-  deriving NoThunks via OnlyCheckWhnfNamed "LCfgA" PartialLedgerConfigA
+  deriving NoThunks via OnlyCheckWhnfNamed "LCfgA" LedgerConfigA
 
-type instance LedgerCfg (LedgerState BlockA) =
-    (EpochInfo Identity, PartialLedgerConfigA)
+instance ToCBOR LedgerConfigA where
+  toCBOR (LCfgA k systemStart forgeTxs) = mconcat [
+      encodeListLen 3
+    , toCBOR k
+    , toCBOR systemStart
+    , encode forgeTxs
+    ]
+
+instance FromCBOR LedgerConfigA where
+  fromCBOR = do
+    enforceSize "LedgerConfigA" 3
+    LCfgA <$> fromCBOR <*> fromCBOR <*> decode
+
+instance SerialiseNodeToClient BlockA LedgerConfigA where
+  encodeNodeToClient _ _ = toCBOR
+  decodeNodeToClient _ _ = fromCBOR
+
+type instance LedgerCfg (LedgerState BlockA) = LedgerConfigA
 
 instance GetTip (LedgerState BlockA) where
   getTip = castPoint . lgrA_tip
@@ -247,9 +294,6 @@ instance LedgerSupportsProtocol BlockA where
 instance HasPartialConsensusConfig ProtocolA
 
 instance HasPartialLedgerConfig BlockA where
-  type PartialLedgerConfig BlockA = PartialLedgerConfigA
-
-  completeLedgerConfig _ ei pcfg = (History.toPureEpochInfo ei, pcfg)
 
 data TxPayloadA = InitiateAtoB
   deriving (Show, Eq, Generic, NoThunks, Serialise)
@@ -280,7 +324,7 @@ forgeBlockA tlc bno sno (TickedLedgerStateA st) _txs _ = BlkA {
     }
   where
     ledgerConfig :: PartialLedgerConfig BlockA
-    ledgerConfig = snd $ configLedger tlc
+    ledgerConfig = configLedger tlc
 
 blockForgingA :: Monad m => BlockForging m BlockA
 blockForgingA = BlockForging {
@@ -405,7 +449,7 @@ instance InspectLedger BlockA where
        _otherwise ->
          []
     where
-      k = stabilityWindowA (lcfgA_k (snd (configLedger cfg)))
+      k = stabilityWindowA (lcfgA_k (configLedger cfg))
 
 getConfirmationDepth :: LedgerState BlockA -> Maybe (SlotNo, Word64)
 getConfirmationDepth st = do

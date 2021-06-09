@@ -20,11 +20,39 @@ import           Codec.Serialise (decode, encode)
 import           Control.Monad.Except
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
+{-
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/byron/Ouroboros/Consensus/Byron/Node/Serialisation.hs
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-byron/src/Ouroboros/Consensus/Byron/Node/Serialisation.hs
+
+import           Cardano.Binary
+import           Cardano.Prelude (cborError)
+
+import qualified Cardano.Chain.Block as CC
+import qualified Cardano.Chain.Byron.API as CC
+
+import           Ouroboros.Network.Block (Serialised (..), unwrapCBORinCBOR,
+                     wrapCBORinCBOR)
+
+=======
+
+import           Cardano.Binary
+import           Cardano.Prelude (cborError)
+
+import qualified Cardano.Chain.Block as CC
+import qualified Cardano.Chain.Byron.API as CC
+import           Cardano.Chain.Genesis (Config)
+
+import           Ouroboros.Network.Block (Serialised (..), unwrapCBORinCBOR,
+                     wrapCBORinCBOR)
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-byron/src/Ouroboros/Consensus/Byron/Node/Serialisation.hs
+-}
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Ledger.Conversions
 import           Ouroboros.Consensus.Byron.Protocol
 import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
@@ -145,6 +173,10 @@ instance SerialiseNodeToNode ByronBlock (GenTxId ByronBlock) where
 -------------------------------------------------------------------------------}
 
 instance SerialiseNodeToClientConstraints ByronBlock
+
+instance SerialiseNodeToClient ByronBlock Config where
+  encodeNodeToClient _ _ = toCBOR
+  decodeNodeToClient _ _ = fromCBOR
 
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.

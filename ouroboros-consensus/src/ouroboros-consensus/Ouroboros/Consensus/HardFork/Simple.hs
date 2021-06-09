@@ -1,5 +1,9 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric  #-}
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE TypeApplications      #-}
 
 module Ouroboros.Consensus.HardFork.Simple (TriggerHardFork (..)) where
 
@@ -8,6 +12,17 @@ import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 
+<<<<<<< HEAD:ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Simple.hs
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/HardFork/Simple.hs
+import           Cardano.Slotting.Slot (EpochNo)
+
+=======
+import           Cardano.Binary
+import           Cardano.Slotting.Slot (EpochNo)
+
+import           Ouroboros.Consensus.Node.Serialisation
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/HardFork/Simple.hs
 -- | The trigger condition that will cause the hard fork transition.
 --
 -- This type is only intended for use as part of a
@@ -32,3 +47,17 @@ data TriggerHardFork =
     -- era.
   | TriggerHardForkNotDuringThisExecution
   deriving (Show, Generic, NoThunks)
+
+instance SerialiseNodeToClient blk TriggerHardFork where
+  encodeNodeToClient _ _ triggerHardFork = case triggerHardFork of
+    TriggerHardForkAtVersion v -> encodeListLen 2 <> encodeWord8 0 <> toCBOR v
+    TriggerHardForkAtEpoch e   -> encodeListLen 2 <> encodeWord8 1 <> toCBOR e
+    TriggerHardForkNever       -> encodeListLen 1 <> encodeWord8 2
+  decodeNodeToClient _ _ = do
+    len <- decodeListLen
+    tag <- decodeWord8
+    case (len, tag) of
+      (2, 0)   -> TriggerHardForkAtVersion <$> fromCBOR @Word16
+      (2, 1)   -> TriggerHardForkAtEpoch <$> fromCBOR @EpochNo
+      (1, 2)   -> return TriggerHardForkNever
+      _ -> fail $ "TriggerHardFork: invalid (len, tag): " <> show (len, tag)

@@ -9,6 +9,23 @@ module Ouroboros.Consensus.ByronDual.Node.Serialisation () where
 import           Cardano.Chain.Slotting (EpochSlots)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Proxy
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/unstable-byron-testlib/Ouroboros/Consensus/ByronDual/Node/Serialisation.hs
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-byron-test/src/Ouroboros/Consensus/ByronDual/Node/Serialisation.hs
+
+import           Cardano.Chain.Slotting (EpochSlots)
+
+import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
+                     wrapCBORinCBOR)
+
+=======
+
+import           Cardano.Binary
+import           Cardano.Chain.Slotting (EpochSlots)
+
+import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
+                     wrapCBORinCBOR)
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-byron-test/src/Ouroboros/Consensus/ByronDual/Node/Serialisation.hs
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node.Serialisation ()
@@ -133,6 +150,10 @@ instance SerialiseNodeToNode DualByronBlock (GenTxId DualByronBlock) where
 -------------------------------------------------------------------------------}
 
 instance SerialiseNodeToClientConstraints DualByronBlock
+
+instance SerialiseNodeToClient DualByronBlock (DualLedgerConfig ByronBlock ByronSpecBlock) where
+  encodeNodeToClient ccfg version = encodeDualLedgerConfig toCBOR (encodeNodeToClient ccfg version)
+  decodeNodeToClient ccfg version = decodeDualLedgerConfig fromCBOR (decodeNodeToClient ccfg version)
 
 -- | CBOR-in-CBOR for the annotation. This also makes it compatible with the
 -- wrapped ('Serialised') variant.

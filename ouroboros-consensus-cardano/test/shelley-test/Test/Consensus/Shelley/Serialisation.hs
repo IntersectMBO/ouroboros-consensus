@@ -16,11 +16,18 @@ import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
+<<<<<<< HEAD:ouroboros-consensus-cardano/test/shelley-test/Test/Consensus/Shelley/Serialisation.hs
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
 import           Ouroboros.Consensus.Util (Dict (..))
 import           Test.Consensus.Shelley.Generators ()
 import           Test.Consensus.Shelley.MockCrypto
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley-test/test/Test/Consensus/Shelley/Serialisation.hs
+
+=======
+import           Ouroboros.Consensus.Shelley.ShelleyHFC ()
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley-test/test/Test/Consensus/Shelley/Serialisation.hs
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Corruption

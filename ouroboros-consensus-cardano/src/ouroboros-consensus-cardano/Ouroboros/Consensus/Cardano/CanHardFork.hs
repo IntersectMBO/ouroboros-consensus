@@ -63,6 +63,27 @@ import           GHC.Generics (Generic)
 import           Lens.Micro ((.~))
 import           Lens.Micro.Extras (view)
 import           NoThunks.Class (NoThunks)
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/CanHardFork.hs
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-cardano/src/Ouroboros/Consensus/Cardano/CanHardFork.hs
+
+import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
+import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
+
+import qualified Cardano.Chain.Common as CC
+import qualified Cardano.Chain.Genesis as CC.Genesis
+import qualified Cardano.Chain.Update as CC.Update
+
+=======
+
+import           Cardano.Binary
+import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
+import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
+
+import qualified Cardano.Chain.Common as CC
+import qualified Cardano.Chain.Genesis as CC.Genesis
+import qualified Cardano.Chain.Update as CC.Update
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-cardano/src/Ouroboros/Consensus/Cardano/CanHardFork.hs
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import qualified Ouroboros.Consensus.Byron.Ledger.Inspect as Byron.Inspect
@@ -75,9 +96,40 @@ import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot),
                      addSlots)
 import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/CanHardFork.hs
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Protocol.Abstract
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-cardano/src/Ouroboros/Consensus/Cardano/CanHardFork.hs
+import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util (eitherToMaybe)
+import           Ouroboros.Consensus.Util.RedundantConstraints
+
+import           Ouroboros.Consensus.HardFork.Combinator
+import           Ouroboros.Consensus.HardFork.Combinator.State.Types
+import           Ouroboros.Consensus.HardFork.Combinator.Util.InPairs
+                     (RequiringBoth (..), ignoringBoth)
+import           Ouroboros.Consensus.HardFork.Combinator.Util.Tails (Tails (..))
+
+import           Ouroboros.Consensus.Byron.Ledger
+import qualified Ouroboros.Consensus.Byron.Ledger.Inspect as Byron.Inspect
+import           Ouroboros.Consensus.Byron.Node ()
+=======
+import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util (eitherToMaybe)
+import           Ouroboros.Consensus.Util.RedundantConstraints
+
+import           Ouroboros.Consensus.HardFork.Combinator
+import           Ouroboros.Consensus.HardFork.Combinator.State.Types
+import           Ouroboros.Consensus.HardFork.Combinator.Util.InPairs
+                     (RequiringBoth (..), ignoringBoth)
+import           Ouroboros.Consensus.HardFork.Combinator.Util.Tails (Tails (..))
+
+import           Ouroboros.Consensus.Byron.Ledger
+import qualified Ouroboros.Consensus.Byron.Ledger.Inspect as Byron.Inspect
+import           Ouroboros.Consensus.Byron.Node ()
+import           Ouroboros.Consensus.Node.Serialisation
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-cardano/src/Ouroboros/Consensus/Cardano/CanHardFork.hs
 import           Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
@@ -250,6 +302,19 @@ instance HasPartialLedgerConfig ByronBlock where
   type PartialLedgerConfig ByronBlock = ByronPartialLedgerConfig
 
   completeLedgerConfig _ _ = byronLedgerConfig
+
+instance SerialiseNodeToClient ByronBlock ByronPartialLedgerConfig where
+  encodeNodeToClient ccfg version (ByronPartialLedgerConfig byronLedgerConfig byronTriggerHardFork)
+    = mconcat [
+                encodeListLen 2
+              , toCBOR @(LedgerConfig ByronBlock) byronLedgerConfig
+              , encodeNodeToClient ccfg version (byronTriggerHardFork :: TriggerHardFork)
+              ]
+  decodeNodeToClient ccfg version = do
+    enforceSize "ByronPartialLedgerConfig" 2
+    ByronPartialLedgerConfig
+      <$> fromCBOR @(LedgerConfig ByronBlock)
+      <*> (decodeNodeToClient ccfg version :: Decoder s TriggerHardFork)
 
 {-------------------------------------------------------------------------------
   CanHardFork
