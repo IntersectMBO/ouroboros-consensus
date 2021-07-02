@@ -48,12 +48,52 @@ import           Data.Bifunctor (first)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.UTF8 as BS.UTF8
 import           Data.List (nub)
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
+<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Golden.hs
+||||||| parent of 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
+import           Data.TreeDiff (Expr (..), ToExpr (..), ansiWlEditExpr, ediff)
+=======
+import qualified Data.Set as Set
+import           Data.TreeDiff (Expr (..), ToExpr (..), ansiWlEditExpr, ediff)
+>>>>>>> 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
 import           GHC.Stack (HasCallStack)
+<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Golden.hs
 import           Ouroboros.Consensus.Block (CodecConfig)
 import           Ouroboros.Consensus.Ledger.Extended (encodeExtLedgerState)
 import           Ouroboros.Consensus.Ledger.Query (QueryVersion,
+||||||| parent of 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
+import           System.Directory (createDirectoryIfMissing)
+import           System.FilePath (takeDirectory, (</>))
+
+import           Cardano.Prelude (forceElemsToWHNF)
+
+import           Ouroboros.Network.Block (Serialised)
+
+import           Ouroboros.Consensus.Block (BlockProtocol, CodecConfig, Header,
+                     HeaderHash, SlotNo, SomeSecond)
+import           Ouroboros.Consensus.HeaderValidation (AnnTip)
+import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
+                     encodeExtLedgerState)
+import           Ouroboros.Consensus.Ledger.Query (BlockQuery, QueryVersion,
+=======
+import           System.Directory (createDirectoryIfMissing)
+import           System.FilePath (takeDirectory, (</>))
+
+import           Cardano.Prelude (forceElemsToWHNF)
+
+import           Ouroboros.Network.Block (Serialised)
+
+import           Ouroboros.Consensus.Block (BlockProtocol, CodecConfig, Header,
+                     HeaderHash, SlotNo, SomeSecond)
+import           Ouroboros.Consensus.HeaderValidation (AnnTip)
+import           Ouroboros.Consensus.Ledger.Abstract (LedgerConfig, LedgerState)
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
+                     encodeExtLedgerState)
+import           Ouroboros.Consensus.Ledger.Query (BlockQuery, QueryVersion,
+>>>>>>> 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
                      nodeToClientVersionToQueryVersion)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (HasNetworkProtocolVersion (..),
@@ -72,8 +112,17 @@ import           System.FilePath (takeDirectory, (</>))
 import           Test.Cardano.Ledger.Binary.TreeDiff (CBORBytes (..), diffExpr)
 import           Test.Tasty
 import           Test.Tasty.Golden.Advanced (goldenTest)
+<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Golden.hs
 import           Test.Util.Serialisation.Examples (Examples (..), Labelled)
 import           Test.Util.Serialisation.SomeResult (SomeResult (..))
+||||||| parent of 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
+
+import           Test.Util.Serialisation.Roundtrip (SomeResult (..))
+=======
+import           Test.Tasty.QuickCheck (counterexample, testProperty)
+
+import           Test.Util.Serialisation.Roundtrip (SomeResult (..))
+>>>>>>> 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
 
 {-------------------------------------------------------------------------------
   Golden test
@@ -164,15 +213,20 @@ goldenTestCBOR testName example enc goldenFile =
               ]
 
 goldenTests ::
-     HasCallStack
+     forall a. HasCallStack
   => TestName
   -> Labelled a
   -> (a -> Encoding)
   -> FilePath  -- ^ Folder containing the golden files
   -> TestTree
 goldenTests testName examples enc goldenFolder
-  | nub labels /= labels
-  = error $ "Examples with the same label for " <> testName
+  | not (null (drop maxSize examples))
+  = testProperty testName $ counterexample
+        ("Too many examples (>" <> show maxSize <> "). Consider reducing the " <>
+        "number of examples so that tests don't take forever.")
+        False
+  | not (null duplicateLabels)
+  = error $ "Examples with the same label for " <> testName <> ". Duplicate labels:\n" <> show duplicateLabels
   | [(Nothing, example)] <- examples
     -- If there's just a single unlabelled example, no need for grouping,
     -- which makes the output more verbose.
@@ -186,10 +240,235 @@ goldenTests testName examples enc goldenFolder
               Just label -> testName <> "_" <> label
       ]
   where
+    duplicateLabels :: Set.Set (Maybe String)
+    duplicateLabels = Set.fromList (labels List.\\ nub labels)
+
     labels :: [Maybe String]
-    labels = map fst examples
+    labels = fst <$> examples
+
+    maxSize :: Int
+    maxSize = 100
 
 {-------------------------------------------------------------------------------
+<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Golden.hs
+||||||| parent of 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
+  Examples
+-------------------------------------------------------------------------------}
+
+type Labelled a = [(Maybe String, a)]
+
+unlabelled :: a -> Labelled a
+unlabelled x = [(Nothing, x)]
+
+labelled :: [(String, a)] -> Labelled a
+labelled = map (first Just)
+
+data Examples blk = Examples {
+      exampleBlock            :: Labelled blk
+    , exampleSerialisedBlock  :: Labelled (Serialised blk)
+    , exampleHeader           :: Labelled (Header blk)
+    , exampleSerialisedHeader :: Labelled (SerialisedHeader blk)
+    , exampleHeaderHash       :: Labelled (HeaderHash blk)
+    , exampleGenTx            :: Labelled (GenTx blk)
+    , exampleGenTxId          :: Labelled (GenTxId blk)
+    , exampleApplyTxErr       :: Labelled (ApplyTxErr blk)
+    , exampleQuery            :: Labelled (SomeSecond BlockQuery blk)
+    , exampleResult           :: Labelled (SomeResult blk)
+    , exampleAnnTip           :: Labelled (AnnTip blk)
+    , exampleLedgerState      :: Labelled (LedgerState blk)
+    , exampleChainDepState    :: Labelled (ChainDepState (BlockProtocol blk))
+    , exampleExtLedgerState   :: Labelled (ExtLedgerState blk)
+    , exampleSlotNo           :: Labelled SlotNo
+    }
+
+emptyExamples :: Examples blk
+emptyExamples = Examples {
+      exampleBlock            = mempty
+    , exampleSerialisedBlock  = mempty
+    , exampleHeader           = mempty
+    , exampleSerialisedHeader = mempty
+    , exampleHeaderHash       = mempty
+    , exampleGenTx            = mempty
+    , exampleGenTxId          = mempty
+    , exampleApplyTxErr       = mempty
+    , exampleQuery            = mempty
+    , exampleResult           = mempty
+    , exampleAnnTip           = mempty
+    , exampleLedgerState      = mempty
+    , exampleChainDepState    = mempty
+    , exampleExtLedgerState   = mempty
+    , exampleSlotNo           = mempty
+    }
+
+combineExamples ::
+     forall blk.
+     (forall a. Labelled a -> Labelled a -> Labelled a)
+  -> Examples blk
+  -> Examples blk
+  -> Examples blk
+combineExamples f e1 e2 = Examples {
+      exampleBlock            = combine exampleBlock
+    , exampleSerialisedBlock  = combine exampleSerialisedBlock
+    , exampleHeader           = combine exampleHeader
+    , exampleSerialisedHeader = combine exampleSerialisedHeader
+    , exampleHeaderHash       = combine exampleHeaderHash
+    , exampleGenTx            = combine exampleGenTx
+    , exampleGenTxId          = combine exampleGenTxId
+    , exampleApplyTxErr       = combine exampleApplyTxErr
+    , exampleQuery            = combine exampleQuery
+    , exampleResult           = combine exampleResult
+    , exampleAnnTip           = combine exampleAnnTip
+    , exampleLedgerState      = combine exampleLedgerState
+    , exampleChainDepState    = combine exampleChainDepState
+    , exampleExtLedgerState   = combine exampleExtLedgerState
+    , exampleSlotNo           = combine exampleSlotNo
+    }
+  where
+    combine :: (Examples blk -> Labelled a) -> Labelled a
+    combine getField = f (getField e1) (getField e2)
+
+instance Semigroup (Examples blk) where
+  (<>) = combineExamples (<>)
+
+instance Monoid (Examples blk) where
+  mempty  = emptyExamples
+  mappend = (<>)
+
+mapExamples ::
+     forall blk.
+     (forall a. Labelled a -> Labelled a)
+  -> Examples blk
+  -> Examples blk
+mapExamples f = combineExamples (const f) mempty
+
+-- | Add the given prefix to each labelled example.
+--
+-- When a label is empty, the prefix is used as the label. If the label is not
+-- empty, the prefix and @_@ are prepended.
+prefixExamples :: String -> Examples blk -> Examples blk
+prefixExamples prefix = mapExamples addPrefix
+  where
+    addPrefix :: Labelled a -> Labelled a
+    addPrefix l = [
+          (Just label, x)
+        | (mbLabel, x) <- l
+        , let label = case mbLabel of
+                Nothing  -> prefix
+                Just lbl -> prefix <> "_" <> lbl
+        ]
+
+{-------------------------------------------------------------------------------
+=======
+  Examples
+-------------------------------------------------------------------------------}
+
+type Labelled a = [(Maybe String, a)]
+
+unlabelled :: a -> Labelled a
+unlabelled x = [(Nothing, x)]
+
+labelled :: [(String, a)] -> Labelled a
+labelled = map (first Just)
+
+data Examples blk = Examples {
+      exampleBlock            :: Labelled blk
+    , exampleSerialisedBlock  :: Labelled (Serialised blk)
+    , exampleHeader           :: Labelled (Header blk)
+    , exampleSerialisedHeader :: Labelled (SerialisedHeader blk)
+    , exampleHeaderHash       :: Labelled (HeaderHash blk)
+    , exampleGenTx            :: Labelled (GenTx blk)
+    , exampleGenTxId          :: Labelled (GenTxId blk)
+    , exampleApplyTxErr       :: Labelled (ApplyTxErr blk)
+    , exampleQuery            :: Labelled (SomeSecond BlockQuery blk)
+    , exampleResult           :: Labelled (SomeResult blk)
+    , exampleAnnTip           :: Labelled (AnnTip blk)
+    , exampleLedgerConfig     :: Labelled (LedgerConfig blk)
+    , exampleLedgerState      :: Labelled (LedgerState blk)
+    , exampleChainDepState    :: Labelled (ChainDepState (BlockProtocol blk))
+    , exampleExtLedgerState   :: Labelled (ExtLedgerState blk)
+    , exampleSlotNo           :: Labelled SlotNo
+    }
+
+emptyExamples :: Examples blk
+emptyExamples = Examples {
+      exampleBlock            = mempty
+    , exampleSerialisedBlock  = mempty
+    , exampleHeader           = mempty
+    , exampleSerialisedHeader = mempty
+    , exampleHeaderHash       = mempty
+    , exampleGenTx            = mempty
+    , exampleGenTxId          = mempty
+    , exampleApplyTxErr       = mempty
+    , exampleQuery            = mempty
+    , exampleResult           = mempty
+    , exampleAnnTip           = mempty
+    , exampleLedgerConfig     = mempty
+    , exampleLedgerState      = mempty
+    , exampleChainDepState    = mempty
+    , exampleExtLedgerState   = mempty
+    , exampleSlotNo           = mempty
+    }
+
+combineExamples ::
+     forall blk.
+     (forall a. Labelled a -> Labelled a -> Labelled a)
+  -> Examples blk
+  -> Examples blk
+  -> Examples blk
+combineExamples f e1 e2 = Examples {
+      exampleBlock            = combine exampleBlock
+    , exampleSerialisedBlock  = combine exampleSerialisedBlock
+    , exampleHeader           = combine exampleHeader
+    , exampleSerialisedHeader = combine exampleSerialisedHeader
+    , exampleHeaderHash       = combine exampleHeaderHash
+    , exampleGenTx            = combine exampleGenTx
+    , exampleGenTxId          = combine exampleGenTxId
+    , exampleApplyTxErr       = combine exampleApplyTxErr
+    , exampleQuery            = combine exampleQuery
+    , exampleResult           = combine exampleResult
+    , exampleAnnTip           = combine exampleAnnTip
+    , exampleLedgerConfig     = combine exampleLedgerConfig
+    , exampleLedgerState      = combine exampleLedgerState
+    , exampleChainDepState    = combine exampleChainDepState
+    , exampleExtLedgerState   = combine exampleExtLedgerState
+    , exampleSlotNo           = combine exampleSlotNo
+    }
+  where
+    combine :: (Examples blk -> Labelled a) -> Labelled a
+    combine getField = f (getField e1) (getField e2)
+
+instance Semigroup (Examples blk) where
+  (<>) = combineExamples (<>)
+
+instance Monoid (Examples blk) where
+  mempty  = emptyExamples
+  mappend = (<>)
+
+mapExamples ::
+     forall blk.
+     (forall a. Labelled a -> Labelled a)
+  -> Examples blk
+  -> Examples blk
+mapExamples f = combineExamples (const f) mempty
+
+-- | Add the given prefix to each labelled example.
+--
+-- When a label is empty, the prefix is used as the label. If the label is not
+-- empty, the prefix and @_@ are prepended.
+prefixExamples :: String -> Examples blk -> Examples blk
+prefixExamples prefix = mapExamples addPrefix
+  where
+    addPrefix :: Labelled a -> Labelled a
+    addPrefix l = [
+          (Just label, x)
+        | (mbLabel, x) <- l
+        , let label = case mbLabel of
+                Nothing  -> prefix
+                Just lbl -> prefix <> "_" <> lbl
+        ]
+
+{-------------------------------------------------------------------------------
+>>>>>>> 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
   Skeletons
 -------------------------------------------------------------------------------}
 
@@ -324,10 +603,22 @@ goldenTest_SerialiseNodeToClient ::
   -> TestTree
 goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples {..} =
     testGroup "SerialiseNodeToClient" [
+<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Golden.hs
         testVersion (queryVersion, blockVersion)
       | (queryVersion, blockVersion) <-
           nub . fmap (first nodeToClientVersionToQueryVersion) . Map.toList $
             supportedNodeToClientVersions (Proxy @blk)
+||||||| parent of 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
+        testVersion (nodeToClientVersionToQueryVersion version, blockVersion)
+      | (version, blockVersion) <- nub $ Map.toList $ supportedNodeToClientVersions $ Proxy @blk
+=======
+        testVersion (queryVersion, blockVersion)
+      | (queryVersion, blockVersion) <- nub $
+            fmap (first nodeToClientVersionToQueryVersion)
+          $ Map.toList
+          $ supportedNodeToClientVersions
+          $ Proxy @blk
+>>>>>>> 4eff5de98... Add LedgerConfig golden test:ouroboros-consensus-test/src/Test/Util/Serialisation/Golden.hs
       ]
   where
     testVersion :: (QueryVersion, BlockNodeToClientVersion blk) -> TestTree
@@ -339,6 +630,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples {..} =
         , test "ApplyTxErr"      exampleApplyTxErr      enc'
         , test "Query"           exampleQuery           enc'
         , test "SlotNo"          exampleSlotNo          enc'
+        , test "LedgerConfig"    exampleLedgerConfig    enc'
         , test "Result"          exampleResult          encRes
         ]
       where
@@ -349,7 +641,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples {..} =
         encRes :: SomeResult blk -> Encoding
         encRes (SomeResult q r) = encodeResult codecConfig blockVersion q r
 
-        test :: TestName -> Labelled a -> (a -> Encoding) -> TestTree
+        test :: HasCallStack => TestName -> Labelled a -> (a -> Encoding) -> TestTree
         test testName exampleValues enc =
             goldenTests
               testName
