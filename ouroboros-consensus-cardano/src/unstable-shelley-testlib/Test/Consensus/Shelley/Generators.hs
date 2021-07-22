@@ -11,6 +11,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Test.Consensus.Shelley.Generators (SomeResult (..)) where
 
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/unstable-shelley-testlib/Test/Consensus/Shelley/Generators.hs
 import           Cardano.Ledger.Crypto (Crypto)
 import           Cardano.Ledger.Era (toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -18,6 +19,17 @@ import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Data.Coerce (coerce)
 import           Generic.Random (genericArbitraryU)
+||||||| parent of 247fc7048... Add round trip tests for ledger config:ouroboros-consensus-shelley-test/src/Test/Consensus/Shelley/Generators.hs
+import           Ouroboros.Network.Block (mkSerialised)
+
+=======
+import           Cardano.Slotting.EpochInfo
+
+import           Cardano.Ledger.Era
+
+import           Ouroboros.Network.Block (mkSerialised)
+
+>>>>>>> 247fc7048... Add round trip tests for ledger config:ouroboros-consensus-shelley-test/src/Test/Consensus/Shelley/Generators.hs
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -37,8 +49,13 @@ import           Test.Cardano.Ledger.AllegraEraGen ()
 import           Test.Cardano.Ledger.Alonzo.AlonzoEraGen ()
 import           Test.Cardano.Ledger.MaryEraGen ()
 import           Test.Cardano.Ledger.Shelley.ConcreteCryptoTypes as SL
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/unstable-shelley-testlib/Test/Consensus/Shelley/Generators.hs
 import           Test.Cardano.Ledger.Shelley.Constants (defaultConstants)
 import           Test.Cardano.Ledger.Shelley.Generator.Presets (coreNodeKeys)
+||||||| parent of 247fc7048... Add round trip tests for ledger config:ouroboros-consensus-shelley-test/src/Test/Consensus/Shelley/Generators.hs
+=======
+import           Test.Cardano.Ledger.Shelley.Generator.EraGen
+>>>>>>> 247fc7048... Add round trip tests for ledger config:ouroboros-consensus-shelley-test/src/Test/Consensus/Shelley/Generators.hs
 import           Test.Cardano.Ledger.Shelley.Generator.ShelleyEraGen ()
 import           Test.Cardano.Ledger.Shelley.Serialisation.EraIndepGenerators
                      (genCoherentBlock)
@@ -206,6 +223,47 @@ instance Arbitrary ShelleyNodeToClientVersion where
 instance ShelleyBasedEra era
       => Arbitrary (SomeSecond (NestedCtxt f) (ShelleyBlock proto era)) where
   arbitrary = return (SomeSecond indexIsTrivial)
+
+{-------------------------------------------------------------------------------
+  Generators for shelley ledger config
+-------------------------------------------------------------------------------}
+
+-- | Generate a 'ShelleyLedgerConfig' with a fixed 'EpochInfo' (see
+-- 'arbitraryGlobalsWithFixedEpochInfo').
+instance ( Mock (Crypto era)
+         , EraGen era
+         , Arbitrary (TranslationContext era)
+         ) => Arbitrary (ShelleyLedgerConfig era) where
+  arbitrary = ShelleyLedgerConfig
+    <$> arbitrary
+    <*> arbitraryGlobalsWithFixedEpochInfo
+    <*> arbitrary
+
+instance ( Mock (Crypto era)
+         , EraGen era
+         ) => Arbitrary (CompactGenesis era) where
+  arbitrary = compactGenesis <$> arbitrary
+
+-- | Generate 'Globals' with a fixed 'EpochInfo'. A fixed 'EpochInfo' is
+-- comprehensive in the case of generating a 'ShelleyLedgerConfig' (see the
+-- documentation for 'shelleyLedgerGlobals').
+arbitraryGlobalsWithFixedEpochInfo :: Gen SL.Globals
+arbitraryGlobalsWithFixedEpochInfo = SL.Globals
+    <$> arbitraryFixedEpochInfo
+    <*> arbitrary
+    <*> arbitrary
+    <*> arbitrary
+    <*> arbitrary
+    <*> arbitrary
+    <*> arbitrary
+    <*> arbitrary
+    <*> arbitrary
+    <*> arbitrary
+    <*> arbitrary
+    <*> arbitrary
+
+arbitraryFixedEpochInfo :: Monad m => Gen (EpochInfo m)
+arbitraryFixedEpochInfo = fixedEpochInfo <$> arbitrary <*> arbitrary
 
 {-------------------------------------------------------------------------------
   Generators for cardano-ledger-specs
