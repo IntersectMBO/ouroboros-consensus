@@ -222,7 +222,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
               bfClient
               bfServer
 
-        forkTicking peerId =
+        forkMockedServers peerId =
             forkLinkedWatcher registry ("TickWatcher " <> condense peerId) $
               LogicalClock.tickWatcher clock \tick -> atomically do
                 let updates = toChainUpdates $
@@ -287,7 +287,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
               infiniteDelay
 
     blockFetchThreads <- Map.fromList <$> for peerIds \peerId -> do
-      _ <- forkTicking   peerId
+      _ <- forkMockedServers peerId
       _ <- forkChainSync peerId
       _ <- forkKeepAlive peerId
       fmap (peerId,) $
