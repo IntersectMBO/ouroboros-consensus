@@ -8,9 +8,10 @@ Bear in mind that the document should remain simple.
 # Resources
 
 To read about the theoretical foundations of consensus, as well as other
-architectural considerations, please see [this file](docs/README.xml). TODO:
-provide links to the consensus report (it’s momentary broken due to Hydra being
-replaced by Cicero).
+architectural considerations, please see TODO!.
+
+TODO: provide links to the consensus report (it’s momentary broken due to Hydra
+being replaced by Cicero).
 
 We are in the process of improving the consensus documentation, and your
 improvement proposals are welcome.
