@@ -5,6 +5,9 @@
 #+LATEX_HEADER: \usepackage[margin=0.9in]{geometry}
 #+OPTIONS: toc:nil
 
+FIXME: this contains way too many code details and it is likely to bitrot. Maybe
+we can move some of the information in this file to source code comments.
+
 #+begin_export latex
   \tableofcontents \clearpage
 #+end_export
