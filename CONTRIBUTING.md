@@ -93,6 +93,11 @@ system with `cabal` installed.
 
 # Contributing to the code
 
+The following sections contain some guidelines that should be followed when
+contributing to the Consensus code base. Please take some time to go through
+them. We do not expect newcomers to adhere to these guidelines perfectly, and we
+will guide you through the process when reviewing your pull request.
+
 ## Following our git process
 
 Our [git process](docs/GitProcess.xml) describes the `git` practices we
