@@ -44,7 +44,7 @@ allow-import-from-derivation = true
 EOF
 ```
 
-As an optional step, to improve build speed, you can set up a binary
+As an optional step, to improve build speed (highly recommended), you can set up a binary
 cache maintained by IOG:
 
 ```sh
