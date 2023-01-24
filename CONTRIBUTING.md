@@ -57,9 +57,9 @@ EOF
 
 ## Using `cabal`
 
-A more involved alternative to using `nix` is to set up the developmen
+An alternative to using `nix` is to set up the development
 environment yourself. Follow [these
-instructions](https://github.com/input-output-hk/cardano-node/blob/master/doc/getting-started/install.md/)
+instructions](https://github.com/input-output-hk/cardano-node/blob/master/doc/getting-started/install.md)
 to properly configure your system.
 
 # Building the project
@@ -72,14 +72,6 @@ cabal build all
 
 in the command line, either inside `nix-shell` if you use `nix`, or in a
 system with `cabal` installed.
-
-# Setting up your developer environment
-
-TODO: we do not support a single editor, however can we give some
-generic instructions here? Alternatively we could propose **a** way to
-setup each of the editors we use (Emacs, VSCode, Vim), just to give the
-reader something to hold on to if they’re clueless. Otherwise we could
-skip this version.
 
 # Testing
 
@@ -106,9 +98,9 @@ encourage when working with the code in this repository.
 
 ## Following the style guide
 
-We have a [Haskell style guide](STYLEGUIDE.xml) that should be followed
-when writing code in Consensus. Our style guide is not set in stone, and
-improvements are always welcome.
+We have a [Haskell style guide](docs/StyleGuide.md) that should be followed when
+writing code in Consensus. Our style guide is not set in stone, and improvements
+are always welcome.
 
 ## Formatting the code
 
@@ -116,8 +108,7 @@ We use `stylish-haskell` for Haskell code formatting. There is a CI
 script (TODO: link to it) that checks that the code is properly
 formatted.
 
-TODO: describe how to fix `stylish-haskell` with a script and optionally
-setting up editors to run `stylish-haskell` on save.
+TODO: describe how to fix `stylish-haskell` with a script.
 
 ## Making and reviewing changes
 
@@ -128,11 +119,12 @@ developers](#contacting-the-developers)). This will help detecting any potential
 problems with the change in the design phase, preventing misunderstandings and
 frustrations later on in the process.
 
-We maintain a [changelog](docs/interface-CHANGELOG.md). See this file for
-instructions on how to maintain it and process it when looking for information
-about changes. Not all pull request need changelog entries. It is up to the
-judgment of the contributor to determine this. The heuristic here is to update
-the changelog if a downstream consumer would find it useful.
+We maintain a [changelog](docs/interface-CHANGELOG.md) for downstream consumers
+of Consensus (eg the networking layer, the node, or the wallet). See this file
+for instructions on how to maintain it and process it when looking for
+information about changes. Not all pull request need changelog entries. It is up
+to the judgment of the contributor to determine this. The heuristic here is to
+update the changelog if a downstream consumer would find it useful.
 
 When creating a pull-request (PR), it is **crucial** that the PR:
 

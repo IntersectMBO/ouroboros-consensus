@@ -12,7 +12,7 @@ concrete behaviors.
 
   * Whenever the Ouroboros protocol specifies that (a stake pool operating) a
     particular node should lead, that node should extend the best chain it has
-    seen so far by minting a new block, which should contain as many
+    seen so far by minting a new block, which should contain as many valid
     transactions as possible.
 
   * The net should be very difficult to disrupt. For example, a successful
@@ -29,7 +29,7 @@ stake -- the honest nodes will all continually reach _consensus_ regarding the
 selection of a single best chain and that that chain grows over time.
 
 The Consensus Layer defines the core Consensus components and logic, notably the
-Ouroboros protocol.
+Ouroboros protocol. See [References](docs/References.md).
 
 ## The Neighbors of Consensus
 

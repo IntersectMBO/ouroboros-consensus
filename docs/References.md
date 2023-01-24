@@ -7,7 +7,7 @@ The following artifacts influence and/or describe the Consensus implementation.
   Shelley][network-report].
 * From the IOG researchers:
     * [Ouroboros BFT][ouroboros-bft] 
-    * [Ouroboros Pros][ouroboros-praos] 
+    * [Ouroboros Praos][ouroboros-praos] 
     * [Ouroboros Genesis][ouroboros-genesis] 
 * [Ledger specifications][cardano-ledger].
 * IOG media:
