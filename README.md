@@ -1,10 +1,12 @@
 # Ouroboros consensus
 
-Implementation of the Ouroboros-family of consensus algorithms. 
+Implementation of the [Ouroboros-family](docs/References.md) of consensus
+algorithms.
 
 :construction: This repository currently contains a proposal for re-organizing
 and publishing the Consensus documentation. We might migrate the code from
-[ouroboros-network](https://github.com/input-output-hk/ouroboros-network) soon.
+[ouroboros-network/ouroboros-consensus*](https://github.com/input-output-hk/ouroboros-network)
+soon.
 
 ## Documentation 
 

@@ -93,7 +93,7 @@ will guide you through the process when reviewing your pull request.
 
 ## Following our git process
 
-Our [git process](docs/GitProcess.xml) describes the `git` practices we
+Our [git process](docs/GitProcess.md) describes the `git` practices we
 encourage when working with the code in this repository.
 
 ## Following the style guide
@@ -147,7 +147,7 @@ TODO: how to submit a feature request?
 
 # Contacting the developers
 
-The core contributors to consensus code base are:
+The core contributors to consensus codebase are:
 
 -   [Nicolas Frisby](https://github.com/nfrisby)
 
