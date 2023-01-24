@@ -1,35 +1,9 @@
-# How to contribute to the Consensus Layer
-
-If you're not working for IOHK, please fork the repository on GitHub and open
-PRs that way. We're excited about your involvement; thank you! If you've
-recently joined IOHK, see [IOHK.md][iohk-onboarding] for additional setup.
-
-Please read the following documents when beginning to contribute to the
-Consensus Layer in this repository. A note about expectations: the rules about
-style and process document our ideal scenario, but we don't expect repository
-newcomers to get them right immediately; we'll guide you through them when
-reviewing your PRs. We appreciate however much effort you can afford at the
-start.
-
-  * [technical onboarding][consensus-onboarding]
-  * [code style guide][consensus-style]
-  * [git process][consensus-git]
-  * TODO quick-start guide
-
-[consensus-git]: GitProcess.md
-
-[consensus-onboarding]: Onboarding.md
-
-[consensus-style]: StyleGuide.md
-
-[iohk-onboarding]: IOHKOnboarding.md
-
-## Profiling tips & tricks
+# Profiling tips & tricks
 
 Here there are some findings or tricks we have found useful at different times
 regarding profiling the Ouroboros Consensus layer.
 
-### Time reported in GHC `-p` profiling is off
+## Time reported in GHC `-p` profiling is off
 
 When a Haskell program is run, the reported time on the `-p` report is the result of
 
@@ -38,7 +12,7 @@ When a Haskell program is run, the reported time on the `-p` report is the resul
 The Cardano-node is run by default with two capabilities, this means that the
 total time will be half of what one would expect.
 
-### Time reported is lower than half of what one would expect
+## Time reported is lower than half of what one would expect
 
 This can be because there are `safe` and `unsafe` calls in different parts of
 the codebase.
@@ -140,7 +114,7 @@ Now, the reported time on the Haskell time profiling will be off due to these
 sometimes lose ticks when running with the default tick interval. Therefore it
 is advised to run with `-V0.01` when doing time measurements.
 
-### Time profiling and eventlog
+## Time profiling and eventlog
 
 One of the few approaches that seemed useful for investigating time consumption
 was using [hs-speedscope](https://github.com/mpickering/hs-speedscope) to graph
@@ -185,7 +159,7 @@ concurrent profiled code run significantly faster (see
 > cabal run --ghc-options="-fno-prof-count-entries" <exe> -- <args> +RTS -l-au -p -olname.eventlog -RTS
 ```
 
-### External interpreter (`ByteCodeLink.lookupCE`)
+## External interpreter (`ByteCodeLink.lookupCE`)
 
 Template haskell has some strange interaction with profiling, which was reported
 to the GHC team at [this
@@ -221,3 +195,5 @@ package plutus-core
   ghc-options: -fexternal-interpreter
 ...
 ```
+
+
