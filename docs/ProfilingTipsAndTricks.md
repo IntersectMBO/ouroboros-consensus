@@ -153,7 +153,7 @@ name.eventlog
 
 It is important to note too that `-fno-prof-count-entries` can make the
 concurrent profiled code run significantly faster (see
-[this](https://downloads.haskell.org/ghc/latest/docs/html/users_guide/profiling.html#profiling-parallel-and-concurrent-programs)).
+[this](https://downloads.haskell.org/ghc/latest/docs/users_guide/profiling.html#profiling-parallel-and-concurrent-programs)).
 
 ```
 > cabal run --ghc-options="-fno-prof-count-entries" <exe> -- <args> +RTS -l-au -p -olname.eventlog -RTS

@@ -2,7 +2,7 @@ Thank you for taking the time to contribute 🙌
 
 The following is a set of guidelines for contributing to the Consensus component
 of Cardano. If you have suggestions on how to improve this document, please feel
-free to [propose changes](#_contributing_to_the_code) to it in a pull request.
+free to [propose changes](#contributing-to-the-code) to it in a pull request.
 Bear in mind that the document should remain simple.
 
 # Resources
