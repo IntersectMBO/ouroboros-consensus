@@ -5,16 +5,33 @@ of Cardano. If you have suggestions on how to improve this document, please feel
 free to [propose changes](#contributing-to-the-code) to it in a pull request.
 Bear in mind that the document should remain simple.
 
-# Resources
+# Documentation
 
-To read about the theoretical foundations of consensus, as well as other
-architectural considerations, please see TODO!.
+Documentation should be a first-class citizen of the Consensus code base. We are
+in the process of improving the Consensus documentation, and your improvement
+proposals are welcome.
 
-TODO: provide links to the consensus report (it’s momentary broken due to Hydra
-being replaced by Cicero).
+We have two types of documentation:
 
-We are in the process of improving the consensus documentation, and your
-improvement proposals are welcome.
+- Markdown files, which can be found in the [docs](docs/) directory. They
+  contain information that is not strictly related to the code itself, such as
+  getting started guides, references, tutorials, etc.
+- [Haddock][haddock-site] comments. They contain more low level information
+  about the code.
+
+When adding or improving documentation about the implementation, it is
+preferable to add haddock comments since they are closer to the code. However
+not all documentation can be placed inside haddock comments, and in such cases
+the contributor can update the markdown files in [docs](docs/). 
+
+When somebody asks a question about the code, we should try to refer people to
+the documentation. If no relevant entry exists, we should create it and submit a
+pull request.
+
+For the time being, all markdown files that contain the Consensus documentation
+live in this repository. On the other hand, the Consensus implementation lives
+in [`ouroboros-network`][ouroboros-network-repo]. We will eventually transfer
+the code to `ouroboros-consensus`.
 
 # Setting up the build tools
 
@@ -96,6 +113,11 @@ will guide you through the process when reviewing your pull request.
 Our [git process](docs/GitProcess.md) describes the `git` practices we
 encourage when working with the code in this repository.
 
+## Updating the documentation
+
+When submitting a pull request, please look update the relevant parts of the
+documentation (see [this section](#documentation).
+
 ## Following the style guide
 
 We have a [Haskell style guide](docs/StyleGuide.md) that should be followed when
@@ -168,3 +190,6 @@ The core contributors to consensus codebase are:
 See [Cardano engineering
 handbook](https://github.com/input-output-hk/cardano-engineering-handbook/blob/main/CODE-OF-CONDUCT.md)'s
 code of conduct.
+
+[haddock-site]: https://haskell-haddock.readthedocs.io/en/latest/
+[ouroboros-network-repo]: https://github.com/input-output-hk/ouroboros-network
