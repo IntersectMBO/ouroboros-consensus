@@ -94,16 +94,16 @@ const config = {
             title: 'Community',
             items: [
               {
+                label: 'Cardano Updates',
+                href: 'https://input-output-hk.github.io/cardano-updates',
+              },
+              {
                 label: 'Stack Overflow',
-                href: 'https://stackoverflow.com/questions/tagged/docusaurus',
+                href: 'https://cardano.stackexchange.com/questions/tagged/consensus',
               },
               {
                 label: 'Discord',
-                href: 'https://discordapp.com/invite/docusaurus',
-              },
-              {
-                label: 'Twitter',
-                href: 'https://twitter.com/docusaurus',
+                href: 'https://discord.gg/inputoutput',
               },
             ],
           },
