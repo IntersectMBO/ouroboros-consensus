@@ -8,7 +8,7 @@ const darkCodeTheme = require('prism-react-renderer/themes/dracula');
 const config = {
   title: 'Ouroboros Consensus',
   tagline: 'The family of protocols powering Cardano',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/cardano_icon.ico',
 
   // Set the production url of your site here
   url: 'https://input-output-hk.github.io/',
