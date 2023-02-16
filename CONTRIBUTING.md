@@ -24,6 +24,12 @@ preferable to add haddock comments since they are closer to the code. However
 not all documentation can be placed inside haddock comments, and in such cases
 the contributor can update the markdown files in [docs](docs/). 
 
+This repository also contains a [technical report](docs/report) that describes
+the implementation of the Consensus layer. We will not update this report. We
+keep it here as a historical reference, and we will systematically convert the
+relevant parts of the report into the two types of documentation mentioned
+above.
+
 When somebody asks a question about the code, we should try to refer people to
 the documentation. If no relevant entry exists, we should create it and submit a
 pull request.
