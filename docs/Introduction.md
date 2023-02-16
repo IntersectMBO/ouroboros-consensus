@@ -18,7 +18,7 @@ This document provides an index to different Consensus documents:
 - [Style guide](StyleGuide.md): describes the style guide we use when developing
   Consensus.
 - [Interface changelog](interface-CHANGELOG.md): contains the old changelog,
-  which describes previos changes that are important for downstream Cardano
+  which describes previous changes that are important for downstream Cardano
   development teams. The new changelog lives in
   [`ouroboros-network`][ouroboros-network-repo] for the time being.
 - [Hard won wisdom](HardWonWisdom.md) contains several realizations we had while

@@ -132,7 +132,7 @@ are always welcome.
 
 ## Formatting the code
 
-We use `stylish-haskell` >= 0.11.0.0 for Haskell code formatting. There is a CI
+We use `stylish-haskell` >= 0.14.3.0 for Haskell code formatting. There is a CI
 script (TODO: link to it) that checks that the code is properly formatted.
 
 TODO: describe how to fix `stylish-haskell` with a script.
@@ -197,11 +197,11 @@ The core contributors to consensus codebase are:
 
 -   [Alexander Esgen](https://github.com/amesgen)
 
--   [Yogesh Sajanikar](https://github.com/yogeshsajanikar)
-
 -   [Joris Dral](https://github.com/jorisdral)
 
 -   [Bart Frenk](https://github.com/bartfrenk)
+
+-   [Arnaud Bailly](https://github.com/abailly-iohk)
 
 -   [Damian Nadales](https://github.com/dnadales)
 
