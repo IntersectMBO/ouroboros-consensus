@@ -56,6 +56,90 @@ may appear out of chronological order.
 The internals of each entry are organized similar to
 https://keepachangelog.com/en/1.1.0/, adapted to our plan explained above.
 
+## Circa 2022-12-19
+
+### Added
+
+- Conway to `CardanoEras`.
+- `NodeToNodeV_11` and `NodeToClientV_15`, both of which enable Conway.
+- Conway-related type and pattern synonyms. Eg `StandardConway`, `HeaderConway`,
+  `GentTxConway`, etc.
+
+### Changed
+
+- The `protocolInfoTPraosShelleyBased` and `protocolInfoPraosShelleyBased`
+  functions now expect a tuple of the `AdditionalGenesisConfig` and the
+  `TranslationContext` instead of just the `TranslationContext`. For all
+  Shelley-based eras before Conway, those had been equal types.
+
+## Circa 2022-11-23
+
+- Removed dead `protocolInfoPraosBabbage` and `protocolInfoPraosShelleyBased`.
+
+## Circa 2022-11-23
+
+- Added `ouroboros-consensus-diffusion`, a top level integration package of
+  `ouroboros-network` & `ouroboros-consensus`
+
+## Circa 2022-09-30
+
+### Fixed
+
+- The maximum major protocol version of the Cardano protocol is now correctly
+  based off of Babbage instead of Alonzo.
+
+## Circa 2022-09-20
+
+### Added
+
+- `consensusStartupErrorTracer` to `Ouroboros.Consensus.Node.Tracers.Tracers'`: a tracer which logs consensus startup errors.
+
+## Circa 2022-08-08
+
+### Added
+
+- `GetPoolDistr`: Get the pool distribution for the given stake pool ids
+
+## Circa 2022-08-03
+
+### Added
+
+- new project `ouroboros-consensus-cardano-tools` containing two tools:
+  1. `db-synthesizer` is a new contribution.
+  2. `db-analyser` has been moved over from `ouroboros-consensus-cardano`.
+  
+### Removed
+- `ouroboros-consensus-cardano/tools/db-analyser` has been removed.
+
+## Circa 2022-07-26
+
+### Added
+
+- `GetPoolState`: Get the pool state for the given stake pool ids
+  New addition to client version `NodeToClientV_14`
+
+## Circa 2022-07-20
+
+### Fixed
+
+- The obsolete node check in the new 'Praos' protocol was not performing the
+  check that was intended. It is supposed to check that the current protocol
+  version is no greater than the max major protocol version. It was instead
+  checking that the max major protocol version was not greater than the
+  protocol version listed in the block header (which is currently not supposed
+  to have any semantic meaning, and is used to manually check the readiness
+  of the network for a hard fork). Note that this mistake is only in the Praos
+  protocol, not in TPraos. The consequence of this incorrect check is that
+  nodes will not properly halt after a hard fork when they do not have the
+  required software for the hard fork.
+
+## Circa 2022-07-13
+
+### Added
+
+- New supported node to client version `NodeToClientV_14` with new queries:
+  - `GetPoolState`: Get the pool state for the given stake pool ids
+
 ## Circa 2022-04-26
 
 ### Added
