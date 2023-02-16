@@ -132,11 +132,27 @@ are always welcome.
 
 ## Formatting the code
 
-We use `stylish-haskell` for Haskell code formatting. There is a CI
-script (TODO: link to it) that checks that the code is properly
-formatted.
+We use `stylish-haskell` >= 0.11.0.0 for Haskell code formatting. There is a CI
+script (TODO: link to it) that checks that the code is properly formatted.
 
 TODO: describe how to fix `stylish-haskell` with a script.
+
+TODO: the steps below do not work yet, as we have not migrated the source code
+from
+[`ouroboros-network`](https://github.com/input-output-hk/ouroboros-network).
+
+Either enable editor integration or call the script used by CI itself:
+
+```bash
+./scripts/ci/check-stylish.sh
+```
+
+When using Nix, you can use the following command, which will build and use
+the right version of `stylish-haskell`.
+
+```bash
+nix-shell --run ./scripts/ci/check-stylish.sh
+```
 
 ## Making and reviewing changes
 
