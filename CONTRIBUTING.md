@@ -163,12 +163,10 @@ developers](#contacting-the-developers)). This will help detecting any potential
 problems with the change in the design phase, preventing misunderstandings and
 frustrations later on in the process.
 
-We maintain a [changelog](docs/interface-CHANGELOG.md) for downstream consumers
-of Consensus (eg the networking layer, the node, or the wallet). See this file
-for instructions on how to maintain it and process it when looking for
-information about changes. Not all pull request need changelog entries. It is up
-to the judgment of the contributor to determine this. The heuristic here is to
-update the changelog if a downstream consumer would find it useful.
+We maintain a changelog. See [our release process](docs/ReleaseProcess.md) for
+information on how to update it. For now the changelogs are in the same
+repository as the source-code, namely
+[`ouroboros-network`][ouroboros-network-repo].
 
 When creating a pull-request (PR), it is **crucial** that the PR:
 
