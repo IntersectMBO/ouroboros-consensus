@@ -17,7 +17,6 @@ This document provides an index to different Consensus documents:
   foundations.
 - [Style guide](StyleGuide.md): describes the style guide we use when developing
   Consensus.
-- [Testing](Testing.md): describes our approach for testing consensus.
 - [Interface changelog](interface-CHANGELOG.md): lists changes that are
   important for downstream Cardano development teams.
 - [Hard won wisdom](HardWonWisdom.md) contains several realizations we had while
