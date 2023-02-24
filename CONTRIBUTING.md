@@ -24,6 +24,12 @@ preferable to add haddock comments since they are closer to the code. However
 not all documentation can be placed inside haddock comments, and in such cases
 the contributor can update the markdown files in [docs](docs/). 
 
+This repository also contains a [technical report](docs/report) that describes
+the implementation of the Consensus layer. We will not update this report. We
+keep it here as a historical reference, and we will systematically convert the
+relevant parts of the report into the two types of documentation mentioned
+above.
+
 When somebody asks a question about the code, we should try to refer people to
 the documentation. If no relevant entry exists, we should create it and submit a
 pull request.
@@ -126,11 +132,27 @@ are always welcome.
 
 ## Formatting the code
 
-We use `stylish-haskell` for Haskell code formatting. There is a CI
-script (TODO: link to it) that checks that the code is properly
-formatted.
+We use `stylish-haskell` >= 0.14.3.0 for Haskell code formatting. There is a CI
+script (TODO: link to it) that checks that the code is properly formatted.
 
 TODO: describe how to fix `stylish-haskell` with a script.
+
+TODO: the steps below do not work yet, as we have not migrated the source code
+from
+[`ouroboros-network`](https://github.com/input-output-hk/ouroboros-network).
+
+Either enable editor integration or call the script used by CI itself:
+
+```bash
+./scripts/ci/check-stylish.sh
+```
+
+When using Nix, you can use the following command, which will build and use
+the right version of `stylish-haskell`.
+
+```bash
+nix-shell --run ./scripts/ci/check-stylish.sh
+```
 
 ## Making and reviewing changes
 
@@ -141,12 +163,10 @@ developers](#contacting-the-developers)). This will help detecting any potential
 problems with the change in the design phase, preventing misunderstandings and
 frustrations later on in the process.
 
-We maintain a [changelog](docs/interface-CHANGELOG.md) for downstream consumers
-of Consensus (eg the networking layer, the node, or the wallet). See this file
-for instructions on how to maintain it and process it when looking for
-information about changes. Not all pull request need changelog entries. It is up
-to the judgment of the contributor to determine this. The heuristic here is to
-update the changelog if a downstream consumer would find it useful.
+We maintain a changelog. See [our release process](docs/ReleaseProcess.md) for
+information on how to update it. For now the changelogs are in the same
+repository as the source-code, namely
+[`ouroboros-network`][ouroboros-network-repo].
 
 When creating a pull-request (PR), it is **crucial** that the PR:
 
@@ -177,11 +197,11 @@ The core contributors to consensus codebase are:
 
 -   [Alexander Esgen](https://github.com/amesgen)
 
--   [Yogesh Sajanikar](https://github.com/yogeshsajanikar)
-
 -   [Joris Dral](https://github.com/jorisdral)
 
 -   [Bart Frenk](https://github.com/bartfrenk)
+
+-   [Arnaud Bailly](https://github.com/abailly-iohk)
 
 -   [Damian Nadales](https://github.com/dnadales)
 

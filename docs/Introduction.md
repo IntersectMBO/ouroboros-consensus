@@ -17,10 +17,13 @@ This document provides an index to different Consensus documents:
   foundations.
 - [Style guide](StyleGuide.md): describes the style guide we use when developing
   Consensus.
-- [Testing](Testing.md): describes our approach for testing consensus.
-- [Interface changelog](interface-CHANGELOG.md): lists changes that are
-  important for downstream Cardano development teams.
+- [Interface changelog](interface-CHANGELOG.md): contains the old changelog,
+  which describes previous changes that are important for downstream Cardano
+  development teams. The new changelog lives in
+  [`ouroboros-network`][ouroboros-network-repo] for the time being.
 - [Hard won wisdom](HardWonWisdom.md) contains several realizations we had while
   working on the code base. This could be used both as a place to look random
   information, and source of inspiration for further improving our
   documentation.
+
+[ouroboros-network-repo]: https://github.com/input-output-hk/ouroboros-network
