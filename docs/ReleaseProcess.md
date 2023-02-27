@@ -243,7 +243,23 @@ If you encounter an error mentioning:
 found that downgrading `setuptools` to a version `< 66` seems to solve this
 problem.
 
-# Steps for cutting a release
+# Adding a changelog fragment
+
+When a given branch contains a change that deserves a changelog entry, you
+should add a changelog
+[fragment](https://scriv.readthedocs.io/en/stable/concepts.html#fragments). When
+we [cut a release](#cutting-a-release) the changelog fragments will be merged
+into a changelog update. To add a changelog fragment, use `scriv`. See [this
+section](#installing-scriv) for instructions on how to install it.
+
+1. Run `scriv create` on the directory of the package you want to create an
+   entry for (eg `ouroboros-consensus` or `ouroboros-consensus-cardano`). This
+   will create a new file inside the `changelog.d` sub-directory of the package.
+2. Edit the newly created file by uncomenting and filling in the appropreate
+   section (Breaking, etc).
+3. Add the file to the branch.
+
+# Cutting a release
 
 1. Update the version in `ouroboros-consensus` to a dummy value, e.g. `10.0.0.0`.
 2. Run `scriv collect`.
