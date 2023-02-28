@@ -291,7 +291,8 @@ To create a changelog fragment you can follow these steps:
    repeated twice if you want to create changelog entries for both bundles. This will
    create a new file inside the `changelog.d` sub-directory of the bundle.
 2. Edit the newly created file(s) by uncommenting and filling in the appropriate
-   section (Breaking, etc).
+   section (Breaking, etc). Write the entry in the imperative, as per [these
+   guidelines][git-contributing-to-a-project].
 3. Add the file(s) to the branch.
 
 # Cutting a release
@@ -304,3 +305,5 @@ To create a changelog fragment you can follow these steps:
 6. Run `scriv collect`.
 7. Repeat steps 1-6 but with `ouroboros-consensus-cardano`.
 8. Release these new versions into CHaP.
+
+[contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines
