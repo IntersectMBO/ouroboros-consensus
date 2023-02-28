@@ -228,7 +228,7 @@ B - the release of FOO-1.0.0 (tag: release-FOO-1.0.0)
 A - ...
 ```
 
-# Installing `scriv` 
+# Installing `scriv`
 
 To manage the workflow described above, we will use the `scriv` tool. If you use
 `nix` then you will find `scriv` in the Nix shell. Otherwise,
@@ -252,12 +252,47 @@ we [cut a release](#cutting-a-release) the changelog fragments will be merged
 into a changelog update. To add a changelog fragment, use `scriv`. See [this
 section](#installing-scriv) for instructions on how to install it.
 
-1. Run `scriv create` on the directory of the package you want to create an
-   entry for (eg `ouroboros-consensus` or `ouroboros-consensus-cardano`). This
-   will create a new file inside the `changelog.d` sub-directory of the package.
-2. Edit the newly created file by uncomenting and filling in the appropreate
+At the moment we maintain two [packages bundles](#generalizing-to-more-packages):
+
+- The `ouroboros-consensus` bundle, which contains the following packages.
+    - `ouroboros-consensus`
+    - `ouroboros-consensus-protocol`
+    - `ouroboros-consensus-diffusion`
+    - `ouroboros-consensus-tutorials`
+    - `ouroboros-consensus-test`
+    - `ouroboros-consensus-mock`
+    - `ouroboros-consensus-mock-test`
+- The `ouroboros-consensus-cardano` bundle, which is Cardano specific and
+  contains the following packages:
+    - `ouroboros-consensus-cardano`
+    - `ouroboros-consensus-cardano-test`
+    - `ouroboros-consensus-cardano-tools`
+    - `ouroboros-consensus-byron`
+    - `ouroboros-consensus-byron-test`
+    - `ouroboros-consensus-byronspec`
+    - `ouroboros-consensus-shelley`
+    - `ouroboros-consensus-shelley-test`
+
+Each bundle contains a changelog. The changelog for the `ouroboros-consensus`
+bundle can be found in `ouroboros-consensus/CHANGELOG.md`. The changelog for the
+`ouroboros-consensus-cardano` bundle can be found in
+`ouroboros-consensus-cardano/CHANGELOG.md`. The changelog fragments for the
+`ouroboros-consensus` bundle are stored in `ouroboros-consensus/changelog.d`.
+The changelog fragments for the `ouroboros-consensus-cardano` bundle are stored
+in `ouroboros-consensus-cardano/changelog.d`. The other packages in one of these
+bundles have a `changelog.d` directory that is symlinked to the directory of the
+bundle to which they belong.
+
+To create a changelog fragment you can follow these steps:
+
+1. Run `scriv create` on the directory of one of the packages in the bundle you
+   want to create an entry for (the symlinks described above will make sure that
+   the fragment gets created in the right directory). This will need to be
+   repeated twice if you want to create changelog entries for both bundles. This will
+   create a new file inside the `changelog.d` sub-directory of the bundle.
+2. Edit the newly created file(s) by uncommenting and filling in the appropriate
    section (Breaking, etc).
-3. Add the file to the branch.
+3. Add the file(s) to the branch.
 
 # Cutting a release
 
@@ -269,4 +304,3 @@ section](#installing-scriv) for instructions on how to install it.
 6. Run `scriv collect`.
 7. Repeat steps 1-6 but with `ouroboros-consensus-cardano`.
 8. Release these new versions into CHaP.
-
