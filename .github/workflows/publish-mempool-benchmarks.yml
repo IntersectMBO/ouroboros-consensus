@@ -1,0 +1,139 @@
+##
+## Since the benchmarking code lives in `ouroboros-network`, we have to clone
+## that repository and build the benchmarks before we can run them. Once we
+## migrate Consensus code to this repository we will not need to perform these
+## steps before running the benchmarks.
+##
+## Another issue with benchmarking the code from `ouroboros-network` is that we
+## cannot run the benchmarks when code in that repository changes. For the time
+## being we schedule a benchmark run periodically. Once we migraet Consensus
+## code here, we can remove such a scheduled run.
+##
+
+# Do not run this workflow on pull requests since this workflow has permission
+# to modify the contents of our github pages, which it needs to publish the
+# benchmarks results.
+name: Run and publish mempool benchmarks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
+      # The day was somewhat arbitrarily choosen. The rationale is that we
+      # want to run the jobs at least once a week
+
+concurrency:
+  # Define a group for this workflow, which at the moment is only used to cancel
+  # any worflow in progress when a new commit is pushed.
+  #
+  # See:
+  #  - https://stackoverflow.com/a/72408109/2289983
+  #  - https://docs.github.com/en/actions/using-jobs/using-concurrency
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # Deployments permission to deploy GitHub pages website.
+  deployments: write
+  # Contents permission to update benchmark contents in gh-pages branch.
+  contents: write
+
+jobs:
+  build_bench:
+    name: ${{ matrix.os }} / ghc ${{ matrix.ghc }}
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        cabal: ["3.8.1.0"]
+        ghc:
+          - ["8.10.7"]
+
+    env:
+      # SECP_CACHE_VERSION and SECP256K1_REF are take from cardano-node
+
+      # Modify this value to "invalidate" the secp cache.
+      SECP_CACHE_VERSION: "2022-12-30"
+
+      # current ref from: 27.02.2022
+      SECP256K1_REF: ac83be33d0956faf6b7f61a60ab524ef7d6a473a
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Haskell
+        uses: input-output-hk/setup-haskell@v1
+        id: setup-haskell
+        with:
+          ghc-version: ${{ matrix.ghc }}
+          cabal-version: ${{ matrix.cabal }}
+
+      - name: "Linux: Install build environment (for secp256k1)"
+        if: runner.os == 'Linux'
+        run: sudo apt-get -y install autoconf automake libtool
+
+      - name: Install secp256k1
+        uses: input-output-hk/setup-secp256k1@v1
+        with:
+          git-ref: ${{ env.SECP256K1_REF }}
+          cache-version: ${{ env.SECP_CACHE_VERSION }}
+
+      - name: Checkout ouroboros-network
+        uses: actions/checkout@v3
+        with:
+          repository: input-output-hk/ouroboros-network
+          ref: master
+          path: ouroboros-network
+
+      - name: Cabal update
+        run: |
+          cd ouroboros-network
+          cabal update
+
+      - name: Cabal configure
+        run: |
+          cd ouroboros-network
+          cabal configure
+
+      - name: Freeze
+        run: |
+          cd ouroboros-network
+          cabal freeze
+
+      - uses: actions/cache@v3
+        name: Cache ~/.cabal/store
+        with:
+          path: ${{ steps.setup-haskell.outputs.cabal-store }}
+          key: ${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('ouroboros-network/cabal.project.freeze') }}
+
+      - uses: actions/cache@v3
+        name: "Cache `dist-newstyle`"
+        with:
+          path: |
+            ouroboros-network/dist-newstyle
+            !ouroboros-network/dist-newstyle/**/.git
+          key: cache-dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('ouroboros-network/cabal.project.freeze') }}
+
+      - name: Install dependencies
+        run: |
+          cd ouroboros-network
+          cabal build ouroboros-consensus-test:bench-mempool --only-dependencies
+
+      - name: Run benchmarks
+        run: |
+          cd ouroboros-network
+          cabal new-run ouroboros-consensus-test:bench-mempool -- --timeout=60
+          cat mempool-benchmarks.json
+
+      - name: Mempool bench
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Mempool
+          tool: 'customSmallerIsBetter'
+          output-file-path: ouroboros-network/mempool-benchmarks.json
+          # Access token to deploy GitHub Pages branch
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Push and deploy GitHub pages branch automatically
+          auto-push: true
