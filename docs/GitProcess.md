@@ -18,6 +18,8 @@ motivation. They help reviewers do their job, future developers understand the
 past design process, troubleshooters debug changes in behavior, downstream
 developers understand recent changes and their context, and so on. In these kind
 of scenarios, commit messages are often the easiest documentation to read first.
+Write commit messages in the imperative, as per [these
+guidelines][git-contributing-to-a-project].
 
 _Small and organized commits_: The commits themselves, beyond just their
 messages, also contribute to the story in their own way. Prefer small commits
@@ -84,3 +86,5 @@ If you'd like to opt-in to that or similar, add a `cabal.project.local` file.
     tracked by one of our lower level GitHub Issues (`NNNN`) and/or IOHK's JIRA
     issues (`JJJ-MMMM` where the `JJJ` is the acronym of the JIRA project, eg
     `CAD`).
+
+[contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines

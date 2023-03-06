@@ -163,8 +163,11 @@ developers](#contacting-the-developers)). This will help detecting any potential
 problems with the change in the design phase, preventing misunderstandings and
 frustrations later on in the process.
 
-We maintain a changelog. See [our release process](docs/ReleaseProcess.md) for
-information on how to update it. For now the changelogs are in the same
+We maintain a changelog. If your pull request requires a changelog entry, please
+follow [these instructions](docs/ReleaseProcess.md#adding-a-changelog-fragment).
+It is up to the pull request author to determine if this is necessary, but do
+not worry, the reviewers will guide you. For more information see [our release
+process](docs/ReleaseProcess.md). For now the changelogs are in the same
 repository as the source-code, namely
 [`ouroboros-network`][ouroboros-network-repo].
 
