@@ -109,7 +109,7 @@ We prepare that release as follows.
     - For example, when releasing version 2.0.0 of a package named FOO, we'd create the branch named release-FOO-2.x.x.
       See the "Release Branch Example" below.
 - RULE: Finally, we announce this commit hash as the new release of these packages.
-  EG We insert these package's new versions into Hackage, [CHaP](https://github.com/input-output-hk/cardano-haskell-packages), etc.
+  EG We insert these package's new versions into Hackage, [CHaP][chap], etc.
 
 *Remark*.
 To explicitly clarify: after a release of a package, there will be zero pending changelog entries for that package.
@@ -297,13 +297,45 @@ To create a changelog fragment you can follow these steps:
 
 # Cutting a release
 
-1. Update the version in `ouroboros-consensus` to a dummy value, e.g. `10.0.0.0`.
-2. Run `scriv collect`.
-3. Assess the change, whether it requires major, minor or patch bump.
-4. Undo the changes (`git reset --hard HEAD`).
-5. Update the version in accordance with step 3 in all the packages in the bundle. Each changelog describes the packages of its bundle.
-6. Run `scriv collect`.
-7. Repeat steps 1-6 but with `ouroboros-consensus-cardano`.
-8. Release these new versions into CHaP.
+First, make sure `scriv` is [installed](#installing-scriv), along with the
+following Python3 packages (unless you use `scriv` in a `nix` shell):
+
+- `bs4`
+- `html5lib`
+
+If they these packages are not installed, then run:
+
+```sh
+pip install bs4 html5lib
+```
+
+To cut a release we rely on a script in `ouroboros-network`. Simply run:
+
+```sh
+./scripts/consensus-release.sh
+```
+
+After the script is run, open a pull request, get it approved and merge using
+`bors`. And once it is merged, create the release tags by using
+`consensus-tag-releases.sh` as follows:
+
+```sh
+git checkout <rev-bors-merge>
+git pull
+./script/consensus-tag-releases.sh
+```
+
+Where `<rev-bors-merge>` is the commit on `master` at which `bors` merged the
+release.
+
+Finally, create a release in [CHaP][chap], for which one can invoke the
+following script:
+
+```sh
+git checkout <rev-bors-merge>
+git pull
+./script/consensus-release-to-chap.sh
+```
 
 [contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines
+[chap]: https://github.com/input-output-hk/cardano-haskell-packages
