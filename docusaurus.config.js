@@ -72,6 +72,12 @@ const config = {
             label: 'Documentation',
           },
           {
+            type: 'doc',
+            docId: 'benchmarks/index',
+            position: 'left',
+            label: 'Benchmarks',
+          },
+          {
             href: 'https://github.com/input-output-hk/ouroboros-network',
             label: 'GitHub',
             position: 'right',
@@ -87,6 +93,10 @@ const config = {
               {
                 label: 'Documentation',
                 to: '/docs/Introduction',
+              },
+              {
+                label: 'Benchmarks',
+                to: '/docs/benchmarks/',
               },
             ],
           },

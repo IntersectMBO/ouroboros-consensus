@@ -29,6 +29,15 @@ This website is built using [Docusaurus 2](https://docusaurus.io/), a modern sta
 
 ### Local Development
 
+To install the packages required to build the documentation site run:
+
+```
+$ yarn
+```
+
+After the necessary packages are installed by the above command, the
+documentation site can be built by running:
+
 ```
 $ yarn start
 ```
