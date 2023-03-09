@@ -48,8 +48,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         cabal: ["3.8.1.0"]
-        ghc:
-          - ["8.10.7"]
+        ghc: ["8.10.7"]
 
     env:
       # SECP_CACHE_VERSION and SECP256K1_REF are take from cardano-node
@@ -70,6 +69,12 @@ jobs:
           ghc-version: ${{ matrix.ghc }}
           cabal-version: ${{ matrix.cabal }}
 
+      - name: "Linux: Install build environment (apt-get)"
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install libsodium-dev
+
       - name: "Linux: Install build environment (for secp256k1)"
         if: runner.os == 'Linux'
         run: sudo apt-get -y install autoconf automake libtool
@@ -87,15 +92,17 @@ jobs:
           ref: master
           path: ouroboros-network
 
+      - name: Create a cabal.project.local file
+        run: |
+          # We need this option to make cardano-crypto-praos use the libsodium
+          # library we installed in this system (and not the IOG fork).
+          echo 'package cardano-crypto-praos'     >> ouroboros-network/cabal.project.local
+          echo '  flags: -external-libsodium-vrf' >> ouroboros-network/cabal.project.local
+
       - name: Cabal update
         run: |
           cd ouroboros-network
           cabal update
-
-      - name: Cabal configure
-        run: |
-          cd ouroboros-network
-          cabal configure
 
       - name: Freeze
         run: |
