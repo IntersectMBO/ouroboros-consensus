@@ -252,36 +252,47 @@ we [cut a release](#cutting-a-release) the changelog fragments will be merged
 into a changelog update. To add a changelog fragment, use `scriv`. See [this
 section](#installing-scriv) for instructions on how to install it.
 
-At the moment we maintain two [packages bundles](#generalizing-to-more-packages):
+At the moment we maintain four [packages bundles](#generalizing-to-more-packages):
 
-- The `ouroboros-consensus` bundle, which contains the following packages.
-    - `ouroboros-consensus`
+- The `ouroboros-consensus` bundle, which contains the following packages:
+    - `ouroboros-consensus` (*)
     - `ouroboros-consensus-protocol`
     - `ouroboros-consensus-diffusion`
-    - `ouroboros-consensus-tutorials`
-    - `ouroboros-consensus-test`
     - `ouroboros-consensus-mock`
-    - `ouroboros-consensus-mock-test`
+- The `ouroboros-consensus-test` bundle, which contains the tests packages for
+  the `ouroboros-consensus` bundle:
+  - `ouroboros-consensus-test` (*)
+  - `ouroboros-consensus-mock-test`
+  - `ouroboros-consensus-tutorials`
 - The `ouroboros-consensus-cardano` bundle, which is Cardano specific and
   contains the following packages:
-    - `ouroboros-consensus-cardano`
-    - `ouroboros-consensus-cardano-test`
+    - `ouroboros-consensus-cardano` (*)
     - `ouroboros-consensus-cardano-tools`
     - `ouroboros-consensus-byron`
-    - `ouroboros-consensus-byron-test`
-    - `ouroboros-consensus-byronspec`
     - `ouroboros-consensus-shelley`
+- The `ouroboros-consensus-cardano-test`bundle, which contains the test packages
+  for the `ouroboros-consensus-cardano` bundle:
+    - `ouroboros-consensus-cardano-test` (*)
+    - `ouroboros-consensus-byronspec`
+    - `ouroboros-consensus-byron-test`
     - `ouroboros-consensus-shelley-test`
 
-Each bundle contains a changelog. The changelog for the `ouroboros-consensus`
-bundle can be found in `ouroboros-consensus/CHANGELOG.md`. The changelog for the
-`ouroboros-consensus-cardano` bundle can be found in
-`ouroboros-consensus-cardano/CHANGELOG.md`. The changelog fragments for the
-`ouroboros-consensus` bundle are stored in `ouroboros-consensus/changelog.d`.
-The changelog fragments for the `ouroboros-consensus-cardano` bundle are stored
-in `ouroboros-consensus-cardano/changelog.d`. The other packages in one of these
-bundles have a `changelog.d` directory that is symlinked to the directory of the
-bundle to which they belong.
+The packages marked with asterisks, (*), whose names match the bundle they
+belong to, contain the changelog (`CHANGELOG.md`) and fragments directory
+(`changelog.d`) of the bundle. The other packages in a bundle have the
+`changelog.d` directory symlinked to the fragments directory of their bundle.
+This eases adding fragments to the right directory when running
+
+```sh
+scriv create
+```
+
+from the root directory of any of the packages of the bundle (eg
+`ouroboros-consensus-protocol`).
+
+The changelog files of the packages not marked with (*) refer to the changelog
+of their bundle. They are not symlinked because changelogs are distributed
+individually per package.
 
 To create a changelog fragment you can follow these steps:
 
