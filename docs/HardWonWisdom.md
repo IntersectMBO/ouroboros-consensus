@@ -99,3 +99,16 @@ A couple more observations:
 
 So, either by mimicking the approach of the existing `ValidityInterval` validation logic or by altering the STS innards to allow short-circuiting failure, we could reify the `EpochInfo` failures into the `PredicateFailure` hierarchy, and thereby leverage the types to force each invocation of the Ledger API to independently handle the possibility of `PastHorizonException`s.
 But it's not obvious that that is definitely worth the extra complexity it would introduce on the Ledger code.
+
+## Why use the Honest Chain Growth window as the Ledger's Stability Window?
+
+Suppose we have selected a different chain than our peer and that our selected chain has L blocks after the intersection and their selected chain has R blocks after the intersection.
+
+REQ1: If k<L, we must promptly disconnect from the peer (b/c of Common Prefix violation and Limit on Rollback).
+
+REQ2: If L≤k (see REQ1) and L<R, we must validate at least L+1 of their headers, because Praos requires us to fetch and select the longer chain, and validating those headers is the first step towards selecting those blocks.
+(This requirement ignores tiebreakers here because the security argument must hold even if the adversary wins a tiebreaker.)
+
+The most demanding case of REQ2 is L=k: at most we'll need to validate k+1 of the peer's headers.
+Thus using HCG window as Stability Window ensures that forecasting can't disrupt REQ2 when the peer is serving honest blocks.
+(We can tick the intersection ledger state to their first header, and then forecast 3k/f from there which by HCG will get us at least the remaining k headers if they're serving an honest chain.)
