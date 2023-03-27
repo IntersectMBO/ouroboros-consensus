@@ -23,6 +23,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
   , ChainSchema (ChainSchema)
   , RaceViolation (AdversaryWonRace, rvAdv, rvHon)
   , checkAdversarialChain
+  , genPrefixBlockCount
   ) where
 
 import           Control.Applicative ((<|>))
@@ -570,3 +571,20 @@ withinYS :: Delta -> MaybeYS base -> RI.Race base -> Bool
 withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
     KnownYS ys -> C.windowLast win C.+ d < ys
     UnknownYS  -> True   -- Honest Chain Growth ensures every Race Window is at most @'Scg' - 'Delta'@ slots wide
+
+-- | Draw a random active slot count for the prefix of a fork.
+--
+-- The count will be strictly smaller than the number of active slots in the given 'ChainSchema'.
+--
+-- REVIEW: why do we not allow forking off the block number 1?
+genPrefixBlockCount :: R.RandomGen g => g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
+genPrefixBlockCount g schedH =
+    if C.toVar numChoices < 2 then C.Count 0 {- can always pick genesis -} else do
+        C.toVar $ R.runSTGen_ g $ C.uniformIndex numChoices
+  where
+    ChainSchema _slots v = schedH
+
+    numChoices = pc C.- 1   -- can't pick the last active slot
+
+    -- 'H.uniformTheHonestChain' ensures 0 < pc
+    pc = BV.countActivesInV S.notInverted v
