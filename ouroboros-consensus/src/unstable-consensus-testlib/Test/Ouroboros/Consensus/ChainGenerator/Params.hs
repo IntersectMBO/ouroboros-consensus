@@ -23,7 +23,7 @@ import qualified Data.Bits as B
 -- the onset of slot @x + Δ + 1@.
 --
 -- NOTE: If @Δ=0@, then the best block minted in each slot is selected by every
--- (healthy) honset before the onset of the next slot.
+-- (healthy) honest node before the onset of the next slot.
 --
 -- NOTE: If the honest block @k+1@ after its intersection with an alternative
 -- chain was minted in slot @x@, then the alternative block @k+1@ after the
