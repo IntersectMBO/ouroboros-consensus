@@ -565,6 +565,7 @@ test-suite infra-test
 
   build-depends:
     , base
+    , hmatrix
     , mtl
     , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
     , QuickCheck
