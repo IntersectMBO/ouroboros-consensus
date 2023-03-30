@@ -1,6 +1,6 @@
 # [Ouroboros Consensus](https://input-output-hk.github.io/ouroboros-consensus/)
 
-[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.5.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-consensus-0.5.0.0/)
+[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.5.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-0.5.0.0/)
 [![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.5.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-diffusion-0.5.0.0/)
 [![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.5.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-protocol-0.5.0.0/)
 [![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.5.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-cardano-0.5.0.0/)

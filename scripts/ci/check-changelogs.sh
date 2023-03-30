@@ -43,7 +43,7 @@ function this_merge_updates_version {
 function this_merge_adds_fragment {
     if [[ -n $CI ]];
     then echo "$(($(ls -A1 $BASE/$1/changelog.d | wc -l) - $(ls -A1 $TARGET/$1/changelog.d | wc -l)))"
-    else git diff $TARGET HEAD --name-only --diff-filter=A | grep $1/changelog.d | wc -l
+    else git diff $TARGET HEAD --name-only --diff-filter=AR | grep $1/changelog.d | wc -l
     fi
 }
 
@@ -59,7 +59,7 @@ function check {
 
     echo "Checking consistency of $pkg"
 
-    if [[ $(files-changed $pkg) ]]; then
+    if [[ $(files-changed $pkg) -gt 0 ]]; then
 
         version=$(cabal_files_version $pkg)
         last_version=$(get_last_version $pkg)
@@ -80,7 +80,7 @@ function check {
             printf "version:       %s\nnew version:   %s\nnew fragments: $adds_fragment\nOK\n\n" $version $updated_versions $last_version
         fi
     else
-        echo "No source files changed in $pkg"
+        printf "No source files changed in %s\n\n" $pkg
     fi
 }
 

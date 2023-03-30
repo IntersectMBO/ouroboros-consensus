@@ -1,12 +1,11 @@
 {-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Test.Util.Orphans.ToExpr () where
 
-import           Data.TreeDiff (ToExpr (..))
+import           Cardano.Ledger.TreeDiff
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract

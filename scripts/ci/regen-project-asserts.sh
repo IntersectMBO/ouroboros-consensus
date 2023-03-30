@@ -2,7 +2,7 @@
 
 set -e
 
-common=$(sed '/package /q' cabal.project | sed '$ d')
+common=$(sed '/^package /q' cabal.project | sed '$ d')
 
 echo "$common" > cabal.project
 
@@ -14,3 +14,5 @@ for pkg in $(grep asserts cabal.project.freeze | awk '{$1=$1};1' | cut -d' ' -f1
 package $pkg
   flags: +asserts" >> cabal.project
 done
+
+rm cabal.project.freeze
