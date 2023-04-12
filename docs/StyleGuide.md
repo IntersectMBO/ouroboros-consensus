@@ -37,6 +37,9 @@ along with its context -- eg whatever is available in the GitHub PR interface.
 As long that rendering doesn't show that the PR spoils something like
 intentional alignment for example, then the PR has no style problems.
 
+We run `stylish-haskell` as a requirement for merging. The specific
+configuration can be found [here][stylish-config].
+
 ## Guiding principles
 
 We value the following principles in the consensus team:
@@ -164,7 +167,7 @@ the rules below, it is good practice to update the code's style to match them.
             [Foo]
       ```
 
-      Note the argument of `Baz` being indented by two spaces.
+      Note the arguments of `Baz` being indented by two spaces.
 
    d. Both of the following are fine
 
@@ -391,8 +394,7 @@ the rules below, it is good practice to update the code's style to match them.
       ```
 
       Bracketing a pattern match on a record is optional, but we feel it aids
-      clarity. (It is not necessary for a `RecordWildCards` style match,
-      however.)
+      clarity.
 
       When that does not fit on a single line, move any pattern matches to a
       `where` block:
@@ -417,14 +419,6 @@ the rules below, it is good practice to update the code's style to match them.
             , argB = b
             , argC = SomeRecord {field = x}
             } = args
-      ```
-
-      If the field names of the `Args` type are named appropriately, using
-      `RecordWildCards` is also acceptable, see also (17).
-
-      ```haskell
-      foo Args {..} =
-          ..
       ```
 
    d. Class or instance contexts: when a class or instance declaration doesn't
@@ -470,10 +464,10 @@ the rules below, it is good practice to update the code's style to match them.
       ```haskell
       data Foo =
           Bar
-           Arg1
-           Arg2
-           ..
-           ArgN
+            Arg1
+            Arg2
+            ..
+            ArgN
         | Baz
 
       data Foo = Foo {
@@ -693,8 +687,8 @@ the rules below, it is good practice to update the code's style to match them.
     foo :: ..
     ```
 
-    Note the space before and after the `|`. We do not align the following lines
-    with the first character of the `|`.
+    Note the space after the `|`. We do not align the following lines with the
+    first character of the `|`.
 
     Haddock treats something between double quotes as a link to a module. So
     when you try to quote something, either use backslashes or extra spaces as
@@ -878,59 +872,7 @@ the rules below, it is good practice to update the code's style to match them.
     *Why:* to avoid wasting horizontal screen space.
 
 15. __Import lists__: we use `stylish-haskell` to automatically format import
-    lists. See the `.stylish-haskell.yaml` file in this repo.
-
-    We prefer the following order of import groups that has to be maintained
-    manually:
-
-    ```haskell
-    -- Prelude
-    import           Prelude hiding (..)
-
-    -- base + third-party non-Cardano packages
-    import           Control.Monad (mplus)
-    import           Data.Text (Text)
-    import qualified Data.Text as Text
-    import           NoThunks.Class (NoThunks)
-
-    -- cardano-prelude
-    import           Cardano.Prelude (forceElemsToWHNF)
-
-    -- cardano-base
-    import           Cardano.Binary (ToCBOR)
-
-    -- ouroboros-network and other network packages,
-    -- each namespace in a separate group
-    import           Ouroboros.Network.Block (Serialised)
-
-    -- ouroboros-consensus
-    import           Ouroboros.Consensus.Block
-
-    -- Storage layer
-    import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
-
-    -- cardano-ledger-specs
-    import qualified Cardano.Ledger.Shelley.API as SL
-
-    -- ouroboros-consensus-shelley (or mock or byron)
-    import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
-
-    -- ouroboros-consensus-cardano
-    import           Ouroboros.Consensus.Cardano.Block
-    ```
-
-    Each group is of course optional and must *not* be preceded by the comment
-    like in the example above.
-
-    The idea behind the ordering is to start with the most general
-    packages/modules and then go more and more specific, ending with the local
-    package. In general, an import group will only depend on packages in import
-    groups *above* it, *not below* it. For example, the network layer import
-    group comes *before* the consensus import group, as the latter depends on
-    the former. The Shelley ledger import group comes before the Shelley ledger
-    consensus integration import group. In case of ties, i.e., when multiple
-    import groups don't depend on each other, we have no real preference. We do
-    put Byron before Shelley.
+    lists. See the [`.stylish-haskell.yaml` config][stylish-config].
 
     When importing modules from consensus and in particular modules from the
     same package, an import list and a qualifier can be omitted. For example,
@@ -940,7 +882,9 @@ the rules below, it is good practice to update the code's style to match them.
     When importing from other packages, we prefer to use either an import list
     or a qualifier.
 
-16. __Export lists__: we format export lists in the following way:
+16. __Export lists__: we use `stylish-haskell` to automatically format export
+    lists. See the [`.stylish-haskell.yaml` config][stylish-config]. We format
+    export lists in the following way:
 
     ```haskell
     module X (
@@ -974,8 +918,7 @@ the rules below, it is good practice to update the code's style to match them.
     ```
 
     *Why:* this is consistent with how `stylish-haskell` formats it when
-    importing it. (We are not particularly consistent with this at present,
-    however.)
+    importing it.
 
     When intentionally hiding the constructor of a datatype or newtype, we add
     a `-- opaque` comment after it in the export list to be explicit about this:
@@ -989,18 +932,6 @@ the rules below, it is good practice to update the code's style to match them.
     *Why:* otherwise, people unfamiliar with this type might be tempted to
     export its constructor without realising they're hidden for a reason. This
     comment should make them (and the reviewer) think twice.
-
-    When re-exporting several modules from one module, use the following pattern:
-
-    ```haskell
-    module Foo (module X) where
-
-    import Foo.A as X
-    import Foo.B as X
-    import Foo.C as X
-
-    ```
-    *Why:* one can add extra imports without having to modify the export list.
 
 17. __Syntactic extensions__: we like to use some syntactic language extensions.
     Some argue against having to learn additional syntax, but we believe the
@@ -1046,9 +977,11 @@ the rules below, it is good practice to update the code's style to match them.
 
 18. __Records__:
 
-    For records we often use `NamedFieldPuns` to make it convenient to
-    extract fields from the record. We also tend to use `RecordWildCards`
-    when the fields of the record are all of the form
+    We purposefully discourage the use of `RecordWildCards`.
+    
+    For records we often use `NamedFieldPuns` to make it convenient to extract
+    fields from the record. We use the following convention when naming fields
+    to avoid duplicate record fields (we do not use `DuplicateRecordFields`):
 
     ```haskell
     data SomeRecord = SomeRecord {
@@ -1056,11 +989,6 @@ the rules below, it is good practice to update the code's style to match them.
         , someRecordB :: ..
         }
     ```
-
-    which is a naming convention we use a lot to avoid duplicate record fields
-    (we do not use `DuplicateRecordFields`). `RecordWildCards` is a convenient
-    extension with such records, and this naming convention means that it's
-    still pretty clear where the field names were brought into scope.
 
     To avoid long lines, it is sometimes useful to use record deconstruction in
     local bindings:
@@ -1071,6 +999,9 @@ the rules below, it is good practice to update the code's style to match them.
       where
         SomeRecord {someRecordA, someRecordB} = someRecord
     ```
+
+    The convention above can be also contracted into `srA`, `srB`, etc, i.e.
+    abbreviating the name of the data definition.
 
     We try to avoid partial fields, but replacing partial fields such as
 
@@ -1107,6 +1038,8 @@ the rules below, it is good practice to update the code's style to match them.
     -Widentities
     -Wredundant-constraints
     -Wmissing-export-lists
+    -Wunused-packages
+    -Wno-unticked-promoted-constructors
     ```
 
     *Why:* the warnings produced by the above list of flags signal code smells
@@ -1174,6 +1107,26 @@ the rules below, it is good practice to update the code's style to match them.
 
     *Tip:* HLint can warn you about some unused pragmas.
 
+24. __Reexports__:
+     When re-exporting several modules from one module, use the following pattern:
+
+    ```haskell
+    module Foo (
+        fooA
+      , fooB
+      , fooC
+      , ...
+      ) where
+
+    import Foo.A (fooA, ...)
+    import Foo.B (fooB, ...)
+    import Foo.C (fooC, ...)
+
+    ```
+    
+    *Why:* this leads to more changes to the export list, but makes it
+    absolutely clear where each identifier comes from.
+    
 ## Guidelines
 
 There are more general guidelines on how we write and structure code.
@@ -1250,3 +1203,5 @@ There are more general guidelines on how we write and structure code.
    available to all of them. However, doing so would make it impossible to
    use that shared code in a test suite defined in another package. To avoid
    this problem, we avoid sharing source directories in `cabal` files.
+
+[stylish-config]: https://github.com/input-output-hk/ouroboros-network/blob/master/.stylish-haskell.yaml
