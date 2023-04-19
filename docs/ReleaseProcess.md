@@ -252,48 +252,6 @@ we [cut a release](#cutting-a-release) the changelog fragments will be merged
 into a changelog update. To add a changelog fragment, use `scriv`. See [this
 section](#installing-scriv) for instructions on how to install it.
 
-At the moment we maintain four [packages bundles](#generalizing-to-more-packages):
-
-- The `ouroboros-consensus` bundle, which contains the following packages:
-    - `ouroboros-consensus` (*)
-    - `ouroboros-consensus-protocol`
-    - `ouroboros-consensus-diffusion`
-    - `ouroboros-consensus-mock`
-- The `ouroboros-consensus-test` bundle, which contains the tests packages for
-  the `ouroboros-consensus` bundle:
-  - `ouroboros-consensus-test` (*)
-  - `ouroboros-consensus-mock-test`
-  - `ouroboros-consensus-tutorials`
-- The `ouroboros-consensus-cardano` bundle, which is Cardano specific and
-  contains the following packages:
-    - `ouroboros-consensus-cardano` (*)
-    - `ouroboros-consensus-cardano-tools`
-    - `ouroboros-consensus-byron`
-    - `ouroboros-consensus-shelley`
-- The `ouroboros-consensus-cardano-test`bundle, which contains the test packages
-  for the `ouroboros-consensus-cardano` bundle:
-    - `ouroboros-consensus-cardano-test` (*)
-    - `ouroboros-consensus-byronspec`
-    - `ouroboros-consensus-byron-test`
-    - `ouroboros-consensus-shelley-test`
-
-The packages marked with asterisks, (*), whose names match the bundle they
-belong to, contain the changelog (`CHANGELOG.md`) and fragments directory
-(`changelog.d`) of the bundle. The other packages in a bundle have the
-`changelog.d` directory symlinked to the fragments directory of their bundle.
-This eases adding fragments to the right directory when running
-
-```sh
-scriv create
-```
-
-from the root directory of any of the packages of the bundle (eg
-`ouroboros-consensus-protocol`).
-
-The changelog files of the packages not marked with (*) refer to the changelog
-of their bundle. They are not symlinked because changelogs are distributed
-individually per package.
-
 To create a changelog fragment you can follow these steps:
 
 1. Run `scriv create` on the directory of one of the packages in the bundle you
@@ -350,3 +308,99 @@ git pull
 
 [contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines
 [chap]: https://github.com/input-output-hk/cardano-haskell-packages
+
+# The first time we had to break this release process
+
+On the first half of April 2023, we were asked to get a new Consensus release
+from current `master` in order for it to be integrated into the node. However
+the version on `master` could not be released because it was dependent on some
+changes from network that were not yet released.
+
+In order to make this clear, I am adding a `+` at the end of the version number
+to indicate that it contains unreleased changes on top of the version mentioned
+(which would be in CHaP). Note that in the cabal version, the `+` is not present
+so for cabal `0.3.1.0+` and `0.3.1.0` are both `0.3.1.0`.
+
+The release engineer that was integrating the node at that time, had pinned a
+specific commit in a `source-repository-packages` clause in his integration
+branch but by luck, several circumstances took place:
+- the commit was in `0.3.1.0+`
+- only `ouroboros-consensus-diffusion` depended on the network changes
+- `ouroboros-consensus` with his changes was, as mentioned above, at `0.3.1.0+`
+- `ouroboros-consensus-diffusion 0.3.1.0+` would not have been buildable at the
+  current CHap versions
+- but `ouroboros-consensus-diffusion 0.3.1.0` (the one from CHaP) declared a
+  dependency on `ouroboros-consensus 0.3.1.0`
+- and by chance, the changes in `ouroboros-consensus 0.3.1.0+` (which actually
+  were "Breaking changes") didn't break the compilation of
+  `ouroboros-consensus-diffusion 0.3.1.0`
+- so he could pull `ouroboros-consensus 0.3.1.0+` from the
+  `source-repository-packages` and `ouroboros-consensus-diffusion 0.3.1.0` from
+  CHaP
+
+So in that situation we were breaking the bundle in a way that our previous
+rules couldn't handle.
+
+> Problem 1: We were unable to make a release from `master`, so we had to make
+> the release from some previous commit as a side branch.
+
+> Problem 2: Our bundles were too rigid for the development that happens.
+
+> Problem 2.1: Sharing a repository with Network means some changes from network
+> will transpire to our packages, and network might not want to make a release
+> just yet, but we might need a release from consensus.
+
+> Problem 2.2: The strict inter-dependency of `consensus` and
+> `consensus-diffusion` is actually wrong, as `consensus-diffusion` is what puts
+> together `consensus` and `network` thus it might not be releasable always.
+
+> Problem 3: our bundles are rigid but one can import only specific packages
+> therefore not following the bundles schema.
+
+> Problem 4: The version number of a released package and a development version
+> is the same in the eyes of Cabal. Therefore the development `consensus` could
+> co-exist with the released `consensus-diffusion`.
+
+This case was just a series of coincidences that happened at the same time but
+is a clear example of why our previous choices were not correct/good enough.
+
+We [solved][solution] the situation by breaking the bundles momentarily and releasing only
+the needed packages at the needed commit, therefore messing up the Changelogs,
+and publishing a release for `ouroboros-consensus-diffusion` to allow for a
+`0.4.0.0` `ouroboros-consensus` package. But we used this opportunity to propose
+a new organization, and also migrate to a new repository.
+
+[solution]: https://github.com/input-output-hk/cardano-haskell-packages/pull/207
+
+# The new organization
+
+The consensus packages are now split as follows:
+
+- `ouroboros-consensus`: contains the whole implementation of consensus, with an
+  abstract `blk` type variable (and `BlockProtocol blk` type family) all over
+  the place.
+- `ouroboros-consensus-diffusion`: glues together `ouroboros-consensus` and
+  `ouroboros-network` code.
+- `ouroboros-consensus-protocol`: defines the `Praos` and `TPraos`
+  instantiations of the protocols.
+- `ouroboros-consensus-cardano`: contains the instantiations of `blk` for the
+  Cardano case, which also entails all the typeclass instances required to
+  support `ouroboros-consensus` and the association with the protocols in
+  `ouroboros-consensus-protocol`. In particular it contains 3 subdirectories
+  with the `byron`, `shelley` and `cardano` (`HardForkBlock`) instantitations.
+  
+  It also contains the code for the `carano-tools` like `db-analyzer` and
+  `db-synthesizer`.
+  
+Then we have a couple of testing packages:
+
+- `ouroboros-consensus-test` which:
+  - defines a `mock` ledger and tests for it,
+  - defines tests for the `ouroboros-consensus` package based on the `mock`
+    block (or some other simple testing ledgers).
+
+- `ouroboros-consensus-cardano-test` which:
+  - defines a spec library `byronspec` for Byron,
+  - defines tests for each of the Cardano eras.
+
+![The new organization](consensus-packages-structure.png)
