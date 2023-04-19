@@ -176,7 +176,7 @@ instance ( Show ks, Show vs, Show d
     -- Reopen a backing store by intialising from values.
     BSInitFromValues :: WithOrigin SlotNo
                      -> Values vs
-                     ->  BSAct ks vs d ()
+                     -> BSAct ks vs d ()
     -- Reopen a backing store by initialising from a copy.
     BSInitFromCopy   :: BS.BackingStorePath
                      -> BSAct ks vs d ()

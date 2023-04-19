@@ -30,12 +30,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
+import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
-import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import qualified System.FS.API as FS
 import qualified System.FS.API.Types as FS
 
@@ -120,7 +119,7 @@ deriving via OnlyCheckWhnfNamed "BackingStoreValueHandle" (BackingStoreValueHand
 
 -- | A combination of 'bsValueHandle' and 'bsvhRead'
 bsRead ::
-     IOLike m
+     MonadThrow m
   => BackingStore m keys values diff
   -> keys
   -> m (WithOrigin SlotNo, values)
@@ -130,12 +129,12 @@ bsRead store keys = withBsValueHandle store $ \slot vh -> do
 
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::
-     IOLike m
+     MonadThrow m
   => BackingStore m keys values diff
   -> (WithOrigin SlotNo -> BackingStoreValueHandle m keys values -> m a)
   -> m a
 withBsValueHandle store kont =
-    IOLike.bracket
+    bracket
       (bsValueHandle store)
       (bsvhClose . snd)
       (uncurry kont)
