@@ -68,10 +68,12 @@ launch-*
 # Visual Studio Code
 /.vscode
 
-# Ignore directory used by .github/bin/check-dependencies
+# Ignore directory used by scripts/ci/check-git-dependencies.sh
 /tmp
 
 # ignore dirs created by consensus release scripts
 /chap
 /dist-chap
 cabal.project.consensus
+
+ouroboros-consensus-cardano/test-tools/disk/chaindb/
