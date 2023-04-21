@@ -2,3 +2,76 @@ node_modules/
 *~
 /.docusaurus/
 /build/
+
+# GHC
+.ghcid
+.ghc.environment.*
+*.tix
+haddocks/
+
+# cabal
+/cabal.project.local*
+/cabal.project.local~
+!cabal.project.local.github-pages
+dist-newstyle/
+dist/
+
+*.swp
+*.swo
+*~
+\#*
+**/tags
+**/TAGS
+
+# nix
+result
+result-[0-9]*
+.stack-to-nix.cache
+.nix-shell-cabal.project
+.envrc
+
+# stack
+.stack-work/
+stack.yaml.lock
+stack.yaml.local.lock
+stack.yaml.local
+
+db-byron-proxy-*
+index-byron-proxy-*
+launch-*
+
+# This project doesn't currently use hlint.  To avoid spurious warnings
+# generate an hlint config to suppress all hlint warnings:
+#
+#   hlint . --ignore-glob='dist-newstyle/**' --default > .hlint.yaml
+#
+# The hlint config is listed here to prevent accidental checkin.
+/.hlint.yaml
+
+# Documentation
+/docs/**/*.aux
+/docs/**/*.bbl
+/docs/**/*.blg
+/docs/**/*.fdb_latexmk
+/docs/**/*.fls
+/docs/**/*.log
+/docs/**/*.lot
+/docs/**/*.out
+/docs/**/*.pdf
+/docs/**/*.synctex.gz
+/docs/**/*.toc
+
+# emacs
+.auctex-auto
+*_flymake.hs
+
+# Visual Studio Code
+/.vscode
+
+# Ignore directory used by .github/bin/check-dependencies
+/tmp
+
+# ignore dirs created by consensus release scripts
+/chap
+/dist-chap
+cabal.project.consensus

@@ -1,0 +1,53 @@
+{
+    "CHaP": {
+        "branch": "repo",
+        "description": "Metadata for Cardano's Haskell package repository",
+        "homepage": "https://input-output-hk.github.io/cardano-haskell-packages/",
+        "owner": "input-output-hk",
+        "repo": "cardano-haskell-packages",
+        "rev": "603f6c823cbc8e7ffe35f7fc5b284df92023ba3c",
+        "sha256": "08bk3yafgjhy0rmx732akvwqpc4hyb0rwfkjmq9zq5g3k47z8wp8",
+        "type": "tarball",
+        "url": "https://github.com/input-output-hk/cardano-haskell-packages/archive/603f6c823cbc8e7ffe35f7fc5b284df92023ba3c.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz"
+    },
+    "hackage.nix": {
+        "branch": "master",
+        "description": "Automatically generated Nix expressions for Hackage",
+        "homepage": "",
+        "owner": "input-output-hk",
+        "repo": "hackage.nix",
+        "rev": "201bf9c5f90d5c408a931d33486aabf0906b71c9",
+        "sha256": "03msf6hbzdp9n6qv0fadfqs0azgwp5vh66aj3wd1vdf7b32068ns",
+        "type": "tarball",
+        "url": "https://github.com/input-output-hk/hackage.nix/archive/201bf9c5f90d5c408a931d33486aabf0906b71c9.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz",
+        "version": "b3c99d7f13df89a9a918c835ecb7114098912962"
+    },
+    "haskell.nix": {
+        "branch": "master",
+        "description": "Alternative Haskell Infrastructure for Nixpkgs",
+        "homepage": "https://input-output-hk.github.io/haskell.nix",
+        "owner": "input-output-hk",
+        "repo": "haskell.nix",
+        "rev": "9bc8625f18ed1aa633f5f3a52ee03d1718eaeebe",
+        "sha256": "0mm4z0wc7vic1185id912lfmrm2vy8ky25qa2ivf8fphi4ls5qb8",
+        "type": "tarball",
+        "url": "https://github.com/input-output-hk/haskell.nix/archive/9bc8625f18ed1aa633f5f3a52ee03d1718eaeebe.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz",
+        "version": "962ecfed3a4fb656b5a91d89159291e00ed766bc"
+    },
+    "iohk-nix": {
+        "branch": "master",
+        "description": "nix scripts shared across projects",
+        "homepage": null,
+        "owner": "input-output-hk",
+        "repo": "iohk-nix",
+        "rev": "c74d45b96acaa84bf441fb27d966ca830c0d98e3",
+        "sha256": "0wkda7ham7in8vhh36l4483aqvjlmp1yh87bjcsrpnxv29mc7wrg",
+        "type": "tarball",
+        "url": "https://github.com/input-output-hk/iohk-nix/archive/c74d45b96acaa84bf441fb27d966ca830c0d98e3.tar.gz",
+        "url_template": "https://github.com/<owner>/<repo>/archive/<rev>.tar.gz",
+        "version": "60fe72cf807a4ec4409a53883d5c3af77f60f721"
+    }
+}
