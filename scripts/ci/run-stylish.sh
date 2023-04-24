@@ -77,7 +77,3 @@ grep "module.*DEPRECATED" ouroboros-consensus/src/consensus-testlib/Test/Util/Bl
 grep "#if __GLASGOW_HASKELL__ < 900
 import           Data.Foldable (asum)
 #endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs                           >/dev/null 2>&1
-
-echo "Formatting cabal files..."
-
-fd -p $(pwd)/ouroboros-consensus -e cabal -x cabal-fmt -i
