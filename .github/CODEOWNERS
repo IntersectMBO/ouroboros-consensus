@@ -1,4 +1,4 @@
 # Note: later rules override earlier rules.
 
 # Default
-* @input-output-hk/consensus-team @input-output-hk/consensus-superowners
+* @input-output-hk/ouroboros-consensus @input-output-hk/consensus-superowners
