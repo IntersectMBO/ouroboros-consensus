@@ -4,9 +4,9 @@
 
 ### Overview
 
-- [Ouroboros.Consensus.Tutorial.Simple](https://github.com/input-output-hk/ouroboros-network/blob/master/ouroboros-consensus-tutorials/src/Ouroboros/Consensus/Tutorial/Simple.lhs):
+- [Ouroboros.Consensus.Tutorial.Simple](https://github.com/input-output-hk/ouroboros-consensus/blob/master/ouroboros-consensus/tutorials/Ouroboros/Consensus/Tutorial/Simple.lhs):
   Simple round-robin instantiation of the abstract Ouroboros consensus protocol.
-- [Ouroboros.Consensus.Tutorial.WithEpoch](https://github.com/input-output-hk/ouroboros-network/blob/master/ouroboros-consensus-tutorials/src/Ouroboros/Consensus/Tutorial/WithEpoch.lhs):
+- [Ouroboros.Consensus.Tutorial.WithEpoch](https://github.com/input-output-hk/ouroboros-consensus/blob/master/ouroboros-consensus/tutorials/Ouroboros/Consensus/Tutorial/WithEpoch.lhs):
   Example in which the leader schedule depends on data from the chain.
 
 ### Generating documents

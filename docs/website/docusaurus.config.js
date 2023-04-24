@@ -31,6 +31,12 @@ const config = {
     locales: ['en'],
   },
 
+  markdown: {
+    mermaid: true,
+  },
+
+  themes: ['@docusaurus/theme-mermaid'],
+
   presets: [
     [
       'classic',
@@ -78,7 +84,7 @@ const config = {
             label: 'Benchmarks',
           },
           {
-            href: 'https://github.com/input-output-hk/ouroboros-network',
+            href: 'https://github.com/input-output-hk/ouroboros-consensus',
             label: 'GitHub',
             position: 'right',
           },
@@ -122,11 +128,11 @@ const config = {
             items: [
               {
                 label: 'GitHub',
-                href: 'https://github.com/input-output-hk/ouroboros-network',
+                href: 'https://github.com/input-output-hk/ouroboros-consensus',
               },
               {
                 label: 'Haddocks',
-                href: 'https://input-output-hk.github.io/ouroboros-network/',
+                href: 'pathname:///haddocks/index.html',
               },
             ],
           },
