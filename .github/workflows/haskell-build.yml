@@ -6,25 +6,18 @@ concurrency:
 
 on:
   pull_request:
-  push:
-    branches:
-      - 'staging'
-      - 'trying'
+  merge_group:
 
 jobs:
   check-cabal-files:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Workaround runner image issue
-      # https://github.com/actions/runner-images/issues/7061
-      run: sudo chown -R $USER /usr/local/.ghcup
-
     - name: Install Haskell
       uses: input-output-hk/setup-haskell@v1
       id: setup-haskell
       with:
-        cabal-version: "3.8.1.0"
+        cabal-version: "3.10.1.0"
 
     - uses: actions/checkout@v3
 
@@ -39,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         # Currently Hydra/Cicero build with 8.10.7
-        ghc: ["9.2.5"]
+        ghc: ["9.2.7"]
         # This is the only OS that Hydra/Cicero cannot run.
         os: [windows-latest]
 
@@ -59,7 +52,7 @@ jobs:
       id: setup-haskell
       with:
         ghc-version: ${{ matrix.ghc }}
-        cabal-version: "3.8.1.0"
+        cabal-version: "3.10.1.0"
         pacman-packages: >
           mingw-w64-x86_64-pkg-config
           mingw-w64-x86_64-libsodium
@@ -126,37 +119,7 @@ jobs:
       run: cabal build --only-dependencies all -j
 
     - name: Build projects [build]
-      run: cabal build all -j
-
-    # Test network packages
-
-    - name: ntp-client [test]
-      run: cabal run ntp-client:test
-
-    - name: network-mux [test]
-      run: cabal run network-mux:test
-
-    - name: ourobors-network-testing [test]
-      run: cabal run ouroboros-network-testing:test
-
-    - name: ourobors-network-framework [test]
-      run: cabal run ouroboros-network-framework:test
-
-    - name: ouroboros-network-protocols [test]
-      run: cabal run ouroboros-network-protocols:test
-
-    # We don't run cddl in GitHub actions (only on Hydra).
-    # - name: ouroboros-network-protocols [cddl]
-    #   run: |
-    #     # The tests call out to msys2 commands. We generally do not want to mix toolchains, so
-    #     # we are very deliberate about only adding msys64 to the path where absolutely necessary.
-    #     ${{ (runner.os == 'Windows' && '$env:PATH=("C:\msys64\mingw64\bin;{0}" -f $env:PATH)') || '' }}
-    #     cabal run ouroboros-network-protocols-test:cddl
-
-    - name: ouroboros-network [test]
-      run: cabal run ouroboros-network:test
-
-    # Consensus tests take too long on GitHub's Azure machines
+      run: cabal build --enable-documentation all -j
 
     # Uncomment the following back in for debugging. Remember to launch a `pwsh` from
     # the tmux session to debug `pwsh` issues. And be reminded that the `/msys2` and

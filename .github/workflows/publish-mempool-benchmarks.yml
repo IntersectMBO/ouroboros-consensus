@@ -47,8 +47,8 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        cabal: ["3.8.1.0"]
-        ghc: ["8.10.7"]
+        cabal: ["3.10.1.0"]
+        ghc: ["9.2.7"]
 
     env:
       # SECP_CACHE_VERSION and SECP256K1_REF are take from cardano-node
@@ -60,7 +60,7 @@ jobs:
       SECP256K1_REF: ac83be33d0956faf6b7f61a60ab524ef7d6a473a
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Install Haskell
         uses: input-output-hk/setup-haskell@v1
@@ -85,13 +85,6 @@ jobs:
           git-ref: ${{ env.SECP256K1_REF }}
           cache-version: ${{ env.SECP_CACHE_VERSION }}
 
-      - name: Checkout ouroboros-network
-        uses: actions/checkout@v3
-        with:
-          repository: input-output-hk/ouroboros-network
-          ref: master
-          path: ouroboros-network
-
       - name: Create a cabal.project.local file
         run: |
           # We need this option to make cardano-crypto-praos use the libsodium
@@ -100,37 +93,30 @@ jobs:
           echo '  flags: -external-libsodium-vrf' >> ouroboros-network/cabal.project.local
 
       - name: Cabal update
-        run: |
-          cd ouroboros-network
-          cabal update
+        run: cabal update
 
       - name: Freeze
-        run: |
-          cd ouroboros-network
-          cabal freeze
+        run: cabal freeze
 
       - uses: actions/cache@v3
         name: Cache ~/.cabal/store
         with:
           path: ${{ steps.setup-haskell.outputs.cabal-store }}
-          key: ${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('ouroboros-network/cabal.project.freeze') }}
+          key: ${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('cabal.project.freeze') }}
 
       - uses: actions/cache@v3
         name: "Cache `dist-newstyle`"
         with:
           path: |
-            ouroboros-network/dist-newstyle
-            !ouroboros-network/dist-newstyle/**/.git
-          key: cache-dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('ouroboros-network/cabal.project.freeze') }}
+            dist-newstyle
+            !dist-newstyle/**/.git
+          key: cache-dist-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('cabal.project.freeze') }}
 
       - name: Install dependencies
-        run: |
-          cd ouroboros-network
-          cabal build ouroboros-consensus-test:bench-mempool --only-dependencies
+        run: cabal build ouroboros-consensus-test:bench-mempool --only-dependencies
 
       - name: Run benchmarks
         run: |
-          cd ouroboros-network
           cabal new-run ouroboros-consensus-test:bench-mempool -- --timeout=60
           cat mempool-benchmarks.json
 
@@ -139,7 +125,7 @@ jobs:
         with:
           name: Mempool
           tool: 'customSmallerIsBetter'
-          output-file-path: ouroboros-network/mempool-benchmarks.json
+          output-file-path: mempool-benchmarks.json
           # Access token to deploy GitHub Pages branch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           # Push and deploy GitHub pages branch automatically

@@ -1,13 +1,14 @@
-node_modules/
+# docusaurus
+/docs/website/node_modules/
 *~
-/.docusaurus/
-/build/
+/docs/website/.docusaurus/
+/docs/website/build/
 
 # GHC
 .ghcid
 .ghc.environment.*
 *.tix
-haddocks/
+docs/website/static/haddocks/
 
 # cabal
 /cabal.project.local*
