@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 # Taken from https://stackoverflow.com/questions/46952210/remove-html-comments-from-markdown-file
+
 import sys
 from bs4 import BeautifulSoup, Comment
 

@@ -3,7 +3,7 @@
 # `ouroboros-network` repository.
 #
 # usage:
-# ./haddocks.sh directory [true|false]
+# ./scripts/docs/haddocks.sh directory [true|false]
 #
 # $1 - where to put the generated pages, this directory contents will be wiped
 #      out (so don't pass `/` or `./` - the latter will delete your 'dist-newstyle')
@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-OUTPUT_DIR=${1:-"./haddocks"}
+OUTPUT_DIR=${1:-"./docs/website/static/haddocks"}
 REGENERATE=${2:-"true"}
 BUILD_DIR=${3:-"dist-newstyle"}
 
@@ -94,12 +94,12 @@ interface_options () {
 #
 haddock \
   -o ${OUTPUT_DIR} \
-  --title "ouroboros-network" \
-  --package-name "Ouroboros-Network & Ouroboros-Consensus" \
+  --title "ouroboros-consensus" \
+  --package-name "Ouroboros-Consensus" \
   --gen-index \
   --gen-contents \
   --quickjump \
-  --prolog ./scripts/prolog \
+  --prolog ${SCRIPTS_DIR}/prologue.md \
   $(interface_options)
 
 # Assemble a toplevel `doc-index.json` from package level ones.
@@ -126,3 +126,5 @@ cp "${SCRIPTS_DIR}/Consensus.svg" "${OUTPUT_DIR}"
 
 # HACK: Replace <img> tag with <object> tag for embedded svg
 sed -i -e 's/\(.*\)<img src=".\/Consensus.svg" title="Ouroboros Consensus Components" \/>\(.*\)/\1<object data="Consensus.svg" type="image\/svg+xml"><\/object>\2/' "${OUTPUT_DIR}/index.html"
+
+echo "Generated documentation in ${OUTPUT_DIR}"
