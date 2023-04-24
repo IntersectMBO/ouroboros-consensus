@@ -288,7 +288,7 @@ library shelley-testlib
     , mtl
     , ouroboros-consensus-cardano
     , ouroboros-consensus-diffusion:diffusion-testlib
-    , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, ouroboros-consensus-protocol-test}
+    , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, protocol-testlib}
     , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
     , ouroboros-network-api
     , QuickCheck
@@ -363,7 +363,7 @@ library cardano-testlib
     , mtl
     , ouroboros-consensus-cardano
     , ouroboros-consensus-diffusion:{ouroboros-consensus-diffusion, diffusion-testlib}
-    , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, ouroboros-consensus-protocol-test}
+    , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, protocol-testlib}
     , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
     , ouroboros-network-api
     , QuickCheck

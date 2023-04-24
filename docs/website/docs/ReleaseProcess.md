@@ -389,18 +389,13 @@ The consensus packages are now split as follows:
   `ouroboros-consensus-protocol`. In particular it contains 3 subdirectories
   with the `byron`, `shelley` and `cardano` (`HardForkBlock`) instantitations.
   
-  It also contains the code for the `carano-tools` like `db-analyzer` and
+  It also contains the code for the `cardano-tools` like `db-analyzer` and
   `db-synthesizer`.
-  
-Then we have a couple of testing packages:
 
-- `ouroboros-consensus-test` which:
-  - defines a `mock` ledger and tests for it,
-  - defines tests for the `ouroboros-consensus` package based on the `mock`
-    block (or some other simple testing ledgers).
-
-- `ouroboros-consensus-cardano-test` which:
-  - defines a spec library `byronspec` for Byron,
-  - defines tests for each of the Cardano eras.
-
-![The new organization](consensus-packages-structure.png)
+``` mermaid
+flowchart TD
+    D[ouroboros-consensus-diffusion] --> C
+    A[ouroboros-consensus-cardano] --> B[ouroboros-consensus-protocol]
+    A --> C
+    B --> C[ouroboros-consensus]
+```

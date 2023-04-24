@@ -65,7 +65,7 @@ library
   if flag(asserts)
     ghc-options: -fno-ignore-asserts
 
-library ouroboros-consensus-protocol-test
+library protocol-testlib
   visibility:       public
   hs-source-dirs:   test-src
   default-language: Haskell2010
