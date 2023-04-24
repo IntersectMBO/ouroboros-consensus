@@ -43,9 +43,6 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Build website
-        run: yarn build
-
       - name: Select build directory
         run: |
           CABAL_BUILDDIR="dist-newstyle"
@@ -97,7 +94,11 @@ jobs:
         run: |
           mkdir ./static/haddocks
           cd ../../
+          cabal build --dry-run all
           ./scripts/docs/haddocks.sh
+
+      - name: Build website
+        run: yarn build
 
       # Popular action to deploy to GitHub Pages:
       # Docs: https://github.com/peaceiris/actions-gh-pages#%EF%B8%8F-docusaurus
