@@ -16,7 +16,7 @@ extra-source-files: CHANGELOG.md
 
 source-repository head
   type:     git
-  location: https://github.com/input-output-hk/ouroboros-network
+  location: https://github.com/input-output-hk/ouroboros-consensus
   subdir:   ouroboros-consensus-protocol
 
 flag asserts
@@ -40,7 +40,7 @@ library
     Ouroboros.Consensus.Protocol.Translate
 
   build-depends:
-    , base                     >=4.14    && <4.17
+    , base                     >=4.14 && <4.17
     , bytestring
     , cardano-binary
     , cardano-crypto-class
