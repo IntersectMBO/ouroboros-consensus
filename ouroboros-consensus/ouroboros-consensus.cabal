@@ -658,7 +658,7 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-state-machine  >=0.7.0 && <0.7.1
+    , quickcheck-state-machine  >=0.7.2
     , random
     , serialise
     , tasty
