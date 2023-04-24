@@ -1,17 +1,20 @@
 # Ouroboros-consensus Cardano Changelog
 
-This Changelog describes changes on the Cardano specific Consensus packages:
-- `ouroboros-consensus-byron`
-- `ouroboros-consensus-shelley`
-- `ouroboros-consensus-cardano`
-
-If you don't see here the package you're interested in, see the top-level
-[Consensus-CHANGELOG.md](../Consensus-CHANGELOG.md).
-
-If you have any doubts, please consult the [release
-process](../ouroboros-consensus/docs/ReleaseProcess.md).
-
 # Changelog entries
+
+<a id='changelog-0.5.0.0'></a>
+## 0.5.0.0 - 2023-04-24
+
+### Breaking
+
+- Apply new organization of Consensus packages. Absorb `byron`, `shelley`,
+  `cardano-tools` and all the testing packages for those.
+
+- Add the new `ShelleyNodeToClientVersion7` to the `ShelleyNodeToClientVersion`
+
+### Non-Breaking
+
+- Add a new ledger query: `GetStakeDelegDeposits`
 
 <a id='changelog-0.4.0.1'></a>
 ## 0.4.0.1 — 2023-04-10
