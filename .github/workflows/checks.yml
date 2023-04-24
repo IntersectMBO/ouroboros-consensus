@@ -1,0 +1,35 @@
+name: Project checks
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+  merge_group:
+
+jobs:
+  consensus-changelog:
+
+    name: Changelog sanity check
+
+    if: ${{ github.event_name == 'push' || !github.event.pull_request.draft }}
+
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+
+    - uses: actions/checkout@v3
+      with:
+        path: 'this-pr'
+
+    - uses: actions/checkout@v3
+      with:
+        ref: ${{ env.GITHUB_BASE_REF }}
+        path: 'main'
+
+    - run: CI=1 ./this-pr/scripts/ci/check-changelogs.sh main this-pr

@@ -13,16 +13,16 @@ proposals are welcome.
 
 We have two types of documentation:
 
-- Markdown files, which can be found in the [docs](docs/) directory. They
-  contain information that is not strictly related to the code itself, such as
-  getting started guides, references, tutorials, etc.
+- Markdown files, which can be found in the [docs](docs/website/docs) directory.
+  They contain information that is not strictly related to the code itself, such
+  as getting started guides, references, tutorials, etc.
 - [Haddock][haddock-site] comments. They contain more low level information
   about the code.
 
 When adding or improving documentation about the implementation, it is
 preferable to add haddock comments since they are closer to the code. However
 not all documentation can be placed inside haddock comments, and in such cases
-the contributor can update the markdown files in [docs](docs/). 
+the contributor can update the markdown files in [docs](docs/website/docs).
 
 This repository also contains a [technical report](docs/report) that describes
 the implementation of the Consensus layer. We will not update this report. We
@@ -35,14 +35,9 @@ the documentation. If no relevant entry exists, we should create it and submit a
 pull request.
 
 For the time being, all markdown files that contain the Consensus documentation
-live in this repository. On the other hand, the Consensus implementation lives
-in [`ouroboros-network`][ouroboros-network-repo]. We will eventually transfer
-the code to `ouroboros-consensus`.
+live in this repository.
 
 # Setting up the build tools
-
-TODO: here we should mention who to contact if the user has problem installing
-the tools.
 
 ## Using Nix
 
@@ -96,9 +91,15 @@ cabal build all
 in the command line, either inside `nix-shell` if you use `nix`, or in a
 system with `cabal` installed.
 
+Specific executables can be executed through cabal once built:
+
+``` sh
+cabal run db-analyser
+```
+
 # Testing
 
-To build all the packages in this repository run:
+To test all the packages in this repository run:
 
 ```sh
 cabal build all
@@ -106,6 +107,17 @@ cabal build all
 
 in the command line, either inside `nix-shell` if you use `nix`, or in a
 system with `cabal` installed.
+
+For running specific test-suites (such as `consensus-test`), we recommend one of
+the following commands:
+
+```sh
+cabal run ouroboros-consensus:test:consensus-test -- <args>
+cabal test ouroboros-consensus:test:consensus-test --test-show-details=direct
+```
+
+Note the second one cannot be used when we want to provide CLI arguments to the
+test-suite.
 
 # Contributing to the code
 
@@ -116,30 +128,25 @@ will guide you through the process when reviewing your pull request.
 
 ## Following our git process
 
-Our [git process](docs/GitProcess.md) describes the `git` practices we
+Our [git process](docs/website/docs/GitProcess.md) describes the `git` practices we
 encourage when working with the code in this repository.
 
 ## Updating the documentation
 
 When submitting a pull request, please look update the relevant parts of the
-documentation (see [this section](#documentation).
+documentation (see [this section](#documentation)).
 
 ## Following the style guide
 
-We have a [Haskell style guide](docs/StyleGuide.md) that should be followed when
+We have a [Haskell style guide](docs/website/docs/StyleGuide.md) that should be followed when
 writing code in Consensus. Our style guide is not set in stone, and improvements
 are always welcome.
 
 ## Formatting the code
 
-We use `stylish-haskell` >= 0.14.3.0 for Haskell code formatting. There is a CI
-script (TODO: link to it) that checks that the code is properly formatted.
-
-TODO: describe how to fix `stylish-haskell` with a script.
-
-TODO: the steps below do not work yet, as we have not migrated the source code
-from
-[`ouroboros-network`](https://github.com/input-output-hk/ouroboros-network).
+We use `stylish-haskell` >= 0.14.4.0 for Haskell code formatting. There is a [CI
+script](./scripts/ci/check-stylish.sh) that checks that the code is properly
+formatted.
 
 Either enable editor integration or call the script used by CI itself:
 
@@ -156,7 +163,7 @@ nix-shell --run ./scripts/ci/check-stylish.sh
 
 ## Making and reviewing changes
 
-If you are working on changing a substantial part of Consensus, it is
+If you are working on changing a **substantial** part of Consensus, it is
 **important** that you contact the core developers first to discuss design
 considerations (See section [Contacting the
 developers](#contacting-the-developers)). This will help detecting any potential
@@ -164,31 +171,38 @@ problems with the change in the design phase, preventing misunderstandings and
 frustrations later on in the process.
 
 We maintain a changelog. If your pull request requires a changelog entry, please
-follow [these instructions](docs/ReleaseProcess.md#adding-a-changelog-fragment).
-It is up to the pull request author to determine if this is necessary, but do
-not worry, the reviewers will guide you. For more information see [our release
-process](docs/ReleaseProcess.md). For now the changelogs are in the same
-repository as the source-code, namely
-[`ouroboros-network`][ouroboros-network-repo].
+follow [these
+instructions](docs/website/docs/ReleaseProcess.md#adding-a-changelog-fragment).
+Even if your change doesn't require a changelog fragment, create an empty one as
+CI will reject your change otherwise. We made this choice to ensure authors of
+PRs would always take a moment to consider whether a changelog fragment should
+be added for their PR. For more information see [our release
+process](docs/website/docs/ReleaseProcess.md).
 
 When creating a pull-request (PR), it is **crucial** that the PR:
 
 - has a clear description,
 
-- targets the `master` branch (unless there is a good reason not to),
+- targets the `main` branch (unless there is a good reason not to),
 
 - is as small as possible, and
 
 - is organized in a cohesive sequence of commits, each representing a
   meaningful, logical and reviewable step.
 
-# Reporting an issue
+# Reporting a bug or requesting a feature
 
-TODO: how to submit a bug?
-
-TODO: how to submit a feature request?
+If you happen to encounter what you think is a bug or you wish there was some
+feature that was added to Consensus, please
+[open](https://github.com/input-output-hk/ouroboros-consensus/issues/new/choose) an
+issue in our [issue
+tracker](https://github.com/input-output-hk/ouroboros-consensus/issues/).
 
 # Submitting pull requests
+
+We monitorize the repository constantly so we should be aware if you open a
+pull-request, however if some reasonable time passes and we miss your PR, feel
+free to ping someone from the team.
 
 # Contacting the developers
 
@@ -206,6 +220,8 @@ The core contributors to consensus codebase are:
 
 -   [Arnaud Bailly](https://github.com/abailly-iohk)
 
+-   [Fraser Murray](https://github.com/fraser-iohk)
+
 -   [Damian Nadales](https://github.com/dnadales)
 
 # Code of conduct
@@ -215,4 +231,3 @@ handbook](https://github.com/input-output-hk/cardano-engineering-handbook/blob/m
 code of conduct.
 
 [haddock-site]: https://haskell-haddock.readthedocs.io/en/latest/
-[ouroboros-network-repo]: https://github.com/input-output-hk/ouroboros-network
