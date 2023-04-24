@@ -44,7 +44,7 @@ common common-test
 
 library
   import:             common-lib
-  hs-source-dirs:     src
+  hs-source-dirs:     src/ouroboros-consensus-diffusion
   exposed-modules:
     Ouroboros.Consensus.Network.NodeToClient
     Ouroboros.Consensus.Network.NodeToNode
@@ -124,7 +124,7 @@ library
 
 library diffusion-testlib
   import:          common-lib
-  hs-source-dirs:  diffusion-testlib
+  hs-source-dirs:  src/diffusion-testlib
   visibility:      public
   exposed-modules:
     Test.ThreadNet.General
@@ -169,7 +169,7 @@ library diffusion-testlib
 library mock-testlib
   import:          common-lib
   visibility:      public
-  hs-source-dirs:  mock-testlib
+  hs-source-dirs:  src/mock-testlib
   exposed-modules:
     Test.Consensus.Ledger.Mock.Generators
     Test.ThreadNet.TxGen.Mock
@@ -189,27 +189,22 @@ library mock-testlib
 test-suite infra-test
   import:         common-test
   type:           exitcode-stdio-1.0
-  hs-source-dirs: infra-test
+  hs-source-dirs: test/infra-test
   main-is:        Main.hs
   other-modules:
-    Ouroboros.Consensus.Util.Tests
     Test.ThreadNet.Util.Tests
-    Test.Util.ChainUpdates.Tests
-    Test.Util.Schedule.Tests
-    Test.Util.Split.Tests
 
   build-depends:
     , base
     , diffusion-testlib
     , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
-    , QuickCheck
     , tasty
     , tasty-quickcheck
 
 test-suite mock-test
   import:         common-test
   type:           exitcode-stdio-1.0
-  hs-source-dirs: mock-test
+  hs-source-dirs: test/mock-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
@@ -235,7 +230,7 @@ test-suite mock-test
 test-suite consensus-test
   import:         common-test
   type:           exitcode-stdio-1.0
-  hs-source-dirs: consensus-test
+  hs-source-dirs: test/consensus-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.HardFork.Combinator

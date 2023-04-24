@@ -32,7 +32,7 @@ This repository also provides two executables:
   the ones created by the node. This helps identifying performance hotspots and
   testing that the validating logic remains correct.
 
-- `ouroboros-consensus-cardano/app/db-synthesizer`: for quickly generating
+- `ouroboros-consensus-cardano/app/db-synthesizer.hs`: for quickly generating
   chains to be used in benchmarking.
 
 To list all the available Cabal components, one can use the following script
@@ -171,43 +171,3 @@ We have several sources of documentation:
   mandatory reading for anyone looking to understand why Consensus does what it
   does.
 
-### Building the website
-
-To install the packages required to build the documentation site run:
-
-```
-$ yarn
-```
-
-After the necessary packages are installed by the above command, the
-documentation site can be built by running:
-
-```
-$ yarn start
-```
-
-This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
-
-#### Build
-
-```
-$ yarn build
-```
-
-This command generates static content into the `build` directory and can be served using any static contents hosting service.
-
-#### Deployment
-
-Using SSH:
-
-```
-$ USE_SSH=true yarn deploy
-```
-
-Not using SSH:
-
-```
-$ GIT_USER=<Your GitHub username> yarn deploy
-```
-
-If you are using GitHub pages for hosting, this command is a convenient way to build the website and push to the `gh-pages` branch.

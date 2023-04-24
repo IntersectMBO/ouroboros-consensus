@@ -77,4 +77,4 @@ launch-*
 /dist-chap
 cabal.project.consensus
 
-ouroboros-consensus-cardano/test-tools/disk/chaindb/
+ouroboros-consensus-cardano/test/tools-test/disk/chaindb/

@@ -24,6 +24,11 @@ flag asserts
   manual:      False
   default:     False
 
+flag expose-sublibs
+  description: Expose all private sublibraries
+  manual:      True
+  default:     False
+
 common common-lib
   default-language: Haskell2010
   ghc-options:
@@ -42,7 +47,7 @@ common common-test
 
 library
   import:           common-lib
-  hs-source-dirs:   src
+  hs-source-dirs:   src/ouroboros-consensus
   exposed-modules:
     Data.SOP.Counting
     Data.SOP.Functors
@@ -349,7 +354,7 @@ library
 
 library consensus-testlib
   import:          common-lib
-  hs-source-dirs:  consensus-testlib
+  hs-source-dirs:  src/consensus-testlib
   visibility:      public
   exposed-modules:
     Test.Util.Blob
@@ -437,7 +442,7 @@ library consensus-testlib
 library mock-block
   import:          common-lib
   visibility:      public
-  hs-source-dirs:  mock-block
+  hs-source-dirs:  src/mock-block
   exposed-modules:
     Ouroboros.Consensus.Mock.Ledger
     Ouroboros.Consensus.Mock.Ledger.Address
@@ -481,8 +486,11 @@ library mock-block
 
 library tutorials
   import:         common-lib
-  visibility:     private
-  hs-source-dirs: tutorials
+  if flag(expose-sublibs)
+    visibility:     private
+  else
+    visibility:     public
+  hs-source-dirs: src/tutorials
   other-modules:
     Ouroboros.Consensus.Tutorial.Simple
     Ouroboros.Consensus.Tutorial.WithEpoch
@@ -500,7 +508,7 @@ library tutorials
 test-suite consensus-test
   import:         common-test
   type:           exitcode-stdio-1.0
-  hs-source-dirs: consensus-test
+  hs-source-dirs: test/consensus-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.BlockchainTime.Simple
@@ -555,10 +563,28 @@ test-suite consensus-test
     , tree-diff
     , typed-protocols
 
+test-suite infra-test
+  import:         common-test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test/infra-test
+  main-is:        Main.hs
+  other-modules:
+    Ouroboros.Consensus.Util.Tests
+    Test.Util.ChainUpdates.Tests
+    Test.Util.Schedule.Tests
+    Test.Util.Split.Tests
+
+  build-depends:
+    , base
+    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , QuickCheck
+    , tasty
+    , tasty-quickcheck
+
 test-suite storage-test
   import:         common-test
   type:           exitcode-stdio-1.0
-  hs-source-dirs: storage-test
+  hs-source-dirs: test/storage-test
   main-is:        Main.hs
   other-modules:
     Test.Ouroboros.Storage
@@ -626,7 +652,7 @@ test-suite storage-test
 
 benchmark mempool-bench
   type:             exitcode-stdio-1.0
-  hs-source-dirs:   mempool-bench
+  hs-source-dirs:   bench/mempool-bench
   main-is:          Main.hs
   other-modules:
     Bench.Consensus.Mempool

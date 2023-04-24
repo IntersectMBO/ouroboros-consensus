@@ -28,6 +28,11 @@ flag asserts
   manual:      False
   default:     False
 
+flag expose-sublibs
+  description: Expose all private sublibraries
+  manual:      True
+  default:     False
+
 common common-lib
   default-language: Haskell2010
   ghc-options:
@@ -49,7 +54,7 @@ common common-exe
 
 library
   import:          common-lib
-  hs-source-dirs:  cardano byron shelley
+  hs-source-dirs:  src/ouroboros-consensus-cardano src/byron src/shelley
   exposed-modules:
     Ouroboros.Consensus.Byron.Crypto.DSIGN
     Ouroboros.Consensus.Byron.EBBs
@@ -145,8 +150,11 @@ library
 
 library byronspec
   import:          common-lib
-  visibility:      private
-  hs-source-dirs:  byronspec
+  if flag(expose-sublibs)
+    visibility:     private
+  else
+    visibility:     public
+  hs-source-dirs:  src/byronspec
   exposed-modules:
     Ouroboros.Consensus.ByronSpec.Ledger
     Ouroboros.Consensus.ByronSpec.Ledger.Accessors
@@ -178,8 +186,11 @@ library byronspec
 
 library byron-testlib
   import:          common-lib
-  visibility:      private
-  hs-source-dirs:  byron-testlib
+  if flag(expose-sublibs)
+    visibility:     private
+  else
+    visibility:     public
+  hs-source-dirs:  src/byron-testlib
   exposed-modules:
     Ouroboros.Consensus.ByronDual.Ledger
     Ouroboros.Consensus.ByronDual.Node
@@ -216,7 +227,7 @@ library byron-testlib
 test-suite byron-test
   import:         common-test
   type:           exitcode-stdio-1.0
-  hs-source-dirs: byron-test
+  hs-source-dirs: test/byron-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.Byron.Golden
@@ -254,8 +265,11 @@ test-suite byron-test
 
 library shelley-testlib
   import:          common-lib
-  visibility:      private
-  hs-source-dirs:  shelley-testlib
+  if flag(expose-sublibs)
+    visibility:     private
+  else
+    visibility:     public
+  hs-source-dirs:  src/shelley-testlib
   exposed-modules:
     Test.Consensus.Shelley.Examples
     Test.Consensus.Shelley.Generators
@@ -298,7 +312,7 @@ library shelley-testlib
 test-suite shelley-test
   import:         common-test
   type:           exitcode-stdio-1.0
-  hs-source-dirs: shelley-test
+  hs-source-dirs: test/shelley-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.Shelley.Coherence
@@ -331,8 +345,11 @@ test-suite shelley-test
 
 library cardano-testlib
   import:          common-lib
-  visibility:      private
-  hs-source-dirs:  cardano-testlib
+  if flag(expose-sublibs)
+    visibility:     private
+  else
+    visibility:     public
+  hs-source-dirs:  src/cardano-testlib
   exposed-modules:
     Test.Consensus.Cardano.Examples
     Test.Consensus.Cardano.Generators
@@ -372,7 +389,7 @@ library cardano-testlib
 test-suite cardano-test
   import:         common-test
   type:           exitcode-stdio-1.0
-  hs-source-dirs: cardano-test
+  hs-source-dirs: test/cardano-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.Cardano.ByronCompatibility
@@ -413,7 +430,7 @@ test-suite cardano-test
 
 library cardano-tools
   import:          common-lib
-  hs-source-dirs:  cardano-tools
+  hs-source-dirs:  src/tools
   visibility:      public
   exposed-modules:
     Cardano.Api.Any
@@ -517,7 +534,7 @@ executable db-synthesizer
 test-suite tools-test
   import:         common-test
   type:           exitcode-stdio-1.0
-  hs-source-dirs: tools-test
+  hs-source-dirs: test/tools-test
   main-is:        Main.hs
   build-depends:
     , base
