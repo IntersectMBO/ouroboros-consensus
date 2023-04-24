@@ -7,6 +7,9 @@ concurrency:
 on:
   pull_request:
   merge_group:
+  push:
+    branches:
+      - main
 
 jobs:
   check-cabal-files:
@@ -31,9 +34,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Currently Hydra/Cicero build with 8.10.7
-        ghc: ["9.2.7"]
-        # This is the only OS that Hydra/Cicero cannot run.
+        # Currently Hydra/Cicero build with 9.2.7
+        ghc: ["8.10.7"]
         os: [windows-latest]
 
     env:
