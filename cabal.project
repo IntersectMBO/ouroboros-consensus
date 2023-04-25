@@ -61,6 +61,7 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/ouroboros-network
-  tag: 1e7539496d2393e95266e790f24ab85a832c2144
+  tag: 69f7cc2d65763ad8040980be1f060b5adf6db7bf
+  --sha256: 1rp2qq4wqgz0g8zg3f4qnka53xpkakn912mbk9ss67kph14xcgab
   subdir:
     ouroboros-network-api
