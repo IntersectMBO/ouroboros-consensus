@@ -143,12 +143,12 @@ use the provided issue templates.
 
 We have several sources of documentation:
 
-- [Haddocks](https://input-output-hk.github.io/ouroboros-consensus/haddocks):
+- [Haddocks](https://input-output-hk.github.io/ouroboros-consensus/haddocks/):
   our code is full of haddock annotations and comments that try to clarify
   expected behaviors and subtleties. Reading through the code should provide
   most of the information on how is Consensus implemented.
 
-- [Website](https://input-output-hk.github.io/ouroboros-consensus): this website
+- [Website](https://input-output-hk.github.io/ouroboros-consensus/): this website
   provides access to the markdown documentation to which step by step we want to
   move the bulk of the "higher level documentation" as well as achitectural
   documentation.
