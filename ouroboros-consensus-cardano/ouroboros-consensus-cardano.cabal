@@ -150,10 +150,13 @@ library
 
 library byronspec
   import:          common-lib
+
   if flag(expose-sublibs)
-    visibility:     private
+    visibility: private
+
   else
-    visibility:     public
+    visibility: public
+
   hs-source-dirs:  src/byronspec
   exposed-modules:
     Ouroboros.Consensus.ByronSpec.Ledger
@@ -186,10 +189,13 @@ library byronspec
 
 library byron-testlib
   import:          common-lib
+
   if flag(expose-sublibs)
-    visibility:     private
+    visibility: private
+
   else
-    visibility:     public
+    visibility: public
+
   hs-source-dirs:  src/byron-testlib
   exposed-modules:
     Ouroboros.Consensus.ByronDual.Ledger
@@ -265,10 +271,13 @@ test-suite byron-test
 
 library shelley-testlib
   import:          common-lib
+
   if flag(expose-sublibs)
-    visibility:     private
+    visibility: private
+
   else
-    visibility:     public
+    visibility: public
+
   hs-source-dirs:  src/shelley-testlib
   exposed-modules:
     Test.Consensus.Shelley.Examples
@@ -306,7 +315,7 @@ library shelley-testlib
     , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
     , ouroboros-network-api
     , QuickCheck
-    , quiet                                                                                           >=0.2 && <0.3
+    , quiet                                                                          >=0.2 && <0.3
     , small-steps
 
 test-suite shelley-test
@@ -345,10 +354,13 @@ test-suite shelley-test
 
 library cardano-testlib
   import:          common-lib
+
   if flag(expose-sublibs)
-    visibility:     private
+    visibility: private
+
   else
-    visibility:     public
+    visibility: public
+
   hs-source-dirs:  src/cardano-testlib
   exposed-modules:
     Test.Consensus.Cardano.Examples

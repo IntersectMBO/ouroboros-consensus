@@ -486,10 +486,13 @@ library mock-block
 
 library tutorials
   import:         common-lib
+
   if flag(expose-sublibs)
-    visibility:     private
+    visibility: private
+
   else
-    visibility:     public
+    visibility: public
+
   hs-source-dirs: src/tutorials
   other-modules:
     Ouroboros.Consensus.Tutorial.Simple

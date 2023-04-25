@@ -191,9 +191,7 @@ test-suite infra-test
   type:           exitcode-stdio-1.0
   hs-source-dirs: test/infra-test
   main-is:        Main.hs
-  other-modules:
-    Test.ThreadNet.Util.Tests
-
+  other-modules:  Test.ThreadNet.Util.Tests
   build-depends:
     , base
     , diffusion-testlib

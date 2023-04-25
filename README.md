@@ -54,9 +54,8 @@ done
 
 ## Building the project
 
-### Cabal
-
-We use `cabal` to build our project. It should suffice with:
+We use `cabal` to build our project, potentially inside a Nix shell (`nix
+develop` or `nix-shell`). It should suffice with:
 
 ``` bash
 > cabal build all
@@ -68,13 +67,7 @@ Specific executables can be executed through cabal once built:
 > cabal run db-analyser
 ```
 
-### Nix
-
-TBD: @amesgen
-
 ## Testing the project
-
-### Cabal
 
 The project is tested with numerous Haskell test suites. To run every test
 suite, one can use:
@@ -93,10 +86,6 @@ the following commands:
 
 Note the second one cannot be used when we want to provide CLI arguments to the
 test-suite.
-
-### Nix
-
-TBD: @amesgen
 
 ## Using Consensus as a dependency
 
@@ -135,9 +124,9 @@ To use CHaP, follow their Readme, but in short:
 At this point, you should be able to declare our libraries as dependencies in
 your `build-depends` list on your cabal files.
 
-### Using Consensus as a dependency through Nix
-
-TBD: @amesgen
+If you use Nix, see the [CHaP
+website](https://input-output-hk.github.io/cardano-haskell-packages/) on how to
+configure CHaP for haskell.nix.
 
 ## How to contribute to the project
 
