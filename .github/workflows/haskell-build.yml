@@ -7,9 +7,6 @@ concurrency:
 on:
   pull_request:
   merge_group:
-  push:
-    branches:
-      - main
 
 jobs:
   check-cabal-files:
@@ -29,7 +26,7 @@ jobs:
 
   build:
     runs-on: ${{ matrix.os }}
-    if: ${{ github.event_name == 'push' || !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft }}
 
     strategy:
       fail-fast: false

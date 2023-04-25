@@ -6,6 +6,8 @@ concurrency:
 
 on:
   pull_request:
+    branches:
+      - main
   merge_group:
 
 jobs:
@@ -13,7 +15,7 @@ jobs:
 
     name: Changelog sanity check
 
-    if: ${{ github.event_name == 'push' || !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft }}
 
     runs-on: ubuntu-latest
 
