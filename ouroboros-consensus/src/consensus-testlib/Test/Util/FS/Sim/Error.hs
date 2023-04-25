@@ -28,5 +28,4 @@ module Test.Util.FS.Sim.Error {-# DEPRECATED "Use System.FS.Sim.Error from fs-si
   ) where
 
 import           Prelude hiding (null)
-
 import           System.FS.Sim.Error

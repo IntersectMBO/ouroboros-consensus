@@ -373,6 +373,7 @@ library consensus-testlib
   hs-source-dirs:  src/consensus-testlib
   visibility:      public
   exposed-modules:
+    Test.LedgerTables
     Test.Util.Blob
     Test.Util.BoolProps
     Test.Util.ChainDB
@@ -389,6 +390,7 @@ library consensus-testlib
     Test.Util.HardFork.Future
     Test.Util.HardFork.OracularClock
     Test.Util.InvertedMap
+    Test.Util.LedgerStateOnlyTables
     Test.Util.LogicalClock
     Test.Util.MockChain
     Test.Util.Orphans.Arbitrary
@@ -420,6 +422,7 @@ library consensus-testlib
     , base16-bytestring
     , binary
     , bytestring
+    , cardano-binary
     , cardano-crypto-class
     , cardano-ledger-binary:testlib
     , cardano-prelude
@@ -498,6 +501,7 @@ library mock-block
     , ouroboros-network-api
     , ouroboros-network-mock
     , serialise
+    , text
     , time
 
 library tutorials
@@ -538,6 +542,8 @@ test-suite consensus-test
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
+    Test.Consensus.Mempool.StateMachine
+    Test.Consensus.Mempool.Util
     Test.Consensus.MiniProtocol.BlockFetch.Client
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
@@ -557,6 +563,7 @@ test-suite consensus-test
     , contra-tracer
     , deepseq
     , fs-api
+    , fs-sim
     , generics-sop
     , hashable
     , io-classes
@@ -579,6 +586,7 @@ test-suite consensus-test
     , tasty-hunit
     , tasty-quickcheck
     , time
+    , transformers
     , tree-diff
     , typed-protocols
 
@@ -623,7 +631,14 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.Primary
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB
+    Test.Ouroboros.Storage.LedgerDB.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.DiskPolicy
+    Test.Ouroboros.Storage.LedgerDB.HD
+    Test.Ouroboros.Storage.LedgerDB.HD.BackingStore
+    Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Lockstep
+    Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Mock
+    Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Registry
+    Test.Ouroboros.Storage.LedgerDB.HD.DiffSeq
     Test.Ouroboros.Storage.LedgerDB.InMemory
     Test.Ouroboros.Storage.LedgerDB.OnDisk
     Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary
@@ -635,16 +650,24 @@ test-suite storage-test
     Test.Ouroboros.Storage.VolatileDB.StateMachine
 
   build-depends:
+    , async
     , base
     , bifunctors
     , binary
     , bytestring
+    , cardano-binary
     , cardano-crypto-class
+    , cardano-ledger-binary:testlib
     , cardano-slotting
+    , cardano-strict-containers
     , cborg
     , consensus-testlib
+    , constraints
     , containers
     , contra-tracer
+    , diff-containers
+    , directory
+    , fingertree-rm
     , fs-api
     , fs-sim
     , generics-sop
@@ -652,20 +675,26 @@ test-suite storage-test
     , io-classes
     , io-sim
     , mtl
+    , nonempty-containers
     , nothunks
     , ouroboros-consensus
     , ouroboros-network-api
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-state-machine  >=0.7.2
+    , quickcheck-dynamic
+    , quickcheck-lockstep
+    , quickcheck-state-machine       >=0.7.2
     , random
     , serialise
+    , simple-semigroupoids
     , tasty
     , tasty-hunit
     , tasty-quickcheck
+    , temporary
     , text
     , time
+    , transformers
     , tree-diff
     , vector
 
@@ -675,6 +704,8 @@ benchmark mempool-bench
   main-is:          Main.hs
   other-modules:
     Bench.Consensus.Mempool
+    Bench.Consensus.Mempool.Params
+    Bench.Consensus.Mempool.Scenario
     Bench.Consensus.Mempool.TestBlock
     Bench.Consensus.MempoolWithMockedLedgerItf
 
@@ -682,12 +713,17 @@ benchmark mempool-bench
     , aeson
     , base
     , bytestring
+    , cardano-binary
     , cardano-slotting
     , cassava
     , consensus-testlib
     , containers
     , contra-tracer
     , deepseq
+    , diff-containers
+    , directory
+    , fs-api
+    , mtl
     , nothunks
     , ouroboros-consensus
     , serialise
@@ -695,6 +731,7 @@ benchmark mempool-bench
     , tasty
     , tasty-bench
     , tasty-hunit
+    , temporary
     , text
     , transformers
     , tree-diff

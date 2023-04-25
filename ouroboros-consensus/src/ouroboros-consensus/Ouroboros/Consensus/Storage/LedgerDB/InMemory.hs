@@ -1,5 +1,5 @@
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ConstraintKinds        #-}
+{-# LANGUAGE FlexibleContexts       #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs                  #-}
 {-# LANGUAGE MultiParamTypeClasses  #-}
@@ -47,22 +47,18 @@ module Ouroboros.Consensus.Storage.LedgerDB.InMemory {-# DEPRECATED "Use Ourobor
   , ledgerDbSwitch'
   ) where
 
-import Data.Functor.Identity
-
 import           Codec.Serialise.Decoding (Decoder)
 import           Codec.Serialise.Encoding (Encoding)
 import           Control.Monad.Except hiding (ap)
 import           Control.Monad.Reader hiding (ap)
+import           Data.Functor.Identity
 import           Data.Word
-
-import           Ouroboros.Network.AnchoredSeq (AnchoredSeq (..), Anchorable)
-
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
-
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LDB
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
+import           Ouroboros.Network.AnchoredSeq (Anchorable, AnchoredSeq (..))
 
 {-------------------------------------------------------------------------------
   Local non-exported aliases

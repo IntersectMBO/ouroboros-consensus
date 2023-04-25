@@ -15,7 +15,7 @@ module Ouroboros.Consensus.Mempool.TxLimits {-# DEPRECATED "Use Ouroboros.Consen
   , noOverridesMeasure
   ) where
 
+import           Ouroboros.Consensus.Mempool.Capacity
 import           Prelude hiding ((<=))
-import           Ouroboros.Consensus.Mempool.Capacity 
 
 type Overrides blk = TxOverrides blk

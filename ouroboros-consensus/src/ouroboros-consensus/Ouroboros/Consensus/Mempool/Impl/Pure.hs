@@ -13,14 +13,13 @@ module Ouroboros.Consensus.Mempool.Impl.Pure {-# DEPRECATED "User Ouroboros.Cons
   , implSnapshotFromIS
   ) where
 
-import           Ouroboros.Consensus.Ledger.Basics (LedgerState, GetTip)
+import           Ouroboros.Consensus.Ledger.Basics (GetTip, LedgerState)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Ticked (Ticked1)
-
-import           Ouroboros.Consensus.Mempool.Update
-import           Ouroboros.Consensus.Mempool.Query
-import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.API
+import           Ouroboros.Consensus.Mempool.Impl.Common
+import           Ouroboros.Consensus.Mempool.Query
+import           Ouroboros.Consensus.Mempool.Update
+import           Ouroboros.Consensus.Ticked (Ticked1)
 
 {-# DEPRECATED implSnapshotFromIS "Use Ouroboros.Consensus.Mempool.Impl.Common (snapshotFromIS)" #-}
 implSnapshotFromIS

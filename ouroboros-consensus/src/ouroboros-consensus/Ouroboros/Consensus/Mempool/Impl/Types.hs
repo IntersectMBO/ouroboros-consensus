@@ -20,10 +20,9 @@ module Ouroboros.Consensus.Mempool.Impl.Types {-# DEPRECATED "Use Ouroboros.Cons
 
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-
+import           Ouroboros.Consensus.Mempool.API (ForgeLedgerState)
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
-import           Ouroboros.Consensus.Mempool.API (ForgeLedgerState)
 
 {-# DEPRECATED validateIS "This function should not be used (it will throw an error), it was internal no longer exists" #-}
 validateIS

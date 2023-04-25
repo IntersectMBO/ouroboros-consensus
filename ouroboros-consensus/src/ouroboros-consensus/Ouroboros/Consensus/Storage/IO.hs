@@ -12,5 +12,4 @@ module Ouroboros.Consensus.Storage.IO {-# DEPRECATED "Use System.IO.FS from fs-a
   ) where
 
 import           Prelude hiding (read, truncate)
-
 import           System.IO.FS

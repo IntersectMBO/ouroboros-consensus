@@ -1,7 +1,7 @@
-module Ouroboros.Consensus.Mempool.Impl {-# DEPRECATED "Use Ouroboros.Consensus.Mempool" #-}(
-    Mempool.openMempool
-  , Mempool.LedgerInterface (..)
+module Ouroboros.Consensus.Mempool.Impl {-# DEPRECATED "Use Ouroboros.Consensus.Mempool" #-} (
+    Mempool.LedgerInterface (..)
   , Mempool.chainDBLedgerInterface
+  , Mempool.openMempool
   , Mempool.openMempoolWithoutSyncThread
   ) where
 

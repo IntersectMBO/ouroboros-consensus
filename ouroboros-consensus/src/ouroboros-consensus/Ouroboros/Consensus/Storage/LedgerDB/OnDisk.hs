@@ -1,5 +1,5 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes       #-}
 module Ouroboros.Consensus.Storage.LedgerDB.OnDisk {-# DEPRECATED "Use Ouroboros.Consensus.Storage.LedgerDB instead" #-} (
     -- * Opening the database
     InitFailure
@@ -10,8 +10,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.OnDisk {-# DEPRECATED "Use Ouroboros
   , LDB.AnnLedgerError'
   , LDB.LedgerDB'
     -- ** Abstraction over the stream API
-  , NextBlock
   , LDB.StreamAPI (..)
+  , NextBlock
     -- * Read from disk
   , readSnapshot
     -- * Write to disk
@@ -40,21 +40,19 @@ import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Word
 import           GHC.Stack
-import           System.FS.API
-import           System.FS.API.Types
-
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LDB
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
 import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
-
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LDB
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
+import           System.FS.API
+import           System.FS.API.Types
 
 {-------------------------------------------------------------------------------
   Non-exported local aliases

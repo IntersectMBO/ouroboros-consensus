@@ -367,7 +367,7 @@ instance ( ShelleyCompatible proto era
                 case lookupDeposit cred of
                   Nothing      -> acc
                   Just deposit -> Map.insert cred deposit acc
-          in Set.foldl' lookupInsert Map.empty stakeCreds
+          in pure $ Set.foldl' lookupInsert Map.empty stakeCreds
     where
       lcfg    = configLedger $ getExtLedgerCfg cfg
       globals = shelleyLedgerGlobals lcfg

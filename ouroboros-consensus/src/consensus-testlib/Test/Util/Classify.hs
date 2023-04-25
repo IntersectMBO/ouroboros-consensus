@@ -11,5 +11,4 @@ module Test.Util.Classify {-# DEPRECATED "Use Test.QuickCheck.StateMachine.Label
   ) where
 
 import           Prelude hiding (maximum)
-
 import           Test.StateMachine.Labelling

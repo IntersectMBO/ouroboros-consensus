@@ -134,6 +134,7 @@ library
     , containers                    >=0.5   && <0.7
     , cryptonite                    >=0.25  && <0.31
     , deepseq
+    , diff-containers
     , formatting                    >=6.3   && <7.2
     , measures
     , microlens
@@ -220,6 +221,7 @@ library byron-testlib
     , cardano-ledger-binary:{cardano-ledger-binary, testlib}
     , cardano-ledger-byron
     , cardano-ledger-byron-test
+    , cardano-slotting
     , containers
     , hedgehog-quickcheck
     , mtl
@@ -237,6 +239,7 @@ test-suite byron-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.Byron.Golden
+    Test.Consensus.Byron.LedgerTables
     Test.Consensus.Byron.Serialisation
     Test.ThreadNet.Byron
     Test.ThreadNet.DualByron
@@ -326,6 +329,7 @@ test-suite shelley-test
   other-modules:
     Test.Consensus.Shelley.Coherence
     Test.Consensus.Shelley.Golden
+    Test.Consensus.Shelley.LedgerTables
     Test.Consensus.Shelley.Serialisation
     Test.ThreadNet.Shelley
 
@@ -335,6 +339,8 @@ test-suite shelley-test
     , cardano-crypto-class
     , cardano-ledger-alonzo
     , cardano-ledger-alonzo-test
+    , cardano-ledger-babbage-test
+    , cardano-ledger-babbage:testlib
     , cardano-ledger-core
     , cardano-ledger-shelley
     , cardano-protocol-tpraos
@@ -377,6 +383,7 @@ library cardano-testlib
   build-depends:
     , base
     , byron-testlib
+    , cardano-binary
     , cardano-crypto-class
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
@@ -390,6 +397,7 @@ library cardano-testlib
     , containers
     , microlens
     , mtl
+    , nothunks
     , ouroboros-consensus-cardano
     , ouroboros-consensus-diffusion:{ouroboros-consensus-diffusion, diffusion-testlib}
     , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, protocol-testlib}
@@ -407,6 +415,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.ByronCompatibility
     Test.Consensus.Cardano.Golden
     Test.Consensus.Cardano.Serialisation
+    Test.Consensus.Cardano.Translation
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
     Test.ThreadNet.MaryAlonzo
@@ -417,16 +426,23 @@ test-suite cardano-test
     , byron-testlib
     , bytestring
     , cardano-crypto-class
+    , cardano-data
     , cardano-ledger-alonzo
+    , cardano-ledger-alonzo-test
+    , cardano-ledger-babbage-test
+    , cardano-ledger-binary
     , cardano-ledger-byron
     , cardano-ledger-conway
+    , cardano-ledger-conway-test
     , cardano-ledger-core
     , cardano-ledger-shelley
+    , cardano-ledger-shelley-test
     , cardano-protocol-tpraos
     , cardano-slotting
     , cardano-testlib
     , cborg
     , containers
+    , diff-containers
     , filepath
     , microlens
     , ouroboros-consensus-cardano
@@ -506,10 +522,17 @@ library cardano-tools
     , fs-api
     , microlens
     , mtl                            >=2.2   && <2.3
-    , cborg                         >=0.2.2   && <0.3
-    , containers                    >=0.5     && <0.7
-    , diff-containers
-    , mtl                           >=2.2     && <2.3
+    , nothunks
+    , ouroboros-consensus
+    , ouroboros-consensus-cardano
+    , ouroboros-consensus-diffusion
+    , ouroboros-consensus-protocol
+    , ouroboros-network-api
+    , serialise
+    , text
+    , text-builder
+    , transformers
+    , transformers-except
 
 executable db-analyser
   import:         common-exe
@@ -548,23 +571,19 @@ test-suite tools-test
     , tasty-hunit
 
 executable ledger-db-backends-checker
-  import:           common-exe
-  hs-source-dirs:   app
-  main-is:          ledger-db-backends-checker
+  import:         common-exe
+  hs-source-dirs: app
+  main-is:        ledger-db-backends-checker.hs
   build-depends:
     , base
     , bytestring
     , cardano-binary
-    , cardano-crypto-wrapper
     , cardano-ledger-core
-    , cardano-lmdb
     , cardano-lmdb-simple
     , cardano-slotting
     , cborg
     , containers
     , fs-api
-    , io-classes
-    , mtl
     , optparse-applicative
     , ouroboros-consensus
     , ouroboros-consensus-cardano
