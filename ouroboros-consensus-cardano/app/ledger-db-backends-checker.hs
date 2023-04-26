@@ -27,10 +27,7 @@ import           Options.Applicative as O
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
-import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
-import           Ouroboros.Consensus.Protocol.TPraos
-import           Ouroboros.Consensus.Protocol.Translate
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as Consensus.LMDB
@@ -78,7 +75,7 @@ getMemDb f = do
         unless (BSL.null extra) $ error $ show "Leftover bytes"
         pure x
 
-getLMDB :: (TranslateProto (TPraos StandardCrypto) (Praos StandardCrypto)) => FilePath -> IO (WithOrigin SlotNo, LedgerTables (ExtLedgerState (CardanoBlock StandardCrypto)) ValuesMK)
+getLMDB :: FilePath -> IO (WithOrigin SlotNo, LedgerTables (ExtLedgerState (CardanoBlock StandardCrypto)) ValuesMK)
 getLMDB dbFilePath = do
   dbEnv <- LMDB.openEnvironment dbFilePath limits
   Just dbSettings <- LMDB.readWriteTransaction dbEnv $ (LMDB.getDatabase (Just "_dbstate") :: LMDB.Transaction LMDB.ReadWrite (LMDB.Database () Consensus.LMDB.DbState)) >>= flip LMDB.get ()
