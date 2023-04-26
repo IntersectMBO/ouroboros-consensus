@@ -65,6 +65,7 @@ launch-*
 # emacs
 .auctex-auto
 *_flymake.hs
+.dir-locals.el
 
 # Visual Studio Code
 /.vscode
