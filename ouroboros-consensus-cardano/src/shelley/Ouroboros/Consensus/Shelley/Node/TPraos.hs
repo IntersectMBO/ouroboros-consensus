@@ -355,7 +355,8 @@ registerGenesisStaking staking nes = nes {
             }
         }
         , SL.esSnapshots = (SL.esSnapshots epochState) {
-              SL.ssStakeMark = initSnapShot
+              SL.ssStakeMark = initSnapShot,
+              SL.ssStakeMarkPoolDistr = SL.calculatePoolDistr initSnapShot
             }
         }
 
