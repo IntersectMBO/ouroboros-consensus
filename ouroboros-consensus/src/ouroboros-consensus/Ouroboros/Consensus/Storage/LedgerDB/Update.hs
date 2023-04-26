@@ -144,7 +144,7 @@ applyBlock cfg ap ksReader db = case ap of
 
     withValues :: blk -> (l ValuesMK -> m (l DiffMK)) -> m (l DiffMK)
     withValues b f =
-      withKeysReadSets l ksReader (ledgerDbChangelog db) (getBlockKeySets b) f
+      withKeysReadSets l ksReader db (getBlockKeySets b) f
 
 {-------------------------------------------------------------------------------
   Resolving blocks maybe from disk
@@ -233,16 +233,13 @@ volatileStatesBimap ::
 volatileStatesBimap f g =
       AS.bimap (f . DbChangelog.unDbChangelogState) (g . DbChangelog.unDbChangelogState)
     . DbChangelog.changelogVolatileStates
-    . ledgerDbChangelog
 
 -- | Prune ledger states until at we have at most @k@ in the LedgerDB, excluding
 -- the one stored at the anchor.
 prune ::
      (GetTip l, StandardHash l)
   => SecurityParam -> LedgerDB l -> LedgerDB l
-prune k db = db {
-      ledgerDbChangelog = DbChangelog.pruneVolatilePart k (ledgerDbChangelog db)
-    }
+prune = DbChangelog.pruneVolatilePart
 
  -- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
  -- 'LedgerDB' and thus a space leak. Alternatively, we could disable the
@@ -258,14 +255,11 @@ pushLedgerState ::
      (IsLedger l, HasLedgerTables l, StandardHash l)
   => SecurityParam
   -> l DiffMK -- ^ Updated ledger state
-  -> LedgerDB l -> LedgerDB l
-pushLedgerState secParam currentNew' db@LedgerDB{..}  =
-    prune secParam $ db {
-        ledgerDbChangelog   =
-          DbChangelog.extend
-            ledgerDbChangelog
-            currentNew'
-      }
+  -> LedgerDB l
+  -> LedgerDB l
+pushLedgerState secParam st ldb =
+    prune secParam $ DbChangelog.extend ldb st
+
 
 {-------------------------------------------------------------------------------
   Internal: rolling back
@@ -279,11 +273,9 @@ rollback ::
   => Word64
   -> LedgerDB l
   -> Maybe (LedgerDB l)
-rollback n db@LedgerDB{..}
+rollback n db
     | n <= Query.maxRollback db
-    = Just db {
-          ledgerDbChangelog   = DbChangelog.rollbackN (fromIntegral n) ledgerDbChangelog
-        }
+    = Just $ DbChangelog.rollbackN (fromIntegral n) db
     | otherwise
     = Nothing
 
@@ -355,10 +347,7 @@ switch cfg numRollbacks trace newBlocks ksReader db =
 flush ::
      (GetTip l, HasLedgerTables l)
   => DbChangelog.FlushPolicy -> LedgerDB l -> (DbChangelog l, LedgerDB l)
-flush policy db = do
-    (l, db { ledgerDbChangelog = r })
-  where
-    (l, r) = DbChangelog.flush policy (ledgerDbChangelog db)
+flush = DbChangelog.flush
 
 {-------------------------------------------------------------------------------
   Trace events

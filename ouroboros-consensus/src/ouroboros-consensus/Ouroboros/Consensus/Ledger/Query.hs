@@ -338,18 +338,16 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
     DiskLedgerView
       (current ldb)
       (\ks -> do
-          let chlog = ledgerDbChangelog ldb
-              rew   = rewindTableKeySets chlog ks
+          let rew = rewindTableKeySets ldb ks
           unfwd <- readKeySetsWith
                      (fmap (seqNo,) . BackingStore.bsvhRead vh)
                      rew
-          case forwardTableKeySets chlog unfwd of
+          case forwardTableKeySets ldb unfwd of
               Left _err -> error "impossible!"
               Right vs  -> pure vs
       )
       (\rq -> do
-          let chlog = ledgerDbChangelog ldb
-              -- Get the differences without the keys that are greater or equal
+          let -- Get the differences without the keys that are greater or equal
               -- than the maximum previously seen key.
               diffs =
                 maybe
@@ -357,7 +355,7 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
                   (zipLedgerTables doDropLTE)
                   (BackingStore.rqPrev rq)
                   $ mapLedgerTables prj
-                  $ changelogDiffs chlog
+                  $ changelogDiffs ldb
               -- (1) Ensure that we never delete everything read from disk (ie
               --     if our result is non-empty then it contains something read
               --     from disk).

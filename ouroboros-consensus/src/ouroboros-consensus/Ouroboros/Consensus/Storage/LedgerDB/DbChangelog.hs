@@ -1,3 +1,5 @@
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE DeriveAnyClass           #-}
 {-# LANGUAGE DeriveGeneric            #-}
@@ -47,6 +49,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (
 import           Cardano.Slotting.Slot
 import qualified Control.Exception as Exn
 import           Data.Bifunctor (bimap)
+import Data.SOP (K, unK)
 import           Data.SOP.Functors (Product2 (..))
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -140,6 +143,17 @@ deriving instance Show     (l EmptyMK) => Show     (DbChangelogState l)
 instance GetTip l => AS.Anchorable (WithOrigin SlotNo) (DbChangelogState l) (DbChangelogState l) where
   asAnchor = id
   getAnchorMeasure _ = getTipSlot . unDbChangelogState
+
+
+instance ( IsLedger l
+         , HeaderHash (K @MapKind (DbChangelog l)) ~ HeaderHash l
+         ) => GetTip (K (DbChangelog l)) where
+  getTip = castPoint
+         . getTip
+         . either unDbChangelogState unDbChangelogState
+         . AS.head
+         . changelogVolatileStates
+         . unK
 
 {-------------------------------------------------------------------------------
   Construction

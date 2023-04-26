@@ -30,7 +30,7 @@ import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.DiffSeq
-import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (LedgerDB (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (LedgerDB)
 import           Ouroboros.Consensus.Storage.LedgerDB.Query (rollback)
 import           Ouroboros.Consensus.Util.IOLike
 
@@ -152,9 +152,9 @@ getLedgerTablesFor ::
   -> KeySetsReader m l
   -> m (Either (WithOrigin SlotNo, WithOrigin SlotNo) (LedgerTables l ValuesMK))
 getLedgerTablesFor db keys ksRead = do
-  let aks = rewindTableKeySets (ledgerDbChangelog db) keys
+  let aks = rewindTableKeySets db keys
   urs <- ksRead aks
-  pure $ forwardTableKeySets (ledgerDbChangelog db) urs
+  pure $ forwardTableKeySets db urs
 
 trivialKeySetsReader :: (Monad m, LedgerTablesAreTrivial l) => KeySetsReader m l
 trivialKeySetsReader (RewoundTableKeySets s _) = pure $ UnforwardedReadSets s trivialLedgerTables trivialLedgerTables

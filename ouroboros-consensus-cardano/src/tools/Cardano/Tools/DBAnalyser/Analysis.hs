@@ -58,7 +58,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
                      LedgerDB', LedgerDbCfg (..), configLedgerDb,
-                     ledgerDbChangelog, push, writeSnapshot)
+                     push, writeSnapshot)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
@@ -439,17 +439,14 @@ checkNoThunksEvery
     process oldLedgerDB blk = do
       let ledgerCfg     = ExtLedgerCfg cfg
       -- this is an inline of LedgerDB.Update.applyBlock
-      appliedResult <- withKeysReadSets (LedgerDB.current oldLedgerDB) (readKeySets bstore) (ledgerDbChangelog oldLedgerDB) (getBlockKeySets blk) $ return . tickThenApplyLedgerResult ledgerCfg blk
+      appliedResult <- withKeysReadSets (LedgerDB.current oldLedgerDB) (readKeySets bstore) oldLedgerDB (getBlockKeySets blk) $ return . tickThenApplyLedgerResult ledgerCfg blk
       let newLedger     = either (error . show) lrResult $ runExcept $ appliedResult
           bn            = blockNo blk
       when (unBlockNo bn `mod` nBlocks == 0 ) $ IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
       -- this is an inline of LedgerDB.Update.pushLedgerState
-      let intermediateLedgerDB = LedgerDB.prune (ledgerDbCfgSecParam $ configLedgerDb cfg) $ oldLedgerDB {
-            ledgerDbChangelog   =
-            DbChangelog.extend
-              (ledgerDbChangelog oldLedgerDB)
+      let intermediateLedgerDB = LedgerDB.prune (ledgerDbCfgSecParam $ configLedgerDb cfg) $ DbChangelog.extend
+              oldLedgerDB
               newLedger
-            }
       if unBlockNo bn `mod` 100 == 0
       then do
         let (toFlush, toKeep) = LedgerDB.flush FlushAllImmutable intermediateLedgerDB
@@ -572,12 +569,9 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, b
         (ldgrSt',    tBlkApp)   <- time $ applyTheBlock                                       hydTkLdgrSt
 
         -- this is an inline of LedgerDB.Update.pushLedgerState
-        let ldb' = LedgerDB.prune (ledgerDbCfgSecParam $ configLedgerDb cfg) $ ldb {
-              ledgerDbChangelog   =
-              DbChangelog.extend
-                (ledgerDbChangelog ldb)
+        let ldb' = LedgerDB.prune (ledgerDbCfgSecParam $ configLedgerDb cfg) $ DbChangelog.extend
+                ldb
                 (ExtLedgerState (prependLedgerTablesDiffsFromTicked tkLdgrSt ldgrSt') hdrSt')
-            }
 
         (ldb'', tFlush) <-
           if unBlockNo (blockNo blk) `mod` 100 == 0
@@ -655,11 +649,10 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, b
              Ticked1 (LedgerState blk) DiffMK
           -> IO (Ticked1 (LedgerState blk) ValuesMK)
         hydrateTheTickedState st = do
-          let dbch = ledgerDbChangelog ldb
-              ks = getBlockKeySets blk
-              aks = rewindTableKeySets dbch ks
+          let ks = getBlockKeySets blk
+              aks = rewindTableKeySets ldb ks
           urs <- readKeySets bstore aks
-          case forwardTableKeySets dbch urs of
+          case forwardTableKeySets ldb urs of
             Left err -> error $ "Rewind;read;forward failed" <> show err
             Right forwarded -> pure $ applyLedgerTablesDiffsTicked' (unExtLedgerStateTables forwarded) st
 

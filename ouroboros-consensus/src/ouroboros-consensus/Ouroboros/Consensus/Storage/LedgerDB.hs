@@ -1,6 +1,6 @@
 module Ouroboros.Consensus.Storage.LedgerDB (
     -- * LedgerDB
-    LedgerDB (..)
+    LedgerDB
   , LedgerDB'
   , LedgerDbCfg (..)
   , configLedgerDb
@@ -99,7 +99,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Init
                      TraceReplayEvent (..), decorateReplayTracerWithGoal,
                      decorateReplayTracerWithStart, initialize, newBackingStore,
                      newBackingStoreInitialiser, restoreBackingStore)
-import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (LedgerDB (..),
+import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (LedgerDB,
                      LedgerDB', LedgerDbCfg (..), configLedgerDb, mkWithAnchor)
 import           Ouroboros.Consensus.Storage.LedgerDB.Query (anchor, current,
                      getPastLedgerAt, isSaturated, lastFlushedState,
