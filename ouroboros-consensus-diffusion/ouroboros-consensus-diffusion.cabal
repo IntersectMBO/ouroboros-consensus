@@ -1,21 +1,21 @@
-cabal-version:      3.0
-name:               ouroboros-consensus-diffusion
-version:            0.5.0.0
-synopsis:           Integration for the Ouroboros Network layer
+cabal-version:   3.0
+name:            ouroboros-consensus-diffusion
+version:         0.5.0.0
+synopsis:        Integration for the Ouroboros Network layer
 description:
   Top level integration for consensus & network layers of the Ouroboros blockchain protocol.
 
-license:            Apache-2.0
+license:         Apache-2.0
 license-files:
   LICENSE
   NOTICE
 
-copyright:          2022-2023 Input Output Global Inc (IOG)
-author:             IOHK Engineering Team
-maintainer:         operations@iohk.io
-category:           Network
-build-type:         Simple
-extra-source-files: CHANGELOG.md
+copyright:       2022-2023 Input Output Global Inc (IOG)
+author:          IOHK Engineering Team
+maintainer:      operations@iohk.io
+category:        Network
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
 
 source-repository head
   type:     git

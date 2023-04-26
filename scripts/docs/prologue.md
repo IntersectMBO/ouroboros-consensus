@@ -32,9 +32,7 @@ implementation of consensus.
 * "Ouroboros.Consensus.Storage.ChainDB.API"
 * "Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel"
 * "Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator"
-* "Ouroboros.Network.AnchoredFragment"
 * "Ouroboros.Consensus.MiniProtocol.ChainSync.Client"
-* "Ouroboros.Network.BlockFetch.Decision"
 
 === Consensus Components
 
@@ -64,7 +62,7 @@ We run these tests for
 * A mock ledger (containing bare bones UTxO style transactions) using a variety
   of consensus protocols: BFT, PBFT, Praos, and a version of Praos where we
   override the leader schedule. See [this
-  directory](https://github.com/input-output-hk/ouroboros-consensus/tree/master/ouroboros-consensus-diffusion/diffusion-testlib/Test/ThreadNet).
+  directory](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion/src/diffusion-testlib/Test/ThreadNet).
   * Byron/PBFT. See
   __[Test.ThreadNet.Byron](ouroboros-consensus-byron-test-test/Test-ThreadNet-Byron.html)__.
   * DualByron. See
@@ -72,7 +70,7 @@ We run these tests for
   * Shelley/TPraos. See
   __[Test.ThreadNet.Shelley](ouroboros-consensus-shelley-test-test/Test-ThreadNet-Shelley.html)__.
   * Cardano. See
-  __[Test.ThreadNet.Cardano](ouroboros-consensus-cardano-test-test/Test-ThreadNet-Cardano.html)__.  
+  __[Test.ThreadNet.Cardano](ouroboros-consensus-cardano-test-test/Test-ThreadNet-Cardano.html)__.
   * The hard fork combinator transitioning from a mock ledger @A@ to a mock
   ledger @B@; these mock ledgers are absolutely minimal ledgers: the only
   transaction supported on the @A@ ledger is "initiate transition to @B@", and

@@ -1,18 +1,18 @@
-cabal-version:      3.0
-name:               ouroboros-consensus-protocol
-version:            0.5.0.0
-synopsis:           Cardano consensus protocols
-description:        Cardano consensus protocols.
-license:            Apache-2.0
+cabal-version:   3.0
+name:            ouroboros-consensus-protocol
+version:         0.5.0.0
+synopsis:        Cardano consensus protocols
+description:     Cardano consensus protocols.
+license:         Apache-2.0
 license-files:
   LICENSE
   NOTICE
 
-copyright:          2021-2023 Input Output Global Inc (IOG)
-author:             IOHK Formal methods team
-maintainer:         operations@iohk.io
-category:           Network
-extra-source-files: CHANGELOG.md
+copyright:       2021-2023 Input Output Global Inc (IOG)
+author:          IOHK Formal methods team
+maintainer:      operations@iohk.io
+category:        Network
+extra-doc-files: CHANGELOG.md
 
 source-repository head
   type:     git
