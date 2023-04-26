@@ -386,13 +386,13 @@ getDiskPolicy = diskPolicy
 -- PRECONDITION: The 'flushLock' write lock must be held before calling this
 -- function
 flush :: (IOLike m, LedgerSupportsProtocol blk) => LgrDB m blk -> m ()
-flush LgrDB { varDB, lgrBackingStore } = do
+flush LgrDB { cfg, varDB, lgrBackingStore } = do
     toFlush <- atomically $ do
       db <- readTVar varDB
-      let (toFlush, db') = LedgerDB.flush FlushAllImmutable db
+      let (toFlush, db') = LedgerDB.flush (FlushAllImmutable $ configSecurityParam cfg) db
       writeTVar varDB db'
       pure toFlush
-    flushIntoBackingStore lgrBackingStore toFlush
+    mapM_ (flushIntoBackingStore lgrBackingStore) toFlush
 
 {-------------------------------------------------------------------------------
   Validation

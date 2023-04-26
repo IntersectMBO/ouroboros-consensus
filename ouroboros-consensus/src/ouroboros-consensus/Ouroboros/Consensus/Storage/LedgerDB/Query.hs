@@ -23,24 +23,20 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 -- | The ledger state at the tip of the chain
 current :: GetTip l => LedgerDB l -> l EmptyMK
 current =
-    either unDbChangelogState unDbChangelogState
+    either id id
   . AS.head
   . changelogVolatileStates
 
 -- | Information about the state of the ledger at the anchor
 anchor :: LedgerDB l -> l EmptyMK
 anchor =
-    unDbChangelogState
-  . AS.anchor
+    AS.anchor
   . changelogVolatileStates
 
 -- | Get the most recently flushed ledger state. This is what will be serialized
 -- when snapshotting.
 lastFlushedState :: LedgerDB l -> l EmptyMK
-lastFlushedState =
-    unDbChangelogState
-  . AS.anchor
-  . changelogImmutableStates
+lastFlushedState = changelogAnchor
 
 -- | All snapshots currently stored by the ledger DB (new to old)
 --
@@ -49,7 +45,6 @@ lastFlushedState =
 snapshots :: LedgerDB l -> [(Word64, l EmptyMK)]
 snapshots =
       zip [0..]
-    . map unDbChangelogState
     . AS.toNewestFirst
     . changelogVolatileStates
 

@@ -235,7 +235,7 @@ getLedgerBackingStoreValueHandle CDB{..} rreg seP = LgrDB.withReadLock cdbLgrDB 
             let BackingStore.LedgerBackingStore store =
                   LgrDB.lgrBackingStore cdbLgrDB
             (seqNo, vh) <- BackingStore.bsValueHandle store
-            assert (seqNo == changelogDiffAnchor ldb) $ pure (seqNo, vh)
+            assert (seqNo == getTipSlot (changelogAnchor ldb)) $ pure (seqNo, vh)
         )
         (\(_seqNo, vh) -> BackingStore.bsvhClose vh)
       pure

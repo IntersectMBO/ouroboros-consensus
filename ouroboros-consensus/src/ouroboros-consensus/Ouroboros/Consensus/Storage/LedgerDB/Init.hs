@@ -283,8 +283,10 @@ replayStartingWith tracer cfg backingStore streamAPI initDb = do
           if sinceLast == 100
           then do
             let (toFlush, toKeep) =
-                  LedgerDB.flush FlushAllImmutable db'
-            flushIntoBackingStore backingStore toFlush
+                  LedgerDB.flush
+                    FlushAll
+                    db'
+            mapM_ (flushIntoBackingStore backingStore) toFlush
             pure (toKeep, 0)
           else pure (db', sinceLast + 1)
 

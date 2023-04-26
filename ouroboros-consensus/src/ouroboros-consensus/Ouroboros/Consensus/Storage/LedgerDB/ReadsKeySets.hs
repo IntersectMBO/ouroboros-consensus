@@ -25,7 +25,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets (
 import           Cardano.Slotting.Slot
 import           Data.Map.Diff.Strict (applyDiffForKeys)
 import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Ledger.Basics (IsLedger)
+import           Ouroboros.Consensus.Ledger.Basics (GetTip, IsLedger,
+                     getTipSlot)
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
@@ -44,10 +45,9 @@ data RewoundTableKeySets l =
       !(LedgerTables l KeysMK)
 
 rewindTableKeySets ::
-     DbChangelog l -> LedgerTables l KeysMK -> RewoundTableKeySets l
-rewindTableKeySets dblog =
-      RewoundTableKeySets
-        (changelogDiffAnchor dblog)
+     GetTip l => DbChangelog l -> LedgerTables l KeysMK -> RewoundTableKeySets l
+rewindTableKeySets =
+     RewoundTableKeySets . getTipSlot . changelogAnchor
 
 {-------------------------------------------------------------------------------
   Read
@@ -55,14 +55,14 @@ rewindTableKeySets dblog =
 
 type KeySetsReader m l = RewoundTableKeySets l -> m (UnforwardedReadSets l)
 
-readKeySets :: forall m l.
+readKeySets ::
      IOLike m
   => LedgerBackingStore m l
   -> KeySetsReader m l
 readKeySets (LedgerBackingStore backingStore) rew = do
     readKeySetsWith (bsRead backingStore) rew
 
-readKeySetsWith :: forall m l.
+readKeySetsWith ::
      Monad m
   => (LedgerTables l KeysMK -> m (WithOrigin SlotNo, LedgerTables l ValuesMK))
   -> RewoundTableKeySets l
@@ -76,9 +76,7 @@ readKeySetsWith readKeys (RewoundTableKeySets _seqNo rew) = do
     }
 
 withKeysReadSets ::
-  forall m l mk1 a.
-  ( HasLedgerTables l, Monad m
-  )
+     (HasLedgerTables l, Monad m, GetTip l)
   => l mk1
   -> KeySetsReader m l
   -> DbChangelog l
@@ -86,7 +84,7 @@ withKeysReadSets ::
   -> (l ValuesMK -> m a)
   -> m a
 withKeysReadSets st ksReader dbch ks f = do
-      let aks = rewindTableKeySets dbch ks :: RewoundTableKeySets l
+      let aks = rewindTableKeySets dbch ks
       urs <- ksReader aks
       case withHydratedLedgerState st dbch urs f of
         Left err ->
@@ -104,7 +102,7 @@ withKeysReadSets st ksReader dbch ks f = do
         Right res -> res
 
 withHydratedLedgerState ::
-     HasLedgerTables l
+     (GetTip l, HasLedgerTables l)
   => l mk1
   -> DbChangelog l
   -> UnforwardedReadSets l
@@ -146,7 +144,7 @@ getLedgerTablesAtFor pt keys lgrDb lbs =
 -- unlucky and scheduling of events happened to move the backing store. Reading
 -- again the LedgerDB and calling this function must eventually succeed.
 getLedgerTablesFor ::
-     (Monad m, HasLedgerTables l)
+     (Monad m, GetTip l, HasLedgerTables l)
   => LedgerDB l
   -> LedgerTables l KeysMK
   -> KeySetsReader m l
@@ -195,10 +193,12 @@ forwardTableKeySets' seqNo chdiffs = \(UnforwardedReadSets seqNo' values keys) -
       ValuesMK $ applyDiffForKeys values keys (cumulativeDiff diffs)
 
 forwardTableKeySets ::
-     HasLedgerTables l
+     (GetTip l, HasLedgerTables l)
   => DbChangelog l
   -> UnforwardedReadSets l
   -> Either (WithOrigin SlotNo, WithOrigin SlotNo)
             (LedgerTables l ValuesMK)
 forwardTableKeySets dblog =
-  forwardTableKeySets' (changelogDiffAnchor dblog) (changelogDiffs dblog)
+  forwardTableKeySets'
+    (getTipSlot $ changelogAnchor dblog)
+    (changelogDiffs dblog)

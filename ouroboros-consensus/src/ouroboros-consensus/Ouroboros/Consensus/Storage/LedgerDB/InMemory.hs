@@ -7,8 +7,8 @@
 {-# LANGUAGE RankNTypes             #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE UndecidableInstances   #-}
-module Ouroboros.Consensus.Storage.LedgerDB.InMemory {-# DEPRECATED "Use Ouroboros.Consensus.Storage.LedgerDB instead" #-}
-  ( -- * LedgerDB proper
+module Ouroboros.Consensus.Storage.LedgerDB.InMemory (
+    -- * LedgerDB proper
     LDB.LedgerDbCfg (..)
   , ledgerDbWithAnchor
     -- ** opaque
@@ -140,11 +140,11 @@ ledgerDbBimap ::
 ledgerDbBimap = LDB.volatileStatesBimap
 
 {-# DEPRECATED ledgerDbPrune "Use Ouroboros.Consensus.Storage.LedgerDB (prune)" #-}
-ledgerDbPrune :: (GetTip l, StandardHash l) => SecurityParam -> LedgerDB l -> LedgerDB l
+ledgerDbPrune :: GetTip l => SecurityParam -> LedgerDB l -> LedgerDB l
 ledgerDbPrune = LDB.prune
 
 {-# DEPRECATED ledgerDbPush "Use Ouroboros.Consensus.Storage.LedgerDB (push)" #-}
-ledgerDbPush :: (ApplyBlock l blk, Monad m, c, StandardHash l)
+ledgerDbPush :: (ApplyBlock l blk, Monad m, c)
              => LedgerDbCfg l
              -> Ap m l blk c
              -> KeySetsReader m l
@@ -153,7 +153,7 @@ ledgerDbPush :: (ApplyBlock l blk, Monad m, c, StandardHash l)
 ledgerDbPush = LDB.push
 
 {-# DEPRECATED ledgerDbSwitch "Use Ouroboros.Consensus.Storage.LedgerDB (switch)" #-}
-ledgerDbSwitch :: (ApplyBlock l blk, Monad m, c, StandardHash l)
+ledgerDbSwitch :: (ApplyBlock l blk, Monad m, c)
                => LedgerDbCfg l
                -> Word64          -- ^ How many blocks to roll back
                -> (LDB.UpdateLedgerDbTraceEvent blk -> m ())
@@ -164,7 +164,7 @@ ledgerDbSwitch :: (ApplyBlock l blk, Monad m, c, StandardHash l)
 ledgerDbSwitch = LDB.switch
 
 {-# DEPRECATED ledgerDbPush' "Use Ouroboros.Consensus.Storage.LedgerDB (push')" #-}
-ledgerDbPush' :: (ApplyBlock l blk, StandardHash l)
+ledgerDbPush' :: ApplyBlock l blk
               => LedgerDbCfg l
               -> blk
               -> KeySetsReader Identity l
@@ -173,7 +173,7 @@ ledgerDbPush' :: (ApplyBlock l blk, StandardHash l)
 ledgerDbPush' = LDB.push'
 
 {-# DEPRECATED ledgerDbPushMany' "Use Ouroboros.Consensus.Storage.LedgerDB (pushMany')" #-}
-ledgerDbPushMany' :: (ApplyBlock l blk, StandardHash l)
+ledgerDbPushMany' :: ApplyBlock l blk
                   => LedgerDbCfg l
                   -> [blk]
                   -> KeySetsReader Identity l
@@ -182,7 +182,7 @@ ledgerDbPushMany' :: (ApplyBlock l blk, StandardHash l)
 ledgerDbPushMany' = LDB.pushMany'
 
 {-# DEPRECATED ledgerDbSwitch' "Use Ouroboros.Consensus.Storage.LedgerDB (switch')" #-}
-ledgerDbSwitch' :: (ApplyBlock l blk, StandardHash l)
+ledgerDbSwitch' :: ApplyBlock l blk
                 => LedgerDbCfg l
                 -> Word64
                 -> [blk]

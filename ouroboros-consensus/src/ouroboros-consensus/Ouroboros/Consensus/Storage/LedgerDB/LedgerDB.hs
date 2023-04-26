@@ -1,16 +1,15 @@
-{-# LANGUAGE DataKinds                #-}
-{-# LANGUAGE DeriveAnyClass           #-}
-{-# LANGUAGE DeriveGeneric            #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE FlexibleInstances        #-}
-{-# LANGUAGE MultiParamTypeClasses    #-}
-{-# LANGUAGE QuantifiedConstraints    #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications         #-}
-{-# LANGUAGE TypeFamilies             #-}
-{-# LANGUAGE UndecidableInstances     #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE StandaloneDeriving    #-}
+{-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (
     -- * LedgerDB
@@ -32,8 +31,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerCfg (..),
                      ExtLedgerState)
 import           Ouroboros.Consensus.Protocol.Abstract (ConsensusProtocol)
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-                     (DbChangelog, empty)
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog,
+                     empty)
 
 {-------------------------------------------------------------------------------
   LedgerDB

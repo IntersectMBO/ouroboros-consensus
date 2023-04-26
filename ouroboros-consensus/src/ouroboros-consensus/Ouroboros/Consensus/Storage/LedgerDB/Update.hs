@@ -64,7 +64,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog)
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+                     (DbChangelogToFlush)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Query as Query
@@ -231,13 +232,13 @@ volatileStatesBimap ::
   -> LedgerDB l
   -> AnchoredSeq (WithOrigin SlotNo) a b
 volatileStatesBimap f g =
-      AS.bimap (f . DbChangelog.unDbChangelogState) (g . DbChangelog.unDbChangelogState)
+      AS.bimap f g
     . DbChangelog.changelogVolatileStates
 
 -- | Prune ledger states until at we have at most @k@ in the LedgerDB, excluding
 -- the one stored at the anchor.
 prune ::
-     (GetTip l, StandardHash l)
+     GetTip l
   => SecurityParam -> LedgerDB l -> LedgerDB l
 prune = DbChangelog.pruneVolatilePart
 
@@ -252,7 +253,7 @@ prune = DbChangelog.pruneVolatilePart
 
 -- | Push an updated ledger state
 pushLedgerState ::
-     (IsLedger l, HasLedgerTables l, StandardHash l)
+     (IsLedger l, HasLedgerTables l)
   => SecurityParam
   -> l DiffMK -- ^ Updated ledger state
   -> LedgerDB l
@@ -295,7 +296,7 @@ data ExceededRollback = ExceededRollback {
     , rollbackRequested :: Word64
     }
 
-push :: forall m c l blk. (ApplyBlock l blk, Monad m, StandardHash l, c)
+push :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
      => LedgerDbCfg l
      -> Ap m l blk c -> KeySetsReader m l -> LedgerDB l -> m (LedgerDB l)
 push cfg ap ksReader db =
@@ -304,7 +305,7 @@ push cfg ap ksReader db =
 
 -- | Push a bunch of blocks (oldest first)
 pushMany ::
-     forall m c l blk . (ApplyBlock l blk, Monad m, StandardHash l, c)
+     forall m c l blk . (ApplyBlock l blk, Monad m, c)
   => (Pushing blk -> m ())
   -> LedgerDbCfg l
   -> [Ap m l blk c] -> KeySetsReader m l -> LedgerDB l -> m (LedgerDB l)
@@ -316,7 +317,7 @@ pushMany trace cfg aps ksReader initDb = (repeatedlyM pushAndTrace) aps initDb
       push cfg ap ksReader db
 
 -- | Switch to a fork
-switch :: (ApplyBlock l blk, Monad m, StandardHash l, c)
+switch :: (ApplyBlock l blk, Monad m, c)
        => LedgerDbCfg l
        -> Word64          -- ^ How many blocks to roll back
        -> (UpdateLedgerDbTraceEvent blk -> m ())
@@ -346,7 +347,7 @@ switch cfg numRollbacks trace newBlocks ksReader db =
 -- | Isolates the prefix of the changelog that should be flushed
 flush ::
      (GetTip l, HasLedgerTables l)
-  => DbChangelog.FlushPolicy -> LedgerDB l -> (DbChangelog l, LedgerDB l)
+  => DbChangelog.FlushPolicy -> LedgerDB l -> (Maybe (DbChangelogToFlush l), LedgerDB l)
 flush = DbChangelog.flush
 
 {-------------------------------------------------------------------------------
@@ -382,16 +383,16 @@ data UpdateLedgerDbTraceEvent blk =
 pureBlock :: blk -> Ap m l blk ()
 pureBlock = ReapplyVal
 
-push' :: (ApplyBlock l blk, StandardHash l)
+push' :: ApplyBlock l blk
       => LedgerDbCfg l -> blk -> KeySetsReader Identity l -> LedgerDB l -> LedgerDB l
 push' cfg b bk = runIdentity . push cfg (pureBlock b) bk
 
-pushMany' :: (ApplyBlock l blk, StandardHash l)
+pushMany' :: ApplyBlock l blk
           => LedgerDbCfg l -> [blk] -> KeySetsReader Identity l -> LedgerDB l -> LedgerDB l
 pushMany' cfg bs bk =
   runIdentity . pushMany (const $ pure ()) cfg (map pureBlock bs) bk
 
-switch' :: (ApplyBlock l blk, StandardHash l)
+switch' :: ApplyBlock l blk
         => LedgerDbCfg l
         -> Word64 -> [blk] -> KeySetsReader Identity l -> LedgerDB l -> Maybe (LedgerDB l)
 switch' cfg n bs bk db =
