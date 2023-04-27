@@ -65,6 +65,7 @@ import           Ouroboros.Network.Block (Serialised, decodePoint, decodeTip,
                      encodePoint, encodeTip)
 import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.Channel
+import           Ouroboros.Network.Context
 import           Ouroboros.Network.Driver
 import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToClient hiding
@@ -458,17 +459,21 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
 responder
   :: N.NodeToClientVersion
   -> Apps m (ConnectionId peer) b b b b a
-  -> OuroborosApplication 'ResponderMode peer b m Void a
+  -> OuroborosApplicationWithMinimalCtx 'ResponderMode peer b m Void a
 responder version Apps {..} =
     nodeToClientProtocols
-      (\peer _shouldStopSTM -> NodeToClientProtocols {
+      (NodeToClientProtocols {
           localChainSyncProtocol =
-            (ResponderProtocolOnly (MuxPeerRaw (aChainSyncServer peer))),
+            ResponderProtocolOnly $ MiniProtocolCb $ \ctx ->
+              aChainSyncServer (rcConnectionId ctx),
           localTxSubmissionProtocol =
-            (ResponderProtocolOnly (MuxPeerRaw (aTxSubmissionServer peer))),
+            ResponderProtocolOnly $ MiniProtocolCb $ \ctx ->
+              aTxSubmissionServer (rcConnectionId ctx),
           localStateQueryProtocol =
-            (ResponderProtocolOnly (MuxPeerRaw (aStateQueryServer peer))),
+            ResponderProtocolOnly $ MiniProtocolCb $ \ctx ->
+              aStateQueryServer (rcConnectionId ctx),
           localTxMonitorProtocol =
-            (ResponderProtocolOnly (MuxPeerRaw (aTxMonitorServer peer)))
+            ResponderProtocolOnly $ MiniProtocolCb $ \ctx ->
+              aTxMonitorServer (rcConnectionId ctx)
         })
       version

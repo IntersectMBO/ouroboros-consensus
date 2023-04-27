@@ -271,7 +271,7 @@ library
     , measures
     , mtl
     , nothunks                     >=0.1.2    && <0.2
-    , ouroboros-network-api        ^>=0.5
+    , ouroboros-network-api        ^>=0.5.1
     , ouroboros-network-mock       ^>=0.1.0.1
     , ouroboros-network-protocols  ^>=0.5
     , psqueues                     >=0.2.3    && <0.3
