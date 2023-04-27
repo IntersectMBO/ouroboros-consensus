@@ -13,6 +13,7 @@ docs/website/static/haddocks/
 # cabal
 /cabal.project.local*
 /cabal.project.local~
+/cabal.project.freeze
 !cabal.project.local.github-pages
 dist-newstyle/
 dist/
