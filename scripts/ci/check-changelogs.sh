@@ -47,27 +47,40 @@ function this_merge_adds_fragment {
     fi
 }
 
+function files-changed {
+    if [[ -n $CI ]]
+    then diff -x .git -x README.md -x changelog.d -x scripts -r $TARGET/$1 $BASE/$1
+    else git diff $TARGET HEAD --name-only | grep -v README | grep -v changelog.d | grep $1 | wc -l
+    fi
+}
+
 function check {
     pkg=$1
 
     echo "Checking consistency of $pkg"
-    version=$(cabal_files_version $pkg)
-    last_version=$(get_last_version $pkg)
-    updated_versions=$(this_merge_updates_version $pkg)
-    adds_fragment=$(this_merge_adds_fragment $pkg)
 
-    if [[ $version != $last_version ]]; then
-        echo "ERROR: In $pkg, last version in the changelog ($last_version) is not the same as in the package's cabal file ($version)"
-        exit 1
-    elif [[ -n "$updated_versions" && $(ls -A1 $BASE/$pkg/changelog.d | wc -l) != 1 ]]; then
-        echo "ERROR: In $pkg, last commit updated the version but there are remaining changelog fragments"
-        exit 1
-    elif [[ -z "$updated_versions" && $adds_fragment -lt 1 ]]; then
-        echo "ERROR: In $pkg, there are no new changelog fragments comparing to pkg. This is enforced. Push an empty fragment if there is nothing to mention."
-        echo "   new fragments - old fragments = $adds_fragment"
-        exit 1
+    if [[ $(files-changed $pkg) ]]; then
+
+        version=$(cabal_files_version $pkg)
+        last_version=$(get_last_version $pkg)
+        updated_versions=$(this_merge_updates_version $pkg)
+        adds_fragment=$(this_merge_adds_fragment $pkg)
+
+        if [[ $version != $last_version ]]; then
+            echo "ERROR: In $pkg, last version in the changelog ($last_version) is not the same as in the package's cabal file ($version)"
+            exit 1
+        elif [[ -n "$updated_versions" && $(ls -A1 $BASE/$pkg/changelog.d | wc -l) != 1 ]]; then
+            echo "ERROR: In $pkg, last commit updated the version but there are remaining changelog fragments"
+            exit 1
+        elif [[ -z "$updated_versions" && $adds_fragment -lt 1 ]]; then
+            echo "ERROR: In $pkg, there are no new changelog fragments comparing to pkg. This is enforced. Push an empty fragment if there is nothing to mention."
+            echo "   new fragments - old fragments = $adds_fragment"
+            exit 1
+        else
+            printf "version:       %s\nnew version:   %s\nnew fragments: $adds_fragment\nOK\n\n" $version $updated_versions $last_version
+        fi
     else
-        printf "version:       %s\nnew version:   %s\nnew fragments: $adds_fragment\nOK\n\n" $version $updated_versions $last_version
+        echo "No source files changed in $pkg"
     fi
 }
 
