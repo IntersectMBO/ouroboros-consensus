@@ -15,8 +15,6 @@ jobs:
 
     name: Changelog sanity check
 
-    if: ${{ !github.event.pull_request.draft }}
-
     runs-on: ubuntu-latest
 
     defaults:
