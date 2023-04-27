@@ -45,9 +45,9 @@ import           Ouroboros.Network.Block (ChainUpdate (..), Tip (..))
 import           Ouroboros.Network.Driver (runPeer)
 import           Ouroboros.Network.KeepAlive (keepAliveServer)
 import           Ouroboros.Network.Magic (NetworkMagic)
-import           Ouroboros.Network.Mux (MiniProtocol (..), MuxMode (..),
-                     MuxPeer (..), OuroborosApplication (..),
-                     RunMiniProtocol (..))
+import           Ouroboros.Network.Mux (MiniProtocol (..), MiniProtocolCb (..),
+                     MuxMode (..), OuroborosApplication (..),
+                     OuroborosApplicationWithMinimalCtx, RunMiniProtocol (..))
 import           Ouroboros.Network.NodeToNode (NodeToNodeVersionData (..),
                      Versions (..))
 import qualified Ouroboros.Network.NodeToNode as N2N
@@ -72,7 +72,7 @@ immDBServer ::
   -> ImmutableDB m blk
   -> NetworkMagic
   -> Versions NodeToNodeVersion NodeToNodeVersionData
-       (OuroborosApplication 'ResponderMode addr BL.ByteString m Void ())
+       (OuroborosApplicationWithMinimalCtx 'ResponderMode addr BL.ByteString m Void ())
 immDBServer codecCfg encAddr decAddr immDB networkMagic = do
     forAllVersions application
   where
@@ -96,9 +96,9 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
     application ::
          NodeToNodeVersion
       -> BlockNodeToNodeVersion blk
-      -> OuroborosApplication 'ResponderMode addr BL.ByteString m Void ()
+      -> OuroborosApplicationWithMinimalCtx 'ResponderMode addr BL.ByteString m Void ()
     application version blockVersion =
-        OuroborosApplication \_connId _controlMessageSTM -> miniprotocols
+        OuroborosApplication miniprotocols
       where
         miniprotocols =
             [ mkMiniProtocol
@@ -127,23 +127,24 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
               Consensus.N2N.defaultCodecs codecCfg blockVersion encAddr decAddr version
 
             keepAliveProt  =
-                MuxPeer nullTracer cKeepAliveCodec
-              $ keepAliveServerPeer keepAliveServer
+              MiniProtocolCb $ \_ctx channel ->
+                runPeer nullTracer cKeepAliveCodec channel
+                      $ keepAliveServerPeer keepAliveServer
             chainSyncProt  =
-                MuxPeerRaw \channel ->
+                MiniProtocolCb $ \_ctx channel ->
                 withRegistry
               $ runPeer nullTracer cChainSyncCodecSerialised channel
               . chainSyncServerPeer
               . chainSyncServer immDB ChainDB.getSerialisedHeaderWithPoint
             blockFetchProt =
-                MuxPeerRaw \channel ->
+                MiniProtocolCb $ \_ctx channel ->
                 withRegistry
               $ runPeer nullTracer cBlockFetchCodecSerialised channel
               . blockFetchServerPeer
               . blockFetchServer immDB ChainDB.getSerialisedBlockWithPoint
             txSubmissionProt =
                 -- never reply, there is no timeout
-                MuxPeerRaw \_channel -> forever $ threadDelay 10
+                MiniProtocolCb $ \_ctx _channel -> forever $ threadDelay 10
 
         mkMiniProtocol miniProtocolNum limits proto = MiniProtocol {
             miniProtocolNum
