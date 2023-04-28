@@ -54,9 +54,8 @@ module Ouroboros.Consensus.Node (
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
-import           Control.Monad.Class.MonadMVar (MonadMVar)
-import           Control.Monad.Class.MonadTime (MonadTime)
-import           Control.Monad.Class.MonadTimer (MonadTimer)
+import           Control.Monad.Class.MonadTime.SI (MonadTime)
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Hashable (Hashable)
@@ -282,7 +281,7 @@ run args stdArgs = stdLowLevelRunNodeArgsIO args stdArgs >>= runWith args encode
 -- This function runs forever unless an exception is thrown.
 runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      ( RunNode blk
-     , IOLike m, MonadTime m, MonadTimer m, MonadMVar m
+     , IOLike m, MonadTime m, MonadTimer m
      , Hashable addrNTN, Ord addrNTN, Show addrNTN, Typeable addrNTN
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p

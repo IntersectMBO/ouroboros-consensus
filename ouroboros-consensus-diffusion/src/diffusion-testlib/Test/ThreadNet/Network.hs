@@ -40,9 +40,8 @@ import           Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import qualified Control.Exception as Exn
 import           Control.Monad
-import           Control.Monad.Class.MonadMVar (MonadMVar)
-import           Control.Monad.Class.MonadTime (MonadTime)
-import           Control.Monad.Class.MonadTimer (MonadTimer)
+import           Control.Monad.Class.MonadTime.SI (MonadTime)
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import qualified Control.Monad.Except as Exc
 import           Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
@@ -278,7 +277,6 @@ runThreadNetwork :: forall m blk.
                     ( IOLike m
                     , MonadTime m
                     , MonadTimer m
-                    , MonadMVar m
                     , RunNode blk
                     , TxGen blk
                     , TracingConstraints blk

@@ -8,6 +8,7 @@
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module Test.Ouroboros.Storage.ChainDB.Unit (tests) where
 
