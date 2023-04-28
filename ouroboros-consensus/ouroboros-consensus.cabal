@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            ouroboros-consensus
-version:         0.5.0.0
+version:         0.6.0.0
 synopsis:        Consensus layer for the Ouroboros blockchain protocol
 description:     Consensus layer for the Ouroboros blockchain protocol.
 license:         Apache-2.0
@@ -312,19 +312,19 @@ library
     ViewPatterns
 
   build-depends:
-    , base                         >=4.14  && <4.17
+    , base                         >=4.14     && <4.17
     , base16-bytestring
-    , bimap                        >=0.4   && <0.5
-    , binary                       >=0.8   && <0.11
-    , bytestring                   >=0.10  && <0.12
+    , bimap                        >=0.4      && <0.5
+    , binary                       >=0.8      && <0.11
+    , bytestring                   >=0.10     && <0.12
     , cardano-binary
     , cardano-crypto-class
     , cardano-ledger-binary
     , cardano-prelude
     , cardano-slotting
     , cardano-strict-containers
-    , cborg                        >=0.2.2 && <0.3
-    , containers                   >=0.5   && <0.7
+    , cborg                        >=0.2.2    && <0.3
+    , containers                   >=0.5      && <0.7
     , contra-tracer
     , deepseq
     , filelock
@@ -332,26 +332,26 @@ library
     , hashable
     , io-classes                   ^>=1.1
     , measures
-    , mtl                          >=2.2   && <2.3
-    , nothunks                     >=0.1.2 && <0.2
+    , mtl                          >=2.2      && <2.3
+    , nothunks                     >=0.1.2    && <0.2
     , ouroboros-network-api        ^>=0.3
     , ouroboros-network-framework  ^>=0.5
     , ouroboros-network-mock       ^>=0.1.0.1
     , ouroboros-network-protocols  ^>=0.5
-    , psqueues                     >=0.2.3 && <0.3
-    , quiet                        >=0.2   && <0.3
+    , psqueues                     >=0.2.3    && <0.3
+    , quiet                        >=0.2      && <0.3
     , semialign                    >=1.1
-    , serialise                    >=0.2   && <0.3
+    , serialise                    >=0.2      && <0.3
     , si-timers                    ^>=1.1
-    , sop-core                     >=0.5   && <0.6
+    , sop-core                     >=0.5      && <0.6
     , streaming
     , strict-stm                   ^>=1.1
-    , text                         >=1.2   && <1.3
-    , these                        >=1.1   && <1.2
+    , text                         >=1.2      && <1.3
+    , these                        >=1.1      && <1.2
     , time
     , transformers
     , typed-protocols
-    , vector                       >=0.12  && <0.13
+    , vector                       >=0.12     && <0.13
 
 library consensus-testlib
   import:          common-lib
