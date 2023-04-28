@@ -64,7 +64,6 @@ in
           {
             #lib.io.github_pr
             github
-            inputs: (github.#input): match: github_body: pull_request: draft: false
           },
         ]
       '';

@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2023-03-29T00:00:00Z
+  , hackage.haskell.org 2023-04-27T10:16:58Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2023-04-24T15:31:00Z
+  , cardano-haskell-packages 2023-04-26T21:43:05Z
 
 packages:
   ./ouroboros-consensus
@@ -27,23 +27,50 @@ packages:
 tests: True
 benchmarks: True
 
-package cardano-ping
+package cardano-ledger-core
+  flags: +asserts
+
+package cardano-ledger-shelley
+  flags: +asserts
+
+package fs-api
+  flags: +asserts
+
+package fs-sim
   flags: +asserts
 
 package io-classes
   flags: +asserts
 
-package strict-stm
-  flags: +asserts
-
 package network-mux
   flags: +asserts
-
-package ouroboros-network
-  flags: +asserts +cddl
 
 package ouroboros-consensus
   flags: +asserts
 
 package ouroboros-consensus-cardano
+  flags: +asserts
+
+package ouroboros-consensus-diffusion
+  flags: +asserts
+
+package ouroboros-consensus-protocol
+  flags: +asserts
+
+package ouroboros-network
+  flags: +asserts
+
+package ouroboros-network-api
+  flags: +asserts
+
+package ouroboros-network-mock
+  flags: +asserts
+
+package ouroboros-network-protocols
+  flags: +asserts
+
+package strict-stm
+  flags: +asserts
+
+package text-short
   flags: +asserts
