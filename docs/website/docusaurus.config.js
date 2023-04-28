@@ -4,6 +4,9 @@
 const lightCodeTheme = require('prism-react-renderer/themes/github');
 const darkCodeTheme = require('prism-react-renderer/themes/dracula');
 
+// generic edition URL that will be used by all parts of the documentation
+const editUrl = 'https://github.com/input-output-hk/ouroboros-consensus/tree/main/docs/';
+
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Ouroboros Consensus',
@@ -43,11 +46,12 @@ const config = {
       /** @type {import('@docusaurus/preset-classic').Options} */
       ({
         docs: {
+          // The website is already inside a `docs` directory. So we do not use the default path.
+          path: 'contents',
           sidebarPath: require.resolve('./sidebars.js'),
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
-          editUrl:
-            'https://github.com/input-output-hk/ouroboros-consensus/tree/main/docs/',
+          editUrl,
         },
         theme: {
           customCss: require.resolve('./src/css/custom.css'),
@@ -70,18 +74,18 @@ const config = {
           alt: 'Cardano Logo',
           src: 'img/logo.svg',
         },
+        // Navigation bar items. Note that the generated page is prefixed with
+        // `docs` regardless of what `presets.docs.path` is set to.
         items: [
           {
-            type: 'doc',
-            docId: 'Introduction',
+            to: '/docs/about-ouroboros/',
             position: 'left',
-            label: 'Documentation',
+            label: 'About Ouroboros',
           },
           {
-            type: 'doc',
-            docId: 'benchmarks/index',
+            to: '/docs/for-developers',
             position: 'left',
-            label: 'Benchmarks',
+            label: 'For Developers',
           },
           {
             href: 'https://github.com/input-output-hk/ouroboros-consensus',
@@ -97,13 +101,13 @@ const config = {
             title: 'Docs',
             items: [
               {
-                label: 'Documentation',
-                to: '/docs/Introduction',
+                label: 'About Ouroboros',
+                to: '/docs/about-ouroboros/',
               },
               {
-                label: 'Benchmarks',
-                to: '/docs/benchmarks/',
-              },
+                label: 'For Developers',
+                to: '/docs/for-developers/',
+              }
             ],
           },
           {
