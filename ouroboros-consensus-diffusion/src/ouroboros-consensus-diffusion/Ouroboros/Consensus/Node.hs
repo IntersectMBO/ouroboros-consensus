@@ -723,11 +723,13 @@ stdVersionDataNTN networkMagic diffusionMode peerSharing = NodeToNodeVersionData
     { networkMagic
     , diffusionMode
     , peerSharing
+    , query = False
     }
 
 stdVersionDataNTC :: NetworkMagic -> NodeToClientVersionData
 stdVersionDataNTC networkMagic = NodeToClientVersionData
     { networkMagic
+    , query = False
     }
 
 stdRunDataDiffusion ::
