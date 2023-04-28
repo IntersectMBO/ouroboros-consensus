@@ -34,45 +34,49 @@ jobs:
 
     - run: CI=1 ./this-pr/scripts/ci/check-changelogs.sh main this-pr
 
-  cabal-project-asserts:
+  # Enabling the assertions results in an error in IO-Sim.
+  # https://github.com/input-output-hk/io-sim/issues/94
+  # Until it is fixed, re-enabling this will only lead to blocked CI.
 
-    name: Cabal project asserts
+  # cabal-project-asserts:
 
-    runs-on: ubuntu-latest
+  #   name: Cabal project asserts
 
-    defaults:
-      run:
-        shell: bash
+  #   runs-on: ubuntu-latest
 
-    env:
+  #   defaults:
+  #     run:
+  #       shell: bash
 
-      # current ref from: 27.02.2022
-      SECP256K1_REF: ac83be33d0956faf6b7f61a60ab524ef7d6a473a
+  #   env:
 
-      SECP_CACHE_VERSION: "2023-04-27"
+  #     # current ref from: 27.02.2022
+  #     SECP256K1_REF: ac83be33d0956faf6b7f61a60ab524ef7d6a473a
 
-    steps:
+  #     SECP_CACHE_VERSION: "2023-04-27"
 
-    - uses: actions/checkout@v3
+  #   steps:
 
-    - name: Install Haskell
-      uses: input-output-hk/setup-haskell@v1
-      id: setup-haskell
-      with:
-        cabal-version: "3.10.1.0"
-        ghc-version: "9.2.7"
+  #   - uses: actions/checkout@v3
 
-    - name: Install build environment
-      run: |
-        sudo apt-get update
-        sudo apt-get -y install libsodium-dev
+  #   - name: Install Haskell
+  #     uses: input-output-hk/setup-haskell@v1
+  #     id: setup-haskell
+  #     with:
+  #       cabal-version: "3.10.1.0"
+  #       ghc-version: "9.2.7"
 
-    - name: Install secp256k1
-      uses: input-output-hk/setup-secp256k1@v1
-      with:
-        git-ref: ${{ env.SECP256K1_REF }}
-        cache-version: ${{ env.SECP_CACHE_VERSION }}
+  #   - name: Install build environment
+  #     run: |
+  #       sudo apt-get update
+  #       sudo apt-get -y install libsodium-dev
 
-    - run: |
-        ./scripts/ci/regen-project-asserts.sh
-        git --no-pager diff --exit-code
+  #   - name: Install secp256k1
+  #     uses: input-output-hk/setup-secp256k1@v1
+  #     with:
+  #       git-ref: ${{ env.SECP256K1_REF }}
+  #       cache-version: ${{ env.SECP_CACHE_VERSION }}
+
+  #   - run: |
+  #       ./scripts/ci/regen-project-asserts.sh
+  #       git --no-pager diff --exit-code

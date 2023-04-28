@@ -42,9 +42,6 @@ package fs-sim
 package io-classes
   flags: +asserts
 
-package io-sim
-  flags: +asserts
-
 package network-mux
   flags: +asserts
 
