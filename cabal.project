@@ -30,9 +30,10 @@ benchmarks: True
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/ouroboros-network
-  tag: 43cfbf5d2de7aa943bf56eecfdbb8eabdc84bf1f
-  --sha256: 17yqpicncf4c434n68afdir894pjxwgsv55pa67v323zirqc4j4b
+  tag: 5aef07f3fc0201b5c72d8005bcf37f50c96fcde0
+  --sha256: 0bpdnxzv27w1gcifw1rq23a3bw08bim46b7hj8dzcnp5w8921gvi
   subdir:
+    ./monoidal-synchronisation
     ./network-mux
     ./ouroboros-network
     ./ouroboros-network-api

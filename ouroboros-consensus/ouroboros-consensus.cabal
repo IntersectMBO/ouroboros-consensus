@@ -334,10 +334,10 @@ library
     , measures
     , mtl                          >=2.2   && <2.3
     , nothunks                     >=0.1.2 && <0.2
-    , ouroboros-network-api
-    , ouroboros-network-framework
-    , ouroboros-network-mock
-    , ouroboros-network-protocols  ^>=0.4
+    , ouroboros-network-api        ^>=0.3
+    , ouroboros-network-framework  ^>=0.5
+    , ouroboros-network-mock       ^>=0.1.0.1
+    , ouroboros-network-protocols  ^>=0.5
     , psqueues                     >=0.2.3 && <0.3
     , quiet                        >=0.2   && <0.3
     , semialign                    >=1.1
