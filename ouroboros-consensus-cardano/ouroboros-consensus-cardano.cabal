@@ -18,6 +18,7 @@ maintainer:      operations@iohk.io
 category:        Network
 build-type:      Simple
 extra-doc-files: CHANGELOG.md
+                 README.md
 
 source-repository head
   type:     git
