@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            ouroboros-consensus-diffusion
-version:         0.5.0.0
+version:         0.5.1.0
 synopsis:        Integration for the Ouroboros Network layer
 description:
   Top level integration for consensus & network layers of the Ouroboros blockchain protocol.
@@ -111,11 +111,11 @@ library
     , hashable
     , io-classes                   ^>=1.1
     , mtl                          ^>=2.2
-    , ouroboros-consensus          ^>=0.5
-    , ouroboros-network            ^>=0.5
-    , ouroboros-network-api        ^>=0.2
-    , ouroboros-network-framework  ^>=0.4
-    , ouroboros-network-protocols  ^>=0.4
+    , ouroboros-consensus          ^>=0.6
+    , ouroboros-network            ^>=0.6
+    , ouroboros-network-api        ^>=0.3
+    , ouroboros-network-framework  ^>=0.5
+    , ouroboros-network-protocols  ^>=0.5
     , random
     , serialise                    ^>=0.2
     , si-timers                    ^>=1.1

@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2023-04-26T22:25:13Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2023-04-28T08:53:31Z
+  , cardano-haskell-packages 2023-04-29T08:53:31Z
 
 packages:
   ./ouroboros-consensus
@@ -26,20 +26,6 @@ packages:
 
 tests: True
 benchmarks: True
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/ouroboros-network
-  tag: 43cfbf5d2de7aa943bf56eecfdbb8eabdc84bf1f
-  --sha256: 17yqpicncf4c434n68afdir894pjxwgsv55pa67v323zirqc4j4b
-  subdir:
-    ./network-mux
-    ./ouroboros-network
-    ./ouroboros-network-api
-    ./ouroboros-network-framework
-    ./ouroboros-network-mock
-    ./ouroboros-network-protocols
-    ./ouroboros-network-testing
 
 package cardano-ledger-core
   flags: +asserts
