@@ -249,6 +249,32 @@ of the content. There are two relatively straightforward ways to do this:
 1. The TOFU approach: put in the wrong hash and then Nix will tell you the correct one, which you can copy in.
 2. Calculate the hash with `nix-shell -p nix-prefetch-git --run 'nix-prefetch-git <URL> <COMMIT_HASH>'`
 
+## Inspecting dependencies as used by Nix
+
+When debugging an issue or when not using the shipped Nix shell, it is often desirable to know the exact version/revision of a specific tool or library as used by Nix.
+
+To get the exact `libsodium-vrf` used by Nix:
+```console
+ $ nix eval --json .#libsodium-vrf.src.url
+"https://github.com/input-output-hk/libsodium/archive/dbb48cce5429cb6585c9034f002568964f1ce567.tar.gz"
+```
+
+To get the `cabal-fmt` version used by Nix:
+```console
+ $ nix eval --json .#cabal-fmt.version
+"0.1.6"
+```
+
+In more complex cases, you can start a Nix REPL and go on to explore interactively:
+
+```console
+ $ nix repl
+nix-repl> :lf .
+nix-repl> pkgs = legacyPackages.${__currentSystem}
+nix-repl> pkgs.hsPkgs.ouroboros-consensus-cardano.components.exes.db-
+pkgs.hsPkgs.ouroboros-consensus-cardano.components.exes.db-analyser     pkgs.hsPkgs.ouroboros-consensus-cardano.components.exes.db-synthesizer
+```
+
 # Reporting a bug or requesting a feature
 
 If you happen to encounter what you think is a bug or you wish there was some
