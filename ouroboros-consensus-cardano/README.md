@@ -47,7 +47,7 @@ By default db-analyser will process all blocks from the chain database
 must first properly initialize the whole database. That means that before it
 even starts processing blocks it will:
 
-1. look for latest snapshot stored in DB_PATH/ledger
+1. look for the latest snapshot stored in DB_PATH/ledger. The latest snapshot is determined by looking at the highest snapshot number. See function 'snapshotFromPath' to understand how a snapshot number is obtained from a snapshot path.
 2. load that snapshot into memory
 3. start replaying blocks
    * starting from that ledger state
@@ -92,7 +92,7 @@ The user can limit the maximum number of blocks that db-analyser will process.
 
 #### Analysis
 
-Lastly the user must provide the analysis that should be run on the chain:
+Lastly the user can provide the analysis that should be run on the chain:
 
 * `--show-slot-block-no` prints the slot and block number of each block it
   process.
@@ -125,6 +125,9 @@ Lastly the user must provide the analysis that should be run on the chain:
   specified by the `out-file` option. In the [`scripts`](./scripts) directory we
   provide a `plot-ledger-ops-cost.gp` script that can be used to plot the
   benchmarking results. See this file for usage information.
+
+If no analysis flag is provided, then the ChainDB will be opened, all the chunks
+in the immutable and volatile databases will be validated, and the tool will exit.
 
 ### Examples
 
@@ -192,7 +195,7 @@ cabal run exe:db-analyser -- cardano
 ##### Plotting the benchmark results
 
 Assuming you are at the top level of `ouroboros-network`, and the benchmark data
-has been written to a fine named `ledger-ops-cost.csv`, a plot can be generated
+has been written to a file named `ledger-ops-cost.csv`, a plot can be generated
 by running:
 
 ```sh
