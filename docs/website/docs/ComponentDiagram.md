@@ -3,7 +3,7 @@ This is a very high-level diagram that indicates how the core data flow within t
 ```mermaid
 graph LR
 
-    subgraph Consensus[Consensus Layer Components]
+    subgraph Consensus[Components of the Consensus Layer]
         direction LR
         Upstream["Upstream Peers Adapter\n& Mint"]---> |B| ChainSel --> |"U(H(B))"| Downstream[["Downstream Peer Adapters\n& Wallet"]]
         ChainSel ---> |B| BlockPool -.-> |B| Downstream
@@ -68,3 +68,23 @@ TODO.
 Ideally the diagram is a cross with BlockPool, ChainSel, and TxPool all on the top-to-bottom line and Upstream Peers Adapter, ChainSel, and Downstream Peer Adapters on the left-to-right line.
 But I can't figure out how to force Mermaid to choose that layout; [nor has anyone else](https://github.com/mermaid-js/mermaid/issues/270).
 If we rework in eg `tikz`, we should do the cross.
+
+The diagram is much simpler for a node that has no downstream peers, no wallet, and doesn't forge blocks; ie its sole purpose is to follow the chain and store it on the local disk.
+
+```mermaid
+graph LR
+
+    subgraph PassiveConsensus["Components of the (Passive) Consensus Layer"]
+        direction LR
+        Upstream["Upstream Peers Adapter"]---> |B| ChainSel
+        ChainSel ---> |B| BlockPool
+
+        ChainSel ---> |"H(L)"| Upstream
+        ChainSel ---> |"O(L)"| BlockPool
+
+        BlockPool -.-> |B| ChainSel
+        BlockPool -.-> |"I(L)"| ChainSel
+    end
+
+style PassiveConsensus fill:transparent,stroke:transparent
+```
