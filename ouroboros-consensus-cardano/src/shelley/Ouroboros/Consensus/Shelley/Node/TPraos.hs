@@ -47,7 +47,7 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL
                      (incrementalStakeDistr, updateStakeDistribution)
 import qualified Cardano.Ledger.Shelley.Translation as SL
                      (emptyFromByronTranslationContext)
-import qualified Cardano.Ledger.UMapCompact as UM
+import qualified Cardano.Ledger.UMap as UM
 import           Cardano.Ledger.Val (coin, inject, (<->))
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
@@ -349,9 +349,9 @@ registerGenesisStaking ::
 registerGenesisStaking staking nes = nes {
       SL.nesEs = epochState {
           SL.esLState = ledgerState {
-          SL.lsDPState = dpState {
-              SL.dpsDState = dState'
-            , SL.dpsPState = pState'
+          SL.lsCertState = dpState {
+              SL.certDState = dState'
+            , SL.certPState = pState'
             }
         }
         , SL.esSnapshots = (SL.esSnapshots epochState) {
@@ -369,14 +369,14 @@ registerGenesisStaking staking nes = nes {
     SL.ShelleyGenesisStaking { sgsPools, sgsStake } = staking
     SL.NewEpochState { nesEs = epochState } = nes
     ledgerState = SL.esLState epochState
-    dpState = SL.lsDPState ledgerState
+    dpState = SL.lsCertState ledgerState
 
     -- New delegation state. Since we're using base addresses, we only care
     -- about updating the '_delegations' field.
     --
     -- See STS DELEG for details
-    dState' :: SL.DState (EraCrypto era)
-    dState' = (SL.dpsDState dpState) {
+    dState' :: SL.DState era
+    dState' = (SL.certDState dpState) {
           SL.dsUnified = UM.unify
             ( Map.map (const $ UM.RDPair (SL.CompactCoin 0) (SL.CompactCoin 0))
                       . Map.mapKeys SL.KeyHashObj
@@ -388,8 +388,8 @@ registerGenesisStaking staking nes = nes {
 
     -- We consider pools as having been registered in slot 0
     -- See STS POOL for details
-    pState' :: SL.PState (EraCrypto era)
-    pState' = (SL.dpsPState dpState) {
+    pState' :: SL.PState era
+    pState' = (SL.certPState dpState) {
           SL.psStakePoolParams = ListMap.toMap sgsPools
         }
 

@@ -337,7 +337,7 @@ library
     , ouroboros-network-api        ^>=0.3
     , ouroboros-network-framework  ^>=0.5
     , ouroboros-network-mock       ^>=0.1.0.1
-    , ouroboros-network-protocols  ^>=0.5
+    , ouroboros-network-protocols  ==0.5.0.0
     , psqueues                     >=0.2.3    && <0.3
     , quiet                        >=0.2      && <0.3
     , semialign                    >=1.1

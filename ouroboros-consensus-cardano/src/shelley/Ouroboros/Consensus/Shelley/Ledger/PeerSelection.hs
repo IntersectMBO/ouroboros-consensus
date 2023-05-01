@@ -53,10 +53,10 @@ instance c ~ EraCrypto era
       (futurePoolParams, poolParams) =
           (SL.psFutureStakePoolParams pstate, SL.psStakePoolParams pstate)
         where
-          pstate :: SL.PState c
+          pstate :: SL.PState era
           pstate =
-                SL.dpsPState
-              . SL.lsDPState
+                SL.certPState
+              . SL.lsCertState
               . SL.esLState
               . SL.nesEs
               $ shelleyLedgerState
