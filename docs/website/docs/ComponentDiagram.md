@@ -56,6 +56,9 @@ The other parts of the diagram more closely match the implementation.
 
 Remarks.
 
+- H(L) must contain at least enough of an L to validate headers (ie H(B)).
+  U(H(B)) corresponds to the `ChainUpdate` data type (ie roll forward or roll backward).
+
 - This diagram distinguishes ChainSel and BlockPool in order to explicitly enumerate the three sources of blocks: Upstream Peers, the Mint, and from disk during node initialization.
 
 - The difference in the plurals of Upstream Peers Adapter and Downstream Peer Adapters is not a typo.
@@ -63,6 +66,9 @@ Remarks.
   The double-box node shape is the closest Mermaid equivalent to the more standard stack boxes.
 
 - The peers are divided into "upstream" and "downstream" based on which direction blocks flow, but transactions flow in the opposite direction.
+
+- Q: Since the upstream peers pass the blocks to ChainSel, why does ChainSel ever need to read from BlockPool?
+  A: Two reasons. It may receive the blocks out of order. It reads them during initialization.
 
 TODO.
 Ideally the diagram is a cross with BlockPool, ChainSel, and TxPool all on the top-to-bottom line and Upstream Peers Adapter, ChainSel, and Downstream Peer Adapters on the left-to-right line.
