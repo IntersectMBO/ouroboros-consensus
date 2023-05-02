@@ -51,7 +51,7 @@ import           Data.Either (isRight)
 import           Data.Functor.Identity (Identity)
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
-import           Data.Map.Diff.Strict.Internal (unsafeApplyDiff)
+import           Data.Map.Diff.Strict (applyDiff)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
@@ -619,7 +619,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 -- subtraction. When we revisit the range query implementation
                 -- we should remove this workaround.
                 fullUTxO <- unExtLedgerStateTables <$> doRangeQuery (RangeQuery Nothing (maxBound-1))
-                let f (DiffMK d) (ValuesMK m) = ValuesMK $ unsafeApplyDiff m d
+                let f (DiffMK d) (ValuesMK m) = ValuesMK $ applyDiff m d
                 pure $! zipOverLedgerTablesTicked f st fullUTxO
               pure $ isRight $ Exc.runExcept $ applyTx lcfg DoNotIntervene slot tx fullLedgerSt
 

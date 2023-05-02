@@ -754,7 +754,7 @@ withTestMempool setup@TestSetup {..} prop =
                                           origTables
                )
 
-        f :: (Ord k, Eq v) => ValuesMK k v -> TrackingMK k v
+        f :: Ord k => ValuesMK k v -> TrackingMK k v
         f (ValuesMK v) = TrackingMK v mempty
 
         mkErrMsg e =

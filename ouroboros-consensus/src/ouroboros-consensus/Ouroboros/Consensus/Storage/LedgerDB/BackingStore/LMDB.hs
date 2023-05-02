@@ -217,10 +217,8 @@ writeLMDBTable (LMDBMK _ db) codecMK (DiffMK d) =
     lmdbWriteTable = void $ traverseDiffEntryWithKey_ go d
       where
         go k de = case de of
-          Delete _v           -> void $ Bridge.delete codecMK db k
-          Insert v            -> Bridge.put codecMK db k v
-          UnsafeAntiDelete _v -> error "Found anti-delete. See https://github.com/input-output-hk/anti-diffs/blob/main/diff-containers/README.md for an explanation why this should never happen"
-          UnsafeAntiInsert _v -> error "Found anti-insert. See https://github.com/input-output-hk/anti-diffs/blob/main/diff-containers/README.md for an explanation why this should never happen"
+          Delete _v -> void $ Bridge.delete codecMK db k
+          Insert v  -> Bridge.put codecMK db k v
 
 {-------------------------------------------------------------------------------
  Db state

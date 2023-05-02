@@ -28,7 +28,7 @@ import           Codec.Serialise.Decoding (Decoder)
 import           Control.Monad.Except
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
-import qualified Data.Map.Diff.Strict.Internal as Diff.Internal
+import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Data.Word
@@ -392,7 +392,7 @@ newBackingStoreInitialiser tracer bss =
       -> DiffMK   k v
       -> ValuesMK k v
     applyDiff_ (ValuesMK values) (DiffMK diff) =
-      ValuesMK (Diff.Internal.unsafeApplyDiff values diff)
+      ValuesMK (Diff.applyDiff values diff)
 
 -- | The backing store selector
 data BackingStoreSelector m where

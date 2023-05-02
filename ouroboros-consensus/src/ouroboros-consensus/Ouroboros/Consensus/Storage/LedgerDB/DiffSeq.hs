@@ -92,11 +92,11 @@ import qualified Control.Exception as Exn
 import           Data.Bifunctor (Bifunctor (bimap))
 import           Data.FingerTree.RootMeasured.Strict hiding (split)
 import qualified Data.FingerTree.RootMeasured.Strict as RMFT (splitSized)
-import           Data.Group
 import           Data.Map.Diff.Strict as MapDiff
 import           Data.Maybe.Strict
 import           Data.Monoid (Sum (..))
 import           Data.Semigroup (Max (..), Min (..))
+import           Data.Semigroup.Cancellative
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Prelude hiding (length, splitAt)
@@ -162,7 +162,8 @@ newtype Length = Length { unLength :: Int }
   deriving anyclass (NoThunks)
   deriving Semigroup via Sum Int
   deriving Monoid via Sum Int
-  deriving Group via Sum Int
+  deriving (LeftReductive, RightReductive) via Sum Int
+  deriving (LeftCancellative, RightCancellative) via Sum Int
 
 -- | An upper bound on slot numbers.
 newtype SlotNoUB = SlotNoUB {unSlotNoUB :: Slot.SlotNo}
@@ -197,9 +198,16 @@ instance (Ord k, Eq v) => Semigroup (RootMeasure k v) where
 instance (Ord k, Eq v) => Monoid (RootMeasure k v) where
   mempty = RootMeasure mempty mempty
 
-instance (Ord k, Eq v) => Group (RootMeasure k v) where
-  invert (RootMeasure len d) =
-    RootMeasure (invert len) (invert d)
+instance (Ord k, Eq v) => LeftReductive (RootMeasure k v) where
+  stripPrefix (RootMeasure len1 d1) (RootMeasure len2 d2) =
+      RootMeasure <$> stripPrefix len1 len2 <*> stripPrefix d1 d2
+
+instance (Ord k, Eq v) => RightReductive (RootMeasure k v) where
+  stripSuffix (RootMeasure len1 d1) (RootMeasure len2 d2) =
+      RootMeasure <$> stripSuffix len1 len2 <*> stripSuffix d1 d2
+
+instance (Ord k, Eq v) => LeftCancellative (RootMeasure k v)
+instance (Ord k, Eq v) => RightCancellative (RootMeasure k v)
 
 {-------------------------------------------------------------------------------
   Internal measuring
