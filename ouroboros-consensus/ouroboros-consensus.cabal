@@ -766,7 +766,10 @@ benchmark backingstore-bench
     , io-classes
     , mtl
     , ouroboros-consensus
+    , tasty
+    , QuickCheck
     , tasty-bench
+    , tasty-quickcheck
     , temporary
 
   default-language: Haskell2010

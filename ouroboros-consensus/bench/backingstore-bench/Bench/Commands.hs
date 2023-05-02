@@ -54,7 +54,6 @@ data Cmd ks vs d =
 -- | Identifiers for value handles
 type VHID = Int
 
-
 instance NFData (Cmd ks vs d) where rnf = rwhnf
 
 {-------------------------------------------------------------------------------
