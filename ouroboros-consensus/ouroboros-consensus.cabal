@@ -748,3 +748,45 @@ benchmark mempool-bench
   -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline
   if impl(ghc >=8.6)
     ghc-options: -fproc-alignment=64
+
+benchmark diffseq-bench
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   bench/diffseq-bench
+  main-is:          Main.hs
+  other-modules:
+    Bench.DiffSeq
+    Bench.Orphans
+    Bench.SeqUtxoDiff
+
+  build-depends:
+    , base
+    , bytestring
+    , cardano-binary
+    , cardano-slotting
+    , cardano-strict-containers
+    , cborg
+    , containers
+    , deepseq
+    , diff-containers
+    , fingertree-rm
+    , mtl
+    , nonempty-containers
+    , nothunks
+    , ouroboros-consensus
+    , QuickCheck-GenT
+    , tasty-bench
+    , tasty-quickcheck
+
+  default-language: Haskell2010
+  ghc-options:
+    -Wall -Wcompat -Wincomplete-uni-patterns
+    -Wincomplete-record-updates -Wpartial-fields -Widentities
+    -Wredundant-constraints -Wmissing-export-lists -Wunused-packages
+    -Wno-unticked-promoted-constructors -rtsopts -with-rtsopts=-A32m
+    -threaded
+
+  -- We use this option to avoid skewed results due to changes in cache-line
+  -- alignment. See
+  -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline
+  if impl(ghc >=8.6)
+    ghc-options: -fproc-alignment=64
