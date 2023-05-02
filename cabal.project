@@ -81,8 +81,8 @@ package text-short
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/cardano-ledger
-  tag: 02fc224ea19807a1882012a132062701fe7d3685
-  --sha256: 1k2zwygf0wnqg3kk1m47n033ig65d435hzf8739bcy3hf1wgcggn
+  tag: 180271602640bcac1214084b6de61d0468332f00
+  --sha256: 120995ssz1nf21pp52xwhmcs4cdfndzv4459l8cjvwbaygs7nvvl
   subdir:
     eras/alonzo/impl
     eras/alonzo/test-suite
