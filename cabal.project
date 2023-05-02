@@ -65,3 +65,11 @@ source-repository-package
   --sha256: 0wfhzqz7nhaclfrbw83c912mxq5f7lzr02yh61air7qpm00wcgw5
   subdir:
     ouroboros-network-api
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/anti-diffs
+  tag: b798c646cf1e06bff33cd10f254b961a15393a28
+  subdir:
+    diff-containers
+    fingertree-rm

@@ -344,7 +344,6 @@ library
     , filelock
     , fingertree-rm
     , fs-api
-    , groups
     , hashable
     , io-classes                   ^>=0.3
     , measures
@@ -353,6 +352,7 @@ library
     , ouroboros-network-api
     , ouroboros-network-framework
     , ouroboros-network-mock
+    , monoid-subclasses
     , ouroboros-network-protocols  >=0.2
     , psqueues                     >=0.2.3   && <0.3
     , quiet                        >=0.2     && <0.3
@@ -676,6 +676,8 @@ test-suite storage-test
     , io-sim
     , mtl
     , nonempty-containers
+    , quickcheck-classes
+    , quickcheck-monoid-subclasses
     , nothunks
     , ouroboros-consensus
     , ouroboros-network-api
@@ -687,7 +689,6 @@ test-suite storage-test
     , quickcheck-state-machine       >=0.7.2
     , random
     , serialise
-    , simple-semigroupoids
     , tasty
     , tasty-hunit
     , tasty-quickcheck

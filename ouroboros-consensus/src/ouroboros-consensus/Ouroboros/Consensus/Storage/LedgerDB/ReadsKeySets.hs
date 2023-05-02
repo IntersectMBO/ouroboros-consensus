@@ -23,7 +23,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets (
   ) where
 
 import           Cardano.Slotting.Slot
-import           Data.Map.Diff.Strict.Internal (unsafeApplyDiffForKeys)
+import           Data.Map.Diff.Strict (applyDiffForKeys)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Basics (IsLedger)
 import           Ouroboros.Consensus.Ledger.Tables
@@ -192,7 +192,7 @@ forwardTableKeySets' seqNo chdiffs = \(UnforwardedReadSets seqNo' values keys) -
       -> SeqDiffMK k v
       -> ValuesMK  k v
     forward (ValuesMK values) (KeysMK keys) (SeqDiffMK diffs) =
-      ValuesMK $ unsafeApplyDiffForKeys values keys (cumulativeDiff diffs)
+      ValuesMK $ applyDiffForKeys values keys (cumulativeDiff diffs)
 
 forwardTableKeySets ::
      HasLedgerTables l

@@ -117,6 +117,7 @@ import           Data.Kind (Type)
 import qualified Data.Map.Diff.Strict.Internal as Diff
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromJust)
 import           Data.Sequence (Seq (..))
 import           Data.Sequence.NonEmpty (NESeq (..))
 import           Data.Set (Set)
@@ -356,7 +357,7 @@ instance (Ord k, Eq v) => IsDiffSeq DS.DiffSeq k v where
   push                 = DS.extend
   flush                = DS.splitAt
   rollback             = DS.splitAtFromEnd
-  forwardValuesAndKeys = \vs ks -> Diff.unsafeApplyDiffForKeys vs (getConst ks)
+  forwardValuesAndKeys = \vs ks -> Diff.applyDiffForKeys vs (getConst ks)
   totalDiff            = DS.cumulativeDiff
 
 instance Ord k => IsDiffSeq HD.SeqUtxoDiff k v where
@@ -771,7 +772,7 @@ genPush = do
     vs <- gets flushedValues
 
     let
-      vs' = Diff.unsafeApplyDiff vs (totalDiff ds)
+      vs' = Diff.applyDiff vs (totalDiff ds)
 
     d1 <- valuesToDelete vs'
     d2 <- valuesToInsert
@@ -832,7 +833,7 @@ genFlush = do
 
     modify (\st -> st {
         diffs         = r
-      , flushedValues = Diff.unsafeApplyDiff vs (totalDiff l)
+      , flushedValues = Diff.applyDiff vs (totalDiff l)
       , nrGenerated   = nrGenerated st + 1
       })
 
@@ -1009,26 +1010,24 @@ fromNEDiffHistory (Diff.NEDiffHistory neseq) = case neseq of
 
 fromDiffEntry :: Diff.DiffEntry v -> HD.UtxoEntryDiff v
 fromDiffEntry de = case de of
-  Diff.Insert v            -> HD.UtxoEntryDiff v HD.UedsIns
-  Diff.Delete v            -> HD.UtxoEntryDiff v HD.UedsDel
-  Diff.UnsafeAntiInsert _v -> error "UnsafeAntiInsert found."
-  Diff.UnsafeAntiDelete _v -> error "UnsafeAntiDelete found."
+  Diff.Insert v -> HD.UtxoEntryDiff v HD.UedsIns
+  Diff.Delete v -> HD.UtxoEntryDiff v HD.UedsDel
 
 fromSeqUtxoDiff :: (Ord k, Eq v) => HD.SeqUtxoDiff k v -> DS.DiffSeq k v
 fromSeqUtxoDiff (HD.SeqUtxoDiff ft) = DS.UnsafeDiffSeq . RMFT.fromList . map fromSudElement . toList $ ft
 
-fromSudElement :: Eq v => HD.SudElement k v -> DS.Element k v
+fromSudElement :: HD.SudElement k v -> DS.Element k v
 fromSudElement (HD.SudElement slot d) = DS.Element slot (fromUtxoDiff d)
 
-fromUtxoDiff :: Eq v => HD.UtxoDiff k v -> Diff.Diff k v
+fromUtxoDiff :: HD.UtxoDiff k v -> Diff.Diff k v
 fromUtxoDiff (HD.UtxoDiff m) = Diff.Diff $ fmap fromUtxoEntryDiff m
 
-fromUtxoEntryDiff :: Eq v => HD.UtxoEntryDiff v -> Diff.NEDiffHistory v
+fromUtxoEntryDiff :: HD.UtxoEntryDiff v -> Diff.NEDiffHistory v
 fromUtxoEntryDiff (HD.UtxoEntryDiff x st) = case st of
   HD.UedsIns       -> Diff.singletonInsert x
   HD.UedsDel       -> Diff.singletonDelete x
-  HD.UedsInsAndDel ->
-    Diff.unsafeFromDiffHistory (
+  HD.UedsInsAndDel -> fromJust $
+    Diff.nonEmptyDiffHistory (
       Diff.toDiffHistory (Diff.singletonInsert x) <>
       Diff.toDiffHistory (Diff.singletonDelete x)
     )
