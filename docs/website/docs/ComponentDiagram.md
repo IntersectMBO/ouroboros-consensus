@@ -5,6 +5,11 @@ graph LR
 
     subgraph Consensus[Components of the Consensus Layer]
         direction LR
+
+        TxPool["Mempool\n(aka 'TxPool')"]
+        BlockPool["disk part of ChainDB\n(aka 'BlockPool')"]
+        ChainSel["in-mem parts of ChainDB\n& its threads\n(aka 'ChainSel')"]
+
         Upstream["Upstream Peers Adapter\n& Mint"]---> |B| ChainSel --> |"U(H(B))"| Downstream[["Downstream Peer Adapters\n& Wallet"]]
         ChainSel ---> |B| BlockPool -.-> |B| Downstream
         Downstream --> |T| TxPool ---> |T| Upstream
