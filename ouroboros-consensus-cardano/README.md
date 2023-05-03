@@ -47,7 +47,7 @@ By default db-analyser will process all blocks from the chain database
 must first properly initialize the whole database. That means that before it
 even starts processing blocks it will:
 
-1. look for the latest snapshot stored in DB_PATH/ledger. The latest snapshot is determined by looking at the highest snapshot number. See function 'snapshotFromPath' to understand how a snapshot number is obtained from a snapshot path.
+1. look for the latest snapshot stored in DB_PATH/ledger. The latest snapshot is determined by looking at the highest snapshot number. The storage layer of consensus expects the snapshot file names to be of the form `<SNAPSHOT NUMBER_SUFFIX>`, this is, a snapshot number, optionally followed by the `_` character and an arbitrary suffix. For instance, given snapshots files with these names `101_foo`, `100_db-analyser`, `99`, the file with the highest snapshot number is `101_foo`.
 2. load that snapshot into memory
 3. start replaying blocks
    * starting from that ledger state
@@ -90,6 +90,17 @@ User should run this if they are dealing with a `cardano` chain.
 
 The user can limit the maximum number of blocks that db-analyser will process.
 
+### Database validation
+
+The tool provides two database validation policies:
+
+- `validate-all-blocks`, which will cause the tool to validate all chunks on the
+  immutable and volatile databases.
+- `minimum-block-validation`, which will cause the tool to validate only the
+  most recent chunk in the immutable database.
+
+Note that these flags do not refer to Ledger validation.
+
 #### Analysis
 
 Lastly the user can provide the analysis that should be run on the chain:
@@ -127,7 +138,8 @@ Lastly the user can provide the analysis that should be run on the chain:
   benchmarking results. See this file for usage information.
 
 If no analysis flag is provided, then the ChainDB will be opened, all the chunks
-in the immutable and volatile databases will be validated, and the tool will exit.
+in the immutable and volatile databases will be validated (see
+[validation](#database-validation)), and the tool will exit.
 
 ### Examples
 
