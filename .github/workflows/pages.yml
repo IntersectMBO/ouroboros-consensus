@@ -43,13 +43,6 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Select build directory
-        run: |
-          CABAL_BUILDDIR="dist-newstyle"
-
-          echo "CABAL_BUILDDIR=$CABAL_BUILDDIR"
-          echo "CABAL_BUILDDIR=$CABAL_BUILDDIR" >> $GITHUB_ENV
-
       - name: Install Haskell
         uses: input-output-hk/setup-haskell@v1
         id: setup-haskell
@@ -61,8 +54,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get -y install libsodium-dev
-          sudo apt-get -y remove --purge software-properties-common
-          sudo apt-get -y autoremove
 
       - name: Install secp256k1
         uses: input-output-hk/setup-secp256k1@v1
@@ -85,16 +76,18 @@ jobs:
       - name: Update Hackage index
         run: cabal update
 
-      - name: Use cabal.project.local.github-pages
+      - name: Configure to use libsodium
         run: |
-          cat ./../../cabal.project.local.github-pages >> ./../../cabal.project.local
-          cat ./../../cabal.project.local
+          cat >> ../../cabal.project <<EOF
+          package cardano-crypto-praos
+            flags: -external-libsodium-vrf
+          EOF
 
       - name: build Haddock documentation 🔧
         run: |
           mkdir ./static/haddocks
           cd ../../
-          cabal build --dry-run all
+          cabal build --dry-run --enable-tests all
           ./scripts/docs/haddocks.sh
 
       - name: Build website
@@ -106,7 +99,8 @@ jobs:
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Build output to publish to the `gh-pages` branch:
           publish_dir: ./docs/website/build
+          force_orphan: true
           user_name: 'Arnaud Bailly'
           user_email: arnaud.bailly@iohk.io
+          commit_message: ${{ github.event.head_commit.message }}
