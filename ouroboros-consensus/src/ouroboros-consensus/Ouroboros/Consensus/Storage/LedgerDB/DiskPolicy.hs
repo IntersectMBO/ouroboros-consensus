@@ -2,7 +2,6 @@
 {-# LANGUAGE DeriveFunctor      #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE RecordWildCards    #-}
 
@@ -76,6 +75,13 @@ data DiskPolicy = DiskPolicy {
       --
       -- See also 'defaultDiskPolicy'
     , onDiskShouldTakeSnapshot :: TimeSinceLast DiffTime -> Word64 -> Bool
+
+      -- | Based on the current length of the diff sequence in the
+      -- 'DbChangelog', decide whether we should flush to the 'BackingStore'.
+      --
+      -- Flushing means only applying part of the diffs to the backing store, in
+      -- particular we /don't/ serialize the ledger state.
+    , onDiskShouldFlush        :: Word64 -> Bool
     }
   deriving NoThunks via OnlyCheckWhnf DiskPolicy
 
@@ -89,6 +95,9 @@ defaultDiskPolicy (SecurityParam k) requestedInterval = DiskPolicy {..}
   where
     onDiskNumSnapshots :: Word
     onDiskNumSnapshots = 2
+
+    onDiskShouldFlush :: Word64 -> Bool
+    onDiskShouldFlush = (>= 50)
 
     onDiskShouldTakeSnapshot ::
          TimeSinceLast DiffTime

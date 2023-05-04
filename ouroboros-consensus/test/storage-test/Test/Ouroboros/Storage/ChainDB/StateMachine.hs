@@ -395,12 +395,12 @@ run :: forall m blk.
     => ChainDBEnv m blk
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
-run env@ChainDBEnv { varDB, .. } cmd =
+run env@ChainDBEnv { args, varDB, .. } cmd =
     readMVar varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
       AddBlock blk             -> Point               <$> (advanceAndAdd st (blockSlot blk) blk)
       AddFutureBlock blk s     -> Point               <$> (advanceAndAdd st s               blk)
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
-      GetLedgerDB              -> LedgerDB . flush    <$> atomically getLedgerDB
+      GetLedgerDB              -> LedgerDB . flush (configSecurityParam $ cdbTopLevelConfig args) <$> atomically getLedgerDB
       GetTipBlock              -> MbBlock             <$> getTipBlock
       GetTipHeader             -> MbHeader            <$> getTipHeader
       GetTipPoint              -> Point               <$> atomically getTipPoint
@@ -471,8 +471,8 @@ run env@ChainDBEnv { varDB, .. } cmd =
 -- immutable tip were not compared by the 'GetLedgerDB' command.
 flush ::
      (LedgerSupportsProtocol blk)
-  => LedgerDB (ExtLedgerState blk) -> LedgerDB (ExtLedgerState blk)
-flush = snd . LedgerDB.flush DbChangelog.FlushAllImmutable
+  => SecurityParam -> LedgerDB (ExtLedgerState blk) -> LedgerDB (ExtLedgerState blk)
+flush k = snd . LedgerDB.flush (DbChangelog.FlushAllImmutable k)
 
 persistBlks :: IOLike m => ShouldGarbageCollect -> ChainDB.Internal m blk -> m ()
 persistBlks collectGarbage ChainDB.Internal{..} = do
@@ -658,7 +658,7 @@ runPure cfg = \case
     AddBlock blk             -> ok  Point               $ update  (advanceAndAdd (blockSlot blk) blk)
     AddFutureBlock blk s     -> ok  Point               $ update  (advanceAndAdd s               blk)
     GetCurrentChain          -> ok  Chain               $ query   (Model.volatileChain k getHeader)
-    GetLedgerDB              -> ok  LedgerDB            $ query   (flush . Model.getLedgerDB cfg)
+    GetLedgerDB              -> ok  LedgerDB            $ query   (flush (configSecurityParam cfg) . Model.getLedgerDB cfg)
     GetTipBlock              -> ok  MbBlock             $ query    Model.tipBlock
     GetTipHeader             -> ok  MbHeader            $ query   (fmap getHeader . Model.tipBlock)
     GetTipPoint              -> ok  Point               $ query    Model.tipPoint
@@ -1532,7 +1532,7 @@ smUnused maxClockSkew chunkInfo =
       maxClockSkew
 
 prop_sequential :: MaxClockSkew -> SmallChunkInfo -> Property
-prop_sequential maxClockSkew smallChunkInfo@(SmallChunkInfo chunkInfo)  =
+prop_sequential maxClockSkew smallChunkInfo@(SmallChunkInfo chunkInfo) =
     forAllCommands (smUnused maxClockSkew chunkInfo) Nothing $
       runCmdsLockstep maxClockSkew smallChunkInfo
 

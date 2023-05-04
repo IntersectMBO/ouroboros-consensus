@@ -4,7 +4,6 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , LedgerDB'
   , LedgerDbCfg (..)
   , configLedgerDb
-  , mkWithAnchor
     -- * Initialization
   , BackingStoreSelector (..)
   , InitLog (..)
@@ -31,6 +30,7 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , tip
     -- * Updates
     -- ** Construct
+  , mkWithAnchor
     -- ** Applying blocks
   , AnnLedgerError (..)
   , AnnLedgerError'

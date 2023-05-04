@@ -57,8 +57,8 @@ import           Ouroboros.Consensus.Storage.Common (BlockComponent (..),
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
-                     LedgerDB', LedgerDbCfg (..), configLedgerDb,
-                     push, writeSnapshot)
+                     LedgerDB', LedgerDbCfg (..), configLedgerDb, push,
+                     writeSnapshot)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
@@ -365,8 +365,8 @@ storeLedgerStateAt slotNo aenv = do
       ldb'' <-
         if unBlockNo (blockNo blk) `mod` 100 == 0
         then do
-          let (toFlush, toKeep) = LedgerDB.flush FlushAllImmutable ldb'
-          flushIntoBackingStore bstore toFlush
+          let (toFlush, toKeep) = LedgerDB.flush FlushAll ldb'
+          mapM_ (flushIntoBackingStore bstore) toFlush
           pure toKeep
         else pure ldb'
       when (unBlockNo (blockNo blk) `mod` 1000 == 0) $ reportProgress blk
@@ -449,8 +449,8 @@ checkNoThunksEvery
               newLedger
       if unBlockNo bn `mod` 100 == 0
       then do
-        let (toFlush, toKeep) = LedgerDB.flush FlushAllImmutable intermediateLedgerDB
-        flushIntoBackingStore bstore toFlush
+        let (toFlush, toKeep) = LedgerDB.flush FlushAll intermediateLedgerDB
+        mapM_ (flushIntoBackingStore bstore) toFlush
         pure toKeep
       else pure intermediateLedgerDB
 
@@ -491,8 +491,8 @@ traceLedgerProcessing
 
       if unBlockNo (blockNo blk) `mod` 100 == 0
       then do
-        let (toFlush, toKeep) = LedgerDB.flush FlushAllImmutable ldb'
-        flushIntoBackingStore bstore toFlush
+        let (toFlush, toKeep) = LedgerDB.flush FlushAll ldb'
+        mapM_ (flushIntoBackingStore bstore) toFlush
         pure toKeep
       else pure ldb'
 
@@ -576,8 +576,8 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, b
         (ldb'', tFlush) <-
           if unBlockNo (blockNo blk) `mod` 100 == 0
           then do
-            let (toFlush, toKeep) = LedgerDB.flush FlushAllImmutable ldb'
-            ((), tFlush) <- time $ flushIntoBackingStore bstore toFlush
+            let (toFlush, toKeep) = LedgerDB.flush FlushAll ldb'
+            ((), tFlush) <- time $ mapM_ (flushIntoBackingStore bstore) toFlush
             pure (toKeep, tFlush)
           else pure (ldb', 0)
 
@@ -793,8 +793,8 @@ reproMempoolForge numBlks env = do
           ldb'' <-
             if unBlockNo (blockNo blk) `mod` 100 == 0
             then do
-              let (toFlush, toKeep) = LedgerDB.flush FlushAllImmutable ldb'
-              flushIntoBackingStore bstore toFlush
+              let (toFlush, toKeep) = LedgerDB.flush FlushAll ldb'
+              mapM_ (flushIntoBackingStore bstore) toFlush
               pure toKeep
             else pure ldb'
 

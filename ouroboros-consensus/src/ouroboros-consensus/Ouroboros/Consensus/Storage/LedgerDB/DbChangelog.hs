@@ -48,14 +48,16 @@ module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (
   , FlushPolicy (..)
   , flush
   , flushIntoBackingStore
+  , flushableLength
   ) where
 
 import           Cardano.Slotting.Slot
 import qualified Control.Exception as Exn
-import           Data.Bifunctor (bimap, first)
+import           Data.Bifunctor (bimap)
 import           Data.Semigroup (Sum (..))
 import           Data.SOP (K, unK)
 import           Data.SOP.Functors (Product2 (..))
+import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
@@ -313,6 +315,17 @@ immutableTipSlot =
   Flushing
 -------------------------------------------------------------------------------}
 
+flushableLength :: HasLedgerTables l => SecurityParam -> DbChangelog l -> Word64
+flushableLength (SecurityParam k) =
+    (\(Sum x) -> x - k)
+  . foldLedgerTables f
+  . changelogDiffs
+ where
+   f :: (Ord k, Eq v)
+     => SeqDiffMK k v
+     -> Sum Word64
+   f (SeqDiffMK sq) = Sum $ fromIntegral $ DiffSeq.length sq
+
 -- | The flush policy
 data FlushPolicy =
       -- | Always flush everything older than the immutable tip
@@ -330,7 +343,9 @@ flush ::
   -> DbChangelog l
   -> (Maybe (DbChangelogToFlush l), DbChangelog l)
 flush policy dblog =
-      (ldblog, rdblog)
+    if foldLedgerTables (\(SeqDiffMK sq) -> Sum $ DiffSeq.length sq) l == 0
+    then (Nothing, dblog)
+    else (Just ldblog, rdblog)
   where
     DbChangelog {
         changelogDiffs
@@ -344,14 +359,13 @@ flush policy dblog =
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> (SeqDiffMK k v, SeqDiffMK k v)
-    splitSeqDiff (SeqDiffMK sq) =
-        bimap (maybe emptyMK SeqDiffMK) SeqDiffMK
-      $ case policy of
-          FlushAllImmutable (SecurityParam k) ->
-            if DiffSeq.length sq > fromIntegral k
-            then first Just $ splitAtFromEnd (fromIntegral k) sq
-            else (Nothing, sq)
-          FlushAll -> (Just sq, DiffSeq.empty)
+    splitSeqDiff (SeqDiffMK sq) = case policy of
+      FlushAll -> (SeqDiffMK sq, emptyMK)
+      FlushAllImmutable secParam ->
+         bimap (maybe emptyMK SeqDiffMK) SeqDiffMK
+        $ if DiffSeq.length sq >= fromIntegral (maxRollbacks secParam)
+          then (Just sq, DiffSeq.empty)
+          else (Nothing, sq)
 
     lr = mapLedgerTables (uncurry Pair2 . splitSeqDiff) changelogDiffs
     l = mapLedgerTables (\(Pair2 x _) -> x) lr
@@ -363,10 +377,7 @@ flush policy dblog =
       -> DiffMK k v
     prj (SeqDiffMK sq) = DiffMK (DS.cumulativeDiff sq)
 
-    ldblog =
-      if foldLedgerTables (\(SeqDiffMK sq) -> Sum $ DiffSeq.length sq) l == 0
-      then Nothing
-      else Just $ DbChangelogToFlush {
+    ldblog = DbChangelogToFlush {
         toFlushDiffs = mapLedgerTables prj l
       , toFlushSlot  =
             fromWithOrigin (error "Flushing a DbChangelog at origin should never happen")

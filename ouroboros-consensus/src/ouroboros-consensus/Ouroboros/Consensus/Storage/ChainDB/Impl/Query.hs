@@ -1,10 +1,8 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 
 -- | Queries
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
@@ -132,7 +130,7 @@ getTipPoint
   :: forall m blk. (IOLike m, HasHeader (Header blk))
   => ChainDbEnv m blk -> STM m (Point blk)
 getTipPoint CDB{..} =
-    (castPoint . AF.headPoint) <$> readTVar cdbChain
+    castPoint . AF.headPoint <$> readTVar cdbChain
 
 getBlockComponent ::
      forall m blk b. IOLike m
@@ -332,4 +330,4 @@ getAnyBlockComponent immutableDB volatileDB blockComponent p = do
 
 mustExist :: RealPoint blk -> Maybe b -> Either (ChainDbFailure blk) b
 mustExist p Nothing  = Left  $ ChainDbMissingBlock p
-mustExist _ (Just b) = Right $ b
+mustExist _ (Just b) = Right b

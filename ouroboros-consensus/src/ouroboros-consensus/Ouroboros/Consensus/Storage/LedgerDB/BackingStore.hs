@@ -3,7 +3,6 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE Rank2Types                 #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 
@@ -27,6 +26,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   , LedgerBackingStore (..)
   , LedgerBackingStore'
   , LedgerBackingStoreValueHandle (..)
+  , lbsValueHandle
+  , lbsvhClose
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
@@ -152,6 +153,13 @@ newtype LedgerBackingStore m l = LedgerBackingStore
     )
   deriving newtype (NoThunks)
 
+lbsValueHandle ::
+     IOLike m
+  => LedgerBackingStore m l
+  -> m (LedgerBackingStoreValueHandle m l)
+lbsValueHandle (LedgerBackingStore bstore) =
+  uncurry LedgerBackingStoreValueHandle <$> bsValueHandle bstore
+
 -- | A handle to the backing store for the ledger tables
 data LedgerBackingStoreValueHandle m l = LedgerBackingStoreValueHandle
     !(WithOrigin SlotNo)
@@ -161,5 +169,8 @@ data LedgerBackingStoreValueHandle m l = LedgerBackingStoreValueHandle
     )
   deriving stock    (Generic)
   deriving anyclass (NoThunks)
+
+lbsvhClose :: LedgerBackingStoreValueHandle m l -> m ()
+lbsvhClose (LedgerBackingStoreValueHandle _ vh) = bsvhClose vh
 
 type LedgerBackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)

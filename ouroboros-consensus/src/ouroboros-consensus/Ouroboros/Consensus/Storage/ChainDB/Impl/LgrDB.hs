@@ -220,7 +220,7 @@ openDB :: forall m blk.
        -> m (LgrDB m blk, Word64)
 openDB args@LgrDbArgs { lgrHasFS = lgrHasFS@(SomeHasFS hasFS), .. } replayTracer immutableDB getBlock = do
     createDirectoryIfMissing hasFS True (mkFsPath [])
-    (db, replayed, lgrBackingStore) <- initFromDisk args replayTracer immutableDB
+    (db, replayed, lgrBackingStore) <- initFromDisk args replayTracer lgrDiskPolicy immutableDB
     -- When initializing the ledger DB from disk we:
     --
     -- - Look for the newest valid snapshot, say 'Lbs', which corresponds to the
@@ -267,10 +267,12 @@ initFromDisk
      )
   => LgrDbArgs Identity m blk
   -> Tracer m (LedgerDB.ReplayGoal blk -> LedgerDB.TraceReplayEvent blk)
+  -> LedgerDB.DiskPolicy
   -> ImmutableDB m blk
   -> m (LedgerDB' blk, Word64, LedgerBackingStore m (ExtLedgerState blk))
 initFromDisk LgrDbArgs { lgrHasFS = hasFS, .. }
              replayTracer
+             diskPolicy
              immutableDB = wrapFailure (Proxy @blk) $ do
     (_initLog, db, replayed, backingStore) <-
       LedgerDB.initialize
@@ -281,6 +283,7 @@ initFromDisk LgrDbArgs { lgrHasFS = hasFS, .. }
         decodeExtLedgerState'
         decode
         (LedgerDB.configLedgerDb lgrTopLevelConfig)
+        diskPolicy
         lgrGenesis
         (streamAPI immutableDB)
         lgrBackingStoreSelector

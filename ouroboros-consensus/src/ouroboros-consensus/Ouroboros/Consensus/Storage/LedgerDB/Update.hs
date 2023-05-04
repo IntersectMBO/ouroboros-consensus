@@ -1,20 +1,14 @@
 {-# LANGUAGE ConstraintKinds          #-}
 {-# LANGUAGE DataKinds                #-}
-{-# LANGUAGE DeriveAnyClass           #-}
 {-# LANGUAGE DeriveGeneric            #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE FlexibleInstances        #-}
 {-# LANGUAGE FunctionalDependencies   #-}
 {-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE MultiParamTypeClasses    #-}
-{-# LANGUAGE NamedFieldPuns           #-}
 {-# LANGUAGE QuantifiedConstraints    #-}
 {-# LANGUAGE RankNTypes               #-}
-{-# LANGUAGE RecordWildCards          #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE StandaloneDeriving       #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE UndecidableInstances     #-}
 
@@ -93,9 +87,10 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 type Ap :: (Type -> Type) -> LedgerStateKind -> Type -> Constraint -> Type
 data Ap m l blk c where
   ReapplyVal ::           blk -> Ap m l blk ()
-  ApplyVal   ::           blk -> Ap m l blk (                      ThrowsLedgerError m l blk)
-  ReapplyRef :: RealPoint blk -> Ap m l blk (ResolvesBlocks m blk)
-  ApplyRef   :: RealPoint blk -> Ap m l blk (ResolvesBlocks m blk, ThrowsLedgerError m l blk)
+  ApplyVal   ::           blk -> Ap m l blk ( ThrowsLedgerError m l blk )
+  ReapplyRef :: RealPoint blk -> Ap m l blk ( ResolvesBlocks    m   blk )
+  ApplyRef   :: RealPoint blk -> Ap m l blk ( ResolvesBlocks    m   blk
+                                            , ThrowsLedgerError m l blk )
 
   -- | 'Weaken' increases the constraint on the monad @m@.
   --
@@ -144,8 +139,8 @@ applyBlock cfg ap ksReader db = case ap of
     l = Query.current db
 
     withValues :: blk -> (l ValuesMK -> m (l DiffMK)) -> m (l DiffMK)
-    withValues b f =
-      withKeysReadSets l ksReader db (getBlockKeySets b) f
+    withValues =
+      withKeysReadSets l ksReader db . getBlockKeySets
 
 {-------------------------------------------------------------------------------
   Resolving blocks maybe from disk
@@ -204,7 +199,8 @@ type AnnLedgerError' blk = AnnLedgerError (ExtLedgerState blk) blk
 class Monad m => ThrowsLedgerError m l blk where
   throwLedgerError :: LedgerDB l -> RealPoint blk -> LedgerErr l -> m a
 
-instance Monad m => ThrowsLedgerError (ExceptT (AnnLedgerError l blk) m) l blk where
+instance Monad m
+      => ThrowsLedgerError (ExceptT (AnnLedgerError l blk) m) l blk where
   throwLedgerError l r e = throwError $ AnnLedgerError l r e
 
 defaultThrowLedgerErrors :: ExceptT (AnnLedgerError l blk) m a
@@ -237,9 +233,7 @@ volatileStatesBimap f g =
 
 -- | Prune ledger states until at we have at most @k@ in the LedgerDB, excluding
 -- the one stored at the anchor.
-prune ::
-     GetTip l
-  => SecurityParam -> LedgerDB l -> LedgerDB l
+prune ::GetTip l => SecurityParam -> LedgerDB l -> LedgerDB l
 prune = DbChangelog.pruneVolatilePart
 
  -- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
@@ -296,7 +290,7 @@ data ExceededRollback = ExceededRollback {
     , rollbackRequested :: Word64
     }
 
-push :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
+push :: (ApplyBlock l blk, Monad m, c)
      => LedgerDbCfg l
      -> Ap m l blk c -> KeySetsReader m l -> LedgerDB l -> m (LedgerDB l)
 push cfg ap ksReader db =
@@ -304,12 +298,14 @@ push cfg ap ksReader db =
       applyBlock (ledgerDbCfg cfg) ap ksReader db
 
 -- | Push a bunch of blocks (oldest first)
-pushMany ::
-     forall m c l blk . (ApplyBlock l blk, Monad m, c)
-  => (Pushing blk -> m ())
-  -> LedgerDbCfg l
-  -> [Ap m l blk c] -> KeySetsReader m l -> LedgerDB l -> m (LedgerDB l)
-pushMany trace cfg aps ksReader initDb = (repeatedlyM pushAndTrace) aps initDb
+pushMany :: (ApplyBlock l blk, Monad m, c)
+         => (Pushing blk -> m ())
+         -> LedgerDbCfg l
+         -> [Ap m l blk c]
+         -> KeySetsReader m l
+         -> LedgerDB l
+         -> m (LedgerDB l)
+pushMany trace cfg aps ksReader = repeatedlyM pushAndTrace aps
   where
     pushAndTrace ap db = do
       let pushing = Pushing . toRealPoint $ ap
@@ -338,16 +334,18 @@ switch cfg numRollbacks trace newBlocks ksReader db =
         (firstBlock:_) -> do
           let start   = PushStart . toRealPoint $ firstBlock
               goal    = PushGoal  . toRealPoint . last $ newBlocks
-          Right <$> pushMany (trace . (StartedPushingBlockToTheLedgerDb start goal))
-                                     cfg
-                                     newBlocks
-                                     ksReader
-                                     db'
+          Right <$> pushMany
+                      (trace . StartedPushingBlockToTheLedgerDb start goal)
+                      cfg
+                      newBlocks
+                      ksReader
+                      db'
 
 -- | Isolates the prefix of the changelog that should be flushed
-flush ::
-     (GetTip l, HasLedgerTables l)
-  => DbChangelog.FlushPolicy -> LedgerDB l -> (Maybe (DbChangelogToFlush l), LedgerDB l)
+flush :: (GetTip l, HasLedgerTables l)
+      => DbChangelog.FlushPolicy
+      -> LedgerDB l
+      -> (Maybe (DbChangelogToFlush l), LedgerDB l)
 flush = DbChangelog.flush
 
 {-------------------------------------------------------------------------------
@@ -384,18 +382,30 @@ pureBlock :: blk -> Ap m l blk ()
 pureBlock = ReapplyVal
 
 push' :: ApplyBlock l blk
-      => LedgerDbCfg l -> blk -> KeySetsReader Identity l -> LedgerDB l -> LedgerDB l
+      => LedgerDbCfg l
+      -> blk
+      -> KeySetsReader Identity l
+      -> LedgerDB l
+      -> LedgerDB l
 push' cfg b bk = runIdentity . push cfg (pureBlock b) bk
 
 pushMany' :: ApplyBlock l blk
-          => LedgerDbCfg l -> [blk] -> KeySetsReader Identity l -> LedgerDB l -> LedgerDB l
+          => LedgerDbCfg l
+          -> [blk]
+          -> KeySetsReader Identity l
+          -> LedgerDB l
+          -> LedgerDB l
 pushMany' cfg bs bk =
   runIdentity . pushMany (const $ pure ()) cfg (map pureBlock bs) bk
 
 switch' :: ApplyBlock l blk
         => LedgerDbCfg l
-        -> Word64 -> [blk] -> KeySetsReader Identity l -> LedgerDB l -> Maybe (LedgerDB l)
+        -> Word64
+        -> [blk]
+        -> KeySetsReader Identity l
+        -> LedgerDB l
+        -> Maybe (LedgerDB l)
 switch' cfg n bs bk db =
-    case runIdentity $ switch cfg n (const $ pure ()) (map pureBlock bs) bk db of
-      Left  ExceededRollback{} -> Nothing
-      Right db'                -> Just db'
+  case runIdentity $ switch cfg n (const $ pure ()) (map pureBlock bs) bk db of
+    Left  ExceededRollback{} -> Nothing
+    Right db'                -> Just db'

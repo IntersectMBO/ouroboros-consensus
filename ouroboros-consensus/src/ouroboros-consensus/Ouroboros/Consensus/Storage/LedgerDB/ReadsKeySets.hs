@@ -44,8 +44,10 @@ data RewoundTableKeySets l =
       !(WithOrigin SlotNo)   -- ^ the slot to which the keys were rewound
       !(LedgerTables l KeysMK)
 
-rewindTableKeySets ::
-     GetTip l => DbChangelog l -> LedgerTables l KeysMK -> RewoundTableKeySets l
+rewindTableKeySets :: GetTip l
+                   => DbChangelog l
+                   -> LedgerTables l KeysMK
+                   -> RewoundTableKeySets l
 rewindTableKeySets =
      RewoundTableKeySets . getTipSlot . changelogAnchor
 
@@ -107,14 +109,14 @@ withHydratedLedgerState ::
   -> DbChangelog l
   -> UnforwardedReadSets l
   -> (l ValuesMK -> a)
-  -> Either (WithOrigin SlotNo, WithOrigin SlotNo) a
+  -> Either RewindReadFwdError a
 withHydratedLedgerState st dbch urs f =
           f
       .   withLedgerTables st
       <$> forwardTableKeySets dbch urs
 
 -- | The requested point is not found on the ledger db
-data PointNotFound blk = PointNotFound !(Point blk) deriving (Eq, Show)
+newtype PointNotFound blk = PointNotFound (Point blk) deriving (Eq, Show)
 
 getLedgerTablesAtFor ::
      ( HeaderHash l ~ HeaderHash blk
@@ -148,14 +150,15 @@ getLedgerTablesFor ::
   => LedgerDB l
   -> LedgerTables l KeysMK
   -> KeySetsReader m l
-  -> m (Either (WithOrigin SlotNo, WithOrigin SlotNo) (LedgerTables l ValuesMK))
+  -> m (Either RewindReadFwdError (LedgerTables l ValuesMK))
 getLedgerTablesFor db keys ksRead = do
   let aks = rewindTableKeySets db keys
   urs <- ksRead aks
   pure $ forwardTableKeySets db urs
 
 trivialKeySetsReader :: (Monad m, LedgerTablesAreTrivial l) => KeySetsReader m l
-trivialKeySetsReader (RewoundTableKeySets s _) = pure $ UnforwardedReadSets s trivialLedgerTables trivialLedgerTables
+trivialKeySetsReader (RewoundTableKeySets s _) =
+  pure $ UnforwardedReadSets s trivialLedgerTables trivialLedgerTables
 
 {-------------------------------------------------------------------------------
   Forward
@@ -171,17 +174,24 @@ data UnforwardedReadSets l = UnforwardedReadSets {
   , ursKeys   :: !(LedgerTables l KeysMK)
   }
 
+-- | The DbChangelog and the BackingStore got out of sync. This is a critical
+-- error, we cannot recover from this.
+data RewindReadFwdError = RewindReadFwdError {
+    rrfBackingStoreAt :: !(WithOrigin SlotNo)
+  , rrfDbChangelogAt  :: !(WithOrigin SlotNo)
+  } deriving Show
+
 forwardTableKeySets' ::
      HasLedgerTables l
   => WithOrigin SlotNo
   -> LedgerTables l SeqDiffMK
   -> UnforwardedReadSets l
-  -> Either (WithOrigin SlotNo, WithOrigin SlotNo)
+  -> Either RewindReadFwdError
             (LedgerTables l ValuesMK)
 forwardTableKeySets' seqNo chdiffs = \(UnforwardedReadSets seqNo' values keys) ->
-    if seqNo /= seqNo' then Left (seqNo, seqNo') else
-    Right
-      $ zipLedgerTables3 forward values keys chdiffs
+    if seqNo /= seqNo'
+    then Left $ RewindReadFwdError seqNo seqNo'
+    else Right $ zipLedgerTables3 forward values keys chdiffs
   where
     forward ::
          (Ord k, Eq v)
@@ -196,7 +206,7 @@ forwardTableKeySets ::
      (GetTip l, HasLedgerTables l)
   => DbChangelog l
   -> UnforwardedReadSets l
-  -> Either (WithOrigin SlotNo, WithOrigin SlotNo)
+  -> Either RewindReadFwdError
             (LedgerTables l ValuesMK)
 forwardTableKeySets dblog =
   forwardTableKeySets'
