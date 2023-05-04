@@ -45,6 +45,20 @@ common common-test
   import:      common-lib
   ghc-options: -threaded -rtsopts
 
+common common-bench
+  default-language: Haskell2010
+  ghc-options:
+    -Wall -Wcompat -Wincomplete-uni-patterns
+    -Wincomplete-record-updates -Wpartial-fields -Widentities
+    -Wredundant-constraints -Wmissing-export-lists -Wunused-packages
+    -Wno-unticked-promoted-constructors -rtsopts -with-rtsopts=-A32m
+
+  -- We use this option to avoid skewed results due to changes in cache-line
+  -- alignment. See
+  -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline
+  if impl(ghc >=8.6)
+    ghc-options: -fproc-alignment=64
+
 library
   import:           common-lib
   hs-source-dirs:   src/ouroboros-consensus
@@ -699,9 +713,10 @@ test-suite storage-test
     , vector
 
 benchmark mempool-bench
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   bench/mempool-bench
-  main-is:          Main.hs
+  import:         common-bench
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/mempool-bench
+  main-is:        Main.hs
   other-modules:
     Bench.Consensus.Mempool
     Bench.Consensus.Mempool.Params
@@ -736,24 +751,12 @@ benchmark mempool-bench
     , transformers
     , tree-diff
 
-  default-language: Haskell2010
-  ghc-options:
-    -Wall -Wcompat -Wincomplete-uni-patterns
-    -Wincomplete-record-updates -Wpartial-fields -Widentities
-    -Wredundant-constraints -Wmissing-export-lists -Wunused-packages
-    -Wno-unticked-promoted-constructors -rtsopts -with-rtsopts=-A32m
-
-  -- We use this option to avoid skewed results due to changes in cache-line
-  -- alignment. See
-  -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline
-  if impl(ghc >=8.6)
-    ghc-options: -fproc-alignment=64
-
 benchmark backingstore-bench
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   bench/backingstore-bench
-  main-is:          Main.hs
-  other-modules:    Bench.Commands
+  import:         common-bench
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/backingstore-bench
+  main-is:        Main.hs
+  other-modules:  Bench.Commands
   build-depends:
     , base
     , cardano-slotting
@@ -766,22 +769,10 @@ benchmark backingstore-bench
     , io-classes
     , mtl
     , ouroboros-consensus
-    , tasty
     , QuickCheck
+    , tasty
     , tasty-bench
     , tasty-quickcheck
     , temporary
 
-  default-language: Haskell2010
-  ghc-options:
-    -Wall -Wcompat -Wincomplete-uni-patterns
-    -Wincomplete-record-updates -Wpartial-fields -Widentities
-    -Wredundant-constraints -Wmissing-export-lists -Wunused-packages
-    -Wno-unticked-promoted-constructors -rtsopts -with-rtsopts=-A32m
-    -threaded
-
-  -- We use this option to avoid skewed results due to changes in cache-line
-  -- alignment. See
-  -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline
-  if impl(ghc >=8.6)
-    ghc-options: -fproc-alignment=64
+  ghc-options:    -threaded
