@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE PatternSynonyms            #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
 
@@ -12,23 +13,36 @@
 -- This is useful when we only need a ledger state and ledger tables, but not
 -- necessarily blocks with payloads (such as defined in @Test.Util.TestBlock@).
 module Test.Util.LedgerStateOnlyTables (
-    LedgerTables (..)
-  , OTLedgerState (..)
+    OTLedgerState
+  , OTLedgerTables
+  , pattern OTLedgerState
+  , pattern OTLedgerTables
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
+import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables
-import           Ouroboros.Consensus.Ledger.Tables.Utils
+                     (CanSerializeLedgerTables (..), CanStowLedgerTables (..),
+                     CodecMK (..), HasLedgerTables (..), MapKind, NameMK (..),
+                     ValuesMK)
+import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 
 {-------------------------------------------------------------------------------
   Simple ledger state
 -------------------------------------------------------------------------------}
 
-data OTLedgerState k v (mk :: MapKind) = OTLedgerState {
+type OTLedgerState  k v = LedgerState  (OTBlock k v)
+type OTLedgerTables k v = LedgerTables (OTLedgerState k v)
+
+-- | An empty type for blocks, which is only used to record the types @k@ and
+-- @v@.
+data OTBlock k v
+
+data instance LedgerState (OTBlock k v) (mk :: MapKind) = OTLedgerState {
     otlsLedgerState  :: ValuesMK k v
-  , otlsLedgerTables :: LedgerTables (OTLedgerState k v) mk
+  , otlsLedgerTables :: OTLedgerTables k v mk
   }
 
 deriving instance (Ord k, Eq v, Eq (mk k v))
@@ -103,10 +117,10 @@ instance (Ord k, Eq v, Show k, Show v, NoThunks k, NoThunks v)
     OTLedgerTables { otltLedgerTables = NameMK "otltLedgerTables" }
 
 deriving stock instance (Eq (mk k v))
-               => Eq (LedgerTables (OTLedgerState k v) mk)
+               => Eq (OTLedgerTables k v mk)
 
 deriving stock instance (Show (mk k v))
-               => Show (LedgerTables (OTLedgerState k v) mk)
+               => Show (OTLedgerTables k v mk)
 
 deriving newtype instance NoThunks (mk k v)
-               => NoThunks (LedgerTables (OTLedgerState k v) mk)
+               => NoThunks (OTLedgerTables k v mk)

@@ -322,11 +322,7 @@ monadicSim m = QC.property (runSimGen (QC.monadic' m))
 -------------------------------------------------------------------------------}
 
 deriving newtype instance QC.Arbitrary (mk k v)
-                       => QC.Arbitrary (
-                            LedgerTables
-                              (OTLedgerState k v)
-                              mk
-                            )
+                       => QC.Arbitrary (OTLedgerTables k v mk)
 
 instance (Ord k, QC.Arbitrary k)
       => QC.Arbitrary (KeysMK k v) where
