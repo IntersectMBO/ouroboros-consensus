@@ -295,6 +295,21 @@ mkBlockFetchConsensusInterface
           -- fragment can't be empty.
           (True,  _)     -> error "impossible"
 
+      -- The precondition of 'compareAnchoredFragments' is that either both
+      -- fragments are non-empty or they intersect. We are mostly satisfying
+      -- that precondition, but there is a corner case when considering EBBs
+      -- where we don't. Either our fragment or the candidate fragment could be
+      -- anchored at an EBB that shares the block number with the anchor of the
+      -- other, in which case the two fragments are not guaranteed to intersect.
+      -- This can happen even if one of the two fragments is empty while the
+      -- other is non-empty.
+      --
+      -- For example, consider an EBB @B@ that shares the block number with its
+      -- predecessor @A. Consider two fragments @f1 = B ] C@ and @f2 = A ]@.
+      -- @f1@ is anchored at @B@, @f2@ is anchored at @A@. @f1@ and @f2@ will
+      -- share the same anchor block number, such that @AF.anchorBlockNo f1 ==
+      -- AF.anchorBlockNo f2@. However, these fragments do not intersect, so
+      -- @preferAnchoredCandidate _ ours cand@ will fail.
       | otherwise
       = preferAnchoredCandidate bcfg ours cand
 
