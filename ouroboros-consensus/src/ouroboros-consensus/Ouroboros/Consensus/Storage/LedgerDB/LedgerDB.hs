@@ -34,8 +34,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog,
   LedgerDB
 -------------------------------------------------------------------------------}
 
--- | Newtype wrapper over a 'DbChangelog'. See the documentation there for more
--- information
 type LedgerDB  l   = DbChangelog l
 type LedgerDB' blk = LedgerDB (ExtLedgerState blk)
 

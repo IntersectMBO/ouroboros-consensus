@@ -1,17 +1,19 @@
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns        #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE UndecidableInstances  #-}
-
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 -- | A 'DbChangelog' is a data structure that holds a sequence of "virtual"
 -- ledger states by internally maintaining:
 --
@@ -46,9 +48,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (
     -- * Flush
   , DbChangelogToFlush (..)
   , FlushPolicy (..)
-  , flush
   , flushIntoBackingStore
   , flushableLength
+  , splitForFlushing
+    -- * Lock
+  , LedgerDBLock (..)
+  , mkLedgerDBLock
+  , withReadLock
+  , withWriteLock
   ) where
 
 import           Cardano.Slotting.Slot
@@ -59,7 +66,6 @@ import           Data.SOP (K, unK)
 import           Data.SOP.Functors (Product2 (..))
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -70,6 +76,8 @@ import           Ouroboros.Consensus.Storage.LedgerDB.DiffSeq hiding (empty,
                      extend)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DiffSeq as DiffSeq
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DiffSeq as DS
+import           Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as Lock
 import           Ouroboros.Network.AnchoredSeq (Anchorable (..),
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredSeq as AS
@@ -169,9 +177,9 @@ empty ::
   => l EmptyMK -> DbChangelog l
 empty anchor =
     DbChangelog {
-        changelogAnchor          = anchor
-      , changelogDiffs           = pureLedgerTables (SeqDiffMK DS.empty)
-      , changelogVolatileStates  = AS.Empty anchor
+        changelogAnchor         = anchor
+      , changelogDiffs          = pureLedgerTables (SeqDiffMK DS.empty)
+      , changelogVolatileStates = AS.Empty anchor
       }
 
 {-------------------------------------------------------------------------------
@@ -184,9 +192,9 @@ extend ::
 extend dblog newState =
     DbChangelog {
         changelogAnchor
-      , changelogDiffs           =
+      , changelogDiffs          =
           zipLedgerTables ext changelogDiffs tablesDiff
-      , changelogVolatileStates  =
+      , changelogVolatileStates =
           changelogVolatileStates AS.:> l'
       }
   where
@@ -239,25 +247,23 @@ rollbackToPoint ::
      )
   => Point l -> DbChangelog l -> Maybe (DbChangelog l)
 rollbackToPoint pt dblog = do
-    let vol = changelogVolatileStates
     vol' <-
       AS.rollback
         (pointSlot pt)
         ((== pt) . getTip . either id id)
         vol
-    let ndropped                  = AS.length vol - AS.length vol'
-        diffs'                    =
-          mapLedgerTables (trunc ndropped) changelogDiffs
+    let ndropped = AS.length vol - AS.length vol'
+        diffs'   = mapLedgerTables (trunc ndropped) changelogDiffs
     Exn.assert (ndropped >= 0) $ pure DbChangelog {
           changelogAnchor
-        , changelogDiffs           = diffs'
-        , changelogVolatileStates  = vol'
+        , changelogDiffs          = diffs'
+        , changelogVolatileStates = vol'
         }
   where
     DbChangelog {
         changelogAnchor
       , changelogDiffs
-      , changelogVolatileStates
+      , changelogVolatileStates = vol
       } = dblog
 
 rollbackToAnchor ::
@@ -266,19 +272,18 @@ rollbackToAnchor ::
 rollbackToAnchor dblog =
     DbChangelog {
         changelogAnchor
-      , changelogDiffs           = diffs'
-      , changelogVolatileStates  = AS.Empty (AS.anchor vol)
+      , changelogDiffs          = diffs'
+      , changelogVolatileStates = AS.Empty (AS.anchor vol)
       }
   where
     DbChangelog {
         changelogAnchor
       , changelogDiffs
-      , changelogVolatileStates
+      , changelogVolatileStates = vol
       } = dblog
 
-    vol                       = changelogVolatileStates
-    ndropped                  = AS.length vol
-    diffs'                    =
+    ndropped = AS.length vol
+    diffs'   =
       mapLedgerTables (trunc ndropped) changelogDiffs
 
 trunc ::
@@ -293,8 +298,8 @@ rollbackN ::
 rollbackN n dblog =
     DbChangelog {
         changelogAnchor
-      , changelogDiffs           = mapLedgerTables (trunc n) changelogDiffs
-      , changelogVolatileStates  = AS.dropNewest n changelogVolatileStates
+      , changelogDiffs          = mapLedgerTables (trunc n) changelogDiffs
+      , changelogVolatileStates = AS.dropNewest n changelogVolatileStates
       }
   where
     DbChangelog {
@@ -336,13 +341,13 @@ data FlushPolicy =
 -- | "Flush" the 'DbChangelog' by splitting it into two 'DbChangelogs', one that
 -- contains the diffs that should be flushed into the Backing store (see
 -- 'flushIntoBackingStore') and one to be considered as the new 'DbChangelog'.
-flush ::
+splitForFlushing ::
      forall l.
      (GetTip l, HasLedgerTables l)
   => FlushPolicy
   -> DbChangelog l
   -> (Maybe (DbChangelogToFlush l), DbChangelog l)
-flush policy dblog =
+splitForFlushing policy dblog =
     if foldLedgerTables (\(SeqDiffMK sq) -> Sum $ DiffSeq.length sq) l == 0
     then (Nothing, dblog)
     else (Just ldblog, rdblog)
@@ -411,10 +416,51 @@ data DbChangelogToFlush l = DbChangelogToFlush {
 -- PRECONDITION: @dblog@ should only contain the diffs for the immutable part
 -- of the changelog. If not, the @slot@ that we flush to the backing store will
 -- not match the actual tip of the diffs that we flush to the backing store.
-flushIntoBackingStore ::
-  LedgerBackingStore m l -> DbChangelogToFlush l -> m ()
+flushIntoBackingStore :: LedgerBackingStore m l -> DbChangelogToFlush l -> m ()
 flushIntoBackingStore (LedgerBackingStore backingStore) dblog =
   BackingStore.bsWrite
     backingStore
     (toFlushSlot dblog)
     (toFlushDiffs dblog)
+
+{-------------------------------------------------------------------------------
+  LedgerDB lock
+-------------------------------------------------------------------------------}
+
+-- | A lock to prevent the LedgerDB (i.e. a 'DbChangelog') from getting out of
+-- sync with the 'BackingStore'.
+--
+-- We rely on the capability of the @BackingStore@s of providing
+-- 'BackingStoreValueHandles' that can be used to hold a persistent view of the
+-- database as long as the handle is open. Assuming this functionality, the lock
+-- is used in three ways:
+--
+-- - Read lock to acquire a value handle: we do this when acquiring a view of the
+--   'LedgerDB' (which lives in a 'StrictTVar' at the 'ChainDB' level) and of
+--   the 'BackingStore'. We momentarily acquire a read lock, consult the
+--   transactional variable and also open a 'BackingStoreValueHandle'. This is
+--   the case for ledger state queries and for the forging loop.
+--
+-- - Read lock to ensure two operations are in sync: in the above situation, we
+--   relied on the 'BackingStoreValueHandle' functionality, but sometimes we
+--   won't access the values through a value handle, and instead we might use
+--   the LMDB environment (as it is the case for 'lmdbCopy'). In these cases, we
+--   acquire a read lock until we ended the copy, so that writers are blocked
+--   until this process is completed. This is the case when taking a snapshot.
+--
+-- - Write lock when flushing differences.
+newtype LedgerDBLock m = LedgerDBLock (Lock.RAWLock m ())
+  deriving newtype NoThunks
+
+mkLedgerDBLock :: IOLike m => m (LedgerDBLock m)
+mkLedgerDBLock = LedgerDBLock <$> Lock.new ()
+
+-- | Acquire the ledger DB read lock and hold it while performing an action
+withReadLock :: IOLike m => LedgerDBLock m -> m a -> m a
+withReadLock (LedgerDBLock lock) m =
+    Lock.withReadAccess lock (\() -> m)
+
+-- | Acquire the ledger DB write lock and hold it while performing an action
+withWriteLock :: IOLike m => LedgerDBLock m -> m a -> m a
+withWriteLock (LedgerDBLock lock) m =
+    Lock.withWriteAccess lock (\() -> (,) () <$> m)

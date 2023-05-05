@@ -31,10 +31,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.Update (
   , defaultResolveBlocks
     -- * Updates
   , defaultResolveWithErrors
-  , flush
   , prune
   , push
   , pushMany
+  , splitForFlushing
   , switch
   , volatileStatesBimap
     -- * Pure API
@@ -342,11 +342,11 @@ switch cfg numRollbacks trace newBlocks ksReader db =
                       db'
 
 -- | Isolates the prefix of the changelog that should be flushed
-flush :: (GetTip l, HasLedgerTables l)
-      => DbChangelog.FlushPolicy
-      -> LedgerDB l
-      -> (Maybe (DbChangelogToFlush l), LedgerDB l)
-flush = DbChangelog.flush
+splitForFlushing :: (GetTip l, HasLedgerTables l)
+                 => DbChangelog.FlushPolicy
+                 -> LedgerDB l
+                 -> (Maybe (DbChangelogToFlush l), LedgerDB l)
+splitForFlushing = DbChangelog.splitForFlushing
 
 {-------------------------------------------------------------------------------
   Trace events

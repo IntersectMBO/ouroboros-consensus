@@ -88,12 +88,10 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (RangeQuery (RangeQuery))
 import           Ouroboros.Consensus.Storage.LedgerDB.Init
-import           Ouroboros.Consensus.Util (StaticEither (StaticLeft),
-                     fromStaticLeft)
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
@@ -599,13 +597,16 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> (SlotNo -> STM m ())
       -> LedgerConfig blk
       -> STM m (Point blk)
-      -> (ResourceRegistry m -> m (DiskLedgerView m (ExtLedgerState blk)))
+      -> m ( LedgerDB' blk
+           , LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+           , DiskLedgerView m (ExtLedgerState blk)
+           )
       -> Mempool m blk
       -> [GenTx blk]
          -- ^ valid transactions the node should immediately propagate
       -> m ()
     forkCrucialTxs clock s0 registry unblockForge lcfg getTipPoint mdlv mempool txs0 = do
-      void $ forkLinkedThread registry "crucialTxs" $ withRegistry $ \reg -> do
+      void $ forkLinkedThread registry "crucialTxs" $ do
         let
             wouldBeValid :: SlotNo
                          -> (RangeQuery (LedgerTables (ExtLedgerState blk) KeysMK) -> m (LedgerTables (ExtLedgerState blk) ValuesMK))
@@ -628,26 +629,24 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 or <$> mapM (wouldBeValid slot doRangeQuery (snapshotState snap)) txs0
 
         let loop (slot, mempFp) = do
-              DiskLedgerView (ledgerState -> ledger) _ doRangeQuery _ <- mdlv reg
+              (ldb, vh, DiskLedgerView (ledgerState -> ledger) _ doRangeQuery _) <- mdlv
               -- This node would include these crucial txs if it leads in
               -- this slot.
               let ledger' = applyChainTick lcfg slot ledger
-              msnap1 <- getSnapshotFor mempool (castPoint $ getTip ledger) slot ledger'
+              snap1 <- getSnapshotFor mempool slot ledger' ldb vh
               -- Other nodes might include these crucial txs when leading
               -- in the next slot.
               let ledger'' = applyChainTick lcfg (succ slot) ledger
-              msnap2 <- getSnapshotFor mempool (castPoint $ getTip ledger) (succ slot) ledger''
+              snap2 <- getSnapshotFor mempool (succ slot) ledger'' ldb vh
 
-              case (msnap1, msnap2) of
-                (Just snap1, Just snap2) -> do
-                  -- Don't attempt to add them if we're sure they'll be invalid.
-                  -- That just risks blocking on a full mempool unnecessarily.
-                  b1 <- checkSt slot doRangeQuery snap1
-                  b2 <- checkSt (succ slot) doRangeQuery snap2
-                  when (b1 || b2) $ do
-                    _ <- addTxs mempool txs0
-                    pure ()
-                _ -> pure ()
+
+              -- Don't attempt to add them if we're sure they'll be invalid.
+              -- That just risks blocking on a full mempool unnecessarily.
+              b1 <- checkSt slot doRangeQuery snap1
+              b2 <- checkSt (succ slot) doRangeQuery snap2
+              when (b1 || b2) $ do
+                _ <- addTxs mempool txs0
+                pure ()
 
               -- See 'unblockForge' in 'forkNode'
               atomically $ unblockForge slot
@@ -693,13 +692,13 @@ runThreadNetwork systemTime ThreadNetworkArgs
                    -> OracularClock m
                    -> TopLevelConfig blk
                    -> Seed
-                   -> (ResourceRegistry m -> m (DiskLedgerView m (ExtLedgerState blk)))
+                   -> m (a, b, DiskLedgerView m (ExtLedgerState blk))
                       -- ^ How to get the current ledger state
                    -> Mempool m blk
                    -> m ()
     forkTxProducer coreNodeId registry clock cfg nodeSeed mdlv mempool =
-        void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> withRegistry $ \reg -> do
-          DiskLedgerView emptySt _ doRangeQuery _ <- mdlv reg
+        void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
+          (_, _, DiskLedgerView emptySt _ doRangeQuery _) <- mdlv
           fullLedgerSt <- fmap ledgerState $ do
                 -- FIXME: we know that the range query implemetation will add at
                 -- most 1 to the number of requested keys, hence the
@@ -1055,9 +1054,11 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -- Create a 'DiskLedgerView' to be used in 'forkTxProducer'. This function
       -- needs the 'DiskLedgerView' to elaborate a complete UTxO set to generate
       -- transactions.
-      let getValueHandle = \rrr -> do
-            bsvh <- ChainDB.getLedgerBackingStoreValueHandle chainDB rrr (StaticLeft ())
-            pure $ mkDiskLedgerView $ fromStaticLeft bsvh
+      let getValueHandle = do
+            eLDBView <- ChainDB.getLedgerDBViewAtPoint chainDB Nothing
+            case eLDBView of
+              Left e -> error $ show e
+              Right (vh, ldb) -> pure (ldb, vh, mkDiskLedgerView (vh, ldb, lbsvhClose vh))
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the

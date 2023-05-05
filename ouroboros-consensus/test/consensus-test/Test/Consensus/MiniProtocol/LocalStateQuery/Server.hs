@@ -19,6 +19,7 @@
 module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 
 import           Cardano.Crypto.DSIGN.Mock
+import           Control.Monad (forM_)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (nullTracer)
 import           Data.Map.Strict (Map)
@@ -43,9 +44,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LgrDB,
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util (StaticEither (..))
 import           Ouroboros.Consensus.Util.IOLike
-import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -219,17 +220,21 @@ initLgrDB k chain = do
         backingStoreInitialiser
         (SomeHasFS (simHasFS v))
         (ExtLedgerStateTables NoTestLedgerTables)
-    rawLock <- RAWLock.new ()
+    rawLock <- mkLedgerDBLock
     reg <- unsafeNewRegistry
     let lgrDB = mkLgrDB varDB varPrevApplied backingStore rawLock resolve (args reg)
-    LgrDB.validate lgrDB genesisLedgerDB BlockCache.empty 0 noopTrace
+    seP <- LgrDB.acquireLDBReadView (StaticLeft ()) lgrDB
+    let vh = case seP of
+          StaticLeft (v, _) -> v
+    LgrDB.validate lgrDB vh genesisLedgerDB BlockCache.empty 0 noopTrace
       (map getHeader (Chain.toOldestFirst chain)) >>= \case
         LgrDB.ValidateExceededRollBack _ ->
           error "impossible: rollback was 0"
         LgrDB.ValidateLedgerError _ ->
           error "impossible: there were no invalid blocks"
         LgrDB.ValidateSuccessful ledgerDB' -> do
-          atomically $ LgrDB.setCurrent lgrDB ledgerDB'
+          mDiffs <- atomically $ LgrDB.setCurrent lgrDB ledgerDB'
+          forM_ mDiffs $ flushIntoBackingStore backingStore
           return lgrDB
   where
     resolve :: RealPoint TestBlock -> m TestBlock

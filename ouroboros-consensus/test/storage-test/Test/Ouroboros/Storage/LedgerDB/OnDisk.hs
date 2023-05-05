@@ -1070,9 +1070,12 @@ runDB standalone@DB{..} cmd =
         (toFlush, bs) <- atomically $ do
           (_, db) <- readTVar dbState
           bs <- readTVar dbBackingStore
-          let (toFlush, db') = flush (DbChangelog.FlushAllImmutable $ ledgerDbCfgSecParam dbLedgerDbCfg) db
-          modifyTVar dbState (\(rs, _) -> (rs, db'))
-          pure (toFlush, bs)
+          let (toFlush, db') = splitForFlushing (DbChangelog.FlushAllImmutable $ ledgerDbCfgSecParam dbLedgerDbCfg) db
+          case toFlush of
+            Nothing -> pure (toFlush, bs)
+            Just _ -> do
+              modifyTVar dbState (\(rs, _) -> (rs, db'))
+              pure (toFlush, bs)
         mapM_ (DbChangelog.flushIntoBackingStore bs) toFlush
         pure Flushed
     go hasFS Snap = do
@@ -1099,6 +1102,7 @@ runDB standalone@DB{..} cmd =
             S.decode
             S.decode
             dbLedgerDbCfg
+            (defaultDiskPolicy (SecurityParam 100) DefaultSnapshotInterval)
             (return (testInitExtLedgerWithState initialTestLedgerState))
             streamAPI
             sdbBackingStoreSelector

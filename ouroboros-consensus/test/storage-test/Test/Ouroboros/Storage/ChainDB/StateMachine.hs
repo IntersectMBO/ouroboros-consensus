@@ -392,15 +392,16 @@ close ChainDBState { chainDB, addBlockAsync } = do
 
 run :: forall m blk.
        (IOLike m, TestConstraints blk)
-    => ChainDBEnv m blk
+    => TopLevelConfig blk
+    -> ChainDBEnv m blk
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
-run env@ChainDBEnv { args, varDB, .. } cmd =
+run cfg env@ChainDBEnv { varDB, .. } cmd =
     readMVar varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
       AddBlock blk             -> Point               <$> (advanceAndAdd st (blockSlot blk) blk)
       AddFutureBlock blk s     -> Point               <$> (advanceAndAdd st s               blk)
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
-      GetLedgerDB              -> LedgerDB . flush (configSecurityParam $ cdbTopLevelConfig args) <$> atomically getLedgerDB
+      GetLedgerDB              -> LedgerDB . flush k  <$> atomically getLedgerDB
       GetTipBlock              -> MbBlock             <$> getTipBlock
       GetTipHeader             -> MbHeader            <$> getTipHeader
       GetTipPoint              -> Point               <$> atomically getTipPoint
@@ -423,6 +424,8 @@ run env@ChainDBEnv { args, varDB, .. } cmd =
       UpdateLedgerSnapshots    -> ignore              <$> intUpdateLedgerSnapshots internal
       WipeVolatileDB           -> Point               <$> wipeVolatileDB st
   where
+    k = configSecurityParam cfg
+
     mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
     isValidResult = IsValid . IsValidResult True
     iterResultGCed = IterResultGCed . IteratorResultGCed True
@@ -472,7 +475,7 @@ run env@ChainDBEnv { args, varDB, .. } cmd =
 flush ::
      (LedgerSupportsProtocol blk)
   => SecurityParam -> LedgerDB (ExtLedgerState blk) -> LedgerDB (ExtLedgerState blk)
-flush k = snd . LedgerDB.flush (DbChangelog.FlushAllImmutable k)
+flush k = snd . LedgerDB.splitForFlushing (DbChangelog.FlushAllImmutable k)
 
 persistBlks :: IOLike m => ShouldGarbageCollect -> ChainDB.Internal m blk -> m ()
 persistBlks collectGarbage ChainDB.Internal{..} = do
@@ -658,7 +661,7 @@ runPure cfg = \case
     AddBlock blk             -> ok  Point               $ update  (advanceAndAdd (blockSlot blk) blk)
     AddFutureBlock blk s     -> ok  Point               $ update  (advanceAndAdd s               blk)
     GetCurrentChain          -> ok  Chain               $ query   (Model.volatileChain k getHeader)
-    GetLedgerDB              -> ok  LedgerDB            $ query   (flush (configSecurityParam cfg) . Model.getLedgerDB cfg)
+    GetLedgerDB              -> ok  LedgerDB            $ query   (flush k . Model.getLedgerDB cfg)
     GetTipBlock              -> ok  MbBlock             $ query    Model.tipBlock
     GetTipHeader             -> ok  MbHeader            $ query   (fmap getHeader . Model.tipBlock)
     GetTipPoint              -> ok  Point               $ query    Model.tipPoint
@@ -724,10 +727,11 @@ runPure cfg = \case
     openOrClosed f = first (Resp . Right . Unit) . f
 
 runIO :: TestConstraints blk
-      => ChainDBEnv IO blk
+      => TopLevelConfig blk
+      -> ChainDBEnv IO blk
       ->     Cmd  blk (TestIterator IO blk) (TestFollower IO blk)
       -> IO (Resp blk (TestIterator IO blk) (TestFollower IO blk))
-runIO env cmd = Resp <$> try (run env cmd)
+runIO cfg env cmd = Resp <$> try (run cfg env cmd)
 
 {-------------------------------------------------------------------------------
   Collect arguments
@@ -1202,12 +1206,13 @@ postcondition model cmd resp =
     ev = lockstep model cmd resp
 
 semantics :: forall blk. TestConstraints blk
-          => ChainDBEnv IO blk
+          => TopLevelConfig blk
+          -> ChainDBEnv IO blk
           -> At Cmd blk IO Concrete
           -> IO (At Resp blk IO Concrete)
-semantics env (At cmd) =
+semantics cfg env (At cmd) =
     At . (bimap (QSM.reference . QSM.Opaque) (QSM.reference . QSM.Opaque)) <$>
-    runIO env (bimap QSM.opaque QSM.opaque cmd)
+    runIO cfg env (bimap QSM.opaque QSM.opaque cmd)
 
 -- | The state machine proper
 sm :: TestConstraints blk
@@ -1227,7 +1232,7 @@ sm env genBlock cfg initLedger maxClockSkew = StateMachine
   , postcondition = postcondition
   , generator     = Just . generator genBlock
   , shrinker      = shrinker
-  , semantics     = semantics env
+  , semantics     = semantics cfg env
   , mock          = mock
   , invariant     = Just $ invariant cfg
   , cleanup       = noCleanup

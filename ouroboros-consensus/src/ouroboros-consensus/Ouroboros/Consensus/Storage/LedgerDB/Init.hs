@@ -295,7 +295,7 @@ replayStartingWith tracer cfg policy backingStore streamAPI initDb = do
           if onDiskShouldFlush (flushableLength secParam db')
           then do
             let (toFlush, toKeep) =
-                  LedgerDB.flush
+                  LedgerDB.splitForFlushing
                     (FlushAllImmutable secParam)
                     db'
             mapM_ (flushIntoBackingStore backingStore) toFlush

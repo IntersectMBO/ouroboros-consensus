@@ -44,9 +44,9 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , defaultResolveBlocks
     -- ** Operations
   , defaultResolveWithErrors
-  , flush
   , prune
   , push
+  , splitForFlushing
   , switch
   , volatileStatesBimap
     -- ** Pure API
@@ -119,5 +119,5 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Update
                      Pushing (..), ResolveBlock, ResolvesBlocks (..),
                      ThrowsLedgerError (..), UpdateLedgerDbTraceEvent (..),
                      defaultResolveBlocks, defaultResolveWithErrors,
-                     defaultThrowLedgerErrors, flush, prune, push, push',
-                     pushMany', switch, switch', volatileStatesBimap)
+                     defaultThrowLedgerErrors, prune, push, push', pushMany',
+                     splitForFlushing, switch, switch', volatileStatesBimap)

@@ -107,7 +107,7 @@ truncateNodeJoinPlan
     -- scale by t' / t
     Map.map (\(SlotNo i) -> SlotNo $ (i * t') `div` t) $
     -- discard discarded nodes
-    Map.filterWithKey (\(CoreNodeId nid) _ -> nid < n') $
+    Map.filterWithKey (\(CoreNodeId nid) _ -> nid < n')
     m
 
 truncateNodeTopology :: NodeTopology -> NumCoreNodes -> NodeTopology

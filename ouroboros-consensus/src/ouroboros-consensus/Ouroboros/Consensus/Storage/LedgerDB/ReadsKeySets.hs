@@ -1,5 +1,3 @@
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | How to rewind, read and forward a set of keys through a db changelog,
 -- and use it to apply a function that expects a hydrated state as input.
@@ -10,7 +8,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets (
     -- * Read
   , KeySetsReader
   , PointNotFound (..)
-  , getLedgerTablesAtFor
   , getLedgerTablesFor
   , readKeySets
   , readKeySetsWith
@@ -25,14 +22,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets (
 import           Cardano.Slotting.Slot
 import           Data.Map.Diff.Strict (applyDiffForKeys)
 import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Ledger.Basics (GetTip, IsLedger,
-                     getTipSlot)
+import           Ouroboros.Consensus.Ledger.Basics (GetTip, getTipSlot)
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.DiffSeq
-import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (LedgerDB)
-import           Ouroboros.Consensus.Storage.LedgerDB.Query (rollback)
+import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
 import           Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
@@ -49,7 +44,7 @@ rewindTableKeySets :: GetTip l
                    -> LedgerTables l KeysMK
                    -> RewoundTableKeySets l
 rewindTableKeySets =
-     RewoundTableKeySets . getTipSlot . changelogAnchor
+    RewoundTableKeySets . getTipSlot . changelogAnchor
 
 {-------------------------------------------------------------------------------
   Read
@@ -78,7 +73,7 @@ readKeySetsWith readKeys (RewoundTableKeySets _seqNo rew) = do
     }
 
 withKeysReadSets ::
-     (HasLedgerTables l, Monad m, GetTip l)
+     (HasLedgerTables l, GetTip l, Monad m)
   => l mk1
   -> KeySetsReader m l
   -> DbChangelog l
@@ -118,35 +113,12 @@ withHydratedLedgerState st dbch urs f =
 -- | The requested point is not found on the ledger db
 newtype PointNotFound blk = PointNotFound (Point blk) deriving (Eq, Show)
 
-getLedgerTablesAtFor ::
-     ( HeaderHash l ~ HeaderHash blk
-     , HasHeader blk
-     , IsLedger l
-     , HasTickedLedgerTables l
-     , IOLike m
-     , StandardHash l
-     )
-  => Point blk
-  -> LedgerTables l KeysMK
-  -> LedgerDB l
-  -> LedgerBackingStore m l
-  -> m (Either (PointNotFound blk) (LedgerTables l ValuesMK))
-getLedgerTablesAtFor pt keys lgrDb lbs =
-  case rollback pt lgrDb of
-    Nothing -> pure $ Left $ PointNotFound pt
-    Just l  -> do
-      eValues <-
-        getLedgerTablesFor l keys (readKeySets lbs)
-      case eValues of
-        Right v -> pure $ Right v
-        Left _  -> getLedgerTablesAtFor pt keys lgrDb lbs
-
 -- | Read and forward the values up to the tip of the given ledger db. Returns
 -- Left if the anchor moved. If Left is returned, then the caller was just
 -- unlucky and scheduling of events happened to move the backing store. Reading
 -- again the LedgerDB and calling this function must eventually succeed.
 getLedgerTablesFor ::
-     (Monad m, GetTip l, HasLedgerTables l)
+     (Monad m, HasLedgerTables l, GetTip l)
   => LedgerDB l
   -> LedgerTables l KeysMK
   -> KeySetsReader m l
@@ -190,7 +162,7 @@ forwardTableKeySets' ::
             (LedgerTables l ValuesMK)
 forwardTableKeySets' seqNo chdiffs = \(UnforwardedReadSets seqNo' values keys) ->
     if seqNo /= seqNo'
-    then Left $ RewindReadFwdError seqNo seqNo'
+    then Left $ RewindReadFwdError seqNo' seqNo
     else Right $ zipLedgerTables3 forward values keys chdiffs
   where
     forward ::

@@ -10,6 +10,7 @@
 
 module Ouroboros.Consensus.Util.EarlyExit (
     exitEarly
+  , exitEarlyWith
   , withEarlyExit
   , withEarlyExit_
     -- * Re-exports
@@ -66,8 +67,11 @@ collapse :: Maybe () -> ()
 collapse Nothing   = ()
 collapse (Just ()) = ()
 
-exitEarly :: Applicative m => WithEarlyExit m a
-exitEarly = earlyExit $ pure Nothing
+exitEarly :: Monad m => WithEarlyExit m a
+exitEarly = exitEarlyWith (pure ())
+
+exitEarlyWith :: Monad m => m () -> WithEarlyExit m a
+exitEarlyWith act = earlyExit $ act >> pure Nothing
 
 instance (forall a'. NoThunks (m a'))
       => NoThunks (WithEarlyExit m a) where

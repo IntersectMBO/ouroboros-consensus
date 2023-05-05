@@ -35,7 +35,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
   , openDBInternal
   ) where
 
-import           Control.Monad (when)
+import           Control.Monad (forM_, when)
 import           Control.Monad.Trans.Class (lift)
 import           Control.Tracer
 import           Data.Functor ((<&>))
@@ -62,6 +62,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+                     (flushIntoBackingStore)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
@@ -163,7 +165,10 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           K ledger = VF.validatedLedger   chainAndLedger
           cfg    = Args.cdbTopLevelConfig args
 
-      atomically $ LgrDB.setCurrent lgrDB ledger
+      mDiffs <- atomically $ LgrDB.setCurrent lgrDB ledger
+
+      forM_ mDiffs $ flushIntoBackingStore (LgrDB.lgrBackingStore lgrDB)
+
       varChain           <- newTVarIO chain
       varTentativeState  <- newTVarIO NoLastInvalidTentative
       varTentativeHeader <- newTVarIO SNothing
@@ -217,11 +222,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getIsInvalidBlock     = getEnvSTM  h Query.getIsInvalidBlock
             , closeDB               = closeDB h
             , isOpen                = isOpen  h
-            , getLedgerBackingStoreValueHandle = \rreg p -> getEnv h $ \env' -> do
+            , getLedgerBackingStoreValueHandle = \rreg p -> getEnv h $ \env' ->
                 Query.getLedgerBackingStoreValueHandle env' rreg p
             , getLedgerTablesAtFor  = \pt keys -> getEnv h (LgrDB.getLedgerTablesAtFor pt keys . cdbLgrDB)
-            , withLgrReadLock       = \m       -> getEnv h (flip LgrDB.withReadLock m    . cdbLgrDB)
-
+            , getLedgerDBViewAtPoint = \pt ->
+                getEnv h $ \env' -> Query.getLedgerDBViewAtPoint env' pt
             }
           testing = Internal
             { intCopyToImmutableDB       = getEnv  h Background.copyToImmutableDB

@@ -89,7 +89,7 @@ openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
             Mempool.getCurrentLedgerState = pure $ LedgerDB.current ldb
           , Mempool.getLedgerTablesAtFor = \pt txs -> do
               let keys = foldMap' Ledger.getTransactionKeySets txs
-              LedgerDB.getLedgerTablesAtFor pt keys ldb lbs
+              undefined --LedgerDB.getLedgerTablesAtFor pt keys ldb lbs
           }
 
     mempool <- Mempool.openMempoolWithoutSyncThread

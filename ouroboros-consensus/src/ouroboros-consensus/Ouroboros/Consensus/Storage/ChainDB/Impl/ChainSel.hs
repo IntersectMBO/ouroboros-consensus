@@ -65,8 +65,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
                      (BlockCache)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB',
-                     LgrDB)
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
+                     (DiskPolicy (..), LedgerDB', LgrDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Paths
                      (LookupBlockInfo)
@@ -75,9 +75,12 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+                     (flushIntoBackingStore, flushableLength, withWriteLock)
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util (whenJust)
+import           Ouroboros.Consensus.Util (StaticEither (..), whenJust)
 import           Ouroboros.Consensus.Util.AnchoredFragment
 import           Ouroboros.Consensus.Util.Enclose (encloseWith)
 import           Ouroboros.Consensus.Util.IOLike
@@ -109,13 +112,14 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
                       varFutureBlocks futureCheck = do
     -- We follow the steps from section "## Initialization" in ChainDB.md
 
-    (i :: Anchor blk, succsOf, ledger) <- atomically $ do
+    ((i :: Anchor blk, succsOf), seLdb) <- LgrDB.acquireLDBReadView' (StaticLeft ()) lgrDB (do
       invalid <- forgetFingerprint <$> readTVar varInvalid
-      (,,)
-        <$> ImmutableDB.getTipAnchor immutableDB
-        <*> (ignoreInvalidSuc volatileDB invalid <$>
-              VolatileDB.filterByPredecessor volatileDB)
-        <*> (K <$> LgrDB.getCurrent lgrDB)
+      (,) <$> ImmutableDB.getTipAnchor immutableDB
+          <*> (ignoreInvalidSuc volatileDB invalid <$>
+               VolatileDB.filterByPredecessor volatileDB))
+
+    let (vh, ledger) = case seLdb of
+                         StaticLeft (bsvh, ldb) -> (bsvh, K ldb)
 
     chains <- constructChains i succsOf
 
@@ -128,7 +132,7 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
       -- If there are no candidates, no chain selection is needed
       Nothing      -> return curChainAndLedger
       Just chains' -> maybe curChainAndLedger toChainAndLedger <$>
-        chainSelection' curChainAndLedger chains'
+        chainSelection' curChainAndLedger vh chains'
   where
     bcfg :: BlockConfig blk
     bcfg = configBlock cfg
@@ -182,10 +186,11 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
       => ChainAndLedger blk
          -- ^ The current chain and ledger, corresponding to
          -- @i@.
+      -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
       -> NonEmpty (AnchoredFragment (Header blk))
          -- ^ Candidates anchored at @i@
       -> m (Maybe (ValidatedChainDiff (Header blk) (K (LedgerDB' blk))))
-    chainSelection' curChainAndLedger candidates =
+    chainSelection' curChainAndLedger vh candidates =
         assert (all ((LgrDB.currentPoint ledger ==) .
                      castPoint . AF.anchorPoint)
                     candidates) $
@@ -213,6 +218,7 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
             , varTentativeHeader
             , punish = Nothing
             , getTentativeFollowers = pure []
+            , vh
             }
 
 -- | Add a block to the ChainDB, /asynchronously/.
@@ -452,18 +458,17 @@ chainSelectionForBlock
   -> InvalidBlockPunishment m
   -> m (Point blk)
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
-  LgrDB.withReadLock cdbLgrDB $ do
-    -- We will read a copy of the ledger DB on the next line, so we have to make
-    -- sure the changelog it contains is not flushed during chain selection.
+    ((invalid, succsOf, lookupBlockInfo, curChain, tipPoint), seLedger) <-
+      LgrDB.acquireLDBReadView' (StaticLeft ()) cdbLgrDB
+        ( (,,,,) <$> (forgetFingerprint <$> readTVar cdbInvalid)
+                 <*> VolatileDB.filterByPredecessor  cdbVolatileDB
+                 <*> VolatileDB.getBlockInfo         cdbVolatileDB
+                 <*> Query.getCurrentChain           cdb
+                 <*> Query.getTipPoint               cdb
+        )
+    let (vh, ledgerDB) = case seLedger of
+          StaticLeft (bsvh, l) -> (bsvh, K l)
 
-    (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB)
-      <- atomically $ (,,,,,)
-          <$> (forgetFingerprint <$> readTVar cdbInvalid)
-          <*> VolatileDB.filterByPredecessor  cdbVolatileDB
-          <*> VolatileDB.getBlockInfo         cdbVolatileDB
-          <*> Query.getCurrentChain           cdb
-          <*> Query.getTipPoint               cdb
-          <*> (K <$> LgrDB.getCurrent  cdbLgrDB)
     let curChainAndLedger :: ChainAndLedger blk
         curChainAndLedger =
           -- The current chain we're working with here is not longer than @k@
@@ -482,7 +487,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     -- The preconditions
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
 
-    if
+    pt <- if
       -- The chain might have grown since we added the block such that the
       -- block is older than @k@.
       | olderThanK hdr isEBB immBlockNo -> do
@@ -505,18 +510,20 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
       | pointHash tipPoint == headerPrevHash hdr -> do
         -- ### Add to current chain
         traceWith addBlockTracer (TryAddToCurrentChain p)
-        addToCurrentChain succsOf' curChainAndLedger
+        addToCurrentChain succsOf' curChainAndLedger vh
 
       | Just diff <- Paths.isReachable lookupBlockInfo' curChain p -> do
         -- ### Switch to a fork
         traceWith addBlockTracer (TrySwitchToAFork p diff)
-        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger diff
+        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger diff vh
 
       | otherwise -> do
         -- ### Store but don't change the current chain
         traceWith addBlockTracer (StoreButDontChange p)
         return tipPoint
 
+    lbsvhClose vh
+    pure pt
     -- Note that we may have extended the chain, but have not trimmed it to
     -- @k@ blocks/headers. That is the job of the background thread, which
     -- will first copy the blocks/headers to trim (from the end of the
@@ -533,8 +540,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
     addBlockTracer = TraceAddBlockEvent >$< cdbTracer
 
-    mkChainSelEnv :: ChainAndLedger blk -> ChainSelEnv m blk
-    mkChainSelEnv curChainAndLedger = ChainSelEnv
+    mkChainSelEnv :: ChainAndLedger blk -> LedgerBackingStoreValueHandle m (ExtLedgerState blk) -> ChainSelEnv m blk
+    mkChainSelEnv curChainAndLedger vh = ChainSelEnv
       { lgrDB                 = cdbLgrDB
       , bcfg                  = configBlock cdbTopLevelConfig
       , varInvalid            = cdbInvalid
@@ -552,6 +559,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
       , pipeliningTracer       =
           TraceAddBlockEvent . PipeliningEvent >$< cdbTracer
       , punish                = Just (p, punish)
+      , vh
       }
 
     -- | PRECONDITION: the header @hdr@ (and block @b@) fit onto the end of
@@ -561,8 +569,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
+      -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
       -> m (Point blk)
-    addToCurrentChain succsOf curChainAndLedger = do
+    addToCurrentChain succsOf curChainAndLedger vh = do
         let suffixesAfterB = Paths.maximalCandidates succsOf (realPointToPoint p)
 
         -- Fragments that are anchored at @curHead@, i.e. suffixes of the
@@ -571,7 +580,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
           -- If there are no suffixes after @b@, just use the suffix just
           -- containing @b@ as the sole candidate.
           Nothing              ->
-            return $ (AF.fromOldestFirst curHead [hdr]) NE.:| []
+            return $ AF.fromOldestFirst curHead [hdr] NE.:| []
           Just suffixesAfterB' ->
             -- We can start with an empty cache, because we're only looking
             -- up the headers /after/ b, so they won't be on the current
@@ -611,7 +620,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
                   (varTentativeHeader chainSelEnv)
                   AddingBlocks
       where
-        chainSelEnv = mkChainSelEnv curChainAndLedger
+        chainSelEnv = mkChainSelEnv curChainAndLedger vh
         curChain    = VF.validatedFragment curChainAndLedger
         curTip      = castPoint $ AF.headPoint curChain
         curHead     = AF.headAnchor curChain
@@ -630,8 +639,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
          -- ^ The current chain (anchored at @i@) and ledger
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
+      -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
       -> m (Point blk)
-    switchToAFork succsOf lookupBlockInfo curChainAndLedger diff = do
+    switchToAFork succsOf lookupBlockInfo curChainAndLedger diff vh = do
         -- We use a cache to avoid reading the headers from disk multiple
         -- times in case they're part of multiple forks that go through @b@.
         let initCache = Map.singleton (headerHash hdr) hdr
@@ -672,7 +682,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
                   (varTentativeHeader chainSelEnv)
                   SwitchingToAFork
       where
-        chainSelEnv = mkChainSelEnv curChainAndLedger
+        chainSelEnv = mkChainSelEnv curChainAndLedger vh
         curChain    = VF.validatedFragment curChainAndLedger
         curTip      = castPoint $ AF.headPoint curChain
 
@@ -725,50 +735,63 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
       -> ChainSwitchType
       -> m (Point blk)
     switchTo vChainDiff varTentativeHeader chainSwitchType = do
-        traceWith addBlockTracer $
-            ChangingSelection
-          $ castPoint
-          $ AF.headPoint
-          $ getSuffix
+        traceWith addBlockTracer
+          . ChangingSelection
+          . castPoint
+          . AF.headPoint
+          . getSuffix
           $ getChainDiff vChainDiff
-        (curChain, newChain, events, prevTentativeHeader) <- atomically $ do
-          curChain  <- readTVar         cdbChain -- Not Query.getCurrentChain!
-          curLedger <- LgrDB.getCurrent cdbLgrDB
-          case Diff.apply curChain chainDiff of
-            -- Impossible, as described in the docstring
-            Nothing       ->
-              error "chainDiff doesn't fit onto current chain"
-            Just newChain -> do
-              writeTVar cdbChain newChain
-              LgrDB.setCurrent cdbLgrDB newLedger
+        let lock =
+              if onDiskShouldFlush
+                (LgrDB.diskPolicy cdbLgrDB)
+                (flushableLength (SecurityParam k) newLedger)
+              then withWriteLock (LgrDB.lgrFlushLock cdbLgrDB)
+              else id
+        (curChain, newChain, events, prevTentativeHeader) <-
+          lock $ do
+           (curChain, newChain, events, prevTentativeHeader, mDiffs) <-
+            atomically $ do
+              curChain  <- readTVar         cdbChain -- Not Query.getCurrentChain!
+              curLedger <- LgrDB.getCurrent cdbLgrDB
+              case Diff.apply curChain chainDiff of
+                -- Impossible, as described in the docstring
+                Nothing       ->
+                  error "chainDiff doesn't fit onto current chain"
+                Just newChain -> do
+                  writeTVar cdbChain newChain
+                  mDiffs <- LgrDB.setCurrent cdbLgrDB newLedger
 
-              -- Inspect the new ledger for potential problems
-              let events :: [LedgerEvent blk]
-                  events = inspectLedger
-                             cdbTopLevelConfig
-                             (ledgerState $ LgrDB.current curLedger)
-                             (ledgerState $ LgrDB.current newLedger)
+                  -- Inspect the new ledger for potential problems
+                  let events :: [LedgerEvent blk]
+                      events = inspectLedger
+                                 cdbTopLevelConfig
+                                 (ledgerState $ LgrDB.current curLedger)
+                                 (ledgerState $ LgrDB.current newLedger)
 
-              -- Clear the tentative header
-              prevTentativeHeader <- swapTVar varTentativeHeader SNothing
+                  -- Clear the tentative header
+                  prevTentativeHeader <- swapTVar varTentativeHeader SNothing
 
-              case chainSwitchType of
-                -- When adding blocks, the intersection point of the old and new
-                -- tentative/selected chain is not receding, in which case
-                -- `fhSwitchFork` is unnecessary. In the case of pipelining a
-                -- block, it would even result in rolling back by one block and
-                -- rolling forward again.
-                AddingBlocks      -> pure ()
-                SwitchingToAFork -> do
-                  -- Update the followers
-                  --
-                  -- 'Follower.switchFork' needs to know the intersection point
-                  -- (@ipoint@) between the old and the current chain.
-                  let ipoint = castPoint $ Diff.getAnchorPoint chainDiff
-                  followerHandles <- Map.elems <$> readTVar cdbFollowers
-                  forM_ followerHandles $ switchFollowerToFork curChain newChain ipoint
+                  case chainSwitchType of
+                    -- When adding blocks, the intersection point of the old and new
+                    -- tentative/selected chain is not receding, in which case
+                    -- `fhSwitchFork` is unnecessary. In the case of pipelining a
+                    -- block, it would even result in rolling back by one block and
+                    -- rolling forward again.
+                    AddingBlocks      -> pure ()
+                    SwitchingToAFork -> do
+                      -- Update the followers
+                      --
+                      -- 'Follower.switchFork' needs to know the intersection point
+                      -- (@ipoint@) between the old and the current chain.
+                      let ipoint = castPoint $ Diff.getAnchorPoint chainDiff
+                      followerHandles <- Map.elems <$> readTVar cdbFollowers
+                      forM_ followerHandles $ switchFollowerToFork curChain newChain ipoint
 
-              return (curChain, newChain, events, prevTentativeHeader)
+                  return (curChain, newChain, events, prevTentativeHeader, mDiffs)
+
+           forM_ mDiffs $ flushIntoBackingStore (LgrDB.lgrBackingStore cdbLgrDB)
+
+           pure (curChain, newChain, events, prevTentativeHeader)
 
         let mkTraceEvent = case chainSwitchType of
               AddingBlocks     -> AddedToCurrentChain
@@ -866,6 +889,7 @@ data ChainSelEnv m blk = ChainSelEnv
       -- delayed. This is part of the reason we bothered to restrict the
       -- expressiveness of the 'InvalidBlockPunishment' combiantors.
     , punish                :: Maybe (RealPoint blk, InvalidBlockPunishment m)
+    , vh :: LedgerBackingStoreValueHandle m (ExtLedgerState blk)
     }
 
 -- | Perform chain selection with the given candidates. If a validated
@@ -1065,7 +1089,7 @@ ledgerValidateCandidate
   -> ChainDiff (Header blk)
   -> m (ValidatedChainDiff (Header blk) (K (LedgerDB' blk)))
 ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) =
-    LgrDB.validate lgrDB curLedger blockCache rollback traceUpdate newBlocks >>= \case
+    LgrDB.validate lgrDB vh curLedger blockCache rollback traceUpdate newBlocks >>= \case
       LgrDB.ValidateExceededRollBack {} ->
         -- Impossible: we asked the LgrDB to roll back past the immutable tip,
         -- which is impossible, since the candidates we construct must connect
@@ -1116,6 +1140,7 @@ ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) =
       , blockCache
       , varInvalid
       , punish
+      , vh
       } = chainSelEnv
 
     traceUpdate = traceWith $ UpdateLedgerDbTraceEvent >$< validationTracer

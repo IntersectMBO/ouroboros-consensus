@@ -19,7 +19,7 @@ import           Control.Monad (forever, void)
 import qualified Control.Tracer as Tracer
 import           Data.Foldable (asum)
 import qualified Data.List as List
-import           Data.List.NonEmpty (NonEmpty (..))
+import           Data.List.NonEmpty hiding (length)
 import           Data.Void (Void, vacuous)
 import           Data.Word (Word32)
 import           Ouroboros.Consensus.Config.SecurityParam as Consensus

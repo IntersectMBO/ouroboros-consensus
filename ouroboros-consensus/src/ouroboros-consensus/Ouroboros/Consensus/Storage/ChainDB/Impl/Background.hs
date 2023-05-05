@@ -4,7 +4,6 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -196,12 +195,23 @@ copyToImmutableDB CDB{..} = withCopyLock $ do
 
     withCopyLock :: forall a. HasCallStack => m a -> m a
     withCopyLock = bracket_
-      (fmap mustBeUnlocked $ tryTakeMVar cdbCopyLock)
+      (mustBeUnlocked <$> tryTakeMVar cdbCopyLock)
       (putMVar  cdbCopyLock ())
 
     mustBeUnlocked :: forall b. HasCallStack => Maybe b -> b
     mustBeUnlocked = fromMaybe
                    $ error "copyToImmutableDB running concurrently with itself"
+
+{-------------------------------------------------------------------------------
+  Snapshotting
+-------------------------------------------------------------------------------}
+
+data SnapCounters = SnapCounters {
+    -- | When was the last time we made a snapshot
+    prevSnapshotTime     :: !(TimeSinceLast Time)
+    -- | How many blocks have we processed since the last snapshot
+  , prevSnapshotDistance :: !Word64
+  }
 
 -- | Copy blocks from the VolatileDB to ImmutableDB and take snapshots of the
 -- LgrDB
@@ -243,15 +253,20 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed =
     if onDiskShouldTakeSnapshot NoSnapshotTakenYet replayed then do
       updateLedgerSnapshots cdb
       now <- getMonotonicTime
-      loop (TimeSinceLast now) 0
+      loop $ SnapCounters (TimeSinceLast now) 0
     else
-      loop NoSnapshotTakenYet replayed
+      loop $ SnapCounters NoSnapshotTakenYet replayed
   where
     SecurityParam k      = configSecurityParam cdbTopLevelConfig
     LgrDB.DiskPolicy{..} = LgrDB.getDiskPolicy cdbLgrDB
 
-    loop :: TimeSinceLast Time -> Word64 -> m Void
-    loop mPrevSnapshot distance = do
+    loop :: SnapCounters -> m Void
+    loop counters = do
+      let SnapCounters {
+              prevSnapshotTime
+            , prevSnapshotDistance
+            } = counters
+
       -- Wait for the chain to grow larger than @k@
       numToWrite <- atomically $ do
         curChain <- readTVar cdbChain
@@ -265,14 +280,14 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed =
       copyToImmutableDB cdb >>= scheduleGC'
 
       now <- getMonotonicTime
-      let distance' = distance + numToWrite
-          elapsed   = (\prev -> now `diffTime` prev) <$> mPrevSnapshot
+      let prevSnapshotDistance' = prevSnapshotDistance + numToWrite
+          elapsed   = (\prev -> now `diffTime` prev) <$> prevSnapshotTime
 
-      if onDiskShouldTakeSnapshot elapsed distance' then do
+      if onDiskShouldTakeSnapshot elapsed prevSnapshotDistance' then do
         updateLedgerSnapshots cdb
-        loop (TimeSinceLast now) 0
+        loop $ SnapCounters (TimeSinceLast now) 0
       else
-        loop mPrevSnapshot distance'
+        loop $ counters { prevSnapshotDistance = prevSnapshotDistance' }
 
     scheduleGC' :: WithOrigin SlotNo -> m ()
     scheduleGC' Origin             = return ()

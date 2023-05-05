@@ -200,7 +200,7 @@ prop_flushingSplitsTheChangelog setup sp = isNothing toFlush .||. (
          )
   where
     dblog                                    = resultingDbChangelog setup
-    (toFlush, toKeep)                        = DbChangelog.flush (DbChangelog.FlushAllImmutable sp) dblog
+    (toFlush, toKeep)                        = DbChangelog.splitForFlushing (DbChangelog.FlushAllImmutable sp) dblog
     toFlushTip                               = maybe undefined DbChangelog.toFlushSlot toFlush
     toKeepTip                                = DbChangelog.immutableTipSlot toKeep
     TestTables (SeqDiffMK toKeepDiffs)  = changelogDiffs toKeep
