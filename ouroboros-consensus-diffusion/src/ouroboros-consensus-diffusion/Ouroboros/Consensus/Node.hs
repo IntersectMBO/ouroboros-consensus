@@ -303,7 +303,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   case fromException err :: Maybe (Diffusion.Failure addrNTN) of
                     Just _  -> Nothing
                     Nothing -> Just err)
-              (\err -> traceWith (consensusStartupErrorTracer rnTraceConsensus) err
+              (\err -> traceWith (consensusErrorTracer rnTraceConsensus) err
                     >> throwIO err
               ) $ do
         let systemStart :: SystemStart
