@@ -1,11 +1,9 @@
-module DBTruncater.Parsers
-  ( commandLineParser
-  ) where
+module DBTruncater.Parsers (commandLineParser) where
 
-import Ouroboros.Consensus.Block.Abstract
-import Options.Applicative
-import Cardano.Tools.DBTruncater.Types
-import DBAnalyser.Parsers
+import           Cardano.Tools.DBTruncater.Types
+import           DBAnalyser.Parsers
+import           Options.Applicative
+import           Ouroboros.Consensus.Block.Abstract
 
 commandLineParser :: Parser DBTruncaterConfig
 commandLineParser = DBTruncaterConfig
@@ -15,7 +13,7 @@ commandLineParser = DBTruncaterConfig
   <*> parseVerbose
   where
     parseChainDBPath = strOption $
-      mconcat 
+      mconcat
         [ long "db"
         , help "Path of the chain DB"
         , metavar "PATH"
@@ -26,5 +24,5 @@ parseTruncatePoint :: Parser TruncatePoint
 parseTruncatePoint = TruncatePoint <$> slotNoOption
 
 slotNoOption :: Parser SlotNo
-slotNoOption = 
+slotNoOption =
   SlotNo <$> option auto (long "truncate-point" <> metavar "SLOT_NUMBER")

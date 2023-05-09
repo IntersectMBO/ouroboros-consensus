@@ -1,27 +1,30 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Cardano.Tools.DBTruncater.Run ( truncate ) where
+module Cardano.Tools.DBTruncater.Run (truncate) where
 
-import Control.Monad
-import Cardano.Slotting.Slot (WithOrigin(..), SlotNo)
-import Cardano.Tools.DBAnalyser.HasAnalysis
-import Cardano.Tools.DBTruncater.Types
-import Control.Tracer
-import Data.Functor.Identity
-import Ouroboros.Consensus.Block.Abstract (HeaderFields(..), getBlockHeaderFields)
-import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Node as Node
-import Ouroboros.Consensus.Node.InitStorage as Node
-import Ouroboros.Consensus.Storage.Common
-import Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator, IteratorResult(..))
-import Ouroboros.Consensus.Storage.ImmutableDB.Impl
-import Ouroboros.Consensus.Util.IOLike
-import Ouroboros.Consensus.Util.ResourceRegistry (withRegistry, runWithTempRegistry)
-import Prelude hiding (truncate)
-import System.IO
+import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
+import           Cardano.Tools.DBAnalyser.HasAnalysis
+import           Cardano.Tools.DBTruncater.Types
+import           Control.Monad
+import           Control.Tracer
+import           Data.Functor.Identity
+import           Ouroboros.Consensus.Block.Abstract (HeaderFields (..),
+                     getBlockHeaderFields)
+import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Node as Node
+import           Ouroboros.Consensus.Node.InitStorage as Node
+import           Ouroboros.Consensus.Storage.Common
+import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
+                     IteratorResult (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
+import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.ResourceRegistry (runWithTempRegistry,
+                     withRegistry)
+import           Prelude hiding (truncate)
+import           System.IO
 
 truncate :: forall block .
             ( Node.RunNode block, HasProtocolInfo block )
@@ -67,7 +70,8 @@ truncate DBTruncaterConfig{ dbDir, truncatePoint, verbose } args = do
           deleteAfter internal (At newTip)
 
 findTruncatePoint :: Monad m => SlotNo -> Iterator m blk (SlotNo, b, c) -> m (Maybe (SlotNo, b, c))
-findTruncatePoint target iter = go Nothing
+findTruncatePoint target iter =
+    go Nothing
   where
     go acc =
       ImmutableDB.iteratorNext iter >>= \case
