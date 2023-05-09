@@ -15,16 +15,17 @@
    the root measure is the total sum of all diffs in the sequence. The internal
    measure is used to keep track of sequence length and maximum slot numbers.
 
-   The diff datatype that we use forms a @'Group'@, which allows for relatively
-   efficient splitting of finger trees with respect to recomputing measures by
-   means of the @'invert'@ operation that the @'Group'@ type class requires.
-   Namely, if either the left or right part of the split is small in comparison
-   with the input sequence, then we can subtract the diffs in the smaller part
-   from the root measure of the input to (quickly) compute the root measure of
-   the /other/ part of the split. This is much faster than computing the root
-   measures from scratch by doing a linear-time pass over the elements of the
-   split parts, or a logarithmic-time pass over intermediate sums of diffs in
-   case we store cumulative diffs in the nodes of the finger tree.
+   The diff datatype that we use forms a cancellative monoid, which allows for
+   relatively efficient splitting of finger trees with respect to recomputing
+   measures by means of subtracting diffs using the 'stripPrefix' and
+   'stripSuffix' functions that cancellative monoids provide. Namely, if either
+   the left or right part of the split is small in comparison with the input
+   sequence, then we can subtract the diffs in the smaller part from the root
+   measure of the input to (quickly) compute the root measure of the /other/
+   part of the split. This is much faster than computing the root measures from
+   scratch by doing a linear-time pass over the elements of the split parts, or
+   a logarithmic-time pass over intermediate sums of diffs in case we store
+   cumulative diffs in the nodes of the finger tree.
 
    === Example of fast splits
 
@@ -55,8 +56,8 @@
    use the total sum of diffs nearly as often as we split or extend the diff
    sequence, this proved to be too costly. The single-instance root measure
    reduces the overhead of this "caching" of intermediate sums of diffs by only
-   using a single total sum of diffs, though augmented with an @'invert'@
-   operation to facilitate computing updated root measures.
+   using a single total sum of diffs, though augmented with 'stripPrefix' and
+   'stripSuffix' operations to facilitate computing updated root measures.
 
 -}
 module Ouroboros.Consensus.Storage.LedgerDB.DiffSeq (
@@ -120,8 +121,8 @@ newtype DiffSeq k v =
   deriving stock (Generic, Show, Eq)
   deriving anyclass (NoThunks)
 
--- The @'SlotNo'@ is not included in the root measure, since it is
--- not a @'Group'@ instance.
+-- The @'SlotNo'@ is not included in the root measure, since it is not a
+-- cancellative monoid.
 data RootMeasure k v = RootMeasure {
     -- | Cumulative length
     rmLength :: {-# UNPACK #-} !Length
