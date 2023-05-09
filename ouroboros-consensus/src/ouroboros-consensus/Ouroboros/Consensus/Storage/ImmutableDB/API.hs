@@ -397,7 +397,8 @@ data MissingBlock blk
     -- | There is no block in the slot of the given point.
   = EmptySlot (RealPoint blk)
     -- | The block and/or EBB in the slot of the given point have a different
-    -- hash.
+    -- hash. We return the 'HeaderHash' for each block we found with the
+    -- corresponding slot number.
   | WrongHash (RealPoint blk) (NonEmpty (HeaderHash blk))
     -- | The requested point is in the future, i.e., its slot is greater than
     -- that of the tip. We record the tip as the second argument.

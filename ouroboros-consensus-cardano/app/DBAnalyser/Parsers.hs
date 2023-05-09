@@ -1,7 +1,7 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP           #-}
 
-module DBAnalyser.Parsers (parseCmdLine) where
+module DBAnalyser.Parsers (parseCmdLine, blockTypeParser) where
 
 import           Cardano.Crypto (RequiresNetworkMagic (..))
 import           Cardano.Tools.DBAnalyser.Block.Byron
