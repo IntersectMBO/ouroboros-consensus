@@ -295,14 +295,14 @@ mkBlockFetchConsensusInterface
           -- fragment can't be empty.
           (True,  _)     -> error "impossible"
 
-      -- The precondition of 'compareAnchoredFragments' is that either both
-      -- fragments are non-empty or they intersect. We are mostly satisfying
-      -- that precondition, but there is a corner case when considering EBBs
-      -- where we don't. Either our fragment or the candidate fragment could be
-      -- anchored at an EBB that shares the block number with the anchor of the
-      -- other, in which case the two fragments are not guaranteed to intersect.
-      -- This can happen even if one of the two fragments is empty while the
-      -- other is non-empty.
+      -- The precondition of 'compareAnchoredFragments' is that both fragments
+      -- are non-empty or they intersect. We are mostly satisfying that
+      -- precondition, but there is a corner case when considering EBBs where we
+      -- don't. Either our fragment or the candidate fragment could be anchored
+      -- at an EBB that shares the block number with the anchor of the other, in
+      -- which case the two fragments are not guaranteed to intersect. This can
+      -- happen even if one of the two fragments is empty while the other is
+      -- non-empty.
       --
       -- For example, consider an EBB @B@ that shares the block number with its
       -- predecessor @A. Consider two fragments @f1 = B ] C@ and @f2 = A ]@.
@@ -310,6 +310,13 @@ mkBlockFetchConsensusInterface
       -- share the same anchor block number, such that @AF.anchorBlockNo f1 ==
       -- AF.anchorBlockNo f2@. However, these fragments do not intersect, so
       -- @preferAnchoredCandidate _ ours cand@ will fail.
+      --
+      -- For this to be a problem in practice, assertions would have to be
+      -- enabled (which isn't the case for a running node) and the current
+      -- evolving chain would have to be in the Byron era (which is not the
+      -- case). Since violation of the precondition is therefore highly
+      -- unlikely, we chose no to include a case for EBBs here because it would
+      -- complicate the code.
       | otherwise
       = preferAnchoredCandidate bcfg ours cand
 
