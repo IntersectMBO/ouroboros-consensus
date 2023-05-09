@@ -560,13 +560,13 @@ executable db-truncater
   build-depends:
     , base
     , cardano-crypto-wrapper
-    , ouroboros-consensus
     , optparse-applicative
+    , ouroboros-consensus
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, cardano-tools}
 
   other-modules:
-    DBAnalyser.Parsers,
-    DBTruncater.Parsers,
+    DBAnalyser.Parsers
+    DBTruncater.Parsers
 
 executable immdb-server
   import:         common-exe
