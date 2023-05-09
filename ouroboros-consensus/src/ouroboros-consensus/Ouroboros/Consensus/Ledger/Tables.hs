@@ -1,15 +1,17 @@
-{-# LANGUAGE DataKinds                #-}
-{-# LANGUAGE DefaultSignatures        #-}
-{-# LANGUAGE DeriveAnyClass           #-}
-{-# LANGUAGE DeriveGeneric            #-}
-{-# LANGUAGE DerivingStrategies       #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE QuantifiedConstraints    #-}
-{-# LANGUAGE Rank2Types               #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeFamilies             #-}
-{-# LANGUAGE UndecidableInstances     #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DefaultSignatures          #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveFunctor              #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE QuantifiedConstraints      #-}
+{-# LANGUAGE Rank2Types                 #-}
+{-# LANGUAGE StandaloneKindSignatures   #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 -- | See @'LedgerTables'@
 module Ouroboros.Consensus.Ledger.Tables (
@@ -26,6 +28,7 @@ module Ouroboros.Consensus.Ledger.Tables (
     -- ** Concrete definitions
   , Canonical (..)
   , CodecMK (..)
+  , ConstMK (..)
   , DiffMK (..)
   , EmptyMK (..)
   , KeysMK (..)
@@ -422,7 +425,7 @@ newtype KeysMK     k v = KeysMK      (Set k)
   deriving stock (Generic, Eq, Show)
   deriving anyclass NoThunks
 
-newtype SeqDiffMK  k v = SeqDiffMK   (DiffSeq k v)
+newtype SeqDiffMK  k v = SeqDiffMK { getSeqDiffMK :: DiffSeq k v }
   deriving stock (Generic, Eq, Show)
   deriving anyclass NoThunks
 
@@ -488,6 +491,12 @@ instance Ord k => Monoid (KeysMK k v) where
 
 instance Functor (DiffMK k) where
   fmap f (DiffMK d) = DiffMK $ fmap f d
+
+newtype ConstMK a k v = ConstMK { getConstMK :: a }
+  deriving stock (Generic, Eq, Show, Functor)
+  deriving newtype (Semigroup, Monoid)
+  deriving anyclass NoThunks
+  deriving anyclass IsMapKind
 
 {-------------------------------------------------------------------------------
   Serialization Codecs

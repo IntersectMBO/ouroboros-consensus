@@ -82,6 +82,7 @@ instance (RMFT.SuperMeasured vt vi a, Arbitrary a)
 instance (Ord k, Arbitrary k, Arbitrary v)
       => Arbitrary (RootMeasure k v) where
   arbitrary = RootMeasure <$> arbitrary <*> arbitrary
+                          <*> arbitrary <*> arbitrary
 
 instance Arbitrary (InternalMeasure k v) where
   arbitrary = InternalMeasure <$> arbitrary <*> arbitrary <*> arbitrary

@@ -25,6 +25,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   , bsRead
   , castBackingStoreValueHandle
   , withBsValueHandle
+    -- * Statistics
+  , Statistics (..)
     -- * Ledger DB wrappers
   , LedgerBackingStore
   , LedgerBackingStore'
@@ -95,6 +97,8 @@ data BackingStoreValueHandle m keys values = BackingStoreValueHandle {
     -- Absent keys will merely not be present in the result instead of causing a
     -- failure or an exception.
   , bsvhRead      :: !(keys -> m values)
+    -- | Retrieve statistics
+  , bsvhStat      :: !(m Statistics)
   }
 
 castBackingStoreValueHandle ::
@@ -110,6 +114,7 @@ castBackingStoreValueHandle f g bsvh =
     , bsvhRangeRead = \(RangeQuery prev count) ->
         fmap f . bsvhRangeRead $  RangeQuery (fmap g prev) count
     , bsvhRead = fmap f . bsvhRead . g
+    , bsvhStat
     }
   where
     BackingStoreValueHandle {
@@ -117,6 +122,7 @@ castBackingStoreValueHandle f g bsvh =
       , bsvhAtSlot
       , bsvhRangeRead
       , bsvhRead
+      , bsvhStat
       } = bsvh
 
 data RangeQuery keys = RangeQuery {
@@ -164,6 +170,27 @@ withBsValueHandle store kont =
       (bsValueHandle store)
       bsvhClose
       kont
+
+{-------------------------------------------------------------------------------
+  Statistics
+-------------------------------------------------------------------------------}
+
+-- | Statistics for a key-value store.
+--
+-- Using 'bsvhStat' on a value handle only provides statistics for the on-disk
+-- state of a key-value store. Combine this with information from a
+-- 'DbChangelog' to obtain statistics about a "logical" state of the key-value
+-- store. See 'getStatistics'.
+data Statistics = Statistics {
+    -- | The last slot number for which key-value pairs were stored.
+    --
+    -- INVARIANT: the 'sequenceNumber' returned by using 'bsvhStat' on a value
+    -- handle should match 'bsvhAtSlot' for that same value handle.
+    sequenceNumber :: !(WithOrigin SlotNo)
+    -- | The total number of key-value pair entries that are stored.
+  , numEntries     :: !Int
+  }
+  deriving stock (Show, Eq)
 
 {-------------------------------------------------------------------------------
   Ledger DB wrappers

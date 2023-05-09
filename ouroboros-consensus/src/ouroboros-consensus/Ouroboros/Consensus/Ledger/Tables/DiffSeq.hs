@@ -71,12 +71,15 @@ module Ouroboros.Consensus.Ledger.Tables.DiffSeq (
   , SlotNoUB (..)
     -- * Short-hands for type-class constraints
   , SM
-    -- * API: derived functions
-  , append
+    -- * Queries
   , cumulativeDiff
+  , length
+  , numDeletes
+  , numInserts
+    -- * Construction
+  , append
   , empty
   , extend
-  , length
     -- * Slots
   , maxSlot
   , minSlot
@@ -94,7 +97,8 @@ import qualified Control.Exception as Exn
 import           Data.Bifunctor (Bifunctor (bimap))
 import           Data.FingerTree.RootMeasured.Strict hiding (split)
 import qualified Data.FingerTree.RootMeasured.Strict as RMFT (splitSized)
-import           Data.Map.Diff.Strict as MapDiff
+import           Data.Map.Diff.Strict (Diff)
+import qualified Data.Map.Diff.Strict as Diff
 import           Data.Maybe.Strict
 import           Data.Monoid (Sum (..))
 import           Data.Semigroup (Max (..), Min (..))
@@ -102,6 +106,7 @@ import           Data.Semigroup.Cancellative
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
+import           Ouroboros.Consensus.Util.Orphans ()
 import           Prelude hiding (length, splitAt)
 
 {-------------------------------------------------------------------------------
@@ -127,9 +132,13 @@ newtype DiffSeq k v =
 -- cancellative monoid.
 data RootMeasure k v = RootMeasure {
     -- | Cumulative length
-    rmLength :: {-# UNPACK #-} !Length
+    rmLength     :: {-# UNPACK #-} !Length
     -- | Cumulative diff
-  , rmDiff   :: !(Diff k v)
+  , rmDiff       :: !(Diff k v)
+    -- | Cumulative number of inserts
+  , rmNumInserts :: !(Sum Int)
+    -- | Cumulative number of deletes
+  , rmNumDeletes :: !(Sum Int)
   }
   deriving stock (Generic, Show, Eq, Functor)
   deriving anyclass (NoThunks)
@@ -192,22 +201,25 @@ noSlotBoundsIntersect (SlotNoUB sl1) (SlotNoLB sl2) = sl1 <= sl2
 -------------------------------------------------------------------------------}
 
 instance (Ord k, Eq v) => RootMeasured (RootMeasure k v) (Element k v) where
-  measureRoot (Element _ d) = RootMeasure 1 d
+  measureRoot (Element _ d) =
+      RootMeasure 1 d (Sum $ Diff.numInserts d) (Sum $ Diff.numDeletes d)
 
 instance (Ord k, Eq v) => Semigroup (RootMeasure k v) where
-  RootMeasure len1 d1 <> RootMeasure len2 d2 =
-      RootMeasure (len1 <> len2) (d1 <> d2)
+  RootMeasure len1 d1 n1 m1 <> RootMeasure len2 d2 n2 m2 =
+      RootMeasure (len1 <> len2) (d1 <> d2) (n1 <> n2) (m1 <> m2)
 
 instance (Ord k, Eq v) => Monoid (RootMeasure k v) where
-  mempty = RootMeasure mempty mempty
+  mempty = RootMeasure mempty mempty mempty mempty
 
 instance (Ord k, Eq v) => LeftReductive (RootMeasure k v) where
-  stripPrefix (RootMeasure len1 d1) (RootMeasure len2 d2) =
+  stripPrefix (RootMeasure len1 d1 n1 m1) (RootMeasure len2 d2 n2 m2) =
       RootMeasure <$> stripPrefix len1 len2 <*> stripPrefix d1 d2
+                  <*> stripPrefix n1 n2     <*> stripPrefix m1 m2
 
 instance (Ord k, Eq v) => RightReductive (RootMeasure k v) where
-  stripSuffix (RootMeasure len1 d1) (RootMeasure len2 d2) =
+  stripSuffix (RootMeasure len1 d1 n1 m1) (RootMeasure len2 d2 n2 m2) =
       RootMeasure <$> stripSuffix len1 len2 <*> stripSuffix d1 d2
+                  <*> stripSuffix n1 n2     <*> stripSuffix m1 m2
 
 instance (Ord k, Eq v) => LeftCancellative (RootMeasure k v)
 instance (Ord k, Eq v) => RightCancellative (RootMeasure k v)
@@ -252,6 +264,16 @@ length ::
      SM k v
   => DiffSeq k v -> Int
 length (UnsafeDiffSeq ft) = unLength . rmLength $ measureRoot ft
+
+numInserts ::
+     SM k v
+  => DiffSeq k v -> Sum Int
+numInserts (UnsafeDiffSeq ft) = rmNumInserts $ measureRoot ft
+
+numDeletes ::
+     SM k v
+  => DiffSeq k v -> Sum Int
+numDeletes (UnsafeDiffSeq ft) = rmNumInserts $ measureRoot ft
 
 {-------------------------------------------------------------------------------
   Construction
@@ -325,7 +347,8 @@ split ::
   => (InternalMeasure k v -> Bool)
   -> DiffSeq k v
   -> (DiffSeq k v, DiffSeq k v)
-split p (UnsafeDiffSeq ft) = bimap UnsafeDiffSeq UnsafeDiffSeq $ RMFT.splitSized p ft
+split p (UnsafeDiffSeq ft) = bimap UnsafeDiffSeq UnsafeDiffSeq $
+    RMFT.splitSized p ft
 
 splitAt ::
      SM k v

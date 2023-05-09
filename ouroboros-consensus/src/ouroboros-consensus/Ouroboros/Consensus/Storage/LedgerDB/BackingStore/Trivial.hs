@@ -25,6 +25,7 @@ trivialBackingStore emptyValues = do
                            (pure ())
                            (\_ -> pure emptyValues)
                            (\_ -> pure emptyValues)
+                           (pure $ Statistics s 0)
               )
               (\s _ -> void
                      $ IOLike.atomically

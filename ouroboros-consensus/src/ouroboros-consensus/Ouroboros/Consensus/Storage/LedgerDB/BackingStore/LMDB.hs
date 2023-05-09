@@ -37,6 +37,7 @@ import           Data.Functor (($>), (<&>))
 import           Data.Map (Map)
 import           Data.Map.Diff.Strict
 import qualified Data.Map.Strict as Map
+import           Data.Monoid (Sum (..))
 import qualified Data.Set as Set
 import qualified Data.Text as Strict
 import qualified Database.LMDB.Simple as LMDB
@@ -243,6 +244,11 @@ readDbStateMaybeNull ::
      LMDB.Database () DbState
   -> LMDB.Transaction mode (Maybe DbState)
 readDbStateMaybeNull db = LMDB.get db ()
+
+readDbState ::
+     LMDB.Database () DbState
+  -> LMDB.Transaction mode DbState
+readDbState db = readDbStateMaybeNull db >>= maybe (liftIO . throwIO $ DbErrNoDbState) pure
 
 withDbStateRW ::
      LMDB.Database () DbState
@@ -579,10 +585,25 @@ mkLMDBBackingStoreValueHandle db = do
      where
       HD.RangeQuery rqPrev rqCount = rq
 
+    bsvhStat :: m HD.Statistics
+    bsvhStat =
+      Status.withReadAccess dbStatusLock DbErrClosed $ do
+      Status.withReadAccess vhStatusLock (DbErrNoValueHandle vhId) $ do
+        Trace.traceWith tracer TVHStatStarted
+        let transaction = do
+              DbState{dbsSeq} <- readDbState dbState
+              constn <- traverseLedgerTables (\(LMDBMK _ dbx) -> ConstMK <$> LMDB.size dbx) dbBackingTables
+              let n = getSum $ foldLedgerTables (Sum . getConstMK) constn
+              pure $ HD.Statistics dbsSeq n
+        res <- liftIO $ TrH.submitReadOnly trh transaction
+        Trace.traceWith tracer TVHStatEnded
+        pure res
+
     bsvh = HD.BackingStoreValueHandle { HD.bsvhAtSlot = initSlot
                                       , HD.bsvhClose = bsvhClose
                                       , HD.bsvhRead = bsvhRead
                                       , HD.bsvhRangeRead = bsvhRangeRead
+                                      , HD.bsvhStat = bsvhStat
                                       }
 
   IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.insert vhId cleanup)
@@ -633,6 +654,8 @@ data TraceValueHandle
   | TVHReadEnded
   | TVHRangeReadStarted
   | TVHRangeReadEnded
+  | TVHStatStarted
+  | TVHStatEnded
   deriving stock(Show, Eq)
 
 {-------------------------------------------------------------------------------
