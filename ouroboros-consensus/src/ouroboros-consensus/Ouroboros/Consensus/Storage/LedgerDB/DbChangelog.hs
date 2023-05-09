@@ -348,7 +348,7 @@ splitForFlushing ::
   -> DbChangelog l
   -> (Maybe (DbChangelogToFlush l), DbChangelog l)
 splitForFlushing policy dblog =
-    if foldLedgerTables (\(SeqDiffMK sq) -> Sum $ DiffSeq.length sq) l == 0
+    if getTipSlot immTip == Origin || foldLedgerTables (\(SeqDiffMK sq) -> Sum $ DiffSeq.length sq) l == 0
     then (Nothing, dblog)
     else (Just ldblog, rdblog)
   where
@@ -369,7 +369,8 @@ splitForFlushing policy dblog =
       FlushAllImmutable secParam ->
          bimap (maybe emptyMK SeqDiffMK) SeqDiffMK
         $ if DiffSeq.length sq >= fromIntegral (maxRollbacks secParam)
-          then (Just sq, DiffSeq.empty)
+          then let (tf, tk) = splitAtFromEnd (fromIntegral (maxRollbacks secParam)) sq
+               in (Just tf, tk)
           else (Nothing, sq)
 
     lr = mapLedgerTables (uncurry Pair2 . splitSeqDiff) changelogDiffs

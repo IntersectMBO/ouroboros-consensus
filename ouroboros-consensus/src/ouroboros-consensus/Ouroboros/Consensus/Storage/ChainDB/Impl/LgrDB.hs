@@ -352,7 +352,9 @@ setCurrent LgrDB {varDB, cfg, diskPolicy} ldb =
             (FlushAllImmutable secParam)
             ldb
     case toFlush of
-      Nothing -> pure Nothing
+      Nothing -> do
+        writeTVar varDB ldb
+        pure Nothing
       Just v -> do
         writeTVar varDB db'
         pure $ Just v

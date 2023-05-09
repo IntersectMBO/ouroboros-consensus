@@ -330,7 +330,9 @@ splitAtFromEnd ::
   -> DiffSeq k v
   -> (DiffSeq k v, DiffSeq k v)
 splitAtFromEnd n dseq =
-    Exn.assert (n <= len) $ splitAt (len - n) dseq
+    if n <= len
+    then splitAt (len - n) dseq
+    else error $ "Can't split a seq of length " ++ show len ++ " from end at " ++ show n
   where
     len = length dseq
 
