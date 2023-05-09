@@ -354,19 +354,19 @@ library
     , containers                   >=0.5     && <0.7
     , contra-tracer
     , deepseq
-    , diff-containers >= 1.0
+    , diff-containers              >=1.0
     , filelock
-    , fingertree-rm >= 1.0
+    , fingertree-rm                >=1.0
     , fs-api
     , hashable
     , io-classes                   ^>=0.3
     , measures
+    , monoid-subclasses
     , mtl                          >=2.2     && <2.3
     , nothunks                     >=0.1.2   && <0.2
     , ouroboros-network-api
     , ouroboros-network-framework
     , ouroboros-network-mock
-    , monoid-subclasses
     , ouroboros-network-protocols  >=0.2
     , psqueues                     >=0.2.3   && <0.3
     , quiet                        >=0.2     && <0.3
@@ -679,9 +679,9 @@ test-suite storage-test
     , constraints
     , containers
     , contra-tracer
-    , diff-containers >= 1.0
+    , diff-containers                >=1.0
     , directory
-    , fingertree-rm >= 1.0
+    , fingertree-rm                  >=1.0
     , fs-api
     , fs-sim
     , generics-sop
@@ -690,16 +690,16 @@ test-suite storage-test
     , io-sim
     , mtl
     , nonempty-containers
-    , quickcheck-classes
-    , quickcheck-monoid-subclasses
     , nothunks
     , ouroboros-consensus
     , ouroboros-network-api
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
+    , quickcheck-classes
     , quickcheck-dynamic
     , quickcheck-lockstep
+    , quickcheck-monoid-subclasses
     , quickcheck-state-machine       >=0.7.2
     , random
     , serialise
@@ -736,7 +736,7 @@ benchmark mempool-bench
     , containers
     , contra-tracer
     , deepseq
-    , diff-containers >= 1.0
+    , diff-containers      >=1.0
     , directory
     , fs-api
     , mtl
@@ -764,7 +764,7 @@ benchmark backingstore-bench
     , consensus-testlib
     , containers
     , deepseq
-    , diff-containers >= 1.0
+    , diff-containers      >=1.0
     , directory
     , fs-api
     , io-classes
