@@ -11,7 +11,7 @@ import           Control.Monad
 import           Control.Tracer
 import           Data.Functor.Identity
 import           Ouroboros.Consensus.Block.Abstract (HeaderFields (..),
-                     getBlockHeaderFields)
+                     getHeaderFields)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Node as Node
 import           Ouroboros.Consensus.Node.InitStorage as Node
@@ -52,7 +52,7 @@ truncate DBTruncaterConfig{ dbDir, truncatePoint, verbose } args = do
 
     withDB immutableDBArgs $ \(immutableDB, internal) -> do
       iterator <- ImmutableDB.streamAll immutableDB registry
-        ((,,) <$> GetSlot <*> GetBlock <*> GetIsEBB)
+        ((,,) <$> GetSlot <*> GetHeader <*> GetIsEBB)
 
       -- Here we're specifically looking for the *first* "block" (i.e. real
       -- block or EBB) of the latest slot with number less than the truncate
@@ -61,8 +61,8 @@ truncate DBTruncaterConfig{ dbDir, truncatePoint, verbose } args = do
       case mTruncatePoint of
         Nothing ->
           putStrLn "Unable to find a truncate point. This is likely because the tip of the ImmutableDB has a slot number less than the intended truncate point"
-        Just (slotNo, block, isEBB) -> do
-          let HeaderFields _ blockNo hash = getBlockHeaderFields block
+        Just (slotNo, header, isEBB) -> do
+          let HeaderFields _ blockNo hash = getHeaderFields header
               newTip = ImmutableDB.Tip slotNo isEBB blockNo hash
           when verbose $ do
             putStrLn "Truncating the ImmutableDB using the following block as the new tip:"
