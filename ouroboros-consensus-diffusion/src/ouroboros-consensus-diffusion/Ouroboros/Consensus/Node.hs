@@ -119,6 +119,7 @@ import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing,
 import           Ouroboros.Network.Protocol.Limits (shortWait)
 import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharingAmount)
 import           Ouroboros.Network.RethrowPolicy
+import           System.Exit (ExitCode (..))
 import           System.FilePath ((</>))
 import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types
@@ -294,15 +295,21 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
     llrnWithCheckedDB $ \(LastShutDownWasClean lastShutDownWasClean) continueWithCleanChainDB ->
     withRegistry $ \registry ->
       handleJust
-             -- ignore exception thrown in connection handlers and diffusion
-             -- initialisation failures; these errors are logged by the network
-             -- layer.
-             (\err -> case fromException err :: Maybe ExceptionInHandler of
-                Just _    -> Nothing
-                Nothing   ->
-                  case fromException err :: Maybe (Diffusion.Failure addrNTN) of
-                    Just _  -> Nothing
-                    Nothing -> Just err)
+             -- Ignore exception thrown in connection handlers and diffusion.
+             -- Also ignore 'ExitSuccess'.
+             (\err ->
+               case fromException err :: Maybe ExceptionInLinkedThread of
+                 Just (ExceptionInLinkedThread _ err') | Just ExitSuccess <- fromException err'
+                                                       -> Nothing
+                                                       | otherwise
+                                                       -> Just err
+                 Nothing ->
+                   case fromException err :: Maybe ExceptionInHandler of
+                     Just _    -> Nothing
+                     Nothing   ->
+                       case fromException err :: Maybe (Diffusion.Failure addrNTN) of
+                         Just _  -> Nothing
+                         Nothing -> Just err)
               (\err -> traceWith (consensusErrorTracer rnTraceConsensus) err
                     >> throwIO err
               ) $ do
