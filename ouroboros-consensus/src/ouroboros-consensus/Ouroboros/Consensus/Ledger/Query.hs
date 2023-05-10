@@ -39,7 +39,7 @@ import           Codec.Serialise (Serialise)
 import           Codec.Serialise.Class (decode, encode)
 import           Control.Exception (Exception, throw)
 import           Data.Kind (Type)
-import qualified Data.Map.Diff.Strict.Internal as DS
+import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Monoid
@@ -390,19 +390,16 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
         DiffMK
       $ case Set.lookupMax ks of
           Nothing -> ds
-          Just k  -> DS.filterOnlyKey (\dk -> dk > k) ds
+          Just k  -> Diff.filterOnlyKey (\dk -> dk > k) ds
 
     -- NOTE: this is counting the deletions wrt disk.
     numDeletesDiffMK :: DiffMK k v -> Int
     numDeletesDiffMK (DiffMK d) =
-      getSum $ DS.foldMapDiffEntry (Sum . oneIfDel) d
+      getSum $ Diff.foldMapDiffEntry (Sum . oneIfDel) d
       where
         oneIfDel x = case x of
-          DS.Delete _           -> 1
-          DS.Insert _           -> 0
-          DS.UnsafeAntiDelete _ -> 0
-          DS.UnsafeAntiInsert _ -> 0
-
+          Diff.Delete _ -> 1
+          Diff.Insert _ -> 0
 
     -- INVARIANT: nrequested > 0
     --
@@ -436,7 +433,7 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
       (DiffMK ds)
       (ValuesMK vs) =
         let includingAllKeys        =
-              DS.unsafeApplyDiff vs ds
+              Diff.applyDiff vs ds
             definitelyNoMoreToFetch = Map.size vs < nrequested
         in
         ValuesMK
@@ -447,9 +444,9 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
               else error $ "Size of values " <> show (Map.size vs) <> ", nrequested " <> show nrequested
           Just ((k, _v), vs') ->
             if definitelyNoMoreToFetch then includingAllKeys else
-            DS.unsafeApplyDiff
+            Diff.applyDiff
               vs'
-              (DS.filterOnlyKey (\dk -> dk < k) ds)
+              (Diff.filterOnlyKey (\dk -> dk < k) ds)
 
 
 {-------------------------------------------------------------------------------

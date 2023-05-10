@@ -354,14 +354,14 @@ library
     , containers                   >=0.5     && <0.7
     , contra-tracer
     , deepseq
-    , diff-containers
+    , diff-containers              >=1.0
     , filelock
-    , fingertree-rm
+    , fingertree-rm                >=1.0
     , fs-api
-    , groups
     , hashable
     , io-classes                   ^>=0.3
     , measures
+    , monoid-subclasses
     , mtl                          >=2.2     && <2.3
     , nothunks                     >=0.1.2   && <0.2
     , ouroboros-network-api
@@ -679,9 +679,9 @@ test-suite storage-test
     , constraints
     , containers
     , contra-tracer
-    , diff-containers
+    , diff-containers                >=1.0
     , directory
-    , fingertree-rm
+    , fingertree-rm                  >=1.0
     , fs-api
     , fs-sim
     , generics-sop
@@ -696,12 +696,13 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
+    , quickcheck-classes
     , quickcheck-dynamic
     , quickcheck-lockstep
+    , quickcheck-monoid-subclasses
     , quickcheck-state-machine       >=0.7.2
     , random
     , serialise
-    , simple-semigroupoids
     , tasty
     , tasty-hunit
     , tasty-quickcheck
@@ -735,7 +736,7 @@ benchmark mempool-bench
     , containers
     , contra-tracer
     , deepseq
-    , diff-containers
+    , diff-containers      >=1.0
     , directory
     , fs-api
     , mtl
@@ -763,7 +764,7 @@ benchmark backingstore-bench
     , consensus-testlib
     , containers
     , deepseq
-    , diff-containers
+    , diff-containers      >=1.0
     , directory
     , fs-api
     , io-classes

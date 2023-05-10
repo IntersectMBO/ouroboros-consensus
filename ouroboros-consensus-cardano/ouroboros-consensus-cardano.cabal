@@ -134,7 +134,7 @@ library
     , containers                    >=0.5   && <0.7
     , cryptonite                    >=0.25  && <0.31
     , deepseq
-    , diff-containers
+    , diff-containers               >=1.0
     , formatting                    >=6.3   && <7.2
     , measures
     , microlens
@@ -442,7 +442,7 @@ test-suite cardano-test
     , cardano-testlib
     , cborg
     , containers
-    , diff-containers
+    , diff-containers                                               >=1.0
     , filepath
     , microlens
     , ouroboros-consensus-cardano

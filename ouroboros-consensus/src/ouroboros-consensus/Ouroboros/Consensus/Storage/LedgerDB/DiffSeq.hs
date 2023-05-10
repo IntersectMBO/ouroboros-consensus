@@ -15,16 +15,17 @@
    the root measure is the total sum of all diffs in the sequence. The internal
    measure is used to keep track of sequence length and maximum slot numbers.
 
-   The diff datatype that we use forms a @'Group'@, which allows for relatively
-   efficient splitting of finger trees with respect to recomputing measures by
-   means of the @'invert'@ operation that the @'Group'@ type class requires.
-   Namely, if either the left or right part of the split is small in comparison
-   with the input sequence, then we can subtract the diffs in the smaller part
-   from the root measure of the input to (quickly) compute the root measure of
-   the /other/ part of the split. This is much faster than computing the root
-   measures from scratch by doing a linear-time pass over the elements of the
-   split parts, or a logarithmic-time pass over intermediate sums of diffs in
-   case we store cumulative diffs in the nodes of the finger tree.
+   The diff datatype that we use forms a cancellative monoid, which allows for
+   relatively efficient splitting of finger trees with respect to recomputing
+   measures by means of subtracting diffs using the 'stripPrefix' and
+   'stripSuffix' functions that cancellative monoids provide. Namely, if either
+   the left or right part of the split is small in comparison with the input
+   sequence, then we can subtract the diffs in the smaller part from the root
+   measure of the input to (quickly) compute the root measure of the /other/
+   part of the split. This is much faster than computing the root measures from
+   scratch by doing a linear-time pass over the elements of the split parts, or
+   a logarithmic-time pass over intermediate sums of diffs in case we store
+   cumulative diffs in the nodes of the finger tree.
 
    === Example of fast splits
 
@@ -55,8 +56,8 @@
    use the total sum of diffs nearly as often as we split or extend the diff
    sequence, this proved to be too costly. The single-instance root measure
    reduces the overhead of this "caching" of intermediate sums of diffs by only
-   using a single total sum of diffs, though augmented with an @'invert'@
-   operation to facilitate computing updated root measures.
+   using a single total sum of diffs, though augmented with 'stripPrefix' and
+   'stripSuffix' operations to facilitate computing updated root measures.
 
 -}
 module Ouroboros.Consensus.Storage.LedgerDB.DiffSeq (
@@ -92,11 +93,11 @@ import qualified Control.Exception as Exn
 import           Data.Bifunctor (Bifunctor (bimap))
 import           Data.FingerTree.RootMeasured.Strict hiding (split)
 import qualified Data.FingerTree.RootMeasured.Strict as RMFT (splitSized)
-import           Data.Group
 import           Data.Map.Diff.Strict as MapDiff
 import           Data.Maybe.Strict
 import           Data.Monoid (Sum (..))
 import           Data.Semigroup (Max (..), Min (..))
+import           Data.Semigroup.Cancellative
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Prelude hiding (length, splitAt)
@@ -120,8 +121,8 @@ newtype DiffSeq k v =
   deriving stock (Generic, Show, Eq)
   deriving anyclass (NoThunks)
 
--- The @'SlotNo'@ is not included in the root measure, since it is
--- not a @'Group'@ instance.
+-- The @'SlotNo'@ is not included in the root measure, since it is not a
+-- cancellative monoid.
 data RootMeasure k v = RootMeasure {
     -- | Cumulative length
     rmLength :: {-# UNPACK #-} !Length
@@ -162,7 +163,8 @@ newtype Length = Length { unLength :: Int }
   deriving anyclass (NoThunks)
   deriving Semigroup via Sum Int
   deriving Monoid via Sum Int
-  deriving Group via Sum Int
+  deriving (LeftReductive, RightReductive) via Sum Int
+  deriving (LeftCancellative, RightCancellative) via Sum Int
 
 -- | An upper bound on slot numbers.
 newtype SlotNoUB = SlotNoUB {unSlotNoUB :: Slot.SlotNo}
@@ -197,9 +199,16 @@ instance (Ord k, Eq v) => Semigroup (RootMeasure k v) where
 instance (Ord k, Eq v) => Monoid (RootMeasure k v) where
   mempty = RootMeasure mempty mempty
 
-instance (Ord k, Eq v) => Group (RootMeasure k v) where
-  invert (RootMeasure len d) =
-    RootMeasure (invert len) (invert d)
+instance (Ord k, Eq v) => LeftReductive (RootMeasure k v) where
+  stripPrefix (RootMeasure len1 d1) (RootMeasure len2 d2) =
+      RootMeasure <$> stripPrefix len1 len2 <*> stripPrefix d1 d2
+
+instance (Ord k, Eq v) => RightReductive (RootMeasure k v) where
+  stripSuffix (RootMeasure len1 d1) (RootMeasure len2 d2) =
+      RootMeasure <$> stripSuffix len1 len2 <*> stripSuffix d1 d2
+
+instance (Ord k, Eq v) => LeftCancellative (RootMeasure k v)
+instance (Ord k, Eq v) => RightCancellative (RootMeasure k v)
 
 {-------------------------------------------------------------------------------
   Internal measuring

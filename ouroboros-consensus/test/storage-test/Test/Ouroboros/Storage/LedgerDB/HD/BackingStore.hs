@@ -352,8 +352,6 @@ instance QC.Arbitrary v => QC.Arbitrary (Diff.DiffEntry v) where
     constr <- QC.elements [
         Diff.Insert
       , Diff.Delete
-      , Diff.UnsafeAntiInsert
-      , Diff.UnsafeAntiDelete
       ]
     constr <$> QC.arbitrary
 

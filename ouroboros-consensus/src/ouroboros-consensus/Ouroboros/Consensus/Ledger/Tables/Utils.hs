@@ -48,7 +48,6 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
   ) where
 
 import           Data.Map.Diff.Strict
-import           Data.Map.Diff.Strict.Internal
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ticked
@@ -171,7 +170,7 @@ forgetLedgerTablesDiffsTicked = mapOverLedgerTablesTicked rawForgetDiffs
 -- Prepend diffs
 
 rawPrependDiffs ::
-     (Ord k, Eq v)
+     Ord k
   => DiffMK k v -- ^ Earlier differences
   -> DiffMK k v -- ^ Later differences
   -> DiffMK k v
@@ -193,7 +192,7 @@ rawApplyDiffs ::
   => ValuesMK k v -- ^ Values to which differences are applied
   -> DiffMK   k v -- ^ Differences to apply
   -> ValuesMK k v
-rawApplyDiffs (ValuesMK vals) (DiffMK diffs) = ValuesMK (unsafeApplyDiff vals diffs)
+rawApplyDiffs (ValuesMK vals) (DiffMK diffs) = ValuesMK (applyDiff vals diffs)
 
 applyLedgerTablesDiffs           ::       HasLedgerTables l =>              l ValuesMK ->         l DiffMK ->         l ValuesMK
 applyLedgerTablesDiffsTicked     :: HasTickedLedgerTables l =>              l ValuesMK -> Ticked1 l DiffMK -> Ticked1 l ValuesMK
@@ -225,7 +224,7 @@ rawAttachAndApplyDiffs ::
   => DiffMK     k v
   -> ValuesMK   k v
   -> TrackingMK k v
-rawAttachAndApplyDiffs (DiffMK d) (ValuesMK v) = TrackingMK (unsafeApplyDiff v d) d
+rawAttachAndApplyDiffs (DiffMK d) (ValuesMK v) = TrackingMK (applyDiff v d) d
 
 -- | Replace the tables in the first parameter with the tables of the second
 -- parameter after applying the differences in the first parameter to them
@@ -246,7 +245,7 @@ attachAndApplyDiffsTickedToTables =
     zipOverLedgerTablesTicked rawAttachAndApplyDiffs
 
 rawPrependTrackingDiffs ::
-      (Ord k, Eq v)
+      Ord k
    => TrackingMK k v
    -> TrackingMK k v
    -> TrackingMK k v
@@ -269,7 +268,7 @@ rawReapplyTracking ::
   => TrackingMK k v
   -> ValuesMK   k v
   -> TrackingMK k v
-rawReapplyTracking (TrackingMK _v d) (ValuesMK v) = TrackingMK (unsafeApplyDiff v d) d
+rawReapplyTracking (TrackingMK _v d) (ValuesMK v) = TrackingMK (applyDiff v d) d
 
 -- | Replace the tables in the first parameter with the tables of the second
 -- parameter after applying the differences in the first parameter to them
