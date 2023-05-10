@@ -58,9 +58,11 @@ import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, contramap, traceWith)
 import           Data.ByteString.Lazy (ByteString)
+import           Data.Functor.Contravariant (Predicate (..))
 import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (isNothing)
 import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
@@ -274,6 +276,7 @@ run :: forall blk p2p.
   -> IO ()
 run args stdArgs = stdLowLevelRunNodeArgsIO args stdArgs >>= runWith args encodeRemoteAddress decodeRemoteAddress
 
+
 -- | Start a node.
 --
 -- This opens the 'ChainDB', sets up the 'NodeKernel' and initialises the
@@ -297,19 +300,17 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       handleJust
              -- Ignore exception thrown in connection handlers and diffusion.
              -- Also ignore 'ExitSuccess'.
-             (\err ->
-               case fromException err :: Maybe ExceptionInLinkedThread of
-                 Just (ExceptionInLinkedThread _ err') | Just ExitSuccess <- fromException err'
-                                                       -> Nothing
-                                                       | otherwise
-                                                       -> Just err
-                 Nothing ->
-                   case fromException err :: Maybe ExceptionInHandler of
-                     Just _    -> Nothing
-                     Nothing   ->
-                       case fromException err :: Maybe (Diffusion.Failure addrNTN) of
-                         Just _  -> Nothing
-                         Nothing -> Just err)
+             (runPredicate $
+                   (Predicate $ \err ->
+                     (case fromException @ExceptionInLinkedThread err of
+                       Just (ExceptionInLinkedThread _ err')
+                         -> maybe True (/= ExitSuccess) $ fromException err'
+                       Nothing -> False))
+                <> (Predicate $ \err ->
+                     isNothing (fromException @ExceptionInHandler err))
+                <> (Predicate $ \err ->
+                     isNothing (fromException @(Diffusion.Failure addrNTN) err))
+              )
               (\err -> traceWith (consensusErrorTracer rnTraceConsensus) err
                     >> throwIO err
               ) $ do
@@ -533,6 +534,10 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
 
         localRethrowPolicy :: RethrowPolicy
         localRethrowPolicy = mempty
+
+    runPredicate :: Predicate a -> a -> Maybe a
+    runPredicate (Predicate p) err = if p err then Just err else Nothing
+
 
 -- | Check the DB marker, lock the DB and look for the clean shutdown marker.
 --
