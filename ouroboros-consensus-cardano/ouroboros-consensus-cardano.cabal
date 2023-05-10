@@ -518,7 +518,6 @@ library cardano-tools
     , containers                     >=0.5   && <0.7
     , contra-tracer
     , directory
-    , diff-containers
     , filepath
     , fs-api
     , microlens

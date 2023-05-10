@@ -181,9 +181,9 @@ data TraceEvent blk =
   | BlockTxSizeEvent SlotNo Int SizeInBytes
     -- ^ triggered for all blocks during ShowBlockTxsSize analysis,
     --   it holds:
-    --   * slot number when the block was forged
-    --   * number of transactions in the block
-    --   * total size of transactions in the block
+    --    * slot number when the block was forged
+    --    * number of transactions in the block
+    --    * total size of transactions in the block
   | BlockMempoolAndForgeRepro BlockNo SlotNo Int SizeInBytes IOLike.DiffTime IOLike.DiffTime
     -- ^ triggered for all blocks during ShowBlockTxsSize analysis,
     --   it holds:
@@ -365,7 +365,7 @@ storeLedgerStateAt slotNo aenv = do
       ldb'' <-
         if unBlockNo (blockNo blk) `mod` 100 == 0
         then do
-          let (toFlush, toKeep) = LedgerDB.flush FlushAll ldb'
+          let (toFlush, toKeep) = LedgerDB.splitForFlushing FlushAll ldb'
           mapM_ (flushIntoBackingStore bstore) toFlush
           pure toKeep
         else pure ldb'
@@ -449,7 +449,7 @@ checkNoThunksEvery
               newLedger
       if unBlockNo bn `mod` 100 == 0
       then do
-        let (toFlush, toKeep) = LedgerDB.flush FlushAll intermediateLedgerDB
+        let (toFlush, toKeep) = LedgerDB.splitForFlushing FlushAll intermediateLedgerDB
         mapM_ (flushIntoBackingStore bstore) toFlush
         pure toKeep
       else pure intermediateLedgerDB
@@ -491,7 +491,7 @@ traceLedgerProcessing
 
       if unBlockNo (blockNo blk) `mod` 100 == 0
       then do
-        let (toFlush, toKeep) = LedgerDB.flush FlushAll ldb'
+        let (toFlush, toKeep) = LedgerDB.splitForFlushing FlushAll ldb'
         mapM_ (flushIntoBackingStore bstore) toFlush
         pure toKeep
       else pure ldb'
@@ -576,7 +576,7 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, b
         (ldb'', tFlush) <-
           if unBlockNo (blockNo blk) `mod` 100 == 0
           then do
-            let (toFlush, toKeep) = LedgerDB.flush FlushAll ldb'
+            let (toFlush, toKeep) = LedgerDB.splitForFlushing FlushAll ldb'
             ((), tFlush) <- time $ mapM_ (flushIntoBackingStore bstore) toFlush
             pure (toKeep, tFlush)
           else pure (ldb', 0)
@@ -703,8 +703,17 @@ reproMempoolForge numBlks env = do
             let keys = ExtLedgerStateTables
                   $ foldl' (zipLedgerTables (<>)) emptyLedgerTables
                   $ map getTransactionKeySets txs
-            lgrDb <- IOLike.atomically $ IOLike.readTVar ref
-            fmap unExtLedgerStateTables <$> getLedgerTablesAtFor pt keys lgrDb bstore
+            let f = do
+                  lgrDb <- IOLike.atomically $ IOLike.readTVar ref
+                  case LedgerDB.rollback pt lgrDb of
+                    Nothing -> pure $ Left $ PointNotFound pt
+                    Just l  -> do
+                      eValues <-
+                        getLedgerTablesFor l keys (readKeySets bstore)
+                      case eValues of
+                        Right v -> pure $ Right v
+                        Left _  -> f
+            fmap unExtLedgerStateTables <$> f
       }
       lCfg
       -- one megabyte should generously accomodate two blocks' worth of txs
@@ -764,12 +773,15 @@ reproMempoolForge numBlks env = do
           -- Primary caveat: that thread's mempool may have had more transactions in it.
           do
             let slot = blockSlot blk
+            vh <- lbsValueHandle bstore
             (ticked, durTick) <- timed $ IOLike.evaluate $
               applyChainTick lCfg slot (ledgerState $ LedgerDB.current ldb)
             ((), durSnap) <- timed $ do
-              snap <- Mempool.getSnapshotFor mempool (castPoint $ getTip $ LedgerDB.current ldb) slot ticked
+              snap <- Mempool.getSnapshotFor mempool slot ticked ldb vh
 
-              pure $ length . Mempool.snapshotTxs <$> snap `seq` Mempool.snapshotState <$> snap `seq` ()
+              pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotState snap `seq` ()
+
+            lbsvhClose vh
 
             let sizes = HasAnalysis.blockTxSizes blk
             traceWith tracer $
@@ -793,7 +805,7 @@ reproMempoolForge numBlks env = do
           ldb'' <-
             if unBlockNo (blockNo blk) `mod` 100 == 0
             then do
-              let (toFlush, toKeep) = LedgerDB.flush FlushAll ldb'
+              let (toFlush, toKeep) = LedgerDB.splitForFlushing FlushAll ldb'
               mapM_ (flushIntoBackingStore bstore) toFlush
               pure toKeep
             else pure ldb'
