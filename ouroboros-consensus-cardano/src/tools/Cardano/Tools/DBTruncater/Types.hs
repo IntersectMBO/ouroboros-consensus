@@ -5,10 +5,12 @@ import           Ouroboros.Consensus.Block.Abstract
 
 data DBTruncaterConfig = DBTruncaterConfig {
     dbDir         :: FilePath
-  , truncatePoint :: TruncatePoint
+  , truncateAfter :: TruncateAfter
   , blockType     :: BlockType
   , verbose       :: Bool
   }
 
-newtype TruncatePoint = TruncatePoint SlotNo
+data TruncateAfter
+  = TruncateAfterSlot SlotNo
+  | TruncateAfterBlock BlockNo
   deriving (Show, Eq)

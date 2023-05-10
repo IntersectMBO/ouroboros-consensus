@@ -8,7 +8,7 @@ import           Ouroboros.Consensus.Block.Abstract
 commandLineParser :: Parser DBTruncaterConfig
 commandLineParser = DBTruncaterConfig
   <$> parseChainDBPath
-  <*> parseTruncatePoint
+  <*> parseTruncateAfter
   <*> blockTypeParser
   <*> parseVerbose
   where
@@ -20,9 +20,28 @@ commandLineParser = DBTruncaterConfig
         ]
     parseVerbose = switch (long "verbose" <> help "Enable verbose logging")
 
-parseTruncatePoint :: Parser TruncatePoint
-parseTruncatePoint = TruncatePoint <$> slotNoOption
+parseTruncateAfter :: Parser TruncateAfter
+parseTruncateAfter = asum
+  [ TruncateAfterSlot <$> slotNoOption
+  , TruncateAfterBlock <$> blockNoOption
+  ]
 
 slotNoOption :: Parser SlotNo
 slotNoOption =
-  SlotNo <$> option auto (long "truncate-point" <> metavar "SLOT_NUMBER")
+    SlotNo <$> option auto mods
+  where
+    mods = mconcat
+      [ long "truncate-after-slot"
+      , metavar "SLOT_NUMBER"
+      , help "The slot number of the intended new tip of the chain after truncation"
+      ]
+
+blockNoOption :: Parser BlockNo
+blockNoOption =
+    BlockNo <$> option auto mods
+  where
+    mods = mconcat
+      [ long "truncate-after-block"
+      , metavar "BLOCK_NUMBER"
+      , help "The block number of the intended new tip of the chain after truncation"
+      ]
