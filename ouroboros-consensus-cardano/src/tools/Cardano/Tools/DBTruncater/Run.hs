@@ -28,9 +28,11 @@ import           Ouroboros.Consensus.Util.ResourceRegistry (runWithTempRegistry,
 import           Prelude hiding (truncate)
 import           System.IO
 
-truncate :: forall block .
-            ( Node.RunNode block, HasProtocolInfo block )
-         => DBTruncaterConfig -> Args block -> IO ()
+truncate ::
+     forall block . (Node.RunNode block, HasProtocolInfo block)
+  => DBTruncaterConfig
+  -> Args block
+  -> IO ()
 truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
   withRegistry $ \registry -> do
     lock <- mkLock
@@ -55,28 +57,34 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
       iterator <- ImmutableDB.streamAll immutableDB registry
         ((,) <$> GetHeader <*> GetIsEBB)
 
-      mTruncatePoint <- findTruncatePoint truncateAfter iterator
+      mTruncatePoint <- findNewTip truncateAfter iterator
       case mTruncatePoint of
         Nothing ->
-          putStrLn "Unable to find a truncate point. This is likely because the tip of the ImmutableDB has a slot number less than the intended truncate point"
+          putStrLn $ mconcat
+            [ "Unable to find a truncate point. This is likely because the tip "
+            , "of the ImmutableDB has a slot number less than the intended "
+            , "truncate point"
+            ]
         Just (header, isEBB) -> do
           let HeaderFields slotNo blockNo hash = getHeaderFields header
               newTip = ImmutableDB.Tip slotNo isEBB blockNo hash
           when verbose $ do
-            putStrLn "Truncating the ImmutableDB using the following block as the new tip:"
-            putStrLn $ "  " <> show newTip
+            putStrLn $ mconcat
+              [ "Truncating the ImmutableDB using the following block as the "
+              , "new tip:\n"
+              , "  ", show newTip
+              ]
           deleteAfter internal (At newTip)
-
 
 -- | Given a 'TruncateAfter' (either a slot number or a block number), and an
 -- iterator, find the last block whose slot or block number is less than or
 -- equal to the intended new chain tip.
-findTruncatePoint :: forall m blk c .
-                     (HasHeader (Header blk), Monad m)
-                  => TruncateAfter
-                  -> Iterator m blk (Header blk, c)
-                  -> m (Maybe (Header blk, c))
-findTruncatePoint target iter =
+findNewTip :: forall m blk c .
+              (HasHeader (Header blk), Monad m)
+           => TruncateAfter
+           -> Iterator m blk (Header blk, c)
+           -> m (Maybe (Header blk, c))
+findNewTip target iter =
     go Nothing
   where
     acceptable (getHeaderFields -> HeaderFields slotNo blockNo _, _) = do
@@ -94,7 +102,7 @@ findTruncatePoint target iter =
 mkLock :: MonadSTM m => m (StrictMVar m ())
 mkLock = newMVar ()
 
-mkTracer :: (Show a) => StrictMVar IO () -> Bool -> IO (Tracer IO a)
+mkTracer :: Show a => StrictMVar IO () -> Bool -> IO (Tracer IO a)
 mkTracer _ False = pure mempty
 mkTracer lock True = do
   startTime <- getMonotonicTime
@@ -105,8 +113,9 @@ mkTracer lock True = do
       hPutStrLn stderr $ concat ["[", show diff, "] ", show ev]
       hFlush stderr
 
-withDB :: ( Node.RunNode block, IOLike m )
-       => ImmutableDbArgs Identity m block
-       -> ((ImmutableDB m block, Internal m block) -> m a)
-       -> m a
+withDB ::
+     (Node.RunNode block, IOLike m)
+  => ImmutableDbArgs Identity m block
+  -> ((ImmutableDB m block, Internal m block) -> m a)
+  -> m a
 withDB immutableDBArgs = bracket (ImmutableDB.openDBInternal immutableDBArgs runWithTempRegistry) (ImmutableDB.closeDB . fst)
