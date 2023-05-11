@@ -1,8 +1,8 @@
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns        #-}
-{-# LANGUAGE FlexibleContexts    #-}
 
 module Cardano.Tools.DBTruncater.Run (truncate) where
 
@@ -12,8 +12,8 @@ import           Cardano.Tools.DBTruncater.Types
 import           Control.Monad
 import           Control.Tracer
 import           Data.Functor.Identity
-import           Ouroboros.Consensus.Block.Abstract (Header, HasHeader, HeaderFields (..),
-                     getHeaderFields)
+import           Ouroboros.Consensus.Block.Abstract (HasHeader, Header,
+                     HeaderFields (..), getHeaderFields)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Node as Node
 import           Ouroboros.Consensus.Node.InitStorage as Node
@@ -89,7 +89,7 @@ findNewTip target iter =
   where
     acceptable (getHeaderFields -> HeaderFields slotNo blockNo _, _) = do
       case target of
-        TruncateAfterSlot s -> slotNo <= s
+        TruncateAfterSlot s  -> slotNo <= s
         TruncateAfterBlock b -> blockNo <= b
     go acc =
       ImmutableDB.iteratorNext iter >>= \case

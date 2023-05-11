@@ -10,6 +10,8 @@ data DBTruncaterConfig = DBTruncaterConfig {
   , verbose       :: Bool
   }
 
+-- | Slot or block number of the block intended to be the new tip of the chain
+-- after the ImmutableDB is truncated.
 data TruncateAfter
   = TruncateAfterSlot SlotNo
   | TruncateAfterBlock BlockNo
