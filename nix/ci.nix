@@ -1,4 +1,4 @@
-{ pkgs, devShell }:
+{ inputs, pkgs, devShell }:
 
 let
   inherit (pkgs) lib haskell-nix;
@@ -20,21 +20,25 @@ let
         haskellLib.collectChecks' projectHsPkgs;
     };
 
-  jobs = lib.filterAttrsRecursive (n: _: n != "recurseForDerivations") {
-    native = mkHaskellJobsFor pkgs.hsPkgs;
-    windows = lib.optionalAttrs (buildSystem == "x86_64-linux")
-      (mkHaskellJobsFor pkgs.hsPkgs.projectCross.mingwW64.hsPkgs);
-    formatting = import ./formatting.nix pkgs;
-    inherit devShell;
-  };
-  required = pkgs.releaseTools.aggregate {
+  jobs = lib.filterAttrsRecursive (n: v: n != "recurseForDerivations") ({
+    native = {
+      haskell = mkHaskellJobsFor pkgs.hsPkgs;
+      formatting = import ./formatting.nix pkgs;
+      inherit devShell;
+    };
+  } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
+    windows = {
+      haskell = mkHaskellJobsFor pkgs.hsPkgs.projectCross.mingwW64.hsPkgs;
+    };
+  });
+
+  require = jobs: pkgs.releaseTools.aggregate {
     name = "required-consensus";
-    constituents = lib.collect lib.isDerivation jobs;
+    constituents = lib.collect lib.isDerivation jobs
+      # force rebuild on every commit
+      ++ [ (pkgs.writeText "rebuild-trigger" (inputs.self.rev or "dirty")) ];
   };
 in
 jobs // {
-  required =
-    if builtins.elem buildSystem [ "x86_64-linux" "x86_64-darwin" "aarch64-darwin" ]
-    then required
-    else pkgs.emptyDirectory;
+  required = lib.mapAttrs (_: require) jobs;
 }
