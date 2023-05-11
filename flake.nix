@@ -56,7 +56,7 @@
           packages = [ pkgs.nodejs pkgs.yarn ];
         };
       };
-      hydraJobs = import ./nix/ci.nix { inherit pkgs devShell; };
+      hydraJobs = import ./nix/ci.nix { inherit inputs pkgs devShell; };
       legacyPackages = pkgs;
     } // inputs.tullia.fromSimple system (import ./nix/tullia.nix)
   );

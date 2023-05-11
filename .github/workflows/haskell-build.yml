@@ -31,7 +31,10 @@ jobs:
       fail-fast: false
       matrix:
         # Currently Hydra/Cicero build with 9.2.7
-        ghc: ["9.2.7"]
+
+        # Consider re-enabling documentation in the respective
+        # cabal.project.local.* when bumping to a newer GHC.
+        ghc: ["8.10.7"]
         os: [windows-latest]
 
     env:
