@@ -19,7 +19,7 @@ past design process, troubleshooters debug changes in behavior, downstream
 developers understand recent changes and their context, and so on. In these kind
 of scenarios, commit messages are often the easiest documentation to read first.
 Write commit messages in the imperative, as per [these
-guidelines][git-contributing-to-a-project].
+guidelines][contributing-to-a-project].
 
 _Small and organized commits_: The commits themselves, beyond just their
 messages, also contribute to the story in their own way. Prefer small commits
