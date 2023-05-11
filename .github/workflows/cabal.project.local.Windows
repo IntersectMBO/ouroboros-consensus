@@ -1,5 +1,6 @@
 benchmarks:     True
-documentation:  True
+-- causes weird out-of-memory errors on 8.10
+documentation:  False
 reorder-goals:  True
 tests:          True
 
