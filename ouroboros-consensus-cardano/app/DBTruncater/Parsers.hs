@@ -21,10 +21,8 @@ commandLineParser = DBTruncaterConfig
     parseVerbose = switch (long "verbose" <> help "Enable verbose logging")
 
 parseTruncateAfter :: Parser TruncateAfter
-parseTruncateAfter = asum
-  [ TruncateAfterSlot <$> slotNoOption
-  , TruncateAfterBlock <$> blockNoOption
-  ]
+parseTruncateAfter =
+  fmap TruncateAfterSlot slotNoOption <|> fmap TruncateAfterBlock blockNoOption
 
 slotNoOption :: Parser SlotNo
 slotNoOption =
