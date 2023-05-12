@@ -48,11 +48,11 @@ import           Ouroboros.Network.TxSubmission.Outbound
 
 data Tracers' remotePeer localPeer blk f = Tracers
   { chainSyncClientTracer         :: f (TraceLabelPeer remotePeer (TraceChainSyncClientEvent blk))
-  , chainSyncServerHeaderTracer   :: f (TraceChainSyncServerEvent blk)
+  , chainSyncServerHeaderTracer   :: f (TraceLabelPeer remotePeer (TraceChainSyncServerEvent blk))
   , chainSyncServerBlockTracer    :: f (TraceChainSyncServerEvent blk)
   , blockFetchDecisionTracer      :: f [TraceLabelPeer remotePeer (FetchDecision [Point (Header blk)])]
   , blockFetchClientTracer        :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
-  , blockFetchServerTracer        :: f (TraceBlockFetchServerEvent blk)
+  , blockFetchServerTracer        :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
   , txInboundTracer               :: f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound  (GenTxId blk) (GenTx blk)))
   , txOutboundTracer              :: f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
