@@ -43,6 +43,7 @@
           inputs.iohkNix.overlays.crypto
           (import ./nix/tools.nix inputs)
           (import ./nix/haskell.nix inputs)
+          (import ./nix/pdfs.nix)
         ];
       };
       inherit (pkgs) lib haskell-nix;

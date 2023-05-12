@@ -40,6 +40,8 @@ jobs:
           cache: yarn
           cache-dependency-path: './docs/website/yarn.lock'
 
+      - uses: cachix/install-nix-action@v20
+
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
@@ -89,6 +91,11 @@ jobs:
           cd ../../
           cabal build --dry-run --enable-tests all
           ./scripts/docs/haddocks.sh
+
+      - name: Build PDFs (Consensus report)
+        run: |
+          nix build -L .#consensus-pdfs
+          cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Build website
         run: yarn build
