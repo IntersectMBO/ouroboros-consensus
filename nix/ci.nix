@@ -25,6 +25,8 @@ let
       haskell = mkHaskellJobsFor pkgs.hsPkgs;
       formatting = import ./formatting.nix pkgs;
       inherit devShell;
+    } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
+      inherit (pkgs) consensus-pdfs;
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {

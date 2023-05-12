@@ -23,6 +23,6 @@ The following artifacts influence and/or describe the Consensus implementation.
 [ouroboros-bft]: https://iohk.io/en/research/library/papers/ouroboros-bfta-simple-byzantine-fault-tolerant-consensus-protocol/
 [ouroboros-praos]: https://iohk.io/en/research/library/papers/ouroboros-praosan-adaptively-securesemi-synchronous-proof-of-stake-protocol/
 [ouroboros-genesis]: https://iohk.io/en/research/library/papers/ouroboros-genesiscomposable-proof-of-stake-blockchains-with-dynamic-availability/
-[consensus-report]: https://input-output-hk.github.io/ouroboros-network/pdfs/report/
+[consensus-report]: https://input-output-hk.github.io/ouroboros-consensus/pdfs/report.pdf
 [network-report]: https://input-output-hk.github.io/ouroboros-network/pdfs/network-design/
 [cardano-ledger]: https://github.com/input-output-hk/cardano-ledger/
