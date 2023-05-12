@@ -6,9 +6,12 @@ module Bench.Consensus.MempoolWithMockedLedgerItf (
     InitialMempoolAndModelParams (..)
     -- * Mempool with a mocked LedgerDB interface
   , MempoolWithMockedLedgerItf (getMempool)
-  , getTxs
   , openMempoolWithMockedLedgerItf
   , setLedgerState
+    -- * Mempool API functions
+  , addTx
+  , getTxs
+  , removeTxs
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict (StrictTVar,
@@ -21,6 +24,8 @@ import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
+import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf,
+                     MempoolAddTxResult)
 
 data MempoolWithMockedLedgerItf m blk = MempoolWithMockedLedgerItf {
       getLedgerInterface :: !(Mempool.LedgerInterface m blk)
@@ -78,6 +83,19 @@ setLedgerState ::
   -> IO ()
 setLedgerState MempoolWithMockedLedgerItf {getLedgerStateTVar} newSt =
   atomically $ writeTVar getLedgerStateTVar newSt
+
+addTx ::
+     MempoolWithMockedLedgerItf m blk
+  -> AddTxOnBehalfOf
+  -> Ledger.GenTx blk
+  -> m (MempoolAddTxResult blk)
+addTx = Mempool.addTx . getMempool
+
+removeTxs ::
+     MempoolWithMockedLedgerItf m blk
+  -> [Ledger.GenTxId blk]
+  -> m ()
+removeTxs = Mempool.removeTxs . getMempool
 
 getTxs ::
      (Ledger.LedgerSupportsMempool blk)
