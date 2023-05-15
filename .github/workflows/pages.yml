@@ -117,6 +117,12 @@ jobs:
           auto-push: false
           benchmark-data-dir-path: "./docs/website/build/benchmarks/"
 
+      - name: Is the benchmark data still there?
+        run: |
+          pwd
+          ls
+          find . -iname 'mempool-benchmarks.json'
+
       - uses: actions/upload-pages-artifact@v1
         with:
           path: ./docs/website/build
