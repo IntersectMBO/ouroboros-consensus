@@ -114,8 +114,8 @@ jobs:
           name: Mempool
           tool: 'customSmallerIsBetter'
           output-file-path: './docs/website/mempool-benchmarks.json'
-          auto-push: false
-          gh-pages-branch: 'bench'
+          auto-push: true
+          # gh-pages-branch: 'main'
           benchmark-data-dir-path: "./docs/website/benchmarks/"
 
       - name: Is the benchmark data still there?
