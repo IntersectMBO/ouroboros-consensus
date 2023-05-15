@@ -54,6 +54,10 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
           }
 
     withDB immutableDBArgs $ \(immutableDB, internal) -> do
+
+      -- At the moment, we're just running a linear search with streamAll to
+      -- find the correct block to truncate from, but we could in theory do this
+      -- more quickly by binary searching the chunks of the ImmutableDB.
       iterator <- ImmutableDB.streamAll immutableDB registry
         ((,) <$> GetHeader <*> GetIsEBB)
 
