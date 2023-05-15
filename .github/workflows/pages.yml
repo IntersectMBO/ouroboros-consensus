@@ -104,8 +104,7 @@ jobs:
       - name: Fake benchmark data
         run: |
           echo '[{"name":"Just adding 10000 transactions","unit":"milliseconds","value":51},{"name":"Just adding 1000000 transactions","unit":"seconds","value":5}]' > mempool-benchmarks.json
-          ls *
-          ls */*
+          find . -iname 'mempool-benchmarks.json'
 
       - name: Generate benchmark plots
         uses: benchmark-action/github-action-benchmark@v1
