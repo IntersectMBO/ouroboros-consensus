@@ -41,65 +41,78 @@ jobs:
           cache: yarn
           cache-dependency-path: './docs/website/yarn.lock'
 
-      - uses: cachix/install-nix-action@v20
+      # - uses: cachix/install-nix-action@v20
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Install Haskell
-        uses: input-output-hk/setup-haskell@v1
-        id: setup-haskell
-        with:
-          ghc-version: ${{ matrix.ghc }}
-          cabal-version: "3.10.1.0"
+      # - name: Install Haskell
+      #   uses: input-output-hk/setup-haskell@v1
+      #   id: setup-haskell
+      #   with:
+      #     ghc-version: ${{ matrix.ghc }}
+      #     cabal-version: "3.10.1.0"
 
-      - name: Install build environment
-        run: |
-          sudo apt-get update
-          sudo apt-get -y install libsodium-dev
+      # - name: Install build environment
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get -y install libsodium-dev
 
-      - name: Install secp256k1
-        uses: input-output-hk/setup-secp256k1@v1
-        with:
-          git-ref: ${{ env.SECP256K1_REF }}
-          cache-version: ${{ env.SECP_CACHE_VERSION }}
+      # - name: Install secp256k1
+      #   uses: input-output-hk/setup-secp256k1@v1
+      #   with:
+      #     git-ref: ${{ env.SECP256K1_REF }}
+      #     cache-version: ${{ env.SECP_CACHE_VERSION }}
 
       - name: Set up temp directory
         run: |
           echo 'TMPDIR=${{ runner.temp }}'  >> $GITHUB_ENV
           echo 'TMP=${{ runner.temp }}'     >> $GITHUB_ENV
 
-      - uses: actions/cache@v3
-        name: Cache cabal store
-        with:
-          path: ${{ steps.setup-haskell.outputs.cabal-store }}
-          key: cache-haddock-${{ runner.os }}-${{ matrix.ghc }}-v1-${{ hashFiles('cabal-cache.cabal') }}-${{ github.sha }}
-          restore-keys: cache-haddock-${{ runner.os }}-${{ matrix.ghc }}-v1-${{ hashFiles('cabal-cache.cabal') }}-
+      # - uses: actions/cache@v3
+      #   name: Cache cabal store
+      #   with:
+      #     path: ${{ steps.setup-haskell.outputs.cabal-store }}
+      #     key: cache-haddock-${{ runner.os }}-${{ matrix.ghc }}-v1-${{ hashFiles('cabal-cache.cabal') }}-${{ github.sha }}
+      #     restore-keys: cache-haddock-${{ runner.os }}-${{ matrix.ghc }}-v1-${{ hashFiles('cabal-cache.cabal') }}-
 
-      - name: Update Hackage index
-        run: cabal update
+      # - name: Update Hackage index
+      #   run: cabal update
 
-      - name: Configure to use libsodium
-        run: |
-          cat >> ../../cabal.project <<EOF
-          package cardano-crypto-praos
-            flags: -external-libsodium-vrf
-          EOF
+      # - name: Configure to use libsodium
+      #   run: |
+      #     cat >> ../../cabal.project <<EOF
+      #     package cardano-crypto-praos
+      #       flags: -external-libsodium-vrf
+      #     EOF
 
-      - name: build Haddock documentation 🔧
-        run: |
-          mkdir ./static/haddocks
-          cd ../../
-          cabal build --dry-run --enable-tests all
-          ./scripts/docs/haddocks.sh
+      # - name: build Haddock documentation 🔧
+      #   run: |
+      #     mkdir ./static/haddocks
+      #     cd ../../
+      #     cabal build --dry-run --enable-tests all
+      #     ./scripts/docs/haddocks.sh
 
-      - name: Build PDFs (Consensus report)
-        run: |
-          nix build -L .#consensus-pdfs
-          cp -r --no-preserve=mode,ownership result/ static/pdfs
+      # - name: Build PDFs (Consensus report)
+      #   run: |
+      #     nix build -L .#consensus-pdfs
+      #     cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Build website
         run: yarn build
+
+      - name: Fake benchmark data
+        run: |
+          echo '[{"name":"Just adding 10000 transactions","unit":"milliseconds","value":51},{"name":"Just adding 1000000 transactions","unit":"seconds","value":5}]' > mempool-benchmarks.json
+
+      - name: Generate benchmark plots
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Mempool
+          tool: 'customSmallerIsBetter'
+          output-file-path: mempool-benchmarks.json
+          auto-push: false
+          benchmark-data-dir-path: "./docs/website/build/benchmarks/"
 
       - uses: actions/upload-pages-artifact@v1
         with:
