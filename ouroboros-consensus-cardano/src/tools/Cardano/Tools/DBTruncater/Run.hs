@@ -29,7 +29,7 @@ import           Prelude hiding (truncate)
 import           System.IO
 
 truncate ::
-     forall block . (Node.RunNode block, HasProtocolInfo block)
+     forall block. (Node.RunNode block, HasProtocolInfo block)
   => DBTruncaterConfig
   -> Args block
   -> IO ()
@@ -62,8 +62,8 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
         Nothing ->
           putStrLn $ mconcat
             [ "Unable to find a truncate point. This is likely because the tip "
-            , "of the ImmutableDB has a slot number less than the intended "
-            , "truncate point"
+            , "of the ImmutableDB has a slot number or block number less than "
+            , "the intended truncate point"
             ]
         Just (header, isEBB) -> do
           let HeaderFields slotNo blockNo hash = getHeaderFields header
@@ -79,7 +79,7 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
 -- | Given a 'TruncateAfter' (either a slot number or a block number), and an
 -- iterator, find the last block whose slot or block number is less than or
 -- equal to the intended new chain tip.
-findNewTip :: forall m blk c .
+findNewTip :: forall m blk c.
               (HasHeader (Header blk), Monad m)
            => TruncateAfter
            -> Iterator m blk (Header blk, c)

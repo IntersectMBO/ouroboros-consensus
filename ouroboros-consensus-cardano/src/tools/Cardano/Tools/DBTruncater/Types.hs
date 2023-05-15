@@ -1,4 +1,7 @@
-module Cardano.Tools.DBTruncater.Types (module Cardano.Tools.DBTruncater.Types) where
+module Cardano.Tools.DBTruncater.Types (
+    DBTruncaterConfig (..)
+  , TruncateAfter (..)
+  ) where
 
 import           Cardano.Tools.DBAnalyser.Types
 import           Ouroboros.Consensus.Block.Abstract
