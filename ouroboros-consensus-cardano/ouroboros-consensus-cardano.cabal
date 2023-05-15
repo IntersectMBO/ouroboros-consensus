@@ -463,6 +463,8 @@ library cardano-tools
     Cardano.Tools.DBSynthesizer.Orphans
     Cardano.Tools.DBSynthesizer.Run
     Cardano.Tools.DBSynthesizer.Types
+    Cardano.Tools.DBTruncater.Run
+    Cardano.Tools.DBTruncater.Types
     Cardano.Tools.ImmDBServer.Diffusion
     Cardano.Tools.ImmDBServer.MiniProtocols
 
@@ -550,6 +552,21 @@ executable db-synthesizer
     , ouroboros-consensus
 
   other-modules:  DBSynthesizer.Parsers
+
+executable db-truncater
+  import:         common-exe
+  hs-source-dirs: app
+  main-is:        db-truncater.hs
+  build-depends:
+    , base
+    , cardano-crypto-wrapper
+    , optparse-applicative
+    , ouroboros-consensus
+    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, cardano-tools}
+
+  other-modules:
+    DBAnalyser.Parsers
+    DBTruncater.Parsers
 
 executable immdb-server
   import:         common-exe
