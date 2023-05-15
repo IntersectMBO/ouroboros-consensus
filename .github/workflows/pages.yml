@@ -108,14 +108,14 @@ jobs:
           ls
           find . -iname 'mempool-benchmarks.json'
 
-      # - name: Generate benchmark plots
-      #   uses: benchmark-action/github-action-benchmark@v1
-      #   with:
-      #     name: Mempool
-      #     tool: 'customSmallerIsBetter'
-      #     output-file-path: mempool-benchmarks.json
-      #     auto-push: false
-      #     benchmark-data-dir-path: "./docs/website/build/benchmarks/"
+      - name: Generate benchmark plots
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Mempool
+          tool: 'customSmallerIsBetter'
+          output-file-path: './docs/website/mempool-benchmarks.json'
+          auto-push: false
+          benchmark-data-dir-path: "./docs/website/build/benchmarks/"
 
       - name: Is the benchmark data still there?
         run: |
