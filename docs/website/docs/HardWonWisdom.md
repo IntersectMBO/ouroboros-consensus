@@ -112,3 +112,47 @@ REQ2: If L≤k (see REQ1) and L<R, we must validate at least L+1 of their header
 The most demanding case of REQ2 is L=k: at most we'll need to validate k+1 of the peer's headers.
 Thus using HCG window as Stability Window ensures that forecasting can't disrupt REQ2 when the peer is serving honest blocks.
 (We can tick the intersection ledger state to their first header, and then forecast 3k/f from there which by HCG will get us at least the remaining k headers if they're serving an honest chain.)
+
+## How does cross-era forecasting work?
+
+When we talk about forecasting, we mean about the process of trying to get a ticked ledger view from a ledger state for a given slot. This ledger view can then be used to verify the validity of headers in that slot that live on the same chain as the original ledger state.
+
+Hence, in the context of the HFC which has to support forecasts across era boundaries, forecasting can be thought of to have type
+```haskell
+   SlotNo
+-> LedgerState blk
+-> Either OutsideForecastRange (Ticked (LedgerView (BlockProtocol blk')))
+```
+(in reality, there is an intermediate `Forecast` type, see `ledgerViewForecastAt`).
+
+The HFC implements forecasting like this (for the actual implementation, see `Ouroboros.Consensus.HardFork.Combinator.Ledger`, in particular `oneForecast`):
+
+ - Due to stability requirements of the safe zone, the HFC can always determine whether the desired slot is still in the current or already in the next era when it is within one safe zone of the current ledger state.
+ - If the HFC can not yet know the era of the slot, it fails with `OutsideForecastRange`.
+ - If the slot is in the current era, the HFC delegates forecasting to the underlying block type.
+ - If the slot is in the next era, the HFC calls a user-provided function to forecast:
+
+   ```haskell
+   newtype CrossEraForecaster state view x y = CrossEraForecaster {
+         crossEraForecastWith ::
+              Bound    -- 'Bound' of the transition (start of the new era)
+           -> SlotNo   -- 'SlotNo' we're constructing a forecast for
+           -> state x
+           -> Except OutsideForecastRange (Ticked (view y))
+       }
+   ```
+   (which is available via a field of `hardForkEraTranslation` in `CanHardFork`).
+
+Hence, the HFC fully offloads the task to work out a safe way to do cross-era forecasting to the user, in particular, the task of determining how far ahead one should be able to forecast.
+
+In our case, there are two cases of era transitions:
+
+ - **Intra-Shelley:** These are trivial to support, as there are almost no changes regarding forecasting, so we can simply forecast starting in the old era and then convert the resulting `LedgerView` to the new era.
+    - The `LedgerView` actually only depends on the `ConsensusProtocol`, which only changed from Alonzo/TPraos to Babbage/Praos (Vasil HF), and even there, the translation only consists of un- and rewrapping (see `translateTickedLedgerView`).
+    - The stability window/forecasting range also stayed the same so far, but there already is existing logic to handle changes there, see the usage of the very conservative `crossEraForecastBound` in `forecastAcrossShelley`. (We definitely will want to revisit that in case we actually ever do a change here.)
+
+ - **Byron-to-Shelley:** This is implemented in `crossEraForecastByronToShelleyWrapper`, and exploits the fact that the ledger view for the first Shelley epoch is independent of the Byron ledger state, and can be constructed just using the static Shelley ledger config.
+
+   Additionally, it allows you to forecast up to one full stability window into Shelley (which is much larger than the stability window of Byron, from the ledger state for `2k` slots vs from the ledger state to the epoch transition and then an additional `3k/f` from there).
+
+Future work could include making the HFC itself handle more details of cross-era forecasting, in particular around determining safe forecast range bounds in case of a changing stability window.
