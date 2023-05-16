@@ -1,32 +1,26 @@
-{-# LANGUAGE ConstraintKinds            #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RankNTypes                 #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE FlexibleInstances        #-}
+{-# LANGUAGE MultiParamTypeClasses    #-}
+{-# LANGUAGE NamedFieldPuns           #-}
+{-# LANGUAGE OverloadedStrings        #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeFamilies             #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Legacy.Cardano.CanHardFork (LegacyCardanoHardForkConstraints) where
 
-import qualified Cardano.Chain.Common as CC
-import qualified Cardano.Chain.Genesis as CC.Genesis
-import qualified Cardano.Chain.Update as CC.Update
-import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
 import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
 import           Cardano.Ledger.Allegra.Translation
                      (shelleyToAllegraAVVMsToDelete)
-import  Cardano.Ledger.Alonzo.Translation ()
-import  Cardano.Ledger.Babbage.Translation ()
-import  Cardano.Ledger.Conway.Translation  ()
-import           Cardano.Ledger.Crypto (ADDRHASH, Crypto, DSIGN, HASH)
+import           Cardano.Ledger.Alonzo.Translation ()
+import           Cardano.Ledger.Babbage.Translation ()
+import           Cardano.Ledger.Conway.Translation ()
+import           Cardano.Ledger.Crypto (ADDRHASH, Crypto, HASH)
 import qualified Cardano.Ledger.Era as SL
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
 import           Cardano.Ledger.Keys (DSignable, Hash)
@@ -36,40 +30,34 @@ import           Cardano.Ledger.Shelley.Translation
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
-import           Control.Monad
 import           Control.Monad.Except (runExcept, throwError)
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (listToMaybe, mapMaybe)
 import           Data.Proxy
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import           Data.SOP.Strict (hpure, unComp, (:.:) (..))
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
-import           Data.Word
-import           GHC.Generics (Generic)
+import           Legacy.Byron.Ledger ()
 import           Legacy.Cardano.Block
 import           Legacy.LegacyBlock
 import           Legacy.Shelley.Ledger ()
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
-import qualified Ouroboros.Consensus.Byron.Ledger.Inspect as Byron.Inspect
-import           Ouroboros.Consensus.Byron.Node ()
 import           Ouroboros.Consensus.Cardano.Block
+import           Ouroboros.Consensus.Cardano.CanHardFork
+                     (CardanoHardForkConstraints)
 import           Ouroboros.Consensus.Forecast
 import qualified Ouroboros.Consensus.Forecast as Forecast
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot),
                      addSlots)
-import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
@@ -79,9 +67,6 @@ import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto)
 import qualified Ouroboros.Consensus.Protocol.Translate as Proto
 import           Ouroboros.Consensus.Shelley.Ledger
-import           Ouroboros.Consensus.Shelley.Node ()
-import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
-import           Ouroboros.Consensus.Shelley.ShelleyHFC ()
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.RedundantConstraints
@@ -90,41 +75,7 @@ import           Ouroboros.Consensus.Util.RedundantConstraints
  Cardano
 -------------------------------------------------------------------------------}
 
--- translations
--- canhardfork
--- isledger
--- applyblock
-
--- translateLedgerStateByronToShelleyWrapper
--- hasledgertables
--- canhardfork
--- ledgertablesaretrivial
-
-
-type LegacyCardanoHardForkConstraints c =
-  ( TPraos.PraosCrypto c
-  , Praos.PraosCrypto c
-  , TranslateProto (TPraos c) (Praos c)
-  , ShelleyCompatible (TPraos c) (ShelleyEra c)
-  , LedgerSupportsProtocol (ShelleyBlock (TPraos c) (ShelleyEra c))
-  , ShelleyCompatible (TPraos c) (AllegraEra c)
-  , LedgerSupportsProtocol (ShelleyBlock (TPraos c) (AllegraEra c))
-  , ShelleyCompatible (TPraos c) (MaryEra    c)
-  , LedgerSupportsProtocol (ShelleyBlock (TPraos c) (MaryEra c))
-  , ShelleyCompatible (TPraos c) (AlonzoEra  c)
-  , LedgerSupportsProtocol (ShelleyBlock (TPraos c) (AlonzoEra c))
-  , ShelleyCompatible (Praos c) (BabbageEra  c)
-  , LedgerSupportsProtocol (ShelleyBlock (Praos c) (BabbageEra c))
-  , ShelleyCompatible (Praos c) (ConwayEra  c)
-  , LedgerSupportsProtocol (ShelleyBlock (Praos c) (ConwayEra c))
-    -- These equalities allow the transition from Byron to Shelley, since
-    -- @cardano-ledger-shelley@ requires Ed25519 for Byron bootstrap addresses and
-    -- the current Byron-to-Shelley translation requires a 224-bit hash for
-    -- address and a 256-bit hash for header hashes.
-  , HASH     c ~ Blake2b_256
-  , ADDRHASH c ~ Blake2b_224
-  , DSIGN    c ~ Ed25519DSIGN
-  )
+type LegacyCardanoHardForkConstraints c = CardanoHardForkConstraints c
 
 instance LegacyCardanoHardForkConstraints c => CanHardFork (LegacyCardanoEras c) where
   hardForkEraTranslation = EraTranslation {
@@ -196,191 +147,6 @@ instance LegacyCardanoHardForkConstraints c => CanHardFork (LegacyCardanoEras c)
 class    (SelectView (BlockProtocol blk) ~ PraosChainSelectView c) => HasPraosSelectView c blk
 instance (SelectView (BlockProtocol blk) ~ PraosChainSelectView c) => HasPraosSelectView c blk
 
-
-{-------------------------------------------------------------------------------
-  SingleEraBlock Byron
--------------------------------------------------------------------------------}
-
-byronTransition :: PartialLedgerConfig ByronBlock
-                -> Word16   -- ^ Shelley major protocol version
-                -> LedgerState ByronBlock mk
-                -> Maybe EpochNo
-byronTransition ByronPartialLedgerConfig{..} shelleyMajorVersion state =
-      takeAny
-    . mapMaybe isTransitionToShelley
-    . Byron.Inspect.protocolUpdates byronLedgerConfig
-    $ state
-  where
-    ByronTransitionInfo transitionInfo = byronLedgerTransition state
-
-    genesis = byronLedgerConfig
-    k       = CC.Genesis.gdK $ CC.Genesis.configGenesisData genesis
-
-    isTransitionToShelley :: Byron.Inspect.ProtocolUpdate -> Maybe EpochNo
-    isTransitionToShelley update = do
-        guard $ CC.Update.pvMajor version == shelleyMajorVersion
-        case Byron.Inspect.protocolUpdateState update of
-          Byron.Inspect.UpdateCandidate _becameCandidateSlotNo adoptedIn -> do
-            becameCandidateBlockNo <- Map.lookup version transitionInfo
-            guard $ isReallyStable becameCandidateBlockNo
-            return adoptedIn
-          Byron.Inspect.UpdateStableCandidate adoptedIn ->
-            -- If the Byron ledger thinks it's stable, it's _definitely_ stable
-            return adoptedIn
-          _otherwise ->
-            -- The proposal isn't yet a candidate, never mind a stable one
-            mzero
-      where
-        version :: CC.Update.ProtocolVersion
-        version = Byron.Inspect.protocolUpdateVersion update
-
-    -- Normally, stability in the ledger is defined in terms of slots, not
-    -- blocks. Byron considers the proposal to be stable after the slot is more
-    -- than @2k@ old. That is not wrong: after @2k@, the block indeed is stable.
-    --
-    -- Unfortunately, this means that the /conclusion about stability itself/
-    -- is /not/ stable: if we were to switch to a denser fork, we might change
-    -- our mind (on the sparse chain we thought the block was already stable,
-    -- but on the dense chain we conclude it is it not yet stable).
-    --
-    -- It is unclear at the moment if this presents a problem; the HFC assumes
-    -- monotonicity of timing info, in the sense that that any slot/time
-    -- conversions are either unknown or else not subject to rollback.
-    -- The problem sketched above might mean that we can go from "conversion
-    -- known" to "conversion unknown", but then when we go back again to
-    -- "conversion known", we /are/ guaranteed that we'd get the same answer.
-    --
-    -- Rather than trying to analyse this subtle problem, we instead base
-    -- stability on block numbers; after the block is `k` deep, we know for sure
-    -- that it is stable, and moreover, no matter which chain we switch to, that
-    -- will remain to be the case.
-    --
-    -- The Byron 'UpdateState' records the 'SlotNo' of the block in which the
-    -- proposal became a candidate (i.e., when the last required endorsement
-    -- came in). That doesn't tell us very much, we need to know the block
-    -- number; that's precisely what the 'ByronTransition' part of the Byron
-    -- state tells us.
-    isReallyStable :: BlockNo -> Bool
-    isReallyStable (BlockNo bno) = distance >= CC.unBlockCount k
-      where
-        distance :: Word64
-        distance = case byronLedgerTipBlockNo state of
-                     Origin                  -> bno + 1
-                     NotOrigin (BlockNo tip) -> tip - bno
-
-    -- We only expect a single proposal that updates to Shelley, but in case
-    -- there are multiple, any one will do
-    takeAny :: [a] -> Maybe a
-    takeAny = listToMaybe
-
-instance SingleEraBlock ByronBlock where
-  singleEraTransition pcfg _eraParams _eraStart ledgerState =
-      case byronTriggerHardFork pcfg of
-        TriggerHardForkNever                         -> Nothing
-        TriggerHardForkAtEpoch   epoch               -> Just epoch
-        TriggerHardForkAtVersion shelleyMajorVersion ->
-            byronTransition
-              pcfg
-              shelleyMajorVersion
-              ledgerState
-
-  singleEraInfo _ = SingleEraInfo {
-      singleEraName = "Byron"
-    }
-
-instance PBftCrypto bc => HasPartialConsensusConfig (PBft bc)
-  -- Use defaults
-
--- | When Byron is part of the hard-fork combinator, we use the partial ledger
--- config. Standalone Byron uses the regular ledger config. This means that
--- the partial ledger config is the perfect place to store the trigger
--- condition for the hard fork to Shelley, as we don't have to modify the
--- ledger config for standalone Byron.
-data ByronPartialLedgerConfig = ByronPartialLedgerConfig {
-      byronLedgerConfig    :: !(LedgerConfig ByronBlock)
-    , byronTriggerHardFork :: !TriggerHardFork
-    }
-  deriving (Generic, NoThunks)
-
-instance HasPartialLedgerConfig ByronBlock where
-
-  type PartialLedgerConfig ByronBlock = ByronPartialLedgerConfig
-
-  completeLedgerConfig _ _ = byronLedgerConfig
-
-
--- {-------------------------------------------------------------------------------
---   SingleEraBlock Shelley
--- -------------------------------------------------------------------------------}
-
--- shelleyTransition ::
---      forall era proto. ShelleyCompatible proto era
---   => PartialLedgerConfig (ShelleyBlock proto era)
---   -> Word16   -- ^ Next era's major protocol version
---   -> LedgerState (ShelleyBlock proto era) EmptyMK
---   -> Maybe EpochNo
--- shelleyTransition ShelleyPartialLedgerConfig{..}
---                   transitionMajorVersionRaw
---                   state =
---       takeAny
---     . mapMaybe isTransition
---     . Shelley.Inspect.protocolUpdates genesis
---     $ state
---   where
---     ShelleyTransitionInfo{..} = shelleyLedgerTransition state
-
---     -- 'shelleyLedgerConfig' contains a dummy 'EpochInfo' but this does not
---     -- matter for extracting the genesis config
---     genesis :: SL.ShelleyGenesis (EraCrypto era)
---     genesis = shelleyLedgerGenesis shelleyLedgerConfig
-
---     k :: Word64
---     k = SL.sgSecurityParam genesis
-
---     isTransition :: Shelley.Inspect.ProtocolUpdate era -> Maybe EpochNo
---     isTransition Shelley.Inspect.ProtocolUpdate{..} = do
---          SL.ProtVer major _minor <- proposalVersion
---          transitionMajorVersion <- SL.mkVersion transitionMajorVersionRaw
---          guard $ major == transitionMajorVersion
---          guard $ proposalReachedQuorum
---          guard $ shelleyAfterVoting >= fromIntegral k
---          return proposalEpoch
---        where
---          Shelley.Inspect.UpdateProposal{..} = protocolUpdateProposal
---          Shelley.Inspect.UpdateState{..}    = protocolUpdateState
-
---     -- In principle there could be multiple proposals that all change the
---     -- major protocol version. In practice this can't happen because each
---     -- delegate can only vote for one proposal, but the types don't guarantee
---     -- this. We don't need to worry about this, and just pick any of them.
---     takeAny :: [a] -> Maybe a
---     takeAny = listToMaybe
-
--- instance
---   ( ShelleyCompatible proto era,
---     LedgerSupportsProtocol (ShelleyBlock proto era)
---   ) => SingleEraBlock (LegacyBlock (ShelleyBlock proto era)) where
---   singleEraTransition pcfg _eraParams _eraStart (LegacyLedgerState ledgerState) =
---       -- TODO: We might be evaluating 'singleEraTransition' more than once when
---       -- replaying blocks. We should investigate if this is the case, and if so,
---       -- whether this is the desired behaviour. If it is not, then we need to
---       -- fix it.
---       --
---       -- For evidence of this behaviour, replace the cased-on expression by:
---       -- > @traceShowId $ shelleyTriggerHardFork pcf@
---       case shelleyTriggerHardFork pcfg of
---         TriggerHardForkNever                         -> Nothing
---         TriggerHardForkAtEpoch   epoch               -> Just epoch
---         TriggerHardForkAtVersion shelleyMajorVersion ->
---             shelleyTransition
---               pcfg
---               shelleyMajorVersion
---               ledgerState
-
---   singleEraInfo _ = SingleEraInfo {
---       singleEraName = shelleyBasedEraName (Proxy @era)
---     }
-
 {-------------------------------------------------------------------------------
   Translation from Byron to Shelley
 -------------------------------------------------------------------------------}
@@ -390,11 +156,11 @@ translateHeaderHashByronToShelley ::
      ( ShelleyCompatible (TPraos c) (ShelleyEra c)
      , HASH c ~ Blake2b_256
      )
-  => HeaderHash ByronBlock
+  => HeaderHash (LegacyBlock ByronBlock)
   -> HeaderHash (LegacyBlock (ShelleyBlock (TPraos c) (ShelleyEra c)))
 translateHeaderHashByronToShelley =
       fromShortRawHash (Proxy @(LegacyBlock (ShelleyBlock (TPraos c) (ShelleyEra c))))
-    . toShortRawHash   (Proxy @ByronBlock)
+    . toShortRawHash   (Proxy @(LegacyBlock ByronBlock))
   where
     -- Byron uses 'Blake2b_256' for header hashes
     _ = keepRedundantConstraint (Proxy @(HASH c ~ Blake2b_256))
@@ -426,12 +192,12 @@ translateLedgerStateByronToShelleyWrapper ::
   => RequiringBoth
        WrapLedgerConfig
        TranslateLedgerState
-       ByronBlock
+       (LegacyBlock ByronBlock)
        (LegacyBlock (ShelleyBlock (TPraos c) (ShelleyEra c)))
 translateLedgerStateByronToShelleyWrapper =
     RequireBoth $ \_ (WrapLedgerConfig cfgShelley) ->
     TranslateLedgerState {
-        translateLedgerStateWith = \epochNo ledgerByron ->
+        translateLedgerStateWith = \epochNo (LegacyLedgerState ledgerByron) ->
           LegacyLedgerState $ ShelleyLedgerState {
             shelleyLedgerTip =
               translatePointByronToShelley
@@ -453,7 +219,7 @@ translateChainDepStateByronToShelleyWrapper ::
      RequiringBoth
        WrapConsensusConfig
        (Translate WrapChainDepState)
-       ByronBlock
+       (LegacyBlock ByronBlock)
        (LegacyBlock (ShelleyBlock (TPraos c) (ShelleyEra c)))
 translateChainDepStateByronToShelleyWrapper =
     RequireBoth $ \_ (WrapConsensusConfig cfgShelley) ->
@@ -497,7 +263,7 @@ translateLedgerViewByronToShelleyWrapper ::
      RequiringBoth
        WrapLedgerConfig
        (TranslateForecast LedgerState WrapLedgerView)
-       ByronBlock
+       (LegacyBlock ByronBlock)
        (LegacyBlock (ShelleyBlock (TPraos c) (ShelleyEra c)))
 translateLedgerViewByronToShelleyWrapper =
     RequireBoth $ \_ (WrapLedgerConfig cfgShelley) ->
@@ -514,7 +280,7 @@ translateLedgerViewByronToShelleyWrapper =
          ShelleyLedgerConfig (ShelleyEra c)
       -> Bound
       -> SlotNo
-      -> LedgerState ByronBlock EmptyMK
+      -> LedgerState (LegacyBlock ByronBlock) EmptyMK
       -> Except
            OutsideForecastRange
            (Ticked (WrapLedgerView (LegacyBlock (ShelleyBlock (TPraos c) (ShelleyEra c)))))
@@ -601,7 +367,12 @@ translateTxShelleyToAllegraWrapper ::
        (LegacyBlock (ShelleyBlock (TPraos c) (ShelleyEra c)))
        (LegacyBlock (ShelleyBlock (TPraos c) (AllegraEra c)))
 translateTxShelleyToAllegraWrapper = InjectTx $
-    fmap LegacyGenTx . fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp . getLegacyGenTx
+      fmap ( LegacyGenTx
+           . unComp
+           )
+    . eitherToMaybe . runExcept . SL.translateEra ()
+    . Comp
+    . getLegacyGenTx
 
 translateValidatedTxShelleyToAllegraWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -609,7 +380,16 @@ translateValidatedTxShelleyToAllegraWrapper ::
        (LegacyBlock (ShelleyBlock (TPraos c) (ShelleyEra c)))
        (LegacyBlock (ShelleyBlock (TPraos c) (AllegraEra c)))
 translateValidatedTxShelleyToAllegraWrapper = InjectValidatedTx $
-    fmap WrapValidatedGenTx . fmap LegacyValidatedGenTx . fmap unwrapValidatedGenTx . fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp . WrapValidatedGenTx . getLegacyValidatedGenTx . unwrapValidatedGenTx
+      fmap ( WrapValidatedGenTx
+           . LegacyValidatedGenTx
+           . unwrapValidatedGenTx
+           . unComp
+           )
+    . eitherToMaybe . runExcept . SL.translateEra ()
+    . Comp
+    . WrapValidatedGenTx
+    . getLegacyValidatedGenTx
+    . unwrapValidatedGenTx
 
 {-------------------------------------------------------------------------------
   Translation from Allegra to Mary
@@ -644,7 +424,12 @@ translateTxAllegraToMaryWrapper ::
        (LegacyBlock (ShelleyBlock (TPraos c) (AllegraEra c)))
        (LegacyBlock (ShelleyBlock (TPraos c) (MaryEra c)))
 translateTxAllegraToMaryWrapper = InjectTx $
-    fmap LegacyGenTx . fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp . getLegacyGenTx
+      fmap ( LegacyGenTx
+           . unComp
+           )
+    . eitherToMaybe . runExcept . SL.translateEra ()
+    . Comp
+    . getLegacyGenTx
 
 translateValidatedTxAllegraToMaryWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -652,7 +437,16 @@ translateValidatedTxAllegraToMaryWrapper ::
        (LegacyBlock (ShelleyBlock (TPraos c) (AllegraEra c)))
        (LegacyBlock (ShelleyBlock (TPraos c) (MaryEra c)))
 translateValidatedTxAllegraToMaryWrapper = InjectValidatedTx $
-    fmap WrapValidatedGenTx . fmap LegacyValidatedGenTx . fmap unwrapValidatedGenTx . fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp . WrapValidatedGenTx . getLegacyValidatedGenTx . unwrapValidatedGenTx
+      fmap ( WrapValidatedGenTx
+           . LegacyValidatedGenTx
+           . unwrapValidatedGenTx
+           . unComp
+           )
+    . eitherToMaybe . runExcept . SL.translateEra ()
+    . Comp
+    . WrapValidatedGenTx
+    . getLegacyValidatedGenTx
+    . unwrapValidatedGenTx
 
 {-------------------------------------------------------------------------------
   Translation from Mary to Alonzo
@@ -694,7 +488,12 @@ translateTxMaryToAlonzoWrapper ::
        (LegacyBlock (ShelleyBlock (TPraos c) (MaryEra c)))
        (LegacyBlock (ShelleyBlock (TPraos c) (AlonzoEra c)))
 translateTxMaryToAlonzoWrapper ctxt = InjectTx $
-    fmap LegacyGenTx . fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . getLegacyGenTx
+      fmap ( LegacyGenTx
+           . unComp
+           )
+    . eitherToMaybe . runExcept . SL.translateEra ctxt
+    . Comp
+    . getLegacyGenTx
 
 translateValidatedTxMaryToAlonzoWrapper ::
      forall c.
@@ -704,7 +503,16 @@ translateValidatedTxMaryToAlonzoWrapper ::
        (LegacyBlock (ShelleyBlock (TPraos c) (MaryEra c)))
        (LegacyBlock (ShelleyBlock (TPraos c) (AlonzoEra c)))
 translateValidatedTxMaryToAlonzoWrapper ctxt = InjectValidatedTx $
-    fmap WrapValidatedGenTx . fmap LegacyValidatedGenTx . fmap unwrapValidatedGenTx . fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . WrapValidatedGenTx . getLegacyValidatedGenTx . unwrapValidatedGenTx
+      fmap ( WrapValidatedGenTx
+           . LegacyValidatedGenTx
+           . unwrapValidatedGenTx
+           . unComp
+           )
+    . eitherToMaybe . runExcept . SL.translateEra ctxt
+    . Comp
+    . WrapValidatedGenTx
+    . getLegacyValidatedGenTx
+    . unwrapValidatedGenTx
 
 {-------------------------------------------------------------------------------
   Translation from Alonzo to Babbage
@@ -752,7 +560,13 @@ translateTxAlonzoToBabbageWrapper ::
        (LegacyBlock (ShelleyBlock (TPraos c) (AlonzoEra c)))
        (LegacyBlock (ShelleyBlock (Praos c) (BabbageEra c)))
 translateTxAlonzoToBabbageWrapper ctxt = InjectTx $
-    fmap LegacyGenTx . fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . transPraosTx . getLegacyGenTx
+      fmap ( LegacyGenTx
+           . unComp
+           )
+    . eitherToMaybe . runExcept . SL.translateEra ctxt
+    . Comp
+    . transPraosTx
+    . getLegacyGenTx
   where
     transPraosTx
       :: GenTx (ShelleyBlock (TPraos c) (AlonzoEra c))
@@ -767,14 +581,19 @@ translateValidatedTxAlonzoToBabbageWrapper ::
        (LegacyBlock (ShelleyBlock (TPraos c) (AlonzoEra c)))
        (LegacyBlock (ShelleyBlock (Praos c) (BabbageEra c)))
 translateValidatedTxAlonzoToBabbageWrapper ctxt = InjectValidatedTx $
-  fmap WrapValidatedGenTx . fmap LegacyValidatedGenTx . fmap unwrapValidatedGenTx .
-  fmap unComp
+      fmap ( WrapValidatedGenTx
+           . LegacyValidatedGenTx
+           . unwrapValidatedGenTx
+           . unComp
+           )
     . eitherToMaybe
     . runExcept
     . SL.translateEra ctxt
     . Comp
     . transPraosValidatedTx
-    . WrapValidatedGenTx . getLegacyValidatedGenTx . unwrapValidatedGenTx
+    . WrapValidatedGenTx
+    . getLegacyValidatedGenTx
+    . unwrapValidatedGenTx
  where
   transPraosValidatedTx
     :: WrapValidatedGenTx (ShelleyBlock (TPraos c) (AlonzoEra c))
@@ -823,7 +642,12 @@ translateTxBabbageToConwayWrapper ::
        (LegacyBlock (ShelleyBlock (Praos c) (BabbageEra c)))
        (LegacyBlock (ShelleyBlock (Praos c) (ConwayEra c)))
 translateTxBabbageToConwayWrapper ctxt = InjectTx $
-    fmap LegacyGenTx . fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . getLegacyGenTx
+      fmap ( LegacyGenTx
+           . unComp
+           )
+    . eitherToMaybe . runExcept . SL.translateEra ctxt
+    . Comp
+    . getLegacyGenTx
 
 translateValidatedTxBabbageToConwayWrapper ::
      forall c.
@@ -833,11 +657,20 @@ translateValidatedTxBabbageToConwayWrapper ::
        (LegacyBlock (ShelleyBlock (Praos c) (BabbageEra c)))
        (LegacyBlock (ShelleyBlock (Praos c) (ConwayEra c)))
 translateValidatedTxBabbageToConwayWrapper ctxt = InjectValidatedTx $
-      fmap WrapValidatedGenTx . fmap LegacyValidatedGenTx . fmap unwrapValidatedGenTx . fmap unComp . eitherToMaybe . runExcept . SL.translateEra ctxt . Comp . WrapValidatedGenTx . getLegacyValidatedGenTx . unwrapValidatedGenTx
+      fmap ( WrapValidatedGenTx
+           . LegacyValidatedGenTx
+           . unwrapValidatedGenTx
+           . unComp
+           )
+    . eitherToMaybe . runExcept . SL.translateEra ctxt
+    . Comp
+    . WrapValidatedGenTx
+    . getLegacyValidatedGenTx
+    . unwrapValidatedGenTx
 
-
---------------
-
+{-------------------------------------------------------------------------------
+  ShelleyHFC
+-------------------------------------------------------------------------------}
 
 -- | Forecast from a Shelley-based era to the next Shelley-based era.
 forecastAcrossShelley' ::

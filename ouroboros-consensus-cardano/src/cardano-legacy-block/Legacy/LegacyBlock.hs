@@ -17,12 +17,12 @@
 {-# LANGUAGE ViewPatterns               #-}
 
 module Legacy.LegacyBlock (
-    LegacyBlock (..)
-  , GenTx (..)
-  , Validated (..)
-  , LedgerTables (..)
-  , Ticked1 (..)
+    GenTx (..)
   , LedgerState (..)
+  , LedgerTables (..)
+  , LegacyBlock (..)
+  , Ticked1 (..)
+  , Validated (..)
   ) where
 
 import           Cardano.Prelude (Bifunctor (..), ByteString, Coercible, Word32)

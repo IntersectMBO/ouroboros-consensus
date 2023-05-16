@@ -159,6 +159,7 @@ library cardano-legacy-block
   hs-source-dirs:  src/cardano-legacy-block
   exposed-modules:
     DBSync
+    Legacy.Byron.Ledger
     Legacy.Cardano.Block
     Legacy.Cardano.CanHardFork
     Legacy.LegacyBlock
@@ -171,7 +172,6 @@ library cardano-legacy-block
     , cardano-ledger-allegra
     , cardano-ledger-alonzo
     , cardano-ledger-babbage
-    , cardano-ledger-byron
     , cardano-ledger-conway
     , cardano-ledger-core
     , cardano-ledger-shelley

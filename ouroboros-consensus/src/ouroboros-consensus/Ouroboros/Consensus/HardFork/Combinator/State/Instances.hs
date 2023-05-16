@@ -2,7 +2,7 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes            #-}
@@ -25,6 +25,7 @@ import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Codec.Serialise
+import           Data.SOP.Classes (Same)
 import           Data.SOP.Strict hiding (shape)
 import qualified Data.SOP.Telescope as Telescope
 import           NoThunks.Class (NoThunks)
@@ -58,6 +59,12 @@ instance HSequence HardForkState where
 
 instance HCollapse HardForkState where
   hcollapse = hcollapse . hmap currentState . Telescope.tip . getHardForkState
+
+-- TODO: implement class members. Is this even possible for a telescope?
+instance HTrans HardForkState HardForkState where
+  htrans _ _ = undefined
+  hcoerce    = undefined
+type instance Same HardForkState = HardForkState
 
 {-------------------------------------------------------------------------------
   Eq, Show, NoThunks
