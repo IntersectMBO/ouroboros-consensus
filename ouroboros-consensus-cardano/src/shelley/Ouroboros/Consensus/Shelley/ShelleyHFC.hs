@@ -18,9 +18,9 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
     ProtocolShelley
   , ShelleyBlockHFC
   , ShelleyPartialLedgerConfig (..)
+  , crossEraForecastAcrossShelley
   , forecastAcrossShelley
   , translateChainDepStateAcrossShelley
-  , translateLedgerViewAcrossShelley
   ) where
 
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
@@ -297,20 +297,20 @@ translateChainDepStateAcrossShelley =
         -- ticking the state.
         WrapChainDepState $ Proto.translateChainDepState @protoFrom @protoTo chainDepState
 
-translateLedgerViewAcrossShelley ::
+crossEraForecastAcrossShelley ::
      forall eraFrom eraTo protoFrom protoTo.
      ( TranslateProto protoFrom protoTo
      , LedgerSupportsProtocol (ShelleyBlock protoFrom eraFrom)
      )
   => RequiringBoth
        WrapLedgerConfig
-       (TranslateForecast LedgerState WrapLedgerView)
+       (CrossEraForecaster LedgerState WrapLedgerView)
        (ShelleyBlock protoFrom eraFrom)
        (ShelleyBlock protoTo eraTo)
-translateLedgerViewAcrossShelley =
+crossEraForecastAcrossShelley =
     RequireBoth $ \(WrapLedgerConfig cfgFrom)
                    (WrapLedgerConfig cfgTo) ->
-      TranslateForecast $ forecastAcrossShelley cfgFrom cfgTo
+      CrossEraForecaster $ forecastAcrossShelley cfgFrom cfgTo
 
 {-------------------------------------------------------------------------------
   Translation from one Shelley-based era to another Shelley-based era

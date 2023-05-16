@@ -19,7 +19,7 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 data EraTranslation xs = EraTranslation {
       translateLedgerState   :: InPairs (RequiringBoth WrapLedgerConfig    (Translate LedgerState))       xs
     , translateChainDepState :: InPairs (RequiringBoth WrapConsensusConfig (Translate WrapChainDepState)) xs
-    , translateLedgerView    :: InPairs (RequiringBoth WrapLedgerConfig    (TranslateForecast LedgerState WrapLedgerView)) xs
+    , crossEraForecast       :: InPairs (RequiringBoth WrapLedgerConfig    (CrossEraForecaster LedgerState WrapLedgerView)) xs
     }
   deriving NoThunks
        via OnlyCheckWhnfNamed "EraTranslation" (EraTranslation xs)
@@ -27,6 +27,6 @@ data EraTranslation xs = EraTranslation {
 trivialEraTranslation :: EraTranslation '[blk]
 trivialEraTranslation = EraTranslation {
       translateLedgerState   = PNil
-    , translateLedgerView    = PNil
+    , crossEraForecast       = PNil
     , translateChainDepState = PNil
     }
