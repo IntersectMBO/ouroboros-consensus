@@ -146,7 +146,7 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons translateLedgerState                PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
-      , translateLedgerView    = PCons translateLedgerView                 PNil
+      , crossEraForecast       = PCons forecastAcrossShelleyWrapper        PNil
       }
     where
       translateLedgerState ::
@@ -164,15 +164,15 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
                 (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
             . Comp
 
-      translateLedgerView ::
+      forecastAcrossShelleyWrapper ::
            InPairs.RequiringBoth
               WrapLedgerConfig
-              (HFC.TranslateForecast LedgerState WrapLedgerView)
+              (HFC.CrossEraForecaster LedgerState WrapLedgerView)
               (ShelleyBlock proto1 era1)
               (ShelleyBlock proto2 era2)
-      translateLedgerView =
+      forecastAcrossShelleyWrapper =
           InPairs.RequireBoth $ \(WrapLedgerConfig cfg1) (WrapLedgerConfig cfg2) ->
-            HFC.TranslateForecast $ forecastAcrossShelley cfg1 cfg2
+            HFC.CrossEraForecaster $ forecastAcrossShelley cfg1 cfg2
 
   hardForkChainSel = Tails.mk2 CompareSameSelectView
 
