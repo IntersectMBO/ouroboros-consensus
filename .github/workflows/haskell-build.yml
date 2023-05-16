@@ -122,6 +122,20 @@ jobs:
     - name: Build projects [build]
       run: cabal build all -j
 
+    - name: Create baseline-benchmark
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      run: |
+        cabal new-run ouroboros-consensus:mempool-bench -- --timeout=60 --csv mempool-baseline.csv  +RTS -T
+
+    - name: Archive baseline results
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: actions/upload-artifact@v3
+      with:
+        name: baseline-benchmark
+        path: |
+          *benchmarks.json
+          *benchmarks.csv
+
     # Uncomment the following back in for debugging. Remember to launch a `pwsh` from
     # the tmux session to debug `pwsh` issues. And be reminded that the `/msys2` and
     # `/msys2/mingw64` paths are not in PATH by default for the workflow, but tmate
