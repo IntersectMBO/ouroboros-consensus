@@ -29,6 +29,7 @@ module Ouroboros.Consensus.Cardano.Node (
   , pattern CardanoNodeToClientVersion1
   , pattern CardanoNodeToClientVersion10
   , pattern CardanoNodeToClientVersion11
+  , pattern CardanoNodeToClientVersion12
   , pattern CardanoNodeToClientVersion2
   , pattern CardanoNodeToClientVersion3
   , pattern CardanoNodeToClientVersion4
@@ -491,11 +492,28 @@ pattern CardanoNodeToClientVersion10 =
       :* Nil
       )
 
--- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo, Babbage and
--- Conway eras enabled Using 'ShelleyNodeToClientVersion6' for the
--- Shelley-based eras, which enables new queries.
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
+-- eras enabled, using 'ShelleyNodeToClientVersion7' for the Shelley-based eras,
+-- which enables new queries.
 pattern CardanoNodeToClientVersion11 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion11 =
+    HardForkNodeToClientEnabled
+      HardForkSpecificNodeToClientVersion2
+      (  EraNodeToClientEnabled ByronNodeToClientVersion1
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
+      :* EraNodeToClientDisabled
+      :* Nil
+      )
+
+-- | The hard fork enabled, and the Shelley, Allegra, Mary, Alonzo and Babbage
+-- and Conway eras enabled, using 'ShelleyNodeToClientVersion7' for the
+-- Shelley-based eras.
+pattern CardanoNodeToClientVersion12 :: BlockNodeToClientVersion (CardanoBlock c)
+pattern CardanoNodeToClientVersion12 =
     HardForkNodeToClientEnabled
       HardForkSpecificNodeToClientVersion2
       (  EraNodeToClientEnabled ByronNodeToClientVersion1
@@ -515,7 +533,8 @@ instance CardanoHardForkConstraints c
       , (NodeToNodeV_8, CardanoNodeToNodeVersion5)
       , (NodeToNodeV_9, CardanoNodeToNodeVersion6)
       , (NodeToNodeV_10, CardanoNodeToNodeVersion6)
-      , (NodeToNodeV_11, CardanoNodeToNodeVersion7)
+      , (NodeToNodeV_11, CardanoNodeToNodeVersion6)
+      , (NodeToNodeV_12, CardanoNodeToNodeVersion7)
       ]
 
   supportedNodeToClientVersions _ = Map.fromList $
@@ -526,9 +545,10 @@ instance CardanoHardForkConstraints c
       , (NodeToClientV_13, CardanoNodeToClientVersion9)
       , (NodeToClientV_14, CardanoNodeToClientVersion10)
       , (NodeToClientV_15, CardanoNodeToClientVersion11)
+      , (NodeToClientV_16, CardanoNodeToClientVersion12)
       ]
 
-  latestReleasedNodeVersion _prx = (Just NodeToNodeV_10, Just NodeToClientV_14)
+  latestReleasedNodeVersion _prx = (Just NodeToNodeV_11, Just NodeToClientV_15)
 
 {-------------------------------------------------------------------------------
   ProtocolInfo

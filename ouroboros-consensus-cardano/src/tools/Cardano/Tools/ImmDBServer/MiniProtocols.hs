@@ -30,6 +30,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (chainSyncServerForFollower)
 import           Ouroboros.Consensus.Network.NodeToNode (Codecs (..))
 import qualified Ouroboros.Consensus.Network.NodeToNode as Consensus.N2N
+import           Ouroboros.Consensus.Node (stdVersionDataNTN)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run (SerialiseNodeToNodeConstraints)
 import           Ouroboros.Consensus.Storage.ChainDB.API (Follower (..))
@@ -85,11 +86,11 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
       where
         mkVersion version blockVersion = Version {
             versionApplication = const $ mkR version blockVersion
-          , versionData        = NodeToNodeVersionData {
+          , versionData        =
+              stdVersionDataNTN
                 networkMagic
-              , diffusionMode = N2N.InitiatorOnlyDiffusionMode
-              , peerSharing   = NoPeerSharing
-              }
+                N2N.InitiatorOnlyDiffusionMode
+                NoPeerSharing
           }
 
     application ::
