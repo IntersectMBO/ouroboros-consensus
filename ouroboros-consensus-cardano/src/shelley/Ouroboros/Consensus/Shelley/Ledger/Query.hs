@@ -31,11 +31,11 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), encodeListLen,
                      enforceSize)
+import           Cardano.Ledger.CertState (lookupDepositDState)
 import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
 import           Cardano.Ledger.Credential (StakeCredential)
 import           Cardano.Ledger.Crypto (Crypto)
-import           Cardano.Ledger.DPState (lookupDepositDState)
 import qualified Cardano.Ledger.EpochBoundary as SL
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -44,8 +44,7 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts)
 import qualified Cardano.Ledger.Shelley.PParams as SL (emptyPPPUpdates)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
-import           Cardano.Ledger.UMapCompact (View (..), domRestrictedView,
-                     rewView)
+import           Cardano.Ledger.UMap (View (..), domRestrictedView, rewView)
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
@@ -201,7 +200,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   GetPoolState
     :: Maybe (Set (SL.KeyHash 'SL.StakePool (EraCrypto era)))
     -> BlockQuery (ShelleyBlock proto era)
-                  (SL.PState (EraCrypto era))
+                  (SL.PState era)
 
   GetStakeSnapshots
     :: Maybe (Set (SL.KeyHash 'SL.StakePool (EraCrypto era)))
@@ -289,18 +288,18 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto) => QueryLedge
         GetRewardInfoPools ->
           SL.getRewardInfoPools globals st
         GetPoolState mPoolIds ->
-          let dpsPState = SL.dpsPState . SL.lsDPState . SL.esLState . SL.nesEs $ st in
+          let certPState = SL.certPState . SL.lsCertState . SL.esLState . SL.nesEs $ st in
           case mPoolIds of
             Just poolIds ->
               SL.PState
                 { SL.psStakePoolParams  =
-                  Map.restrictKeys (SL.psStakePoolParams dpsPState) poolIds
+                  Map.restrictKeys (SL.psStakePoolParams certPState) poolIds
                 , SL.psFutureStakePoolParams =
-                  Map.restrictKeys (SL.psFutureStakePoolParams dpsPState) poolIds
-                , SL.psRetiring = Map.restrictKeys (SL.psRetiring dpsPState) poolIds
-                , SL.psDeposits = Map.restrictKeys (SL.psDeposits dpsPState) poolIds
+                  Map.restrictKeys (SL.psFutureStakePoolParams certPState) poolIds
+                , SL.psRetiring = Map.restrictKeys (SL.psRetiring certPState) poolIds
+                , SL.psDeposits = Map.restrictKeys (SL.psDeposits certPState) poolIds
                 }
-            Nothing -> dpsPState
+            Nothing -> certPState
         GetStakeSnapshots mPoolIds ->
           let SL.SnapShots
                 { SL.ssStakeMark
@@ -353,7 +352,7 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto) => QueryLedge
           SL.calculatePoolDistr' (maybe (const True) (flip Set.member) mPoolIds) stakeSet
         GetStakeDelegDeposits stakeCreds ->
           let lookupDeposit =
-                lookupDepositDState (SL.dpsDState $ SL.lsDPState $ SL.esLState $ SL.nesEs st)
+                lookupDepositDState (SL.certDState $ SL.lsCertState $ SL.esLState $ SL.nesEs st)
               lookupInsert acc cred =
                 case lookupDeposit cred of
                   Nothing      -> acc
@@ -577,8 +576,8 @@ getProposedPPUpdates = fromMaybe SL.emptyPPPUpdates
 getEpochState :: SL.NewEpochState era -> SL.EpochState era
 getEpochState = SL.nesEs
 
-getDState :: SL.NewEpochState era -> SL.DState (EraCrypto era)
-getDState = SL.dpsDState . SL.lsDPState . SL.esLState . SL.nesEs
+getDState :: SL.NewEpochState era -> SL.DState era
+getDState = SL.certDState . SL.lsCertState . SL.esLState . SL.nesEs
 
 getFilteredDelegationsAndRewardAccounts ::
      SL.NewEpochState era

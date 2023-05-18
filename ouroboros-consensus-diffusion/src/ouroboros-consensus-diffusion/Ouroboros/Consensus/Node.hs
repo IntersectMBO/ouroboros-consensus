@@ -286,7 +286,7 @@ run args stdArgs = stdLowLevelRunNodeArgsIO args stdArgs >>= runWith args encode
 runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      ( RunNode blk
      , IOLike m, MonadTime m, MonadTimer m
-     , Hashable addrNTN, Ord addrNTN, Show addrNTN, Typeable addrNTN
+     , Hashable addrNTN, Ord addrNTN, Typeable addrNTN
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (addrNTN -> CBOR.Encoding)
@@ -309,7 +309,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 <> (Predicate $ \err ->
                      isNothing (fromException @ExceptionInHandler err))
                 <> (Predicate $ \err ->
-                     isNothing (fromException @(Diffusion.Failure addrNTN) err))
+                     isNothing (fromException @Diffusion.Failure err))
               )
               (\err -> traceWith (consensusErrorTracer rnTraceConsensus) err
                     >> throwIO err
@@ -735,11 +735,13 @@ stdVersionDataNTN networkMagic diffusionMode peerSharing = NodeToNodeVersionData
     { networkMagic
     , diffusionMode
     , peerSharing
+    , query         = False
     }
 
 stdVersionDataNTC :: NetworkMagic -> NodeToClientVersionData
 stdVersionDataNTC networkMagic = NodeToClientVersionData
     { networkMagic
+    , query        = False
     }
 
 stdRunDataDiffusion ::

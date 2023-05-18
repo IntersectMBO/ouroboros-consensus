@@ -143,7 +143,7 @@ library
     , nothunks
     , ouroboros-consensus           >=0.5   && <0.7
     , ouroboros-consensus-protocol  ^>=0.5
-    , ouroboros-network-api         ^>=0.3
+    , ouroboros-network-api         ^>=0.5
     , serialise                     >=0.2   && <0.3
     , small-steps
     , text                          >=1.2   && <1.3
