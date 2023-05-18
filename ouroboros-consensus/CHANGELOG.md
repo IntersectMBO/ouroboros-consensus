@@ -2,6 +2,18 @@
 
 # Changelog entries
 
+<a id='changelog-0.7.0.0'></a>
+## 0.7.0.0 — 2023-05-19
+
+### Non-Breaking
+
+- Map unreleased `NodeToClientV_16` version.
+
+### Breaking
+
+ - Renamed `TranslateForecast` to `CrossEraForecaster` and `translateLedgerView`
+   to `crossEraForecast`.
+
 <a id='changelog-0.6.0.0'></a>
 ## 0.6.0.0 — 2023-04-28
 
