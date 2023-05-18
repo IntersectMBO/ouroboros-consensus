@@ -1,5 +1,3 @@
-{-# LANGUAGE DeriveFoldable             #-}
-{-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DeriveTraversable          #-}
 {-# LANGUAGE FlexibleContexts           #-}
@@ -11,7 +9,6 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeApplications           #-}
 -- | Tests for the resource registry
 --
@@ -33,7 +30,7 @@
 --
 module Test.Consensus.ResourceRegistry (tests) where
 
-import           Control.Monad.Class.MonadTimer
+import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Except
 import           Data.Foldable (toList)
 import           Data.Function (on)
@@ -580,6 +577,7 @@ sm alive reg = StateMachine {
     , semantics     = semantics alive reg
     , mock          = symbolicResp
     , cleanup       = noCleanup
+    , getTraces     = Nothing
     }
 
 prop_sequential :: QC.Property
@@ -590,8 +588,8 @@ prop_sequential' cmds = QC.monadicIO $ do
     alive <- liftIO $ uncheckedNewTVarM []
     reg   <- liftIO $ unsafeNewRegistry
     let sm' = sm alive reg
-    (hist, _model, res) <- runCommands sm' cmds
-    prettyCommands sm' hist
+    (output, hist, _model, res) <- runCommands sm' cmds
+    prettyCommands sm' output hist
       $ checkCommandNames cmds
       $ res QC.=== Ok
 

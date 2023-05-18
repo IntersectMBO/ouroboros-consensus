@@ -27,6 +27,7 @@ import           Data.Foldable (traverse_)
 import           GHC.Generics (Generic)
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Mempool (Mempool (..))
+import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf (..))
 
 {-------------------------------------------------------------------------------
   Commands
@@ -54,14 +55,14 @@ txsAddedInCmds = concatMap txsAdded
 -- TODO: the interpretation of running the command should be defined elsewhere,
 -- and tested by state-mathine tests.
 run ::
-     Applicative m
+     Monad m
   => MempoolWithMockedLedgerItf m blk -> [MempoolCmd blk] -> m ()
 run mempool = traverse_ (runCmd mempool)
 
 runCmd ::
-     Applicative m
+     Monad m
   => MempoolWithMockedLedgerItf m blk -> MempoolCmd blk -> m ()
 runCmd mempoolWithMockedItf = \case
-    TryAdd txs -> void $ tryAddTxs mempool Ledger.DoNotIntervene txs -- TODO: we might want to benchmark the 'Intervene' case
+    TryAdd txs -> void $ mapM (addTx mempool AddTxForRemotePeer) txs -- TODO: we might want to benchmark the 'Intervene' case
   where
     mempool = getMempool mempoolWithMockedItf

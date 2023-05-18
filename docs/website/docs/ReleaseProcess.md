@@ -230,11 +230,11 @@ A - ...
 
 # Installing `scriv`
 
-To manage the workflow described above, we will use the `scriv` tool. If you use
-`nix` then you will find `scriv` in the Nix shell. Otherwise,
-the way to install it from source is:
+To manage the workflow described above, we will use the `scriv` tool slightly
+modified to support cabal files.. If you use `nix` then you will find `scriv` in
+the Nix shell. Otherwise, the way to install it from source is:
 
-1. Clone [the repository](https://github.com/input-output-hk/scriv/) and `cd`
+1. Clone [our fork of scriv](https://github.com/input-output-hk/scriv/) and `cd`
    into it.
 2. Run `pip install -e $(pwd)`
 
@@ -242,6 +242,14 @@ If you encounter an error mentioning:
 `pkg_resources.extern.packaging.version.InvalidVersion: Invalid version: ...` we
 found that downgrading `setuptools` to a version `< 66` seems to solve this
 problem.
+
+If you don't want to use virtual environments for python packages and
+installation complains with the error `error: externally-managed-environment`,
+pass in the flag `--break-system-packages`:
+
+```
+pip install --break-system-packages -e $(pwd)
+```
 
 # Adding a changelog fragment
 

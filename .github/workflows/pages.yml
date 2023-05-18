@@ -27,7 +27,7 @@ jobs:
        # current ref from: 27.02.2022
        SECP256K1_REF: ac83be33d0956faf6b7f61a60ab524ef7d6a473a
 
-       SECP_CACHE_VERSION: "2022-12-29"
+       SECP_CACHE_VERSION: "2023-04-27"
 
        LD_LIBRARY_PATH: '/usr/local/lib'
 
@@ -43,13 +43,6 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Select build directory
-        run: |
-          CABAL_BUILDDIR="dist-newstyle"
-
-          echo "CABAL_BUILDDIR=$CABAL_BUILDDIR"
-          echo "CABAL_BUILDDIR=$CABAL_BUILDDIR" >> $GITHUB_ENV
-
       - name: Install Haskell
         uses: input-output-hk/setup-haskell@v1
         id: setup-haskell
@@ -61,8 +54,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get -y install libsodium-dev
-          sudo apt-get -y remove --purge software-properties-common
-          sudo apt-get -y autoremove
 
       - name: Install secp256k1
         uses: input-output-hk/setup-secp256k1@v1
@@ -85,28 +76,34 @@ jobs:
       - name: Update Hackage index
         run: cabal update
 
-      - name: Use cabal.project.local.github-pages
+      - name: Configure to use libsodium
         run: |
-          cat ./../../cabal.project.local.github-pages >> ./../../cabal.project.local
-          cat ./../../cabal.project.local
+          cat >> ../../cabal.project <<EOF
+          package cardano-crypto-praos
+            flags: -external-libsodium-vrf
+          EOF
 
       - name: build Haddock documentation 🔧
         run: |
           mkdir ./static/haddocks
           cd ../../
-          cabal build --dry-run all
+          cabal build --dry-run --enable-tests all
           ./scripts/docs/haddocks.sh
 
       - name: Build website
         run: yarn build
 
-      # Popular action to deploy to GitHub Pages:
-      # Docs: https://github.com/peaceiris/actions-gh-pages#%EF%B8%8F-docusaurus
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
+      - uses: actions/upload-pages-artifact@v1
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Build output to publish to the `gh-pages` branch:
-          publish_dir: ./docs/website/build
-          user_name: 'Arnaud Bailly'
-          user_email: arnaud.bailly@iohk.io
+          path: ./docs/website/build
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v2
+
+    # https://github.com/actions/deploy-pages
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}

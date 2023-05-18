@@ -1,19 +1,19 @@
-cabal-version:      3.0
-name:               ouroboros-consensus
-version:            0.5.0.0
-synopsis:           Consensus layer for the Ouroboros blockchain protocol
-description:        Consensus layer for the Ouroboros blockchain protocol.
-license:            Apache-2.0
+cabal-version:   3.0
+name:            ouroboros-consensus
+version:         0.6.0.0
+synopsis:        Consensus layer for the Ouroboros blockchain protocol
+description:     Consensus layer for the Ouroboros blockchain protocol.
+license:         Apache-2.0
 license-files:
   LICENSE
   NOTICE
 
-copyright:          2019-2023 Input Output Global Inc (IOG)
-author:             IOHK Engineering Team
-maintainer:         operations@iohk.io
-category:           Network
-build-type:         Simple
-extra-source-files: CHANGELOG.md
+copyright:       2019-2023 Input Output Global Inc (IOG)
+author:          IOHK Engineering Team
+maintainer:      operations@iohk.io
+category:        Network
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
 
 source-repository head
   type:     git
@@ -338,11 +338,11 @@ library
     ViewPatterns
 
   build-depends:
-    , base                         >=4.14    && <4.17
+    , base                         >=4.14     && <4.17
     , base16-bytestring
-    , bimap                        >=0.4     && <0.5
-    , binary                       >=0.8     && <0.11
-    , bytestring                   >=0.10    && <0.12
+    , bimap                        >=0.4      && <0.5
+    , binary                       >=0.8      && <0.11
+    , bytestring                   >=0.10     && <0.12
     , cardano-binary
     , cardano-crypto-class
     , cardano-ledger-binary
@@ -351,8 +351,8 @@ library
     , cardano-prelude
     , cardano-slotting
     , cardano-strict-containers
-    , cborg                        >=0.2.2   && <0.3
-    , containers                   >=0.5     && <0.7
+    , cborg                        >=0.2.2    && <0.3
+    , containers                   >=0.5      && <0.7
     , contra-tracer
     , deepseq
     , diff-containers              >=1.0
@@ -360,28 +360,29 @@ library
     , fingertree-rm                >=1.0
     , fs-api
     , hashable
-    , io-classes                   ^>=0.3
+    , io-classes                   ^>=1.1
     , measures
     , monoid-subclasses
-    , mtl                          >=2.2     && <2.3
-    , nothunks                     >=0.1.2   && <0.2
-    , ouroboros-network-api
-    , ouroboros-network-framework
-    , ouroboros-network-mock
-    , ouroboros-network-protocols  >=0.2
-    , psqueues                     >=0.2.3   && <0.3
-    , quiet                        >=0.2     && <0.3
+    , mtl                          >=2.2      && <2.3
+    , nothunks                     >=0.1.2    && <0.2
+    , ouroboros-network-api        ^>=0.3
+    , ouroboros-network-framework  ^>=0.5
+    , ouroboros-network-mock       ^>=0.1.0.1
+    , ouroboros-network-protocols  ^>=0.5
+    , psqueues                     >=0.2.3    && <0.3
+    , quiet                        >=0.2      && <0.3
     , semialign                    >=1.1
-    , serialise                    >=0.2     && <0.3
-    , sop-core                     >=0.5     && <0.6
+    , serialise                    >=0.2      && <0.3
+    , si-timers                    ^>=1.1
+    , sop-core                     >=0.5      && <0.6
     , streaming
-    , strict-stm                   ^>=0.2
-    , text                         >=1.2     && <1.3
-    , these                        >=1.1     && <1.2
+    , strict-stm                   ^>=1.1
+    , text                         >=1.2      && <1.3
+    , these                        >=1.1      && <1.2
     , time
     , transformers
     , typed-protocols
-    , vector                       >=0.12    && <0.13
+    , vector                       >=0.12     && <0.13
 
 library consensus-testlib
   import:          common-lib
@@ -439,7 +440,7 @@ library consensus-testlib
     , bytestring
     , cardano-binary
     , cardano-crypto-class
-    , cardano-ledger-binary:testlib
+    , cardano-ledger-binary:{cardano-ledger-binary, testlib}
     , cardano-prelude
     , cardano-strict-containers
     , cborg
@@ -571,6 +572,7 @@ test-suite consensus-test
     , base
     , cardano-binary
     , cardano-crypto-class
+    , cardano-ledger-binary
     , cardano-slotting
     , cborg
     , consensus-testlib
@@ -596,8 +598,9 @@ test-suite consensus-test
     , quickcheck-state-machine
     , random
     , serialise
+    , si-timers
+    , strict-stm
     , tasty
-    , tasty-expected-failure
     , tasty-hunit
     , tasty-quickcheck
     , time

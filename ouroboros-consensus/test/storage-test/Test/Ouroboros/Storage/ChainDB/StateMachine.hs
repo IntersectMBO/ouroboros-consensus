@@ -84,7 +84,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine (
 
 import           Codec.Serialise (Serialise)
 import           Control.Monad (replicateM, void)
-import           Control.Tracer
+import qualified Control.Tracer as CT
 import           Data.Bifoldable
 import           Data.Bifunctor
 import qualified Data.Bifunctor.TH as TH
@@ -1236,6 +1236,7 @@ sm env genBlock cfg initLedger maxClockSkew = StateMachine
   , mock          = mock
   , invariant     = Just $ invariant cfg
   , cleanup       = noCleanup
+  , getTraces     = Nothing
   }
 
 {-------------------------------------------------------------------------------
@@ -1553,8 +1554,8 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
           ctcCmdNames :: [String]
           ctcCmdNames = fmap (show . cmdName . QSM.getCommand) $ QSM.unCommands cmds
 
-        (hist, prop) <- QC.run $ test cmds
-        prettyCommands (smUnused maxClockSkew chunkInfo) hist
+        (output, hist, prop) <- QC.run $ test cmds
+        prettyCommands (smUnused maxClockSkew chunkInfo) output hist
           $ tabulate
               "Tags"
               (map show $ tag (execCmds (QSM.initModel (smUnused maxClockSkew chunkInfo)) cmds))
@@ -1566,7 +1567,8 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
 
     test :: QSM.Commands (At Cmd Blk IO) (At Resp Blk IO)
          -> IO
-            ( QSM.History (At Cmd Blk IO) (At Resp Blk IO)
+            ( Maybe QSM.TraceOutput
+            , QSM.History (At Cmd Blk IO) (At Resp Blk IO)
             , Property
             )
     test cmds' = do
@@ -1579,7 +1581,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       let args = mkArgs testCfg chunkInfo (testInitExtLedger `withLedgerTables` emptyLedgerTables) threadRegistry nodeDBs tracer
                    maxClockSkew varCurSlot
 
-      (hist, model, res, trace) <- bracket
+      (output, hist, model, res, trace) <- bracket
         (open args >>= newMVar)
         -- Note: we might be closing a different ChainDB than the one we
         -- opened, as we can reopen it the ChainDB, swapping the ChainDB in
@@ -1596,9 +1598,9 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                 , args
                 }
               sm' = sm env (genBlk chunkInfo) testCfg testInitExtLedger maxClockSkew
-          (hist, model, res) <- QSM.runCommands' (pure sm') cmds'
+          (output, hist, model, res) <- QSM.runCommands' (pure sm') cmds'
           trace <- getTrace
-          return (hist, model, res, trace)
+          return (output, hist, model, res, trace)
 
       closeRegistry threadRegistry
 
@@ -1632,7 +1634,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                            (Mock.numOpenHandles (nodeDBsLgr fses) === 0) .&&.
             counterexample "There were registered clean-up actions"
                            (remainingCleanups === 0)
-      return (hist, prop)
+      return (output, hist, prop)
 
 prop_trace :: TopLevelConfig Blk -> DBModel Blk -> [TraceEvent Blk] -> Property
 prop_trace cfg dbModel trace =
@@ -1722,7 +1724,7 @@ mkArgs :: IOLike m
        -> ExtLedgerState Blk ValuesMK
        -> ResourceRegistry m
        -> NodeDBs (StrictTVar m MockFS)
-       -> Tracer m (TraceEvent Blk)
+       -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
        -> ChainDbArgs Identity m Blk

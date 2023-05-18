@@ -31,11 +31,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
-import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
+import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Util.IOLike
 import qualified System.FS.API as FS
 import qualified System.FS.API.Types as FS
 

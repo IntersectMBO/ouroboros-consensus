@@ -17,7 +17,7 @@ import           Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import           Cardano.Crypto.Hash (Hash)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.Serialise (Serialise (..))
-import           Control.Monad.Class.MonadTime (Time (..))
+import           Control.Monad.Class.MonadTime.SI (Time (..))
 import           Control.Tracer (Tracer)
 import           Data.Bimap (Bimap)
 import qualified Data.Bimap as Bimap

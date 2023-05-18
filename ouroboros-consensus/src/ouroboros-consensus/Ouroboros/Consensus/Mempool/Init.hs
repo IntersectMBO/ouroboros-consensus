@@ -21,6 +21,7 @@ import           Ouroboros.Consensus.Mempool.API hiding (MempoolCapacityBytes,
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.Query
+import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Mempool.Update
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
@@ -111,7 +112,7 @@ mkMempool
      )
   => MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv = Mempool
-    { tryAddTxs      = implTryAddTxs mpEnv
+    { addTx          = implAddTx mpEnv
     , removeTxs      = implRemoveTxs mpEnv
     , syncWithLedger = fst <$> implSyncWithLedger mpEnv
     , getSnapshot    = snapshotFromIS <$> readTMVar istate
@@ -140,6 +141,15 @@ mkMempool mpEnv = Mempool
              )
 
     , getCapacity    = isCapacity <$> readTMVar istate
+    , getRemainingCapacity = do
+        is <- readTMVar istate
+        let size = sum ( map (txSize . txForgetValidated . TxSeq.txTicketTx)
+                $ TxSeq.toList
+                $ isTxs is
+                )
+        pure
+          $ MempoolCapacityBytes
+          $ if size > getMempoolCapacityBytes (isCapacity is) then 0 else getMempoolCapacityBytes (isCapacity is) - size
     , getTxSize      = txSize
     }
   where

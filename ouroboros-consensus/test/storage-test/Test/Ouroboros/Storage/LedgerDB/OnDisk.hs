@@ -1513,6 +1513,7 @@ sm secParam cd db = StateMachine {
         HD.LedgerBackingStore bs <- atomically . readTVar $ dbBackingStore db
         HD.bsClose bs
         dbCleanup $ dbEnv db
+    , getTraces     = Nothing
     }
 
 prop_sequential ::
@@ -1567,8 +1568,8 @@ propCmds ::
 propCmds dbEnv cd secParam rr cmds = do
     db <- QC.run $ initStandaloneDB dbEnv rr secParam
     let sm' = sm secParam cd db
-    (hist, _model, res) <- runCommands sm' cmds
-    prettyCommands sm' hist
+    (output, hist, _model, res) <- runCommands sm' cmds
+    prettyCommands sm' output hist
       $ checkCommandNames cmds
       $ res QC.=== Ok
 

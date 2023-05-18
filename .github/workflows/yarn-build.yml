@@ -2,7 +2,8 @@ name: Yarn Build
 
 on:
   pull_request:
-  merge_group:
+    branches:
+      - main
 
 jobs:
   build:

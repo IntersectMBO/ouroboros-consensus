@@ -289,6 +289,7 @@ sm env dbm = StateMachine {
     , mock          = mockImpl
     , invariant     = Nothing
     , cleanup       = noCleanup
+    , getTraces     = Nothing
     }
 
 initModelImpl :: DBModel Block -> Model r
@@ -551,9 +552,9 @@ mockImpl model cmdErr = At <$> return mockResp
 
 prop_sequential :: Property
 prop_sequential = forAllCommands smUnused Nothing $ \cmds -> monadicIO $ do
-    (hist, prop) <- run $ test cmds
+    (output, hist, prop) <- run $ test cmds
     let events = execCmds (initModel smUnused) cmds
-    prettyCommands smUnused hist
+    prettyCommands smUnused output hist
         $ tabulate "Tags"
           (map show $ tag events)
         $ tabulate "Commands"
@@ -576,7 +577,7 @@ prop_sequential = forAllCommands smUnused Nothing $ \cmds -> monadicIO $ do
       | otherwise = ">=100"
 
 test :: Commands (At CmdErr) (At Resp)
-     -> IO (History (At CmdErr) (At Resp), Property)
+     -> IO (Maybe TraceOutput, History (At CmdErr) (At Resp), Property)
 test cmds = do
     varErrors          <- uncheckedNewTVarM mempty
     varFs              <- uncheckedNewTVarM Mock.empty
@@ -592,7 +593,7 @@ test cmds = do
                  , volValidationPolicy = ValidateAll
                  }
 
-    (hist, res, trace) <- bracket
+    (output, hist, res, trace) <- bracket
       (openDB args runWithTempRegistry >>= newMVar)
       -- Note: we might be closing a different VolatileDB than the one we
       -- opened, as we can reopen it the VolatileDB, swapping the VolatileDB
@@ -601,9 +602,9 @@ test cmds = do
       $ \varDB -> do
         let env = VolatileDBEnv { varErrors, varDB, args }
             sm' = sm env dbm
-        (hist, _model, res) <- QSM.runCommands' (pure sm') cmds
+        (output, hist, _model, res) <- QSM.runCommands' (pure sm') cmds
         trace <- getTrace
-        return (hist, res, trace)
+        return (output, hist, res, trace)
 
     fs <- atomically $ readTVar varFs
 
@@ -611,7 +612,7 @@ test cmds = do
           counterexample ("Trace: " <> unlines (map show trace)) $
           counterexample ("FS: " <> Mock.pretty fs)              $
           res === Ok
-    return (hist, prop)
+    return (output, hist, prop)
   where
     dbm = initDBModel testMaxBlocksPerFile TestBlockCodecConfig
 

@@ -18,7 +18,7 @@ function last_version {
 }
 
 function compute_new_version {
-  ch=$(cat ./$1/changelog.d/*.md | python3 ./scripts/strip-md-comments.py)
+  ch=$(cat ./$1/changelog.d/*.md | python3 ./scripts/release/strip-md-comments.py)
   if [[ $(echo "$ch" | grep "### Breaking") ]]; then
       increment_version $2  1
   elif [[ $(echo "$ch" | grep "### Non-Breaking") ]]; then

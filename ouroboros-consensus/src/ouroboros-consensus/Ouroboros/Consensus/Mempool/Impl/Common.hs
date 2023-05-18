@@ -36,6 +36,7 @@ module Ouroboros.Consensus.Mempool.Impl.Common (
   , initInternalState
   ) where
 
+import           Control.Concurrent.Class.MonadMVar (MVar, newMVar)
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import           Control.Exception (assert)
 import           Control.Monad.Trans.Except (runExcept)
@@ -67,8 +68,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
                      (PointNotFound)
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util (repeatedly)
-import           Ouroboros.Consensus.Util.IOLike
-
+import           Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 {-------------------------------------------------------------------------------
   Internal State
 -------------------------------------------------------------------------------}
@@ -210,6 +210,8 @@ data MempoolEnv m blk = MempoolEnv {
       mpEnvLedger           :: LedgerInterface m blk
     , mpEnvLedgerCfg        :: LedgerConfig blk
     , mpEnvStateVar         :: StrictTMVar m (InternalState blk)
+    , mpEnvAddTxsRemoteFifo :: MVar m ()
+    , mpEnvAddTxsAllFifo    :: MVar m ()
     , mpEnvTracer           :: Tracer m (TraceEventMempool blk)
     , mpEnvTxSize           :: GenTx blk -> TxSizeInBytes
     , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
@@ -229,10 +231,14 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer txSize = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
     let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
     isVar <- newTMVarIO $ initInternalState capacityOverride TxSeq.zeroTicketNo slot st'
+    addTxRemoteFifo <- newMVar ()
+    addTxAllFifo    <- newMVar ()
     return MempoolEnv
       { mpEnvLedger           = ledgerInterface
       , mpEnvLedgerCfg        = cfg
       , mpEnvStateVar         = isVar
+      , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
+      , mpEnvAddTxsAllFifo    = addTxAllFifo
       , mpEnvTracer           = tracer
       , mpEnvTxSize           = txSize
       , mpEnvCapacityOverride = capacityOverride
@@ -552,16 +558,24 @@ data TraceEventMempool blk
       -- transactions.
       MempoolSize
       -- ^ The current size of the Mempool.
+  | TraceMempoolAttemptingSync
+  | TraceMempoolSyncNotNeeded (Point blk) (Point blk)
+  | TraceMempoolSyncDone
+  | TraceMempoolAttemptingAdd (GenTx blk)
+  | TraceMempoolLedgerFound (Point blk)
+  | TraceMempoolLedgerNotFound (Point blk)
   deriving (Generic)
 
 deriving instance ( Eq (GenTx blk)
                   , Eq (Validated (GenTx blk))
                   , Eq (GenTxId blk)
                   , Eq (ApplyTxErr blk)
+                  , Eq (Point blk)
                   ) => Eq (TraceEventMempool blk)
 
 deriving instance ( Show (GenTx blk)
                   , Show (Validated (GenTx blk))
                   , Show (GenTxId blk)
                   , Show (ApplyTxErr blk)
+                  , Show (Point blk)
                   ) => Show (TraceEventMempool blk)

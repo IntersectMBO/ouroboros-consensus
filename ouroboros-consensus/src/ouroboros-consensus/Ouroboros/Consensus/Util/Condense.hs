@@ -24,7 +24,7 @@ import           Cardano.Crypto.KES (MockKES, NeverKES, SigKES, SignedKES (..),
 import           Cardano.Slotting.Block (BlockNo (..))
 import           Cardano.Slotting.Slot (EpochNo (..), SlotNo (..),
                      WithOrigin (..))
-import           Control.Monad.Class.MonadTime (Time (..))
+import           Control.Monad.Class.MonadTime.SI (Time (..))
 import qualified Data.ByteString as BS.Strict
 import qualified Data.ByteString.Lazy as BS.Lazy
 import           Data.Int

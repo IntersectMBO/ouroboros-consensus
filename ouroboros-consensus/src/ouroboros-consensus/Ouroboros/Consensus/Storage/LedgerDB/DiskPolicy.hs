@@ -12,7 +12,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (
   , defaultDiskPolicy
   ) where
 
-import           Control.Monad.Class.MonadTime
+import           Control.Monad.Class.MonadTime.SI
 import           Data.Time.Clock (secondsToDiffTime)
 import           Data.Word
 import           GHC.Generics

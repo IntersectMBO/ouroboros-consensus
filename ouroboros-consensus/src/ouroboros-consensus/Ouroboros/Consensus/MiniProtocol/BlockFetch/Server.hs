@@ -14,13 +14,15 @@ module Ouroboros.Consensus.MiniProtocol.BlockFetch.Server (
   , TraceBlockFetchServerEvent (..)
     -- * Exceptions
   , BlockFetchServerException
+    -- * Low-level API
+  , blockFetchServer'
   ) where
 
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Storage.ChainDB (ChainDB,
-                     IteratorResult (..), WithPoint (..),
+import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, Iterator,
+                     IteratorResult (..), UnknownRange, WithPoint (..),
                      getSerialisedBlockWithPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util.IOLike
@@ -73,13 +75,28 @@ blockFetchServer
     -> NodeToNodeVersion
     -> ResourceRegistry m
     -> BlockFetchServer (Serialised blk) (Point blk) m ()
-blockFetchServer tracer chainDB _version registry = senderSide
+blockFetchServer tracer chainDB _version registry =
+    blockFetchServer' tracer $
+      ChainDB.stream chainDB registry getSerialisedBlockWithPoint
+
+blockFetchServer'
+    :: forall m blk a.
+       ( IOLike m
+       , StandardHash blk
+       , Typeable     blk
+       )
+    => Tracer m (TraceBlockFetchServerEvent blk)
+    -> (    ChainDB.StreamFrom blk -> ChainDB.StreamTo blk
+         -> m (Either (UnknownRange blk) (Iterator m blk (WithPoint blk a)))
+       )
+    -> BlockFetchServer a (Point blk) m ()
+blockFetchServer' tracer stream = senderSide
   where
-    senderSide :: BlockFetchServer (Serialised blk) (Point blk) m ()
+    senderSide :: BlockFetchServer a (Point blk) m ()
     senderSide = BlockFetchServer receiveReq' ()
 
     receiveReq' :: ChainRange (Point blk)
-                -> m (BlockFetchBlockSender (Serialised blk) (Point blk) m ())
+                -> m (BlockFetchBlockSender a (Point blk) m ())
     receiveReq' (ChainRange start end) =
       case (start, end) of
         (BlockPoint s h, BlockPoint s' h') ->
@@ -89,12 +106,9 @@ blockFetchServer tracer chainDB _version registry = senderSide
 
     receiveReq :: RealPoint blk
                -> RealPoint blk
-               -> m (BlockFetchBlockSender (Serialised blk) (Point blk) m ())
+               -> m (BlockFetchBlockSender a (Point blk) m ())
     receiveReq start end = do
-      errIt <- ChainDB.stream
-        chainDB
-        registry
-        getSerialisedBlockWithPoint
+      errIt <- stream
         (ChainDB.StreamFromInclusive start)
         (ChainDB.StreamToInclusive   end)
       return $ case errIt of
@@ -106,8 +120,8 @@ blockFetchServer tracer chainDB _version registry = senderSide
         -- iterator is empty.
         Right it -> SendMsgStartBatch $ sendBlocks it
 
-    sendBlocks :: ChainDB.Iterator m blk (WithPoint blk (Serialised blk))
-               -> m (BlockFetchSendBlocks (Serialised blk) (Point blk) m ())
+    sendBlocks :: ChainDB.Iterator m blk (WithPoint blk a)
+               -> m (BlockFetchSendBlocks a (Point blk) m ())
     sendBlocks it = do
       next <- ChainDB.iteratorNext it
       case next of
