@@ -2,6 +2,27 @@
 
 # Changelog entries
 
+<a id='changelog-0.6.0.0'></a>
+## 0.6.0.0 — 2023-05-19
+
+### Patch
+
+- Optimise `GetStakeSnapshots` query to not traverse all delegations
+  per stake pool, but instead compute the total stake per pool in a
+  map and do a lookup
+- Update CHaPs dependencies
+- Fix performance regression of `GetFilteredDelegationsAndRewardAccounts` query
+
+### Breaking
+
+- Bumped latest released node versions to `NodeToNodeV_11` and `NodeToClientV_15`.
+- `NodeToClientV_15` enables the deposits query.
+- The `GetCurrentPParams` query now uses the legacy en-/decoding for its result again when the `NodeToClientVersion` is `<15`, restoring compatibility with older clients.
+
+### Non-Breaking
+
+- Bump `cardano-ledger-{alonzo,babbage}` to 1.2.1.0, which changes the corresponding `PParams` serialisation. This affects the ledger snapshots, and the `GetCurrentPParams` query for `NodeToClientVersion >= 15`.
+
 <a id='changelog-0.5.0.1'></a>
 ## 0.5.0.1 — 2023-04-28
 
