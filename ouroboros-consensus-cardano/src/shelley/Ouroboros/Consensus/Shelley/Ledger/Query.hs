@@ -307,18 +307,21 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto) => QueryLedge
                 , SL.ssStakeGo
                 } = SL.esSnapshots . SL.nesEs $ st
 
-              -- | Sum all the stake that is held by the pool
-              getPoolStake :: KeyHash 'StakePool crypto -> SL.SnapShot crypto -> SL.Coin
-              getPoolStake hash ss = VMap.foldMap fromCompact s
-                where
-                  SL.Stake s = SL.poolStake hash (SL.ssDelegations ss) (SL.ssStake ss)
+              totalMarkByPoolId :: Map (KeyHash 'StakePool crypto) Coin
+              totalMarkByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeMark) (SL.ssStake ssStakeMark)
+
+              totalSetByPoolId :: Map (KeyHash 'StakePool crypto) Coin
+              totalSetByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeSet) (SL.ssStake ssStakeSet)
+
+              totalGoByPoolId :: Map (KeyHash 'StakePool crypto) Coin
+              totalGoByPoolId = SL.sumStakePerPool (SL.ssDelegations ssStakeGo) (SL.ssStake ssStakeGo)
 
               getPoolStakes :: Set (KeyHash 'StakePool crypto) -> Map (KeyHash 'StakePool crypto) (StakeSnapshot crypto)
               getPoolStakes poolIds = Map.fromSet mkStakeSnapshot poolIds
                 where mkStakeSnapshot poolId = StakeSnapshot
-                        { ssMarkPool = getPoolStake poolId ssStakeMark
-                        , ssSetPool  = getPoolStake poolId ssStakeSet
-                        , ssGoPool   = getPoolStake poolId ssStakeGo
+                        { ssMarkPool = Map.findWithDefault mempty poolId totalMarkByPoolId
+                        , ssSetPool  = Map.findWithDefault mempty poolId totalSetByPoolId
+                        , ssGoPool   = Map.findWithDefault mempty poolId totalGoByPoolId
                         }
 
               getAllStake :: SL.SnapShot crypto -> SL.Coin
