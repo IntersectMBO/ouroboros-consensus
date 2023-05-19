@@ -13,6 +13,16 @@ on:
     branches:
       - main
 
+env:
+  # Modify this value to "invalidate" the cabal cache.
+  CABAL_CACHE_VERSION: "2023-04-30"
+
+  # Modify this value to "invalidate" the secp cache.
+  SECP_CACHE_VERSION: "2023-04-27"
+
+  # current ref from: 27.02.2022
+  SECP256K1_REF: ac83be33d0956faf6b7f61a60ab524ef7d6a473a
+
 jobs:
   check-cabal-files:
     runs-on: ubuntu-latest
@@ -29,7 +39,7 @@ jobs:
     - name: Cabal check
       run: ./scripts/ci/check-cabal-files.sh
 
-  build-test:
+  build:
     name: Build and test using cabal
 
     runs-on: ${{ matrix.os }}
@@ -40,16 +50,6 @@ jobs:
          ghc: ["8.10.7"] # ["9.2.7"]
          cabal: ["3.10.1.0"]
          os: [ubuntu-latest]
-
-    env:
-      # Modify this value to "invalidate" the cabal cache.
-      CABAL_CACHE_VERSION: "2023-04-30"
-
-      # Modify this value to "invalidate" the secp cache.
-      SECP_CACHE_VERSION: "2023-04-27"
-
-      # current ref from: 27.02.2022
-      SECP256K1_REF: ac83be33d0956faf6b7f61a60ab524ef7d6a473a
 
     steps:
     - uses: actions/checkout@v3
@@ -120,3 +120,35 @@ jobs:
 
     - name: Build projects [build]
       run: cabal build all -j
+
+  # run-tests:
+
+  run-benchmarks:
+    needs: build
+
+    # TODO: can this be de-duplicated?
+    strategy:
+       fail-fast: false
+       matrix:
+         ghc: ["8.10.7"]
+         cabal: ["3.10.1.0"]
+         os: [ubuntu-latest]
+
+      steps:
+      - uses: actions/checkout@v3
+
+      # TODO: the cache key might be an output of the build action
+      - uses: actions/cache@v3
+        name: "Cache `dist-newstyle`"
+        with:
+          path: |
+            dist-newstyle
+            !dist-newstyle/**/.git
+          key: cache-dist-${{ runner.os }}-${{ matrix.ghc }}
+
+      - name: Create baseline-benchmark
+        # if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cabal new-run ouroboros-consensus:mempool-bench -- \
+          --timeout=60 --csv mempool-baseline.csv \
+          +RTS -T
