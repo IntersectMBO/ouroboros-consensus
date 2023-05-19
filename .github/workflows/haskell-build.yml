@@ -120,7 +120,7 @@ jobs:
       run: cabal build --only-dependencies all -j
 
     - name: Build projects [build]
-      run: cabal build all -j
+      run: cabal build all --jobs=1
 
     # Uncomment the following back in for debugging. Remember to launch a `pwsh` from
     # the tmux session to debug `pwsh` issues. And be reminded that the `/msys2` and
