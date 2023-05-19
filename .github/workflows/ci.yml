@@ -1,0 +1,113 @@
+name: "CI"
+
+# Limit concurrent runs of this workflow within a single PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check-cabal-files:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install Haskell
+      uses: input-output-hk/setup-haskell@v1
+      id: setup-haskell
+      with:
+        cabal-version: "3.10.1.0"
+
+    - uses: actions/checkout@v3
+
+    - name: Cabal check
+      run: ./scripts/ci/check-cabal-files.sh
+
+  build-test:
+    name: Build and test using cabal
+
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+       fail-fast: false
+       matrix:
+         ghc: ["9.2.7"]
+         cabal: ["3.10.1.0"]
+         os: [ubuntu-latest]
+
+    env:
+      # Modify this value to "invalidate" the cabal cache.
+      CABAL_CACHE_VERSION: "2023-04-30"
+
+      # Modify this value to "invalidate" the secp cache.
+      SECP_CACHE_VERSION: "2023-04-27"
+
+      # current ref from: 27.02.2022
+      SECP256K1_REF: ac83be33d0956faf6b7f61a60ab524ef7d6a473a
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Haskell
+      uses: input-output-hk/setup-haskell@v1
+      id: setup-haskell
+      with:
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: ${{ matrix.cabal }}
+
+    - uses: actions/checkout@v3
+
+    - name: Install build environment
+      run: |
+        sudo apt-get update
+        sudo apt-get -y install libsodium-dev
+
+    - name: Configure cabal to use libsodium
+      run: |
+        cat >> ../../cabal.project <<EOF
+        package cardano-crypto-praos
+          flags: -external-libsodium-vrf
+        EOF
+
+    - name: "LINUX: Install build environment (for secp256k1)"
+      run: sudo apt-get -y install autoconf automake libtool
+
+    - name: Install secp256k1
+      uses: input-output-hk/setup-secp256k1@v1
+      with:
+        git-ref: ${{ env.SECP256K1_REF }}
+        cache-version: ${{ env.SECP_CACHE_VERSION }}
+
+    - name: Update Cabal (Hackage and CHaP)
+      run: cabal update
+
+    - name: Generate dist-newstyle/cache/plan.json
+      run: cabal build all --dry-run --minimize-conflict-set
+
+    # TODO: why not using plan.json directly?
+    - name: Record dependencies to be used as cache keys
+      id: record-deps
+      run: |
+        cabal build all --dry-run
+        cat dist-newstyle/cache/plan.json \
+        | jq -L .github/workflows/jq-install-plan \
+        | sort \
+        | uniq > dependencies.txt
+
+    - uses: actions/cache@v3
+      name: "Cache `cabal store`"
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key: cache-dependencies-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('dependencies.txt') }}
+
+    - uses: actions/cache@v3
+      name: "Cache `dist-newstyle`"
+      with:
+        path: |
+          dist-newstyle
+          !dist-newstyle/**/.git
+        key: cache-dist-${{ runner.os }}-${{ matrix.ghc }}
+
+    - name: Build dependencies
+      run: cabal build --only-dependencies all -j
+
+    - name: Build projects [build]
+      run: cabal build all -j
