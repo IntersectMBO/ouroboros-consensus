@@ -23,14 +23,14 @@ steps:
   #
   - module_header:
   #     # How many spaces use for indentation in the module header.
-       indent: 2
+        indent: 2
   #
   #     # Should export lists be sorted?  Sorting is only performed within the
   #     # export section, as delineated by Haddock comments.
-       sort: true
+        sort: true
   #
   #     # See `separate_lists` for the `imports` step.
-       separate_lists: true
+        separate_lists: true
   #
   #     # When to break the "where".
   #     # Possible values:
@@ -40,14 +40,14 @@ steps:
   #     #   determined by the `columns` setting. Not applicable when the export
   #     #   list contains comments as newlines will be required.
   #     # - always: always break before the "where".
-       break_where: single
+        break_where: single
   #
   #     # Where to put open bracket
   #     # Possible values:
   #     # - same_line: put open bracket on the same line as the module name, before the
   #     #              comment of the module
   #     # - next_line: put open bracket on the next line, after module comment
-       open_bracket: same_line
+        open_bracket: same_line
 
   # Format record definitions. This is disabled by default.
   #

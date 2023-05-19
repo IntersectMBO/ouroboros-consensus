@@ -87,10 +87,11 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+                     (BackingStoreSelector (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog')
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
@@ -595,7 +596,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> (SlotNo -> STM m ())
       -> LedgerConfig blk
       -> STM m (Point blk)
-      -> m ( LedgerDB' blk
+      -> m ( DbChangelog' blk
            , LedgerBackingStoreValueHandle m (ExtLedgerState blk)
            , DiskLedgerView m (ExtLedgerState blk)
            )
@@ -1055,8 +1056,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
       let getValueHandle = do
             eLDBView <- ChainDB.getLedgerDBViewAtPoint chainDB Nothing
             case eLDBView of
-              Left e -> error $ show e
-              Right (vh, ldb) -> pure (ldb, vh, mkDiskLedgerView (vh, ldb, lbsvhClose vh))
+              Left e          -> error $ show e
+              Right (vh, ldb) -> pure (ldb, vh, mkDiskLedgerView (vh, ldb))
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the

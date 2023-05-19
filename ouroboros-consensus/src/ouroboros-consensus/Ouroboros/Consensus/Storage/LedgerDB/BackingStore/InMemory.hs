@@ -58,16 +58,17 @@ data TVarBackingStoreExn =
   deriving anyclass (Exception)
   deriving stock    (Show)
 
-data TVarTraceEvent = TVarTraceOpening
-                    | TVarTraceOpened
-                    | TVarTraceClosing
-                    | TVarTraceClosed
-                    | TVarTraceCopying     !FS.FsPath -- ^ To
-                    | TVarTraceCopied      !FS.FsPath -- ^ To
-                    | TVarTraceWrite       !(WithOrigin SlotNo) !SlotNo
-                    | TVarTraceInitialisingFromSnapshot !FS.FsPath
-                    | TVarTraceInitialisedFromSnapshot !FS.FsPath
-                    | TVarTraceInitialisingFromValues !(WithOrigin SlotNo)
+data TVarTraceEvent =
+    TVarTraceOpening
+  | TVarTraceOpened
+  | TVarTraceClosing
+  | TVarTraceClosed
+  | TVarTraceCopying                  !FS.FsPath -- ^ To
+  | TVarTraceCopied                   !FS.FsPath -- ^ To
+  | TVarTraceInitialisingFromSnapshot !FS.FsPath
+  | TVarTraceInitialisedFromSnapshot  !FS.FsPath
+  | TVarTraceWrite   !(WithOrigin SlotNo) !SlotNo
+  | TVarTraceInitialisingFromValues !(WithOrigin SlotNo)
   deriving (Show, Eq)
 
 -- | Use a 'TVar' as a trivial backing store

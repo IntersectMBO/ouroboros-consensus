@@ -3,7 +3,7 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE Rank2Types                 #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 
 -- | A store for key-value maps that can be extended with deltas.
@@ -26,6 +26,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   , LedgerBackingStore (..)
   , LedgerBackingStore'
   , LedgerBackingStoreValueHandle (..)
+  , castBackingStoreValueHandle
+  , castLedgerBackingStoreValueHandle
   , lbsValueHandle
   , lbsvhClose
   ) where
@@ -93,6 +95,26 @@ data BackingStoreValueHandle m keys values = BackingStoreValueHandle {
     -- failure or an exception.
   , bsvhRead      :: !(keys -> m values)
   }
+
+castBackingStoreValueHandle ::
+     Functor m
+  => (values -> values')
+  -> (keys' -> keys)
+  -> BackingStoreValueHandle m keys values
+  -> BackingStoreValueHandle m keys' values'
+castBackingStoreValueHandle f g bsvh =
+  BackingStoreValueHandle {
+    bsvhClose
+    , bsvhRangeRead = \(RangeQuery prev count) ->
+        fmap f . bsvhRangeRead $  RangeQuery (fmap g prev) count
+    , bsvhRead = fmap f . bsvhRead . g
+    }
+  where
+    BackingStoreValueHandle {
+        bsvhClose
+      , bsvhRangeRead
+      , bsvhRead
+      } = bsvh
 
 data RangeQuery keys = RangeQuery {
       -- | The result of this range query begin at first key that is strictly
@@ -172,5 +194,16 @@ data LedgerBackingStoreValueHandle m l = LedgerBackingStoreValueHandle
 
 lbsvhClose :: LedgerBackingStoreValueHandle m l -> m ()
 lbsvhClose (LedgerBackingStoreValueHandle _ vh) = bsvhClose vh
+
+castLedgerBackingStoreValueHandle ::
+     Functor m
+  => (LedgerTables l ValuesMK -> LedgerTables l' ValuesMK)
+  -> (LedgerTables l' KeysMK -> LedgerTables l KeysMK)
+  -> LedgerBackingStoreValueHandle m l
+  -> LedgerBackingStoreValueHandle m l'
+castLedgerBackingStoreValueHandle f g lbsvh =
+    LedgerBackingStoreValueHandle s $ castBackingStoreValueHandle f g bsvh
+  where
+    LedgerBackingStoreValueHandle s bsvh = lbsvh
 
 type LedgerBackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)

@@ -60,7 +60,7 @@
    'stripSuffix' operations to facilitate computing updated root measures.
 
 -}
-module Ouroboros.Consensus.Storage.LedgerDB.DiffSeq (
+module Ouroboros.Consensus.Ledger.Tables.DiffSeq (
     -- * Sequences of diffs
     DiffSeq (..)
   , Element (..)

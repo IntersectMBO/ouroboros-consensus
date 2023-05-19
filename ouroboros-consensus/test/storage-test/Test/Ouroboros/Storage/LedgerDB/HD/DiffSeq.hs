@@ -14,9 +14,8 @@ import           Data.Map.Diff.Strict.Internal (Diff (..), NEDiffHistory (..))
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Sequence.NonEmpty (NESeq (..))
 import           Data.Typeable
-import           Ouroboros.Consensus.Storage.LedgerDB.DiffSeq
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DiffSeq as DS
-                     (Length (..), SlotNoLB (..), SlotNoUB (..))
+import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
+import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Test.Cardano.Ledger.Binary.Arbitrary ()
 import           Test.QuickCheck.Classes
 import           Test.QuickCheck.Classes.Semigroup.Cancellative

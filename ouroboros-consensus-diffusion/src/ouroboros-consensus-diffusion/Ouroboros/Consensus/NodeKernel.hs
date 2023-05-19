@@ -60,8 +60,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
 import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -255,30 +255,6 @@ forkBlockForging IS{..} blockForging =
 
     go :: SlotNo -> WithEarlyExit m ()
     go currentSlot = do
-      -- Once the forging logic is invoked, a block context is selected and the
-      -- logic then *MUST SUCCESFULLY PRODUCE* a block on top of the selected
-      -- context, i.e. it cannot fail even if the LedgerDB switches to a
-      -- different fork while the forging logic is executed. For this reason, we
-      -- need a complete view on the ledger state we are going to forge on top
-      -- of.
-      --
-      -- A complete view on the ledger state (like the one we need to forge on
-      -- top of it), includes the UTxO set. In order to arbitrarily query for
-      -- UTxO entries on that ledger state, we need to be able to
-      -- rewind-read-forward on a DbChangelog.
-      --
-      -- We need to hold the read lock so that the anchor of the DbChangelog
-      -- that we get when starting the forging logic doesn't get out of sync
-      -- with the Backing store by the time we ask the mempool for a set of
-      -- transactions. This is because we might need to revalidate said
-      -- transactions and therefore we cannot lose the consistency on the
-      -- DbChangelog that we have.
-      --
-      -- It is important to note that this cannot be held indefinitely as adding
-      -- the block to the ledger db might trigger storing a snapshot which
-      -- acquires the write lock which would result in a deadlock. For this
-      -- reason, we release the read lock just as we finish asking the mempool
-      -- for a snapshot.
       trace $ TraceStartLeadershipCheck currentSlot
 
       -- Figure out which block to connect to
@@ -297,7 +273,7 @@ forkBlockForging IS{..} blockForging =
 
       trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
 
-      -- Get ledger state corresponding to bcPrevPoint
+      -- Get ledger state and ledger db view corresponding to bcPrevPoint
       --
       -- This might fail if, in between choosing 'bcPrevPoint' and this call to
       -- 'getPastLedger', we switched to a fork where 'bcPrevPoint' is no longer

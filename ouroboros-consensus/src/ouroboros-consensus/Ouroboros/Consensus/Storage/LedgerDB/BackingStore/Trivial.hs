@@ -20,12 +20,12 @@ trivialBackingStore emptyValues = do
               (\_ _ -> pure ())
               (IOLike.atomically $ do
                   s <- IOLike.readTVar seqNo
-                  pure $ ( s
-                         , BackingStoreValueHandle
-                             (pure ())
-                             (\_ -> pure emptyValues)
-                             (\_ -> pure emptyValues)
-                         )
+                  pure ( s
+                       , BackingStoreValueHandle
+                           (pure ())
+                           (\_ -> pure emptyValues)
+                           (\_ -> pure emptyValues)
+                       )
               )
               (\s _ -> void
                      $ IOLike.atomically

@@ -23,6 +23,7 @@ dist/
 \#*
 **/tags
 **/TAGS
+**/.TAGS.lock
 
 # nix
 result

@@ -63,7 +63,7 @@ import           Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Query
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
                      (PointNotFound)
 import           Ouroboros.Consensus.Ticked
@@ -194,7 +194,7 @@ chainDBLedgerInterface chainDB = LedgerInterface
         ledgerState . current <$> ChainDB.getLedgerDB chainDB
     , getLedgerTablesAtFor = \pt txs -> do
         let keys = ExtLedgerStateTables
-                 $ foldl' (zipLedgerTables (<>)) emptyLedgerTables
+                 $ foldl' (<>) emptyLedgerTables
                  $ map getTransactionKeySets txs
         fmap unExtLedgerStateTables <$> ChainDB.getLedgerTablesAtFor chainDB pt keys
     }
@@ -570,12 +570,19 @@ deriving instance ( Eq (GenTx blk)
                   , Eq (Validated (GenTx blk))
                   , Eq (GenTxId blk)
                   , Eq (ApplyTxErr blk)
-                  , Eq (Point blk)
+                  , StandardHash blk
                   ) => Eq (TraceEventMempool blk)
 
 deriving instance ( Show (GenTx blk)
                   , Show (Validated (GenTx blk))
                   , Show (GenTxId blk)
                   , Show (ApplyTxErr blk)
-                  , Show (Point blk)
+                  , StandardHash blk
                   ) => Show (TraceEventMempool blk)
+
+deriving instance ( NoThunks (GenTx blk)
+                  , NoThunks (Validated (GenTx blk))
+                  , NoThunks (GenTxId blk)
+                  , NoThunks (ApplyTxErr blk)
+                  , StandardHash blk
+                  ) => NoThunks (TraceEventMempool blk)

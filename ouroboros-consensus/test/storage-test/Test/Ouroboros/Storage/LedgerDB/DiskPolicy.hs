@@ -9,9 +9,8 @@ import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
                      picosecondsToDiffTime, secondsToDiffTime)
 import           Data.Word
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicy (..),
-                     SnapshotInterval (..), TimeSinceLast (..),
-                     defaultDiskPolicy)
+import           Ouroboros.Consensus.Storage.LedgerDB.Config (DiskPolicy (..),
+                     SnapshotInterval (..), defaultDiskPolicy)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -38,7 +37,7 @@ data TestSetup = TestSetup {
     -- | argument to 'defaultDiskPolicy'
   , tsSnapshotInterval :: SnapshotInterval
     -- | argument to 'onDiskShouldTakeSnapshot'
-  , tsTimeSince        :: TimeSinceLast DiffTime
+  , tsTimeSince        :: Maybe DiffTime
   }
   deriving (Show)
 
@@ -116,7 +115,7 @@ instance Arbitrary TestSetup where
           tsBlocksSince = b
         , tsK           = SecurityParam k
         , tsSnapshotInterval
-        , tsTimeSince   = maybe NoSnapshotTakenYet TimeSinceLast t
+        , tsTimeSince   = t
         }
     where
       -- 100 years seems a reasonable upper bound for consideration
@@ -154,8 +153,8 @@ instance Arbitrary TestSetup where
         . diffTimeToPicoseconds
 
       shrinkTSL shnk = \case
-        NoSnapshotTakenYet -> []
-        TimeSinceLast    d -> NoSnapshotTakenYet : fmap TimeSinceLast (shnk d)
+        Nothing -> []
+        Just  d -> Nothing : fmap Just (shnk d)
 
       shrinkSnapshotInterval = \case
         DefaultSnapshotInterval     -> []
@@ -185,11 +184,11 @@ prop_onDiskShouldTakeSnapshot :: TestSetup -> Property
 prop_onDiskShouldTakeSnapshot ts =
     counterexample ("decided to take snapshot? " ++ show (shouldTakeSnapshot ts)) $
     case t of
-      NoSnapshotTakenYet ->
+      Nothing ->
             counterexample "haven't taken a snapshot yet"
           $ counterexample "should take snapshot if it processed at least k blocks"
           $ shouldTakeSnapshot ts === (blocksSinceLast >= k)
-      TimeSinceLast    timeSinceLast ->
+      Just timeSinceLast ->
             counterexample "have previously taken a snapshot"
           $ isDisjunctionOf (shouldTakeSnapshot ts `named` "the decision")
               [ systemChecksHowMuchTimeHasPassed timeSinceLast

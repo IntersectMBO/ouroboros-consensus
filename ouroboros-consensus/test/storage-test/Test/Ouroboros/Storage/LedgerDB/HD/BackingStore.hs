@@ -35,8 +35,8 @@ import qualified Data.Set as Set
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
+import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as LMDB
 import           Ouroboros.Consensus.Util ((.:))
@@ -76,15 +76,15 @@ tests = testGroup "BackingStore" [
       testProperty "InMemory IOSim SimHasFS" testWithIOSim
   , adjustOption (scaleQuickCheckTests 10) $
       testProperty "InMemory IO SimHasFS" $ testWithIO $
-        setupBSEnv InMemoryBackingStore setupSimHasFS (pure ())
+        setupBSEnv BS.InMemoryBackingStore setupSimHasFS (pure ())
   , adjustOption (scaleQuickCheckTests 10) $
       testProperty "InMemory IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv InMemoryBackingStore (setupIOHasFS fp) cleanup
+        setupBSEnv BS.InMemoryBackingStore (setupIOHasFS fp) cleanup
   , adjustOption (scaleQuickCheckTests 2) $
       testProperty "LMDB IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv (LMDBBackingStore testLMDBLimits) (setupIOHasFS fp) cleanup
+        setupBSEnv (BS.LMDBBackingStore testLMDBLimits) (setupIOHasFS fp) cleanup
   ]
 
 scaleQuickCheckTests :: Int -> QuickCheckTests -> QuickCheckTests
@@ -107,7 +107,7 @@ testLMDBLimits = LMDB.LMDBLimits
 testWithIOSim :: Actions (Lockstep (BackingStoreState K V D)) -> Property
 testWithIOSim acts = monadicSim $ do
   BSEnv {bsRealEnv, bsCleanup} <-
-    QC.run (setupBSEnv InMemoryBackingStore setupSimHasFS (pure ()))
+    QC.run (setupBSEnv BS.InMemoryBackingStore setupSimHasFS (pure ()))
   void $
     runPropertyIOLikeMonad $
       runPropertyReaderT (StateModel.runActions acts) bsRealEnv
@@ -161,7 +161,7 @@ setupTempDir = do
 
 setupBSEnv ::
      IOLike m
-  => BackingStoreSelector m
+  => BS.BackingStoreSelector m
   -> m (SomeHasFS m)
   -> m ()
   -> m (BSEnv m K V D)
@@ -170,7 +170,7 @@ setupBSEnv bss mkSfhs cleanup = do
 
   createDirectory hfs (mkFsPath ["copies"])
 
-  let bsi = newBackingStoreInitialiser mempty bss
+  let bsi = BS.newBackingStoreInitialiser mempty bss
 
   bsVar <- newMVar =<< bsi sfhs (BS.InitFromValues Origin emptyLedgerTables)
 

@@ -8,12 +8,9 @@
 {-# LANGUAGE InstanceSigs               #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE NumericUnderscores         #-}
 {-# LANGUAGE PolyKinds                  #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
@@ -27,7 +24,7 @@ import           Control.Arrow (first)
 import           Control.Concurrent.Class.MonadSTM.Strict.TChan
 import           Control.Monad (void)
 import           Control.Monad.Except (runExcept)
-import qualified Control.Tracer as CT (Tracer (..), nullTracer, traceWith)
+import qualified Control.Tracer as CT (Tracer (..), traceWith)
 import           Data.Bool (bool)
 import           Data.Foldable hiding (toList)
 import           Data.Function (on)
@@ -37,7 +34,6 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.TreeDiff (genericToExpr)
 import qualified Data.TreeDiff.OMap as TD
-import           Debug.Trace
 import           GHC.Generics
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
@@ -67,6 +63,8 @@ import           Test.StateMachine.Types (History (..), HistoryEvent (..))
 import qualified Test.StateMachine.Types.Rank2 as Rank2
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.Orphans.ToExpr ()
+
 {-------------------------------------------------------------------------------
   Datatypes
 -------------------------------------------------------------------------------}
@@ -199,7 +197,7 @@ generator ::
   -> Maybe (Gen (Command blk Symbolic))
 generator ma gTxs Model{ modelMempoolIntermediateState } =
    Just $
-    frequency $
+    frequency
       [(100,
           Action . TryAddTxs <$> case ma of
             Atomic -> do
@@ -211,8 +209,7 @@ generator ma gTxs Model{ modelMempoolIntermediateState } =
       , (10, pure $ Action SyncLedger)
       , (10, do
             ls <- arbitrary
-            b  <- arbitrary
-            pure $ Event $ ChangeLedger ls b)
+            Event . ChangeLedger ls <$> arbitrary)
       , (10, pure $ Action GetSnapshot)
       ]
 
@@ -349,7 +346,7 @@ doTryAddTxs cfg model tSize txs' =
         let nextTicket          = succ $ modelLastSeenTicketNo model
             (res, tk, cap', st) = foldTxs cfg nextTicket modelRemainingCapacity
                                   modelMempoolIntermediateState
-                                  $ txs'
+                                  txs'
             modelTxs'           = modelTxs ++
                                   zip [ txForgetValidated vtx
                                       | MempoolTxAdded vtx <- fst res
@@ -365,7 +362,6 @@ doTryAddTxs cfg model tSize txs' =
                modelMempoolWasFilled || (not . null . snd $ res)
           }
   where
-
     Model {
         modelMempoolIntermediateState
       , modelTxs
@@ -524,7 +520,7 @@ newLedgerInterface ::
   -> m (LedgerInterface m blk, StrictTVar m (MockedLedgerDB blk))
 newLedgerInterface initialLedger = do
   t <- newTVarIO $ MockedLedgerDB initialLedger Set.empty Set.empty
-  pure $ (,t) $ LedgerInterface {
+  pure (LedgerInterface {
       getCurrentLedgerState = forgetLedgerTables . ldbTip <$> readTVar t
     , getLedgerTablesAtFor  = \pt txs -> do
         let keys = foldl' (zipLedgerTables (<>)) emptyLedgerTables
@@ -534,7 +530,7 @@ newLedgerInterface initialLedger = do
                                        -- ledger db
         then
           let tbs = zipLedgerTables f keys $ projectLedgerTables ti
-          in  pure $ Right $ tbs
+          in  pure $ Right tbs
         else case find ((castPoint pt ==). getTip) oldReachableTips of
            Nothing -> pure $ Left $ PointNotFound pt
            Just mtip ->
@@ -542,12 +538,12 @@ newLedgerInterface initialLedger = do
              -- if asking for tables at some still reachable state
              then
                let tbs = zipLedgerTables f keys $ projectLedgerTables mtip
-               in  pure $ Right $ tbs
+               in  pure $ Right tbs
              else
                -- if asking for tables at other point or at the mempool tip but
                -- it is not reachable
                pure $ Left $ PointNotFound pt
-    }
+    }, t)
  where
    f :: Ord k => KeysMK k v -> ValuesMK k v -> ValuesMK k v
    f (KeysMK s) (ValuesMK v) =
@@ -576,6 +572,7 @@ mkSUT cfg initialLedger = do
                txInBlockSize
   pure (SUT mempool t, QC.TraceOutput . fmap show <$> getChanContents trcrChan, CT.Tracer $ atomically . writeTChan trcrChan . Left)
 
+getChanContents :: MonadSTM f => StrictTChan f a -> f [a]
 getChanContents chan = reverse <$> atomically (go' [])
   where
     go' acc = do
@@ -881,9 +878,6 @@ instance NoThunks (Mempool IO TestBlock) where
   showTypeOf _  = showTypeOf (Proxy @(Mempool IO TestBlock))
   wNoThunks _ _ = return Nothing
 
-instance Show (TxId (GenTx blk)) => ToExpr (TxId (GenTx blk)) where
-  toExpr x = App (show x) []
-
 instance ( ToExpr (TxId (GenTx blk))
          , ToExpr (GenTx blk)
          , ToExpr (LedgerState blk ValuesMK)
@@ -925,21 +919,6 @@ instance ToExpr (Command blk r) => Show (Command blk r) where
     show . toExpr
 
 instance ( ToExpr (GenTx blk)
-         , LedgerSupportsMempool blk
-         ) => ToExpr (TxTicket (Validated (GenTx blk))) where
-  toExpr tkt =
-    Rec "Ticket"
-    $ TD.fromList [ ("number", toExpr $ txTicketNo tkt)
-                  , ("tx", toExpr $ txForgetValidated $ txTicketTx tkt)
-                  , ("size", toExpr $ txTicketTxSizeInBytes tkt)]
-
-instance ( ToExpr (GenTx blk)
-         , LedgerSupportsMempool blk
-         , ToExpr (Validated (GenTx blk))) => ToExpr (MempoolAddTxResult blk) where
-  toExpr (MempoolTxAdded vtx)     = App "Added" [toExpr vtx]
-  toExpr (MempoolTxRejected tx e) = App "Rejected" [toExpr tx, App (show e) [] ]
-
-instance ( ToExpr (GenTx blk)
          , LedgerSupportsMempool blk) => ToExpr (Response blk r) where
 
   toExpr Void = App "Void" []
@@ -951,8 +930,6 @@ instance ( ToExpr (GenTx blk)
          , LedgerSupportsMempool blk) => Show (Response blk r) where
   show = -- unwords . take 2 . words .
     show . toExpr
-
-deriving newtype instance ToExpr (TicketNo)
 
 deriving instance NoThunks (LedgerState blk ValuesMK) => NoThunks (MockedLedgerDB blk)
 
@@ -972,16 +949,12 @@ instance ToExpr (LedgerState TestBlock ValuesMK) where
       [ ("state", toExpr $ mockTip st)
       , ("tables", toExpr tbs)]
 
-deriving instance ToExpr (MockState TestBlock)
-instance ToExpr (Point TestBlock) where
-  toExpr p = App (show p) []
-
 instance ToExpr Addr where
   toExpr a = App (show a) []
 
 deriving instance ToExpr (GenTx TestBlock)
-deriving instance ToExpr (Tx)
-deriving instance ToExpr (Expiry)
+deriving instance ToExpr Tx
+deriving instance ToExpr Expiry
 
 instance ToExpr (LedgerTables (LedgerState TestBlock) ValuesMK) where
   toExpr = genericToExpr
@@ -994,7 +967,3 @@ class UnTick blk where
 
 instance UnTick TestBlock where
   unTick = getTickedSimpleLedgerState
-
-deriving instance NoThunks MempoolSize
-
-deriving instance NoThunks (TraceEventMempool TestBlock)

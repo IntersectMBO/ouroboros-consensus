@@ -3,26 +3,29 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Ouroboros.Consensus.Storage.LedgerDB.Stream (
-    NextBlock
-  , NextItem (..)
+module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream (
+    NextItem (..)
   , StreamAPI (..)
+  , streamAPI
+  , streamAPI'
   , streamAll
   ) where
 
 import           Control.Monad.Except
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Storage.Common
+import           Ouroboros.Consensus.Storage.ImmutableDB hiding (streamAll)
+import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
+import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.ResourceRegistry
 
 {-------------------------------------------------------------------------------
   Abstraction over the streaming API provided by the Chain DB
 -------------------------------------------------------------------------------}
 
-{-# DEPRECATED NextBlock ["Use Ouroboros.Consensus.Storage.LedgerDB (NextItem(NextItem))", "or Ouroboros.Consensus.Storage.LedgerDB (NextItem)"] #-}
 -- | Next block returned during streaming
 data NextItem blk = NoMoreItems | NextItem blk | NextBlock blk
-type NextBlock blk = NextItem blk
-
 
 -- | Stream blocks from the immutable DB
 --
@@ -73,3 +76,41 @@ streamAll StreamAPI{..} tip notFound e f = ExceptT $
                         -- check but it will never be matched
                         NextBlock b -> go =<< f b a
         Right <$> go e
+
+
+streamAPI ::
+     (IOLike m, HasHeader blk)
+  => ImmutableDB m blk -> StreamAPI m blk blk
+streamAPI = streamAPI' (return . NextItem) GetBlock
+
+streamAPI' ::
+     forall m blk a.
+     (IOLike m, HasHeader blk)
+  => (a -> m (NextItem a)) -- ^ Stop condition
+  -> BlockComponent   blk a
+  -> ImmutableDB    m blk
+  -> StreamAPI      m blk a
+streamAPI' shouldStop blockComponent immutableDB = StreamAPI streamAfter
+  where
+    streamAfter :: Point blk
+                -> (Either (RealPoint blk) (m (NextItem a)) -> m b)
+                -> m b
+    streamAfter tip k = withRegistry $ \registry -> do
+        eItr <-
+          ImmutableDB.streamAfterPoint
+            immutableDB
+            registry
+            blockComponent
+            tip
+        case eItr of
+          -- Snapshot is too recent
+          Left  err -> k $ Left  $ ImmutableDB.missingBlockPoint err
+          Right itr -> k $ Right $ streamUsing itr
+
+    streamUsing :: ImmutableDB.Iterator m blk a
+                -> m (NextItem a)
+    streamUsing itr = do
+        itrResult <- ImmutableDB.iteratorNext itr
+        case itrResult of
+          ImmutableDB.IteratorExhausted -> return NoMoreItems
+          ImmutableDB.IteratorResult b  -> shouldStop b

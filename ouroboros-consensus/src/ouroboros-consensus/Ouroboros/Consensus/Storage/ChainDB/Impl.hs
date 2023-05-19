@@ -1,9 +1,7 @@
-{-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE LambdaCase               #-}
-{-# LANGUAGE PatternSynonyms          #-}
-{-# LANGUAGE RecordWildCards          #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Storage.ChainDB.Impl (
     -- * Initialization
@@ -13,7 +11,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
   , openDB
   , withDB
     -- * Trace types
-  , LgrDB.TraceReplayEvent
+  , LedgerDB.TraceReplayEvent
   , NewTipInfo (..)
   , TraceAddBlockEvent (..)
   , TraceCopyToImmutableDBEvent (..)
@@ -28,14 +26,14 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
     -- * Re-exported for convenience
   , Args.RelativeMountPoint (..)
   , ImmutableDB.ImmutableDbSerialiseConstraints
-  , LgrDB.LgrDbSerialiseConstraints
+  , LedgerDB.LedgerDBSerialiseConstraints
   , VolatileDB.VolatileDbSerialiseConstraints
     -- * Internals for testing purposes
   , Internal (..)
   , openDBInternal
   ) where
 
-import           Control.Monad (forM_, when)
+import           Control.Monad (void, when)
 import           Control.Monad.Trans.Class (lift)
 import           Control.Tracer
 import           Data.Functor ((<&>))
@@ -58,12 +56,11 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Background as Backgrou
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel as ChainSel
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Follower as Follower
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-                     (flushIntoBackingStore)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
@@ -134,11 +131,11 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     (chainDB, testing, env) <- lift $ do
       traceWith tracer $ TraceOpenEvent OpenedVolatileDB
       let lgrReplayTracer =
-            LgrDB.decorateReplayTracerWithGoal
+            LedgerDB.decorateReplayTracerWithGoal
               immutableDbTipPoint
               (contramap TraceLedgerReplayEvent tracer)
       traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
-      (lgrDB, replayed) <- LgrDB.openDB argsLgrDb
+      (lgrDB, replayed) <- LedgerDB.openDB argsLgrDb
                             lgrReplayTracer
                             immutableDB
                             (Query.getAnyKnownBlock immutableDB volatileDB)
@@ -165,9 +162,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           K ledger = VF.validatedLedger   chainAndLedger
           cfg    = Args.cdbTopLevelConfig args
 
-      mDiffs <- atomically $ LgrDB.setCurrent lgrDB ledger
+      atomically $ LedgerDB.setCurrent lgrDB ledger
 
-      forM_ mDiffs $ flushIntoBackingStore (LgrDB.lgrBackingStore lgrDB)
+      -- FIXME flush
 
       varChain           <- newTVarIO chain
       varTentativeState  <- newTVarIO NoLastInvalidTentative
@@ -182,7 +179,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
       let env = CDB { cdbImmutableDB     = immutableDB
                     , cdbVolatileDB      = volatileDB
-                    , cdbLgrDB           = lgrDB
+                    , cdbLedgerDB        = lgrDB
                     , cdbChain           = varChain
                     , cdbTentativeState  = varTentativeState
                     , cdbTentativeHeader = varTentativeHeader
@@ -207,33 +204,31 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     }
       h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
       let chainDB = API.ChainDB
-            { addBlockAsync         = getEnv2    h ChainSel.addBlockAsync
-            , getCurrentChain       = getEnvSTM  h Query.getCurrentChain
-            , getLedgerDB           = getEnvSTM  h Query.getLedgerDB
-            , getTipBlock           = getEnv     h Query.getTipBlock
-            , getTipHeader          = getEnv     h Query.getTipHeader
-            , getTipPoint           = getEnvSTM  h Query.getTipPoint
-            , getBlockComponent     = getEnv2    h Query.getBlockComponent
-            , getIsFetched          = getEnvSTM  h Query.getIsFetched
-            , getIsValid            = getEnvSTM  h Query.getIsValid
-            , getMaxSlotNo          = getEnvSTM  h Query.getMaxSlotNo
-            , stream                = Iterator.stream  h
-            , newFollower           = Follower.newFollower h
-            , getIsInvalidBlock     = getEnvSTM  h Query.getIsInvalidBlock
-            , closeDB               = closeDB h
-            , isOpen                = isOpen  h
-            , getLedgerBackingStoreValueHandle = \rreg p -> getEnv h $ \env' ->
-                Query.getLedgerBackingStoreValueHandle env' rreg p
-            , getLedgerTablesAtFor  = \pt keys -> getEnv h (LgrDB.getLedgerTablesAtFor pt keys . cdbLgrDB)
-            , getLedgerDBViewAtPoint = \pt ->
-                getEnv h $ \env' -> Query.getLedgerDBViewAtPoint env' pt
+            { addBlockAsync          = getEnv2    h ChainSel.addBlockAsync
+            , getCurrentChain        = getEnvSTM  h Query.getCurrentChain
+            , getLedgerDB            = getEnvSTM  h Query.getLedgerDB
+            , getTipBlock            = getEnv     h Query.getTipBlock
+            , getTipHeader           = getEnv     h Query.getTipHeader
+            , getTipPoint            = getEnvSTM  h Query.getTipPoint
+            , getBlockComponent      = getEnv2    h Query.getBlockComponent
+            , getIsFetched           = getEnvSTM  h Query.getIsFetched
+            , getIsValid             = getEnvSTM  h Query.getIsValid
+            , getMaxSlotNo           = getEnvSTM  h Query.getMaxSlotNo
+            , stream                 = Iterator.stream  h
+            , newFollower            = Follower.newFollower h
+            , getIsInvalidBlock      = getEnvSTM  h Query.getIsInvalidBlock
+            , closeDB                = closeDB h
+            , isOpen                 = isOpen  h
+            , getLedgerTablesAtFor   = getEnv2 h $ LedgerDB.getLedgerTablesAtFor . cdbLedgerDB
+            , getLedgerDBViewAtPoint = getEnv1 h Query.getLedgerDBViewAtPoint
             }
           testing = Internal
-            { intCopyToImmutableDB       = getEnv  h Background.copyToImmutableDB
-            , intGarbageCollect          = getEnv1 h Background.garbageCollect
-            , intUpdateLedgerSnapshots   = getEnv  h Background.updateLedgerSnapshots
-            , intAddBlockRunner          = getEnv  h Background.addBlockRunner
-            , intKillBgThreads           = varKillBgThreads
+            { intCopyToImmutableDB = getEnv  h Background.copyToImmutableDB
+            , intGarbageCollect    = getEnv1 h Background.garbageCollect
+            , intTryTakeSnapshot   = getEnv  h $ \env' ->
+                void $ LedgerDB.tryTakeSnapshot (cdbLedgerDB env') Nothing maxBound
+            , intAddBlockRunner    = getEnv  h Background.addBlockRunner
+            , intKillBgThreads     = varKillBgThreads
             }
 
       traceWith tracer $ TraceOpenEvent $ OpenedDB
@@ -244,7 +239,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
       return (chainDB, testing, env)
 
-    _ <- lift $ allocate (Args.cdbRegistry args) (\_ -> return $ chainDB) API.closeDB
+    _ <- lift $ allocate (Args.cdbRegistry args) (\_ -> return chainDB) API.closeDB
 
     return ((chainDB, testing), env)
   where

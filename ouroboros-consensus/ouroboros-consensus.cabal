@@ -167,6 +167,7 @@ library
     Ouroboros.Consensus.Ledger.SupportsPeerSelection
     Ouroboros.Consensus.Ledger.SupportsProtocol
     Ouroboros.Consensus.Ledger.Tables
+    Ouroboros.Consensus.Ledger.Tables.DiffSeq
     Ouroboros.Consensus.Ledger.Tables.Utils
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
@@ -212,7 +213,6 @@ library
     Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
     Ouroboros.Consensus.Storage.ChainDB.Impl.Follower
     Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator
-    Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
     Ouroboros.Consensus.Storage.ChainDB.Impl.Paths
     Ouroboros.Consensus.Storage.ChainDB.Impl.Query
     Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -236,29 +236,30 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Parser
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.State
+    Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
     Ouroboros.Consensus.Storage.IO
     Ouroboros.Consensus.Storage.LedgerDB
+    Ouroboros.Consensus.Storage.LedgerDB.API
+    Ouroboros.Consensus.Storage.LedgerDB.Args
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Bridge
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Status
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Trivial
+    Ouroboros.Consensus.Storage.LedgerDB.Config
     Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-    Ouroboros.Consensus.Storage.LedgerDB.DiffSeq
-    Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-    Ouroboros.Consensus.Storage.LedgerDB.Init
-    Ouroboros.Consensus.Storage.LedgerDB.InMemory
-    Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
-    Ouroboros.Consensus.Storage.LedgerDB.OnDisk
+    Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
+    Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
+    Ouroboros.Consensus.Storage.LedgerDB.Impl
+    Ouroboros.Consensus.Storage.LedgerDB.Lock
     Ouroboros.Consensus.Storage.LedgerDB.Query
     Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
     Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-    Ouroboros.Consensus.Storage.LedgerDB.Stream
     Ouroboros.Consensus.Storage.LedgerDB.Types
     Ouroboros.Consensus.Storage.LedgerDB.Update
     Ouroboros.Consensus.Storage.Serialisation

@@ -1,23 +1,81 @@
-{-# LANGUAGE DataKinds          #-}
-{-# LANGUAGE DeriveFunctor      #-}
-{-# LANGUAGE DeriveGeneric      #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DeriveGeneric        #-}
+{-# LANGUAGE DerivingVia          #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE NamedFieldPuns       #-}
+{-# LANGUAGE NumericUnderscores   #-}
+{-# LANGUAGE StandaloneDeriving   #-}
+{-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (
-    DiskPolicy (..)
+-- | Configuration of the LedgerDB
+module Ouroboros.Consensus.Storage.LedgerDB.Config (
+    LedgerDbCfg (..)
+  , configLedgerDb
+    -- * DiskPolicy
+  , DiskPolicy (..)
+  , SnapCounters (..)
   , SnapshotInterval (..)
-  , TimeSinceLast (..)
   , defaultDiskPolicy
+    -- * Flushing
+  , FlushPolicy (..)
   ) where
 
 import           Control.Monad.Class.MonadTime.SI
 import           Data.Time.Clock (secondsToDiffTime)
 import           Data.Word
-import           GHC.Generics
+import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks, OnlyCheckWhnf (..))
-import           Ouroboros.Consensus.Config.SecurityParam
+import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Abstract (LedgerCfg)
+import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Protocol.Abstract
+
+{-------------------------------------------------------------------------------
+  LedgerDB Config
+-------------------------------------------------------------------------------}
+
+data LedgerDbCfg l = LedgerDbCfg {
+      ledgerDbCfgSecParam :: !SecurityParam
+    , ledgerDbCfg         :: !(LedgerCfg l)
+    }
+  deriving (Generic)
+
+deriving instance NoThunks (LedgerCfg l) => NoThunks (LedgerDbCfg l)
+
+configLedgerDb ::
+     ConsensusProtocol (BlockProtocol blk)
+  => TopLevelConfig blk
+  -> LedgerDbCfg (ExtLedgerState blk)
+configLedgerDb config = LedgerDbCfg {
+      ledgerDbCfgSecParam    = configSecurityParam config
+    , ledgerDbCfg            = ExtLedgerCfg config
+    }
+
+{-------------------------------------------------------------------------------
+ Flushing
+-------------------------------------------------------------------------------}
+
+-- | The flush policy
+data FlushPolicy =
+      -- | Always flush everything older than the immutable tip
+      FlushAllImmutable
+      -- | Flush all the db changelog, cannot fail. This can be used when we
+      -- don't have a volatile part, such as while replaying the chain during
+      -- initialization
+    | FlushAll
+    deriving (Generic, NoThunks)
+
+{-------------------------------------------------------------------------------
+ DiskPolicy
+-------------------------------------------------------------------------------}
+
+data SnapCounters = SnapCounters {
+    -- | When was the last time we made a snapshot
+    prevSnapshotTime      :: !(Maybe Time)
+    -- | How many blocks have we processed since the last snapshot
+  , ntBlocksSinceLastSnap :: !Word64
+  }
 
 -- | Length of time, requested by the user, that has to pass after which
 -- a snapshot is taken. It can be:
@@ -74,10 +132,12 @@ data DiskPolicy = DiskPolicy {
       --   blocks had to be replayed.
       --
       -- See also 'defaultDiskPolicy'
-    , onDiskShouldTakeSnapshot :: TimeSinceLast DiffTime -> Word64 -> Bool
+    , onDiskShouldTakeSnapshot :: Maybe DiffTime -> Word64 -> Bool
 
       -- | Based on the current length of the diff sequence in the
-      -- 'DbChangelog', decide whether we should flush to the 'BackingStore'.
+      -- 'DbChangelog', decide whether we should flush to the 'BackingStore'
+      -- (note that we will always keep @k@ states, but we will keep more
+      -- differences that have not yet been flushed to the disk).
       --
       -- Flushing means only applying part of the diffs to the backing store, in
       -- particular we /don't/ serialize the ledger state.
@@ -85,25 +145,27 @@ data DiskPolicy = DiskPolicy {
     }
   deriving NoThunks via OnlyCheckWhnf DiskPolicy
 
-data TimeSinceLast time = NoSnapshotTakenYet | TimeSinceLast time
-  deriving (Functor, Show)
-
 -- | Default on-disk policy suitable to use with cardano-node
 --
 defaultDiskPolicy :: SecurityParam -> SnapshotInterval -> DiskPolicy
-defaultDiskPolicy (SecurityParam k) requestedInterval = DiskPolicy {..}
+defaultDiskPolicy (SecurityParam k) requestedInterval =
+    DiskPolicy {
+        onDiskNumSnapshots
+      , onDiskShouldFlush
+      , onDiskShouldTakeSnapshot
+      }
   where
     onDiskNumSnapshots :: Word
     onDiskNumSnapshots = 2
 
     onDiskShouldFlush :: Word64 -> Bool
-    onDiskShouldFlush = (>= 50)
+    onDiskShouldFlush = (>= 100)
 
     onDiskShouldTakeSnapshot ::
-         TimeSinceLast DiffTime
+         Maybe DiffTime
       -> Word64
       -> Bool
-    onDiskShouldTakeSnapshot NoSnapshotTakenYet blocksSinceLast =
+    onDiskShouldTakeSnapshot Nothing blocksSinceLast =
       -- If users never leave their wallet running for long, this would mean
       -- that under some circumstances we would never take a snapshot
       -- So, on startup (when the 'time since the last snapshot' is `Nothing`),
@@ -114,7 +176,7 @@ defaultDiskPolicy (SecurityParam k) requestedInterval = DiskPolicy {..}
       -- that is not a big deal.
       blocksSinceLast >= k
 
-    onDiskShouldTakeSnapshot (TimeSinceLast timeSinceLast) blocksSinceLast =
+    onDiskShouldTakeSnapshot (Just timeSinceLast) blocksSinceLast =
          timeSinceLast >= snapshotInterval
       || substantialAmountOfBlocksWereProcessed blocksSinceLast timeSinceLast
 

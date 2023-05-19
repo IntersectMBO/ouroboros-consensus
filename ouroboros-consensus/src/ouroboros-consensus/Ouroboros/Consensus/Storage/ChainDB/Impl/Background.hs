@@ -6,6 +6,7 @@
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 
 -- | Background tasks:
 --
@@ -19,7 +20,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background (
     -- * Copying blocks from the VolatileDB to the ImmutableDB
   , copyAndSnapshotRunner
   , copyToImmutableDB
-  , updateLedgerSnapshots
     -- * Executing garbage collection
   , garbageCollect
     -- * Scheduling garbage collections
@@ -37,7 +37,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background (
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad (forM_, forever, void)
+import           Control.Monad (forM_, forever)
 import           Control.Tracer
 import           Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
@@ -58,12 +58,10 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
                      (addBlockSync)
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
-                     (LgrDbSerialiseConstraints)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (TimeSinceLast (..))
+import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.Condense
@@ -83,7 +81,6 @@ launchBgTasks
      , LedgerSupportsProtocol blk
      , InspectLedger blk
      , HasHardForkHistory blk
-     , LgrDbSerialiseConstraints blk
      )
   => ChainDbEnv m blk
   -> Word64 -- ^ Number of immutable blocks replayed on ledger DB startup
@@ -206,13 +203,6 @@ copyToImmutableDB CDB{..} = withCopyLock $ do
   Snapshotting
 -------------------------------------------------------------------------------}
 
-data SnapCounters = SnapCounters {
-    -- | When was the last time we made a snapshot
-    prevSnapshotTime     :: !(TimeSinceLast Time)
-    -- | How many blocks have we processed since the last snapshot
-  , prevSnapshotDistance :: !Word64
-  }
-
 -- | Copy blocks from the VolatileDB to ImmutableDB and take snapshots of the
 -- LgrDB
 --
@@ -243,28 +233,22 @@ copyAndSnapshotRunner
   :: forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
-     , LgrDbSerialiseConstraints blk
      )
   => ChainDbEnv m blk
   -> GcSchedule m
   -> Word64 -- ^ Number of immutable blocks replayed on ledger DB startup
   -> m Void
-copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed =
-    if onDiskShouldTakeSnapshot NoSnapshotTakenYet replayed then do
-      updateLedgerSnapshots cdb
-      now <- getMonotonicTime
-      loop $ SnapCounters (TimeSinceLast now) 0
-    else
-      loop $ SnapCounters NoSnapshotTakenYet replayed
+copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed = do
+    LedgerDB.tryFlush cdbLedgerDB
+    loop =<< LedgerDB.tryTakeSnapshot cdbLedgerDB Nothing replayed
   where
-    SecurityParam k      = configSecurityParam cdbTopLevelConfig
-    LgrDB.DiskPolicy{..} = LgrDB.getDiskPolicy cdbLgrDB
+    SecurityParam k = configSecurityParam cdbTopLevelConfig
 
     loop :: SnapCounters -> m Void
     loop counters = do
       let SnapCounters {
               prevSnapshotTime
-            , prevSnapshotDistance
+            , ntBlocksSinceLastSnap
             } = counters
 
       -- Wait for the chain to grow larger than @k@
@@ -279,15 +263,12 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed =
       -- copied to disk (though not flushed, necessarily).
       copyToImmutableDB cdb >>= scheduleGC'
 
-      now <- getMonotonicTime
-      let prevSnapshotDistance' = prevSnapshotDistance + numToWrite
-          elapsed   = (\prev -> now `diffTime` prev) <$> prevSnapshotTime
+      LedgerDB.tryFlush cdbLedgerDB
 
-      if onDiskShouldTakeSnapshot elapsed prevSnapshotDistance' then do
-        updateLedgerSnapshots cdb
-        loop $ SnapCounters (TimeSinceLast now) 0
-      else
-        loop $ counters { prevSnapshotDistance = prevSnapshotDistance' }
+      now <- getMonotonicTime
+      let ntBlocksSinceLastSnap' = ntBlocksSinceLastSnap + numToWrite
+
+      loop =<< LedgerDB.tryTakeSnapshot cdbLedgerDB ((,now) <$> prevSnapshotTime) ntBlocksSinceLastSnap'
 
     scheduleGC' :: WithOrigin SlotNo -> m ()
     scheduleGC' Origin             = return ()
@@ -300,18 +281,6 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed =
             , gcInterval = cdbGcInterval
             }
           gcSchedule
-
--- | Write a snapshot of the LedgerDB to disk and remove old snapshots
--- (typically one) so that only 'onDiskNumSnapshots' snapshots are on disk.
-updateLedgerSnapshots ::
-     ( IOLike m
-     , LgrDbSerialiseConstraints blk
-     , LedgerSupportsProtocol blk
-     )
-  => ChainDbEnv m blk -> m ()
-updateLedgerSnapshots CDB{..} = do
-    void $ LgrDB.takeSnapshot  cdbLgrDB
-    void $ LgrDB.trimSnapshots cdbLgrDB
 
 {-------------------------------------------------------------------------------
   Executing garbage collection
@@ -336,7 +305,7 @@ garbageCollect :: forall m blk. IOLike m => ChainDbEnv m blk -> SlotNo -> m ()
 garbageCollect CDB{..} slotNo = do
     VolatileDB.garbageCollect cdbVolatileDB slotNo
     atomically $ do
-      LgrDB.garbageCollectPrevApplied cdbLgrDB slotNo
+      LedgerDB.garbageCollect cdbLedgerDB slotNo
       modifyTVar cdbInvalid $ fmap $ Map.filter ((>= slotNo) . invalidBlockSlotNo)
     traceWith cdbTracer $ TraceGCEvent $ PerformedGC slotNo
 

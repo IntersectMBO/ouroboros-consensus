@@ -1,16 +1,14 @@
-{-# LANGUAGE DeriveGeneric          #-}
-{-# LANGUAGE FlexibleContexts       #-}
-{-# LANGUAGE FlexibleInstances      #-}
-{-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE KindSignatures         #-}
-{-# LANGUAGE LambdaCase             #-}
-{-# LANGUAGE MultiParamTypeClasses  #-}
-{-# LANGUAGE MultiWayIf             #-}
-{-# LANGUAGE NamedFieldPuns         #-}
-{-# LANGUAGE RankNTypes             #-}
-{-# LANGUAGE RecordWildCards        #-}
-{-# LANGUAGE ScopedTypeVariables    #-}
-{-# LANGUAGE TypeApplications       #-}
+{-# LANGUAGE ConstraintKinds       #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE KindSignatures        #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE TypeApplications      #-}
 
 {-|
   = Snapshot managing and contents
@@ -105,6 +103,7 @@
 -}
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     DiskSnapshot (..)
+  , LedgerDBSerialiseConstraints
     -- * Read from disk
   , SnapshotFailure (..)
   , diskSnapshotIsTemporary
@@ -127,6 +126,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
   ) where
 
 import qualified Codec.CBOR.Write as CBOR
+import           Codec.Serialise.Class
 import           Codec.Serialise.Decoding (Decoder)
 import qualified Codec.Serialise.Decoding as Dec
 import           Codec.Serialise.Encoding (Encoding)
@@ -141,10 +141,18 @@ import           Data.Word
 import           GHC.Generics (Generic)
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query hiding
+                     (snapshots)
+import           Ouroboros.Consensus.Storage.LedgerDB.Lock
+import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
                      decodeWithOrigin, readIncremental)
 import           Ouroboros.Consensus.Util.IOLike
@@ -152,6 +160,10 @@ import           Ouroboros.Consensus.Util.Versioned
 import           System.FS.API
 import           System.FS.API.Types
 import           Text.Read (readMaybe)
+
+{-------------------------------------------------------------------------------
+  Types
+-------------------------------------------------------------------------------}
 
 data DiskSnapshot = DiskSnapshot {
       -- | Snapshots are numbered. We will try the snapshots with the highest
@@ -175,10 +187,6 @@ data DiskSnapshot = DiskSnapshot {
     }
   deriving (Show, Eq, Ord, Generic)
 
-{-------------------------------------------------------------------------------
-  Read from disk
--------------------------------------------------------------------------------}
-
 data SnapshotFailure blk =
     -- | We failed to deserialise the snapshot
     --
@@ -192,6 +200,31 @@ data SnapshotFailure blk =
     -- take snapshots at genesis, so this is unexpected.
   | InitFailureGenesis
   deriving (Show, Eq, Generic)
+
+data TraceSnapshotEvent blk
+  = InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
+    -- ^ An on disk snapshot was skipped because it was invalid.
+  | TookSnapshot DiskSnapshot (RealPoint blk)
+    -- ^ A snapshot was written to disk.
+  | DeletedSnapshot DiskSnapshot
+    -- ^ An old or invalid on-disk snapshot was deleted
+  deriving (Generic, Eq, Show)
+
+-- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the LgrDB.
+type LedgerDBSerialiseConstraints blk =
+  ( Serialise      (HeaderHash  blk)
+  , EncodeDisk blk (LedgerState blk EmptyMK)
+  , DecodeDisk blk (LedgerState blk EmptyMK)
+  , EncodeDisk blk (AnnTip      blk)
+  , DecodeDisk blk (AnnTip      blk)
+  , EncodeDisk blk (ChainDepState (BlockProtocol blk))
+  , DecodeDisk blk (ChainDepState (BlockProtocol blk))
+  , CanSerializeLedgerTables (LedgerState blk)
+  )
+
+{-------------------------------------------------------------------------------
+  Read from disk
+-------------------------------------------------------------------------------}
 
 -- | Named snapshot are permanent, they will never be deleted when trimming.
 diskSnapshotIsPermanent :: DiskSnapshot -> Bool
@@ -230,6 +263,35 @@ listSnapshots (SomeHasFS HasFS{..}) =
   Write to disk
 -------------------------------------------------------------------------------}
 
+takeSnapshot ::
+  forall m blk.
+  ( IOLike m
+  , LedgerDBSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  )
+  => StrictTVar m (DbChangelog' blk)
+  -> LedgerDBLock m
+  -> CodecConfig blk
+  -> Tracer m (TraceSnapshotEvent blk)
+  -> SomeHasFS m
+  -> BackingStore.LedgerBackingStore' m blk
+  -> m (Maybe (DiskSnapshot, RealPoint blk))
+takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore =
+  withReadLock lock $ do
+    state <- lastFlushedState <$> atomically (readTVar ldbvar)
+    doTakeSnapshot
+      tracer
+      hasFS
+      ldbBackingStore
+      encodeExtLedgerState'
+      state
+  where
+    encodeExtLedgerState' :: ExtLedgerState blk EmptyMK -> Encoding
+    encodeExtLedgerState' = encodeExtLedgerState
+                              (encodeDisk ccfg)
+                              (encodeDisk ccfg)
+                              (encodeDisk ccfg)
+
 -- | Take a snapshot of the /oldest ledger state/ in the ledger DB
 --
 -- We write the /oldest/ ledger state to disk because the intention is to only
@@ -249,7 +311,7 @@ listSnapshots (SomeHasFS HasFS{..}) =
 -- whether this snapshot corresponds to a state that is more than @k@ back.
 --
 -- TODO: Should we delete the file if an error occurs during writing?
-takeSnapshot ::
+doTakeSnapshot ::
      forall m blk. (MonadThrow m, IsLedger (LedgerState blk))
   => Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
@@ -257,20 +319,41 @@ takeSnapshot ::
   -> (ExtLedgerState blk EmptyMK -> Encoding)
   -> ExtLedgerState blk EmptyMK
   -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot tracer hasFS backingStore encLedger oldest =
+doTakeSnapshot tracer hasFS backingStore encLedger oldest =
     case pointToWithOriginRealPoint (castPoint (getTip oldest)) of
       Origin ->
         return Nothing
-      NotOrigin tip -> do
-        let number   = unSlotNo (realPointSlot tip)
+      NotOrigin t -> do
+        let number   = unSlotNo (realPointSlot t)
             snapshot = DiskSnapshot number Nothing
         snapshots <- listSnapshots hasFS
         if List.any ((== number) . dsNumber) snapshots then
           return Nothing
         else do
           writeSnapshot hasFS backingStore encLedger snapshot oldest
-          traceWith tracer $ TookSnapshot snapshot tip
-          return $ Just (snapshot, tip)
+          traceWith tracer $ TookSnapshot snapshot t
+          return $ Just (snapshot, t)
+
+-- | Write snapshot to disk
+writeSnapshot ::
+     forall m blk. MonadThrow m
+  => SomeHasFS m
+  -> BackingStore.LedgerBackingStore' m blk
+  -> (ExtLedgerState blk EmptyMK -> Encoding)
+  -> DiskSnapshot
+  -> ExtLedgerState blk EmptyMK
+  -> m ()
+writeSnapshot (SomeHasFS hasFS) backingStore encLedger snapshot cs = do
+    createDirectory hasFS (snapshotToDirPath snapshot)
+    withFile hasFS (snapshotToStatePath snapshot) (WriteMode MustBeNew) $ \h ->
+      void $ hPut hasFS h $ CBOR.toBuilder (encoder cs)
+    BackingStore.bsCopy
+      (let BackingStore.LedgerBackingStore store = backingStore in store)
+      (SomeHasFS hasFS)
+      (BackingStore.BackingStorePath (snapshotToTablesPath snapshot))
+  where
+    encoder :: ExtLedgerState blk EmptyMK -> Encoding
+    encoder = encodeSnapshot encLedger
 
 -- | Trim the number of on disk snapshots so that at most 'onDiskNumSnapshots'
 -- snapshots are stored on disk. The oldest snapshots are deleted.
@@ -291,27 +374,6 @@ trimSnapshots tracer hasFS DiskPolicy{..} = do
       deleteSnapshot hasFS snapshot
       traceWith tracer $ DeletedSnapshot snapshot
       return snapshot
-
--- | Write snapshot to disk
-writeSnapshot ::
-     forall m blk. MonadThrow m
-  => SomeHasFS m
-  -> BackingStore.LedgerBackingStore' m blk
-  -> (ExtLedgerState blk EmptyMK -> Encoding)
-  -> DiskSnapshot
-  -> ExtLedgerState blk EmptyMK
-  -> m ()
-writeSnapshot (SomeHasFS hasFS) backingStore encLedger snapshot cs = do
-    createDirectory hasFS (snapshotToDirPath snapshot)
-    withFile hasFS (snapshotToStatePath snapshot) (WriteMode MustBeNew) $ \h ->
-      void $ hPut hasFS h $ CBOR.toBuilder (encode cs)
-    BackingStore.bsCopy
-      (let BackingStore.LedgerBackingStore store = backingStore in store)
-      (SomeHasFS hasFS)
-      (BackingStore.BackingStorePath (snapshotToTablesPath snapshot))
-  where
-    encode :: ExtLedgerState blk EmptyMK -> Encoding
-    encode = encodeSnapshot encLedger
 
 {-------------------------------------------------------------------------------
   Delete
@@ -363,19 +425,6 @@ snapshotFromPath fileName = do
     suffix' = case suffix of
       ""      -> Nothing
       _ : str -> Just str
-
-{-------------------------------------------------------------------------------
-  Tracing
--------------------------------------------------------------------------------}
-
-data TraceSnapshotEvent blk
-  = InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
-    -- ^ An on disk snapshot was skipped because it was invalid.
-  | TookSnapshot DiskSnapshot (RealPoint blk)
-    -- ^ A snapshot was written to disk.
-  | DeletedSnapshot DiskSnapshot
-    -- ^ An old or invalid on-disk snapshot was deleted
-  deriving (Generic, Eq, Show)
 
 {-------------------------------------------------------------------------------
   Serialisation

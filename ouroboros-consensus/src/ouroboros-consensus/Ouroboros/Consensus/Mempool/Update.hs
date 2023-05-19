@@ -15,7 +15,6 @@ module Ouroboros.Consensus.Mempool.Update (
 import           Cardano.Slotting.Slot
 import           Control.Concurrent.Class.MonadMVar (withMVar)
 import           Control.Exception (assert)
-import           Control.Monad (void)
 import           Control.Tracer
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe, isJust, isNothing)
