@@ -39,7 +39,7 @@ jobs:
     - name: Cabal check
       run: ./scripts/ci/check-cabal-files.sh
 
-  build:
+  build-test-bench:
     name: Build and test using cabal
 
     runs-on: ${{ matrix.os }}
@@ -121,35 +121,11 @@ jobs:
     - name: Build projects [build]
       run: cabal build all -j
 
-  # run-tests:
-  #
-  run-benchmarks:
-    needs: build
-
-    runs-on: ${{ matrix.os }}
-
-    # TODO: can this be de-duplicated?
-    strategy:
-      fail-fast: false
-      matrix:
-        ghc: ["8.10.7"]
-        cabal: ["3.10.1.0"]
-        os: [ubuntu-latest]
-
-    steps:
-    - uses: actions/checkout@v3
-
-    # TODO: the cache key might be an output of the build action
-    - uses: actions/cache@v3
-      name: "Cache `dist-newstyle`"
-      with:
-        path: |
-          dist-newstyle
-          !dist-newstyle/**/.git
-        key: cache-dist-${{ runner.os }}-${{ matrix.ghc }}
+    - name: Test
+      run: cabal test all -j
 
     - name: Create baseline-benchmark
-      # if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       run: |
         cabal new-run ouroboros-consensus:mempool-bench -- \
         --timeout=60 --csv mempool-baseline.csv \
