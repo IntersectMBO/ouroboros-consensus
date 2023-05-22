@@ -153,7 +153,7 @@ instance CanMock proto era => Arbitrary (SomeResult (ShelleyBlock proto era)) wh
     , SomeResult GetStakeDistribution <$> arbitrary
     , SomeResult DebugEpochState <$> arbitrary
     , (\(SomeResult q r) ->
-        SomeResult (GetCBOR q) (mkSerialised (encodeShelleyResult q) r)) <$>
+        SomeResult (GetCBOR q) (mkSerialised (encodeShelleyResult maxBound q) r)) <$>
       arbitrary
     , SomeResult <$> (GetFilteredDelegationsAndRewardAccounts <$> arbitrary) <*> arbitrary
     , SomeResult GetGenesisConfig . compactGenesis <$> arbitrary
