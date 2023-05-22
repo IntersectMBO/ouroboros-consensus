@@ -18,7 +18,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Shelley.Ledger.Query (
-    BlockQuery (.., GetUTxO, GetFilteredUTxO)
+    BlockQuery (..)
   , NonMyopicMemberRewards (..)
   , StakeSnapshot (..)
   , StakeSnapshots (..)
@@ -233,16 +233,6 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- it by modifying 'querySupportedVersion' (@< X@) and when the version is no
   -- longer used (because mainnet has hard-forked to a newer version), it can be
   -- removed.
-
-pattern GetUTxO :: BlockQuery (ShelleyBlock proto era) (SL.UTxO era)
-pattern GetUTxO = GetUTxOWhole
-{-# DEPRECATED GetUTxO "Use 'GetUTxOWhole'" #-}
-
-pattern GetFilteredUTxO :: Set (SL.Addr (EraCrypto era))
-                        -> BlockQuery (ShelleyBlock proto era) (SL.UTxO era)
-pattern GetFilteredUTxO x = GetUTxOByAddress x
-{-# DEPRECATED GetFilteredUTxO "Use 'GetUTxOByAddress'" #-}
-
 
 instance (Typeable era, Typeable proto)
   => ShowProxy (BlockQuery (ShelleyBlock proto era)) where

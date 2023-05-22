@@ -12,6 +12,8 @@
   map and do a lookup
 - Update CHaPs dependencies
 - Fix performance regression of `GetFilteredDelegationsAndRewardAccounts` query
+- Remove deprecated pattern synonyms from `Ouroboros.Consensus.Shelley.Ledger`:
+  `GetUTxO` and `GetFilteredUTxO`.
 
 ### Breaking
 

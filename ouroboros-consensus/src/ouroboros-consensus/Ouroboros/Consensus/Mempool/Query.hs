@@ -6,9 +6,7 @@ module Ouroboros.Consensus.Mempool.Query (pureGetSnapshotFor) where
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool.API hiding (MempoolCapacityBytes,
-                     MempoolCapacityBytesOverride, MempoolSize,
-                     TraceEventMempool, computeMempoolCapacity)
+import           Ouroboros.Consensus.Mempool.API
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 
