@@ -168,7 +168,7 @@ isEmptyMVar StrictMVar { tmvar } = atomically $ Lazy.isEmptyTMVar tmvar
 
 updateMVar :: (MonadSTM m, HasCallStack) => StrictMVar m a -> (a -> (a, b)) -> m b
 updateMVar StrictMVar { tmvar, tvar, invariant } f = do
-    (a', b) <- atomically $ do
+    (!a', b) <- atomically $ do
         a <- Lazy.takeTMVar tmvar
         let !(!a', b) = f a
         Lazy.putTMVar tmvar a'
