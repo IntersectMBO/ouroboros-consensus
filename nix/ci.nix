@@ -27,6 +27,13 @@ let
       inherit devShell;
     } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
       inherit (pkgs) consensus-pdfs;
+      # ensure we can still build on 8.10, can be removed soon
+      haskell8107 = builtins.removeAttrs
+        (mkHaskellJobsFor (
+          (pkgs.hsPkgs.appendModule {
+            compiler-nix-name = lib.mkForce "ghc8107";
+          }).hsPkgs
+        )) [ "checks" ];
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
