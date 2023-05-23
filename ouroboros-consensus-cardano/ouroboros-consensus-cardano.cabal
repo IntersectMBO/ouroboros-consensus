@@ -110,6 +110,9 @@ library
     Ouroboros.Consensus.Shelley.Protocol.TPraos
     Ouroboros.Consensus.Shelley.ShelleyHFC
 
+  other-modules:
+    Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
+
   build-depends:
     , base                          >=4.14  && <4.17
     , base-deriving-via

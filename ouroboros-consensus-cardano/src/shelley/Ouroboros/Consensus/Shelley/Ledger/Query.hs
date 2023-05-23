@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -74,6 +75,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
                      (ShelleyNodeToClientVersion (..))
+import           Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
@@ -268,7 +270,11 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto) => QueryLedge
         DebugEpochState ->
           getEpochState st
         GetCBOR query' ->
-          mkSerialised (encodeShelleyResult query') $
+          -- We encode using the latest (@maxBound@) ShelleyNodeToClientVersion,
+          -- as the @GetCBOR@ query already is about opportunistically assuming
+          -- both client and server are running the same version; cf. the
+          -- @GetCBOR@ Haddocks.
+          mkSerialised (encodeShelleyResult maxBound query') $
             answerBlockQuery cfg query' ext
         GetFilteredDelegationsAndRewardAccounts creds ->
           getFilteredDelegationsAndRewardAccounts st creds
@@ -688,12 +694,13 @@ decodeShelleyQuery = do
 
 encodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
-  => BlockQuery (ShelleyBlock proto era) result -> result -> Encoding
-encodeShelleyResult query = case query of
+  => ShelleyNodeToClientVersion
+  -> BlockQuery (ShelleyBlock proto era) result -> result -> Encoding
+encodeShelleyResult v query = case query of
     GetLedgerTip                               -> encodePoint encode
     GetEpochNo                                 -> toCBOR
     GetNonMyopicMemberRewards {}               -> toCBOR
-    GetCurrentPParams                          -> toCBOR
+    GetCurrentPParams                          -> fst $ currentPParamsEnDecoding v
     GetProposedPParamsUpdates                  -> toCBOR
     GetStakeDistribution                       -> LC.toEraCBOR @era
     GetUTxOByAddress {}                        -> toCBOR
@@ -716,13 +723,14 @@ encodeShelleyResult query = case query of
 
 decodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
-  => BlockQuery (ShelleyBlock proto era) result
+  => ShelleyNodeToClientVersion
+  -> BlockQuery (ShelleyBlock proto era) result
   -> forall s. Decoder s result
-decodeShelleyResult query = case query of
+decodeShelleyResult v query = case query of
     GetLedgerTip                               -> decodePoint decode
     GetEpochNo                                 -> fromCBOR
     GetNonMyopicMemberRewards {}               -> fromCBOR
-    GetCurrentPParams                          -> fromCBOR
+    GetCurrentPParams                          -> snd $ currentPParamsEnDecoding v
     GetProposedPParamsUpdates                  -> fromCBOR
     GetStakeDistribution                       -> LC.fromEraCBOR @era
     GetUTxOByAddress {}                        -> fromCBOR
@@ -742,6 +750,21 @@ decodeShelleyResult query = case query of
     GetStakeSnapshots {}                       -> fromCBOR
     GetPoolDistr {}                            -> LC.fromEraCBOR @era
     GetStakeDelegDeposits {}                   -> LC.fromEraCBOR @era
+
+currentPParamsEnDecoding ::
+     forall era s.
+     ( FromCBOR (LC.PParams era)
+     , ToCBOR (LC.PParams era)
+     , FromCBOR (LegacyPParams era)
+     , ToCBOR (LegacyPParams era)
+     )
+  => ShelleyNodeToClientVersion
+  -> (LC.PParams era -> Encoding, Decoder s (LC.PParams era))
+currentPParamsEnDecoding v
+  | v >= ShelleyNodeToClientVersion7
+  = (toCBOR, fromCBOR)
+  | otherwise
+  = (encodeLegacyPParams, decodeLegacyPParams)
 
 -- | The stake snapshot returns information about the mark, set, go ledger snapshots for a pool,
 -- plus the total active stake for each snapshot that can be used in a 'sigma' calculation.
