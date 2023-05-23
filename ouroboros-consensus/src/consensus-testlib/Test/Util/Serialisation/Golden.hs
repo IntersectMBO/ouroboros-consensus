@@ -445,8 +445,10 @@ goldenTest_SerialiseNodeToClient ::
   -> TestTree
 goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples {..} =
     testGroup "SerialiseNodeToClient" [
-        testVersion (nodeToClientVersionToQueryVersion version, blockVersion)
-      | (version, blockVersion) <- nub $ Map.toList $ supportedNodeToClientVersions $ Proxy @blk
+        testVersion (queryVersion, blockVersion)
+      | (queryVersion, blockVersion) <-
+          nub . fmap (first nodeToClientVersionToQueryVersion) . Map.toList $
+            supportedNodeToClientVersions (Proxy @blk)
       ]
   where
     testVersion :: (QueryVersion, BlockNodeToClientVersion blk) -> TestTree
