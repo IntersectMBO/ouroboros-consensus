@@ -2,6 +2,49 @@
 
 # Changelog entries
 
+<a id='changelog-0.7.0.0'></a>
+## 0.7.0.0 — 2023-05-19
+
+### Patch
+
+- Remove deprecated modules from `consensus-testlib`.
+  * `Test.Util.Blob`
+  * `Test.Util.Classify`
+  * `Test.Util.FS.Sim.*`
+- Remove deprecated modules from the main `ouroboros-consensus` library.
+  * `Ouroboros.Consensus.HardFork.Combinator.Util.*`
+  * `Ouroboros.Consensus.Mempool.Impl`
+  * `Ouroboros.Consensus.Mempool.TxLimits`
+  * `Ouroboros.Consensus.Mempool.Impl.Pure`
+  * `Ouroboros.Consensus.Mempool.Impl.Types`
+  * `Ouroboros.Consensus.Storage.IO`
+  * `Ouroboros.Consensus.Storage.FS.*`
+  * `Ouroboros.Consensus.Storage.LedgerDB.InMemory`
+  * `Ouroboros.Consensus.Storage.LedgerDB.OnDisk`
+  * `Ouroboros.Consensus.Storage.LedgerDB.Types`
+  * `Ouroboros.Consensus.Util.Counting`
+  * `Ouroboros.Consensus.Util.OptNP`
+  * `Ouroboros.Consensus.Util.SOP`
+- Remove deprecated definitions from non-deprecated modules in the main
+  `ouroboros-consensus` library:
+  * `Ouroboros.Consensus.Mempool.API`: `MempoolCapacityBytes`,
+    `MempoolCapacityBytesOverride`, `MempoolSize`, `TraceEventMempool`,
+    `computeMempoolCapacity`.
+  * `Ouroboros.Consensus.Storage.ChainDB.Impl.Types`: `TraceLedgerEvent`.
+- In the main `ouroboros-consensus` library, remove exports that were only there
+  to make deprecated modules compile.
+  * `Ouroboros.Consensus.Mempool.Update`: `pureRemoveTxs`, `pureSyncWithLedger`.
+  * `Ouroboros.Consensus.Mempool.Impl.Common`: `initInternalState`.
+
+### Non-Breaking
+
+- Map unreleased `NodeToClientV_16` version.
+
+### Breaking
+
+- Renamed `TranslateForecast` to `CrossEraForecaster` and `translateLedgerView`
+  to `crossEraForecast`.
+
 <a id='changelog-0.6.0.0'></a>
 ## 0.6.0.0 — 2023-04-28
 

@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.5.0.2'></a>
+## 0.5.0.2 — 2023-05-19
+
+### Patch
+
+- Relax bounds on `ouroboros-consensus`
+
 <a id='changelog-0.5.0.1'></a>
 ## 0.5.0.1 — 2023-04-28
 
