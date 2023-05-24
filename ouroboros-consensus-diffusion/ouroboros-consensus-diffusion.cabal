@@ -150,7 +150,7 @@ library diffusion-testlib
     , contra-tracer
     , fgl
     , fs-sim
-    , graphviz
+    , graphviz                                                      >=2999.20.1.0
     , io-classes
     , io-sim
     , mtl
@@ -162,7 +162,7 @@ library diffusion-testlib
     , ouroboros-network-mock
     , ouroboros-network-protocols
     , QuickCheck
-    , quiet                                                         >=0.2 && <0.3
+    , quiet                                                         >=0.2         && <0.3
     , random
     , si-timers
     , text
