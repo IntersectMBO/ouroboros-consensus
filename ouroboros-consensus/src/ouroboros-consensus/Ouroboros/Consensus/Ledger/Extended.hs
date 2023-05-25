@@ -27,8 +27,8 @@ module Ouroboros.Consensus.Ledger.Extended (
   , Ticked (..)
   ) where
 
-import           Cardano.Ledger.Binary.Plain (Decoder, Encoding,
-                     decodeRecordNamed, encodeListLen)
+import           Codec.CBOR.Decoding (Decoder, decodeListLenOf)
+import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Control.Monad.Except
 import           Data.Coerce
 import           Data.Functor ((<&>))
@@ -198,8 +198,8 @@ decodeExtLedgerState :: (forall s. Decoder s (LedgerState    blk))
                      -> (forall s. Decoder s (ExtLedgerState blk))
 decodeExtLedgerState decodeLedgerState
                      decodeChainDepState
-                     decodeAnnTip =
-    decodeRecordNamed "ExtLedgerState" (const 2) $ do
+                     decodeAnnTip = do
+      decodeListLenOf 2
       ledgerState <- decodeLedgerState
       headerState <- decodeHeaderState'
       return ExtLedgerState{..}
