@@ -227,6 +227,29 @@ test-suite mock-test
     , tasty
     , tasty-quickcheck
 
+test-suite no-thunks-test
+  import:         common-test
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: test/no-thunks-test
+  main-is:        Main.hs
+  build-depends:
+    , base
+    , bytestring
+    , cborg
+    , containers
+    , diffusion-testlib
+    , mock-testlib
+    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib, mock-block}
+    , ouroboros-network-mock
+    , QuickCheck
+    , serialise
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , io-sim
+    , nothunks
+    , text
+
 test-suite consensus-test
   import:         common-test
   type:           exitcode-stdio-1.0
