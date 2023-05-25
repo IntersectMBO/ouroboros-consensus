@@ -132,30 +132,6 @@ jobs:
     - name: Build projects [build]
       run: cabal build all -j
 
-    # We build the haddocks only for one GHC version.
-    - name: Build Haddock documentation
-      if: |
-        github.event_name == 'push'
-        && github.ref == 'refs/heads/main'
-        && ${{ matrix.os=='ubuntu-latest' }}
-        && ${{ matrix.ghc=='8.10.7' }}
-      run: |
-        cabal build --dry-run --enable-tests all
-        ./scripts/docs/haddocks.sh
-        tar vzcf haddocks.tgz ./docs/website/static/haddocks
-
-    - name: Upload haddocks as an artifact
-      if: |
-        github.event_name == 'push'
-        && github.ref == 'refs/heads/main'
-        && ${{ matrix.os=='ubuntu-latest' }}
-        && ${{ matrix.ghc=='8.10.7' }}
-      uses: actions/upload-artifact@v3
-      with:
-        name: haddocks
-        path: haddocks.tgz
-        retention-days: 1
-
     - name: Test
       run: cabal test all -j
 
@@ -203,6 +179,32 @@ jobs:
         --timeout=60 --baseline baseline-mempool-benchmarks.csv \
         --fail-if-slower 20 \
         +RTS -T
+
+    # NB: build the haddocks at the end to avoid unecessary recompilations.
+    # We build the haddocks only for one GHC version.
+    - name: Build Haddock documentation
+      if: |
+        github.event_name == 'push'
+        && github.ref == 'refs/heads/main'
+        && ${{ matrix.os=='ubuntu-latest' }}
+        && ${{ matrix.ghc=='8.10.7' }}
+      run: |
+        cabal build --dry-run --enable-tests all
+        ./scripts/docs/haddocks.sh
+        tar vzcf haddocks.tgz ./docs/website/static/haddocks
+
+    - name: Upload haddocks as an artifact
+      if: |
+        github.event_name == 'push'
+        && github.ref == 'refs/heads/main'
+        && ${{ matrix.os=='ubuntu-latest' }}
+        && ${{ matrix.ghc=='8.10.7' }}
+      uses: actions/upload-artifact@v3
+      with:
+        name: haddocks
+        path: haddocks.tgz
+        retention-days: 1
+
 
   deploy-documentation:
     name: Deploy documentation to GitHub Pages
