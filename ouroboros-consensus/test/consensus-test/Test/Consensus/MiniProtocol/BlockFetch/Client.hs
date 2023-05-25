@@ -53,7 +53,6 @@ import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      newFetchClientRegistry)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import           Ouroboros.Network.Channel (createConnectedChannels)
-import           Ouroboros.Network.ConnectionId (ConnectionId (..))
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
 import qualified Ouroboros.Network.Driver.Simple as Driver
 import           Ouroboros.Network.Mock.Chain (Chain)
@@ -112,8 +111,8 @@ prop_blockFetch bfcts@BlockFetchClientTestSetup{..} =
 -------------------------------------------------------------------------------}
 
 data BlockFetchClientOutcome = BlockFetchClientOutcome {
-    bfcoBlockFetchResults :: Map (ConnectionId PeerId) (Either SomeException ())
-  , bfcoFetchedBlocks     :: Map (ConnectionId PeerId) Word
+    bfcoBlockFetchResults :: Map PeerId (Either SomeException ())
+  , bfcoFetchedBlocks     :: Map PeerId Word
   , bfcoTrace             :: [(Tick, String)]
   }
 
@@ -272,9 +271,9 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
 
     mkTestBlockFetchConsensusInterface ::
-         STM m (Map (ConnectionId PeerId) (AnchoredFragment (Header TestBlock)))
+         STM m (Map PeerId (AnchoredFragment (Header TestBlock)))
       -> BlockFetchClientInterface.ChainDbView m TestBlock
-      -> BlockFetchConsensusInterface (ConnectionId PeerId) (Header TestBlock) TestBlock m
+      -> BlockFetchConsensusInterface PeerId (Header TestBlock) TestBlock m
     mkTestBlockFetchConsensusInterface getCandidates chainDbView =
         BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (TestBlockConfig numCoreNodes)
@@ -318,7 +317,7 @@ ntnVersion = maxBound
 data BlockFetchClientTestSetup = BlockFetchClientTestSetup {
     -- | A 'Schedule' of 'ChainUpdate's for every peer. This emulates
     -- the candidate fragments provided by the ChainSync client.
-    peerUpdates    :: Map (ConnectionId PeerId) (Schedule ChainUpdate)
+    peerUpdates    :: Map PeerId (Schedule ChainUpdate)
     -- | BlockFetch 'FetchMode'
   , blockFetchMode :: FetchMode
   , blockFetchCfg  :: BlockFetchConfiguration
@@ -344,9 +343,7 @@ instance Condense BlockFetchClientTestSetup where
 instance Arbitrary BlockFetchClientTestSetup where
   arbitrary = do
       numPeers <- chooseInt (1, 3)
-      let local = PeerId 0
-          peerIds = map (ConnectionId local)
-                  $ PeerId <$> [1 .. numPeers]
+      let peerIds = PeerId <$> [1 .. numPeers]
       peerUpdates <-
             Map.fromList . zip peerIds
         <$> replicateM numPeers genUpdateSchedule
