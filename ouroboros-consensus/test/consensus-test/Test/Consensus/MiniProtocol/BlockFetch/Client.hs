@@ -31,7 +31,10 @@ import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
-import           Network.TypedProtocol.Codec (AnyMessageAndAgency (..))
+import           Network.TypedProtocol.Channel (createConnectedChannels)
+import           Network.TypedProtocol.Codec (AnyMessage (..))
+import           Network.TypedProtocol.Core (PeerRole (..))
+import qualified Network.TypedProtocol.Driver.Simple as Driver
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -52,9 +55,7 @@ import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      bracketKeepAliveClient, bracketSyncWithFetchClient,
                      newFetchClientRegistry)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
-import           Ouroboros.Network.Channel (createConnectedChannels)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
-import qualified Ouroboros.Network.Driver.Simple as Driver
 import           Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion,
@@ -64,8 +65,8 @@ import           Ouroboros.Network.Protocol.BlockFetch.Server
                      (BlockFetchBlockSender (SendMsgNoBlocks, SendMsgStartBatch),
                      BlockFetchSendBlocks (SendMsgBatchDone, SendMsgBlock),
                      BlockFetchServer (..), blockFetchServerPeer)
-import           Ouroboros.Network.Protocol.BlockFetch.Type (ChainRange (..),
-                     Message (MsgBlock))
+import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch,
+                     ChainRange (..), Message (MsgBlock))
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -160,10 +161,11 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                   where
                     getCurrentChain = atomically $ (Map.! peerId) <$> getCandidates
 
+                blockFetchTracer :: Tracer m (PeerRole, Driver.TraceSendRecv (BlockFetch TestBlock (Point TestBlock)))
                 blockFetchTracer = Tracer \case
-                    (Driver.Client, ev) -> do
+                    (AsClient, ev) -> do
                       atomically case ev of
-                        Driver.TraceRecvMsg (AnyMessageAndAgency _ (MsgBlock _)) ->
+                        Driver.TraceRecvMsg (AnyMessage (MsgBlock _)) ->
                            modifyTVar varFetchedBlocks $ Map.adjust (+ 1) peerId
                         _ -> pure ()
                       traceWith tracer $
