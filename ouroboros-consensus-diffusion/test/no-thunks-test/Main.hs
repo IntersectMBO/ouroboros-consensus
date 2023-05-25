@@ -32,6 +32,10 @@ tests = testGroup "no-thunks-test"
       [ testCase "IO-Int" updateMVarTestI
       , testCase "IOSim-Int" (runSimTest updateMVarTestI)
       ]
+  , testGroup "updateMVarTestII"
+      [ testCase "IO-Int" updateMVarTestII
+      , testCase "IOSim-Int" (runSimTest updateMVarTestII)
+      ]
   ]
 
 runSimTest :: (forall s . IOSim s ()) -> IO ()
@@ -66,3 +70,8 @@ updateMVarTestI = do
       pure ()
     else
       error $ "failed assertion, got " <> show updated <> ", expected 5"
+
+updateMVarTestII :: MonadSTM m => m ()
+updateMVarTestII = do
+  mvar <- newMVar (5 :: Int)
+  void $ updateMVar mvar $ \v -> (v + 1, "5")
