@@ -496,6 +496,7 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
     Test.Consensus.ResourceRegistry
+    Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.MonadSTM.RAWLock
     Test.Consensus.Util.Versioned
 
