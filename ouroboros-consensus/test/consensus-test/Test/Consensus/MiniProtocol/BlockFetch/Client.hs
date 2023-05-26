@@ -31,7 +31,10 @@ import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
-import           Network.TypedProtocol.Codec (AnyMessageAndAgency (..))
+import           Network.TypedProtocol.Channel (createConnectedChannels)
+import           Network.TypedProtocol.Codec (AnyMessage (..))
+import           Network.TypedProtocol.Core (PeerRole (..))
+import qualified Network.TypedProtocol.Driver.Simple as Driver
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
@@ -52,10 +55,7 @@ import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      bracketKeepAliveClient, bracketSyncWithFetchClient,
                      newFetchClientRegistry)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
-import           Ouroboros.Network.Channel (createConnectedChannels)
-import           Ouroboros.Network.ConnectionId (ConnectionId (..))
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
-import qualified Ouroboros.Network.Driver.Simple as Driver
 import           Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion,
@@ -65,8 +65,8 @@ import           Ouroboros.Network.Protocol.BlockFetch.Server
                      (BlockFetchBlockSender (SendMsgNoBlocks, SendMsgStartBatch),
                      BlockFetchSendBlocks (SendMsgBatchDone, SendMsgBlock),
                      BlockFetchServer (..), blockFetchServerPeer)
-import           Ouroboros.Network.Protocol.BlockFetch.Type (ChainRange (..),
-                     Message (MsgBlock))
+import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch,
+                     ChainRange (..), Message (MsgBlock))
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -112,8 +112,8 @@ prop_blockFetch bfcts@BlockFetchClientTestSetup{..} =
 -------------------------------------------------------------------------------}
 
 data BlockFetchClientOutcome = BlockFetchClientOutcome {
-    bfcoBlockFetchResults :: Map (ConnectionId PeerId) (Either SomeException ())
-  , bfcoFetchedBlocks     :: Map (ConnectionId PeerId) Word
+    bfcoBlockFetchResults :: Map PeerId (Either SomeException ())
+  , bfcoFetchedBlocks     :: Map PeerId Word
   , bfcoTrace             :: [(Tick, String)]
   }
 
@@ -161,10 +161,11 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                   where
                     getCurrentChain = atomically $ (Map.! peerId) <$> getCandidates
 
+                blockFetchTracer :: Tracer m (PeerRole, Driver.TraceSendRecv (BlockFetch TestBlock (Point TestBlock)))
                 blockFetchTracer = Tracer \case
-                    (Driver.Client, ev) -> do
+                    (AsClient, ev) -> do
                       atomically case ev of
-                        Driver.TraceRecvMsg (AnyMessageAndAgency _ (MsgBlock _)) ->
+                        Driver.TraceRecvMsg (AnyMessage (MsgBlock _)) ->
                            modifyTVar varFetchedBlocks $ Map.adjust (+ 1) peerId
                         _ -> pure ()
                       traceWith tracer $
@@ -272,9 +273,9 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
 
     mkTestBlockFetchConsensusInterface ::
-         STM m (Map (ConnectionId PeerId) (AnchoredFragment (Header TestBlock)))
+         STM m (Map PeerId (AnchoredFragment (Header TestBlock)))
       -> BlockFetchClientInterface.ChainDbView m TestBlock
-      -> BlockFetchConsensusInterface (ConnectionId PeerId) (Header TestBlock) TestBlock m
+      -> BlockFetchConsensusInterface PeerId (Header TestBlock) TestBlock m
     mkTestBlockFetchConsensusInterface getCandidates chainDbView =
         BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (TestBlockConfig numCoreNodes)
@@ -318,7 +319,7 @@ ntnVersion = maxBound
 data BlockFetchClientTestSetup = BlockFetchClientTestSetup {
     -- | A 'Schedule' of 'ChainUpdate's for every peer. This emulates
     -- the candidate fragments provided by the ChainSync client.
-    peerUpdates    :: Map (ConnectionId PeerId) (Schedule ChainUpdate)
+    peerUpdates    :: Map PeerId (Schedule ChainUpdate)
     -- | BlockFetch 'FetchMode'
   , blockFetchMode :: FetchMode
   , blockFetchCfg  :: BlockFetchConfiguration
@@ -344,9 +345,7 @@ instance Condense BlockFetchClientTestSetup where
 instance Arbitrary BlockFetchClientTestSetup where
   arbitrary = do
       numPeers <- chooseInt (1, 3)
-      let local = PeerId 0
-          peerIds = map (ConnectionId local)
-                  $ PeerId <$> [1 .. numPeers]
+      let peerIds = PeerId <$> [1 .. numPeers]
       peerUpdates <-
             Map.fromList . zip peerIds
         <$> replicateM numPeers genUpdateSchedule

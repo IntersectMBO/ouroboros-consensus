@@ -41,7 +41,6 @@ import           Numeric.Natural
 import           Ouroboros.Consensus.Util.HList (All, HList (..))
 import qualified Ouroboros.Consensus.Util.HList as HList
 import           Ouroboros.Network.Block (ChainHash (..), HeaderHash, Tip (..))
-import           Ouroboros.Network.ConnectionId (ConnectionId (..))
 import           Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
@@ -166,9 +165,6 @@ instance Condense (HeaderHash b) => Condense (Tip b) where
 instance Condense a => Condense (WithOrigin a) where
   condense Origin = "origin"
   condense (At a) = condense a
-
-instance Condense addr => Condense (ConnectionId addr) where
-  condense (ConnectionId l r) = condense l <> " " <> condense r
 
 {-------------------------------------------------------------------------------
   Orphans for cardano-crypto-classes

@@ -312,7 +312,6 @@ library
     , mtl                          >=2.2      && <2.3
     , nothunks                     >=0.1.2    && <0.2
     , ouroboros-network-api        ^>=0.5
-    , ouroboros-network-framework  ^>=0.6
     , ouroboros-network-mock       ^>=0.1.0.1
     , ouroboros-network-protocols  ^>=0.5
     , psqueues                     >=0.2.3    && <0.3
@@ -522,7 +521,6 @@ test-suite consensus-test
     , ouroboros-consensus
     , ouroboros-network
     , ouroboros-network-api
-    , ouroboros-network-framework
     , ouroboros-network-mock
     , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
     , QuickCheck
@@ -536,6 +534,7 @@ test-suite consensus-test
     , time
     , tree-diff
     , typed-protocols
+    , typed-protocols-examples
 
 test-suite infra-test
   import:         common-test
