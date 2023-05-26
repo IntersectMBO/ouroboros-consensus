@@ -1,16 +1,17 @@
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE RankNTypes         #-}
+{-# LANGUAGE TypeApplications   #-}
 module Test.Consensus.Util.MonadSTM.NormalForm (tests) where
 
-import Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM, newMVar, updateMVar)
-import Test.Tasty
-import Test.Tasty.QuickCheck
-import NoThunks.Class
-import Control.Monad.IOSim
-import GHC.Generics
+import           Control.Monad.IOSim
+import           GHC.Generics
+import           NoThunks.Class
+import           Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM,
+                     newMVar, updateMVar)
+import           Test.Tasty
+import           Test.Tasty.QuickCheck
 
 
 -- Note that all of the tests here are only significant with compiler
