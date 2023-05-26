@@ -149,7 +149,7 @@ library diffusion-testlib
     , containers
     , contra-tracer
     , fgl
-    , fs-sim
+    , fs-sim                                                        >=0.2
     , graphviz                                                      >=2999.20.1.0
     , io-classes
     , io-sim
@@ -247,7 +247,7 @@ test-suite consensus-test
     , diffusion-testlib
     , directory
     , fs-api
-    , fs-sim
+    , fs-sim                                                        >=0.2
     , io-sim
     , mtl
     , nothunks

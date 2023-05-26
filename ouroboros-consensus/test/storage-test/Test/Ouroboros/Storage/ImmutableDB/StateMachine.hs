@@ -80,7 +80,8 @@ import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Prelude hiding (elem, notElem)
 import           System.FS.API (HasFS (..), SomeHasFS (..))
 import           System.FS.API.Types (FsError (..), FsPath, mkFsPath)
-import           System.FS.Sim.Error (Errors, mkSimErrorHasFS, withErrors)
+import           System.FS.Sim.Error (Errors, emptyErrors, mkSimErrorHasFS,
+                     withErrors)
 import qualified System.FS.Sim.MockFS as Mock
 import           System.Random (getStdRandom, randomR)
 import           Test.Ouroboros.Storage.ImmutableDB.Model
@@ -1189,7 +1190,7 @@ test :: Index.CacheConfig
      -> IO (QSM.History (At CmdErr IO) (At Resp IO), Property)
 test cacheConfig chunkInfo cmds = do
     fsVar              <- uncheckedNewTVarM Mock.empty
-    varErrors          <- uncheckedNewTVarM mempty
+    varErrors          <- uncheckedNewTVarM emptyErrors
     varNextId          <- uncheckedNewTVarM 0
     varIters           <- uncheckedNewTVarM []
     (tracer, getTrace) <- recordingTracerIORef
