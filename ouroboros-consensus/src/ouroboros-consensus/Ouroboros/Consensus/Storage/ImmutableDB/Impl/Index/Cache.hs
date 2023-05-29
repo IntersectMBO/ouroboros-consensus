@@ -74,7 +74,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
 import           Ouroboros.Consensus.Util (takeUntil, whenJust)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import qualified Ouroboros.Consensus.Util.MonadSTM.StrictMVar as Strict
+import qualified Ouroboros.Consensus.Util.MonadSTM.StrictSVar as Strict
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (HasFS (..), withFile)
 import           System.FS.API.Types (AllowExisting (..), Handle,

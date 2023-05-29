@@ -1,6 +1,6 @@
 module Ouroboros.Consensus.Util.MonadSTM.NormalForm (
     module LazySTM
-  , module Ouroboros.Consensus.Util.MonadSTM.StrictMVar
+  , module Ouroboros.Consensus.Util.MonadSTM.StrictSVar
   , module StrictSTM
   , newEmptyMVar
   , newMVar
@@ -23,10 +23,10 @@ import           Control.Concurrent.Class.MonadSTM.TQueue as LazySTM
 import           Control.Monad.Class.MonadSTM as StrictSTM
 import           GHC.Stack
 import           NoThunks.Class (NoThunks (..), unsafeNoThunks)
-import           Ouroboros.Consensus.Util.MonadSTM.StrictMVar hiding
+import           Ouroboros.Consensus.Util.MonadSTM.StrictSVar hiding
                      (newEmptyMVar, newEmptyMVarWithInvariant, newMVar,
                      newMVarWithInvariant)
-import qualified Ouroboros.Consensus.Util.MonadSTM.StrictMVar as Strict
+import qualified Ouroboros.Consensus.Util.MonadSTM.StrictSVar as Strict
 
 -- TODO: use strict versions of 'TQueue' and 'TBQueue'.  Previously the
 -- 'Control.Monad.Class.MonadSTM.Strict' was imported which
