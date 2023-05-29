@@ -2,13 +2,13 @@ module Ouroboros.Consensus.Util.MonadSTM.NormalForm (
     module LazySTM
   , module Ouroboros.Consensus.Util.MonadSTM.StrictSVar
   , module StrictSTM
-  , newEmptyMVar
-  , newMVar
+  , newEmptySVar
+  , newSVar
   , newTVar
   , newTVarIO
     -- * Temporary
-  , uncheckedNewEmptyMVar
-  , uncheckedNewMVar
+  , uncheckedNewEmptySVar
+  , uncheckedNewSVar
   , uncheckedNewTVarM
   ) where
 
@@ -24,8 +24,8 @@ import           Control.Monad.Class.MonadSTM as StrictSTM
 import           GHC.Stack
 import           NoThunks.Class (NoThunks (..), unsafeNoThunks)
 import           Ouroboros.Consensus.Util.MonadSTM.StrictSVar hiding
-                     (newEmptyMVar, newEmptyMVarWithInvariant, newMVar,
-                     newMVarWithInvariant)
+                     (newEmptySVar, newEmptySVarWithInvariant, newSVar,
+                     newSVarWithInvariant)
 import qualified Ouroboros.Consensus.Util.MonadSTM.StrictSVar as Strict
 
 -- TODO: use strict versions of 'TQueue' and 'TBQueue'.  Previously the
@@ -45,12 +45,12 @@ newTVar :: (MonadSTM m, HasCallStack, NoThunks a)
           => a -> STM m (StrictTVar m a)
 newTVar = Strict.newTVarWithInvariant (fmap show . unsafeNoThunks)
 
-newMVar :: (MonadSTM m, HasCallStack, NoThunks a)
-        => a -> m (StrictMVar m a)
-newMVar = Strict.newMVarWithInvariant (fmap show . unsafeNoThunks)
+newSVar :: (MonadSTM m, HasCallStack, NoThunks a)
+        => a -> m (StrictSVar m a)
+newSVar = Strict.newSVarWithInvariant (fmap show . unsafeNoThunks)
 
-newEmptyMVar :: (MonadSTM m, NoThunks a) => a -> m (StrictMVar m a)
-newEmptyMVar = Strict.newEmptyMVarWithInvariant (fmap show . unsafeNoThunks)
+newEmptySVar :: (MonadSTM m, NoThunks a) => a -> m (StrictSVar m a)
+newEmptySVar = Strict.newEmptySVarWithInvariant (fmap show . unsafeNoThunks)
 
 {-------------------------------------------------------------------------------
   Unchecked wrappers (where we don't check for thunks)
@@ -61,8 +61,8 @@ newEmptyMVar = Strict.newEmptyMVarWithInvariant (fmap show . unsafeNoThunks)
 uncheckedNewTVarM :: MonadSTM m => a -> m (StrictTVar m a)
 uncheckedNewTVarM = Strict.newTVarIO
 
-uncheckedNewMVar :: MonadSTM m => a -> m (StrictMVar m a)
-uncheckedNewMVar = Strict.newMVar
+uncheckedNewSVar :: MonadSTM m => a -> m (StrictSVar m a)
+uncheckedNewSVar = Strict.newSVar
 
-uncheckedNewEmptyMVar :: MonadSTM m => a -> m (StrictMVar m a)
-uncheckedNewEmptyMVar = Strict.newEmptyMVar
+uncheckedNewEmptySVar :: MonadSTM m => a -> m (StrictSVar m a)
+uncheckedNewEmptySVar = Strict.newEmptySVar

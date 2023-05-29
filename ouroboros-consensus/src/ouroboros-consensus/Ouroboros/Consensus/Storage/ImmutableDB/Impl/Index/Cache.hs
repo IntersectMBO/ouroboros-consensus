@@ -356,9 +356,9 @@ data CacheEnv m blk h = CacheEnv
   { hasFS       :: HasFS m h
   , registry    :: ResourceRegistry m
   , tracer      :: Tracer m TraceCacheEvent
-  , cacheVar    :: StrictMVar m (Cached blk)
+  , cacheVar    :: StrictSVar m (Cached blk)
   , cacheConfig :: CacheConfig
-  , bgThreadVar :: StrictMVar m (Maybe (Thread m Void))
+  , bgThreadVar :: StrictSVar m (Maybe (Thread m Void))
     -- ^ Nothing if no thread running
   , chunkInfo   :: ChunkInfo
   }
@@ -386,10 +386,10 @@ newEnv hasFS registry tracer cacheConfig chunkInfo chunk = do
       error "pastChunksToCache must be > 0"
 
     currentChunkInfo <- loadCurrentChunkInfo hasFS chunkInfo chunk
-    cacheVar <- newMVarWithInvariants $ emptyCached chunk currentChunkInfo
-    bgThreadVar <- newMVar Nothing
+    cacheVar <- newSVarWithInvariants $ emptyCached chunk currentChunkInfo
+    bgThreadVar <- newSVar Nothing
     let cacheEnv = CacheEnv {..}
-    mask_ $ modifyMVar_ bgThreadVar $ \_mustBeNothing -> do
+    mask_ $ modifySVar_ bgThreadVar $ \_mustBeNothing -> do
       !bgThread <- forkLinkedThread registry "ImmutableDB.expireUnusedChunks" $
         expireUnusedChunks cacheEnv
       return $ Just bgThread
@@ -399,8 +399,8 @@ newEnv hasFS registry tracer cacheConfig chunkInfo chunk = do
 
     -- When checking invariants, check both our invariants and for thunks.
     -- Note that this is only done when the corresponding flag is enabled.
-    newMVarWithInvariants =
-      Strict.newMVarWithInvariant $ \cached ->
+    newSVarWithInvariants =
+      Strict.newSVarWithInvariant $ \cached ->
         checkInvariants pastChunksToCache cached
         `mplus`
         (show <$> unsafeNoThunks cached)
@@ -420,7 +420,7 @@ expireUnusedChunks
 expireUnusedChunks CacheEnv { cacheVar, cacheConfig, tracer } =
     forever $ do
       now <- getMonotonicTime
-      mbTraceMsg <- updateMVar cacheVar $ garbageCollect now
+      mbTraceMsg <- updateSVar cacheVar $ garbageCollect now
       mapM_ (traceWith tracer) mbTraceMsg
       threadDelay expireUnusedAfter
   where
@@ -578,25 +578,25 @@ getChunkInfo
   -> m (Either (CurrentChunkInfo blk) (PastChunkInfo blk))
 getChunkInfo cacheEnv chunk = do
     lastUsed <- LastUsed <$> getMonotonicTime
-    -- Make sure we don't leave an empty MVar in case of an exception.
-    mbCacheHit <- bracketOnError (takeMVar cacheVar) (tryPutMVar cacheVar) $
+    -- Make sure we don't leave an empty SVar in case of an exception.
+    mbCacheHit <- bracketOnError (takeSVar cacheVar) (tryPutSVar cacheVar) $
       \cached@Cached { currentChunk, currentChunkInfo, nbPastChunks } -> if
         | chunk == currentChunk -> do
           -- Cache hit for the current chunk
-          putMVar cacheVar cached
+          putSVar cacheVar cached
           traceWith tracer $ TraceCurrentChunkHit chunk nbPastChunks
           return $ Just $ Left currentChunkInfo
         | Just (pastChunkInfo, cached') <- lookupPastChunkInfo chunk lastUsed cached -> do
           -- Cache hit for an chunk in the past
-          putMVar cacheVar cached'
+          putSVar cacheVar cached'
           traceWith tracer $ TracePastChunkHit chunk nbPastChunks
           return $ Just $ Right pastChunkInfo
         | otherwise -> do
           -- Cache miss for an chunk in the past. We don't want to hold on to
-          -- the 'cacheVar' MVar, blocking all other access to the cace, while
+          -- the 'cacheVar' SVar, blocking all other access to the cace, while
           -- we're reading things from disk, so put it back now and update the
           -- cache afterwards.
-          putMVar cacheVar cached
+          putSVar cacheVar cached
           traceWith tracer $ TracePastChunkMiss chunk nbPastChunks
           return Nothing
     case mbCacheHit of
@@ -607,7 +607,7 @@ getChunkInfo cacheEnv chunk = do
         -- Loading the chunk might have taken some time, so obtain the time
         -- again.
         lastUsed' <- LastUsed <$> getMonotonicTime
-        mbEvicted <- updateMVar cacheVar $
+        mbEvicted <- updateSVar cacheVar $
           evictIfNecessary pastChunksToCache .
           addPastChunkInfo chunk lastUsed' pastChunkInfo
         whenJust mbEvicted $ \evicted ->
@@ -627,7 +627,7 @@ getChunkInfo cacheEnv chunk = do
 -- This operation is idempotent.
 close :: IOLike m => CacheEnv m blk h -> m ()
 close CacheEnv { bgThreadVar } =
-    mask_ $ modifyMVar_ bgThreadVar $ \mbBgThread -> do
+    mask_ $ modifySVar_ bgThreadVar $ \mbBgThread -> do
       mapM_ cancelThread mbBgThread
       return Nothing
 
@@ -643,8 +643,8 @@ restart
   -> m ()
 restart cacheEnv chunk = do
     currentChunkInfo <- loadCurrentChunkInfo hasFS chunkInfo chunk
-    void $ swapMVar cacheVar $ emptyCached chunk currentChunkInfo
-    mask_ $ modifyMVar_ bgThreadVar $ \mbBgThread ->
+    void $ swapSVar cacheVar $ emptyCached chunk currentChunkInfo
+    mask_ $ modifySVar_ bgThreadVar $ \mbBgThread ->
       case mbBgThread of
         Just _  -> throwIO $ userError "background thread still running"
         Nothing -> do
@@ -747,7 +747,7 @@ openPrimaryIndex cacheEnv chunk allowExisting = do
       newCurrentChunkInfo <- case allowExisting of
         MustBeNew     -> return $ emptyCurrentChunkInfo chunk
         AllowExisting -> loadCurrentChunkInfo hasFS chunkInfo chunk
-      mbEvicted <- updateMVar cacheVar $
+      mbEvicted <- updateSVar cacheVar $
         evictIfNecessary pastChunksToCache .
         openChunk chunk lastUsed newCurrentChunkInfo
       whenJust mbEvicted $ \evicted ->
@@ -767,7 +767,7 @@ appendOffsets
   -> m ()
 appendOffsets CacheEnv { hasFS, cacheVar } pHnd offsets = do
     Primary.appendOffsets hasFS pHnd offsets
-    updateMVar_ cacheVar addCurrentChunkOffsets
+    updateSVar_ cacheVar addCurrentChunkOffsets
   where
     -- Lenses would be nice here
     addCurrentChunkOffsets :: Cached blk -> Cached blk
@@ -861,7 +861,7 @@ appendEntry
   -> m Word64
 appendEntry CacheEnv { hasFS, cacheVar } chunk sHnd entry = do
     nbBytes <- Secondary.appendEntry hasFS sHnd (withoutBlockSize entry)
-    updateMVar_ cacheVar addCurrentChunkEntry
+    updateSVar_ cacheVar addCurrentChunkEntry
     return nbBytes
   where
     -- Lenses would be nice here

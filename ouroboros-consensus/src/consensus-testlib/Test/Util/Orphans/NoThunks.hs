@@ -11,8 +11,8 @@ import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
 
-instance NoThunks a => NoThunks (StrictMVar (IOSim s) a) where
-  showTypeOf _ = "StrictMVar IOSim"
-  wNoThunks ctxt StrictMVar { tvar } = do
+instance NoThunks a => NoThunks (StrictSVar (IOSim s) a) where
+  showTypeOf _ = "StrictSVar IOSim"
+  wNoThunks ctxt StrictSVar { tvar } = do
       a <- unsafeSTToIO $ lazyToStrictST $ inspectTVar (Proxy :: Proxy (IOSim s)) tvar
       noThunks ctxt a

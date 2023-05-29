@@ -56,7 +56,8 @@ import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util (repeatedly)
-import           Ouroboros.Consensus.Util.IOLike hiding (newEmptyMVar, newMVar)
+import           Ouroboros.Consensus.Util.IOLike
+
 {-------------------------------------------------------------------------------
   Internal State
 -------------------------------------------------------------------------------}

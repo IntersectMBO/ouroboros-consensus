@@ -170,7 +170,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       varFollowers       <- newTVarIO Map.empty
       varNextIteratorKey <- newTVarIO (IteratorKey 0)
       varNextFollowerKey <- newTVarIO (FollowerKey   0)
-      varCopyLock        <- newMVar  ()
+      varCopyLock        <- newSVar  ()
       varKillBgThreads   <- newTVarIO $ return ()
       blocksToAdd        <- newBlocksToAdd (Args.cdbBlocksToAddSize args)
 
