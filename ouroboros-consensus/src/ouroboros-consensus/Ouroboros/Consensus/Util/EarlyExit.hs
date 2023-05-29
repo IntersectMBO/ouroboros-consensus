@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Util.EarlyExit (
 
 import           Control.Applicative
 import           Control.Concurrent.Class.MonadMVar
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks (StrictMVar)
 import           Control.Monad
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
@@ -283,6 +284,7 @@ instance MonadEventlog m => MonadEventlog (WithEarlyExit m) where
 instance ( IOLike m
          , forall a. NoThunks (StrictTVar (WithEarlyExit m) a)
          , forall a. NoThunks (StrictSVar (WithEarlyExit m) a)
+         , forall a. NoThunks (StrictMVar (WithEarlyExit m) a)
            -- The simulator does not currently support @MonadCatch (STM m)@,
            -- making this @IOLike@ instance applicable to @IO@ only. Once that
            -- missing @MonadCatch@ instance is added, @IOLike@ should require

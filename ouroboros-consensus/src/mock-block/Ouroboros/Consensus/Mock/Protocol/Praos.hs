@@ -213,7 +213,7 @@ deriving instance PraosCrypto c => Show (HotKey c)
 newtype HotKeyEvolutionError = HotKeyEvolutionError Period
   deriving (Show)
 
--- | To be used in conjunction with, e.g., 'updateSVar'.
+-- | To be used in conjunction with, e.g., 'modifyMVar'.
 --
 -- NOTE: when the key's period is after the target period, we shouldn't use
 -- it, but we currently do. In real TPraos we check this in

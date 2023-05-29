@@ -28,6 +28,7 @@ import qualified Cardano.Crypto.KES as Relative (Period)
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
@@ -173,13 +174,13 @@ mkHotKey ::
   -> Word64              -- ^ Max KES evolutions
   -> m (HotKey c m)
 mkHotKey initKey startPeriod@(Absolute.KESPeriod start) maxKESEvolutions = do
-    varKESState <- newSVar initKESState
+    varKESState <- newMVar initKESState
     return HotKey {
         evolve     = evolveKey varKESState
-      , getInfo    = kesStateInfo <$> readSVar varKESState
-      , isPoisoned = kesKeyIsPoisoned . kesStateKey <$> readSVar varKESState
+      , getInfo    = kesStateInfo <$> readMVar varKESState
+      , isPoisoned = kesKeyIsPoisoned . kesStateKey <$> readMVar varKESState
       , sign_      = \toSign -> do
-          KESState { kesStateInfo, kesStateKey } <- readSVar varKESState
+          KESState { kesStateInfo, kesStateKey } <- readMVar varKESState
           case kesStateKey of
             KESKeyPoisoned -> error "trying to sign with a poisoned key"
             KESKey key     -> do
@@ -217,8 +218,8 @@ mkHotKey initKey startPeriod@(Absolute.KESPeriod start) maxKESEvolutions = do
 -- When the key is poisoned, we always return 'UpdateFailed'.
 evolveKey ::
      forall m c. (Crypto c, IOLike m)
-  => StrictSVar m (KESState c) -> Absolute.KESPeriod -> m KESEvolutionInfo
-evolveKey varKESState targetPeriod = modifySVar varKESState $ \kesState -> do
+  => StrictMVar m (KESState c) -> Absolute.KESPeriod -> m KESEvolutionInfo
+evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
     let info = kesStateInfo kesState
     -- We mask the evolution process because if we got interrupted after
     -- calling 'forgetSignKeyKES', which destructively updates the current

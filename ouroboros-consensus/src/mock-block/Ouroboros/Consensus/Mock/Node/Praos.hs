@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Mock.Node.Praos (
 
 import           Cardano.Crypto.KES
 import           Cardano.Crypto.VRF
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks
 import           Data.Bifunctor (second)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -96,16 +97,17 @@ praosBlockForging ::
   -> HotKey PraosMockCrypto
   -> m (BlockForging m MockPraosBlock)
 praosBlockForging cid initHotKey = do
-    varHotKey <- newSVar initHotKey
+    varHotKey <- newMVar initHotKey
     return $ BlockForging {
         forgeLabel       = "praosBlockForging"
       , canBeLeader      = cid
-      , updateForgeState = \_ sno _ -> updateSVar varHotKey $
-                                 second forgeStateUpdateInfoFromUpdateInfo
+      , updateForgeState = \_ sno _ -> modifyMVar varHotKey $
+                                 pure
+                               . second forgeStateUpdateInfoFromUpdateInfo
                                . evolveKey sno
       , checkCanForge    = \_ _ _ _ _ -> return ()
       , forgeBlock       = \cfg bno sno tickedLedgerSt txs isLeader -> do
-                               hotKey <- readSVar varHotKey
+                               hotKey <- readMVar varHotKey
                                return $
                                  forgeSimple
                                    (forgePraosExt hotKey)

@@ -37,7 +37,8 @@
 module Test.Consensus.BlockchainTime.Simple (tests) where
 
 import           Control.Applicative (Alternative (..))
-import           Control.Concurrent.Class.MonadMVar (MonadMVar)
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks (MonadMVar,
+                     StrictMVar)
 import qualified Control.Monad.Class.MonadSTM.Internal as LazySTM
 import           Control.Monad.Class.MonadTime
 import qualified Control.Monad.Class.MonadTimer as MonadTimer
@@ -378,6 +379,9 @@ deriving via AllowThunk (StrictTVar (OverrideDelay s) a)
 
 deriving via AllowThunk (StrictSVar (OverrideDelay s) a)
          instance NoThunks (StrictSVar (OverrideDelay s) a)
+
+deriving via AllowThunk (StrictMVar (OverrideDelay s) a)
+         instance NoThunks (StrictMVar (OverrideDelay s) a)
 
 instance MonadTimer.MonadDelay (OverrideDelay (IOSim s)) where
   threadDelay d = OverrideDelay $ ReaderT $ \schedule -> do

@@ -37,6 +37,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background (
   , addBlockRunner
   ) where
 
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks
 import           Control.Exception (assert)
 import           Control.Monad (forM_, forever, void)
 import           Control.Tracer
@@ -197,8 +198,8 @@ copyToImmutableDB CDB{..} = withCopyLock $ do
 
     withCopyLock :: forall a. HasCallStack => m a -> m a
     withCopyLock = bracket_
-      (fmap mustBeUnlocked $ tryTakeSVar cdbCopyLock)
-      (putSVar  cdbCopyLock ())
+      (fmap mustBeUnlocked $ tryTakeMVar cdbCopyLock)
+      (putMVar  cdbCopyLock ())
 
     mustBeUnlocked :: forall b. HasCallStack => Maybe b -> b
     mustBeUnlocked = fromMaybe

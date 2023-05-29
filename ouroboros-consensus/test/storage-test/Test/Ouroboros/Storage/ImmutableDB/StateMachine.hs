@@ -46,6 +46,7 @@ module Test.Ouroboros.Storage.ImmutableDB.StateMachine (
   , tests
   ) where
 
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks
 import           Control.Monad (forM_, void)
 import           Data.Bifunctor (first)
 import           Data.ByteString.Lazy (ByteString)
@@ -216,7 +217,7 @@ open args = do
 reopen :: ImmutableDBEnv -> ValidationPolicy -> IO ()
 reopen ImmutableDBEnv { varDB, args } valPol = do
     immutableDbState <- open args { immValidationPolicy = valPol }
-    void $ swapSVar varDB immutableDbState
+    void $ swapMVar varDB immutableDbState
 
 -- | Run the command against the given database.
 run ::
@@ -233,7 +234,7 @@ run env@ImmutableDBEnv {
           , immHasFS = SomeHasFS hasFS
           }
       } cmd =
-    readSVar varDB >>= \ImmutableDBState { db, internal } -> case cmd of
+    readMVar varDB >>= \ImmutableDBState { db, internal } -> case cmd of
       GetTip               -> ImmTip          <$> atomically (getTip            db)
       GetBlockComponent pt -> ErAllComponents <$>             getBlockComponent db allComponents pt
       AppendBlock blk      -> Unit            <$>             appendBlock       db blk
@@ -799,15 +800,15 @@ data ImmutableDBEnv = ImmutableDBEnv {
       -- During truncation we might need to delete a file that is still opened
       -- by an iterator. As this is not allowed by the MockFS implementation, we
       -- first close all open iterators in these cases.
-    , varDB     :: StrictSVar IO ImmutableDBState
+    , varDB     :: StrictMVar IO ImmutableDBState
     , args      :: ImmutableDbArgs Identity IO TestBlock
     }
 
 getImmutableDB :: ImmutableDBEnv -> IO (ImmutableDB IO TestBlock)
-getImmutableDB = fmap db . readSVar . varDB
+getImmutableDB = fmap db . readMVar . varDB
 
 getInternal :: ImmutableDBEnv -> IO (ImmutableDB.Internal IO TestBlock)
-getInternal = fmap internal . readSVar . varDB
+getInternal = fmap internal . readMVar . varDB
 
 semantics ::
      ImmutableDBEnv
@@ -1208,11 +1209,11 @@ test cacheConfig chunkInfo cmds = do
             }
 
       (hist, model, res, trace) <- bracket
-        (open args >>= newSVar)
+        (open args >>= newMVar)
         -- Note: we might be closing a different ImmutableDB than the one we
         -- opened, as we can reopen it the ImmutableDB, swapping the
-        -- ImmutableDB in the SVar.
-        (\varDB -> readSVar varDB >>= closeDB . db)
+        -- ImmutableDB in the MVar.
+        (\varDB -> readMVar varDB >>= closeDB . db)
         $ \varDB -> do
           let env = ImmutableDBEnv
                 { varErrors

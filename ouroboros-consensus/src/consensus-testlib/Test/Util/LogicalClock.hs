@@ -24,6 +24,7 @@ module Test.Util.LogicalClock (
   , tickTracer
   ) where
 
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks
 import           Control.Monad
 import           Control.Tracer (Tracer, contramapM)
 import           Data.Time (NominalDiffTime)
@@ -152,7 +153,7 @@ newWithDelay :: (IOLike m, HasCallStack)
              -> m (LogicalClock m)
 newWithDelay registry (NumTicks numTicks) tickLen = do
     current <- newTVarIO 0
-    done    <- newEmptySVar ()
+    done    <- newEmptyMVar
     _thread <- forkThread registry "ticker" $ do
                  -- Tick 0 is the first tick, so increment @numTicks - 1@ times
                  replicateM_ (fromIntegral numTicks - 1) $ do
@@ -163,11 +164,11 @@ newWithDelay registry (NumTicks numTicks) tickLen = do
                  -- Give tests that need to do some final processing on the last
                  -- tick a chance to do that before we indicate completion.
                  threadDelay (nominalDelay tickLen)
-                 putSVar done ()
+                 putMVar done ()
 
     return LogicalClock {
         getCurrentTick = Tick <$> readTVar current
-      , waitUntilDone  = readSVar done
+      , waitUntilDone  = readMVar done
       , mockSystemTime = BTime.SystemTime {
             BTime.systemTimeCurrent = do
               tick <- atomically $ readTVar current

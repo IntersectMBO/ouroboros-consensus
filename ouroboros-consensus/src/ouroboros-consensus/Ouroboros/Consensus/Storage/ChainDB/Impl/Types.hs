@@ -60,6 +60,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks
 import           Control.Tracer
 import           Data.Map.Strict (Map)
 import           Data.Maybe.Strict (StrictMaybe (..))
@@ -225,7 +226,7 @@ data ChainDbEnv m blk = CDB
     -- not when hashes are garbage-collected from the map.
   , cdbNextIteratorKey :: !(StrictTVar m IteratorKey)
   , cdbNextFollowerKey :: !(StrictTVar m FollowerKey)
-  , cdbCopyLock        :: !(StrictSVar m ())
+  , cdbCopyLock        :: !(StrictMVar m ())
     -- ^ Lock used to ensure that 'copyToImmutableDB' is not executed more than
     -- once concurrently.
     --

@@ -10,6 +10,7 @@ import           Cardano.Tools.DBAnalyser.HasAnalysis
 import           Cardano.Tools.DBAnalyser.Types
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.Serialise (Serialise (decode))
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks
 import           Control.Monad.Except (runExceptT)
 import           Control.Tracer (Tracer (..), nullTracer)
 import qualified Debug.Trace as Debug
@@ -52,7 +53,7 @@ analyse ::
   -> IO (Maybe AnalysisResult)
 analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbose} args =
     withRegistry $ \registry -> do
-      lock           <- newSVar ()
+      lock           <- newMVar ()
       chainDBTracer  <- mkTracer lock verbose
       analysisTracer <- mkTracer lock True
       ProtocolInfo { pInfoInitLedger = genesisLedger, pInfoConfig = cfg } <-
@@ -128,7 +129,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
         hPutStrLn stderr $ concat ["[", show diff, "] ", show ev]
         hFlush stderr
       where
-        withLock = bracket_ (takeSVar lock) (putSVar lock ())
+        withLock = bracket_ (takeMVar lock) (putMVar lock ())
 
     immValidationPolicy = case (analysis, validation) of
       (_, Just ValidateAllBlocks)      -> ImmutableDB.ValidateAllChunks

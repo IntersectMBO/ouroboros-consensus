@@ -44,7 +44,7 @@ module Ouroboros.Consensus.Util.IOLike (
 import           Cardano.Crypto.KES (KESAlgorithm, SignKeyKES)
 import qualified Cardano.Crypto.KES as KES
 import           Control.Applicative (Alternative)
-import           Control.Concurrent.Class.MonadMVar
+import           Control.Concurrent.Class.MonadMVar.Strict.NoThunks
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
 import           Control.Monad.Class.MonadFork
@@ -78,6 +78,7 @@ class ( MonadAsync              m
       , forall a. NoThunks (m a)
       , forall a. NoThunks a => NoThunks (StrictTVar m a)
       , forall a. NoThunks a => NoThunks (StrictSVar m a)
+      , forall a. NoThunks a => NoThunks (StrictMVar m a)
       ) => IOLike m where
   -- | Securely forget a KES signing key.
   --

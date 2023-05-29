@@ -539,6 +539,7 @@ test-suite consensus-test
     , random
     , serialise
     , si-timers
+    , strict-mvar
     , tasty
     , tasty-hunit
     , tasty-quickcheck
