@@ -569,22 +569,3 @@ test-suite tools-test
     , cardano-tools
     , tasty
     , tasty-hunit
-
-executable ledger-db-backends-checker
-  import:         common-exe
-  hs-source-dirs: app
-  main-is:        ledger-db-backends-checker.hs
-  build-depends:
-    , base
-    , bytestring
-    , cardano-binary
-    , cardano-ledger-core
-    , cardano-lmdb-simple
-    , cardano-slotting
-    , cborg
-    , containers
-    , fs-api
-    , optparse-applicative
-    , ouroboros-consensus
-    , ouroboros-consensus-cardano
-    , ouroboros-consensus-protocol
