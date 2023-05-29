@@ -5,29 +5,27 @@
 {-# LANGUAGE TupleSections     #-}
 {-# LANGUAGE TypeFamilies      #-}
 
--- TODO: this module ought to use 'MonadMVar'
--- See https://github.com/input-output-hk/io-sim/issues/34
 module Ouroboros.Consensus.Util.MonadSTM.StrictSVar (
-    castStrictMVar
-  , isEmptyMVar
-  , modifyMVar
-  , modifyMVar_
-  , newEmptyMVar
-  , newEmptyMVarWithInvariant
-  , newMVar
-  , newMVarWithInvariant
-  , putMVar
-  , readMVar
-  , readMVarSTM
-  , swapMVar
-  , takeMVar
-  , tryPutMVar
-  , tryReadMVar
-  , tryTakeMVar
-  , updateMVar
-  , updateMVar_
+    castStrictSVar
+  , isEmptySVar
+  , modifySVar
+  , modifySVar_
+  , newEmptySVar
+  , newEmptySVarWithInvariant
+  , newSVar
+  , newSVarWithInvariant
+  , putSVar
+  , readSVar
+  , readSVarSTM
+  , swapSVar
+  , takeSVar
+  , tryPutSVar
+  , tryReadSVar
+  , tryTakeSVar
+  , updateSVar
+  , updateSVar_
     -- * constructors exported for benefit of tests
-  , StrictMVar (..)
+  , StrictSVar (..)
   ) where
 
 import           Control.Concurrent.Class.MonadSTM
@@ -40,34 +38,34 @@ import           GHC.Stack
 import           NoThunks.Class (NoThunks (..))
 
 {-------------------------------------------------------------------------------
-  Strict MVar
+  Strict SVar
 -------------------------------------------------------------------------------}
 
--- | Strict MVar (modelled using a lazy 'Lazy.TMVar' under the hood)
+-- | Strict SVar (modelled using a lazy 'Lazy.TMVar' under the hood)
 --
--- The 'StrictMVar' API is slightly stronger than the usual 'MVar' one, as we
--- offer a primitive to read the value of the MVar even if it is empty (in which
--- case we will return the oldest known stale one). See 'readMVarSTM'.
+-- The 'StrictSVar' API is slightly stronger than the usual 'SVar' one, as we
+-- offer a primitive to read the value of the SVar even if it is empty (in which
+-- case we will return the oldest known stale one). See 'readSVarSTM'.
 --
--- There is a weaker invariant for a 'StrictMVar' than for a 'StrictTVar':
--- although all functions that modify the 'StrictMVar' check the invariant, we
--- do /not/ guarantee that the value inside the 'StrictMVar' always satisfies
--- the invariant. Instead, we /do/ guarantee that if the 'StrictMVar' is updated
+-- There is a weaker invariant for a 'StrictSVar' than for a 'StrictTVar':
+-- although all functions that modify the 'StrictSVar' check the invariant, we
+-- do /not/ guarantee that the value inside the 'StrictSVar' always satisfies
+-- the invariant. Instead, we /do/ guarantee that if the 'StrictSVar' is updated
 -- with a value that does not satisfy the invariant, an exception is thrown. The
--- reason for this weaker guarantee is that leaving an 'MVar' empty can lead to
+-- reason for this weaker guarantee is that leaving an 'SVar' empty can lead to
 -- very hard to debug "blocked indefinitely" problems.
 --
 -- This is also the reason we do not offer support for an invariant in
 -- 'StrictTMVar': if we throw an exception from an STM transaction, the STM
 -- transaction is not executed, and so we would not even be able to provide the
--- weaker guarantee that we provide for 'StrictMVar'.
-data StrictMVar m a = StrictMVar
+-- weaker guarantee that we provide for 'StrictSVar'.
+data StrictSVar m a = StrictSVar
   { invariant :: !(a -> Maybe String)
-    -- ^ Invariant checked whenever updating the 'StrictMVar'.
+    -- ^ Invariant checked whenever updating the 'StrictSVar'.
   , tmvar     :: !(Lazy.TMVar m a)
-    -- ^ The main TMVar supporting this 'StrictMVar'
+    -- ^ The main TMVar supporting this 'StrictSVar'
   , tvar      :: !(Lazy.TVar m a)
-    -- ^ TVar for supporting 'readMVarSTM'
+    -- ^ TVar for supporting 'readSVarSTM'
     --
     -- This TVar is always kept up to date with the 'Lazy.TMVar', but holds on
     -- the old value of the 'Lazy.TMVar' when it is empty. This is very useful
@@ -77,107 +75,107 @@ data StrictMVar m a = StrictMVar
     -- the update to the 'tmvar' fails, the 'tvar is left unchanged.
   }
 
-castStrictMVar :: ( Lazy.TMVar m ~ Lazy.TMVar n
+castStrictSVar :: ( Lazy.TMVar m ~ Lazy.TMVar n
                   , Lazy.TVar  m ~ Lazy.TVar  n
                   )
-               => StrictMVar m a -> StrictMVar n a
-castStrictMVar StrictMVar{..} = StrictMVar{..}
+               => StrictSVar m a -> StrictSVar n a
+castStrictSVar StrictSVar{..} = StrictSVar{..}
 
-newMVar :: MonadSTM m => a -> m (StrictMVar m a)
-newMVar = newMVarWithInvariant (const Nothing)
+newSVar :: MonadSTM m => a -> m (StrictSVar m a)
+newSVar = newSVarWithInvariant (const Nothing)
 
-newMVarWithInvariant :: (MonadSTM m, HasCallStack)
+newSVarWithInvariant :: (MonadSTM m, HasCallStack)
                      => (a -> Maybe String)  -- ^ Invariant (expect 'Nothing')
                      -> a
-                     -> m (StrictMVar m a)
-newMVarWithInvariant invariant !a =
+                     -> m (StrictSVar m a)
+newSVarWithInvariant invariant !a =
     checkInvariant (invariant a) $
-    StrictMVar invariant <$> Lazy.newTMVarIO a <*> Lazy.newTVarIO a
+    StrictSVar invariant <$> Lazy.newTMVarIO a <*> Lazy.newTVarIO a
 
-newEmptyMVar :: MonadSTM m => a -> m (StrictMVar m a)
-newEmptyMVar = newEmptyMVarWithInvariant (const Nothing)
+newEmptySVar :: MonadSTM m => a -> m (StrictSVar m a)
+newEmptySVar = newEmptySVarWithInvariant (const Nothing)
 
--- | Create an initially empty 'StrictMVar'
+-- | Create an initially empty 'StrictSVar'
 --
--- NOTE: Since 'readMVarSTM' allows to read the 'StrictMVar' even when it is
--- empty, we need an initial value of @a@ even though the 'StrictMVar' starts
+-- NOTE: Since 'readSVarSTM' allows to read the 'StrictSVar' even when it is
+-- empty, we need an initial value of @a@ even though the 'StrictSVar' starts
 -- out empty. However, we are /NOT/ strict in this value, to allow it to be
 -- @error@.
-newEmptyMVarWithInvariant :: MonadSTM m
+newEmptySVarWithInvariant :: MonadSTM m
                           => (a -> Maybe String)  -- ^ Invariant (expect 'Nothing')
                           -> a                    -- ^ The initial stale value
-                          -> m (StrictMVar m a)
-newEmptyMVarWithInvariant invariant stale =
-    StrictMVar invariant <$> Lazy.newEmptyTMVarIO <*> Lazy.newTVarIO stale
+                          -> m (StrictSVar m a)
+newEmptySVarWithInvariant invariant stale =
+    StrictSVar invariant <$> Lazy.newEmptyTMVarIO <*> Lazy.newTVarIO stale
 
-takeMVar :: MonadSTM m => StrictMVar m a -> m a
-takeMVar StrictMVar { tmvar } = atomically $ Lazy.takeTMVar tmvar
+takeSVar :: MonadSTM m => StrictSVar m a -> m a
+takeSVar StrictSVar { tmvar } = atomically $ Lazy.takeTMVar tmvar
 
-tryTakeMVar :: MonadSTM m => StrictMVar m a -> m (Maybe a)
-tryTakeMVar StrictMVar { tmvar } = atomically $ Lazy.tryTakeTMVar tmvar
+tryTakeSVar :: MonadSTM m => StrictSVar m a -> m (Maybe a)
+tryTakeSVar StrictSVar { tmvar } = atomically $ Lazy.tryTakeTMVar tmvar
 
-putMVar :: (MonadSTM m, HasCallStack) => StrictMVar m a -> a -> m ()
-putMVar StrictMVar { tmvar, tvar, invariant } !a = do
+putSVar :: (MonadSTM m, HasCallStack) => StrictSVar m a -> a -> m ()
+putSVar StrictSVar { tmvar, tvar, invariant } !a = do
     atomically $ do
         Lazy.putTMVar tmvar a
         Lazy.writeTVar tvar a
     checkInvariant (invariant a) $ return ()
 
-tryPutMVar :: (MonadSTM m, HasCallStack) => StrictMVar m a -> a -> m Bool
-tryPutMVar StrictMVar { tmvar, tvar, invariant } !a = do
+tryPutSVar :: (MonadSTM m, HasCallStack) => StrictSVar m a -> a -> m Bool
+tryPutSVar StrictSVar { tmvar, tvar, invariant } !a = do
     didPut <- atomically $ do
         didPut <- Lazy.tryPutTMVar tmvar a
         when didPut $ Lazy.writeTVar tvar a
         return didPut
     checkInvariant (invariant a) $ return didPut
 
-readMVar :: MonadSTM m => StrictMVar m a -> m a
-readMVar StrictMVar { tmvar } = atomically $ Lazy.readTMVar tmvar
+readSVar :: MonadSTM m => StrictSVar m a -> m a
+readSVar StrictSVar { tmvar } = atomically $ Lazy.readTMVar tmvar
 
-tryReadMVar :: MonadSTM m => StrictMVar m a -> m (Maybe a)
-tryReadMVar StrictMVar { tmvar } = atomically $ Lazy.tryReadTMVar tmvar
+tryReadSVar :: MonadSTM m => StrictSVar m a -> m (Maybe a)
+tryReadSVar StrictSVar { tmvar } = atomically $ Lazy.tryReadTMVar tmvar
 
--- | Read the possibly-stale value of the @MVar@
+-- | Read the possibly-stale value of the @SVar@
 --
--- Will return the current value of the @MVar@ if it non-empty, or the last
+-- Will return the current value of the @SVar@ if it non-empty, or the last
 -- known value otherwise.
-readMVarSTM :: MonadSTM m => StrictMVar m a -> STM m a
-readMVarSTM StrictMVar { tmvar, tvar } = do
+readSVarSTM :: MonadSTM m => StrictSVar m a -> STM m a
+readSVarSTM StrictSVar { tmvar, tvar } = do
     ma <- Lazy.tryReadTMVar tmvar
     case ma of
       Just a  -> return a
       Nothing -> Lazy.readTVar tvar
 
--- | Swap value of a 'StrictMVar'
+-- | Swap value of a 'StrictSVar'
 --
--- NOTE: Since swapping the value can't leave the 'StrictMVar' empty, we
+-- NOTE: Since swapping the value can't leave the 'StrictSVar' empty, we
 -- /could/ check the invariant first and only then swap. We nonetheless swap
 -- first and check the invariant after to keep the semantics the same with
--- 'putMVar', otherwise it will be difficult to understand when a 'StrictMVar'
+-- 'putSVar', otherwise it will be difficult to understand when a 'StrictSVar'
 -- is updated and when it is not.
-swapMVar :: (MonadSTM m, HasCallStack) => StrictMVar m a -> a -> m a
-swapMVar StrictMVar { tmvar, tvar, invariant } !a = do
+swapSVar :: (MonadSTM m, HasCallStack) => StrictSVar m a -> a -> m a
+swapSVar StrictSVar { tmvar, tvar, invariant } !a = do
     oldValue <- atomically $ do
         oldValue <- Lazy.swapTMVar tmvar a
         Lazy.writeTVar tvar a
         return oldValue
     checkInvariant (invariant a) $ return oldValue
 
-isEmptyMVar :: MonadSTM m => StrictMVar m a -> m Bool
-isEmptyMVar StrictMVar { tmvar } = atomically $ Lazy.isEmptyTMVar tmvar
+isEmptySVar :: MonadSTM m => StrictSVar m a -> m Bool
+isEmptySVar StrictSVar { tmvar } = atomically $ Lazy.isEmptyTMVar tmvar
 
-updateMVar :: (MonadSTM m, HasCallStack) => StrictMVar m a -> (a -> (a, b)) -> m b
-updateMVar StrictMVar { tmvar, tvar, invariant } f = do
+updateSVar :: (MonadSTM m, HasCallStack) => StrictSVar m a -> (a -> (a, b)) -> m b
+updateSVar StrictSVar { tmvar, tvar, invariant } f = do
     -- it's not unreasonable to assume that forcing !(!a', b) inside the
     -- atomically block will force the new value before putting it into the
-    -- MVar, but although the value in the tuple is forced, there's actually
+    -- SVar, but although the value in the tuple is forced, there's actually
     -- a thin closure constructed that just points to the forced value which
     -- is what GHC returns in the constructed tuple (so it is actually a thunk,
     -- albeit a trivial one!). in order to ensure that we're forcing the value
-    -- inside the MVar before calling checkInvariant, we need an additional
+    -- inside the SVar before calling checkInvariant, we need an additional
     -- bang outside the atomically block, which will correctly force a' before
     -- checkInvariant looks to see if it's been evaluated or not. without this
-    -- change, it's possible to put a lazy value inside a StrictMVar (though
+    -- change, it's possible to put a lazy value inside a StrictSVar (though
     -- it's unlikely to occur in production environments because this
     -- intermediate unforced closure is optimized away at -O1 and above).
     (!a', b) <- atomically $ do
@@ -191,30 +189,30 @@ updateMVar StrictMVar { tmvar, tvar, invariant } f = do
         return (a', b)
     checkInvariant (invariant a') $ return b
 
-updateMVar_ :: (MonadSTM m, HasCallStack) => StrictMVar m a -> (a -> a) -> m ()
-updateMVar_ var f = updateMVar var ((, ()) . f)
+updateSVar_ :: (MonadSTM m, HasCallStack) => StrictSVar m a -> (a -> a) -> m ()
+updateSVar_ var f = updateSVar var ((, ()) . f)
 
-modifyMVar :: (MonadSTM m, MonadCatch m, HasCallStack)
-           => StrictMVar m a -> (a -> m (a, b)) -> m b
-modifyMVar var action =
-    snd . fst <$> generalBracket (takeMVar var) putBack action
+modifySVar :: (MonadSTM m, MonadCatch m, HasCallStack)
+           => StrictSVar m a -> (a -> m (a, b)) -> m b
+modifySVar var action =
+    snd . fst <$> generalBracket (takeSVar var) putBack action
   where
     putBack a ec = case ec of
-      ExitCaseSuccess (a', _) -> putMVar var a'
-      ExitCaseException _ex   -> putMVar var a
-      ExitCaseAbort           -> putMVar var a
+      ExitCaseSuccess (a', _) -> putSVar var a'
+      ExitCaseException _ex   -> putSVar var a
+      ExitCaseAbort           -> putSVar var a
 
-modifyMVar_ :: (MonadSTM m, MonadCatch m, HasCallStack)
-            => StrictMVar m a -> (a -> m a) -> m ()
-modifyMVar_ var action = modifyMVar var (fmap (, ()) . action)
+modifySVar_ :: (MonadSTM m, MonadCatch m, HasCallStack)
+            => StrictSVar m a -> (a -> m a) -> m ()
+modifySVar_ var action = modifySVar var (fmap (, ()) . action)
 
 {-------------------------------------------------------------------------------
   NoThunks
 -------------------------------------------------------------------------------}
 
-instance NoThunks a => NoThunks (StrictMVar IO a) where
-  showTypeOf _ = "StrictMVar IO"
-  wNoThunks ctxt StrictMVar { tvar } = do
+instance NoThunks a => NoThunks (StrictSVar IO a) where
+  showTypeOf _ = "StrictSVar IO"
+  wNoThunks ctxt StrictSVar { tvar } = do
       -- We can't use @atomically $ readTVar ..@ here, as that will lead to a
       -- "Control.Concurrent.STM.atomically was nested" exception.
       a <- readTVarIO tvar
