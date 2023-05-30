@@ -168,6 +168,17 @@ isEmptyMVar StrictMVar { tmvar } = atomically $ Lazy.isEmptyTMVar tmvar
 
 updateMVar :: (MonadSTM m, HasCallStack) => StrictMVar m a -> (a -> (a, b)) -> m b
 updateMVar StrictMVar { tmvar, tvar, invariant } f = do
+    -- it's not unreasonable to assume that forcing !(!a', b) inside the
+    -- atomically block will force the new value before putting it into the
+    -- MVar, but there's actually an additional closure constructed (with a
+    -- dependency on a') that will only force a' when *it's* evaluated! in
+    -- order to ensure that we're forcing the value inside the MVar before
+    -- calling checkInvariant, we need an additional bang outside the
+    -- atomically block, which will correctly force a' before checkInvariant
+    -- looks to see if it's been evaluated or not. without this change, it's
+    -- possible to put a lazy value inside a StrictMVar (though it's unlikely
+    -- to occur in production environments because this intermediate unforced
+    -- closure is optimized away at -O1 and above)
     (!a', b) <- atomically $ do
         a <- Lazy.takeTMVar tmvar
         let !(!a', b) = f a
