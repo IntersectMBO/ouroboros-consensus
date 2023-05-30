@@ -16,7 +16,7 @@ in
 {
   hsPkgs = haskell-nix.cabalProject {
     src = ./..;
-    compiler-nix-name = "ghc927";
+    compiler-nix-name = "ghc928";
     inputMap = {
       "https://input-output-hk.github.io/cardano-haskell-packages" = inputs.CHaP;
     };
