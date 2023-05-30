@@ -1,6 +1,5 @@
 module Main (main) where
 
-import           Cardano.Crypto.Init (cryptoInit)
 import qualified Test.Consensus.Shelley.Coherence (tests)
 import qualified Test.Consensus.Shelley.Golden (tests)
 import qualified Test.Consensus.Shelley.Serialisation (tests)
@@ -10,7 +9,7 @@ import           Test.Util.TestEnv (defaultMainWithTestEnv,
                      defaultTestEnvConfig)
 
 main :: IO ()
-main = cryptoInit >> defaultMainWithTestEnv defaultTestEnvConfig tests
+main = defaultMainWithTestEnv defaultTestEnvConfig tests
 
 tests :: TestTree
 tests =
