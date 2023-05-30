@@ -7,6 +7,7 @@ import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
 import           Test.Tasty
 import           Test.Tasty.HUnit
+import           Test.Util.TestEnv
 
 
 nodeConfig, chainDB :: FilePath
@@ -97,4 +98,4 @@ tests =
       ]
 
 main :: IO ()
-main = defaultMain tests
+main = defaultMainWithTestEnv defaultTestEnvConfig tests
