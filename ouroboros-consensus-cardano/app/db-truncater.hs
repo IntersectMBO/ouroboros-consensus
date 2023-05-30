@@ -1,5 +1,6 @@
 module Main (main) where
 
+import           Cardano.Crypto.Init (cryptoInit)
 import           Cardano.Tools.DBAnalyser.Types (BlockType (..))
 import           Cardano.Tools.DBTruncater.Run
 import           Cardano.Tools.DBTruncater.Types
@@ -11,6 +12,7 @@ import           Prelude hiding (truncate)
 
 main :: IO ()
 main = do
+  cryptoInit
   config <- getCommandLineConfig
   case blockType config of
     CardanoBlock args -> truncate config args
