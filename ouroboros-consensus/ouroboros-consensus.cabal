@@ -52,7 +52,7 @@ common common-bench
     -Wincomplete-record-updates -Wpartial-fields -Widentities
     -Wredundant-constraints -Wmissing-export-lists -Wunused-packages
     -Wno-unticked-promoted-constructors -rtsopts -with-rtsopts=-A32m
-
+    -threaded
   -- We use this option to avoid skewed results due to changes in cache-line
   -- alignment. See
   -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline

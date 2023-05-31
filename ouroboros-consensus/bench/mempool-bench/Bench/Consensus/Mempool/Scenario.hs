@@ -21,7 +21,7 @@ module Bench.Consensus.Mempool.Scenario (
   , theChangelogHasLinkedTxs
   ) where
 
-import           Bench.Consensus.Mempool (MempoolCmd, mkSimpleTryAdd)
+import           Bench.Consensus.Mempool (MempoolCmd (..))
 import           Bench.Consensus.Mempool.Params (InitialMempoolAndModelParams,
                      ledgerStateFromTokens, mkParams, testBlocksFromTxs)
 import           Bench.Consensus.Mempool.TestBlock (GenTx (TestBlockGenTx),
@@ -173,13 +173,13 @@ theChangelogHasLinkedTxs n = do
 theCandidateTransactionsConsume :: MonadState St m => [Tx] -> m ()
 theCandidateTransactionsConsume txs = do
     mTxs <- mapM consumeOneAndProduceOne txs
-    putMempoolCommands $ fmap (mkSimpleTryAdd . TestBlockGenTx) mTxs
+    putMempoolCommands $ fmap (AddTx . TestBlockGenTx) mTxs
 
 -- | Creates @n@ transactions that consume nothing and each produce 1 'Token'.
 theCandidateTransactionsHave :: MonadState St m => Int -> m ()
 theCandidateTransactionsHave n = do
     mTxs <- replicateM n consumeNoneAndProduceOne
-    putMempoolCommands $ fmap (mkSimpleTryAdd . TestBlockGenTx) mTxs
+    putMempoolCommands $ fmap (AddTx . TestBlockGenTx) mTxs
 
 -- | @'theCandidateTransactionsHaveLinkedTxs' prevtx n@ creates @n@
 -- transactions, where each transaction consumes the tokens of its predecessor,
@@ -192,7 +192,7 @@ theCandidateTransactionsHaveLinkedTxs ::
   => Maybe Tx -> Int -> m ()
 theCandidateTransactionsHaveLinkedTxs prevtx n = do
     mTxs <- linkedTxs prevtx n
-    putMempoolCommands $ fmap (mkSimpleTryAdd . TestBlockGenTx) mTxs
+    putMempoolCommands $ fmap (AddTx . TestBlockGenTx) mTxs
 
 {-------------------------------------------------------------------------------
   Scenario builder: utilities

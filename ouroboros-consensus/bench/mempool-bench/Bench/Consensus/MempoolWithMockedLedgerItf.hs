@@ -1,21 +1,25 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns   #-}
 
 -- | Mempool with a mocked ledger interface
 module Bench.Consensus.MempoolWithMockedLedgerItf (
     InitialMempoolAndModelParams (..)
     -- * Mempool with a mocked LedgerDB interface
   , MempoolWithMockedLedgerItf (getMempool)
-  , getTxs
   , openMempoolWithMockedLedgerItf
+    -- * Mempool API functions
+  , addTx
+  , getTxs
+  , removeTxs
   ) where
 
 import           Bench.Consensus.Mempool.Params
-                     (InitialMempoolAndModelParams (..))
 import           Control.Concurrent.Class.MonadSTM.Strict
                      (MonadSTM (atomically), newTVarIO)
 import           Control.DeepSeq (NFData (rnf))
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Foldable (foldMap')
+import qualified Data.List.NonEmpty as NE
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsProtocol as Ledger
@@ -23,6 +27,8 @@ import qualified Ouroboros.Consensus.Ledger.Tables as Ledger
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
 import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
+import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf,
+                     MempoolAddTxResult)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
@@ -115,6 +121,19 @@ openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
       } = params
 
     lcfg = ledgerDbCfg ldbcfg
+
+addTx ::
+     MempoolWithMockedLedgerItf m blk
+  -> AddTxOnBehalfOf
+  -> Ledger.GenTx blk
+  -> m (MempoolAddTxResult blk)
+addTx = Mempool.addTx . getMempool
+
+removeTxs ::
+     MempoolWithMockedLedgerItf m blk
+  -> [Ledger.GenTxId blk]
+  -> m ()
+removeTxs m = Mempool.removeTxs (getMempool m) .  NE.fromList
 
 getTxs ::
      (Ledger.LedgerSupportsMempool blk)
