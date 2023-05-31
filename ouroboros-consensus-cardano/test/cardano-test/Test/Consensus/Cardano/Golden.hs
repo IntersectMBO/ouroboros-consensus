@@ -46,4 +46,5 @@ instance CardanoHardForkConstraints c
     CardanoNodeToClientVersion9  -> "CardanoNodeToClientVersion9"
     CardanoNodeToClientVersion10 -> "CardanoNodeToClientVersion10"
     CardanoNodeToClientVersion11 -> "CardanoNodeToClientVersion11"
+    CardanoNodeToClientVersion12 -> "CardanoNodeToClientVersion12"
     _                            -> error $ "Unknown version: " <> show blockVersion

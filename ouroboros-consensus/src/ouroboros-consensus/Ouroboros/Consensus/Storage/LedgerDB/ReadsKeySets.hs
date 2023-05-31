@@ -24,7 +24,6 @@ import           Cardano.Slotting.Slot
 import           Data.Map.Diff.Strict (applyDiffForKeys)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
@@ -118,11 +117,11 @@ newtype PointNotFound blk = PointNotFound (Point blk) deriving (Eq, Show)
 -- unlucky and scheduling of events happened to move the backing store. Reading
 -- again the LedgerDB and calling this function must eventually succeed.
 getLedgerTablesFor ::
-     (Monad m, HasLedgerTables (LedgerState blk), IsLedger (LedgerState blk))
-  => DbChangelog' blk
-  -> LedgerTables (ExtLedgerState blk) KeysMK
-  -> KeySetsReader m (ExtLedgerState blk)
-  -> m (Either RewindReadFwdError (LedgerTables (ExtLedgerState blk) ValuesMK))
+     (Monad m, HasLedgerTables l, IsLedger l)
+  => DbChangelog l
+  -> LedgerTables l KeysMK
+  -> KeySetsReader m l
+  -> m (Either RewindReadFwdError (LedgerTables l ValuesMK))
 getLedgerTablesFor db keys ksRead = do
   let aks = rewindTableKeySets db keys
   urs <- ksRead aks

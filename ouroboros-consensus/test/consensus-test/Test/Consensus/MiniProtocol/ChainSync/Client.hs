@@ -36,6 +36,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import qualified Data.Set as Set
 import           Data.Typeable
+import           Network.TypedProtocol.Channel
+import           Network.TypedProtocol.Driver.Simple
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
@@ -60,9 +62,7 @@ import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (getTipPoint)
-import           Ouroboros.Network.Channel
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
-import           Ouroboros.Network.Driver
 import           Ouroboros.Network.Mock.Chain (Chain (Genesis))
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.Mock.ProducerState (chainState,
@@ -372,7 +372,7 @@ runChainSync securityParam (ClientUpdates clientUpdates)
            maxBound $ \varCandidate -> do
              atomically $ modifyTVar varFinalCandidates $
                Map.insert serverId varCandidate
-             (result, _) <-
+             result <-
                runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
                  chainSyncClientPeerPipelined $ client varCandidate
              atomically $ writeTVar varClientResult (Just (Right result))

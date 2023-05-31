@@ -12,14 +12,13 @@ module Bench.Consensus.MempoolWithMockedLedgerItf (
 import           Bench.Consensus.Mempool.Params
                      (InitialMempoolAndModelParams (..))
 import           Control.Concurrent.Class.MonadSTM.Strict
-                     (MonadSTM (atomically), newTVar, newTVarIO)
+                     (MonadSTM (atomically), newTVarIO)
 import           Control.DeepSeq (NFData (rnf))
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Foldable (foldMap')
-import           Ouroboros.Consensus.HeaderValidation as Header
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
-import           Ouroboros.Consensus.Ledger.Extended (LedgerTables (..))
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
+import qualified Ouroboros.Consensus.Ledger.SupportsProtocol as Ledger
 import qualified Ouroboros.Consensus.Ledger.Tables as Ledger
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
 import           Ouroboros.Consensus.Mempool (Mempool)
@@ -59,8 +58,8 @@ instance NFData (MempoolWithMockedLedgerItf m blk) where
 openMempoolWithMockedLedgerItf ::
      ( Ledger.LedgerSupportsMempool blk
      , Ledger.HasTxId (Ledger.GenTx blk)
-     , Header.ValidateEnvelope blk
      , Ledger.CanSerializeLedgerTables (LedgerState blk)
+     , Ledger.LedgerSupportsProtocol blk
      )
   => Mempool.MempoolCapacityBytesOverride
   -> Tracer IO (Mempool.TraceEventMempool blk)
@@ -92,7 +91,7 @@ openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
             Mempool.getCurrentLedgerState = pure $ current ldb
           , Mempool.getLedgerTablesAtFor = \pt txs -> do
               let keys = foldMap' Ledger.getTransactionKeySets txs
-              fmap unExtLedgerStateTables <$> Query.getLedgerTablesAtFor pt (ExtLedgerStateTables keys) dbVar lbs
+              Query.getLedgerTablesAtFor pt keys dbVar lbs
           }
 
     mempool <- Mempool.openMempoolWithoutSyncThread

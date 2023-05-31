@@ -28,12 +28,6 @@ module Ouroboros.Consensus.Mempool.API (
   , TicketNo
   , TxSizeInBytes
   , zeroTicketNo
-    -- * Deprecated re-exports
-  , MempoolCapacityBytes
-  , MempoolCapacityBytesOverride
-  , MempoolSize
-  , TraceEventMempool
-  , computeMempoolCapacity
   ) where
 
 import qualified Data.List.NonEmpty as NE
@@ -376,27 +370,3 @@ data MempoolSnapshot blk = MempoolSnapshot {
     -- transactions
   , snapshotState       :: TickedLedgerState blk DiffMK
   }
-
-{-------------------------------------------------------------------------------
-  Deprecations
--------------------------------------------------------------------------------}
-
-{-# DEPRECATED MempoolCapacityBytes "Use Ouroboros.Consensus.Mempool (MempoolCapacityBytes)" #-}
-type MempoolCapacityBytes = Cap.MempoolCapacityBytes
-
-{-# DEPRECATED MempoolSize "Use Ouroboros.Consensus.Mempool (MempoolSize)" #-}
-type MempoolSize = Cap.MempoolSize
-
-{-# DEPRECATED MempoolCapacityBytesOverride "Use Ouroboros.Consensus.Mempool (MempoolCapacityBytesOverride)" #-}
-type MempoolCapacityBytesOverride = Cap.MempoolCapacityBytesOverride
-
-{-# DEPRECATED computeMempoolCapacity "Use Ouroboros.Consensus.Mempool (computeMempoolCapacity)" #-}
-computeMempoolCapacity
-  :: LedgerSupportsMempool blk
-  => TickedLedgerState blk mk
-  -> MempoolCapacityBytesOverride
-  -> MempoolCapacityBytes
-computeMempoolCapacity = Cap.computeMempoolCapacity
-
-{-# DEPRECATED TraceEventMempool "Use Ouroboros.Consensus.Mempool (TraceEventMempool)" #-}
-data TraceEventMempool

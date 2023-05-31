@@ -186,8 +186,8 @@ instance ShelleyCompatible proto era
   decodeNodeToClient _ _ = decodeShelleyQuery
 
 instance ShelleyCompatible proto era => SerialiseResult (ShelleyBlock proto era) (BlockQuery (ShelleyBlock proto era)) where
-  encodeResult _ _ = encodeShelleyResult
-  decodeResult _ _ = decodeShelleyResult
+  encodeResult _ = encodeShelleyResult
+  decodeResult _ = decodeShelleyResult
 
 instance ShelleyCompatible proto era  => SerialiseNodeToClient (ShelleyBlock proto era) SlotNo where
   encodeNodeToClient _ _ = toCBOR

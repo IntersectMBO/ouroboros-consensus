@@ -404,7 +404,7 @@ instance CanHardFork '[BlockA, BlockB] where
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons ledgerState_AtoB   PNil
       , translateChainDepState = PCons chainDepState_AtoB PNil
-      , translateLedgerView    = PCons ledgerView_AtoB    PNil
+      , crossEraForecast       = PCons forecast_AtoB      PNil
       }
   hardForkChainSel  = Tails.mk2 CompareBlockNo
   hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
@@ -465,13 +465,13 @@ chainDepState_AtoB ::
 chainDepState_AtoB = InPairs.ignoringBoth $ Translate $ \_ _ ->
     WrapChainDepState ()
 
-ledgerView_AtoB ::
+forecast_AtoB ::
       RequiringBoth
         WrapLedgerConfig
-        (TranslateForecast LedgerState WrapLedgerView)
+        (CrossEraForecaster LedgerState WrapLedgerView)
         BlockA
         BlockB
-ledgerView_AtoB = InPairs.ignoringBoth $ TranslateForecast $ \_ _ _ -> return $
+forecast_AtoB = InPairs.ignoringBoth $ CrossEraForecaster $ \_ _ _ -> return $
     WrapTickedLedgerView TickedTrivial
 
 injectTx_AtoB ::

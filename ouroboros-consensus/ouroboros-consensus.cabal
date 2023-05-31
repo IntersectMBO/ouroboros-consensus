@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            ouroboros-consensus
-version:         0.6.0.0
+version:         0.7.0.0
 synopsis:        Consensus layer for the Ouroboros blockchain protocol
 description:     Consensus layer for the Ouroboros blockchain protocol.
 license:         Apache-2.0
@@ -139,12 +139,6 @@ library
     Ouroboros.Consensus.HardFork.Combinator.State.Lift
     Ouroboros.Consensus.HardFork.Combinator.State.Types
     Ouroboros.Consensus.HardFork.Combinator.Translation
-    Ouroboros.Consensus.HardFork.Combinator.Util.DerivingVia
-    Ouroboros.Consensus.HardFork.Combinator.Util.Functors
-    Ouroboros.Consensus.HardFork.Combinator.Util.InPairs
-    Ouroboros.Consensus.HardFork.Combinator.Util.Match
-    Ouroboros.Consensus.HardFork.Combinator.Util.Tails
-    Ouroboros.Consensus.HardFork.Combinator.Util.Telescope
     Ouroboros.Consensus.HardFork.History
     Ouroboros.Consensus.HardFork.History.Caching
     Ouroboros.Consensus.HardFork.History.EpochInfo
@@ -172,13 +166,9 @@ library
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
-    Ouroboros.Consensus.Mempool.Impl
     Ouroboros.Consensus.Mempool.Impl.Common
-    Ouroboros.Consensus.Mempool.Impl.Pure
-    Ouroboros.Consensus.Mempool.Impl.Types
     Ouroboros.Consensus.Mempool.Init
     Ouroboros.Consensus.Mempool.Query
-    Ouroboros.Consensus.Mempool.TxLimits
     Ouroboros.Consensus.Mempool.TxSeq
     Ouroboros.Consensus.Mempool.Update
     Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface
@@ -218,11 +208,6 @@ library
     Ouroboros.Consensus.Storage.ChainDB.Impl.Types
     Ouroboros.Consensus.Storage.ChainDB.Init
     Ouroboros.Consensus.Storage.Common
-    Ouroboros.Consensus.Storage.FS.API
-    Ouroboros.Consensus.Storage.FS.API.Types
-    Ouroboros.Consensus.Storage.FS.CRC
-    Ouroboros.Consensus.Storage.FS.Handle
-    Ouroboros.Consensus.Storage.FS.IO
     Ouroboros.Consensus.Storage.ImmutableDB
     Ouroboros.Consensus.Storage.ImmutableDB.API
     Ouroboros.Consensus.Storage.ImmutableDB.Chunks
@@ -240,7 +225,6 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
-    Ouroboros.Consensus.Storage.IO
     Ouroboros.Consensus.Storage.LedgerDB
     Ouroboros.Consensus.Storage.LedgerDB.API
     Ouroboros.Consensus.Storage.LedgerDB.Args
@@ -281,7 +265,6 @@ library
     Ouroboros.Consensus.Util.CallStack
     Ouroboros.Consensus.Util.CBOR
     Ouroboros.Consensus.Util.Condense
-    Ouroboros.Consensus.Util.Counting
     Ouroboros.Consensus.Util.DepPair
     Ouroboros.Consensus.Util.EarlyExit
     Ouroboros.Consensus.Util.Enclose
@@ -291,12 +274,10 @@ library
     Ouroboros.Consensus.Util.MonadSTM.NormalForm
     Ouroboros.Consensus.Util.MonadSTM.RAWLock
     Ouroboros.Consensus.Util.MonadSTM.StrictMVar
-    Ouroboros.Consensus.Util.OptNP
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.ResourceRegistry
     Ouroboros.Consensus.Util.Singletons
-    Ouroboros.Consensus.Util.SOP
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.TentativeState
     Ouroboros.Consensus.Util.Time
@@ -346,7 +327,6 @@ library
     , bytestring                   >=0.10     && <0.12
     , cardano-binary
     , cardano-crypto-class
-    , cardano-ledger-binary
     , cardano-lmdb                 >=0.3.0.0
     , cardano-lmdb-simple          >=0.6.0.0
     , cardano-prelude
@@ -366,8 +346,7 @@ library
     , monoid-subclasses
     , mtl                          >=2.2      && <2.3
     , nothunks                     >=0.1.2    && <0.2
-    , ouroboros-network-api        ^>=0.3
-    , ouroboros-network-framework  ^>=0.5
+    , ouroboros-network-api        ^>=0.5
     , ouroboros-network-mock       ^>=0.1.0.1
     , ouroboros-network-protocols  ^>=0.5
     , psqueues                     >=0.2.3    && <0.3
@@ -391,19 +370,12 @@ library consensus-testlib
   visibility:      public
   exposed-modules:
     Test.LedgerTables
-    Test.Util.Blob
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
     Test.Util.ChunkInfo
-    Test.Util.Classify
     Test.Util.Corruption
     Test.Util.FileLock
-    Test.Util.FS.Sim.Error
-    Test.Util.FS.Sim.FsTree
-    Test.Util.FS.Sim.MockFS
-    Test.Util.FS.Sim.Pure
-    Test.Util.FS.Sim.STM
     Test.Util.HardFork.Future
     Test.Util.HardFork.OracularClock
     Test.Util.InvertedMap
@@ -592,7 +564,6 @@ test-suite consensus-test
     , ouroboros-consensus
     , ouroboros-network
     , ouroboros-network-api
-    , ouroboros-network-framework
     , ouroboros-network-mock
     , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
     , QuickCheck
@@ -608,6 +579,7 @@ test-suite consensus-test
     , transformers
     , tree-diff
     , typed-protocols
+    , typed-protocols-examples
 
 test-suite infra-test
   import:         common-test

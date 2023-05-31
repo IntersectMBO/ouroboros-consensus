@@ -32,10 +32,9 @@ import           Control.Monad.State.Strict (MonadState, State, StateT (StateT),
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables (ValuesMK)
-import           Ouroboros.Consensus.Storage.LedgerDB.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
                      (BackingStoreSelector (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
-                     (LedgerDbCfg (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.Config (LedgerDbCfg (..))
 
 {-------------------------------------------------------------------------------
   Scenario

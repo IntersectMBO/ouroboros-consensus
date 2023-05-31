@@ -48,11 +48,11 @@ import           Ouroboros.Network.TxSubmission.Outbound
 
 data Tracers' remotePeer localPeer blk f = Tracers
   { chainSyncClientTracer         :: f (TraceLabelPeer remotePeer (TraceChainSyncClientEvent blk))
-  , chainSyncServerHeaderTracer   :: f (TraceChainSyncServerEvent blk)
+  , chainSyncServerHeaderTracer   :: f (TraceLabelPeer remotePeer (TraceChainSyncServerEvent blk))
   , chainSyncServerBlockTracer    :: f (TraceChainSyncServerEvent blk)
   , blockFetchDecisionTracer      :: f [TraceLabelPeer remotePeer (FetchDecision [Point (Header blk)])]
   , blockFetchClientTracer        :: f (TraceLabelPeer remotePeer (TraceFetchClientState (Header blk)))
-  , blockFetchServerTracer        :: f (TraceBlockFetchServerEvent blk)
+  , blockFetchServerTracer        :: f (TraceLabelPeer remotePeer (TraceBlockFetchServerEvent blk))
   , txInboundTracer               :: f (TraceLabelPeer remotePeer (TraceTxSubmissionInbound  (GenTxId blk) (GenTx blk)))
   , txOutboundTracer              :: f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
@@ -61,7 +61,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockchainTimeTracer          :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer          :: f (TraceLabelCreds (ForgeStateInfo blk))
   , keepAliveClientTracer         :: f (TraceKeepAliveClient remotePeer)
-  , consensusStartupErrorTracer   :: f SomeException
+  , consensusErrorTracer          :: f SomeException
   }
 
 instance (forall a. Semigroup (f a))
@@ -81,7 +81,7 @@ instance (forall a. Semigroup (f a))
       , blockchainTimeTracer          = f blockchainTimeTracer
       , forgeStateInfoTracer          = f forgeStateInfoTracer
       , keepAliveClientTracer         = f keepAliveClientTracer
-      , consensusStartupErrorTracer   = f consensusStartupErrorTracer
+      , consensusErrorTracer          = f consensusErrorTracer
       }
     where
       f :: forall a. Semigroup a
@@ -109,7 +109,7 @@ nullTracers = Tracers
     , blockchainTimeTracer          = nullTracer
     , forgeStateInfoTracer          = nullTracer
     , keepAliveClientTracer         = nullTracer
-    , consensusStartupErrorTracer            = nullTracer
+    , consensusErrorTracer          = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -140,7 +140,7 @@ showTracers tr = Tracers
     , blockchainTimeTracer          = showTracing tr
     , forgeStateInfoTracer          = showTracing tr
     , keepAliveClientTracer         = showTracing tr
-    , consensusStartupErrorTracer   = showTracing tr
+    , consensusErrorTracer          = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

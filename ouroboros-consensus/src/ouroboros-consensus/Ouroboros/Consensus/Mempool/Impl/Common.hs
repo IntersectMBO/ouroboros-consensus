@@ -32,8 +32,6 @@ module Ouroboros.Consensus.Mempool.Impl.Common (
   , validationResultFromIS
     -- * Ticking a ledger state
   , tickLedgerState
-    -- * Exported for deprecated modules
-  , initInternalState
   ) where
 
 import           Control.Concurrent.Class.MonadMVar (MVar, newMVar)
@@ -55,9 +53,7 @@ import           Ouroboros.Consensus.Ledger.Extended (LedgerTables (..),
                      ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Mempool.API hiding (MempoolCapacityBytes,
-                     MempoolCapacityBytesOverride, MempoolSize,
-                     TraceEventMempool, computeMempoolCapacity)
+import           Ouroboros.Consensus.Mempool.API
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq

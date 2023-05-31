@@ -18,7 +18,7 @@ data NodeToNodeInitiatorResult =
 
 
 returnPolicy :: ReturnPolicy NodeToNodeInitiatorResult
-returnPolicy NoInitiatorResult = ReconnectDelay 0
+returnPolicy NoInitiatorResult = ReconnectDelay 10
 returnPolicy (ChainSyncInitiatorResult result) = case result of
   -- TODO: it would be nice to have additional context to predict when we will
   -- be ready to reconnect.
@@ -28,4 +28,4 @@ returnPolicy (ChainSyncInitiatorResult result) = case result of
                    _ _ourTip _theirTip -> ReconnectDelay 180
   -- the outbound-governor asked for hot to warm demotion; it's up to the
   -- governor to decide to promote the peer to hot.
-  AskedToTerminate                     -> ReconnectDelay 0
+  AskedToTerminate                     -> ReconnectDelay 10

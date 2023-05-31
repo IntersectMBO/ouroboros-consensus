@@ -50,7 +50,7 @@ function this_merge_adds_fragment {
 function files-changed {
     if [[ -n $CI ]]
     then diff -x .git -x README.md -x changelog.d -x scripts -r $TARGET/$1 $BASE/$1
-    else git diff $TARGET HEAD --name-only | grep -v README | grep -v changelog.d | grep $1 | wc -l
+    else git diff $TARGET HEAD --name-only | grep -v README | grep -v changelog.d | grep "^$1/" | wc -l
     fi
 }
 

@@ -19,7 +19,7 @@ past design process, troubleshooters debug changes in behavior, downstream
 developers understand recent changes and their context, and so on. In these kind
 of scenarios, commit messages are often the easiest documentation to read first.
 Write commit messages in the imperative, as per [these
-guidelines][git-contributing-to-a-project].
+guidelines][contributing-to-a-project].
 
 _Small and organized commits_: The commits themselves, beyond just their
 messages, also contribute to the story in their own way. Prefer small commits
@@ -47,9 +47,7 @@ If you'd like to opt-in to that or similar, add a `cabal.project.local` file.
     how to do that. We don't have any strict guidelines beyond appreciating the
     value of a good commit message and appreciating their permanence.
 
-  * We only merge via GitHub PR. Moreover, we favor the command `bors r+` or the
-    equivalent `bors merge` as the final step on a PR, when the `bors` bot is
-    behaving. Usually it's the PR author that issue that command.
+  * We only merge via GitHub PR. Moreover, we make use of github [merge queues][merge-queues] for our PRs.
 
   * The tip of the `master` branch is always the latest and greatest we have to
     offer, closer to our current primary goals. As mentioned above, it should
@@ -88,3 +86,4 @@ If you'd like to opt-in to that or similar, add a `cabal.project.local` file.
     `CAD`).
 
 [contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines
+[merge-queues]: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue

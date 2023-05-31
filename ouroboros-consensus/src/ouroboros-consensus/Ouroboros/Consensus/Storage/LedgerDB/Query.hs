@@ -37,15 +37,18 @@ getCurrent = readTVar . ldbChangelog
 getLedgerTablesAtFor ::
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , StandardHash (ExtLedgerState blk)
+  , HeaderHash blk ~ HeaderHash l
+  , IsLedger l
+  , StandardHash l
+  , HasTickedLedgerTables l
   )
   => Point blk
-  -> LedgerTables (ExtLedgerState blk) KeysMK
-  -> StrictTVar m (DbChangelog' blk)
-  -> LedgerBackingStore m (ExtLedgerState blk)
+  -> LedgerTables l KeysMK
+  -> StrictTVar m (DbChangelog l)
+  -> LedgerBackingStore m l
   -> m (Either
         (PointNotFound blk)
-        (LedgerTables (ExtLedgerState blk) ValuesMK))
+        (LedgerTables l ValuesMK))
 getLedgerTablesAtFor pt keys dbvar bstore = do
   lgrDb <- readTVarIO dbvar
   case rollback pt lgrDb of

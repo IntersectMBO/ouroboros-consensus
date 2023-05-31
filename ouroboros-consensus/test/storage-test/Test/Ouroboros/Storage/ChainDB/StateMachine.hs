@@ -21,9 +21,6 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- Remove this when @TraceLedgerEvent@ is gone
-{-# OPTIONS_GHC -Wno-deprecations #-}
-
 -- | Main tests for the chain DB.
 --
 -- These are the main tests for the chain DB. Commands include
