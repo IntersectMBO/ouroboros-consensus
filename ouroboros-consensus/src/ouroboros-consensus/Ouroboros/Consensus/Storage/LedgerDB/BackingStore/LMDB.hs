@@ -46,12 +46,13 @@ import qualified Database.LMDB.Simple.Internal as LMDB.Internal
 import qualified Database.LMDB.Simple.TransactionHandle as TrH
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Ledger.Tables.H2K ((:..:) (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as HD
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Bridge as Bridge
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Status
                      (Status (..), StatusLock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Status as Status
-import           Ouroboros.Consensus.Util (foldlM', unComp2, (:..:) (..))
+import           Ouroboros.Consensus.Util (foldlM')
 import           Ouroboros.Consensus.Util.IOLike (Exception (..), IOLike,
                      MonadCatch (..), MonadThrow (..), bracket)
 import qualified System.FS.API as FS
