@@ -8,6 +8,7 @@ module Test.Util.TestEnv (
   , defaultTestEnvConfig
   ) where
 
+import           Cardano.Crypto.Init (cryptoInit)
 import           Data.Proxy (Proxy (..))
 import           Options.Applicative (metavar)
 import           Test.Tasty
@@ -17,9 +18,10 @@ import           Test.Tasty.QuickCheck
 
 -- | 'defaultMain' extended with 'iohkTestEnvIngredient'
 defaultMainWithTestEnv :: TestEnvConfig -> TestTree -> IO ()
-defaultMainWithTestEnv testConfig testTree =
-    defaultMainWithIngredients (testEnvIngredient : defaultIngredients) $ withTestEnv testConfig testTree
-
+defaultMainWithTestEnv testConfig testTree = do
+    cryptoInit
+    defaultMainWithIngredients (testEnvIngredient : defaultIngredients) $
+      withTestEnv testConfig testTree
     where
       testEnvIngredient :: Ingredient
       testEnvIngredient = includingOptions [Option (Proxy :: Proxy TestEnv)]
