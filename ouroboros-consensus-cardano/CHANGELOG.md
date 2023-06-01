@@ -98,3 +98,11 @@
   functions now expect a tuple of the `AdditionalGenesisConfig` and the
   `TranslationContext` instead of just the `TranslationContext`. For all
   Shelley-based eras before Conway, those had been equal types.
+
+---
+
+### Archaeological remark
+
+Before following a more structured release process, we tracked most significant
+changes affecting downstream users in the
+[interface-CHANGELOG.md](https://github.com/input-output-hk/ouroboros-consensus/blob/8d8329e4dd41404439b7cd30629fcce427679212/docs/website/docs/interface-CHANGELOG.md).
