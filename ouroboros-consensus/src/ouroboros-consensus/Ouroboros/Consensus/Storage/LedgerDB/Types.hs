@@ -5,6 +5,8 @@
 {-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE TypeApplications    #-}
 
+-- This module exists to avoid a cyclic dependency, but it is morally related to
+-- 'Ouroboros.Consensus.Storage.LedgerDB.Impl'.
 module Ouroboros.Consensus.Storage.LedgerDB.Types (
     LedgerDBHandle (..)
   , LedgerDBState (..)
@@ -24,7 +26,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Types (
 import           Data.Set (Set)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory
@@ -39,7 +40,7 @@ data LedgerDBState m blk = LedgerDBState {
    ldbChangelog    :: !(StrictTVar m (DbChangelog' blk))
    -- ^ INVARIANT: the tip of the 'LedgerDB' is always in sync with the tip of
    -- the current chain of the ChainDB.
- , ldbBackingStore :: !(LedgerBackingStore m (ExtLedgerState blk))
+ , ldbBackingStore :: !(LedgerBackingStore' m blk)
    -- ^ Handle to the ledger's backing store, containing the parts that grow too
    -- big for in-memory residency
  , ldbLock         :: !(LedgerDBLock m)

@@ -33,7 +33,6 @@ module Ouroboros.Consensus.Mempool.API (
 import qualified Data.List.NonEmpty as NE
 import           Ouroboros.Consensus.Block (ChainHash, SlotNo)
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import           Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
@@ -201,7 +200,7 @@ data Mempool m blk = Mempool {
         -> TickedLedgerState blk DiffMK
                      -- ^ The ledger state ticked to the given slot number
         -> DbChangelog' blk
-        -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+        -> LedgerBackingStoreValueHandle' m blk
         -> m (MempoolSnapshot blk)
 
       -- | Get the mempool's capacity in bytes.

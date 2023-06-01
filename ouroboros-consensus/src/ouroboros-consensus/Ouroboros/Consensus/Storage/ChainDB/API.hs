@@ -75,7 +75,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import           Ouroboros.Consensus.Storage.Common
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (LedgerBackingStoreValueHandle)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
@@ -168,17 +167,17 @@ data ChainDB m blk = ChainDB {
       -- | Return the LedgerDB containing the last @k@ ledger states.
     , getLedgerDB        :: STM m (LedgerDB.DbChangelog' blk)
 
-     --  -- | Acquire a value handle and ledger DB, both anchored at the same slot
-    --   -- and truncated to the specified point if the provided point exists on
-    --   -- the db.
-    --   --
-    --   -- Note that the ValueHandle should be closed by the caller of this
-    --   -- function.
+      -- | Acquire a value handle and ledger DB, both anchored at the same slot
+      -- and truncated to the specified point if the provided point exists on
+      -- the db.
+      --
+      -- Note that the ValueHandle should be closed by the caller of this
+      -- function.
     , getLedgerDBViewAtPoint ::
            Maybe (Point blk)
         -> m ( Either
                (Point blk)
-               ( LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+               ( LedgerBackingStoreValueHandle' m blk
                , LedgerDB.DbChangelog' blk
                )
              )
@@ -346,12 +345,12 @@ data ChainDB m blk = ChainDB {
       -- invalid block is detected. These blocks are likely to be valid.
     , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
 
-    --   -- | Read and forward the values up to the given point on the chain.
-    --   -- Returns Nothing if the anchor moved or if the state is not found on the
-    --   -- ledger db.
-    --   --
-    --   -- This is intended to be used by the mempool to hydrate a ledger state at
-    --   -- a specific point
+      -- | Read and forward the values up to the given point on the chain.
+      -- Returns Nothing if the anchor moved or if the state is not found on the
+      -- ledger db.
+      --
+      -- This is intended to be used by the mempool to hydrate a ledger state at
+      -- a specific point
     , getLedgerTablesAtFor ::
            Point blk
         -> LedgerTables (ExtLedgerState blk) KeysMK

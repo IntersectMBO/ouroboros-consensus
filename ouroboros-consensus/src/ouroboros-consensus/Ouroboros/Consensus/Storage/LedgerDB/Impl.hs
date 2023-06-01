@@ -10,7 +10,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.Impl (
     -- * LedgerDB
     LedgerDBState (..)
-  , Snapshots.LedgerDBSerialiseConstraints
+  , Snapshots.LedgerDbSerialiseConstraints
   , mkLedgerDB
   , openDB
     -- * Initialization
@@ -111,7 +111,7 @@ data InitLog blk =
 openDB :: forall m blk.
           ( IOLike m
           , LedgerSupportsProtocol blk
-          , Snapshots.LedgerDBSerialiseConstraints blk
+          , Snapshots.LedgerDbSerialiseConstraints blk
           , InspectLedger blk
           , HasCallStack
           )
@@ -171,7 +171,7 @@ mkLedgerDB ::
   forall m blk.
   ( IOLike m
   , LedgerSupportsProtocol blk
-  , Snapshots.LedgerDBSerialiseConstraints blk
+  , Snapshots.LedgerDbSerialiseConstraints blk
   , HasCallStack
   )
   => LedgerDBState m blk
@@ -182,14 +182,25 @@ mkLedgerDB st args getBlock = do
   h <- fmap LDBHandle $ newTVarIO $ LedgerDBOpen st
   return $ LedgerDB {
       getCurrent = getStateSTM h Query.getCurrent
+
     , getPrevApplied = getStateSTM h Query.getPrevApplied
+
     , getLedgerTablesAtFor = \pt k -> getState h $ \st' ->
         Query.getLedgerTablesAtFor pt k (ldbChangelog st') (ldbBackingStore st')
+
     , acquireLDBReadView = \se stm -> getState h $ \st' ->
-        Query.acquireLDBReadView' se (ldbChangelog st') (ldbLock st') (ldbBackingStore st') stm
+        Query.acquireLDBReadView
+          se
+          (ldbChangelog st')
+          (ldbLock st')
+          (ldbBackingStore st')
+          stm
+
     , garbageCollect = getStateSTM1 h $ \st' ->
         Update.garbageCollectPrevApplied (varPrevApplied st')
+
     , setCurrent = getStateSTM1 h $ Update.setCurrent . ldbChangelog
+
     , tryFlush = getState h $ \st' -> do
         ldb <- atomically $ Query.getCurrent st'
         when (onDiskShouldFlush policy $ flushableLength ldb)
@@ -201,19 +212,26 @@ mkLedgerDB st args getBlock = do
                  pure toFlush
                mapM_ (Update.flushIntoBackingStore (ldbBackingStore st')) diffs
            )
+
     , validate = \vh ch cache rb tr hs -> getState h $ \st' ->
         Update.validate  (varPrevApplied st') getBlock cfg vh ch cache rb tr hs
+
     , tryTakeSnapshot = \mTime nrBlocks -> getState h $ \st' ->
         if onDiskShouldTakeSnapshot policy (uncurry diffTime <$> mTime) nrBlocks then do
-          void $ Snapshots.takeSnapshot (ldbChangelog st') (ldbLock st') (configCodec cfg) (LedgerDBSnapshotEvent >$< tracer) fs (ldbBackingStore st')
-          void $ Snapshots.trimSnapshots (LedgerDBSnapshotEvent >$< tracer) fs policy
+          void $ Snapshots.takeSnapshot
+                   (ldbChangelog st')
+                   (ldbLock st')
+                   (configCodec cfg)
+                   (LedgerDBSnapshotEvent >$< tracer)
+                   fs
+                   (ldbBackingStore st')
+          void $ Snapshots.trimSnapshots
+                   (LedgerDBSnapshotEvent >$< tracer)
+                   fs
+                   policy
           (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
         else
           pure $ SnapCounters (fst <$> mTime) nrBlocks
-    -- , takeSnapshot = getState h $ \st' ->
-    --     Snapshots.takeSnapshot (ldbChangelog st') (ldbLock st') (configCodec cfg) (LedgerDBSnapshotEvent >$< tracer) fs (ldbBackingStore st')
-    -- , trimSnapshots =
-    --     Snapshots.trimSnapshots (LedgerDBSnapshotEvent >$< tracer) fs policy
     }
   where
     LedgerDBArgs {
@@ -227,7 +245,7 @@ initFromDisk
   :: forall blk m.
      ( IOLike m
      , LedgerSupportsProtocol blk
-     , Snapshots.LedgerDBSerialiseConstraints blk
+     , Snapshots.LedgerDbSerialiseConstraints blk
      , InspectLedger blk
      , HasCallStack
      )
@@ -235,7 +253,7 @@ initFromDisk
   -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
   -> DiskPolicy
   -> ImmutableDB m blk
-  -> m (DbChangelog' blk, Word64, LedgerBackingStore m (ExtLedgerState blk))
+  -> m (DbChangelog' blk, Word64, LedgerBackingStore' m blk)
 initFromDisk args
              replayTracer
              policy
@@ -309,7 +327,7 @@ initialize ::
   -> m (ExtLedgerState blk ValuesMK) -- ^ Genesis ledger state
   -> StreamAPI m blk blk
   -> BackingStoreSelector m
-  -> m (InitLog blk, DbChangelog' blk, Word64, LedgerBackingStore m (ExtLedgerState blk))
+  -> m (InitLog blk, DbChangelog' blk, Word64, LedgerBackingStore' m blk)
 initialize replayTracer
            tracer
            hasFS
@@ -338,7 +356,7 @@ initialize replayTracer
                    -> m ( InitLog   blk
                         , DbChangelog' blk
                         , Word64
-                        , LedgerBackingStore m (ExtLedgerState blk)
+                        , LedgerBackingStore' m blk
                         )
     tryNewestFirst acc [] = do
       -- We're out of snapshots. Start at genesis

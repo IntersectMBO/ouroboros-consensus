@@ -5,7 +5,6 @@
 -- | Queries on the ledger db
 module Ouroboros.Consensus.Storage.LedgerDB.Query (
     acquireLDBReadView
-  , acquireLDBReadView'
   , getCurrent
   , getLedgerTablesAtFor
   , getPrevApplied
@@ -16,7 +15,6 @@ import           Data.Set
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Basics
-import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
@@ -63,41 +61,23 @@ getLedgerTablesAtFor pt keys dbvar bstore = do
 -- | Given a point (or Left () for the tip), acquire both a value handle and a
 -- db changelog at the requested point. Holds a read lock while doing so.
 acquireLDBReadView ::
-     (IOLike m, LedgerSupportsProtocol blk)
-  => StaticEither b () (Point blk)
-  -> StrictTVar m (DbChangelog' blk)
-  -> LedgerDBLock m
-  -> LedgerBackingStore m (ExtLedgerState blk)
-  -> m (StaticEither b
-        (LedgerBackingStoreValueHandle m (ExtLedgerState blk), DbChangelog' blk)
-        (Either
-          (Point blk)
-          (LedgerBackingStoreValueHandle m (ExtLedgerState blk), DbChangelog' blk))
-       )
-acquireLDBReadView p ldb lock bstore =
-  snd <$> acquireLDBReadView' p ldb lock bstore (pure ())
-
-
--- | Same as 'acquireLDBReadView' but with another argument which will be
--- executed in the same atomic block.
-acquireLDBReadView' ::
      forall a b m blk.
      (IOLike m, LedgerSupportsProtocol blk, HasCallStack)
   => StaticEither b () (Point blk)
   -> StrictTVar m (DbChangelog' blk)
   -> LedgerDBLock m
-  -> LedgerBackingStore m (ExtLedgerState blk)
+  -> LedgerBackingStore' m blk
   -> STM m a
      -- ^ STM operation that we want to run in the same atomic block as the
      -- acquisition of the LedgerDB
   -> m ( a
        , StaticEither b
-           (LedgerBackingStoreValueHandle m (ExtLedgerState blk), DbChangelog' blk)
+           (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk)
            (Either
             (Point blk)
-            (LedgerBackingStoreValueHandle m (ExtLedgerState blk), DbChangelog' blk))
+            (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk))
        )
-acquireLDBReadView' p dbvar lock (LedgerBackingStore bs) stmAct =
+acquireLDBReadView p dbvar lock (LedgerBackingStore bs) stmAct =
   withReadLock lock $ do
     (a, ldb') <- atomically $ do
       (,) <$> stmAct <*> readTVar dbvar
@@ -110,7 +90,7 @@ acquireLDBReadView' p dbvar lock (LedgerBackingStore bs) stmAct =
  where
    acquire ::
         DbChangelog' blk
-     -> m (LedgerBackingStoreValueHandle m (ExtLedgerState blk), DbChangelog' blk)
+     -> m (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk)
    acquire l = do
      (slot, vh) <- bsValueHandle bs
      if slot == getTipSlot (changelogLastFlushedState l)

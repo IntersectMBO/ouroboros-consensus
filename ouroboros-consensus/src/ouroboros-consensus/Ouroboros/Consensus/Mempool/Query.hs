@@ -29,7 +29,7 @@ implGetSnapshotFor ::
   -> SlotNo -- ^ Get snapshot for this slot number (usually the current slot)
   -> TickedLedgerState blk DiffMK -- ^ The ledger state at 'pt' ticked to 'slot'
   -> LedgerTables (ExtLedgerState blk) SeqDiffMK
-  -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+  -> LedgerBackingStoreValueHandle' m blk
   -> m (MempoolSnapshot blk)
 implGetSnapshotFor mpEnv slot ticked extChlog extLbsvh = do
   is <- atomically $ readTMVar istate

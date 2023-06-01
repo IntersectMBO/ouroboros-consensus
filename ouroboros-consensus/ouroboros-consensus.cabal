@@ -328,7 +328,7 @@ library
     , cardano-binary
     , cardano-crypto-class
     , cardano-lmdb                 >=0.3.0.0
-    , cardano-lmdb-simple          >=0.6.0.0
+    , cardano-lmdb-simple          >=0.6.1.0
     , cardano-prelude
     , cardano-slotting
     , cardano-strict-containers

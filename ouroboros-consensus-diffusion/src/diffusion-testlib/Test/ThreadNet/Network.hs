@@ -597,7 +597,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> LedgerConfig blk
       -> STM m (Point blk)
       -> m ( DbChangelog' blk
-           , LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+           , LedgerBackingStoreValueHandle' m blk
            , DiskLedgerView m (ExtLedgerState blk)
            )
       -> Mempool m blk

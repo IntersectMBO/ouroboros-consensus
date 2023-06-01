@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   , LedgerBackingStore (..)
   , LedgerBackingStore'
   , LedgerBackingStoreValueHandle (..)
+  , LedgerBackingStoreValueHandle'
   , castBackingStoreValueHandle
   , castLedgerBackingStoreValueHandle
   , lbsValueHandle
@@ -191,6 +192,9 @@ data LedgerBackingStoreValueHandle m l = LedgerBackingStoreValueHandle
     )
   deriving stock    (Generic)
   deriving anyclass (NoThunks)
+
+type LedgerBackingStoreValueHandle' m blk =
+     LedgerBackingStoreValueHandle  m (ExtLedgerState blk)
 
 lbsvhClose :: LedgerBackingStoreValueHandle m l -> m ()
 lbsvhClose (LedgerBackingStoreValueHandle _ vh) = bsvhClose vh

@@ -117,8 +117,7 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
           <*> (ignoreInvalidSuc volatileDB invalid <$>
                VolatileDB.filterByPredecessor volatileDB))
 
-    let (vh, ledger) = second K $ fromStaticLeft seLdb -- of
-                         -- StaticLeft (bsvh, ldb) -> (bsvh, K ldb)
+    let (vh, ledger) = second K $ fromStaticLeft seLdb
 
     chains <- constructChains i succsOf
 
@@ -185,7 +184,7 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
       => ChainAndLedger blk
          -- ^ The current chain and ledger, corresponding to
          -- @i@.
-      -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+      -> LedgerBackingStoreValueHandle' m blk
       -> NonEmpty (AnchoredFragment (Header blk))
          -- ^ Candidates anchored at @i@
       -> m (Maybe (ValidatedChainDiff (Header blk) (K (DbChangelog' blk))))
@@ -539,7 +538,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
     addBlockTracer = TraceAddBlockEvent >$< cdbTracer
 
-    mkChainSelEnv :: ChainAndLedger blk -> LedgerBackingStoreValueHandle m (ExtLedgerState blk) -> ChainSelEnv m blk
+    mkChainSelEnv :: ChainAndLedger blk -> LedgerBackingStoreValueHandle' m blk -> ChainSelEnv m blk
     mkChainSelEnv curChainAndLedger vh = ChainSelEnv
       { lgrDB                 = cdbLedgerDB
       , bcfg                  = configBlock cdbTopLevelConfig
@@ -568,7 +567,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
-      -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+      -> LedgerBackingStoreValueHandle' m blk
       -> m (Point blk)
     addToCurrentChain succsOf curChainAndLedger vh = do
         let suffixesAfterB = Paths.maximalCandidates succsOf (realPointToPoint p)
@@ -638,7 +637,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
          -- ^ The current chain (anchored at @i@) and ledger
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
-      -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+      -> LedgerBackingStoreValueHandle' m blk
       -> m (Point blk)
     switchToAFork succsOf lookupBlockInfo curChainAndLedger diff vh = do
         -- We use a cache to avoid reading the headers from disk multiple
@@ -881,7 +880,7 @@ data ChainSelEnv m blk = ChainSelEnv
     , punish                :: Maybe (RealPoint blk, InvalidBlockPunishment m)
       -- | The value handle that has to be used through this Chain selection,
       -- acquired at the beginning of the Chain selection process.
-    , vh                    :: LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+    , vh                    :: LedgerBackingStoreValueHandle' m blk
     }
 
 -- | Perform chain selection with the given candidates. If a validated

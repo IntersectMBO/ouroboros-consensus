@@ -16,10 +16,6 @@ This package also contains two executables:
 
 * `app/db-synthesizer`: builds a chain, to be used with benchmarking purposes.
 
-* `app/ledger-db-backends-checker.hs`: simple tool (for the UTxO-HD feature) to
-  compare the contents of an in-memory backing store and an LMDB backing store
-  (i.e., it checks if they have the same slot number and values).
-
 NB: our top level `cabal.project` enables assertions in both our local packages
 and the ones we depend on. If you build these tools from this repository, it is
 recommended that you override this locally by means of a `cabal.project.local`.

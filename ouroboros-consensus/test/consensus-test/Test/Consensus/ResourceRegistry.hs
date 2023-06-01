@@ -577,7 +577,6 @@ sm alive reg = StateMachine {
     , semantics     = semantics alive reg
     , mock          = symbolicResp
     , cleanup       = noCleanup
-    , getTraces     = Nothing
     }
 
 prop_sequential :: QC.Property
@@ -588,8 +587,8 @@ prop_sequential' cmds = QC.monadicIO $ do
     alive <- liftIO $ uncheckedNewTVarM []
     reg   <- liftIO $ unsafeNewRegistry
     let sm' = sm alive reg
-    (output, hist, _model, res) <- runCommands sm' cmds
-    prettyCommands sm' output hist
+    (hist, _model, res) <- runCommands sm' cmds
+    prettyCommands sm' hist
       $ checkCommandNames cmds
       $ res QC.=== Ok
 

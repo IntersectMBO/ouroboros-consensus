@@ -103,7 +103,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 
 -- | All the serialisation related constraints needed by the ChainDB.
 class ( ImmutableDbSerialiseConstraints blk
-      , LedgerDBSerialiseConstraints blk
+      , LedgerDbSerialiseConstraints blk
       , VolatileDbSerialiseConstraints blk
         -- Needed for Follower
       , EncodeDiskDep (NestedCtxt Header) blk

@@ -882,7 +882,6 @@ sm env dbm = StateMachine {
     , mock          = mock
     , invariant     = Nothing
     , cleanup       = noCleanup
-    , getTraces     = Nothing
     }
 
 {-------------------------------------------------------------------------------
@@ -1177,8 +1176,8 @@ showLabelledExamples = showLabelledExamples' Nothing 1000 (const True)
 prop_sequential :: Index.CacheConfig -> SmallChunkInfo -> Property
 prop_sequential cacheConfig (SmallChunkInfo chunkInfo) =
     forAllCommands smUnused Nothing $ \cmds -> QC.monadicIO $ do
-      (output, hist, prop) <- QC.run $ test cacheConfig chunkInfo cmds
-      prettyCommands smUnused output hist
+      (hist, prop) <- QC.run $ test cacheConfig chunkInfo cmds
+      prettyCommands smUnused hist
         $ tabulate "Tags" (map show $ tag (execCmds (QSM.initModel smUnused) cmds))
         $ prop
   where
@@ -1187,7 +1186,7 @@ prop_sequential cacheConfig (SmallChunkInfo chunkInfo) =
 test :: Index.CacheConfig
      -> ChunkInfo
      -> QSM.Commands (At CmdErr IO) (At Resp IO)
-     -> IO (Maybe QSM.TraceOutput, QSM.History (At CmdErr IO) (At Resp IO), Property)
+     -> IO (QSM.History (At CmdErr IO) (At Resp IO), Property)
 test cacheConfig chunkInfo cmds = do
     fsVar              <- uncheckedNewTVarM Mock.empty
     varErrors          <- uncheckedNewTVarM mempty
@@ -1208,7 +1207,7 @@ test cacheConfig chunkInfo cmds = do
             , immValidationPolicy = ValidateMostRecentChunk
             }
 
-      (output, hist, model, res, trace) <- bracket
+      (hist, model, res, trace) <- bracket
         (open args >>= newMVar)
         -- Note: we might be closing a different ImmutableDB than the one we
         -- opened, as we can reopen it the ImmutableDB, swapping the
@@ -1224,10 +1223,10 @@ test cacheConfig chunkInfo cmds = do
                 }
               sm' = sm env (initDBModel chunkInfo TestBlockCodecConfig)
 
-          (output, hist, model, res) <- QSM.runCommands' (pure sm') cmds
+          (hist, model, res) <- QSM.runCommands' (pure sm') cmds
 
           trace <- getTrace
-          return (output, hist, model, res, trace)
+          return (hist, model, res, trace)
 
       fs <- atomically $ readTVar fsVar
 
@@ -1238,7 +1237,7 @@ test cacheConfig chunkInfo cmds = do
             counterexample ("modelTip: " <> show modelTip)         $
             res === Ok .&&. openHandlesProp fs model
 
-      return (output, hist, prop)
+      return (hist, prop)
   where
     openHandlesProp fs model
         | openHandles <= maxExpectedOpenHandles

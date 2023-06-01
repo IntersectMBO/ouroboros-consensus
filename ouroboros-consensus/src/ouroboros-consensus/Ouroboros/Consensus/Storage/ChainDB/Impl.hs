@@ -26,7 +26,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
     -- * Re-exported for convenience
   , Args.RelativeMountPoint (..)
   , ImmutableDB.ImmutableDbSerialiseConstraints
-  , LedgerDB.LedgerDBSerialiseConstraints
+  , LedgerDB.LedgerDbSerialiseConstraints
   , VolatileDB.VolatileDbSerialiseConstraints
     -- * Internals for testing purposes
   , Internal (..)
@@ -164,7 +164,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
       atomically $ LedgerDB.setCurrent lgrDB ledger
 
-      -- FIXME flush
+      LedgerDB.tryFlush lgrDB
 
       varChain           <- newTVarIO chain
       varTentativeState  <- newTVarIO NoLastInvalidTentative

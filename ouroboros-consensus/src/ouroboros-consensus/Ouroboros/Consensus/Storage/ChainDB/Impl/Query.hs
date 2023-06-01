@@ -30,7 +30,6 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
                      ChainDbFailure (..), InvalidBlockReason)
@@ -194,13 +193,13 @@ getLedgerBackingStoreValueHandle :: forall b m blk.
   -> StaticEither b () (Point blk)
   -> m (StaticEither
          b
-         ( BackingStore.LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+         ( BackingStore.LedgerBackingStoreValueHandle' m blk
          , DbChangelog' blk
          , m ()
          )
          (Either
             (Point blk)
-            ( BackingStore.LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+            ( BackingStore.LedgerBackingStoreValueHandle' m blk
             , DbChangelog' blk
             , m ()
             )
@@ -214,9 +213,9 @@ getLedgerBackingStoreValueHandle CDB{..} rreg seP = do
     StaticRight (Right (vh, ldb)) -> StaticRight . Right <$> allocateInReg vh ldb
   where
     allocateInReg ::
-         BackingStore.LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+         BackingStore.LedgerBackingStoreValueHandle' m blk
       -> DbChangelog' blk
-      -> m ( BackingStore.LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+      -> m ( BackingStore.LedgerBackingStoreValueHandle' m blk
            , DbChangelog' blk
            , m ()
            )
@@ -237,7 +236,7 @@ getLedgerDBViewAtPoint ::
   -> Maybe (Point blk)
   -> m ( Either
            (Point blk)
-           ( BackingStore.LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+           ( BackingStore.LedgerBackingStoreValueHandle' m blk
            , DbChangelog' blk
            )
        )

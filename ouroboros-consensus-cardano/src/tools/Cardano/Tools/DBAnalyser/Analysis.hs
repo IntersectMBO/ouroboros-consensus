@@ -105,7 +105,7 @@ runAnalysis ::
      , LedgerSupportsMempool.HasTxs blk
      , LedgerSupportsMempool blk
      , LedgerSupportsProtocol blk
-     , LedgerDBSerialiseConstraints blk
+     , LedgerDbSerialiseConstraints blk
      )
   => AnalysisName -> Analysis blk
 runAnalysis analysisName env@(AnalysisEnv { tracer }) = do
@@ -340,7 +340,7 @@ showEBBs AnalysisEnv { db, registry, initLedger, limit, tracer } = do
 
 storeLedgerStateAt ::
      forall blk .
-     ( LedgerDBSerialiseConstraints blk
+     ( LedgerDbSerialiseConstraints blk
      , HasAnalysis blk
      , LedgerSupportsProtocol blk
      )

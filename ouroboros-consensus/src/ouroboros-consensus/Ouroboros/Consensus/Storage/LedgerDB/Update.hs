@@ -81,7 +81,7 @@ validate :: forall m blk. (IOLike m, LedgerSupportsProtocol blk, HasCallStack)
          => StrictTVar m (Set (RealPoint blk))
          -> ResolveBlock m blk
          -> TopLevelConfig blk
-         -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+         -> LedgerBackingStoreValueHandle' m blk
          -> DbChangelog' blk
          -> BlockCache blk
          -> Word64  -- ^ How many blocks to roll back

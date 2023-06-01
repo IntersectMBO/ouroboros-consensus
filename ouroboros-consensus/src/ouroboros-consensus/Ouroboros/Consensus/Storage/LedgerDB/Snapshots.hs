@@ -103,7 +103,7 @@
 -}
 module Ouroboros.Consensus.Storage.LedgerDB.Snapshots (
     DiskSnapshot (..)
-  , LedgerDBSerialiseConstraints
+  , LedgerDbSerialiseConstraints
     -- * Read from disk
   , SnapshotFailure (..)
   , diskSnapshotIsTemporary
@@ -211,7 +211,7 @@ data TraceSnapshotEvent blk
   deriving (Generic, Eq, Show)
 
 -- | 'EncodeDisk' and 'DecodeDisk' constraints needed for the LgrDB.
-type LedgerDBSerialiseConstraints blk =
+type LedgerDbSerialiseConstraints blk =
   ( Serialise      (HeaderHash  blk)
   , EncodeDisk blk (LedgerState blk EmptyMK)
   , DecodeDisk blk (LedgerState blk EmptyMK)
@@ -263,36 +263,7 @@ listSnapshots (SomeHasFS HasFS{..}) =
   Write to disk
 -------------------------------------------------------------------------------}
 
-takeSnapshot ::
-  forall m blk.
-  ( IOLike m
-  , LedgerDBSerialiseConstraints blk
-  , LedgerSupportsProtocol blk
-  )
-  => StrictTVar m (DbChangelog' blk)
-  -> LedgerDBLock m
-  -> CodecConfig blk
-  -> Tracer m (TraceSnapshotEvent blk)
-  -> SomeHasFS m
-  -> BackingStore.LedgerBackingStore' m blk
-  -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore =
-  withReadLock lock $ do
-    state <- lastFlushedState <$> atomically (readTVar ldbvar)
-    doTakeSnapshot
-      tracer
-      hasFS
-      ldbBackingStore
-      encodeExtLedgerState'
-      state
-  where
-    encodeExtLedgerState' :: ExtLedgerState blk EmptyMK -> Encoding
-    encodeExtLedgerState' = encodeExtLedgerState
-                              (encodeDisk ccfg)
-                              (encodeDisk ccfg)
-                              (encodeDisk ccfg)
-
--- | Take a snapshot of the /oldest ledger state/ in the ledger DB
+-- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
 --
 -- We write the /oldest/ ledger state to disk because the intention is to only
 -- write ledger states to disk that we know to be immutable. Primarily for
@@ -311,16 +282,23 @@ takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore =
 -- whether this snapshot corresponds to a state that is more than @k@ back.
 --
 -- TODO: Should we delete the file if an error occurs during writing?
-doTakeSnapshot ::
-     forall m blk. (MonadThrow m, IsLedger (LedgerState blk))
-  => Tracer m (TraceSnapshotEvent blk)
+takeSnapshot ::
+  forall m blk.
+  ( IOLike m
+  , LedgerDbSerialiseConstraints blk
+  , LedgerSupportsProtocol blk
+  )
+  => StrictTVar m (DbChangelog' blk)
+  -> LedgerDBLock m
+  -> CodecConfig blk
+  -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
   -> BackingStore.LedgerBackingStore' m blk
-  -> (ExtLedgerState blk EmptyMK -> Encoding)
-  -> ExtLedgerState blk EmptyMK
   -> m (Maybe (DiskSnapshot, RealPoint blk))
-doTakeSnapshot tracer hasFS backingStore encLedger oldest =
-    case pointToWithOriginRealPoint (castPoint (getTip oldest)) of
+takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore =
+  withReadLock lock $ do
+    state <- lastFlushedState <$> atomically (readTVar ldbvar)
+    case pointToWithOriginRealPoint (castPoint (getTip state)) of
       Origin ->
         return Nothing
       NotOrigin t -> do
@@ -330,9 +308,15 @@ doTakeSnapshot tracer hasFS backingStore encLedger oldest =
         if List.any ((== number) . dsNumber) snapshots then
           return Nothing
         else do
-          writeSnapshot hasFS backingStore encLedger snapshot oldest
+          writeSnapshot hasFS ldbBackingStore encodeExtLedgerState' snapshot state
           traceWith tracer $ TookSnapshot snapshot t
           return $ Just (snapshot, t)
+  where
+    encodeExtLedgerState' :: ExtLedgerState blk EmptyMK -> Encoding
+    encodeExtLedgerState' = encodeExtLedgerState
+                              (encodeDisk ccfg)
+                              (encodeDisk ccfg)
+                              (encodeDisk ccfg)
 
 -- | Write snapshot to disk
 writeSnapshot ::

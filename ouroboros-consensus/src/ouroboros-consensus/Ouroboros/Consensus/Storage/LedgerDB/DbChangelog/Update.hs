@@ -409,7 +409,8 @@ switch cfg numRollbacks trace newBlocks ksReader db =
                       db'
 
 
--- | A simplified 'DbChangelog' that should be used for flushing.
+-- | A container for differences that are inteded to be flushed to a
+-- 'BackingStore'
 data DiffsToFlush l = DiffsToFlush {
     -- | The set of differences that should be flushed into the 'BackingStore'
     toFlushDiffs :: !(LedgerTables l DiffMK)

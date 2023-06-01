@@ -559,7 +559,7 @@ mkSUT ::
   )
   => LedgerConfig blk
   -> LedgerState blk ValuesMK
-  -> m (SUT m blk, m QC.TraceOutput, CT.Tracer m String)
+  -> m (SUT m blk, CT.Tracer m String)
 mkSUT cfg initialLedger = do
   (lif, t) <- newLedgerInterface initialLedger
   trcrChan <- atomically newTChan :: m (StrictTChan m (Either String (TraceEventMempool blk)))
@@ -570,16 +570,7 @@ mkSUT cfg initialLedger = do
                (MempoolCapacityBytesOverride txMaxBytes')
                (CT.Tracer $ CT.traceWith trcr . Right)
                txInBlockSize
-  pure (SUT mempool t, QC.TraceOutput . fmap show <$> getChanContents trcrChan, CT.Tracer $ atomically . writeTChan trcrChan . Left)
-
-getChanContents :: MonadSTM f => StrictTChan f a -> f [a]
-getChanContents chan = reverse <$> atomically (go' [])
-  where
-    go' acc = do
-      mx <- tryReadTChan chan
-      case mx of
-        Just x  -> go' (x : acc)
-        Nothing -> return acc
+  pure (SUT mempool t, CT.Tracer $ atomically . writeTChan trcrChan . Left)
 
 semantics ::
      (MonadSTM m, LedgerSupportsMempool blk) =>
@@ -694,7 +685,7 @@ sm ::
   -> (Int -> LedgerState blk ValuesMK -> Gen [GenTx blk])
   -> m (StateMachine (Model blk) (Command blk) m (Response blk))
 sm cfg initialState ma tSize gTxs = do
-  (sut, getTracer, trcr) <- mkSUT cfg initialState
+  (sut, trcr) <- mkSUT cfg initialState
   ior <- newTVarIO sut
   pure $ StateMachine {
       QC.initModel     = initModel cfg initialState
@@ -711,7 +702,6 @@ sm cfg initialState ma tSize gTxs = do
     , QC.semantics     = \c -> semantics trcr c ior
     , QC.mock          = mock
     , QC.cleanup       = noCleanup
-    , QC.getTraces     = Just getTracer
     }
 
 smUnused ::
@@ -745,7 +735,6 @@ smUnused cfg initialState ma tSize gTxs = StateMachine {
   , QC.semantics     = undefined
   , QC.mock          = mock
   , QC.cleanup       = noCleanup
-  , QC.getTraces     = Nothing
   }
 
 {-------------------------------------------------------------------------------
@@ -775,8 +764,8 @@ prop_mempoolSequential ::
 prop_mempoolSequential cfg initialState tSize gTxs = forAllCommands smUnused' Nothing $
   \cmds -> monadicIO
     (do
-        (output, hist, model, res) <- runCommandsWithSetup sm' cmds
-        prettyCommands smUnused' output hist
+        (hist, model, res) <- runCommandsWithSetup sm' cmds
+        prettyCommands smUnused' hist
           $ checkCommandNames cmds
           $ tabulate "Command sequence length"
               [QC.lengthCommands cmds `bucketiseBy` 10]

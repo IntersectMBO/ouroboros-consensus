@@ -23,10 +23,10 @@ import           Ouroboros.Consensus.Util.IOLike (Time)
 
 type LedgerDBView m b blk =
   StaticEither b
-   (LedgerBackingStoreValueHandle m (ExtLedgerState blk), DbChangelog' blk)
+   (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk)
    (Either
      (Point blk)
-     (LedgerBackingStoreValueHandle m (ExtLedgerState blk), DbChangelog' blk))
+     (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk))
 
 data LedgerDB m blk = LedgerDB {
     -- | Set the current DbChangelog in the LedgerDB.
@@ -55,7 +55,7 @@ data LedgerDB m blk = LedgerDB {
       -> m (a, LedgerDBView m b blk)
     -- | Apply a list of blocks on top of the given DbChangelog.
   , validate              ::
-         LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+         LedgerBackingStoreValueHandle' m blk
       -> DbChangelog' blk
          -- ^ This is used as the starting point for validation, not the one
          -- in the 'LgrDB'.

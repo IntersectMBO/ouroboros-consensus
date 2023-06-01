@@ -190,12 +190,3 @@ openMempoolWithCapacityFor params cmds =
   where
     capacityRequiredByCmds = Mempool.mkCapacityBytesOverride totalTxsSize
       where totalTxsSize = sum $ fmap TestBlock.txSize $ getCmdsTxs cmds
-
--- mkNTryAddTxs :: Int -> [MempoolCmd TestBlock.TestBlock]
--- mkNTryAddTxs 0 = []
--- mkNTryAddTxs n =        [AddTx $ TestBlock.TestBlockGenTx (TestBlock.mkTx [] [TestBlock.Token 0])]
---                 <> fmap (AddTx . mkSimpleTx) (zip [0 .. n - 2] [1 .. n - 1])
---   where
---     mkSimpleTx (x, y) = TestBlock.TestBlockGenTx
---                       $ TestBlock.mkTx [TestBlock.Token (fromIntegral x)]
---                                        [TestBlock.Token (fromIntegral y)]
