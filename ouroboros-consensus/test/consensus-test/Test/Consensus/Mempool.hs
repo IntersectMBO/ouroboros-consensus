@@ -702,7 +702,7 @@ withTestMempool setup@TestSetup {..} prop =
                          snapshotSlotNo
                          tx
                          (forgetLedgerTablesDiffsTicked st)
-          let origTables = projectLedgerTablesTicked st
+          let origTables = castLedgerTables $ projectLedgerTables st
           pure (zipOverLedgerTablesTicked rawPrependTrackingDiffs
                                           (fst st')
                                           origTables

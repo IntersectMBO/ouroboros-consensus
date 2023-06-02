@@ -49,8 +49,7 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Extended (LedgerTables (..),
-                     ledgerState)
+import           Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool.API
@@ -189,10 +188,10 @@ chainDBLedgerInterface chainDB = LedgerInterface
     { getCurrentLedgerState =
         ledgerState . current <$> ChainDB.getLedgerDB chainDB
     , getLedgerTablesAtFor = \pt txs -> do
-        let keys = ExtLedgerStateTables
-                 $ foldl' (<>) emptyLedgerTables
+        let keys = castLedgerTables
+                 $ foldl' (zipLedgerTables (<>)) emptyLedgerTables
                  $ map getTransactionKeySets txs
-        fmap unExtLedgerStateTables <$> ChainDB.getLedgerTablesAtFor chainDB pt keys
+        fmap castLedgerTables <$> ChainDB.getLedgerTablesAtFor chainDB pt keys
     }
 
 {-------------------------------------------------------------------------------

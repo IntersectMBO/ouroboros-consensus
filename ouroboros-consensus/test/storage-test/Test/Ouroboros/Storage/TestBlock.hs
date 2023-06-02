@@ -76,6 +76,7 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (maybeToList)
 import           Data.Typeable (Typeable)
+import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
@@ -549,22 +550,20 @@ instance IsLedger (LedgerState TestBlock) where
                                  . TickedTestLedger
                                  . noNewTickingDiffs
 
-instance HasLedgerTables (LedgerState TestBlock) where
-  data LedgerTables (LedgerState TestBlock) mk = NoTestLedgerTables
-    deriving stock    (Generic, Eq, Show)
-    deriving anyclass (NoThunks)
+type instance Key   (LedgerState TestBlock) = Void
+type instance Value (LedgerState TestBlock) = Void
+
+instance HasLedgerTables (LedgerState TestBlock)
+instance HasLedgerTables (Ticked1 (LedgerState TestBlock))
 
 instance CanSerializeLedgerTables (LedgerState TestBlock) where
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
 
-instance HasTickedLedgerTables (LedgerState TestBlock) where
-  withLedgerTablesTicked (TickedTestLedger st) tables =
-      TickedTestLedger $ withLedgerTables st tables
+instance HasTickedLedgerTables (LedgerState TestBlock)
 
-instance LedgerTablesAreTrivial (LedgerState TestBlock) where
-  convertMapKind TestLedger{..} = TestLedger{..}
-  trivialLedgerTables = NoTestLedgerTables
+instance LedgerTablesAreTrivial (LedgerState TestBlock)
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock))
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where
   applyBlockLedgerResult _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})
@@ -578,7 +577,7 @@ instance ApplyBlock (LedgerState TestBlock) TestBlock where
   reapplyBlockLedgerResult _ tb _ =
                    pureLedgerResult $ TestLedger (Chain.blockPoint tb) (BlockHash (blockHash tb))
 
-  getBlockKeySets _blk = NoTestLedgerTables
+  getBlockKeySets _blk = trivialLedgerTables
 
 data instance LedgerState TestBlock mk =
     TestLedger {

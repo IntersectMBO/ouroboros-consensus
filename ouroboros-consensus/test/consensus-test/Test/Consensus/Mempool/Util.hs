@@ -113,7 +113,7 @@ txIsValid ledgerState tx =
     isRight $ runExcept $ applyTxToLedger ledgerState tx
 
 genValidTx :: LedgerState TestBlock ValuesMK -> Gen (TestTx, LedgerState TestBlock ValuesMK)
-genValidTx ledgerState@(SimpleLedgerState MockState {} (SimpleLedgerTables (ValuesMK utxo))) = do
+genValidTx ledgerState@(SimpleLedgerState MockState {} (LedgerTables (ValuesMK utxo))) = do
     -- Never let someone go broke, otherwise we risk concentrating all the
     -- wealth in one person. That would be problematic (for the society) but
     -- also because we wouldn't be able to generate any valid transactions
@@ -164,7 +164,7 @@ genInvalidTx ledgerState = do
 
   where
     SimpleLedgerState {
-      simpleLedgerTables = SimpleLedgerTables (ValuesMK utxo)
+      simpleLedgerTables = LedgerTables (ValuesMK utxo)
     } = ledgerState
 
 

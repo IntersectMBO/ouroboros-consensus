@@ -266,17 +266,17 @@ instance Mock.LookupKeys K V where
         ValuesMK $ Map.restrictKeys vs ks
 
 instance Mock.ValuesLength V where
-  valuesLength (OTLedgerTables (ValuesMK m)) =
+  valuesLength (LedgerTables (ValuesMK m)) =
     Map.size m
 
 instance Mock.MakeDiff V D where
   diff t1 t2 = zipLedgerTables (rawForgetValues .: rawCalculateDifference) t1 t2
 
 instance Mock.DiffSize D where
-  diffSize (OTLedgerTables (DiffMK (Diff.Diff m))) = Map.size m
+  diffSize (LedgerTables (DiffMK (Diff.Diff m))) = Map.size m
 
 instance Mock.KeysSize K where
-  keysSize (OTLedgerTables (KeysMK s)) = Set.size s
+  keysSize (LedgerTables (KeysMK s)) = Set.size s
 
 instance Mock.HasOps K V D
 

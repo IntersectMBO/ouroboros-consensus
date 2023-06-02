@@ -17,7 +17,7 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Ledger.Tables (DiffMK (..), KeysMK (..),
-                     ValuesMK)
+                     LedgerTables (..), ValuesMK)
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
                      (BackingStorePath (..))
@@ -37,8 +37,7 @@ import           Test.Tasty (TestTree, testGroup, withResource)
 import           Test.Tasty.Bench (Benchmark, bench, bgroup, defaultMain,
                      envWithCleanup, nfAppIO)
 import           Test.Tasty.QuickCheck (testProperty)
-import           Test.Util.LedgerStateOnlyTables (OTLedgerTables,
-                     pattern OTLedgerTables)
+import           Test.Util.LedgerStateOnlyTables (OTLedgerTables)
 
 {-------------------------------------------------------------------------------
   Main benchmarks
@@ -179,10 +178,10 @@ mkKey :: k -> OTLedgerTables k v KeysMK
 mkKey = mkKeys . Set.singleton
 
 mkKeys :: Set k -> OTLedgerTables k v KeysMK
-mkKeys = OTLedgerTables . KeysMK
+mkKeys = LedgerTables . KeysMK
 
 mkDiffs :: Diff k v -> OTLedgerTables k v DiffMK
-mkDiffs = OTLedgerTables . DiffMK
+mkDiffs = LedgerTables . DiffMK
 
 groupsOfN :: Int -> [a] -> [[a]]
 groupsOfN n

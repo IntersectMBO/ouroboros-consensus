@@ -14,8 +14,6 @@ import           Test.QuickCheck
 (==?) ::
   ( IsMapKind mk
   , HasLedgerTables (LedgerState blk)
-  , Eq (LedgerTables (LedgerState blk) mk)
-  , Show (LedgerTables (LedgerState blk) mk)
   )
   => LedgerState blk mk
   -> LedgerState blk mk
@@ -32,9 +30,6 @@ infix 4 ==?
 prop_stowable_laws ::
      ( HasLedgerTables (LedgerState blk)
      , CanStowLedgerTables (LedgerState blk)
-     , Eq (LedgerTables (LedgerState blk) EmptyMK)
-     , Show (LedgerTables (LedgerState blk) EmptyMK)
-     , Show (LedgerTables (LedgerState blk) ValuesMK)
      )
   => LedgerState blk EmptyMK
   -> LedgerState blk ValuesMK
@@ -49,11 +44,7 @@ prop_stowable_laws = \ls ls' ->
 --
 -- > project . with == id
 prop_tablestuff_laws ::
-     ( HasLedgerTables (LedgerState blk)
-     , Eq (LedgerTables (LedgerState blk) EmptyMK)
-     , Show (LedgerTables (LedgerState blk) EmptyMK)
-     , Show (LedgerTables (LedgerState blk) ValuesMK)
-     )
+     HasLedgerTables (LedgerState blk)
   => LedgerState blk EmptyMK
   -> LedgerTables (LedgerState blk) ValuesMK
   -> Property

@@ -623,7 +623,7 @@ the `ApplyBlock` typeclass:
 >                  , lrResult = convertMapKind $ block `applyBlockTo` tickedLdgrSt
 >                  }
 >
->   getBlockKeySets = const NoLedgerTables
+>   getBlockKeySets = const trivialLedgerTables
 >
 >
 
@@ -737,18 +737,13 @@ the `LedgerTables`. For a Ledger state definition as simple as the one we are
 defining there the tables are trivially empty so the operations are all trivial
 and we use the default implementation
 
-> instance HasLedgerTables (LedgerState BlockC) where
->   data LedgerTables (LedgerState BlockC) mk =
->        NoLedgerTables
->        deriving (Generic, Eq, Show, NoThunks)
+> type instance Key   (LedgerState BlockC) = Void
+> type instance Value (LedgerState BlockC) = Void
 >
-> instance HasTickedLedgerTables (LedgerState BlockC) where
->   withLedgerTablesTicked (TickedLedgerStateC st) tbs =
->     TickedLedgerStateC (withLedgerTables st tbs)
->
+> instance HasLedgerTables (LedgerState BlockC)
+> instance HasLedgerTables (Ticked1 (LedgerState BlockC))
+> instance HasTickedLedgerTables (LedgerState BlockC)
 > instance CanSerializeLedgerTables (LedgerState BlockC)
 > instance CanStowLedgerTables (LedgerState BlockC)
->
-> instance LedgerTablesAreTrivial (LedgerState BlockC) where
->   convertMapKind (LedgerC t c) = LedgerC t c
->   trivialLedgerTables = NoLedgerTables
+> instance LedgerTablesAreTrivial (LedgerState BlockC)
+> instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockC))

@@ -56,6 +56,7 @@ And imports, of course:
 
 > import Control.Monad ()
 > import Control.Monad.Except (MonadError (throwError))
+> import Data.Void (Void)
 > import Data.Word (Word64)
 > import GHC.Generics (Generic)
 > import NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
@@ -414,7 +415,7 @@ applying each individual transaction - exactly as it was in for `BlockC`:
 >                  , lrEvents = []
 >                  }
 >
->   getBlockKeySets = const NoLedgerTables
+>   getBlockKeySets = const trivialLedgerTables
 
 Note that prior to `applyBlockLedgerResult` being invoked, the calling code will
 have already established that the header is valid and that the header matches
@@ -683,18 +684,13 @@ Appendix: UTxO-HD features
 For reference on these instances and their meaning, please see the appendix in
 [the Simple tutorial](./Simple.lhs).
 
-> instance HasLedgerTables (LedgerState BlockD) where
->   data LedgerTables (LedgerState BlockD) mk =
->        NoLedgerTables
->        deriving (Generic, Eq, Show, NoThunks)
+> type instance Key   (LedgerState BlockD) = Void
+> type instance Value (LedgerState BlockD) = Void
 >
-> instance HasTickedLedgerTables (LedgerState BlockD) where
->   withLedgerTablesTicked (TickedLedgerStateD st) tbs =
->     TickedLedgerStateD (withLedgerTables st tbs)
->
+> instance HasLedgerTables (LedgerState BlockD)
+> instance HasLedgerTables (Ticked1 (LedgerState BlockD))
+> instance HasTickedLedgerTables (LedgerState BlockD)
 > instance CanSerializeLedgerTables (LedgerState BlockD)
 > instance CanStowLedgerTables (LedgerState BlockD)
->
-> instance LedgerTablesAreTrivial (LedgerState BlockD) where
->   convertMapKind (LedgerD t c a b) = LedgerD t c a b
->   trivialLedgerTables = NoLedgerTables
+> instance LedgerTablesAreTrivial (LedgerState BlockD)
+> instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockD))
