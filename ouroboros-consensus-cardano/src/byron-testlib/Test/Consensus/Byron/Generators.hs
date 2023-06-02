@@ -46,6 +46,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HeaderValidation (AnnTip (..))
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
+import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import           Ouroboros.Network.SizeInBytes
@@ -291,8 +292,8 @@ genByronLedgerState = do
         Left _  -> pure Origin
         Right _ -> At <$> arbitrary
 
-instance Arbitrary (LedgerTables (LedgerState ByronBlock) mk) where
-  arbitrary = pure NoByronLedgerTables
+instance IsMapKind mk => Arbitrary (LedgerTables (LedgerState ByronBlock) mk) where
+  arbitrary = pure emptyLedgerTables
 
 genByronLedgerConfig :: Gen Byron.Config
 genByronLedgerConfig = hedgehog $ CC.genConfig protocolMagicId

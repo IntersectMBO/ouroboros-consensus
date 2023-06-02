@@ -651,7 +651,7 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, b
           urs <- readKeySets bstore aks
           case forwardTableKeySets ldb urs of
             Left err -> error $ "Rewind;read;forward failed" <> show err
-            Right forwarded -> pure $ applyLedgerTablesDiffsTicked' (unExtLedgerStateTables forwarded) st
+            Right forwarded -> pure $ applyLedgerTablesDiffsTicked' (castLedgerTables forwarded) st
 
         tickTheLedgerState ::
              SlotNo
@@ -697,7 +697,7 @@ reproMempoolForge numBlks env = do
       Mempool.LedgerInterface {
           Mempool.getCurrentLedgerState = ledgerState . DbChangelog.current <$> IOLike.readTVar ref
         , Mempool.getLedgerTablesAtFor = \pt txs -> do
-            let keys = ExtLedgerStateTables
+            let keys = castLedgerTables
                   $ foldl' (zipLedgerTables (<>)) emptyLedgerTables
                   $ map getTransactionKeySets txs
             let f = do
@@ -710,7 +710,7 @@ reproMempoolForge numBlks env = do
                       case eValues of
                         Right v -> pure $ Right v
                         Left _  -> f
-            fmap unExtLedgerStateTables <$> f
+            fmap castLedgerTables <$> f
       }
       lCfg
       -- one megabyte should generously accomodate two blocks' worth of txs

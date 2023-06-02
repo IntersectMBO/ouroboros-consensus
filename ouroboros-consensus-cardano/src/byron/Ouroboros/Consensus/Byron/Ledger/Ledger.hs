@@ -62,6 +62,7 @@ import           Data.ByteString (ByteString)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Void (Void)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
@@ -181,21 +182,16 @@ instance IsLedger (LedgerState ByronBlock) where
             byronLedgerTransition
         }
 
-instance HasLedgerTables (LedgerState ByronBlock) where
-  data LedgerTables (LedgerState ByronBlock) mk = NoByronLedgerTables
-    deriving (Generic, Eq, Show, NoThunks)
+type instance Key   (LedgerState ByronBlock) = Void
+type instance Value (LedgerState ByronBlock) = Void
 
-instance CanSerializeLedgerTables (LedgerState ByronBlock) where
-
-instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
-  convertMapKind ByronLedgerState{..} = ByronLedgerState{..}
-  trivialLedgerTables = NoByronLedgerTables
-
-instance HasTickedLedgerTables (LedgerState ByronBlock) where
-  withLedgerTablesTicked (TickedByronLedgerState st trans) NoByronLedgerTables =
-    TickedByronLedgerState st trans
-
-instance CanStowLedgerTables (LedgerState ByronBlock) where
+instance HasLedgerTables (LedgerState ByronBlock)
+instance HasLedgerTables (Ticked1 (LedgerState ByronBlock))
+instance HasTickedLedgerTables (LedgerState ByronBlock)
+instance CanSerializeLedgerTables (LedgerState ByronBlock)
+instance CanStowLedgerTables (LedgerState ByronBlock)
+instance LedgerTablesAreTrivial (LedgerState ByronBlock)
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronBlock))
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces
@@ -220,7 +216,7 @@ data instance BlockQuery ByronBlock :: Type -> Type where
 instance QueryLedger ByronBlock where
   answerBlockQuery _cfg GetUpdateInterfaceState (DiskLedgerView (ExtLedgerState ledgerState _) _ _ _) =
     pure $ CC.cvsUpdateState (byronLedgerState ledgerState)
-  getQueryKeySets _ = NoByronLedgerTables
+  getQueryKeySets _ = trivialLedgerTables
   tableTraversingQuery _ = Nothing
 
 instance SameDepIndex (BlockQuery ByronBlock) where

@@ -382,7 +382,7 @@ instance ( ShelleyCompatible proto era
       DiskLedgerView ext _ _ _ = dlv
 
   getQueryKeySets = \case
-    GetUTxOByTxIn ks -> ShelleyLedgerTables $ KeysMK ks
+    GetUTxOByTxIn ks -> LedgerTables $ KeysMK ks
     _other           -> emptyLedgerTables
 
   tableTraversingQuery = \case

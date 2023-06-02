@@ -402,7 +402,6 @@ library cardano-testlib
     , containers
     , microlens
     , mtl
-    , nothunks
     , ouroboros-consensus-cardano
     , ouroboros-consensus-diffusion:{ouroboros-consensus-diffusion, diffusion-testlib}
     , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, protocol-testlib}

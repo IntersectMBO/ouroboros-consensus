@@ -83,7 +83,7 @@ mkLedgerTables :: forall proto era.
   => LC.Tx era
   -> LedgerTables (LedgerState (ShelleyBlock proto era)) ValuesMK
 mkLedgerTables tx =
-      ShelleyLedgerTables
+      LedgerTables
     $ ValuesMK
     $ Map.fromList
     $ zip exampleTxIns exampleTxOuts
@@ -167,7 +167,7 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
                                   }
     , shelleyLedgerState      = sleNewEpochState
     , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
-    , shelleyLedgerTables     = ShelleyLedgerTables EmptyMK
+    , shelleyLedgerTables     = LedgerTables EmptyMK
     }
     chainDepState = TPraosState (NotOrigin 1) sleChainDepState
     extLedgerState = ExtLedgerState
