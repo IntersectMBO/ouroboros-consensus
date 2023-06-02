@@ -1,34 +1,42 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns   #-}
 
 -- | Mempool with a mocked ledger interface
 module Bench.Consensus.MempoolWithMockedLedgerItf (
     InitialMempoolAndModelParams (..)
     -- * Mempool with a mocked LedgerDB interface
   , MempoolWithMockedLedgerItf (getMempool)
-  , getTxs
   , openMempoolWithMockedLedgerItf
+    -- * Mempool API functions
+  , addTx
+  , getTxs
+  , removeTxs
   ) where
 
 import           Bench.Consensus.Mempool.Params
-                     (InitialMempoolAndModelParams (..))
 import           Control.Concurrent.Class.MonadSTM.Strict
-                     (MonadSTM (atomically))
+                     (MonadSTM (atomically), newTVarIO)
 import           Control.DeepSeq (NFData (rnf))
 import           Control.Tracer (Tracer, nullTracer)
 import           Data.Foldable (foldMap')
-import           Ouroboros.Consensus.HeaderValidation as Header
+import qualified Data.List.NonEmpty as NE
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
+import qualified Ouroboros.Consensus.Ledger.SupportsProtocol as Ledger
 import qualified Ouroboros.Consensus.Ledger.Tables as Ledger
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
 import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB)
+import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf,
+                     MempoolAddTxResult)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (LedgerBackingStore)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Update as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Query as Query
 import           System.Directory (getTemporaryDirectory)
 import           System.FS.API (SomeHasFS (SomeHasFS))
 import           System.FS.API.Types (MountPoint (MountPoint))
@@ -37,7 +45,7 @@ import           System.IO.Temp (createTempDirectory)
 
 data MempoolWithMockedLedgerItf m blk = MempoolWithMockedLedgerItf {
       getLedgerInterface    :: !(Mempool.LedgerInterface m blk)
-    , getLedgerDB           :: !(LedgerDB (LedgerState blk))
+    , getLedgerDB           :: !(DbChangelog (LedgerState blk))
     , getLedgerBackingStore :: !(LedgerBackingStore m (LedgerState blk))
     , getMempool            :: !(Mempool m blk)
     }
@@ -56,8 +64,8 @@ instance NFData (MempoolWithMockedLedgerItf m blk) where
 openMempoolWithMockedLedgerItf ::
      ( Ledger.LedgerSupportsMempool blk
      , Ledger.HasTxId (Ledger.GenTx blk)
-     , Header.ValidateEnvelope blk
      , Ledger.CanSerializeLedgerTables (LedgerState blk)
+     , Ledger.LedgerSupportsProtocol blk
      )
   => Mempool.MempoolCapacityBytesOverride
   -> Tracer IO (Mempool.TraceEventMempool blk)
@@ -69,27 +77,27 @@ openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
     -- Set up a backing store with initial values
     sysTmpDir <- getTemporaryDirectory
     tmpDir <- createTempDirectory sysTmpDir "mempool-bench"
-    let lbsi = LedgerDB.newBackingStoreInitialiser nullTracer bss
+    let lbsi = newBackingStoreInitialiser nullTracer bss
         sfhs = SomeHasFS $ ioHasFS $ MountPoint tmpDir
         values = Ledger.projectLedgerTables backingState
-    lbs <- LedgerDB.newBackingStore lbsi sfhs values
+    lbs <- newBackingStore lbsi sfhs values
 
     -- Set up an empty changelog and populate it by applying blocks
-    let ldb0 = LedgerDB.mkWithAnchor $ Ledger.forgetLedgerTables backingState
-    ldb <- LedgerDB.pushMany
+    let ldb0 = empty $ Ledger.forgetLedgerTables backingState
+    ldb <- pushMany
               (const $ pure ())
               ldbcfg
-              (fmap LedgerDB.ReapplyVal blks)
+              (fmap ReapplyVal blks)
               (LedgerDB.readKeySets lbs)
               ldb0
-
+    dbVar <- newTVarIO ldb
     -- Create a ledger interface, mimicking @getLedgerTablesAtFor@ from the
     -- @ChainDB.Impl.LgrDB@ module.
     let ledgerItf = Mempool.LedgerInterface {
-            Mempool.getCurrentLedgerState = pure $ LedgerDB.current ldb
+            Mempool.getCurrentLedgerState = pure $ current ldb
           , Mempool.getLedgerTablesAtFor = \pt txs -> do
               let keys = foldMap' Ledger.getTransactionKeySets txs
-              LedgerDB.getLedgerTablesAtFor pt keys ldb lbs
+              Query.getLedgerTablesAtFor pt keys dbVar lbs
           }
 
     mempool <- Mempool.openMempoolWithoutSyncThread
@@ -112,7 +120,20 @@ openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
       , immpChangelogBlocks      = blks
       } = params
 
-    lcfg = LedgerDB.ledgerDbCfg ldbcfg
+    lcfg = ledgerDbCfg ldbcfg
+
+addTx ::
+     MempoolWithMockedLedgerItf m blk
+  -> AddTxOnBehalfOf
+  -> Ledger.GenTx blk
+  -> m (MempoolAddTxResult blk)
+addTx = Mempool.addTx . getMempool
+
+removeTxs ::
+     MempoolWithMockedLedgerItf m blk
+  -> [Ledger.GenTxId blk]
+  -> m ()
+removeTxs m = Mempool.removeTxs (getMempool m) .  NE.fromList
 
 getTxs ::
      (Ledger.LedgerSupportsMempool blk)

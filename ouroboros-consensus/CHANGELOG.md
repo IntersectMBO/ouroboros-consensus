@@ -2,6 +2,76 @@
 
 # Changelog entries
 
+<a id='changelog-0.7.0.0'></a>
+## 0.7.0.0 — 2023-05-19
+
+### Patch
+
+- Remove deprecated modules from `consensus-testlib`.
+  * `Test.Util.Blob`
+  * `Test.Util.Classify`
+  * `Test.Util.FS.Sim.*`
+- Remove deprecated modules from the main `ouroboros-consensus` library.
+  * `Ouroboros.Consensus.HardFork.Combinator.Util.*`
+  * `Ouroboros.Consensus.Mempool.Impl`
+  * `Ouroboros.Consensus.Mempool.TxLimits`
+  * `Ouroboros.Consensus.Mempool.Impl.Pure`
+  * `Ouroboros.Consensus.Mempool.Impl.Types`
+  * `Ouroboros.Consensus.Storage.IO`
+  * `Ouroboros.Consensus.Storage.FS.*`
+  * `Ouroboros.Consensus.Storage.LedgerDB.InMemory`
+  * `Ouroboros.Consensus.Storage.LedgerDB.OnDisk`
+  * `Ouroboros.Consensus.Storage.LedgerDB.Types`
+  * `Ouroboros.Consensus.Util.Counting`
+  * `Ouroboros.Consensus.Util.OptNP`
+  * `Ouroboros.Consensus.Util.SOP`
+- Remove deprecated definitions from non-deprecated modules in the main
+  `ouroboros-consensus` library:
+  * `Ouroboros.Consensus.Mempool.API`: `MempoolCapacityBytes`,
+    `MempoolCapacityBytesOverride`, `MempoolSize`, `TraceEventMempool`,
+    `computeMempoolCapacity`.
+  * `Ouroboros.Consensus.Storage.ChainDB.Impl.Types`: `TraceLedgerEvent`.
+- In the main `ouroboros-consensus` library, remove exports that were only there
+  to make deprecated modules compile.
+  * `Ouroboros.Consensus.Mempool.Update`: `pureRemoveTxs`, `pureSyncWithLedger`.
+  * `Ouroboros.Consensus.Mempool.Impl.Common`: `initInternalState`.
+
+### Non-Breaking
+
+- Map unreleased `NodeToClientV_16` version.
+
+### Breaking
+
+- Renamed `TranslateForecast` to `CrossEraForecaster` and `translateLedgerView`
+  to `crossEraForecast`.
+
+<a id='changelog-0.6.0.0'></a>
+## 0.6.0.0 — 2023-04-28
+
+### Non-Breaking
+
+- Update `io-sim` dependency to 1.1.0.0.
+
+- Update `ouroboros-network` dependency.
+
+### Breaking
+
+- Remove function `tryAddTxs` from the mempool API. The implementation (Shelly Era)
+  of this function relied on the fairness of 'service-in-random-order', and
+  endeavoured to maximally fill the mempool. Since the Babbage Era there is an
+  increased variation in representational size of transactions for a given cost
+  of processing. This means that, under certain conditions, representationally
+  large transactions could be stalled in progress between mempools.
+  This function was replaced by `addTx`.
+- Add a `addTx` function to the mempool API. This function tries to add a single
+  transaction and blocks if the mempool can not accept the given transaction.
+  This means that entry to a mempool is now a (per-peer) FIFO. This also ensure
+  that transactions will always progress, irrespective of size.
+  The refactoring introduces two FIFO queues. Remote clients have to queue in both
+  of them, whereas local clients only have to queue in the local clients' queue.
+  This gives local clients a higher precedence to get into their local mempool under
+  heavy load situations.
+
 <a id='changelog-0.5.0.0'></a>
 ## 0.5.0.0 - 2023-04-24
 

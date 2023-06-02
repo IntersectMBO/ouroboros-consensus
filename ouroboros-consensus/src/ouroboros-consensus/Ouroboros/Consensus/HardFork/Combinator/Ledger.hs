@@ -376,7 +376,7 @@ instance ( CanHardFork xs
   ledgerViewForecastAt ledgerCfg@HardForkLedgerConfig{..}
                        (HardForkLedgerState ledgerSt) =
       mkHardForkForecast
-        (InPairs.requiringBoth cfgs $ translateLedgerView hardForkEraTranslation)
+        (InPairs.requiringBoth cfgs $ crossEraForecast hardForkEraTranslation)
         annForecast
     where
       ei    = State.epochInfoLedger ledgerCfg ledgerSt
@@ -429,7 +429,7 @@ data AnnForecast state view blk = AnnForecast {
 mkHardForkForecast ::
      forall state view xs.
      SListI xs
-  => InPairs (TranslateForecast state view) xs
+  => InPairs (CrossEraForecaster state view) xs
   -> HardForkState (AnnForecast state view) xs
   -> Forecast (HardForkLedgerView_ view xs)
 mkHardForkForecast translations st = Forecast {
@@ -438,7 +438,7 @@ mkHardForkForecast translations st = Forecast {
     }
   where
     go :: SlotNo
-       -> InPairs (TranslateForecast state view) xs'
+       -> InPairs (CrossEraForecaster state view) xs'
        -> Telescope (K Past) (Current (AnnForecast state view)) xs'
        -> Except OutsideForecastRange (Ticked (HardForkLedgerView_ view xs'))
     go sno pairs        (TZ cur)       = oneForecast sno pairs cur
@@ -447,7 +447,7 @@ mkHardForkForecast translations st = Forecast {
 oneForecast ::
      forall state view blk blks.
      SlotNo
-  -> InPairs (TranslateForecast state view) (blk : blks)
+  -> InPairs (CrossEraForecaster state view) (blk : blks)
      -- ^ this function uses at most the first translation
   -> Current (AnnForecast state view) blk
   -> Except OutsideForecastRange (Ticked (HardForkLedgerView_ view (blk : blks)))
@@ -460,7 +460,7 @@ oneForecast sno pairs (Current start AnnForecast{..}) =
         else case pairs of
           PCons translate _ ->
                 afterKnownEnd end
-            <$> translateForecastWith translate end sno annForecastState
+            <$> crossEraForecastWith translate end sno annForecastState
           PNil              ->
             -- The requested slot is after the last era the code knows about.
             throwError OutsideForecastRange {

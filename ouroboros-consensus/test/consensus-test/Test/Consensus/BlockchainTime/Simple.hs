@@ -37,8 +37,11 @@
 module Test.Consensus.BlockchainTime.Simple (tests) where
 
 import           Control.Applicative (Alternative (..))
+import           Control.Concurrent.Class.MonadMVar (MonadMVar)
 import qualified Control.Monad.Class.MonadSTM.Internal as LazySTM
 import           Control.Monad.Class.MonadTime
+import qualified Control.Monad.Class.MonadTimer as MonadTimer
+import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Except
 import           Control.Monad.IOSim
 import           Control.Monad.Reader
@@ -358,6 +361,8 @@ newtype OverrideDelay m a = OverrideDelay {
            , MonadCatch
            , MonadMask
            , MonadMonotonicTime
+           , MonadMonotonicTimeNSec
+           , MonadMVar
            , MonadTime
            , MonadThread
            , MonadFork
@@ -373,6 +378,27 @@ deriving via AllowThunk (StrictTVar (OverrideDelay s) a)
 
 deriving via AllowThunk (StrictMVar (OverrideDelay s) a)
          instance NoThunks (StrictMVar (OverrideDelay s) a)
+
+instance MonadTimer.MonadDelay (OverrideDelay (IOSim s)) where
+  threadDelay d = OverrideDelay $ ReaderT $ \schedule -> do
+      -- Do the original delay. This is important, because otherwise this
+      -- turns into a busy loop in the simulator
+      MonadTimer.threadDelay d
+      -- However, the time /after/ the delay will be determined by the
+      -- schedule (unless it is empty, in which case the threadDelay behaves
+      -- as normal).
+      mOverride <- atomically $ stateTVar schedule nextDelay
+      case mOverride of
+        Nothing -> return ()
+        Just t  -> setCurrentTime t
+    where
+      nextDelay :: Schedule -> (Maybe UTCTime, Schedule)
+      nextDelay = \case
+          Schedule []     -> (Nothing, Schedule [])
+          Schedule (t:ts) -> (Just $ offsetToTime t, Schedule ts)
+
+      offsetToTime :: Fixed E1 -> UTCTime
+      offsetToTime t = Time.addUTCTime (realToFrac t) dawnOfTime
 
 instance MonadDelay (OverrideDelay (IOSim s)) where
   threadDelay d = OverrideDelay $ ReaderT $ \schedule -> do
@@ -394,6 +420,10 @@ instance MonadDelay (OverrideDelay (IOSim s)) where
 
       offsetToTime :: Fixed E1 -> UTCTime
       offsetToTime t = Time.addUTCTime (realToFrac t) dawnOfTime
+
+-- | The IO instance just uses the default delay
+instance MonadTimer.MonadDelay (OverrideDelay IO) where
+  threadDelay d = OverrideDelay $ ReaderT $ \_schedule -> MonadTimer.threadDelay d
 
 -- | The IO instance just uses the default delay
 instance MonadDelay (OverrideDelay IO) where

@@ -42,9 +42,8 @@ import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.CBOR.Read (DeserialiseFailure)
-import           Control.Monad.Class.MonadMVar (MonadMVar)
-import           Control.Monad.Class.MonadTime (MonadTime)
-import           Control.Monad.Class.MonadTimer (MonadTimer)
+import           Control.Monad.Class.MonadTime.SI (MonadTime)
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BSL
@@ -141,7 +140,8 @@ data Handlers m addr blk = Handlers {
         -- closure include these and not need to be explicit about them here.
 
     , hChainSyncServer
-        :: NodeToNodeVersion
+        :: ConnectionId addr
+        -> NodeToNodeVersion
         -> ChainDB.Follower m blk (ChainDB.WithPoint blk (SerialisedHeader blk))
         -> ChainSyncServer (SerialisedHeader blk) (Point blk) (Tip blk) m ()
 
@@ -153,7 +153,8 @@ data Handlers m addr blk = Handlers {
         -> BlockFetchClient (Header blk) blk m ()
 
     , hBlockFetchServer
-        :: NodeToNodeVersion
+        :: ConnectionId addr
+        -> NodeToNodeVersion
         -> ResourceRegistry m
         -> BlockFetchServer (Serialised blk) (Point blk) m ()
 
@@ -199,7 +200,6 @@ mkHandlers
      ( IOLike m
      , MonadTime m
      , MonadTimer m
-     , MonadMVar m
      , LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
      , LedgerSupportsProtocol blk
@@ -223,15 +223,15 @@ mkHandlers
             (contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers))
             getTopLevelConfig
             (defaultChainDbView getChainDB)
-      , hChainSyncServer = \_version ->
+      , hChainSyncServer = \peer _version ->
           chainSyncHeadersServer
-            (Node.chainSyncServerHeaderTracer tracers)
+            (contramap (TraceLabelPeer peer) (Node.chainSyncServerHeaderTracer tracers))
             getChainDB
       , hBlockFetchClient =
           blockFetchClient
-      , hBlockFetchServer = \version ->
+      , hBlockFetchServer = \peer version ->
           blockFetchServer
-            (Node.blockFetchServerTracer tracers)
+            (contramap (TraceLabelPeer peer) (Node.blockFetchServerTracer tracers))
             getChainDB
             version
       , hTxSubmissionClient = \version controlMessageSTM peer ->
@@ -601,7 +601,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
             (timeLimitsChainSync chainSyncTimeout)
             channel
             $ chainSyncServerPeer
-            $ hChainSyncServer version flr
+            $ hChainSyncServer them version flr
 
     aBlockFetchClient
       :: NodeToNodeVersion
@@ -638,7 +638,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
           timeLimitsBlockFetch
           channel
           $ blockFetchServerPeer
-          $ hBlockFetchServer version registry
+          $ hBlockFetchServer them version registry
 
     aTxSubmission2Client
       :: NodeToNodeVersion

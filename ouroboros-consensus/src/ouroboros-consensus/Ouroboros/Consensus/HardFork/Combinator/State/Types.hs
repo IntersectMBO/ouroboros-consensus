@@ -11,9 +11,9 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   , Past (..)
   , sequenceHardForkState
     -- * Supporting types
+  , CrossEraForecaster (..)
   , TransitionInfo (..)
   , Translate (..)
-  , TranslateForecast (..)
   , TranslateLedgerState (..)
   ) where
 
@@ -78,21 +78,19 @@ newtype Translate f x y = Translate {
       translateWith :: EpochNo -> f x -> f y
     }
 
--- | Translate (a forecast of) @f x@ to (a forecast of) @f y@
--- across an era transition.
---
--- Typically @f@ will be 'WrapLedgerView'.
+-- | Forecast a @'Ticked' (view y)@ from a @state x@ across an
+-- era transition.
 --
 -- In addition to the 'Bound' of the transition, this is also told the
 -- 'SlotNo' we're constructing a forecast for. This enables the translation
 -- function to take into account any scheduled changes that the final ledger
 -- view in the preceding era might have.
-newtype TranslateForecast f g x y = TranslateForecast {
-      translateForecastWith ::
+newtype CrossEraForecaster state view x y = CrossEraForecaster {
+      crossEraForecastWith ::
            Bound    -- 'Bound' of the transition (start of the new era)
         -> SlotNo   -- 'SlotNo' we're constructing a forecast for
-        -> f x EmptyMK
-        -> Except OutsideForecastRange (Ticked (g y))
+        -> state x EmptyMK
+        -> Except OutsideForecastRange (Ticked (view y))
     }
 
 -- | Translate a LedgerState across an era transition.

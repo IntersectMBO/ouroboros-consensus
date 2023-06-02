@@ -1,8 +1,10 @@
+{-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 
@@ -52,7 +54,9 @@ import           Prelude hiding ((<=))
 newtype MempoolCapacityBytes = MempoolCapacityBytes {
       getMempoolCapacityBytes :: Word32
     }
-  deriving (Eq, Show, NoThunks)
+  deriving (Eq, Show)
+
+deriving newtype instance NoThunks MempoolCapacityBytes
 
 -- | An override for the default 'MempoolCapacityBytes' which is 2x the
 -- maximum transaction capacity
@@ -92,7 +96,7 @@ data MempoolSize = MempoolSize
     -- ^ The number of transactions in the mempool.
   , msNumBytes :: !Word32
     -- ^ The summed byte size of all the transactions in the mempool.
-  } deriving (Eq, Show, Generic)
+  } deriving (Eq, Show, Generic, NoThunks)
 
 instance Semigroup MempoolSize where
   MempoolSize xt xb <> MempoolSize yt yb = MempoolSize (xt + yt) (xb + yb)

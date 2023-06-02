@@ -56,17 +56,15 @@ import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query.Version
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (BlockNodeToClientVersion)
 import           Ouroboros.Consensus.Node.Serialisation
                      (SerialiseNodeToClient (..), SerialiseResult (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding (empty)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DiffSeq as DS
-import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbChangelog
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
 import           Ouroboros.Consensus.Util.DepPair
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -289,9 +287,9 @@ answerQuery ::
   -> DiskLedgerView m (ExtLedgerState blk)
   -> Query blk result
   -> m result
-answerQuery cfg dlv query = case query of
-    BlockQuery blockQuery -> answerBlockQuery cfg blockQuery dlv
-    GetSystemStart -> pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg cfg))
+answerQuery config dlv query = case query of
+    BlockQuery blockQuery -> answerBlockQuery config blockQuery dlv
+    GetSystemStart -> pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
     GetChainBlockNo -> pure $ headerStateBlockNo (headerState st)
     GetChainPoint -> pure $ headerStatePoint (headerState st)
   where
@@ -332,24 +330,22 @@ data DiskLedgerView m l =
 
 mkDiskLedgerView ::
      (GetTip l, IOLike m, HasLedgerTables l)
-  => (LedgerBackingStoreValueHandle m l, LedgerDB l, m ())
+  => (LedgerBackingStoreValueHandle m l, DbChangelog l)
   -> DiskLedgerView m l
-mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
+mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb) =
     DiskLedgerView
-      (current ldb)
+      (DbChangelog.current ldb)
       (\ks -> do
-          let chlog = ledgerDbChangelog ldb
-              rew   = rewindTableKeySets chlog ks
+          let rew = rewindTableKeySets ldb ks
           unfwd <- readKeySetsWith
                      (fmap (seqNo,) . BackingStore.bsvhRead vh)
                      rew
-          case forwardTableKeySets chlog unfwd of
+          case forwardTableKeySets ldb unfwd of
               Left _err -> error "impossible!"
               Right vs  -> pure vs
       )
       (\rq -> do
-          let chlog = ledgerDbChangelog ldb
-              -- Get the differences without the keys that are greater or equal
+          let -- Get the differences without the keys that are greater or equal
               -- than the maximum previously seen key.
               diffs =
                 maybe
@@ -357,7 +353,7 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
                   (zipLedgerTables doDropLTE)
                   (BackingStore.rqPrev rq)
                   $ mapLedgerTables prj
-                  $ changelogDiffs chlog
+                  $ changelogDiffs ldb
               -- (1) Ensure that we never delete everything read from disk (ie
               --     if our result is non-empty then it contains something read
               --     from disk).
@@ -372,7 +368,7 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
           values <- BackingStore.bsvhRangeRead vh (rq{BackingStore.rqCount = nrequested})
           pure $ zipLedgerTables (doFixupReadResult nrequested) diffs values
       )
-      close
+      (bsvhClose vh)
   where
     prj ::
          (Ord k, Eq v)
@@ -390,7 +386,7 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
         DiffMK
       $ case Set.lookupMax ks of
           Nothing -> ds
-          Just k  -> Diff.filterOnlyKey (\dk -> dk > k) ds
+          Just k  -> Diff.filterOnlyKey (> k) ds
 
     -- NOTE: this is counting the deletions wrt disk.
     numDeletesDiffMK :: DiffMK k v -> Int
@@ -446,7 +442,7 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb, close) =
             if definitelyNoMoreToFetch then includingAllKeys else
             Diff.applyDiff
               vs'
-              (Diff.filterOnlyKey (\dk -> dk < k) ds)
+              (Diff.filterOnlyKey (< k) ds)
 
 
 {-------------------------------------------------------------------------------
@@ -491,7 +487,7 @@ handleTraversingQuery ::
 handleTraversingQuery dlv query =
   case tableTraversingQuery query of
     Nothing -> error "Tried to perform a traversing query on a query that doesn't need to traverse the Ledger tables!"
-    Just (TraversingQueryHandler partial empty comb post) ->
+    Just (TraversingQueryHandler partial mt comb post) ->
       let
         loop !prev !acc = do
           extValues <-
@@ -502,7 +498,7 @@ handleTraversingQuery dlv query =
                 (Just $ mapLedgerTables toKeys extValues)
                 (comb acc $ partial (stowLedgerTables (st `withLedgerTables` extValues) `withLedgerTables` emptyLedgerTables))
        in
-        post <$> loop Nothing empty
+        post <$> loop Nothing mt
   where
     DiskLedgerView st _dbRead dbReadRange _dbClose = dlv
 

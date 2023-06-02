@@ -18,7 +18,9 @@ import           Control.Tracer
 import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Basics
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB, current)
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog)
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
+                     (current)
 
 {-------------------------------------------------------------------------------
   Generic
@@ -55,7 +57,7 @@ data LedgerDbSize (l :: LedgerStateKind) = LedgerDbSize {
 traceLedgerDbSize :: forall m l. (MonadIO m, GetTip l)
                   => (Word64 -> Bool)
                   -> Tracer m (LedgerDbSize l)
-                  -> Tracer m (LedgerDB l)
+                  -> Tracer m (DbChangelog l)
 traceLedgerDbSize p (Tracer f) = Tracer $ \(!db) -> do
     let !ledger = current db
         !tip    = getTip ledger

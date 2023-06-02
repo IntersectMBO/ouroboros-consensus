@@ -37,8 +37,13 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Storage.LedgerDB hiding (tip)
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query hiding
+                     (tip)
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
+import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
 import           Ouroboros.Consensus.Util
 import           Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary ()
 import           Test.QuickCheck
@@ -131,7 +136,7 @@ prop_genesisCurrent :: Property
 prop_genesisCurrent =
     current genSnaps === convertMapKind testInitLedger
   where
-    genSnaps = mkWithAnchor (convertMapKind testInitLedger)
+    genSnaps = empty (convertMapKind testInitLedger)
 
 {-------------------------------------------------------------------------------
   Constructing snapshots
@@ -166,7 +171,7 @@ prop_pastLedger setup@ChainSetup{..} =
     tip :: Point TestBlock
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
-    afterPrefix :: LedgerDB (LedgerState TestBlock)
+    afterPrefix :: DbChangelog (LedgerState TestBlock)
     afterPrefix = pushMany' (csBlockConfig setup) prefix trivialKeySetsReader csGenSnaps
 
     -- See 'prop_snapshotsMaxRollback'
@@ -179,7 +184,7 @@ prop_pastLedger setup@ChainSetup{..} =
 
 prop_maxRollbackGenesisZero :: Property
 prop_maxRollbackGenesisZero =
-        maxRollback (mkWithAnchor (convertMapKind testInitLedger))
+        maxRollback (empty (convertMapKind testInitLedger))
     === 0
 
 prop_snapshotsMaxRollback :: ChainSetup -> Property
@@ -233,7 +238,7 @@ prop_pastAfterSwitch setup@SwitchSetup{..} =
     tip :: Point TestBlock
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
-    afterPrefix :: LedgerDB (LedgerState TestBlock)
+    afterPrefix :: DbChangelog (LedgerState TestBlock)
     afterPrefix = pushMany' (csBlockConfig ssChainSetup) prefix trivialKeySetsReader (csGenSnaps ssChainSetup)
 
     -- See 'prop_snapshotsMaxRollback'
@@ -260,13 +265,13 @@ data ChainSetup = ChainSetup {
     , csPrefixLen :: Word64
 
       -- | Derived: genesis snapshots
-    , csGenSnaps  :: LedgerDB (LedgerState TestBlock)
+    , csGenSnaps  :: DbChangelog (LedgerState TestBlock)
 
       -- | Derived: the actual blocks that got applied (old to new)
     , csChain     :: [TestBlock]
 
       -- | Derived: the snapshots after all blocks were applied
-    , csPushed    :: LedgerDB (LedgerState TestBlock)
+    , csPushed    :: DbChangelog (LedgerState TestBlock)
     }
   deriving (Show)
 
@@ -312,7 +317,7 @@ data SwitchSetup = SwitchSetup {
     , ssChain       :: [TestBlock]
 
       -- | Derived; the snapshots after the switch was performed
-    , ssSwitched    :: LedgerDB (LedgerState TestBlock)
+    , ssSwitched    :: DbChangelog (LedgerState TestBlock)
     }
   deriving (Show)
 
@@ -323,7 +328,7 @@ mkTestSetup :: SecurityParam -> Word64 -> Word64 -> ChainSetup
 mkTestSetup csSecParam csNumBlocks csPrefixLen =
     ChainSetup {..}
   where
-    csGenSnaps = mkWithAnchor (convertMapKind testInitLedger)
+    csGenSnaps = empty (convertMapKind testInitLedger)
     csChain    = take (fromIntegral csNumBlocks) $
                    iterate successorBlock (firstBlock 0)
     csPushed   = pushMany' (csBlockConfig' csSecParam) csChain trivialKeySetsReader csGenSnaps

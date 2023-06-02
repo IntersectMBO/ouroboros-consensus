@@ -13,6 +13,8 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Server (
     -- * Trace events
   , BlockingType (..)
   , TraceChainSyncServerEvent (..)
+    -- * Low-level API
+  , chainSyncServerForFollower
   ) where
 
 import           Control.Tracer
@@ -61,7 +63,7 @@ chainSyncHeadersServer
     -> Follower m blk (WithPoint blk (SerialisedHeader blk))
     -> ChainSyncServer (SerialisedHeader blk) (Point blk) (Tip blk) m ()
 chainSyncHeadersServer tracer chainDB flr =
-    chainSyncServerForFollower tracer chainDB flr
+    chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) flr
 
 -- | Chain Sync Server for blocks for a given a 'ChainDB'.
 --
@@ -75,27 +77,24 @@ chainSyncBlocksServer
     -> Follower m blk (WithPoint blk (Serialised blk))
     -> ChainSyncServer (Serialised blk) (Point blk) (Tip blk) m ()
 chainSyncBlocksServer tracer chainDB flr =
-    chainSyncServerForFollower tracer chainDB flr
+    chainSyncServerForFollower tracer (ChainDB.getCurrentTip chainDB) flr
 
 -- | A chain sync server.
 --
 -- This is a version of
 -- 'Ouroboros.Network.Protocol.ChainSync.Examples.chainSyncServerExample' that
--- uses a 'chainDB' and a 'Follower' instead of
+-- uses an action to get the current 'Tip' and a 'Follower' instead of
 -- 'Ourboros.Network.ChainProducerState.ChainProducerState'.
 --
 -- All the hard work is done by the 'Follower's provided by the 'ChainDB'.
 --
 chainSyncServerForFollower ::
-     forall m blk b.
-     ( IOLike m
-     , HasHeader (Header blk)
-     )
+     forall m blk b. IOLike m
   => Tracer m (TraceChainSyncServerEvent blk)
-  -> ChainDB m blk
+  -> STM m (Tip blk)
   -> Follower  m blk (WithPoint blk b)
   -> ChainSyncServer b (Point blk) (Tip blk) m ()
-chainSyncServerForFollower tracer chainDB flr =
+chainSyncServerForFollower tracer getCurrentTip flr =
     idle'
   where
     idle :: ServerStIdle b (Point blk) (Tip blk) m ()
@@ -112,7 +111,7 @@ chainSyncServerForFollower tracer chainDB flr =
                                 (m (ServerStNext b (Point blk) (Tip blk) m ())))
     handleRequestNext = ChainDB.followerInstruction flr >>= \case
       Just update -> do
-        tip <- atomically $ ChainDB.getCurrentTip chainDB
+        tip <- atomically getCurrentTip
         let mkTraceEvent =
               TraceChainSyncServerUpdate tip (point <$> update) NonBlocking
         traceWith tracer $ mkTraceEvent RisingEdge
@@ -121,7 +120,7 @@ chainSyncServerForFollower tracer chainDB flr =
         -- Follower is at the head, we have to block and wait for the chain to
         -- change.
         update <- ChainDB.followerInstructionBlocking flr
-        tip    <- atomically $ ChainDB.getCurrentTip chainDB
+        tip    <- atomically getCurrentTip
         let mkTraceEvent =
               TraceChainSyncServerUpdate tip (point <$> update) Blocking
         traceWith tracer $ mkTraceEvent RisingEdge
@@ -144,7 +143,7 @@ chainSyncServerForFollower tracer chainDB flr =
     handleFindIntersect points = do
       -- TODO guard number of points
       changed <- ChainDB.followerForward flr points
-      tip     <- atomically $ ChainDB.getCurrentTip chainDB
+      tip     <- atomically getCurrentTip
       case changed of
         Just pt -> return $ SendMsgIntersectFound pt tip idle'
         Nothing -> return $ SendMsgIntersectNotFound tip idle'

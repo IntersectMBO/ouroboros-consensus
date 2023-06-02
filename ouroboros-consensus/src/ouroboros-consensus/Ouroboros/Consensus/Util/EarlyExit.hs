@@ -10,6 +10,7 @@
 
 module Ouroboros.Consensus.Util.EarlyExit (
     exitEarly
+  , exitEarlyWith
   , withEarlyExit
   , withEarlyExit_
     -- * Re-exports
@@ -19,6 +20,7 @@ module Ouroboros.Consensus.Util.EarlyExit (
   ) where
 
 import           Control.Applicative
+import           Control.Concurrent.Class.MonadMVar
 import           Control.Monad
 import           Control.Monad.Class.MonadAsync
 import           Control.Monad.Class.MonadEventlog
@@ -26,7 +28,10 @@ import           Control.Monad.Class.MonadFork
 import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadSTM.Internal
 import           Control.Monad.Class.MonadThrow
+import           Control.Monad.Class.MonadTime
+import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Class.MonadTimer
+import qualified Control.Monad.Class.MonadTimer.SI as TimerSI
 import           Control.Monad.ST (ST)
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Maybe
@@ -34,8 +39,8 @@ import           Data.Function (on)
 import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
-import           Ouroboros.Consensus.Util.IOLike (IOLike (..),
-                     MonadMonotonicTime (..), StrictMVar, StrictTVar)
+import           Ouroboros.Consensus.Util.IOLike (IOLike (..), StrictMVar,
+                     StrictTVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions
@@ -66,8 +71,11 @@ collapse :: Maybe () -> ()
 collapse Nothing   = ()
 collapse (Just ()) = ()
 
-exitEarly :: Applicative m => WithEarlyExit m a
-exitEarly = earlyExit $ pure Nothing
+exitEarly :: Monad m => WithEarlyExit m a
+exitEarly = exitEarlyWith (pure ())
+
+exitEarlyWith :: Monad m => m () -> WithEarlyExit m a
+exitEarlyWith act = earlyExit $ act >> pure Nothing
 
 instance (forall a'. NoThunks (m a'))
       => NoThunks (WithEarlyExit m a) where
@@ -145,6 +153,22 @@ instance MonadSTM m => MonadSTM (WithEarlyExit m) where
   newTMVarIO      = lift . newTMVarIO
   newEmptyTMVarIO = lift   newEmptyTMVarIO
 
+instance (MonadMVar m, MonadMask m, MonadEvaluate m)
+      => MonadMVar (WithEarlyExit m) where
+  type MVar (WithEarlyExit m) = MVar m
+
+  newEmptyMVar          = lift    newEmptyMVar
+  takeMVar              = lift .  takeMVar
+  putMVar               = lift .: putMVar
+  tryTakeMVar           = lift .  tryTakeMVar
+  tryPutMVar            = lift .: tryPutMVar
+  tryReadMVar           = lift .  tryReadMVar
+  isEmptyMVar           = lift .  isEmptyMVar
+
+  newMVar               = lift .  newMVar
+  readMVar              = lift .  readMVar
+  swapMVar              = lift .: swapMVar
+
 instance MonadCatch m => MonadThrow (WithEarlyExit m) where
   throwIO = lift . throwIO
 
@@ -188,7 +212,6 @@ instance MonadThread m => MonadThread (WithEarlyExit m) where
 
   myThreadId   = lift    myThreadId
   labelThread  = lift .: labelThread
-  threadStatus = lift .  threadStatus
 
 instance (MonadMask m, MonadAsync m, MonadCatch (STM m))
       => MonadAsync (WithEarlyExit m) where
@@ -236,11 +259,19 @@ instance MonadST m => MonadST (WithEarlyExit m) where
       lowerLiftST :: (forall s. Proxy s -> (forall a. ST s a -> m a) -> b) -> b
       lowerLiftST g = withLiftST $ g Proxy
 
+instance MonadMonotonicTimeNSec m => MonadMonotonicTimeNSec (WithEarlyExit m) where
+  getMonotonicTimeNSec = lift getMonotonicTimeNSec
+
+
 instance MonadMonotonicTime m => MonadMonotonicTime (WithEarlyExit m) where
   getMonotonicTime = lift getMonotonicTime
 
 instance MonadDelay m => MonadDelay (WithEarlyExit m) where
   threadDelay = lift . threadDelay
+
+
+instance TimerSI.MonadDelay m => TimerSI.MonadDelay (WithEarlyExit m) where
+  threadDelay = lift . TimerSI.threadDelay
 
 instance (MonadEvaluate m, MonadCatch m) => MonadEvaluate (WithEarlyExit m) where
   evaluate  = lift . evaluate

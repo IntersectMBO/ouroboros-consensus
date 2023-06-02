@@ -32,10 +32,9 @@ module Ouroboros.Consensus.Mempool.Impl.Common (
   , validationResultFromIS
     -- * Ticking a ledger state
   , tickLedgerState
-    -- * Exported for deprecated modules
-  , initInternalState
   ) where
 
+import           Control.Concurrent.Class.MonadMVar (MVar, newMVar)
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
 import           Control.Exception (assert)
 import           Control.Monad.Trans.Except (runExcept)
@@ -54,21 +53,18 @@ import           Ouroboros.Consensus.Ledger.Extended (LedgerTables (..),
                      ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Mempool.API hiding (MempoolCapacityBytes,
-                     MempoolCapacityBytesOverride, MempoolSize,
-                     TraceEventMempool, computeMempoolCapacity)
+import           Ouroboros.Consensus.Mempool.API
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Query
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
                      (PointNotFound)
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util (repeatedly)
-import           Ouroboros.Consensus.Util.IOLike
-
+import           Ouroboros.Consensus.Util.IOLike hiding (newMVar)
 {-------------------------------------------------------------------------------
   Internal State
 -------------------------------------------------------------------------------}
@@ -194,7 +190,7 @@ chainDBLedgerInterface chainDB = LedgerInterface
         ledgerState . current <$> ChainDB.getLedgerDB chainDB
     , getLedgerTablesAtFor = \pt txs -> do
         let keys = ExtLedgerStateTables
-                 $ foldl' (zipLedgerTables (<>)) emptyLedgerTables
+                 $ foldl' (<>) emptyLedgerTables
                  $ map getTransactionKeySets txs
         fmap unExtLedgerStateTables <$> ChainDB.getLedgerTablesAtFor chainDB pt keys
     }
@@ -210,6 +206,8 @@ data MempoolEnv m blk = MempoolEnv {
       mpEnvLedger           :: LedgerInterface m blk
     , mpEnvLedgerCfg        :: LedgerConfig blk
     , mpEnvStateVar         :: StrictTMVar m (InternalState blk)
+    , mpEnvAddTxsRemoteFifo :: MVar m ()
+    , mpEnvAddTxsAllFifo    :: MVar m ()
     , mpEnvTracer           :: Tracer m (TraceEventMempool blk)
     , mpEnvTxSize           :: GenTx blk -> TxSizeInBytes
     , mpEnvCapacityOverride :: MempoolCapacityBytesOverride
@@ -229,10 +227,14 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer txSize = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
     let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
     isVar <- newTMVarIO $ initInternalState capacityOverride TxSeq.zeroTicketNo slot st'
+    addTxRemoteFifo <- newMVar ()
+    addTxAllFifo    <- newMVar ()
     return MempoolEnv
       { mpEnvLedger           = ledgerInterface
       , mpEnvLedgerCfg        = cfg
       , mpEnvStateVar         = isVar
+      , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
+      , mpEnvAddTxsAllFifo    = addTxAllFifo
       , mpEnvTracer           = tracer
       , mpEnvTxSize           = txSize
       , mpEnvCapacityOverride = capacityOverride
@@ -552,16 +554,31 @@ data TraceEventMempool blk
       -- transactions.
       MempoolSize
       -- ^ The current size of the Mempool.
+  | TraceMempoolAttemptingSync
+  | TraceMempoolSyncNotNeeded (Point blk) (Point blk)
+  | TraceMempoolSyncDone
+  | TraceMempoolAttemptingAdd (GenTx blk)
+  | TraceMempoolLedgerFound (Point blk)
+  | TraceMempoolLedgerNotFound (Point blk)
   deriving (Generic)
 
 deriving instance ( Eq (GenTx blk)
                   , Eq (Validated (GenTx blk))
                   , Eq (GenTxId blk)
                   , Eq (ApplyTxErr blk)
+                  , StandardHash blk
                   ) => Eq (TraceEventMempool blk)
 
 deriving instance ( Show (GenTx blk)
                   , Show (Validated (GenTx blk))
                   , Show (GenTxId blk)
                   , Show (ApplyTxErr blk)
+                  , StandardHash blk
                   ) => Show (TraceEventMempool blk)
+
+deriving instance ( NoThunks (GenTx blk)
+                  , NoThunks (Validated (GenTx blk))
+                  , NoThunks (GenTxId blk)
+                  , NoThunks (ApplyTxErr blk)
+                  , StandardHash blk
+                  ) => NoThunks (TraceEventMempool blk)

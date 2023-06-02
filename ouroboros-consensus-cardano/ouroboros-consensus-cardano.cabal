@@ -1,23 +1,25 @@
-cabal-version:      3.0
-name:               ouroboros-consensus-cardano
-version:            0.5.0.0
+cabal-version:   3.0
+name:            ouroboros-consensus-cardano
+version:         0.6.0.0
 synopsis:
   The instantation of the Ouroboros consensus layer used by Cardano
 
 description:
   The instantation of the Ouroboros consensus layer used by Cardano.
 
-license:            Apache-2.0
+license:         Apache-2.0
 license-files:
   LICENSE
   NOTICE
 
-copyright:          2019-2023 Input Output Global Inc (IOG)
-author:             IOHK Engineering Team
-maintainer:         operations@iohk.io
-category:           Network
-build-type:         Simple
-extra-source-files: CHANGELOG.md
+copyright:       2019-2023 Input Output Global Inc (IOG)
+author:          IOHK Engineering Team
+maintainer:      operations@iohk.io
+category:        Network
+build-type:      Simple
+extra-doc-files:
+  CHANGELOG.md
+  README.md
 
 source-repository head
   type:     git
@@ -108,18 +110,21 @@ library
     Ouroboros.Consensus.Shelley.Protocol.TPraos
     Ouroboros.Consensus.Shelley.ShelleyHFC
 
+  other-modules:
+    Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
+
   build-depends:
-    , base                          >=4.14  && <4.17
+    , base                          >=4.14     && <4.17
     , base-deriving-via
-    , bytestring                    >=0.10  && <0.12
+    , bytestring                    >=0.10     && <0.12
     , cardano-binary
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
     , cardano-data
     , cardano-ledger-allegra
-    , cardano-ledger-alonzo
-    , cardano-ledger-babbage
+    , cardano-ledger-alonzo         ^>=1.2.1
+    , cardano-ledger-babbage        ^>=1.2.1
     , cardano-ledger-binary
     , cardano-ledger-byron
     , cardano-ledger-conway
@@ -127,26 +132,26 @@ library
     , cardano-ledger-mary
     , cardano-ledger-shelley
     , cardano-prelude
-    , cardano-protocol-tpraos       >=1.0.1 && <1.1
+    , cardano-protocol-tpraos       >=1.0.1    && <1.1
     , cardano-slotting
     , cardano-strict-containers
-    , cborg                         >=0.2.2 && <0.3
-    , containers                    >=0.5   && <0.7
-    , cryptonite                    >=0.25  && <0.31
+    , cborg                         >=0.2.2    && <0.3
+    , containers                    >=0.5      && <0.7
+    , cryptonite                    >=0.25     && <0.31
     , deepseq
     , diff-containers               >=1.0
-    , formatting                    >=6.3   && <7.2
+    , formatting                    >=6.3      && <7.2
     , measures
     , microlens
-    , mtl                           >=2.2   && <2.3
+    , mtl                           >=2.2      && <2.3
     , nothunks
-    , ouroboros-consensus           ^>=0.5
-    , ouroboros-consensus-protocol  ^>=0.5
-    , ouroboros-network-api
-    , serialise                     >=0.2   && <0.3
+    , ouroboros-consensus           ^>=0.7
+    , ouroboros-consensus-protocol  ^>=0.5.0.1
+    , ouroboros-network-api         ^>=0.5
+    , serialise                     >=0.2      && <0.3
     , small-steps
-    , text                          >=1.2   && <1.3
-    , these                         >=1.1   && <1.2
+    , text                          >=1.2      && <1.3
+    , these                         >=1.1      && <1.2
     , vector-map
 
 library byronspec
@@ -183,7 +188,7 @@ library byronspec
     , containers                 >=0.5   && <0.7
     , mtl                        >=2.2   && <2.3
     , nothunks
-    , ouroboros-consensus        ^>=0.5
+    , ouroboros-consensus        ^>=0.7
     , serialise                  >=0.2   && <0.3
     , small-steps
     , transformers
@@ -477,6 +482,10 @@ library cardano-tools
     Cardano.Tools.DBSynthesizer.Orphans
     Cardano.Tools.DBSynthesizer.Run
     Cardano.Tools.DBSynthesizer.Types
+    Cardano.Tools.DBTruncater.Run
+    Cardano.Tools.DBTruncater.Types
+    Cardano.Tools.ImmDBServer.Diffusion
+    Cardano.Tools.ImmDBServer.MiniProtocols
 
   other-modules:
     Cardano.Api.Key
@@ -522,14 +531,18 @@ library cardano-tools
     , fs-api
     , microlens
     , mtl                            >=2.2   && <2.3
+    , network
     , nothunks
-    , ouroboros-consensus
+    , ouroboros-consensus            ^>=0.7
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-diffusion
-    , ouroboros-consensus-protocol
+    , ouroboros-consensus-diffusion  ^>=0.6
+    , ouroboros-consensus-protocol   ^>=0.5
+    , ouroboros-network
     , ouroboros-network-api
-    , serialise
-    , text
+    , ouroboros-network-framework
+    , ouroboros-network-protocols
+    , serialise                      >=0.2   && <0.3
+    , text                           >=1.2   && <1.3
     , text-builder
     , transformers
     , transformers-except
@@ -559,6 +572,32 @@ executable db-synthesizer
 
   other-modules:  DBSynthesizer.Parsers
 
+executable db-truncater
+  import:         common-exe
+  hs-source-dirs: app
+  main-is:        db-truncater.hs
+  build-depends:
+    , base
+    , cardano-crypto-wrapper
+    , optparse-applicative
+    , ouroboros-consensus
+    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, cardano-tools}
+
+  other-modules:
+    DBAnalyser.Parsers
+    DBTruncater.Parsers
+
+executable immdb-server
+  import:         common-exe
+  hs-source-dirs: app
+  main-is:        immdb-server.hs
+  build-depends:
+    , base
+    , network
+    , optparse-applicative
+    , ouroboros-consensus
+    , ouroboros-consensus-cardano:cardano-tools
+
 test-suite tools-test
   import:         common-test
   type:           exitcode-stdio-1.0
@@ -569,22 +608,3 @@ test-suite tools-test
     , cardano-tools
     , tasty
     , tasty-hunit
-
-executable ledger-db-backends-checker
-  import:         common-exe
-  hs-source-dirs: app
-  main-is:        ledger-db-backends-checker.hs
-  build-depends:
-    , base
-    , bytestring
-    , cardano-binary
-    , cardano-ledger-core
-    , cardano-lmdb-simple
-    , cardano-slotting
-    , cborg
-    , containers
-    , fs-api
-    , optparse-applicative
-    , ouroboros-consensus
-    , ouroboros-consensus-cardano
-    , ouroboros-consensus-protocol

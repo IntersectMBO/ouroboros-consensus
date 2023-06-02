@@ -33,14 +33,11 @@ import           Ouroboros.Consensus.Config.SecurityParam
                      (SecurityParam (SecurityParam))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, ValuesMK (..))
-import           Ouroboros.Consensus.Storage.LedgerDB (BackingStoreSelector,
-                     LedgerDbCfg)
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+                     (BackingStoreSelector (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB
                      (LMDBLimits (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Init
-                     (BackingStoreSelector (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
-                     (LedgerDbCfg (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.Config (LedgerDbCfg (..))
 import qualified Test.Util.TestBlock as TestBlock
 import           Test.Util.TestBlock (LedgerState (..))
 

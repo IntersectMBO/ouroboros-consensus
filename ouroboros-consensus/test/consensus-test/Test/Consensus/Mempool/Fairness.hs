@@ -19,7 +19,7 @@ import           Control.Monad (forever, void)
 import qualified Control.Tracer as Tracer
 import           Data.Foldable (asum)
 import qualified Data.List as List
-import           Data.List.NonEmpty (NonEmpty (..))
+import           Data.List.NonEmpty hiding (length)
 import           Data.Void (Void, vacuous)
 import           Data.Word (Word32)
 import           Ouroboros.Consensus.Config.SecurityParam as Consensus
@@ -33,14 +33,12 @@ import           Ouroboros.Consensus.Util.IOLike (STM, atomically, retry)
 import           System.Random (randomIO)
 import           Test.Consensus.Mempool.Fairness.TestBlock
 import           Test.Tasty (TestTree, testGroup)
-import           Test.Tasty.ExpectedFailure (expectFail)
 import           Test.Tasty.HUnit (testCase, (@?), (@?=))
 import           Test.Util.TestBlock (testInitLedgerWithState)
 
 tests :: TestTree
 tests = testGroup "Mempool fairness"
-                  [ expectFail $
-                    testCase "There is no substantial bias in added transaction sizes" $
+                  [ testCase "There is no substantial bias in added transaction sizes" $
                               testTxSizeFairness TestParams { mempoolMaxCapacity =   100
                                                             , smallTxSize        =     1
                                                             , largeTxSize        =    10

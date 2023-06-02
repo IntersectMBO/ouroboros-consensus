@@ -222,13 +222,13 @@ withinEraForecast maxLookAhead st = Forecast{
 -- | Translations between eras
 translations :: forall xs.
      TestSetup xs
-  -> InPairs (TranslateForecast (K1 LedgerState) (K LedgerView)) xs
+  -> InPairs (CrossEraForecaster (K1 LedgerState) (K LedgerView)) xs
 translations TestSetup{..} =
     case isNonEmpty (Proxy @xs) of
       ProofNonEmpty{} -> go testLookahead
   where
     go :: Exactly (x ': xs') MaxLookahead
-       -> InPairs (TranslateForecast (K1 LedgerState) (K LedgerView)) (x ': xs')
+       -> InPairs (CrossEraForecaster (K1 LedgerState) (K LedgerView)) (x ': xs')
     go (ExactlyCons _ ExactlyNil) =
         InPairs.PNil
     go (ExactlyCons this rest@(ExactlyCons next _)) =
@@ -236,9 +236,9 @@ translations TestSetup{..} =
 
     tr :: MaxLookahead -- ^ Look-ahead in the current era
        -> MaxLookahead -- ^ Look-ahead in the next era
-       -> TranslateForecast (K1 LedgerState) (K LedgerView) era era'
+       -> CrossEraForecaster (K1 LedgerState) (K LedgerView) era era'
     tr thisLookahead nextLookahead =
-        TranslateForecast $ \transition sno (K1 st) ->
+        CrossEraForecaster $ \transition sno (K1 st) ->
           assert (sno >= boundSlot transition) $ do
             let tip :: WithOrigin SlotNo
                 tip = ledgerTip st

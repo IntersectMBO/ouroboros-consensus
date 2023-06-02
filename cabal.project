@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2023-04-24T00:00:00Z
+  , hackage.haskell.org 2023-06-02T09:05:32Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2023-05-09T09:56:37Z
+  , cardano-haskell-packages 2023-05-23T16:25:08Z
 
 packages:
   ./ouroboros-consensus
@@ -27,24 +27,23 @@ packages:
 tests: True
 benchmarks: True
 
-constraints:
-  -- Nix doesn't pick this version by default even if it can.
-  cardano-ledger-alonzo-test >= 1.0.0.0
+package cardano-ledger-core
+  flags: +asserts
 
-package cardano-ping
+package cardano-ledger-shelley
+  flags: +asserts
+
+package fs-api
+  flags: +asserts
+
+package fs-sim
   flags: +asserts
 
 package io-classes
   flags: +asserts
 
-package strict-stm
-  flags: +asserts
-
 package network-mux
   flags: +asserts
-
-package ouroboros-network
-  flags: +asserts +cddl
 
 package ouroboros-consensus
   flags: +asserts
@@ -52,16 +51,49 @@ package ouroboros-consensus
 package ouroboros-consensus-cardano
   flags: +asserts
 
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/lmdb-simple
-  tag: fb86d051e0c517aea3f5c27723fcc88586be8bfe
-  --sha256: 14bcznx0xhif1za17h2102axqyvyqzf1ki3kzhjxfj5a0q66n3m1
+package ouroboros-consensus-diffusion
+  flags: +asserts
+
+package ouroboros-consensus-protocol
+  flags: +asserts
+
+package ouroboros-network
+  flags: +asserts
+
+package ouroboros-network-api
+  flags: +asserts
+
+package ouroboros-network-mock
+  flags: +asserts
+
+package ouroboros-network-protocols
+  flags: +asserts
+
+package si-timers
+  flags: +asserts
+
+package strict-stm
+  flags: +asserts
+
+package text-short
+  flags: +asserts
 
 source-repository-package
   type: git
-  location: https://github.com/input-output-hk/ouroboros-network
-  tag: da0324edf83b5d4d2a756ebc970e3f21f10a070b
-  --sha256: 0wfhzqz7nhaclfrbw83c912mxq5f7lzr02yh61air7qpm00wcgw5
+  location: https://github.com/jasagredo/quickcheck-state-machine
+  tag: 44b2fa5970229d502ae8181b9dccbf1bb511f286
+  --sha256: 1chfw51rbciwnn86vvry71wff0sxws3lr0cir51w357hrldj68xh
+
+source-repository-package
+  type: git
+  location: https://github.com/jasagredo/tree-diff
+  tag: a97c7ab0792efee192a11d693cef69801c0fb280
+  --sha256: 1wag4gqrcg2r82qqj9wfllavrynhrzgd7rmrhmah6z2nf968kka2
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-ledger
+  tag: febddc58683186232db5fa376de65c58973f9686
   subdir:
-    ouroboros-network-api
+   libs/cardano-ledger-binary
+  --sha256: 0q6c2f4ld5l85153q8xrm2qc64k8p0y66j6adcl8bga31yd0pl16

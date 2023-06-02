@@ -1,16 +1,13 @@
 {-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DefaultSignatures     #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
-{-# LANGUAGE PatternSynonyms       #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
@@ -108,9 +105,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      StreamFrom (..), StreamTo (..), UnknownRange (..),
                      validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB,
-                     LedgerDbCfg (..))
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
 import           Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
@@ -329,11 +326,11 @@ getLedgerDB ::
      (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk))
   => TopLevelConfig blk
   -> Model blk
-  -> LedgerDB (ExtLedgerState blk)
+  -> DbChangelog.DbChangelog' blk
 getLedgerDB cfg m@Model{..} =
-      LedgerDB.prune (SecurityParam (maxActualRollback k m))
-    $ LedgerDB.pushMany' ledgerDbCfg blks trivialKeySetsReader
-    $ LedgerDB.mkWithAnchor initLedger
+      DbChangelog.prune (SecurityParam (maxActualRollback k m))
+    $ DbChangelog.pushMany' ledgerDbCfg blks trivialKeySetsReader
+    $ DbChangelog.empty initLedger
   where
     blks = Chain.toOldestFirst $ currentChain m
 

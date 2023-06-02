@@ -1,6 +1,6 @@
 module Main (main) where
 
-import           Cardano.Crypto.Libsodium (sodiumInit)
+import           Cardano.Crypto.Init (cryptoInit)
 import qualified Test.Consensus.Shelley.Coherence (tests)
 import qualified Test.Consensus.Shelley.Golden (tests)
 import qualified Test.Consensus.Shelley.LedgerTables (tests)
@@ -11,7 +11,7 @@ import           Test.Util.TestEnv (defaultMainWithTestEnv,
                      defaultTestEnvConfig)
 
 main :: IO ()
-main = sodiumInit >> defaultMainWithTestEnv defaultTestEnvConfig tests
+main = cryptoInit >> defaultMainWithTestEnv defaultTestEnvConfig tests
 
 tests :: TestTree
 tests =

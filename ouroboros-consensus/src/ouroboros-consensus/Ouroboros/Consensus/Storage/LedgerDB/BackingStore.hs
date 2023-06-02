@@ -3,8 +3,7 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE Rank2Types                 #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 
 -- | A store for key-value maps that can be extended with deltas.
@@ -27,14 +26,19 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   , LedgerBackingStore (..)
   , LedgerBackingStore'
   , LedgerBackingStoreValueHandle (..)
+  , LedgerBackingStoreValueHandle'
+  , castBackingStoreValueHandle
+  , castLedgerBackingStoreValueHandle
+  , lbsValueHandle
+  , lbsvhClose
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
-import           Control.Monad.Class.MonadThrow (MonadThrow (..))
 import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
+import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Util.IOLike
 import qualified System.FS.API as FS
 import qualified System.FS.API.Types as FS
 
@@ -92,6 +96,26 @@ data BackingStoreValueHandle m keys values = BackingStoreValueHandle {
     -- failure or an exception.
   , bsvhRead      :: !(keys -> m values)
   }
+
+castBackingStoreValueHandle ::
+     Functor m
+  => (values -> values')
+  -> (keys' -> keys)
+  -> BackingStoreValueHandle m keys values
+  -> BackingStoreValueHandle m keys' values'
+castBackingStoreValueHandle f g bsvh =
+  BackingStoreValueHandle {
+    bsvhClose
+    , bsvhRangeRead = \(RangeQuery prev count) ->
+        fmap f . bsvhRangeRead $  RangeQuery (fmap g prev) count
+    , bsvhRead = fmap f . bsvhRead . g
+    }
+  where
+    BackingStoreValueHandle {
+        bsvhClose
+      , bsvhRangeRead
+      , bsvhRead
+      } = bsvh
 
 data RangeQuery keys = RangeQuery {
       -- | The result of this range query begin at first key that is strictly
@@ -152,6 +176,13 @@ newtype LedgerBackingStore m l = LedgerBackingStore
     )
   deriving newtype (NoThunks)
 
+lbsValueHandle ::
+     IOLike m
+  => LedgerBackingStore m l
+  -> m (LedgerBackingStoreValueHandle m l)
+lbsValueHandle (LedgerBackingStore bstore) =
+  uncurry LedgerBackingStoreValueHandle <$> bsValueHandle bstore
+
 -- | A handle to the backing store for the ledger tables
 data LedgerBackingStoreValueHandle m l = LedgerBackingStoreValueHandle
     !(WithOrigin SlotNo)
@@ -161,5 +192,22 @@ data LedgerBackingStoreValueHandle m l = LedgerBackingStoreValueHandle
     )
   deriving stock    (Generic)
   deriving anyclass (NoThunks)
+
+type LedgerBackingStoreValueHandle' m blk =
+     LedgerBackingStoreValueHandle  m (ExtLedgerState blk)
+
+lbsvhClose :: LedgerBackingStoreValueHandle m l -> m ()
+lbsvhClose (LedgerBackingStoreValueHandle _ vh) = bsvhClose vh
+
+castLedgerBackingStoreValueHandle ::
+     Functor m
+  => (LedgerTables l ValuesMK -> LedgerTables l' ValuesMK)
+  -> (LedgerTables l' KeysMK -> LedgerTables l KeysMK)
+  -> LedgerBackingStoreValueHandle m l
+  -> LedgerBackingStoreValueHandle m l'
+castLedgerBackingStoreValueHandle f g lbsvh =
+    LedgerBackingStoreValueHandle s $ castBackingStoreValueHandle f g bsvh
+  where
+    LedgerBackingStoreValueHandle s bsvh = lbsvh
 
 type LedgerBackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)

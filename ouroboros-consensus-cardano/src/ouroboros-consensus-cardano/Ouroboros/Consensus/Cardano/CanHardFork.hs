@@ -300,13 +300,13 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         $ PCons translateChainDepStateAcrossShelley
         $ PCons translateChainDepStateAcrossShelley
         $ PNil
-    , translateLedgerView    =
-          PCons translateLedgerViewByronToShelleyWrapper
-        $ PCons translateLedgerViewAcrossShelley
-        $ PCons translateLedgerViewAcrossShelley
-        $ PCons translateLedgerViewAcrossShelley
-        $ PCons translateLedgerViewAcrossShelley
-        $ PCons translateLedgerViewAcrossShelley
+    , crossEraForecast       =
+          PCons crossEraForecastByronToShelleyWrapper
+        $ PCons crossEraForecastAcrossShelley
+        $ PCons crossEraForecastAcrossShelley
+        $ PCons crossEraForecastAcrossShelley
+        $ PCons crossEraForecastAcrossShelley
+        $ PCons crossEraForecastAcrossShelley
         $ PNil
     }
   hardForkChainSel =
@@ -467,16 +467,16 @@ translateChainDepStateByronToShelley TPraosConfig { tpraosParams } pbftState =
   where
     nonce = tpraosInitialNonce tpraosParams
 
-translateLedgerViewByronToShelleyWrapper ::
+crossEraForecastByronToShelleyWrapper ::
      forall c. Crypto c =>
      RequiringBoth
        WrapLedgerConfig
-       (TranslateForecast LedgerState WrapLedgerView)
+       (CrossEraForecaster LedgerState WrapLedgerView)
        ByronBlock
        (ShelleyBlock (TPraos c) (ShelleyEra c))
-translateLedgerViewByronToShelleyWrapper =
+crossEraForecastByronToShelleyWrapper =
     RequireBoth $ \_ (WrapLedgerConfig cfgShelley) ->
-      TranslateForecast (forecast cfgShelley)
+      CrossEraForecaster (forecast cfgShelley)
   where
     -- We ignore the Byron ledger view and create a new Shelley.
     --

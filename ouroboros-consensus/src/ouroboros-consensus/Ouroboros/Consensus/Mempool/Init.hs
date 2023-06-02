@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 
 -- | Creating a mempool
 module Ouroboros.Consensus.Mempool.Init (
@@ -14,16 +13,17 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool.API hiding (MempoolCapacityBytes,
-                     MempoolCapacityBytesOverride, MempoolSize,
-                     TraceEventMempool, computeMempoolCapacity)
+import           Ouroboros.Consensus.Mempool.API (Mempool (..))
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.Query
+import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Mempool.Update
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
+import           Ouroboros.Consensus.Util.STM
+import           Ouroboros.Network.Protocol.TxSubmission2.Type (TxSizeInBytes)
 
 {-------------------------------------------------------------------------------
   Opening the mempool
@@ -107,12 +107,22 @@ mkMempool
      )
   => MempoolEnv m blk -> Mempool m blk
 mkMempool mpEnv = Mempool
-    { tryAddTxs      = implTryAddTxs mpEnv
+    { addTx          = implAddTx mpEnv
     , removeTxs      = implRemoveTxs mpEnv
     , syncWithLedger = fst <$> implSyncWithLedger mpEnv
     , getSnapshot    = snapshotFromIS <$> readTMVar istate
-    , getSnapshotFor = implGetSnapshotFor mpEnv
+    , getSnapshotFor = \slot st ->
+          implGetSnapshotFor mpEnv slot st . changelogDiffs
     , getCapacity    = isCapacity <$> readTMVar istate
+    , getRemainingCapacity = do
+        is <- readTMVar istate
+        let size = sum ( map (txSize . txForgetValidated . TxSeq.txTicketTx)
+                $ TxSeq.toList
+                $ isTxs is
+                )
+        pure
+          $ MempoolCapacityBytes
+          $ if size > getMempoolCapacityBytes (isCapacity is) then 0 else getMempoolCapacityBytes (isCapacity is) - size
     , getTxSize      = txSize
     }
   where
