@@ -7,21 +7,17 @@ module Ouroboros.Consensus.Mempool.Query (
   ) where
 
 import           Data.Foldable (foldl')
-import           Ouroboros.Consensus.Block.Abstract (SlotNo, castHash,
-                     pointHash)
+import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
-import           Ouroboros.Consensus.Mempool.API hiding (MempoolCapacityBytes,
-                     MempoolCapacityBytesOverride, MempoolSize,
-                     TraceEventMempool, computeMempoolCapacity)
+import           Ouroboros.Consensus.Mempool.API
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (LedgerBackingStoreValueHandle (..), bsvhRead)
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
-                     (UnforwardedReadSets (..), forwardTableKeySets')
 import           Ouroboros.Consensus.Util.IOLike
 
 implGetSnapshotFor ::
@@ -32,10 +28,10 @@ implGetSnapshotFor ::
   => MempoolEnv m blk
   -> SlotNo -- ^ Get snapshot for this slot number (usually the current slot)
   -> TickedLedgerState blk DiffMK -- ^ The ledger state at 'pt' ticked to 'slot'
-  -> LedgerTables (LedgerState blk) SeqDiffMK
-  -> LedgerBackingStoreValueHandle m (LedgerState blk)
+  -> LedgerTables (ExtLedgerState blk) SeqDiffMK
+  -> LedgerBackingStoreValueHandle' m blk
   -> m (MempoolSnapshot blk)
-implGetSnapshotFor mpEnv slot ticked chlog (LedgerBackingStoreValueHandle vhSlot vh) = do
+implGetSnapshotFor mpEnv slot ticked extChlog extLbsvh = do
   is <- atomically $ readTMVar istate
   if pointHash (isTip is) == castHash (getTipHash ticked) &&
      isSlotNo is == slot
@@ -44,7 +40,7 @@ implGetSnapshotFor mpEnv slot ticked chlog (LedgerBackingStoreValueHandle vhSlot
       -- have cached, then just return it.
       pure . snapshotFromIS $ is
     else do
-       let keys = foldl' (zipLedgerTables (<>)) emptyLedgerTables
+       let keys = foldl' (<>) emptyLedgerTables
                 $ map getTransactionKeySets
                 $ [ txForgetValidated . TxSeq.txTicketTx $ tx
                   | tx <- TxSeq.toList $ isTxs is
@@ -58,9 +54,17 @@ implGetSnapshotFor mpEnv slot ticked chlog (LedgerBackingStoreValueHandle vhSlot
        pure $ getSnap is $ case eTbs of
          Right tbs -> tbs
          Left e -> error $ "Critical error, value handle and changelog \
-                           \ should be in the same slot thanks to the RAWLock. \
-                           \ Seeing this means the RAWLock has failed! " <> show e
+                           \should be in the same slot thanks to the RAWLock. \
+                           \Seeing this means the RAWLock has failed! " <> show e
   where
+    LedgerBackingStoreValueHandle vhSlot vh =
+      castLedgerBackingStoreValueHandle
+      unExtLedgerStateTables
+      ExtLedgerStateTables
+      extLbsvh
+
+    chlog = unExtLedgerStateTables extChlog
+
     getSnap is tbs = pureGetSnapshotFor
                        capacityOverride
                        cfg

@@ -41,9 +41,8 @@ import           Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import qualified Control.Exception as Exn
 import           Control.Monad
-import           Control.Monad.Class.MonadMVar (MonadMVar)
-import           Control.Monad.Class.MonadTime (MonadTime)
-import           Control.Monad.Class.MonadTimer (MonadTimer)
+import           Control.Monad.Class.MonadTime.SI (MonadTime)
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import qualified Control.Monad.Except as Exc
 import           Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
@@ -88,10 +87,11 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+                     (BackingStoreSelector (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog')
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
@@ -285,7 +285,6 @@ runThreadNetwork :: forall m blk.
                     ( IOLike m
                     , MonadTime m
                     , MonadTimer m
-                    , MonadMVar m
                     , RunNode blk
                     , TxGen blk
                     , TracingConstraints blk
@@ -597,8 +596,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> (SlotNo -> STM m ())
       -> LedgerConfig blk
       -> STM m (Point blk)
-      -> m ( LedgerDB' blk
-           , LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+      -> m ( DbChangelog' blk
+           , LedgerBackingStoreValueHandle' m blk
            , DiskLedgerView m (ExtLedgerState blk)
            )
       -> Mempool m blk
@@ -1057,8 +1056,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
       let getValueHandle = do
             eLDBView <- ChainDB.getLedgerDBViewAtPoint chainDB Nothing
             case eLDBView of
-              Left e -> error $ show e
-              Right (vh, ldb) -> pure (ldb, vh, mkDiskLedgerView (vh, ldb, lbsvhClose vh))
+              Left e          -> error $ show e
+              Right (vh, ldb) -> pure (ldb, vh, mkDiskLedgerView (vh, ldb))
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the

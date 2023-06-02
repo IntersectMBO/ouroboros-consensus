@@ -120,7 +120,8 @@ compareAnchoredFragments cfg frag1 frag2 =
       = return ()
       | otherwise
       = throwError
-          "precondition violated: fragments both empty or don't intersect"
+          "precondition violated: fragments should both be non-empty or they \
+          \should intersect"
 
 -- | Lift 'preferCandidate' to 'AnchoredFragment'
 --

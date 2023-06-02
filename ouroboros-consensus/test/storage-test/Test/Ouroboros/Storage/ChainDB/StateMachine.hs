@@ -21,9 +21,6 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- Remove this when @TraceLedgerEvent@ is gone
-{-# OPTIONS_GHC -Wno-deprecations #-}
-
 -- | Main tests for the chain DB.
 --
 -- These are the main tests for the chain DB. Commands include
@@ -84,7 +81,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine (
 
 import           Codec.Serialise (Serialise)
 import           Control.Monad (replicateM, void)
-import           Control.Tracer
+import qualified Control.Tracer as CT
 import           Data.Bifoldable
 import           Data.Bifunctor
 import qualified Data.Bifunctor.TH as TH
@@ -123,9 +120,11 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Config as DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (split)
 import           Ouroboros.Consensus.Util.CallStack
@@ -265,7 +264,7 @@ deriving instance SOP.HasDatatypeInfo (Cmd blk it flr)
 data Success blk it flr
   = Unit                ()
   | Chain               (AnchoredFragment (Header blk))
-  | LedgerDB            (LedgerDB (ExtLedgerState blk))
+  | LedgerDB            (DbChangelog.DbChangelog' blk)
   | MbBlock             (Maybe blk)
   | MbAllComponents     (Maybe (AllComponents blk))
   | MbGCedAllComponents (MaybeGCedBlock (AllComponents blk))
@@ -392,16 +391,15 @@ close ChainDBState { chainDB, addBlockAsync } = do
 
 run :: forall m blk.
        (IOLike m, TestConstraints blk)
-    => TopLevelConfig blk
-    -> ChainDBEnv m blk
+    => ChainDBEnv m blk
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
-run cfg env@ChainDBEnv { varDB, .. } cmd =
+run env@ChainDBEnv { varDB, .. } cmd =
     readMVar varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
-      AddBlock blk             -> Point               <$> (advanceAndAdd st (blockSlot blk) blk)
-      AddFutureBlock blk s     -> Point               <$> (advanceAndAdd st s               blk)
+      AddBlock blk             -> Point               <$> advanceAndAdd st (blockSlot blk) blk
+      AddFutureBlock blk s     -> Point               <$> advanceAndAdd st s               blk
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
-      GetLedgerDB              -> LedgerDB . flush k  <$> atomically getLedgerDB
+      GetLedgerDB              -> LedgerDB . flush    <$> atomically getLedgerDB
       GetTipBlock              -> MbBlock             <$> getTipBlock
       GetTipHeader             -> MbHeader            <$> getTipHeader
       GetTipPoint              -> Point               <$> atomically getTipPoint
@@ -421,11 +419,9 @@ run cfg env@ChainDBEnv { varDB, .. } cmd =
       Reopen                   -> Unit                <$> reopen env
       PersistBlks              -> ignore              <$> persistBlks DoNotGarbageCollect internal
       PersistBlksThenGC        -> ignore              <$> persistBlks GarbageCollect internal
-      UpdateLedgerSnapshots    -> ignore              <$> intUpdateLedgerSnapshots internal
+      UpdateLedgerSnapshots    -> ignore              <$> intTryTakeSnapshot internal
       WipeVolatileDB           -> Point               <$> wipeVolatileDB st
   where
-    k = configSecurityParam cfg
-
     mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
     isValidResult = IsValid . IsValidResult True
     iterResultGCed = IterResultGCed . IteratorResultGCed True
@@ -474,8 +470,8 @@ run cfg env@ChainDBEnv { varDB, .. } cmd =
 -- immutable tip were not compared by the 'GetLedgerDB' command.
 flush ::
      (LedgerSupportsProtocol blk)
-  => SecurityParam -> LedgerDB (ExtLedgerState blk) -> LedgerDB (ExtLedgerState blk)
-flush k = snd . LedgerDB.splitForFlushing (DbChangelog.FlushAllImmutable k)
+  => DbChangelog.DbChangelog' blk -> DbChangelog.DbChangelog' blk
+flush = snd . DbChangelog.splitForFlushing DbChangelog.FlushAllImmutable
 
 persistBlks :: IOLike m => ShouldGarbageCollect -> ChainDB.Internal m blk -> m ()
 persistBlks collectGarbage ChainDB.Internal{..} = do
@@ -661,7 +657,7 @@ runPure cfg = \case
     AddBlock blk             -> ok  Point               $ update  (advanceAndAdd (blockSlot blk) blk)
     AddFutureBlock blk s     -> ok  Point               $ update  (advanceAndAdd s               blk)
     GetCurrentChain          -> ok  Chain               $ query   (Model.volatileChain k getHeader)
-    GetLedgerDB              -> ok  LedgerDB            $ query   (flush k . Model.getLedgerDB cfg)
+    GetLedgerDB              -> ok  LedgerDB            $ query   (flush . Model.getLedgerDB cfg)
     GetTipBlock              -> ok  MbBlock             $ query    Model.tipBlock
     GetTipHeader             -> ok  MbHeader            $ query   (fmap getHeader . Model.tipBlock)
     GetTipPoint              -> ok  Point               $ query    Model.tipPoint
@@ -727,11 +723,10 @@ runPure cfg = \case
     openOrClosed f = first (Resp . Right . Unit) . f
 
 runIO :: TestConstraints blk
-      => TopLevelConfig blk
-      -> ChainDBEnv IO blk
+      => ChainDBEnv IO blk
       ->     Cmd  blk (TestIterator IO blk) (TestFollower IO blk)
       -> IO (Resp blk (TestIterator IO blk) (TestFollower IO blk))
-runIO cfg env cmd = Resp <$> try (run cfg env cmd)
+runIO env cmd = Resp <$> try (run env cmd)
 
 {-------------------------------------------------------------------------------
   Collect arguments
@@ -1206,13 +1201,12 @@ postcondition model cmd resp =
     ev = lockstep model cmd resp
 
 semantics :: forall blk. TestConstraints blk
-          => TopLevelConfig blk
-          -> ChainDBEnv IO blk
+          => ChainDBEnv IO blk
           -> At Cmd blk IO Concrete
           -> IO (At Resp blk IO Concrete)
-semantics cfg env (At cmd) =
-    At . (bimap (QSM.reference . QSM.Opaque) (QSM.reference . QSM.Opaque)) <$>
-    runIO cfg env (bimap QSM.opaque QSM.opaque cmd)
+semantics env (At cmd) =
+    At . bimap (QSM.reference . QSM.Opaque) (QSM.reference . QSM.Opaque) <$>
+    runIO env (bimap QSM.opaque QSM.opaque cmd)
 
 -- | The state machine proper
 sm :: TestConstraints blk
@@ -1232,7 +1226,7 @@ sm env genBlock cfg initLedger maxClockSkew = StateMachine
   , postcondition = postcondition
   , generator     = Just . generator genBlock
   , shrinker      = shrinker
-  , semantics     = semantics cfg env
+  , semantics     = semantics env
   , mock          = mock
   , invariant     = Just $ invariant cfg
   , cleanup       = noCleanup
@@ -1708,10 +1702,6 @@ traceEventName = \case
     TraceGCEvent                ev    -> "GC."                <> constrName ev
     TraceIteratorEvent          ev    -> "Iterator."          <> constrName ev
     TraceLedgerDBEvent          ev    -> "Ledger."            <> constrName ev
-    -- This one is deprecated but unless we match it we get non-exhaustiveness
-    -- warnings. When this constructor is deleted we must remove this match as
-    -- well as re-enable the deprecation warnings at the top of this file.
-    TraceLedgerEvent            ev    -> "Ledger."            <> constrName ev
     TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
@@ -1722,7 +1712,7 @@ mkArgs :: IOLike m
        -> ExtLedgerState Blk ValuesMK
        -> ResourceRegistry m
        -> NodeDBs (StrictTVar m MockFS)
-       -> Tracer m (TraceEvent Blk)
+       -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
        -> ChainDbArgs Identity m Blk

@@ -57,7 +57,7 @@ import           Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import           Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Util (ShowProxy, StaticEither (..))
+import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -97,8 +97,7 @@ data Handlers m peer blk = Handlers {
         :: LocalTxSubmissionServer (GenTx blk) (ApplyTxErr blk) m ()
 
     , hStateQueryServer
-       :: ResourceRegistry m
-       -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
+       :: LocalStateQueryServer blk (Point blk) (Query blk) m ()
 
     , hTxMonitorServer
         :: LocalTxMonitorServer (GenTxId blk) (GenTx blk) SlotNo m ()
@@ -125,15 +124,11 @@ mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
           localTxSubmissionServer
             (Node.localTxSubmissionServerTracer tracers)
             getMempool
-      , hStateQueryServer = \rreg ->
+      , hStateQueryServer =
           localStateQueryServer
             (ExtLedgerCfg cfg)
-            (\seP -> do
-                se <- ChainDB.getLedgerBackingStoreValueHandle getChainDB rreg seP
-                case se of
-                  StaticRight (Left p)  -> pure $ StaticRight (Left p)
-                  StaticLeft         x  -> pure $ StaticLeft  $         mkDiskLedgerView x
-                  StaticRight (Right x) -> pure $ StaticRight $ Right $ mkDiskLedgerView x
+            (  fmap (fmap mkDiskLedgerView)
+             . ChainDB.getLedgerDBViewAtPoint getChainDB
             )
 
       , hTxMonitorServer =
@@ -434,13 +429,13 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
       :: addrNTC
       -> Channel m bSQ
       -> m ((), Maybe bSQ)
-    aStateQueryServer them channel = withRegistry $ \reg -> do
+    aStateQueryServer them channel = do
       labelThisThread "LocalStateQueryServer"
       runPeer
         (contramap (TraceLabelPeer them) tStateQueryTracer)
         cStateQueryCodec
         channel
-        (localStateQueryServerPeer (hStateQueryServer reg))
+        (localStateQueryServerPeer hStateQueryServer)
 
     aTxMonitorServer
       :: addrNTC

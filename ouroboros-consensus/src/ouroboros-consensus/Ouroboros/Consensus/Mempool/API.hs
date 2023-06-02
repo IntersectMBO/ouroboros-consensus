@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Mempool.API (
     -- * Mempool
     Mempool (..)
     -- * Transaction adding
+  , AddTxOnBehalfOf (..)
   , MempoolAddTxResult (..)
   , addLocalTxs
   , addTxs
@@ -27,26 +28,16 @@ module Ouroboros.Consensus.Mempool.API (
   , TicketNo
   , TxSizeInBytes
   , zeroTicketNo
-    -- * Deprecated re-exports
-  , MempoolCapacityBytes
-  , MempoolCapacityBytesOverride
-  , MempoolSize
-  , TraceEventMempool
-  , computeMempoolCapacity
   ) where
 
 import qualified Data.List.NonEmpty as NE
 import           Ouroboros.Consensus.Block (ChainHash, SlotNo)
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool.Capacity hiding
-                     (MempoolCapacityBytes, MempoolCapacityBytesOverride,
-                     MempoolSize, computeMempoolCapacity, (<=))
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import           Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.TxSubmission2.Type (TxSizeInBytes)
 
@@ -73,24 +64,40 @@ import           Ouroboros.Network.Protocol.TxSubmission2.Type (TxSizeInBytes)
 -- * It supports wallets that submit dependent transactions (where later
 --   transaction depends on outputs from earlier ones).
 --
--- When only one thread is operating on the mempool, operations that mutate the
--- state based on the input arguments (tryAddTxs and removeTxs) will produce the
--- same result whether they process transactions one by one or all in one go, so
--- this equality holds:
+-- The mempool provides fairness guarantees for the case of multiple threads
+-- performing 'addTx' concurrently. Implementations of this interface must
+-- provide this guarantee, and users of this interface may rely on it.
+-- Specifically, multiple threads that continuously use 'addTx' will, over
+-- time, get a share of the mempool resource (measured by the number of txs
+-- only, not their sizes) roughly proportional to their \"weight\". The weight
+-- depends on the 'AddTxOnBehalfOf': either acting on behalf of remote peers
+-- ('AddTxForRemotePeer') or on behalf of a local client
+-- ('AddTxForLocalClient'). The weighting for threads acting on behalf of
+-- remote peers is the same for all remote peers, so all remote peers will get
+-- a roughly equal share of the resource. The weighting for local clients is
+-- the same for all local clients but /may/ be higher than the weighting for
+-- remote peers. The weighting is not unboundedly higher however, so there is
+-- still (weighted) fairness between remote peers and local clients. Thus
+-- local clients will also get a roughly equal share of the resource, but that
+-- share may be strictly greater than the share for each remote peer.
+-- Furthermore, this implies local clients cannot starve remote peers, despite
+-- their higher weighting.
 --
--- > void (tryAddTxs wti txs) === forM_ txs (tryAddTxs wti . (:[]))
--- > void (trAddTxs wti [x,y]) === tryAddTxs wti x >> void (tryAddTxs wti y)
+-- This fairness specification in terms of weighting is deliberately
+-- non-specific, which allows multiple strategies. The existing default
+-- strategy (for the implementation in "Ouroboros.Consensus.Mempool") is as
+-- follows. The design uses two FIFOs, to give strictly in-order behaviour.
+-- All remote peers get equal weight and all local clients get equal weight.
+-- The relative weight between remote and local is that if there are N remote
+-- peers and M local clients, each local client gets weight 1/(M+1), while all
+-- of the N remote peers together also get total weight 1/(M+1). This means
+-- individual remote peers get weight 1/(N * (M+1)). Intuitively: a single local
+-- client has the same weight as all the remote peers put together.
 --
--- This shows that @'tryAddTxs' wti@ is an homomorphism from '++' and '>>',
--- which informally makes these operations "distributive".
 data Mempool m blk = Mempool {
-      -- | Add a bunch of transactions (oldest to newest)
+      -- | Add a single transaction to the mempool.
       --
-      -- As long as we keep the mempool entirely in-memory this could live in
-      -- @STM m@; we keep it in @m@ instead to leave open the possibility of
-      -- persistence.
-      --
-      -- The new transactions provided will be validated, /in order/, against
+      -- The new transaction provided will be validated, /in order/, against
       -- the ledger state obtained by applying all the transactions already in
       -- the Mempool to it. Transactions which are found to be invalid, with
       -- respect to the ledger state, are dropped, whereas valid transactions
@@ -104,29 +111,28 @@ data Mempool m blk = Mempool {
       -- the mempool via a call to 'syncWithLedger' or by the background
       -- thread that watches the ledger for changes.
       --
-      -- This function will return two lists
+      -- This action returns one of two results
       --
-      -- 1. A list containing the following transactions:
+      --  * A 'MempoolTxAdded' value if the transaction provided was found to
+      --    be valid. This transactions is now in the Mempool.
       --
-      --    * Those transactions provided which were found to be valid, as a
-      --      'MempoolTxAdded' value. These transactions are now in the Mempool.
-      --    * Those transactions provided which were found to be invalid, along
-      --      with their accompanying validation errors, as a
-      --      'MempoolTxRejected' value. These transactions are not in the
-      --      Mempool.
+      --  * A 'MempoolTxRejected' value if the transaction provided was found
+      --    to be invalid, along with its accompanying validation errors. This
+      --    transactions is not in the Mempool.
       --
-      -- 2. A list containing the transactions that have not yet been added, as
-      --    the capacity of the Mempool has been reached. I.e., there is no
-      --    space in the Mempool to add the first transaction in this list. Note
-      --    that we won't try to add smaller transactions after that first
-      --    transaction because they might depend on the first transaction.
+      -- Note that this is a blocking action. It will block until the
+      -- transaction fits into the mempool. This includes transactions that
+      -- turn out to be invalid: the action waits for there to be space for
+      -- the transaction before it gets validated.
+      --
+      -- Note that it is safe to use this from multiple threads concurrently.
       --
       -- POSTCONDITION:
       -- > let prj = \case
       -- >       MempoolTxAdded vtx        -> txForgetValidated vtx
       -- >       MempoolTxRejected tx _err -> tx
-      -- > (processed, toProcess) <- tryAddTxs wti txs
-      -- > map prj processed ++ toProcess == txs
+      -- > processed <- addTx wti txs
+      -- > prj processed == tx
       --
       -- Note that previously valid transaction that are now invalid with
       -- respect to the current ledger state are dropped from the mempool, but
@@ -151,11 +157,13 @@ data Mempool m blk = Mempool {
       -- an index of transaction hashes that have been included on the
       -- blockchain.
       --
-      tryAddTxs      :: WhetherToIntervene
-                     -> [GenTx blk]
-                     -> m ( [MempoolAddTxResult blk]
-                          , [GenTx blk]
-                          )
+      -- As long as we keep the mempool entirely in-memory this could live in
+      -- @STM m@; we keep it in @m@ instead to leave open the possibility of
+      -- persistence.
+      --
+      addTx      :: AddTxOnBehalfOf
+                 -> GenTx blk
+                 -> m (MempoolAddTxResult blk)
 
       -- | Manually remove the given transactions from the mempool.
     , removeTxs      :: NE.NonEmpty (GenTxId blk) -> m ()
@@ -191,8 +199,8 @@ data Mempool m blk = Mempool {
            SlotNo    -- ^ The current slot in which we want the snapshot
         -> TickedLedgerState blk DiffMK
                      -- ^ The ledger state ticked to the given slot number
-        -> LedgerDB' blk
-        -> LedgerBackingStoreValueHandle m (ExtLedgerState blk)
+        -> DbChangelog' blk
+        -> LedgerBackingStoreValueHandle' m blk
         -> m (MempoolSnapshot blk)
 
       -- | Get the mempool's capacity in bytes.
@@ -208,6 +216,8 @@ data Mempool m blk = Mempool {
       -- capacity, i.e., we won't admit new transactions until some have been
       -- removed because they have become invalid.
     , getCapacity    :: STM m Cap.MempoolCapacityBytes
+
+    , getRemainingCapacity :: STM m Cap.MempoolCapacityBytes
 
       -- | Return the post-serialisation size in bytes of a 'GenTx'.
     , getTxSize      :: GenTx blk -> TxSizeInBytes
@@ -240,63 +250,45 @@ isMempoolTxRejected :: MempoolAddTxResult blk -> Bool
 isMempoolTxRejected MempoolTxRejected{} = True
 isMempoolTxRejected _                   = False
 
--- | Wrapper around 'implTryAddTxs' that blocks until all transaction have
--- either been added to the Mempool or rejected.
+-- | A wrapper around 'addTx' that adds a sequence of transactions on behalf of
+-- a remote peer.
 --
--- This function does not sync the Mempool contents with the ledger state in
--- case the latter changes, it relies on the background thread to do that.
+-- Note that transactions are added one by one, and can interleave with other
+-- concurrent threads using 'addTx'.
 --
--- See the necessary invariants on the Haddock for 'tryAddTxs'.
+-- See 'addTx' for further details.
 addTxs
   :: forall m blk. MonadSTM m
   => Mempool m blk
   -> [GenTx blk]
   -> m [MempoolAddTxResult blk]
-addTxs mempool = addTxsHelper mempool DoNotIntervene
+addTxs mempool = mapM (addTx mempool AddTxForRemotePeer)
 
--- | Variation on 'addTxs' that is more forgiving when possible
+-- | A wrapper around 'addTx' that adds a sequence of transactions on behalf of
+-- a local client. This reports more errors for local clients, see 'Intervene'.
 --
--- See 'Intervene'.
+-- Note that transactions are added one by one, and can interleave with other
+-- concurrent threads using 'addTx'.
+--
+-- See 'addTx' for further details.
 addLocalTxs
   :: forall m blk. MonadSTM m
   => Mempool m blk
   -> [GenTx blk]
   -> m [MempoolAddTxResult blk]
-addLocalTxs mempool = addTxsHelper mempool Intervene
+addLocalTxs mempool = mapM (addTx mempool AddTxForLocalClient)
 
--- | See 'addTxs'
-addTxsHelper
-  :: forall m blk. MonadSTM m
-  => Mempool m blk
-  -> WhetherToIntervene
-  -> [GenTx blk]
-  -> m [MempoolAddTxResult blk]
-addTxsHelper mempool wti = \txs -> do
-    (processed, toAdd) <- tryAddTxs mempool wti txs
-    case toAdd of
-      [] -> return processed
-      _  -> go [processed] toAdd
-  where
-    go
-      :: [[MempoolAddTxResult blk]]
-         -- ^ The outer list is in reverse order, but all the inner lists will
-         -- be in the right order.
-      -> [GenTx blk]
-      -> m [MempoolAddTxResult blk]
-    go acc []         = return (concat (reverse acc))
-    go acc txs@(tx:_) = do
-      let firstTxSize = getTxSize mempool tx
-      -- Wait until there's at least room for the first transaction we're
-      -- trying to add, otherwise there's no point in trying to add it.
-      atomically $ do
-        curSize <- msNumBytes . snapshotMempoolSize <$> getSnapshot mempool
-        Cap.MempoolCapacityBytes capacity <- getCapacity mempool
-        check (curSize + firstTxSize <= capacity)
-      -- It is possible that between the check above and the call below, other
-      -- transactions are added, stealing our spot, but that's fine, we'll
-      -- just recurse again without progress.
-      (added, toAdd) <- tryAddTxs mempool wti txs
-      go (added:acc) toAdd
+-- | Who are we adding a tx on behalf of, a remote peer or a local client?
+--
+-- This affects two things:
+--
+-- 1. how certain errors are treated: we want to be helpful to local clients.
+-- 2. priority of service: local clients are prioritised over remote peers.
+--
+-- See 'Mempool' for a discussion of fairness and priority.
+--
+data AddTxOnBehalfOf = AddTxForRemotePeer | AddTxForLocalClient
+
 
 {-------------------------------------------------------------------------------
   Ledger state considered for forging
@@ -377,27 +369,3 @@ data MempoolSnapshot blk = MempoolSnapshot {
     -- transactions
   , snapshotState       :: TickedLedgerState blk DiffMK
   }
-
-{-------------------------------------------------------------------------------
-  Deprecations
--------------------------------------------------------------------------------}
-
-{-# DEPRECATED MempoolCapacityBytes "Use Ouroboros.Consensus.Mempool (MempoolCapacityBytes)" #-}
-type MempoolCapacityBytes = Cap.MempoolCapacityBytes
-
-{-# DEPRECATED MempoolSize "Use Ouroboros.Consensus.Mempool (MempoolSize)" #-}
-type MempoolSize = Cap.MempoolSize
-
-{-# DEPRECATED MempoolCapacityBytesOverride "Use Ouroboros.Consensus.Mempool (MempoolCapacityBytesOverride)" #-}
-type MempoolCapacityBytesOverride = Cap.MempoolCapacityBytesOverride
-
-{-# DEPRECATED computeMempoolCapacity "Use Ouroboros.Consensus.Mempool (computeMempoolCapacity)" #-}
-computeMempoolCapacity
-  :: LedgerSupportsMempool blk
-  => TickedLedgerState blk mk
-  -> MempoolCapacityBytesOverride
-  -> MempoolCapacityBytes
-computeMempoolCapacity = Cap.computeMempoolCapacity
-
-{-# DEPRECATED TraceEventMempool "Use Ouroboros.Consensus.Mempool (TraceEventMempool)" #-}
-data TraceEventMempool

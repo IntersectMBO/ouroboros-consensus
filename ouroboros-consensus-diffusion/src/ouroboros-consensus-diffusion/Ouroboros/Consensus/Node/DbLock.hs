@@ -12,7 +12,7 @@ module Ouroboros.Consensus.Node.DbLock (
   , withLockDB_
   ) where
 
-import           Control.Monad.Class.MonadTimer
+import           Control.Monad.Class.MonadTimer.SI
 import qualified Data.Time.Clock as Time
 import           Ouroboros.Consensus.Util.FileLock
 import           Ouroboros.Consensus.Util.IOLike

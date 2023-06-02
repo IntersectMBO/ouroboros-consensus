@@ -2,6 +2,28 @@
 
 # Changelog entries
 
+<a id='changelog-0.6.0.0'></a>
+## 0.6.0.0 — 2023-05-19
+
+### Non-Breaking
+
+* Increase the minimum reconnection delay from 0s to 10s.
+
+### Breaking
+
+* `consensusStartupErrorTracer` field of `Tracers'` data type was renamed to `consensusErrorTracer`.
+* `chainSyncServerHeaderTracer` field of `Tracers` was changed to use `TraceLabelPeer`.
+* `blockFetchServerTracer` field of `Tracers` was changed to use `TraceLabelPeer`.
+
+<a id='changelog-0.5.1.0'></a>
+## 0.5.1.0 — 2023-04-28
+
+### Non-Breaking
+
+- Update `io-sim` dependency to 1.1.0.0.
+
+- Update `ouroboros-network` dependency.
+
 <a id='changelog-0.5.0.0'></a>
 ## 0.5.0.0 - 2023-04-24
 

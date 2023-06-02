@@ -230,11 +230,11 @@ A - ...
 
 # Installing `scriv`
 
-To manage the workflow described above, we will use the `scriv` tool. If you use
-`nix` then you will find `scriv` in the Nix shell. Otherwise,
-the way to install it from source is:
+To manage the workflow described above, we will use the `scriv` tool slightly
+modified to support cabal files.. If you use `nix` then you will find `scriv` in
+the Nix shell. Otherwise, the way to install it from source is:
 
-1. Clone [the repository](https://github.com/input-output-hk/scriv/) and `cd`
+1. Clone [our fork of scriv](https://github.com/input-output-hk/scriv/) and `cd`
    into it.
 2. Run `pip install -e $(pwd)`
 
@@ -242,6 +242,14 @@ If you encounter an error mentioning:
 `pkg_resources.extern.packaging.version.InvalidVersion: Invalid version: ...` we
 found that downgrading `setuptools` to a version `< 66` seems to solve this
 problem.
+
+If you don't want to use virtual environments for python packages and
+installation complains with the error `error: externally-managed-environment`,
+pass in the flag `--break-system-packages`:
+
+```
+pip install --break-system-packages -e $(pwd)
+```
 
 # Adding a changelog fragment
 
@@ -281,29 +289,28 @@ pip install bs4 html5lib
 To cut a release we rely on a script in `ouroboros-network`. Simply run:
 
 ```sh
-./scripts/consensus-release.sh
+./scripts/release/create-release.sh
 ```
 
-After the script is run, open a pull request, get it approved and merge using
-`bors`. And once it is merged, create the release tags by using
+After the script is run, open a pull request, get it approved and add it to the
+merge queue. And once it is merged, create the release tags by using
 `consensus-tag-releases.sh` as follows:
 
 ```sh
-git checkout <rev-bors-merge>
+git checkout <rev-merge>
 git pull
-./script/consensus-tag-releases.sh
+./scripts/release/tag-release.sh
 ```
 
-Where `<rev-bors-merge>` is the commit on `master` at which `bors` merged the
-release.
+Where `<rev-merge>` is the respective merge commit on `master`.
 
 Finally, create a release in [CHaP][chap], for which one can invoke the
 following script:
 
 ```sh
-git checkout <rev-bors-merge>
+git checkout <rev-merge>
 git pull
-./script/consensus-release-to-chap.sh
+./scripts/release/release-to-chap.sh
 ```
 
 [contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines

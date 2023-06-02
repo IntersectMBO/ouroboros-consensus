@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -12,8 +13,6 @@ import           Ouroboros.Consensus.Ledger.Query (DiskLedgerView (..), Query,
 import qualified Ouroboros.Consensus.Ledger.Query as Query
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.Util (StaticEither (..), fromStaticLeft,
-                     fromStaticRight)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -27,13 +26,8 @@ localStateQueryServer ::
      , LedgerSupportsProtocol blk
      )
   => ExtLedgerCfg blk
-  -> (forall b.
-         StaticEither b () (Point blk)
-      -> m (StaticEither
-             b
-                                 (DiskLedgerView m (ExtLedgerState blk))
-             (Either (Point blk) (DiskLedgerView m (ExtLedgerState blk)))
-           )
+  -> (   Maybe (Point blk)
+      -> m (Either (Point blk) (DiskLedgerView m (ExtLedgerState blk)))
      )
   -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
 localStateQueryServer cfg getDLV =
@@ -48,19 +42,13 @@ localStateQueryServer cfg getDLV =
     handleAcquire :: Maybe (Point blk)
                   -> m (ServerStAcquiring blk (Point blk) (Query blk) m ())
     handleAcquire mpt = do
-        case mpt of
-          Nothing -> do
-            dlv <- fromStaticLeft <$> getDLV (StaticLeft ())
-            return $ SendMsgAcquired $ acquired dlv
-          Just pt -> do
-            ei <- fromStaticRight <$> getDLV (StaticRight pt)
-            case ei of
-              Left immP
-                | pointSlot pt < pointSlot immP
-                -> return $ SendMsgFailure AcquireFailurePointTooOld idle
-                | otherwise
-                -> return $ SendMsgFailure AcquireFailurePointNotOnChain idle
-              Right dlv -> return $ SendMsgAcquired $ acquired dlv
+        getDLV mpt >>= \case
+          Left immP
+            | maybe False ((< pointSlot immP) . pointSlot) mpt
+            -> return $ SendMsgFailure AcquireFailurePointTooOld idle
+            | otherwise
+            -> return $ SendMsgFailure AcquireFailurePointNotOnChain idle
+          Right dlv -> return $ SendMsgAcquired $ acquired dlv
 
     acquired :: DiskLedgerView m (ExtLedgerState blk)
              -> ServerStAcquired blk (Point blk) (Query blk) m ()

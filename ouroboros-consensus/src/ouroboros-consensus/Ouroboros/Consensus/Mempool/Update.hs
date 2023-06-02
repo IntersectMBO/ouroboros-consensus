@@ -1,19 +1,16 @@
 {-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Operations that update the mempool. They are internally divided in the pure
 -- and impure sides of the operation.
 module Ouroboros.Consensus.Mempool.Update (
-    implRemoveTxs
+    implAddTx
+  , implRemoveTxs
   , implSyncWithLedger
-  , implTryAddTxs
-    -- * Exported for deprecated modules
-  , pureRemoveTxs
-  , pureSyncWithLedger
   ) where
 
 import           Cardano.Slotting.Slot
+import           Control.Concurrent.Class.MonadMVar (withMVar)
 import           Control.Exception (assert)
 import           Control.Tracer
 import qualified Data.List.NonEmpty as NE
@@ -24,9 +21,7 @@ import           Ouroboros.Consensus.Block.Abstract (castHash, castPoint,
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
-import           Ouroboros.Consensus.Mempool.API hiding (MempoolCapacityBytes,
-                     MempoolCapacityBytesOverride, MempoolSize,
-                     TraceEventMempool, computeMempoolCapacity)
+import           Ouroboros.Consensus.Mempool.API
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
@@ -40,10 +35,78 @@ import           Ouroboros.Consensus.Util.IOLike
   Add transactions
 -------------------------------------------------------------------------------}
 
--- | Result of processing a transaction to be added to the mempool.
-data TransactionResult blk =
+-- | Add a single transaction to the mempool, blocking if there is no space.
+implAddTx ::
+     ( IOLike m
+     , LedgerSupportsMempool blk
+     , ValidateEnvelope blk
+     , HasTxId (GenTx blk)
+     )
+  => MempoolEnv m blk
+  -> AddTxOnBehalfOf
+     -- ^ Whether we're acting on behalf of a remote peer or a local client.
+  -> GenTx blk
+     -- ^ The transaction to add to the mempool.
+  -> m (MempoolAddTxResult blk)
+implAddTx mpEnv onbehalf tx =
+    -- To ensure fair behaviour between threads that are trying to add
+    -- transactions, we make them all queue in a fifo. Only the one at the head
+    -- of the queue gets to actually wait for space to get freed up in the
+    -- mempool. This avoids small transactions repeatedly squeezing in ahead of
+    -- larger transactions.
+    --
+    -- The fifo behaviour is implemented using a simple MVar. And take this
+    -- MVar lock on a transaction by transaction basis. So if several threads
+    -- are each trying to add several transactions, then they'll interleave at
+    -- transaction granularity, not batches of transactions.
+    --
+    -- To add back in a bit of deliberate unfairness, we want to prioritise
+    -- transactions being added on behalf of local clients, over ones being
+    -- added on behalf of remote peers. We do this by using a pair of mvar
+    -- fifos: remote peers must wait on both mvars, while local clients only
+    -- need to wait on the second.
+    case onbehalf of
+      AddTxForRemotePeer -> do
+        withMVar remoteFifo $ \() ->
+         withMVar allFifo $ \() ->
+          -- This action can also block. Holding the MVars means
+          -- there is only a single such thread blocking at once.
+          implAddTx'
+
+      AddTxForLocalClient ->
+        withMVar allFifo $ \() ->
+          -- As above but skip the first MVar fifo so we will get
+          -- service sooner if there's lots of other remote
+          -- threads waiting.
+          implAddTx'
+  where
+    MempoolEnv {
+        mpEnvAddTxsRemoteFifo = remoteFifo
+      , mpEnvAddTxsAllFifo = allFifo
+      , mpEnvTracer = trcr
+      } = mpEnv
+
+    implAddTx' = do
+      TransactionProcessingResult _ result ev <-
+        doAddTx
+          mpEnv
+          (whetherToIntervene onbehalf)
+          tx
+      traceWith trcr ev
+      return result
+
+    whetherToIntervene :: AddTxOnBehalfOf -> WhetherToIntervene
+    whetherToIntervene AddTxForRemotePeer  = DoNotIntervene
+    whetherToIntervene AddTxForLocalClient = Intervene
+
+-- | Tried to add a transaction, was it processed or is there no space left?
+data TriedToAddTx blk =
     NoSpaceLeft
-  | TransactionProcessed
+  | Processed (TransactionProcessed blk)
+
+-- | A transaction was processed, either accepted or rejected.
+data TransactionProcessed blk =
+  TransactionProcessingResult
     (Maybe (InternalState blk))
     -- ^ If the transaction was accepted, the new state that can be written to
     -- the TVar.
@@ -52,77 +115,76 @@ data TransactionResult blk =
     (TraceEventMempool blk)
     -- ^ The event emitted by the operation.
 
--- | Add a list of transactions (oldest to newest) by interpreting a 'TryAddTxs'
--- from 'pureTryAddTxs'.
+-- | This function returns whether the transaction was added or rejected, and
+-- will block if the mempool is full.
 --
--- This function returns two lists: the transactions that were added or
--- rejected, and the transactions that could not yet be added, because the
--- Mempool capacity was reached. See 'addTxs' for a function that blocks in
--- case the Mempool capacity is reached.
---
--- Transactions are added one by one, updating the Mempool each time one was
--- added successfully.
---
--- See the necessary invariants on the Haddock for 'API.tryAddTxs'.
+-- See the necessary invariants on the Haddock for 'API.addTx'.
 --
 -- This function does not sync the Mempool contents with the ledger state in
--- case the latter changes, it relies on the background thread to do that.
+-- case the latter changes in a way that doesn't invalidate the db changelog, it
+-- relies on the background thread to do that. If the db changelog is
+-- invalidated (by rolling back the last synced ledger state), it will sync
+-- in-place.
 --
 -- INVARIANT: The code needs that read and writes on the state are coupled
--- together or inconsistencies will arise. To ensure that STM transactions are
--- short, each iteration of the helper function is a separate STM transaction.
-implTryAddTxs
-  :: forall m blk.
-     ( IOLike m
-     , LedgerSupportsMempool blk
+-- together or inconsistencies will arise.
+doAddTx ::
+     ( LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
      , ValidateEnvelope blk
+     , IOLike m
      )
   => MempoolEnv m blk
   -> WhetherToIntervene
-  -> [GenTx blk]
-  -> m ([MempoolAddTxResult blk], [GenTx blk])
-implTryAddTxs mpEnv wti =
-    go []
+  -> GenTx blk
+     -- ^ The transaction to add to the mempool.
+  -> m (TransactionProcessed blk)
+doAddTx mpEnv wti tx =
+    doAddTx' Nothing
   where
     MempoolEnv {
-        mpEnvLedgerCfg = cfg
-      , mpEnvLedger    = ldgrInterface
-      , mpEnvStateVar  = istate
-      , mpEnvTracer    = trcr
-      , mpEnvTxSize    = txSize
+        mpEnvLedger = ldgrInterface
+      , mpEnvLedgerCfg = cfg
+      , mpEnvTxSize = txSize
+      , mpEnvStateVar = istate
+      , mpEnvTracer = trcr
       } = mpEnv
 
-    -- MAYBE batch transaction keys queries
-    go :: [MempoolAddTxResult blk]
-       -> [GenTx blk]
-       -> m ([MempoolAddTxResult blk], [GenTx blk])
-    go acc = \case
-      []            -> pure (reverse acc, [])
-      txs@(tx:next) -> do
-        is <- atomically $ takeTMVar istate
-        mTbs <- getLedgerTablesAtFor ldgrInterface (isTip is) [tx]
-        case mTbs of
-          Right tbs -> case pureTryAddTx cfg txSize wti tx is tbs of
+    doAddTx' s = do
+      traceWith trcr $ TraceMempoolAttemptingAdd tx
+      is <- atomically $ do
+        i <- takeTMVar istate
+        case s of
+          Nothing -> pure ()
+          Just s' -> check $ isMempoolSize i /= s'
+        pure i
+      mTbs <- getLedgerTablesAtFor ldgrInterface (isTip is) [tx]
+      case mTbs of
+        Right tbs -> do
+          traceWith trcr $ TraceMempoolLedgerFound (isTip is)
+          case pureTryAddTx cfg txSize wti tx is tbs of
             NoSpaceLeft -> do
               atomically $ putTMVar istate is
-              pure (reverse acc, txs)
-            TransactionProcessed is' result ev -> do
+              doAddTx' (Just $ isMempoolSize is)
+            Processed outcome@(TransactionProcessingResult is' _ _) -> do
               atomically $ putTMVar istate $ fromMaybe is is'
-              traceWith trcr ev
-              go (result:acc) next
-          Left PointNotFound{} -> do
-            -- We couldn't retrieve the values because the state is no longer on
-            -- the db. We need to resync.
-            atomically $ putTMVar istate is
-            (_, mTrace) <- implSyncWithLedger mpEnv
-            whenJust mTrace (traceWith trcr)
-            go acc txs
+              pure outcome
+        Left PointNotFound{} -> do
+          traceWith trcr $ TraceMempoolLedgerNotFound (isTip is)
+          -- We couldn't retrieve the values because the state is no longer on
+          -- the db. We need to resync.
+          atomically $ putTMVar istate is
+          (_, mTrace) <- implSyncWithLedger mpEnv
+          whenJust mTrace (traceWith trcr)
+          doAddTx' s
 
-
--- | Craft a 'TryAddTxs' value containing the resulting state if applicable, the
--- tracing event and the result of adding this transaction. See the
--- documentation of 'implTryAddTxs' for some more context.
+-- | Craft a 'TriedToAddTx' value containing the resulting state if
+-- applicable, the tracing event and the result of adding this transaction. See
+-- the documentation of 'implAddTx' for some more context.
+--
+-- It returns 'NoSpaceLeft' only when the current mempool size is bigger or
+-- equal than then mempool capacity. Otherwise it will validate the transaction
+-- and add it to the mempool if there is at least one byte free on the mempool.
 pureTryAddTx
   :: ( LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
@@ -138,19 +200,17 @@ pureTryAddTx
      -- ^ The current internal state of the mempool.
   -> LedgerTables (LedgerState blk) ValuesMK
      -- ^ Values for this transaction
-  -> TransactionResult blk
+  -> TriedToAddTx blk
 pureTryAddTx cfg txSize wti tx is values
-  | let size    = txSize tx
-        curSize = msNumBytes  $ isMempoolSize is
-  , curSize + size > getMempoolCapacityBytes (isCapacity is)
-  = NoSpaceLeft
-  | otherwise
-  = case eVtx of
+  | let curSize = msNumBytes $ isMempoolSize is
+  , curSize < getMempoolCapacityBytes (isCapacity is)
+  = -- We add the transaction if there is at least one byte free left in the mempool.
+  case eVtx of
       -- We only extended the ValidationResult with a single transaction
       -- ('tx'). So if it's not in 'vrInvalid', it must be in 'vrNewValid'.
       Right vtx ->
         assert (isJust (vrNewValid vr)) $
-          TransactionProcessed
+          Processed $ TransactionProcessingResult
             (Just is')
             (MempoolTxAdded vtx)
             (TraceMempoolAddedTx
@@ -161,7 +221,7 @@ pureTryAddTx cfg txSize wti tx is values
       Left err ->
         assert (isNothing (vrNewValid vr))  $
           assert (length (vrInvalid vr) == 1) $
-            TransactionProcessed
+            Processed $ TransactionProcessingResult
               Nothing
               (MempoolTxRejected tx err)
               (TraceMempoolRejectedTx
@@ -169,6 +229,8 @@ pureTryAddTx cfg txSize wti tx is values
                err
                (isMempoolSize is)
               )
+  | otherwise
+  = NoSpaceLeft
   where
     (eVtx, vr) = extendVRNew cfg txSize wti tx $ validationResultFromIS values is
     is'        = internalStateFromVR vr
@@ -270,6 +332,7 @@ implSyncWithLedger ::
   => MempoolEnv m blk
   -> m (MempoolSnapshot blk, Maybe (TraceEventMempool blk))
 implSyncWithLedger mpEnv = do
+  traceWith trcr TraceMempoolAttemptingSync
   (is, ls) <- atomically $ do
     is <- takeTMVar istate
     ls <- getCurrentLedgerState ldgrInterface
@@ -282,6 +345,7 @@ implSyncWithLedger mpEnv = do
     then do
     -- The tip didn't change, put the same state.
     atomically $ putTMVar istate is
+    traceWith trcr $ TraceMempoolSyncNotNeeded (isTip is) (castPoint $ getTip ls)
     pure (snapshotFromIS is, Nothing)
     else do
     -- We need to revalidate
@@ -301,6 +365,7 @@ implSyncWithLedger mpEnv = do
                               is
         atomically $ putTMVar istate is'
         whenJust mTrace (traceWith trcr)
+        traceWith trcr TraceMempoolSyncDone
         return (snapshotFromIS is', mTrace)
       Left PointNotFound{} -> do
         -- If the point is gone, resync

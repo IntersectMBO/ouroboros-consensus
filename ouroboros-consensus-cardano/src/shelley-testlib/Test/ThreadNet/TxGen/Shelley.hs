@@ -115,9 +115,9 @@ genTx _cfg slotNo TickedShelleyLedgerState { tickedShelleyLedgerState } genEnv =
       . SL.esLState
       $ epochState
 
-    dpState :: SL.DPState (MockCrypto h)
+    dpState :: SL.CertState (MockShelley h)
     dpState =
-        SL.lsDPState
+        SL.lsCertState
       . SL.esLState
       $ epochState
 

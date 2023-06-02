@@ -12,7 +12,7 @@ import           Bench.Consensus.Mempool.TestBlock (TestBlock)
 import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
 import           Bench.Consensus.MempoolWithMockedLedgerItf
 import           Control.Arrow (first)
-import           Control.Monad
+import           Control.Monad (unless, void)
 import qualified Control.Tracer as Tracer
 import           Data.Aeson
 import qualified Data.ByteString.Lazy as BL
@@ -21,11 +21,12 @@ import           Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
-import           Ouroboros.Consensus.Storage.LedgerDB.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
                      (BackingStoreSelector (..))
 import           System.Exit (die, exitFailure)
+import           Test.Tasty (withResource)
 import           Test.Tasty.Bench (Benchmark, CsvPath (CsvPath), bench,
-                     benchIngredients, bgroup, env, nfIO)
+                     benchIngredients, bgroup, nfIO)
 import           Test.Tasty.HUnit (testCase, (@?=))
 import           Test.Tasty.Options (changeOption)
 import           Test.Tasty.Runners (parseOptions, tryIngredients)
@@ -100,29 +101,33 @@ main = do
           where
             benchAddNTxs :: BackingStoreSelector IO -> Int -> ScBuilder () -> Benchmark
             benchAddNTxs bss n scenario =
-                env ((,txs0) <$> openMempoolWithCapacityFor params txs0 )
-                -- The irrefutable pattern was added to avoid the
-                --
-                -- > Unhandled resource. Probably a bug in the runner you're using.
-                --
-                -- error reported here https://hackage.haskell.org/package/tasty-bench-0.3.3/docs/Test-Tasty-Bench.html#v:env
-                (\ ~(mempool, txs) -> bgroup (  showBackingStoreSelector (immpBackingStoreSelector params)
-                                             <> ": "
-                                             <> show n
-                                             <> " transactions"
-                                             ) [
-                    bench    "benchmark"     $ nfIO $ run        mempool txs
-                  , testCase "test"          $        testAddTxs mempool txs
-                  , testCase "txs length"    $ length txs @?= n
-                  ]
-                )
+                withResource
+                  ((, txs0) <$> openMempoolWithCapacityFor params txs0)
+                  (\_ -> pure ())
+                  (\getAcquiredRes -> do
+                      let withAcquiredMempool act = do
+                            (mempool, txs) <- getAcquiredRes
+                            void $ act mempool txs
+                            -- TODO: consider adding a 'reset' command to the mempool to make sure its state is not tainted.
+                            removeTxs mempool $ getCmdsTxIds txs
+                      bgroup (showBackingStoreSelector (immpBackingStoreSelector params)
+                               <> ": "
+                               <> show n <> " transactions") [
+                          bench "benchmark" $ nfIO $ withAcquiredMempool $ \mempool txs -> do
+                            run mempool txs
+                        , testCase "test" $ withAcquiredMempool $ \mempool txs ->
+                            testAddTxs mempool txs
+                        , testCase "txs length" $ withAcquiredMempool $ \_mempool txs -> do
+                            length txs @?= n
+                        ]
+                  )
               where
                 (params, txs0) = fromScenario defaultLedgerDbCfg bss (build scenario)
 
                 testAddTxs mempool txs = do
                     run mempool txs
                     mempoolTxs <- getTxs mempool
-                    mempoolTxs @?= txsAddedInCmds txs
+                    mempoolTxs @?= getCmdsTxs txs
 
     parseBenchmarkResults csvFilePath = do
         csvData <- BL.readFile csvFilePath
@@ -183,5 +188,5 @@ openMempoolWithCapacityFor params cmds =
                                    TestBlock.txSize
                                    params
   where
-    capacityRequiredByCmds = Mempool.mkCapacityBytesOverride  totalTxsSize
-      where totalTxsSize = sum $ fmap TestBlock.txSize $ txsAddedInCmds cmds
+    capacityRequiredByCmds = Mempool.mkCapacityBytesOverride totalTxsSize
+      where totalTxsSize = sum $ fmap TestBlock.txSize $ getCmdsTxs cmds

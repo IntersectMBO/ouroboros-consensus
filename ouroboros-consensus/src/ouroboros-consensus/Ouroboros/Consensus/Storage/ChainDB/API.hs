@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE DeriveTraversable    #-}
 {-# LANGUAGE DerivingStrategies   #-}
@@ -6,12 +5,9 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
 {-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE NamedFieldPuns       #-}
-{-# LANGUAGE PatternSynonyms      #-}
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -77,14 +73,14 @@ import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
                      (InvalidBlockPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.Common
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (LedgerBackingStoreValueHandle)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
                      (PointNotFound)
 import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Util (StaticEither, (..:))
+import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -169,11 +165,11 @@ data ChainDB m blk = ChainDB {
     , getCurrentChain    :: STM m (AnchoredFragment (Header blk))
 
       -- | Return the LedgerDB containing the last @k@ ledger states.
-    , getLedgerDB        :: STM m (LedgerDB' blk)
+    , getLedgerDB        :: STM m (LedgerDB.DbChangelog' blk)
 
-      -- | Acquire a value handle and ledger DB anchored at the same slot as the
-      -- value handle and truncated to the specified point if the provided point
-      -- exists on the db.
+      -- | Acquire a value handle and ledger DB, both anchored at the same slot
+      -- and truncated to the specified point if the provided point exists on
+      -- the db.
       --
       -- Note that the ValueHandle should be closed by the caller of this
       -- function.
@@ -181,8 +177,8 @@ data ChainDB m blk = ChainDB {
            Maybe (Point blk)
         -> m ( Either
                (Point blk)
-               ( LedgerBackingStoreValueHandle m (ExtLedgerState blk)
-               , LedgerDB.LedgerDB' blk
+               ( LedgerBackingStoreValueHandle' m blk
+               , LedgerDB.DbChangelog' blk
                )
              )
 
@@ -349,39 +345,6 @@ data ChainDB m blk = ChainDB {
       -- invalid block is detected. These blocks are likely to be valid.
     , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
 
-      -- | Get a 'LedgerDB' and a handle to a value of the backing store
-      -- corresponding to the anchor of the 'LedgerDB'
-      --
-      -- In the 'StaticRight' case, 'Left pt' out means the requested point is
-      -- not on current chain, so that 'LedgerDB' is unavailable.
-      --
-      -- The return type in the end contains a value handle that can be used to
-      -- perform reads on the backing store, a LedgerDB truncated at the
-      -- requested point and a function for releasing the value handle.
-      --
-      -- The value handle is allocated in the given registry.
-      --
-      -- This is intended to be used on queries, to get an ephemeral stable view
-      -- of the backing store.
-    , getLedgerBackingStoreValueHandle ::
-        forall b.
-             ResourceRegistry m
-          -> StaticEither b () (Point blk)
-          -> m (StaticEither
-                 b
-                 ( LedgerBackingStoreValueHandle m (ExtLedgerState blk)
-                 , LedgerDB' blk
-                 , m ()
-                 )
-                 (Either
-                    (Point blk)
-                    ( LedgerBackingStoreValueHandle m (ExtLedgerState blk)
-                    , LedgerDB' blk
-                    , m ()
-                    )
-                 )
-               )
-
       -- | Read and forward the values up to the given point on the chain.
       -- Returns Nothing if the anchor moved or if the state is not found on the
       -- ledger db.
@@ -446,7 +409,7 @@ getHeaderStateHistory ::
 getHeaderStateHistory = fmap toHeaderStateHistory . getLedgerDB
   where
     toHeaderStateHistory ::
-         LedgerDB' blk
+         LedgerDB.DbChangelog' blk
       -> HeaderStateHistory blk
     toHeaderStateHistory =
           HeaderStateHistory

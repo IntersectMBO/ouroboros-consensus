@@ -22,7 +22,7 @@
 --
 module Test.Consensus.Node (tests) where
 
-import           Control.Monad.Class.MonadTimer (MonadTimer)
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.Bifunctor (second)
 import           Data.Functor ((<&>))

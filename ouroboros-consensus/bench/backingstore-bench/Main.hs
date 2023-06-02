@@ -21,10 +21,10 @@ import           Ouroboros.Consensus.Ledger.Tables (DiffMK (..), KeysMK (..),
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
                      (BackingStorePath (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+                     (BackingStoreSelector (..), newBackingStoreInitialiser)
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB
                      (LMDBLimits (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Init
-                     (BackingStoreSelector (..), newBackingStoreInitialiser)
 import qualified System.Directory as Dir
 import           System.FS.API (HasFS (..), SomeHasFS (..))
 import           System.FS.API.Types (MountPoint (..), mkFsPath)

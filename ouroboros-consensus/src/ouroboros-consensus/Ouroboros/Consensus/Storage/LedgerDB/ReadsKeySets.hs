@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 
 -- | How to rewind, read and forward a set of keys through a db changelog,
 -- and use it to apply a function that expects a hydrated state as input.
@@ -22,12 +23,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets (
 import           Cardano.Slotting.Slot
 import           Data.Map.Diff.Strict (applyDiffForKeys)
 import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Ledger.Basics (GetTip, getTipSlot)
-import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import           Ouroboros.Consensus.Storage.LedgerDB.DiffSeq
-import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
 import           Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
@@ -44,7 +43,7 @@ rewindTableKeySets :: GetTip l
                    -> LedgerTables l KeysMK
                    -> RewoundTableKeySets l
 rewindTableKeySets =
-    RewoundTableKeySets . getTipSlot . changelogAnchor
+    RewoundTableKeySets . getTipSlot . changelogLastFlushedState
 
 {-------------------------------------------------------------------------------
   Read
@@ -118,8 +117,8 @@ newtype PointNotFound blk = PointNotFound (Point blk) deriving (Eq, Show)
 -- unlucky and scheduling of events happened to move the backing store. Reading
 -- again the LedgerDB and calling this function must eventually succeed.
 getLedgerTablesFor ::
-     (Monad m, HasLedgerTables l, GetTip l)
-  => LedgerDB l
+     (Monad m, HasLedgerTables l, IsLedger l)
+  => DbChangelog l
   -> LedgerTables l KeysMK
   -> KeySetsReader m l
   -> m (Either RewindReadFwdError (LedgerTables l ValuesMK))
@@ -182,5 +181,5 @@ forwardTableKeySets ::
             (LedgerTables l ValuesMK)
 forwardTableKeySets dblog =
   forwardTableKeySets'
-    (getTipSlot $ changelogAnchor dblog)
+    (getTipSlot $ changelogLastFlushedState dblog)
     (changelogDiffs dblog)
