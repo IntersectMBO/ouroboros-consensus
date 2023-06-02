@@ -65,8 +65,6 @@ module Ouroboros.Consensus.Util (
   , (...:)
   , (..:)
   , (.:)
-    -- * Type-level composition
-  , (:..:) (..)
     -- * Product
   , pairFst
   , pairSnd
@@ -403,18 +401,6 @@ dimap keyFn valFn = Map.foldlWithKey update Map.empty
 
 (......:) :: (y -> z) -> (x0 -> x1 -> x2 -> x3 -> x4 -> x5 -> x6 -> y) -> (x0 -> x1 -> x2 -> x3 -> x4 -> x5 -> x6 -> z)
 (f ......: g) x0 x1 x2 x3 x4 x5 x6 = f (g x0 x1 x2 x3 x4 x5 x6)
-
-{-------------------------------------------------------------------------------
-  Type-level composition
--------------------------------------------------------------------------------}
-
--- | Compose two types where the second one expects two type variables
---
--- @@
---   Comp2 (Just (Left "hi")) :: (Maybe :..: Either) String Int
--- @@
-type (:..:) :: (y -> Type) -> (x0 -> x1 -> y) -> (x0 -> x1 -> Type)
-newtype (f :..: g) p r = Comp2 { unComp2 :: f (g p r) }
 
 {-------------------------------------------------------------------------------
   Product
