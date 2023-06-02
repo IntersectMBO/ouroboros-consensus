@@ -138,9 +138,20 @@ decodeAsFlatTerm bs0 =
               -- always starts by requesting initial input. Only decoders that
               -- fail or return a value without looking at their input can give
               -- a different initial result.
-              CBOR.R.Partial k <- CBOR.R.deserialiseIncremental CBOR.F.decodeTermToken
+              idc <- CBOR.R.deserialiseIncremental CBOR.F.decodeTermToken
+              let k = fromPartial idc
               k (Just bs)
           collectOutput next
+
+      where
+        fromPartial ::
+             CBOR.R.IDecode s a
+          -> Maybe ByteString
+          -> ST s (CBOR.R.IDecode s a)
+        fromPartial idc = case idc of
+            CBOR.R.Partial k -> k
+            CBOR.R.Done{}    -> error "fromPartial: expected a Partial decoder"
+            CBOR.R.Fail{}    -> error "fromPartial: expected a Partial decoder"
 
     collectOutput ::
          CBOR.R.IDecode s CBOR.F.TermToken
