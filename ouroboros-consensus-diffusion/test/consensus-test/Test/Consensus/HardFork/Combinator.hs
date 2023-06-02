@@ -30,9 +30,9 @@ import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.OptNP (OptNP (..))
 import           Data.SOP.Strict hiding (shape)
 import qualified Data.SOP.Tails as Tails
+import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
@@ -358,39 +358,24 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
 instance TxGen TestBlock where
   testGenTxs _ _ _ _ _ _ = return []
 
-instance HasLedgerTables (LedgerState TestBlock) where
-  data instance LedgerTables (LedgerState TestBlock) mk = NoABTables
-    deriving stock (Eq, Show, Generic)
-    deriving anyclass NoThunks
+type instance Key   (LedgerState TestBlock) = Void
+type instance Value (LedgerState TestBlock) = Void
 
-instance HasTickedLedgerTables (LedgerState TestBlock) where
-  withLedgerTablesTicked (TickedHardForkLedgerState info hfstate) tbs =
-    TickedHardForkLedgerState info $
-     hczipWith
-      (Proxy @(Compose HasTickedLedgerTables LedgerState))
-      (\ilt st -> FlipTickedLedgerState
-                . flip withLedgerTablesTicked (applyDistribLedgerTables ilt tbs)
-                . getFlipTickedLedgerState $ st
-      )
-      hardForkInjectLedgerTables
-      hfstate
-
-instance CanSerializeLedgerTables (LedgerState TestBlock) where
-
-instance LedgerTablesAreTrivial (LedgerState TestBlock) where
-  convertMapKind = HardForkLedgerState . hcmap
-      (Proxy @(Compose LedgerTablesAreTrivial LedgerState))
-      (Flip . convertMapKind . unFlip)
-    . hardForkLedgerStatePerEra
-  trivialLedgerTables = NoABTables
+instance HasLedgerTables (LedgerState TestBlock)
+instance HasLedgerTables (Ticked1 (LedgerState TestBlock))
+instance HasTickedLedgerTables (LedgerState TestBlock)
+instance CanSerializeLedgerTables (LedgerState TestBlock)
+instance CanStowLedgerTables (LedgerState TestBlock)
+instance LedgerTablesAreTrivial (LedgerState TestBlock)
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock))
 
 instance LedgerTablesCanHardFork '[BlockA, BlockB] where
   hardForkInjectLedgerTables =
-       (InjectLedgerTables { applyInjectLedgerTables = \NoATables -> NoABTables
-                           , applyDistribLedgerTables = \NoABTables -> NoATables
+       (InjectLedgerTables { applyInjectLedgerTables  = castLedgerTables
+                           , applyDistribLedgerTables = castLedgerTables
                            })
-    :* (InjectLedgerTables { applyInjectLedgerTables = \NoBTables -> NoABTables
-                           , applyDistribLedgerTables = \NoABTables -> NoBTables
+    :* (InjectLedgerTables { applyInjectLedgerTables  = castLedgerTables
+                           , applyDistribLedgerTables = castLedgerTables
                            })
     :* Nil
 
@@ -453,7 +438,7 @@ ledgerState_AtoB =
             LgrB {
               lgrB_tip = castPoint lgrA_tip
             }
-      , translateLedgerTablesWith = \NoATables -> NoBTables
+      , translateLedgerTablesWith = castLedgerTables
     }
 
 chainDepState_AtoB ::
