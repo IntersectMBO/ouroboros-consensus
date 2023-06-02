@@ -1,6 +1,5 @@
 module Main (main) where
 
-import           Cardano.Crypto.Init (cryptoInit)
 import           System.IO (BufferMode (LineBuffering), hSetBuffering,
                      hSetEncoding, stdout, utf8)
 import qualified Test.Consensus.Cardano.ByronCompatibility (tests)
@@ -19,7 +18,6 @@ main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
   hSetEncoding stdout utf8
-  cryptoInit
   defaultMainWithTestEnv defaultTestEnvConfig tests
 
 tests :: TestTree

@@ -553,6 +553,7 @@ executable db-analyser
   main-is:        db-analyser.hs
   build-depends:
     , base
+    , cardano-crypto-class
     , cardano-crypto-wrapper
     , optparse-applicative
     , ouroboros-consensus
@@ -566,6 +567,7 @@ executable db-synthesizer
   main-is:        db-synthesizer.hs
   build-depends:
     , base
+    , cardano-crypto-class
     , cardano-tools
     , optparse-applicative
     , ouroboros-consensus
@@ -578,6 +580,7 @@ executable db-truncater
   main-is:        db-truncater.hs
   build-depends:
     , base
+    , cardano-crypto-class
     , cardano-crypto-wrapper
     , optparse-applicative
     , ouroboros-consensus
@@ -593,6 +596,7 @@ executable immdb-server
   main-is:        immdb-server.hs
   build-depends:
     , base
+    , cardano-crypto-class
     , network
     , optparse-applicative
     , ouroboros-consensus
@@ -606,5 +610,6 @@ test-suite tools-test
   build-depends:
     , base
     , cardano-tools
+    , ouroboros-consensus:consensus-testlib
     , tasty
     , tasty-hunit

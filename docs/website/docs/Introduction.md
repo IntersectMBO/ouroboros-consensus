@@ -17,9 +17,6 @@ This document provides an index to different Consensus documents:
   foundations.
 - [Style guide](StyleGuide.md): describes the style guide we use when developing
   Consensus.
-- [Interface changelog](interface-CHANGELOG.md): contains the old changelog,
-  which describes previous changes that are important for downstream Cardano
-  development teams.
 - [Hard won wisdom](HardWonWisdom.md) contains several realizations we had while
   working on the code base. This could be used both as a place to look random
   information, and source of inspiration for further improving our

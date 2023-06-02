@@ -15,6 +15,7 @@
 --                    [--num-blocks-to-process INT]
 module Main (main) where
 
+import           Cardano.Crypto.Init (cryptoInit)
 import           Cardano.Tools.DBAnalyser.Run
 import           Cardano.Tools.DBAnalyser.Types
 import           Control.Monad (void)
@@ -25,6 +26,7 @@ import           Options.Applicative (execParser, fullDesc, helper, info,
 
 main :: IO ()
 main = do
+    cryptoInit
     cmdLine <- getCmdLine
     void $ case blockType cmdLine of
       ByronBlock   args -> analyse cmdLine args

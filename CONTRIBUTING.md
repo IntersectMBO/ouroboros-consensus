@@ -255,8 +255,8 @@ When debugging an issue or when not using the shipped Nix shell, it is often des
 
 To get the exact `libsodium-vrf` used by Nix:
 ```console
- $ nix eval --json .#libsodium-vrf.src.url
-"https://github.com/input-output-hk/libsodium/archive/dbb48cce5429cb6585c9034f002568964f1ce567.tar.gz"
+ $ nix eval --json .#libsodium-vrf.src.rev
+"dbb48cce5429cb6585c9034f002568964f1ce567"
 ```
 
 To get the `cabal-fmt` version used by Nix:
