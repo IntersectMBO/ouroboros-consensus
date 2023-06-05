@@ -750,7 +750,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
                   error "chainDiff doesn't fit onto current chain"
                 Just newChain -> do
                   writeTVar cdbChain newChain
-                  LedgerDB.setCurrent cdbLedgerDB newLedger
+                  LedgerDB.setCurrent cdbLedgerDB newLedger Extend
 
                   -- Inspect the new ledger for potential problems
                   let events :: [LedgerEvent blk]

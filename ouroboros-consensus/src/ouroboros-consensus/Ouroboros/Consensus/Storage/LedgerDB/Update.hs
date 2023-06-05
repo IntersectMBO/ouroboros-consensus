@@ -7,6 +7,7 @@
 -- | Updating the LedgerDB
 module Ouroboros.Consensus.Storage.LedgerDB.Update (
     DiffsToFlush (..)
+  , LedgerDBUpdate (..)
   , ValidateResult (..)
   , flushIntoBackingStore
   , garbageCollectPrevApplied
@@ -23,8 +24,10 @@ import           Data.Word
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
@@ -33,17 +36,72 @@ import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
 import           Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Network.AnchoredSeq as AS
+
+data LedgerDBUpdate = Prune | Extend
+  deriving (Show)
 
 -- | PRECONDITION: The new 'LedgerDB' must be the result of calling either
 -- 'LedgerDB.ledgerDbSwitch' or 'LedgerDB.ledgerDbPushMany' on the current
 -- 'LedgerDB'.
 setCurrent ::
-     MonadSTM m
+     forall blk m.
+     ( MonadSTM m
+     , IsLedger (LedgerState blk)
+     , HasLedgerTables (LedgerState blk)
+     , HasCallStack
+     )
   => StrictTVar m (DbChangelog' blk)
   -> DbChangelog' blk
+  -> LedgerDBUpdate
   -> STM m ()
-setCurrent = writeTVar
+setCurrent v dblog = \case
+  Prune ->
+    updatePruning (changelogLastFlushedState dblog)
+  Extend ->
+    updateExtending (changelogVolatileStates dblog) (changelogDiffs dblog)
+ where
+   updatePruning :: ExtLedgerState blk EmptyMK -> STM m ()
+   updatePruning lf =
+     let
+       f :: (Ord k, Eq v) => SeqDiffMK k v -> SeqDiffMK k v
+       f (SeqDiffMK seqExtended) =
+         SeqDiffMK $ snd $ DS.splitAtSlot (fromWithOrigin 0 $ pointSlot $ getTip lf) seqExtended
+     in
+       modifyTVar v (\extended ->
+                       DbChangelog {
+                          changelogLastFlushedState = lf
+                        , changelogVolatileStates   = changelogVolatileStates extended
+                        , changelogDiffs            =
+                            mapLedgerTables f (changelogDiffs extended)
+                        })
 
+   updateExtending ::
+        AS.AnchoredSeq
+         (WithOrigin SlotNo)
+         (ExtLedgerState blk EmptyMK)
+         (ExtLedgerState blk EmptyMK)
+     -> LedgerTables (ExtLedgerState blk) SeqDiffMK
+     -> STM m ()
+   updateExtending newVolatile extendedDiffs =
+     let
+       f :: (Ord k, Eq v) => SeqDiffMK k v -> SeqDiffMK k v -> SeqDiffMK k v
+       f (SeqDiffMK prunedSeq) (SeqDiffMK extendedSeq) =
+         SeqDiffMK $
+         if DS.minSlot prunedSeq == DS.minSlot extendedSeq
+         then extendedSeq
+         else
+           let (imm, _) = DS.splitAtSlot (fromWithOrigin 0 $ pointSlot $ getTip $ AS.anchor newVolatile) prunedSeq
+               (_, rest) = DS.splitAtFromEnd (AS.length newVolatile) extendedSeq
+           in DS.append imm rest
+     in
+       modifyTVar v (\pruned ->
+                       DbChangelog {
+                          changelogLastFlushedState = changelogLastFlushedState pruned
+                        , changelogVolatileStates   = newVolatile
+                        , changelogDiffs            =
+                            zipLedgerTables f (changelogDiffs pruned) extendedDiffs
+                        })
 -- | Flush **all the changes in this DbChangelog** into the backing store
 --
 -- Note that 'flush' must have been called to split the 'DbChangelog' on the

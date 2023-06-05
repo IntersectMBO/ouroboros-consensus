@@ -199,7 +199,8 @@ mkLedgerDB st args getBlock = do
     , garbageCollect = getStateSTM1 h $ \st' ->
         Update.garbageCollectPrevApplied (varPrevApplied st')
 
-    , setCurrent = getStateSTM1 h $ Update.setCurrent . ldbChangelog
+    , setCurrent = \chlog upd -> getStateSTM h $ \st' ->
+        Update.setCurrent (ldbChangelog st') chlog upd
 
     , tryFlush = getState h $ \st' -> do
         ldb <- atomically $ Query.getCurrent st'
@@ -208,7 +209,9 @@ mkLedgerDB st args getBlock = do
                diffs <- atomically $ do
                  ldb' <- Query.getCurrent st'
                  let (toFlush, toKeep) = splitForFlushing FlushAllImmutable ldb'
-                 Update.setCurrent (ldbChangelog st') toKeep
+                 mapM_ ( const $
+                         Update.setCurrent (ldbChangelog st') toKeep Update.Prune
+                       ) toFlush
                  pure toFlush
                mapM_ (Update.flushIntoBackingStore (ldbBackingStore st')) diffs
            )
@@ -475,7 +478,7 @@ replayStartingWith tracer cfg policy backingStore stream initDb = do
           then do
             let (toFlush, toKeep) =
                   DbChangelog.splitForFlushing
-                    FlushAll
+                    FlushAllImmutable
                     db'
             mapM_ (Update.flushIntoBackingStore backingStore) toFlush
             pure toKeep

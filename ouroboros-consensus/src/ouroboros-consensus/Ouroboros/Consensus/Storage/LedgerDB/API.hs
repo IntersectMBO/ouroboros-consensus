@@ -30,7 +30,7 @@ type LedgerDBView m b blk =
 
 data LedgerDB m blk = LedgerDB {
     -- | Set the current DbChangelog in the LedgerDB.
-    setCurrent            :: DbChangelog' blk -> STM m ()
+    setCurrent            :: DbChangelog' blk -> LedgerDBUpdate -> STM m ()
     -- | Get the current DbChangelog in the LedgerDB.
   , getCurrent            :: STM m (DbChangelog' blk)
     -- | Get the set of previously succesfully applied blocks.

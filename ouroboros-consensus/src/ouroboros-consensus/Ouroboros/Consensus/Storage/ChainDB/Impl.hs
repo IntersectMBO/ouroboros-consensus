@@ -61,6 +61,8 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Update
+                     (LedgerDBUpdate (..))
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
@@ -162,7 +164,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
           K ledger = VF.validatedLedger   chainAndLedger
           cfg    = Args.cdbTopLevelConfig args
 
-      atomically $ LedgerDB.setCurrent lgrDB ledger
+      atomically $ LedgerDB.setCurrent lgrDB ledger Extend
 
       LedgerDB.tryFlush lgrDB
 
