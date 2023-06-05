@@ -376,8 +376,8 @@ deriving via AllowThunk (OverrideDelay s a)
 deriving via AllowThunk (StrictTVar (OverrideDelay s) a)
          instance NoThunks (StrictTVar (OverrideDelay s) a)
 
-deriving via AllowThunk (StrictMVar (OverrideDelay s) a)
-         instance NoThunks (StrictMVar (OverrideDelay s) a)
+deriving via AllowThunk (StrictSVar (OverrideDelay s) a)
+         instance NoThunks (StrictSVar (OverrideDelay s) a)
 
 instance MonadTimer.MonadDelay (OverrideDelay (IOSim s)) where
   threadDelay d = OverrideDelay $ ReaderT $ \schedule -> do
