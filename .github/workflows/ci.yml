@@ -61,7 +61,7 @@ jobs:
       run: |
         sudo apt update
         sudo apt -y install libsodium-dev
-        sudo apt -y install lmdb-dev
+        sudo apt -y install liblmdb-dev
 
     - name: Configure Cabal to use libsodium
       run: |
