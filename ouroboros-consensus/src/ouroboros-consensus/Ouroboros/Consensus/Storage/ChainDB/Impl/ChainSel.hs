@@ -1233,7 +1233,7 @@ futureCheckCandidate chainSelEnv validatedChainDiff =
         validatedChainDiff' = ValidatedDiff.toValidatedFragment validatedChainDiff
       in
         validatedChainDiff' {
-          VF.validatedLedger = mapAnchorlessDbChangelog ledgerState unExtLedgerStateTables
+          VF.validatedLedger = mapAnchorlessDbChangelog ledgerState castLedgerTables
                              . VF.validatedLedger
                              $ validatedChainDiff'
                             }

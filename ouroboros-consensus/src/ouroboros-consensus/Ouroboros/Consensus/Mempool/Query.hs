@@ -60,11 +60,11 @@ implGetSnapshotFor mpEnv slot ticked extChlog extLbsvh = do
   where
     vh@BackingStoreValueHandle { bsvhAtSlot } =
       castBackingStoreValueHandle
-         unExtLedgerStateTables
-         ExtLedgerStateTables
+         castLedgerTables
+         castLedgerTables
          extLbsvh
 
-    chlog = unExtLedgerStateTables extChlog
+    chlog = castLedgerTables extChlog
 
     getSnap is tbs = pureGetSnapshotFor
                        capacityOverride

@@ -53,7 +53,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Bridge a
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Status
                      (Status (..), StatusLock)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Status as Status
-import           Ouroboros.Consensus.Util (foldlM', unComp2, (:..:) (..))
+import           Ouroboros.Consensus.Util (foldlM')
 import           Ouroboros.Consensus.Util.IOLike (Exception (..), IOLike,
                      MonadCatch (..), MonadThrow (..), bracket)
 import qualified System.FS.API as FS
@@ -436,7 +436,7 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
      -- Here we get the LMDB.Databases for the tables of the ledger state
      -- Must be read-write transaction because tables may need to be created
      dbBackingTables <- liftIO $ LMDB.readWriteTransaction dbEnv $
-       traverseLedgerTables getDb namesLedgerTables
+       traverseLedgerTables getDb (pureLedgerTables $ NameMK "utxo")
 
      dbNextId <- IOLike.newTVarIO 0
 

@@ -59,7 +59,7 @@ import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyLedgerConfig, mkShelleyLedgerConfig,
-                     shelleyLedgerState, shelleyLedgerTables, shelleyUTxOTable)
+                     shelleyLedgerState, shelleyLedgerTables)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (dimap)
@@ -273,7 +273,7 @@ extractUtxoDiff
   :: LedgerState (ShelleyBlock proto era) DiffMK
   -> Diff (TxIn (EraCrypto era)) (Core.TxOut era)
 extractUtxoDiff shelleyLedgerState =
-  let DiffMK tables = shelleyUTxOTable $ shelleyLedgerTables shelleyLedgerState
+  let DiffMK tables = getLedgerTables $ shelleyLedgerTables shelleyLedgerState
   in tables
 
 {-------------------------------------------------------------------------------

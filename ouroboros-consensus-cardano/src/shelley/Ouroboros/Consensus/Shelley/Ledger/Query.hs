@@ -382,7 +382,7 @@ instance ( ShelleyCompatible proto era
       ext = dlvCurrent dlv
 
   getQueryKeySets = \case
-    GetUTxOByTxIn ks -> ShelleyLedgerTables $ KeysMK ks
+    GetUTxOByTxIn ks -> LedgerTables $ KeysMK ks
     _other           -> emptyLedgerTables
 
   tableTraversingQuery = \case

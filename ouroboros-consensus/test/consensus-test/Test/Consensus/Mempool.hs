@@ -692,7 +692,7 @@ withTestMempool setup@TestSetup {..} prop =
         case runExcept $ repeatedlyM
                applyTx'
                [ txForgetValidated tx | (tx, _) <- snapshotTxs ]
-               (mapOverLedgerTablesTicked f $ TickedSimpleLedgerState ledgerState) of
+               (mapOverLedgerTables f $ TickedSimpleLedgerState ledgerState) of
           Right _ -> property True
           Left  e -> counterexample (mkErrMsg e) $ property False
       where
@@ -702,7 +702,7 @@ withTestMempool setup@TestSetup {..} prop =
                          snapshotSlotNo
                          tx
                          (forgetLedgerTablesDiffsTicked st)
-          let origTables = projectLedgerTablesTicked st
+          let origTables = castLedgerTables $ projectLedgerTables st
           pure (zipOverLedgerTablesTicked rawPrependTrackingDiffs
                                           (fst st')
                                           origTables

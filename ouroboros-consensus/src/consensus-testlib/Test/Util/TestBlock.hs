@@ -99,6 +99,7 @@ import           Data.Tree (Tree (..))
 import qualified Data.Tree as Tree
 import           Data.TreeDiff (ToExpr)
 import           Data.Typeable (Typeable)
+import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -373,7 +374,7 @@ instance PayloadSemantics () where
 
   applyPayload _ _ = Right EmptyPLDS
 
-  getPayloadKeySets = const NoTestLedgerTables
+  getPayloadKeySets = const trivialLedgerTables
 
 -- | Apply the payload directly to the payload dependent state portion of a
 -- ticked state, leaving the rest of the input ticked state unaltered.
@@ -456,22 +457,20 @@ instance ( Typeable ptype
 
 type instance LedgerCfg (LedgerState TestBlock) = HardFork.EraParams
 
-instance HasLedgerTables (LedgerState TestBlock) where
-  data LedgerTables (LedgerState TestBlock) mk = NoTestLedgerTables
-    deriving stock    (Generic, Eq, Show)
-    deriving anyclass (NoThunks)
+type instance Key   (LedgerState TestBlock) = Void
+type instance Value (LedgerState TestBlock) = Void
 
-instance LedgerTablesAreTrivial (LedgerState (TestBlockWith ())) where
-  convertMapKind (TestLedger lap EmptyPLDS) = TestLedger lap EmptyPLDS
-  trivialLedgerTables = NoTestLedgerTables
+instance HasLedgerTables (LedgerState TestBlock)
+instance HasLedgerTables (Ticked1 (LedgerState TestBlock))
 
-instance CanSerializeLedgerTables (LedgerState TestBlock) where
+instance LedgerTablesAreTrivial (LedgerState TestBlock)
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock))
 
-instance HasTickedLedgerTables (LedgerState TestBlock) where
-  withLedgerTablesTicked (TickedTestLedger st) tables =
-      TickedTestLedger $ withLedgerTables st tables
+instance CanSerializeLedgerTables (LedgerState TestBlock)
 
-instance CanStowLedgerTables (LedgerState TestBlock) where
+instance HasTickedLedgerTables (LedgerState TestBlock)
+
+instance CanStowLedgerTables (LedgerState TestBlock)
 
 instance PayloadSemantics ptype
          => ApplyBlock (LedgerState (TestBlockWith ptype)) (TestBlockWith ptype) where

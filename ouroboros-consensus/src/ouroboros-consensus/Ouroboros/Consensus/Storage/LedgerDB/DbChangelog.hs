@@ -113,11 +113,11 @@ data DbChangelog l = DbChangelog {
   }
   deriving (Generic)
 
-deriving instance (Eq       (LedgerTables l SeqDiffMK), Eq       (l EmptyMK))
+deriving instance (Eq       (Key l), Eq       (Value l), Eq       (l EmptyMK))
                =>  Eq       (DbChangelog l)
-deriving instance (NoThunks (LedgerTables l SeqDiffMK), NoThunks (l EmptyMK))
+deriving instance (NoThunks (Key l), NoThunks (Value l), NoThunks (l EmptyMK))
                =>  NoThunks (DbChangelog l)
-deriving instance (Show     (LedgerTables l SeqDiffMK), Show     (l EmptyMK))
+deriving instance (Show     (Key l), Show     (Value l), Show     (l EmptyMK))
                =>  Show     (DbChangelog l)
 
 mapDbChangelog :: GetTip l'

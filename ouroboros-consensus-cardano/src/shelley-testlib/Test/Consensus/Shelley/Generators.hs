@@ -190,7 +190,7 @@ instance CanMock proto era
     <$> arbitrary
     <*> arbitrary
     <*> arbitrary
-    <*> pure (ShelleyLedgerTables EmptyMK)
+    <*> pure (LedgerTables EmptyMK)
 
 instance CanMock proto era
       => Arbitrary (LedgerState (ShelleyBlock proto era) ValuesMK) where
@@ -198,7 +198,7 @@ instance CanMock proto era
     <$> arbitrary
     <*> arbitrary
     <*> arbitrary
-    <*> (ShelleyLedgerTables . ValuesMK <$> arbitrary)
+    <*> (LedgerTables . ValuesMK <$> arbitrary)
 
 instance CanMock proto era => Arbitrary (AnnTip (ShelleyBlock proto era)) where
   arbitrary = AnnTip

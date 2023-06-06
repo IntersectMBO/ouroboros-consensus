@@ -45,7 +45,7 @@ import           Ouroboros.Consensus.HeaderValidation (AnnTip)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
 import           Ouroboros.Consensus.Ledger.Tables (EmptyMK, IsMapKind,
-                     ValuesMK)
+                     ValuesMK, castLedgerTables)
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
@@ -164,8 +164,8 @@ injectWrapLedgerTables ::
    -> Index xs x
    -> WrapLedgerTables x
    -> WrapLedgerTables (HardForkBlock xs)
-injectWrapLedgerTables _startBounds idx (WrapLedgerTables (ExtLedgerStateTables lt)) =
-    WrapLedgerTables $ ExtLedgerStateTables $ injectLedgerTables lt
+injectWrapLedgerTables _startBounds idx (WrapLedgerTables lt) =
+    WrapLedgerTables $ castLedgerTables $ injectLedgerTables (castLedgerTables lt)
   where
     injectLedgerTables ::
          (IsMapKind mk)

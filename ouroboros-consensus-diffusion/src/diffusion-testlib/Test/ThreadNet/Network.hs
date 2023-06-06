@@ -618,7 +618,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 -- most 1 to the number of requested keys, hence the
                 -- subtraction. When we revisit the range query implementation
                 -- we should remove this workaround.
-                fullUTxO <- unExtLedgerStateTables <$> doRangeQuery (RangeQuery Nothing (maxBound-1))
+                fullUTxO <- castLedgerTables <$> doRangeQuery (RangeQuery Nothing (maxBound-1))
                 let f (DiffMK d) (ValuesMK m) = ValuesMK $ applyDiff m d
                 pure $! zipOverLedgerTablesTicked f st fullUTxO
               pure $ isRight $ Exc.runExcept $ applyTx lcfg DoNotIntervene slot tx fullLedgerSt
@@ -899,7 +899,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                   -- if it is valid, we retick to the /same/ slot
                   let apply  = applyLedgerBlock (configLedger pInfoConfig)
                       tables = emptyLedgerTables   -- EBBs need no input tables
-                  tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTablesTicked` tables) of
+                  tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
                     Left e   -> Exn.throw $ JitEbbError @blk e
                     Right st -> pure $ applyChainTick
                                         (configLedger pInfoConfig)

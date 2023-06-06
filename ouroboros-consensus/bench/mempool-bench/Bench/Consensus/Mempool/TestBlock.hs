@@ -40,9 +40,9 @@ import qualified Ouroboros.Consensus.Block as Block
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
-                     CanStowLedgerTables, CodecMK (..), DiffMK (..), EmptyMK,
-                     HasLedgerTables, HasTickedLedgerTables, IsMapKind (..),
-                     KeysMK (..), LedgerTables, NameMK (..), ValuesMK (..))
+                     CanStowLedgerTables, DiffMK (..), EmptyMK, HasLedgerTables,
+                     HasTickedLedgerTables, IsMapKind (..), Key, KeysMK (..),
+                     LedgerTables (..), Value, ValuesMK (..))
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
                      (rawAttachAndApplyDiffs)
 import qualified Ouroboros.Consensus.Mempool as Mempool
@@ -124,7 +124,7 @@ instance PayloadSemantics Tx where
       fullDiff :: DiffMK Token ()
       fullDiff = DiffMK $ consumedDiff <> producedDiff
 
-  getPayloadKeySets tx = TestLedgerTables $ KeysMK $ consumed <> produced
+  getPayloadKeySets tx = LedgerTables $ KeysMK $ consumed <> produced
     where
       Tx {consumed, produced} = tx
 
@@ -151,55 +151,33 @@ data instance Block.StorageConfig TestBlock = TestBlockStorageConfig
   Ledger tables
 -------------------------------------------------------------------------------}
 
-instance HasLedgerTables (LedgerState TestBlock) where
-  newtype instance LedgerTables (LedgerState TestBlock) mk =
-    TestLedgerTables { getTestLedgerTables :: mk Token () }
-    deriving Generic
+type instance Key   (LedgerState TestBlock) = Token
+type instance Value (LedgerState TestBlock) = ()
 
+instance HasLedgerTables (LedgerState TestBlock) where
   projectLedgerTables st =
-    TestLedgerTables $ getTestPLDS $ payloadDependentState st
+    LedgerTables $ getTestPLDS $ payloadDependentState st
   withLedgerTables st table = st {
         payloadDependentState = plds {
-            getTestPLDS = getTestLedgerTables table
+            getTestPLDS = Ledger.getLedgerTables table
           }
       }
     where
       TestLedger { payloadDependentState = plds } = st
 
-  pureLedgerTables = TestLedgerTables
-  mapLedgerTables f (TestLedgerTables x) = TestLedgerTables (f x)
-  traverseLedgerTables f (TestLedgerTables x) = TestLedgerTables <$> f x
-  zipLedgerTables f (TestLedgerTables x) (TestLedgerTables y) =
-    TestLedgerTables (f x y)
-  zipLedgerTables3 f (TestLedgerTables x) (TestLedgerTables y) (TestLedgerTables z) =
-    TestLedgerTables (f x y z)
-  zipLedgerTablesA f (TestLedgerTables x) (TestLedgerTables y) =
-    TestLedgerTables <$> f x y
-  zipLedgerTables3A f (TestLedgerTables x) (TestLedgerTables y) (TestLedgerTables z) =
-    TestLedgerTables <$> f x y z
-  foldLedgerTables f (TestLedgerTables x) = f x
-  foldLedgerTables2 f (TestLedgerTables x) (TestLedgerTables y) = f x y
-  namesLedgerTables = TestLedgerTables $ NameMK "benchmempooltables"
+instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
+  projectLedgerTables (TickedTestLedger st) = Ledger.castLedgerTables $
+    Ledger.projectLedgerTables st
+  withLedgerTables (TickedTestLedger st) tables =
+    TickedTestLedger $ Ledger.withLedgerTables st $ Ledger.castLedgerTables tables
 
-instance CanSerializeLedgerTables (LedgerState TestBlock) where
-  codecLedgerTables = TestLedgerTables $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
-
-deriving stock instance IsMapKind mk
-                     => Eq (LedgerTables (LedgerState TestBlock) mk)
-deriving stock instance IsMapKind mk
-                     => Show (LedgerTables (LedgerState TestBlock) mk)
-deriving anyclass instance IsMapKind mk
-                        => NoThunks (LedgerTables (LedgerState TestBlock) mk)
+instance CanSerializeLedgerTables (LedgerState TestBlock)
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables     = error "unused: stowLedgerTables"
   unstowLedgerTables   = error "unused: unstowLedgerTables"
 
 instance HasTickedLedgerTables (LedgerState TestBlock) where
-  projectLedgerTablesTicked (TickedTestLedger st) =
-    Ledger.projectLedgerTables st
-  withLedgerTablesTicked (TickedTestLedger st) tables =
-    TickedTestLedger $ Ledger.withLedgerTables st tables
 
 {-------------------------------------------------------------------------------
   Mempool support
@@ -231,7 +209,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  getTransactionKeySets (TestBlockGenTx tx) = TestLedgerTables $
+  getTransactionKeySets (TestBlockGenTx tx) = LedgerTables $
     KeysMK $ consumed tx
 
 newtype instance Ledger.TxId (Ledger.GenTx TestBlock) = TestBlockTxId Tx

@@ -469,7 +469,7 @@ handleQueryWithStowedKeySets dlv query f = do
     let st     = dlvCurrent dlv
         dbRead = dlvRead dlv
         keys   = getQueryKeySets query
-    values <- dbRead (ExtLedgerStateTables keys)
+    values <- dbRead (castLedgerTables keys)
     pure $ f (stowLedgerTables $ st `withLedgerTables` values)
 
 data TraversingQueryHandler blk result where
