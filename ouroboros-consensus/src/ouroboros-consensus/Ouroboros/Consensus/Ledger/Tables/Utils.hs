@@ -96,7 +96,7 @@ overLedgerTablesTicked ::
   -> Ticked1 l mk1
   -> Ticked1 l mk2
 overLedgerTablesTicked f l =
-    withLedgerTablesTicked l $ f $ projectLedgerTablesTicked l
+    withLedgerTables l $ castLedgerTables $ f $ castLedgerTables $ projectLedgerTables l
 
 mapOverLedgerTablesTicked ::
      (HasTickedLedgerTables l, IsMapKind mk1, IsMapKind mk2)
@@ -182,7 +182,7 @@ prependLedgerTablesDiffsFromTicked :: HasTickedLedgerTables l => Ticked1      l 
 prependLedgerTablesDiffsTicked     :: HasTickedLedgerTables l =>              l DiffMK -> Ticked1 l DiffMK -> Ticked1 l DiffMK
 prependLedgerTablesDiffsRaw        = flip (zipOverLedgerTables rawPrependDiffs)
 prependLedgerTablesDiffs           = prependLedgerTablesDiffsRaw . projectLedgerTables
-prependLedgerTablesDiffsFromTicked = prependLedgerTablesDiffsRaw . projectLedgerTablesTicked
+prependLedgerTablesDiffsFromTicked = prependLedgerTablesDiffsRaw . castLedgerTables . projectLedgerTables
 prependLedgerTablesDiffsTicked     = flip (zipOverLedgerTablesTicked rawPrependDiffs) . projectLedgerTables
 
 -- Apply diffs
@@ -201,7 +201,7 @@ applyLedgerTablesDiffsFromTicked :: HasTickedLedgerTables l => Ticked1      l Va
 applyLedgerTablesDiffs           = flip (zipOverLedgerTables       $ flip rawApplyDiffs) . projectLedgerTables
 applyLedgerTablesDiffsTicked     = flip (zipOverLedgerTablesTicked $ flip rawApplyDiffs) . projectLedgerTables
 applyLedgerTablesDiffsTicked'    = flip (zipOverLedgerTablesTicked $ flip rawApplyDiffs)
-applyLedgerTablesDiffsFromTicked = flip (zipOverLedgerTables       $ flip rawApplyDiffs) . projectLedgerTablesTicked
+applyLedgerTablesDiffsFromTicked = flip (zipOverLedgerTables       $ flip rawApplyDiffs) . castLedgerTables . projectLedgerTables
 
 -- Calculate differences
 
@@ -216,8 +216,8 @@ calculateAdditions        ::       HasLedgerTables l =>         l ValuesMK ->   
 calculateDifference       :: HasTickedLedgerTables l => Ticked1 l ValuesMK ->         l ValuesMK ->         l TrackingMK
 calculateDifferenceTicked :: HasTickedLedgerTables l => Ticked1 l ValuesMK -> Ticked1 l ValuesMK -> Ticked1 l TrackingMK
 calculateAdditions               after = zipOverLedgerTables       (flip rawCalculateDifference) after emptyLedgerTables
-calculateDifference       before after = zipOverLedgerTables       (flip rawCalculateDifference) after (projectLedgerTablesTicked before)
-calculateDifferenceTicked before after = zipOverLedgerTablesTicked (flip rawCalculateDifference) after (projectLedgerTablesTicked before)
+calculateDifference       before after = zipOverLedgerTables       (flip rawCalculateDifference) after (castLedgerTables $ projectLedgerTables before)
+calculateDifferenceTicked before after = zipOverLedgerTablesTicked (flip rawCalculateDifference) after (castLedgerTables $ projectLedgerTables before)
 
 rawAttachAndApplyDiffs ::
      Ord k
@@ -261,7 +261,8 @@ prependLedgerTablesTrackingDiffs ::
   -> Ticked1 l TrackingMK
 prependLedgerTablesTrackingDiffs after before =
     zipOverLedgerTablesTicked rawPrependTrackingDiffs after
-  $ projectLedgerTablesTicked before
+  $ castLedgerTables
+  $ projectLedgerTables before
 
 rawReapplyTracking ::
      Ord k

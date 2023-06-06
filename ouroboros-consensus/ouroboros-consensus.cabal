@@ -171,6 +171,8 @@ library
     Ouroboros.Consensus.Ledger.SupportsPeerSelection
     Ouroboros.Consensus.Ledger.SupportsProtocol
     Ouroboros.Consensus.Ledger.Tables
+    Ouroboros.Consensus.Ledger.Tables.Combinators
+    Ouroboros.Consensus.Ledger.Tables.Common
     Ouroboros.Consensus.Ledger.Tables.DiffSeq
     Ouroboros.Consensus.Ledger.Tables.Utils
     Ouroboros.Consensus.Mempool

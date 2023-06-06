@@ -15,13 +15,23 @@
 
 -- | See @'LedgerTables'@
 module Ouroboros.Consensus.Ledger.Tables (
-    -- * Kinds
-    LedgerStateKind
-  , MapKind
+    -- * Re-exports
+    module Ouroboros.Consensus.Ledger.Tables.Combinators
+  , module Ouroboros.Consensus.Ledger.Tables.Common
     -- * Basic LedgerState classes
   , CanStowLedgerTables (..)
   , HasLedgerTables (..)
-  , HasTickedLedgerTables (..)
+  , HasTickedLedgerTables
+    -- * TODO: To be removed
+  , foldLedgerTables
+  , foldLedgerTables2
+  , mapLedgerTables
+  , pureLedgerTables
+  , traverseLedgerTables
+  , zipLedgerTables
+  , zipLedgerTables3
+  , zipLedgerTables3A
+  , zipLedgerTablesA
     -- * @MapKind@s
     -- ** Interface
   , IsMapKind (..)
@@ -37,35 +47,36 @@ module Ouroboros.Consensus.Ledger.Tables (
   , TrackingMK (..)
   , ValuesMK (..)
     -- * Serialization
-  , CanSerializeLedgerTables (..)
+  , CanSerializeLedgerTables
+  , codecLedgerTables
   , valuesMKDecoder
   , valuesMKEncoder
     -- * Special classes
-  , LedgerTablesAreTrivial (..)
+  , LedgerTablesAreTrivial
+  , convertMapKind
+  , trivialLedgerTables
   ) where
 
+import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Control.Exception as Exn
 import           Control.Monad (replicateM)
-import           Data.Kind (Constraint, Type)
+import           Data.Kind (Constraint)
 import           Data.Map.Diff.Strict (Diff)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Monoid (Sum (..))
 import           Data.Set (Set)
+import           Data.Void (Void)
 import           GHC.Generics
 import           NoThunks.Class (NoThunks (..))
+import           Ouroboros.Consensus.Ledger.Tables.Combinators
+import           Ouroboros.Consensus.Ledger.Tables.Common
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (DiffSeq, empty,
                      mapDiffSeq)
 import           Ouroboros.Consensus.Ticked
-
-{-------------------------------------------------------------------------------
-  Kinds
--------------------------------------------------------------------------------}
-
-type MapKind         = {- key -} Type -> {- value -} Type -> Type
-type LedgerStateKind = MapKind -> Type
+import           Ouroboros.Consensus.Util ((..:), (.:))
 
 {-------------------------------------------------------------------------------
   Basic LedgerState classes
@@ -78,24 +89,13 @@ type HasLedgerTables :: LedgerStateKind -> Constraint
 class ( forall mk. IsMapKind mk => Eq       (LedgerTables l mk)
       , forall mk. IsMapKind mk => NoThunks (LedgerTables l mk)
       , forall mk. IsMapKind mk => Show     (LedgerTables l mk)
+      , Ord (Key l)
+      , Eq (Value l)
+      , Show (Key l)
+      , Show (Value l)
+      , NoThunks (Key l)
+      , NoThunks (Value l)
       ) => HasLedgerTables l where
-
-  -- | The Ledger Tables represent the portion of the data on disk that has been
-  -- pulled from disk and attached to the in-memory Ledger State or that will
-  -- eventually be written to disk.
-  --
-  -- With UTxO-HD and the split of the Ledger State into the in-memory part and
-  -- the on-disk part, this splitting was reflected in the new type parameter
-  -- added to the Ledger State, to which we refer as "the MapKind" or @mk@.
-  --
-  -- Every @'LedgerState'@ is associated with a @'LedgerTables'@ and they both
-  -- share the @mk@. They both are of kind @'LedgerStateKind'@. @'LedgerTables'@
-  -- is just a way to refer /only/ to a partial view of the on-disk data without
-  -- having the rest of the in-memory Ledger State in scope.
-  --
-  -- The @mk@ can be instantiated to anything that is map-like, i.e. that expects
-  -- two type parameters, the key and the value.
-  data family LedgerTables l :: LedgerStateKind
 
   -- | Extract the ledger tables from a ledger state
   --
@@ -103,7 +103,7 @@ class ( forall mk. IsMapKind mk => Eq       (LedgerTables l mk)
   -- instance uses 'mapMK'.
   projectLedgerTables :: forall mk. IsMapKind mk => l mk -> LedgerTables l mk
   default projectLedgerTables ::
-        LedgerTablesAreTrivial l
+         (IsMapKind mk, LedgerTablesAreTrivial l)
       => l mk
       -> LedgerTables l mk
   projectLedgerTables _ = trivialLedgerTables
@@ -126,206 +126,20 @@ class ( forall mk. IsMapKind mk => Eq       (LedgerTables l mk)
     -> l mk
   withLedgerTables st _ = convertMapKind st
 
-  pureLedgerTables ::
-       (forall k v.
-            (Ord k, Eq v)
-         => mk k v
-       )
-    -> LedgerTables l mk
-  default pureLedgerTables ::
-       LedgerTablesAreTrivial l
-    => (forall k v.
-            (Ord k, Eq v)
-         => mk k v
-       )
-    -> LedgerTables l mk
-  pureLedgerTables _ = trivialLedgerTables
+instance ( Ord (Key l)
+         , Eq (Value l)
+         , Show (Key l)
+         , Show (Value l)
+         , NoThunks (Key l)
+         , NoThunks (Value l)
+         ) => HasLedgerTables (LedgerTables l) where
+  projectLedgerTables = castLedgerTables
+  withLedgerTables _ = castLedgerTables
 
-  mapLedgerTables ::
-       (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-  default mapLedgerTables ::
-       LedgerTablesAreTrivial l
-    => (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-  mapLedgerTables _ _ = trivialLedgerTables
-
-  traverseLedgerTables ::
-       Applicative f
-    => (forall k v .
-           (Ord k, Eq v)
-        =>    mk1 k v
-        -> f (mk2 k v)
-       )
-    ->    LedgerTables l mk1
-    -> f (LedgerTables l mk2)
-  default traverseLedgerTables ::
-       (Applicative f, LedgerTablesAreTrivial l)
-    => (forall k v .
-           (Ord k, Eq v)
-        =>    mk1 k v
-        -> f (mk2 k v)
-       )
-    ->    LedgerTables l mk1
-    -> f (LedgerTables l mk2)
-  traverseLedgerTables _ _ = pure trivialLedgerTables
-
-  zipLedgerTables ::
-       (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-         -> mk3 k v
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-    -> LedgerTables l mk3
-  default zipLedgerTables ::
-       LedgerTablesAreTrivial l
-    => (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-         -> mk3 k v
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-    -> LedgerTables l mk3
-  zipLedgerTables _ _ _ = trivialLedgerTables
-
-  zipLedgerTables3 ::
-       (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-         -> mk3 k v
-         -> mk4 k v
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-    -> LedgerTables l mk3
-    -> LedgerTables l mk4
-  default zipLedgerTables3 ::
-       LedgerTablesAreTrivial l
-    => (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-         -> mk3 k v
-         -> mk4 k v
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-    -> LedgerTables l mk3
-    -> LedgerTables l mk4
-  zipLedgerTables3 _ _ _ _ = trivialLedgerTables
-
-  zipLedgerTablesA ::
-       Applicative f
-    => (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-         -> f (mk3 k v)
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-    -> f (LedgerTables l mk3)
-  default zipLedgerTablesA ::
-       (Applicative f, LedgerTablesAreTrivial l)
-    => (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-         -> f (mk3 k v)
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-    -> f (LedgerTables l mk3)
-  zipLedgerTablesA _ _ _ = pure trivialLedgerTables
-
-  zipLedgerTables3A ::
-       Applicative f
-    => (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-         -> mk3 k v
-         -> f (mk4 k v)
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-    -> LedgerTables l mk3
-    -> f (LedgerTables l mk4)
-  default zipLedgerTables3A ::
-       (Applicative f, LedgerTablesAreTrivial l)
-    => (forall k v.
-            (Ord k, Eq v)
-         => mk1 k v
-         -> mk2 k v
-         -> mk3 k v
-         -> f (mk4 k v)
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-    -> LedgerTables l mk3
-    -> f (LedgerTables l mk4)
-  zipLedgerTables3A _ _ _ _ = pure trivialLedgerTables
-
-  foldLedgerTables ::
-       Monoid m
-    => (forall k v.
-            (Ord k, Eq v)
-         => mk k v
-         -> m
-       )
-    -> LedgerTables l mk
-    -> m
-  foldLedgerTables _ _ = mempty
-
-  foldLedgerTables2 ::
-       Monoid m
-    => (forall k v.
-           (Ord k, Eq v)
-        => mk1 k v
-        -> mk2 k v
-        -> m
-       )
-    -> LedgerTables l mk1
-    -> LedgerTables l mk2
-    -> m
-  foldLedgerTables2 _ _ _ = mempty
-
-  -- | The ledger tables will eventually be stored in some BackingStore under a
-  -- db-like table named after this value
-  namesLedgerTables :: LedgerTables l NameMK
-  default namesLedgerTables :: LedgerTablesAreTrivial l => LedgerTables l NameMK
-  namesLedgerTables = trivialLedgerTables
-
+-- | TODO: either remove this class, or make it a type synonym.
 type HasTickedLedgerTables :: LedgerStateKind -> Constraint
-class HasLedgerTables l => HasTickedLedgerTables l where
-  -- The 'IsMapKind' constraint is here for the same reason it's on
-  -- 'projectLedgerTables'
-  projectLedgerTablesTicked :: IsMapKind mk => Ticked1 l mk  -> LedgerTables l mk
-  default projectLedgerTablesTicked ::
-       LedgerTablesAreTrivial l
-    => Ticked1 l mk
-    -> LedgerTables l mk
-  projectLedgerTablesTicked _ = trivialLedgerTables
-
-  -- The 'IsMapKind' constraint is here for the same reason it's on
-  -- 'withLedgerTables'
-  withLedgerTablesTicked :: IsMapKind mk => Ticked1 l any -> LedgerTables l mk -> Ticked1 l mk
+class (HasLedgerTables l, HasLedgerTables (Ticked1 l))
+   => HasTickedLedgerTables l where
 
 -- | LedgerTables are projections of data from a LedgerState and as such they
 -- can be injected back into a LedgerState. This is necessary because the Ledger
@@ -341,26 +155,124 @@ type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables l where
 
   stowLedgerTables     :: l ValuesMK -> l EmptyMK
-  default stowLedgerTables :: LedgerTablesAreTrivial l => l ValuesMK -> l EmptyMK
+  default stowLedgerTables ::
+       (LedgerTablesAreTrivial l, HasLedgerTables l)
+    => l ValuesMK
+    -> l EmptyMK
   stowLedgerTables = convertMapKind
 
   unstowLedgerTables   :: l EmptyMK  -> l ValuesMK
-  default unstowLedgerTables :: LedgerTablesAreTrivial l => l EmptyMK -> l ValuesMK
+  default unstowLedgerTables ::
+       (LedgerTablesAreTrivial l, HasLedgerTables l)
+    => l EmptyMK
+    -> l ValuesMK
   unstowLedgerTables = convertMapKind
 
 {-------------------------------------------------------------------------------
-  'LedgerTables' are 'Monoid's
+  To be removed
 -------------------------------------------------------------------------------}
 
-instance ( forall k v. (Ord k, Eq v) => Semigroup (mk k v)
-         , HasLedgerTables l
-         ) => Semigroup (LedgerTables l mk) where
-  (<>) = zipLedgerTables (<>)
+pureLedgerTables ::
+     HasLedgerTables l
+  => (forall k v.
+          (Ord k, Eq v)
+       => mk k v
+     )
+  -> LedgerTables l mk
+pureLedgerTables = ltpure
 
-instance ( forall k v. (Ord k, Eq v) => Monoid (mk k v)
-         , HasLedgerTables l
-         ) => Monoid (LedgerTables l mk) where
-  mempty = pureLedgerTables mempty
+mapLedgerTables ::
+     HasLedgerTables l
+  => (forall k v.
+          (Ord k, Eq v)
+       => mk1 k v
+       -> mk2 k v
+     )
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+mapLedgerTables = ltmap
+
+traverseLedgerTables ::
+      (Applicative f, HasLedgerTables l)
+  => (forall k v .
+          (Ord k, Eq v)
+       =>    mk1 k v
+       -> f (mk2 k v)
+     )
+  ->    LedgerTables l mk1
+  -> f (LedgerTables l mk2)
+traverseLedgerTables = lttraverse
+
+zipLedgerTables ::
+     HasLedgerTables l
+  => (forall k v.
+          (Ord k, Eq v)
+       => mk1 k v
+       -> mk2 k v
+       -> mk3 k v
+     )
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+  -> LedgerTables l mk3
+zipLedgerTables = ltliftA2
+
+zipLedgerTables3 ::
+     HasLedgerTables l
+  => (forall k v.
+          (Ord k, Eq v)
+       => mk1 k v
+       -> mk2 k v
+       -> mk3 k v
+       -> mk4 k v
+     )
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+  -> LedgerTables l mk3
+  -> LedgerTables l mk4
+zipLedgerTables3 = ltliftA3
+
+zipLedgerTablesA ::
+     (Applicative f, HasLedgerTables l)
+  => (forall k v.
+          (Ord k, Eq v)
+       => mk1 k v
+       -> mk2 k v
+       -> f (mk3 k v)
+     )
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+  -> f (LedgerTables l mk3)
+zipLedgerTablesA f = ltsequence .: ltliftA2 (Comp2 .: f)
+
+zipLedgerTables3A ::
+     (Applicative f, HasLedgerTables l)
+  => (forall k v.
+          (Ord k, Eq v)
+       => mk1 k v
+       -> mk2 k v
+       -> mk3 k v
+       -> f (mk4 k v)
+     )
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+  -> LedgerTables l mk3
+  -> f (LedgerTables l mk4)
+zipLedgerTables3A f = ltsequence ..: ltliftA3 (Comp2 ..: f)
+
+foldLedgerTables ::
+      HasLedgerTables l
+  => (forall k v. (Ord k, Eq v) => mk k v -> m)
+  -> LedgerTables l mk
+  -> m
+foldLedgerTables f = ltcollapse . ltliftA (K2 . f)
+
+foldLedgerTables2 ::
+     HasLedgerTables l
+  => (forall k v. (Ord k, Eq v) => mk1 k v -> mk2 k v -> m)
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+  -> m
+foldLedgerTables2 f = ltcollapse .: ltliftA2 (K2 .: f)
 
 {-------------------------------------------------------------------------------
   @MapKind@s
@@ -507,8 +419,12 @@ newtype ConstMK a k v = ConstMK { getConstMK :: a }
 type CanSerializeLedgerTables :: LedgerStateKind -> Constraint
 class CanSerializeLedgerTables l where
   codecLedgerTables :: LedgerTables l CodecMK
-  default codecLedgerTables :: LedgerTablesAreTrivial l => LedgerTables l CodecMK
-  codecLedgerTables = trivialLedgerTables
+  default codecLedgerTables ::
+       ( FromCBOR (Key l), FromCBOR (Value l)
+       , ToCBOR   (Key l), ToCBOR   (Value l)
+       )
+    => LedgerTables l CodecMK
+  codecLedgerTables = LedgerTables $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
 
 -- | Default encoder of @'LedgerTables' l ''ValuesMK'@ to be used by the
 -- in-memory backing store.
@@ -557,21 +473,27 @@ valuesMKDecoder = do
   Special classes of ledger states
 -------------------------------------------------------------------------------}
 
+-- | TODO: make this a type synonym.
 type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
 -- | For some ledger states we won't be defining 'LedgerTables' and instead the
 -- ledger state will be fully stored in memory, as before UTxO-HD. The ledger
 -- states that are defined this way can be made instances of this class which
 -- allows for easy manipulation of the types of @mk@ required at any step of the
 -- program.
-class LedgerTablesAreTrivial l where
-  -- | If the ledger state is always in memory, then @l mk@ will be isomorphic
-  -- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
-  -- states indexed by different map kinds.
-  --
-  -- This function is useful to combine functions that operate on functions that
-  -- transform the map kind on a ledger state (eg @applyChainTickLedgerResult@).
-  convertMapKind :: IsMapKind mk' => l mk -> l mk'
+class (Key l ~ Void, Value l ~ Void) => LedgerTablesAreTrivial l where
 
-  -- | As the ledger tables are trivial, this functions provides the only data
-  -- constructor that is defined for them.
-  trivialLedgerTables :: LedgerTables l mk
+trivialLedgerTables ::
+     (IsMapKind mk, LedgerTablesAreTrivial l)
+  => LedgerTables l mk
+trivialLedgerTables = LedgerTables emptyMK
+
+-- | If the ledger state is always in memory, then @l mk@ will be isomorphic
+-- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
+-- states indexed by different map kinds.
+--
+-- This function is useful to combine functions that operate on functions that
+-- transform the map kind on a ledger state (eg @applyChainTickLedgerResult@).
+convertMapKind ::
+     (HasLedgerTables l, IsMapKind mk', LedgerTablesAreTrivial l)
+  => l mk -> l mk'
+convertMapKind l = l `withLedgerTables` LedgerTables emptyMK
