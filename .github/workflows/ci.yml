@@ -39,7 +39,7 @@ jobs:
          os: [ubuntu-latest]
     env:
       # Modify this value to "invalidate" the Cabal cache.
-      CABAL_CACHE_VERSION: "2023-04-30"
+      CABAL_CACHE_VERSION: "2023-06-05"
       # Modify this value to "invalidate" the secp cache.
       SECP_CACHE_VERSION: "2023-04-27"
       # current ref from: 27.02.2022
@@ -59,9 +59,9 @@ jobs:
 
     - name: Install build environment
       run: |
-        sudo apt update
-        sudo apt -y install libsodium-dev
-        sudo apt -y install lmdb-dev
+        sudo apt-get update
+        sudo apt-get -y install libsodium-dev
+        sudo apt-get -y install liblmdb-dev
 
     - name: Configure Cabal to use libsodium
       run: |
@@ -81,7 +81,7 @@ jobs:
         cache-version: ${{ env.SECP_CACHE_VERSION }}
 
     - name: Update Cabal (Hackage and CHaP)
-      run: cabal update
+      run: cabal clean; cabal update
 
     - name: Generate dist-newstyle/cache/plan.json
       run: cabal build all --dry-run --minimize-conflict-set
@@ -108,7 +108,7 @@ jobs:
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
         key: cache-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('dependencies.txt') }}
-        restore-keys: cache-dependencies-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}
+        restore-keys: cache-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}
 
     # This is used for caching the `dist-newstyle` directory.
     - name: Store week number as environment variable
@@ -173,13 +173,15 @@ jobs:
 
     # The `fail-if-slower` value is determined ad-hoc based on the variability
     # we observed in our benchmarks.
-    - name: Run mempool benchmarks on pull requests
-      if: ${{ github.event_name == 'pull_request' }}
-      run: |
-        cabal new-run ouroboros-consensus:mempool-bench -- \
-        --timeout=60 --baseline baseline-mempool-benchmarks.csv \
-        --fail-if-slower 20 \
-        +RTS -T
+    #
+    # TODO: Uncomment this after this is merged to main. We need to generate the baseline benchmarks first.
+    # - name: Run mempool benchmarks on pull requests
+    #   if: ${{ github.event_name == 'pull_request' }}
+    #   run: |
+    #     cabal new-run ouroboros-consensus:mempool-bench -- \
+    #     --timeout=60 --baseline baseline-mempool-benchmarks.csv \
+    #     --fail-if-slower 20 \
+    #     +RTS -T
 
     # NB: build the haddocks at the end to avoid unecessary recompilations.
     # We build the haddocks only for one GHC version.
@@ -187,8 +189,8 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && ${{ matrix.os=='ubuntu-latest' }}
-        && ${{ matrix.ghc=='8.10.7' }}
+        && matrix.os=='ubuntu-latest'
+        && matrix.ghc=='8.10.7'
       run: |
         cabal build --dry-run --enable-tests all
         ./scripts/docs/haddocks.sh
@@ -198,8 +200,33 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && ${{ matrix.os=='ubuntu-latest' }}
-        && ${{ matrix.ghc=='8.10.7' }}
+        && matrix.os=='ubuntu-latest'
+        && matrix.ghc=='8.10.7'
+      uses: actions/upload-artifact@v3
+      with:
+        name: haddocks
+        path: haddocks.tgz
+        retention-days: 1
+
+    # NB: build the haddocks at the end to avoid unecessary recompilations.
+    # We build the haddocks only for one GHC version.
+    - name: Build Haddock documentation
+      if: |
+        github.event_name == 'push'
+        && github.ref == 'refs/heads/main'
+        && matrix.os=='ubuntu-latest'
+        && matrix.ghc=='8.10.7'
+      run: |
+        cabal build --dry-run --enable-tests all
+        ./scripts/docs/haddocks.sh
+        tar vzcf haddocks.tgz ./docs/website/static/haddocks
+
+    - name: Upload haddocks as an artifact
+      if: |
+        github.event_name == 'push'
+        && github.ref == 'refs/heads/main'
+        && matrix.os=='ubuntu-latest'
+        && matrix.ghc=='8.10.7'
       uses: actions/upload-artifact@v3
       with:
         name: haddocks
