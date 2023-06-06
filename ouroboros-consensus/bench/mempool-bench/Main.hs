@@ -12,7 +12,7 @@ import           Bench.Consensus.Mempool.TestBlock (TestBlock)
 import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
 import           Bench.Consensus.MempoolWithMockedLedgerItf
 import           Control.Arrow (first)
-import           Control.Monad (unless)
+import           Control.Monad (unless, void)
 import qualified Control.Tracer as Tracer
 import           Data.Aeson
 import qualified Data.ByteString.Lazy as BL
@@ -23,8 +23,9 @@ import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           System.Exit (die, exitFailure)
+import           Test.Tasty (withResource)
 import           Test.Tasty.Bench (CsvPath (CsvPath), bench, benchIngredients,
-                     bgroup, env, nfIO)
+                     bgroup, nfIO)
 import           Test.Tasty.HUnit (testCase, (@?=))
 import           Test.Tasty.Options (changeOption)
 import           Test.Tasty.Runners (parseOptions, tryIngredients)
@@ -50,23 +51,29 @@ main = do
                 fmap benchAddNTxs [10_000, 1_000_000]
           where
             benchAddNTxs n =
-                env (let txs = mkNTryAddTxs n in fmap (, txs) (openMempoolWithCapacityFor txs))
-                -- The irrefutable pattern was added to avoid the
-                --
-                -- > Unhandled resource. Probably a bug in the runner you're using.
-                --
-                -- error reported here https://hackage.haskell.org/package/tasty-bench-0.3.3/docs/Test-Tasty-Bench.html#v:env
-                (\ ~(mempool, txs) -> bgroup (show n <> " transactions") [
-                    bench    "benchmark"     $ nfIO $ run        mempool txs
-                  , testCase "test"          $        testAddTxs mempool txs
-                  , testCase "txs length"    $ length txs @?= n
-                  ]
-                )
+                withResource
+                  (let txs = mkNTryAddTxs n in fmap (, txs) (openMempoolWithCapacityFor txs))
+                  (\_ -> pure ())
+                  (\getAcquiredRes -> do
+                      let withAcquiredMempool act = do
+                            (mempool, txs) <- getAcquiredRes
+                            void $ act mempool txs
+                            -- TODO: consider adding a 'reset' command to the mempool to make sure its state is not tainted.
+                            removeTxs mempool $ getCmdsTxIds txs
+                      bgroup (show n <> " transactions") [
+                          bench "benchmark" $ nfIO $ withAcquiredMempool $ \mempool txs -> do
+                            run mempool txs
+                        , testCase "test" $ withAcquiredMempool $ \mempool txs ->
+                            testAddTxs mempool txs
+                        , testCase "txs length" $ withAcquiredMempool $ \_mempool txs -> do
+                            length txs @?= n
+                        ]
+                  )
               where
                 testAddTxs mempool txs = do
                     run mempool txs
                     mempoolTxs <- getTxs mempool
-                    mempoolTxs @?= txsAddedInCmds txs
+                    mempoolTxs @?= getCmdsTxs txs
 
     parseBenchmarkResults csvFilePath = do
         csvData <- BL.readFile csvFilePath
@@ -124,13 +131,13 @@ openMempoolWithCapacityFor cmds =
                                    TestBlock.txSize
                                    TestBlock.sampleMempoolAndModelParams
   where
-    capacityRequiredByCmds = Mempool.mkCapacityBytesOverride  totalTxsSize
-      where totalTxsSize = sum $ fmap TestBlock.txSize $ txsAddedInCmds cmds
+    capacityRequiredByCmds = Mempool.mkCapacityBytesOverride totalTxsSize
+      where totalTxsSize = sum $ fmap TestBlock.txSize $ getCmdsTxs cmds
 
 mkNTryAddTxs :: Int -> [MempoolCmd TestBlock.TestBlock]
 mkNTryAddTxs 0 = []
-mkNTryAddTxs n =        [TryAdd [TestBlock.mkTx [] [TestBlock.Token 0]]]
-                <> fmap (TryAdd . (:[]) . mkSimpleTx) (zip [0 .. n - 2] [1 .. n - 1])
+mkNTryAddTxs n =        [AddTx (TestBlock.mkTx [] [TestBlock.Token 0])]
+                <> fmap (AddTx . mkSimpleTx) (zip [0 .. n - 2] [1 .. n - 1])
   where
     mkSimpleTx (x, y) = TestBlock.mkTx [TestBlock.Token (fromIntegral x)]
                                        [TestBlock.Token (fromIntegral y)]
