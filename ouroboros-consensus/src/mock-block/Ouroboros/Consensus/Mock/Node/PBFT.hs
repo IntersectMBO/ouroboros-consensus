@@ -7,6 +7,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Ouroboros.Consensus.Mock.Node.PBFT (
     MockPBftBlock
+  , blockForgingMockPBFT
   , protocolInfoMockPBFT
   ) where
 
@@ -26,12 +27,10 @@ import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 
 type MockPBftBlock = SimplePBftBlock SimpleMockCrypto PBftMockCrypto
 
-protocolInfoMockPBFT :: Monad m
-                     => PBftParams
+protocolInfoMockPBFT :: PBftParams
                      -> HardFork.EraParams
-                     -> CoreNodeId
-                     -> ProtocolInfo m MockPBftBlock
-protocolInfoMockPBFT params eraParams nid =
+                     -> ProtocolInfo MockPBftBlock
+protocolInfoMockPBFT params eraParams =
     ProtocolInfo {
         pInfoConfig = TopLevelConfig {
             topLevelConfigProtocol = PBftConfig {
@@ -44,25 +43,13 @@ protocolInfoMockPBFT params eraParams nid =
           }
       , pInfoInitLedger = ExtLedgerState (genesisSimpleLedgerState addrDist)
                                          (genesisHeaderState S.empty)
-      , pInfoBlockForging = return [pbftBlockForging canBeLeader]
       }
   where
-    canBeLeader :: PBftCanBeLeader PBftMockCrypto
-    canBeLeader = PBftCanBeLeader {
-          pbftCanBeLeaderCoreNodeId = nid
-        , pbftCanBeLeaderSignKey    = signKey nid
-          -- For Mock PBFT, we use our key as the genesis key.
-        , pbftCanBeLeaderDlgCert    = (verKey nid, verKey nid)
-        }
-
     ledgerView :: PBftLedgerView PBftMockCrypto
     ledgerView = PBftLedgerView $ Bimap.fromList [
           (PBftMockVerKeyHash (verKey n), PBftMockVerKeyHash (verKey n))
         | n <- enumCoreNodes (pbftNumNodes params)
         ]
-
-    signKey :: CoreNodeId -> SignKeyDSIGN MockDSIGN
-    signKey (CoreNodeId n) = SignKeyMockDSIGN n
 
     verKey :: CoreNodeId -> VerKeyDSIGN MockDSIGN
     verKey (CoreNodeId n) = VerKeyMockDSIGN n
@@ -73,6 +60,23 @@ protocolInfoMockPBFT params eraParams nid =
 {-------------------------------------------------------------------------------
   BlockForging
 -------------------------------------------------------------------------------}
+--
+blockForgingMockPBFT :: Monad m => CoreNodeId -> [BlockForging m MockPBftBlock]
+blockForgingMockPBFT nid = [pbftBlockForging canBeLeader]
+  where
+    canBeLeader :: PBftCanBeLeader PBftMockCrypto
+    canBeLeader = PBftCanBeLeader {
+          pbftCanBeLeaderCoreNodeId = nid
+        , pbftCanBeLeaderSignKey    = signKey nid
+          -- For Mock PBFT, we use our key as the genesis key.
+        , pbftCanBeLeaderDlgCert    = (verKey nid, verKey nid)
+        }
+
+    signKey :: CoreNodeId -> SignKeyDSIGN MockDSIGN
+    signKey (CoreNodeId n) = SignKeyMockDSIGN n
+
+    verKey :: CoreNodeId -> VerKeyDSIGN MockDSIGN
+    verKey (CoreNodeId n) = VerKeyMockDSIGN n
 
 pbftBlockForging ::
      ( SimpleCrypto c

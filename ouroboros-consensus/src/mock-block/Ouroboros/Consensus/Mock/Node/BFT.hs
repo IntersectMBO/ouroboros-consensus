@@ -1,10 +1,12 @@
 module Ouroboros.Consensus.Mock.Node.BFT (
     MockBftBlock
+  , blockForgingBft
   , protocolInfoBft
   ) where
 
 import           Cardano.Crypto.DSIGN
 import qualified Data.Map.Strict as Map
+import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HeaderValidation
@@ -17,12 +19,11 @@ import           Ouroboros.Consensus.Protocol.BFT
 
 type MockBftBlock = SimpleBftBlock SimpleMockCrypto BftMockCrypto
 
-protocolInfoBft :: Monad m
-                => NumCoreNodes
+protocolInfoBft :: NumCoreNodes
                 -> CoreNodeId
                 -> SecurityParam
                 -> HardFork.EraParams
-                -> ProtocolInfo m MockBftBlock
+                -> ProtocolInfo MockBftBlock
 protocolInfoBft numCoreNodes nid securityParam eraParams =
     ProtocolInfo {
         pInfoConfig = TopLevelConfig {
@@ -44,7 +45,6 @@ protocolInfoBft numCoreNodes nid securityParam eraParams =
           }
       , pInfoInitLedger = ExtLedgerState (genesisSimpleLedgerState addrDist)
                                          (genesisHeaderState ())
-      , pInfoBlockForging = return [simpleBlockForging nid forgeBftExt]
       }
   where
     signKey :: CoreNodeId -> SignKeyDSIGN MockDSIGN
@@ -55,3 +55,6 @@ protocolInfoBft numCoreNodes nid securityParam eraParams =
 
     addrDist :: AddrDist
     addrDist = mkAddrDist numCoreNodes
+
+blockForgingBft :: Monad m => CoreNodeId -> [BlockForging m MockBftBlock]
+blockForgingBft nid = [simpleBlockForging nid forgeBftExt]
