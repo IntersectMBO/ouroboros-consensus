@@ -40,6 +40,7 @@ const sidebars = {
         'for-developers/HardWonWisdom',
         'for-developers/StyleGuide',
         'for-developers/ProfilingTipsAndTricks',
+        'for-developers/Benchmarks',
         'for-developers/GitProcess',
         'for-developers/ReleaseProcess',
         'for-developers/SanityChecks',
