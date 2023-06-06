@@ -412,7 +412,9 @@ mkProtocolShelley ::
   -> SL.Nonce
   -> ProtVer
   -> CoreNode c
-  -> ProtocolInfo m (ShelleyBlock (TPraos c) (ShelleyEra c))
+  -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c))
+     , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
+     )
 mkProtocolShelley genesis initialNonce protVer coreNode =
     protocolInfoShelley
       ProtocolParamsShelleyBased {
@@ -424,6 +426,7 @@ mkProtocolShelley genesis initialNonce protVer coreNode =
           shelleyProtVer                = protVer
         , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
         }
+
 {-------------------------------------------------------------------------------
   Necessary transactions for updating the 'DecentralizationParam'
 -------------------------------------------------------------------------------}

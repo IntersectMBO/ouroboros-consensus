@@ -257,21 +257,23 @@ prop_simple_real_tpraos_convergence TestSetup
     testOutput =
         runTestNetwork setupTestConfig testConfigB TestConfigMB
             { nodeInfo = \(CoreNodeId nid) ->
-                TestNodeInitialization
-                  { tniProtocolInfo =
-                      mkProtocolShelley
-                        genesisConfig
-                        setupInitialNonce
-                        nextProtVer
-                        (coreNodes !! fromIntegral nid)
-                  , tniCrucialTxs =
-                      if not includingDUpdateTx then [] else
-                      mkSetDecentralizationParamTxs
-                        coreNodes
-                        nextProtVer
-                        sentinel   -- Does not expire during test
-                        setupD2
-                  }
+              let (protocolInfo, blockForging) =
+                    mkProtocolShelley
+                      genesisConfig
+                      setupInitialNonce
+                      nextProtVer
+                      (coreNodes !! fromIntegral nid)
+               in TestNodeInitialization
+                    { tniProtocolInfo = protocolInfo
+                    , tniCrucialTxs =
+                        if not includingDUpdateTx then [] else
+                        mkSetDecentralizationParamTxs
+                          coreNodes
+                          nextProtVer
+                          sentinel   -- Does not expire during test
+                          setupD2
+                    , tniBlockForging = blockForging
+                    }
             , mkRekeyM = Nothing
             }
 
