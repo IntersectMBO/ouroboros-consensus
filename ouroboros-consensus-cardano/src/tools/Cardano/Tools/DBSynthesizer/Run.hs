@@ -123,7 +123,7 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
                 registry InFuture.dontCheck pInfoConfig pInfoInitLedger chunkInfo $
                     ChainDB.defaultArgs (Node.stdMkChainDbHasFS confDbDir) diskPolicy
 
-        forgers <- pInfoBlockForging
+        forgers <- blockForging
         let fCount = length forgers
         putStrLn $ "--> forger count: " ++ show fCount
         if fCount > 0
@@ -148,11 +148,12 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
         { synthOpenMode
         , synthLimit
         } = confOptions
-    ProtocolInfo
+    ( ProtocolInfo
         { pInfoConfig
-        , pInfoBlockForging
         , pInfoInitLedger
-        } = protocolInfo runP
+        }
+      , blockForging
+      ) = protocolInfo runP
 
 preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()
 preOpenChainDB mode db =
