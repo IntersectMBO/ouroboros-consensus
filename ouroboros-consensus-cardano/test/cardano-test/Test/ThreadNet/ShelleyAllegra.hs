@@ -252,6 +252,28 @@ prop_simple_shelleyAllegra_convergence TestSetup
     testOutput :: TestOutput ShelleyAllegraBlock
     testOutput = runTestNetwork setupTestConfig testConfigB TestConfigMB {
           nodeInfo = \(CoreNodeId nid) ->
+            let protocolParamsShelleyBased =
+                  ProtocolParamsShelleyBased {
+                      shelleyBasedGenesis           = genesisShelley
+                    , shelleyBasedInitialNonce      = setupInitialNonce
+                    , shelleyBasedLeaderCredentials =
+                        [Shelley.mkLeaderCredentials
+                          (coreNodes !! fromIntegral nid)]
+                    }
+                protocolTransitionParamsShelleyBased =
+                  ProtocolTransitionParamsShelleyBased {
+                      transitionTranslationContext = ()
+                    , transitionTrigger            =
+                        TriggerHardForkAtVersion $ SL.getVersion majorVersion2
+                    }
+                (protocolInfo, blockForging) =
+                  protocolInfoShelleyBasedHardFork
+                    protocolParamsShelleyBased
+                    (SL.ProtVer majorVersion1 0)
+                    (SL.ProtVer majorVersion2 0)
+                    (SL.toFromByronTranslationContext genesisShelley)
+                    protocolTransitionParamsShelleyBased
+            in
             TestNodeInitialization {
                 tniCrucialTxs   =
                   if not setupHardFork then [] else
@@ -261,23 +283,8 @@ prop_simple_shelleyAllegra_convergence TestSetup
                     (SL.ProtVer majorVersion2 0)
                     (SlotNo $ unNumSlots numSlots)   -- never expire
                     setupD   -- unchanged
-              , tniProtocolInfo =
-                  protocolInfoShelleyBasedHardFork
-                    ProtocolParamsShelleyBased {
-                        shelleyBasedGenesis           = genesisShelley
-                      , shelleyBasedInitialNonce      = setupInitialNonce
-                      , shelleyBasedLeaderCredentials =
-                          [Shelley.mkLeaderCredentials
-                            (coreNodes !! fromIntegral nid)]
-                      }
-                    (SL.ProtVer majorVersion1 0)
-                    (SL.ProtVer majorVersion2 0)
-                    (SL.toFromByronTranslationContext genesisShelley)
-                    ProtocolTransitionParamsShelleyBased {
-                        transitionTranslationContext = ()
-                      , transitionTrigger            =
-                          TriggerHardForkAtVersion $ SL.getVersion majorVersion2
-                      }
+              , tniProtocolInfo = protocolInfo
+              , tniBlockForging = blockForging
               }
           , mkRekeyM = Nothing
           }

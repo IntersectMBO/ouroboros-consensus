@@ -29,6 +29,7 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word (Word64)
 import           Lens.Micro
+import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)
 import           Ouroboros.Consensus.Byron.Ledger.Conversions
@@ -41,6 +42,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
                      (isHardForkNodeToNodeEnabled)
 import           Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import qualified Ouroboros.Consensus.Mempool as Mempool
+import qualified Ouroboros.Consensus.Mempool as TxLimits
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
@@ -467,7 +469,8 @@ mkProtocolCardanoAndHardForkTxs
     protocolParamsByronShelley =
     TestNodeInitialization
       { tniCrucialTxs   = crucialTxs
-      , tniProtocolInfo = pInfo
+      , tniProtocolInfo = protocolInfo
+      , tniBlockForging = blockForging
       }
   where
     crucialTxs :: [GenTx (CardanoBlock c)]
@@ -485,8 +488,26 @@ mkProtocolCardanoAndHardForkTxs
               generatedSecretsByron
               propPV
 
-    pInfo :: ProtocolInfo m (CardanoBlock c)
-    pInfo = protocolInfoCardano
+    protocolInfo :: ProtocolInfo (CardanoBlock c)
+    blockForging :: m [BlockForging m (CardanoBlock c)]
+    (protocolInfo, blockForging) = protocolInfoCardano
+              paramsByron
+              paramsShelleyBased
+              paramsShelley
+              paramsAllegra
+              paramsMary
+              paramsAlonzo
+              paramsBabbage
+              paramsConway
+              transitionShelley
+              transitionAllegra
+              transitionMary
+              transitionAlonzo
+              transitionBabbage
+              transitionConway
+
+    paramsByron :: ProtocolParamsByron
+    paramsByron =
         ProtocolParamsByron {
             byronGenesis                = genesisByron
             -- Trivialize the PBFT signature window so that the forks induced by
@@ -495,59 +516,97 @@ mkProtocolCardanoAndHardForkTxs
           , byronProtocolVersion        = propPV
           , byronSoftwareVersion        = softVerByron
           , byronLeaderCredentials      = Just leaderCredentialsByron
-          , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          , byronMaxTxCapacityOverrides = TxLimits.mkOverrides TxLimits.noOverridesMeasure
           }
+
+    paramsShelleyBased :: ProtocolParamsShelleyBased (ShelleyEra c)
+    paramsShelleyBased =
         ProtocolParamsShelleyBased {
             shelleyBasedGenesis           = genesisShelley
           , shelleyBasedInitialNonce      = initialNonce
           , shelleyBasedLeaderCredentials = [leaderCredentialsShelley]
           }
+
+    paramsShelley :: ProtocolParamsShelley c
+    paramsShelley =
         ProtocolParamsShelley {
             shelleyProtVer                = SL.ProtVer shelleyMajorVersion 0
-          , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          , shelleyMaxTxCapacityOverrides = TxLimits.mkOverrides TxLimits.noOverridesMeasure
           }
+
+    paramsAllegra :: ProtocolParamsAllegra c
+    paramsAllegra =
         ProtocolParamsAllegra {
             allegraProtVer                = SL.ProtVer allegraMajorVersion 0
-          , allegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          , allegraMaxTxCapacityOverrides = TxLimits.mkOverrides TxLimits.noOverridesMeasure
           }
+
+    paramsMary :: ProtocolParamsMary c
+    paramsMary =
         ProtocolParamsMary {
             maryProtVer                   = SL.ProtVer maryMajorVersion    0
-          , maryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
+          , maryMaxTxCapacityOverrides    = TxLimits.mkOverrides TxLimits.noOverridesMeasure
           }
+
+    paramsAlonzo :: ProtocolParamsAlonzo c
+    paramsAlonzo =
         ProtocolParamsAlonzo {
             alonzoProtVer                 = SL.ProtVer alonzoMajorVersion  0
-          , alonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+          , alonzoMaxTxCapacityOverrides  = TxLimits.mkOverrides TxLimits.noOverridesMeasure
           }
+
+    paramsBabbage :: ProtocolParamsBabbage c
+    paramsBabbage =
         ProtocolParamsBabbage {
             babbageProtVer                = SL.ProtVer babbageMajorVersion  0
-          , babbageMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          , babbageMaxTxCapacityOverrides  = TxLimits.mkOverrides TxLimits.noOverridesMeasure
           }
-        ProtocolParamsConway {
+
+    paramsConway :: ProtocolParamsConway c
+    paramsConway =
+      ProtocolParamsConway {
             conwayProtVer                 = SL.ProtVer conwayMajorVersion  0
           , conwayMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
-        protocolParamsByronShelley
+
+    transitionShelley :: ProtocolTransitionParamsShelleyBased (ShelleyEra c)
+    transitionShelley = protocolParamsByronShelley
+
+    transitionAllegra :: ProtocolTransitionParamsShelleyBased (AllegraEra c)
+    transitionAllegra =
         ProtocolTransitionParamsShelleyBased {
             transitionTranslationContext = ()
           , transitionTrigger            =
               TriggerHardForkAtVersion $ SL.getVersion allegraMajorVersion
           }
+
+    transitionMary :: ProtocolTransitionParamsShelleyBased (MaryEra c)
+    transitionMary =
         ProtocolTransitionParamsShelleyBased {
             transitionTranslationContext = ()
           , transitionTrigger            =
               TriggerHardForkAtVersion $ SL.getVersion maryMajorVersion
           }
+
+    transitionAlonzo :: ProtocolTransitionParamsShelleyBased (AlonzoEra c)
+    transitionAlonzo =
         ProtocolTransitionParamsShelleyBased {
             transitionTranslationContext = Alonzo.degenerateAlonzoGenesis
           , transitionTrigger            =
               TriggerHardForkAtVersion $ SL.getVersion alonzoMajorVersion
           }
+
+    transitionBabbage :: ProtocolTransitionParamsShelleyBased (BabbageEra c)
+    transitionBabbage =
         ProtocolTransitionParamsShelleyBased {
             transitionTranslationContext = ()
           , transitionTrigger            =
               TriggerHardForkAtVersion $ SL.getVersion babbageMajorVersion
           }
-        ProtocolTransitionParamsShelleyBased {
+
+    transitionConway :: ProtocolTransitionParamsShelleyBased (ConwayEra c)
+    transitionConway =
+      ProtocolTransitionParamsShelleyBased {
             transitionTranslationContext =
               -- Note that this is effectively a no-op, which is fine for
               -- testing, at least for now.
