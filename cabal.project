@@ -81,19 +81,5 @@ package text-short
 source-repository-package
   type: git
   location: https://github.com/jasagredo/quickcheck-state-machine
-  tag: 44b2fa5970229d502ae8181b9dccbf1bb511f286
-  --sha256: 1chfw51rbciwnn86vvry71wff0sxws3lr0cir51w357hrldj68xh
-
-source-repository-package
-  type: git
-  location: https://github.com/jasagredo/tree-diff
-  tag: a97c7ab0792efee192a11d693cef69801c0fb280
-  --sha256: 1wag4gqrcg2r82qqj9wfllavrynhrzgd7rmrhmah6z2nf968kka2
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/cardano-ledger
-  tag: febddc58683186232db5fa376de65c58973f9686
-  subdir:
-   libs/cardano-ledger-binary
-  --sha256: 0q6c2f4ld5l85153q8xrm2qc64k8p0y66j6adcl8bga31yd0pl16
+  tag: af6c8be00da2293995ce6ed8bef904192ec8ef50
+  --sha256: 04421bkxf5iyqr2rvy69wd96nh3v1s230j4k75kkd767dzkg8cx4
