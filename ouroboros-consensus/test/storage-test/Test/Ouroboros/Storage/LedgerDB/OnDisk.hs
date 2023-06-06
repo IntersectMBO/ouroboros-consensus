@@ -1075,7 +1075,7 @@ runDB standalone@DB{..} cmd =
         (toFlush, bs) <- atomically $ do
           db <- readTVar dbChlog
           bs <- readTVar dbBackingStore
-          let (toFlush, db') = DbChangelog.splitForFlushing FlushAllImmutable db
+          let (toFlush, db') = DbChangelog.splitForFlushing db
           case toFlush of
             Nothing -> pure (toFlush, bs)
             Just _ -> do

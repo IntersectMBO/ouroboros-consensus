@@ -48,7 +48,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as Ledge
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Lock as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Update as LedgerDB
-                     (ValidateResult (..))
+                     (LedgerDBUpdate (Extend), ValidateResult (..))
 import           Ouroboros.Consensus.Util (StaticEither (..), fromStaticLeft)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Mock.Chain (Chain (..))
@@ -236,7 +236,7 @@ initLedgerDB k chain = do
         LedgerDB.ValidateLedgerError _ ->
           error "impossible: there were no invalid blocks"
         LedgerDB.ValidateSuccessful ledgerDB' -> do
-          atomically $ LedgerDB.setCurrent ledgerDB ledgerDB'
+          atomically $ LedgerDB.setCurrent ledgerDB ledgerDB' LedgerDB.Extend
           tryFlush ledgerDB
           return ledgerDB
   where

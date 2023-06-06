@@ -29,7 +29,6 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import           Ouroboros.Consensus.Ledger.Basics hiding (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
-import           Ouroboros.Consensus.Storage.LedgerDB.Config (FlushPolicy (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
                      (DbChangelog (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
@@ -203,7 +202,7 @@ prop_flushingSplitsTheChangelog setup = isNothing toFlush .||.
     )
   where
     dblog                                    = resultingDbChangelog setup
-    (toFlush, toKeep)                        = DbChangelog.splitForFlushing FlushAllImmutable dblog
+    (toFlush, toKeep)                        = DbChangelog.splitForFlushing dblog
     toFlushTip                               = maybe undefined DbChangelog.toFlushSlot toFlush
     toKeepTip                                = DbChangelog.immutableTipSlot toKeep
     TestTables (SeqDiffMK toKeepDiffs)  = changelogDiffs toKeep

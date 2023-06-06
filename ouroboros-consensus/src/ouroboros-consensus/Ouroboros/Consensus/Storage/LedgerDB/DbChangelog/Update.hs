@@ -424,10 +424,9 @@ data DiffsToFlush l = DiffsToFlush {
 splitForFlushing ::
      forall l.
      (GetTip l, HasLedgerTables l)
-  => FlushPolicy
-  -> DbChangelog l
+  => DbChangelog l
   -> (Maybe (DiffsToFlush l), DbChangelog l)
-splitForFlushing policy dblog =
+splitForFlushing dblog =
     if getTipSlot immTip == Origin || foldLedgerTables (\(SeqDiffMK sq) -> Sum $ DS.length sq) l == 0
     then (Nothing, dblog)
     else (Just ldblog, rdblog)
@@ -439,16 +438,13 @@ splitForFlushing policy dblog =
       } = dblog
 
     immTip = AS.anchor changelogVolatileStates
-    volTip = either id id $ AS.head changelogVolatileStates
 
     -- TODO: #4371 by point, not by count, so sequences can be ragged
     splitSeqDiff ::
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> (SeqDiffMK k v, SeqDiffMK k v)
-    splitSeqDiff (SeqDiffMK sq) = case policy of
-      FlushAll          -> (SeqDiffMK sq, emptyMK)
-      FlushAllImmutable ->
+    splitSeqDiff (SeqDiffMK sq) =
        let numToFlush = DS.length sq - AS.length changelogVolatileStates
        in bimap (maybe emptyMK SeqDiffMK) SeqDiffMK
         $ if numToFlush > 0
@@ -463,9 +459,7 @@ splitForFlushing policy dblog =
     (newTip, newStates) =
         if getAll $ foldLedgerTables (\(SeqDiffMK sq) -> All $ 0 == DS.length sq) l
         then (changelogLastFlushedState, changelogVolatileStates)
-        else case policy of
-          FlushAll          -> (volTip, AS.Empty volTip)
-          FlushAllImmutable -> (immTip, changelogVolatileStates)
+        else (immTip, changelogVolatileStates)
 
     prj ::
          (Ord k, Eq v)
@@ -478,9 +472,7 @@ splitForFlushing policy dblog =
       , toFlushSlot  =
             fromWithOrigin (error "Flushing a DbChangelog at origin should never happen")
           $ getTipSlot
-          $ case policy of
-              FlushAll          -> volTip
-              FlushAllImmutable -> immTip
+          $ immTip
       }
 
     rdblog = DbChangelog {

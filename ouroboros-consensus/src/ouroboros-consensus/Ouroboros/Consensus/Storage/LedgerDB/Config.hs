@@ -16,8 +16,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Config (
   , SnapCounters (..)
   , SnapshotInterval (..)
   , defaultDiskPolicy
-    -- * Flushing
-  , FlushPolicy (..)
   ) where
 
 import           Control.Monad.Class.MonadTime.SI
@@ -51,20 +49,6 @@ configLedgerDb config = LedgerDbCfg {
       ledgerDbCfgSecParam    = configSecurityParam config
     , ledgerDbCfg            = ExtLedgerCfg config
     }
-
-{-------------------------------------------------------------------------------
- Flushing
--------------------------------------------------------------------------------}
-
--- | The flush policy
-data FlushPolicy =
-      -- | Always flush everything older than the immutable tip
-      FlushAllImmutable
-      -- | Flush all the db changelog, cannot fail. This can be used when we
-      -- don't have a volatile part, such as while replaying the chain during
-      -- initialization
-    | FlushAll
-    deriving (Generic, NoThunks)
 
 {-------------------------------------------------------------------------------
  DiskPolicy

@@ -364,7 +364,7 @@ storeLedgerStateAt slotNo aenv = do
       ldb'' <-
         if unBlockNo (blockNo blk) `mod` 100 == 0
         then do
-          let (toFlush, toKeep) = DbChangelog.splitForFlushing FlushAll ldb'
+          let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
           mapM_ (flushIntoBackingStore bstore) toFlush
           pure toKeep
         else pure ldb'
@@ -446,7 +446,7 @@ checkNoThunksEvery
                                $ DbChangelog.extend newLedger oldLedgerDB
       if unBlockNo bn `mod` 100 == 0
       then do
-        let (toFlush, toKeep) = DbChangelog.splitForFlushing FlushAll intermediateLedgerDB
+        let (toFlush, toKeep) = DbChangelog.splitForFlushing intermediateLedgerDB
         mapM_ (flushIntoBackingStore bstore) toFlush
         pure toKeep
       else pure intermediateLedgerDB
@@ -488,7 +488,7 @@ traceLedgerProcessing
 
       if unBlockNo (blockNo blk) `mod` 100 == 0
       then do
-        let (toFlush, toKeep) = DbChangelog.splitForFlushing FlushAll ldb'
+        let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
         mapM_ (flushIntoBackingStore bstore) toFlush
         pure toKeep
       else pure ldb'
@@ -573,7 +573,7 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, b
         (ldb'', tFlush) <-
           if unBlockNo (blockNo blk) `mod` 100 == 0
           then do
-            let (toFlush, toKeep) = DbChangelog.splitForFlushing FlushAll ldb'
+            let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
             ((), tFlush) <- time $ mapM_ (flushIntoBackingStore bstore) toFlush
             pure (toKeep, tFlush)
           else pure (ldb', 0)
@@ -802,7 +802,7 @@ reproMempoolForge numBlks env = do
           ldb'' <-
             if unBlockNo (blockNo blk) `mod` 100 == 0
             then do
-              let (toFlush, toKeep) = DbChangelog.splitForFlushing FlushAll ldb'
+              let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
               mapM_ (flushIntoBackingStore bstore) toFlush
               pure toKeep
             else pure ldb'

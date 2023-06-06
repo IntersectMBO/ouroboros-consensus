@@ -208,7 +208,7 @@ mkLedgerDB st args getBlock = do
            (Lock.withWriteLock (ldbLock st') $ do
                diffs <- atomically $ do
                  ldb' <- Query.getCurrent st'
-                 let (toFlush, toKeep) = splitForFlushing FlushAllImmutable ldb'
+                 let (toFlush, toKeep) = splitForFlushing ldb'
                  mapM_ ( const $
                          Update.setCurrent (ldbChangelog st') toKeep Update.Prune
                        ) toFlush
@@ -476,10 +476,7 @@ replayStartingWith tracer cfg policy backingStore stream initDb = do
         db'' <-
           if onDiskShouldFlush (flushableLength db')
           then do
-            let (toFlush, toKeep) =
-                  DbChangelog.splitForFlushing
-                    FlushAllImmutable
-                    db'
+            let (toFlush, toKeep) = DbChangelog.splitForFlushing db'
             mapM_ (Update.flushIntoBackingStore backingStore) toFlush
             pure toKeep
           else pure db'

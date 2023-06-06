@@ -121,7 +121,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Config as DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl as LedgerDB
@@ -471,7 +470,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
 flush ::
      (LedgerSupportsProtocol blk)
   => DbChangelog.DbChangelog' blk -> DbChangelog.DbChangelog' blk
-flush = snd . DbChangelog.splitForFlushing DbChangelog.FlushAllImmutable
+flush = snd . DbChangelog.splitForFlushing
 
 persistBlks :: IOLike m => ShouldGarbageCollect -> ChainDB.Internal m blk -> m ()
 persistBlks collectGarbage ChainDB.Internal{..} = do
