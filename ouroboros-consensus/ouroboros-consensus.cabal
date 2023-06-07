@@ -282,7 +282,6 @@ library
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.TentativeState
     Ouroboros.Consensus.Util.Time
-    Ouroboros.Consensus.Util.TraceSize
     Ouroboros.Consensus.Util.Versioned
 
   other-extensions:

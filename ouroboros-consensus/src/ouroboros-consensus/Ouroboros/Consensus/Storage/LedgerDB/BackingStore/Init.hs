@@ -17,6 +17,7 @@ import           Data.Functor.Contravariant
 import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
@@ -63,6 +64,7 @@ newBackingStoreInitialiser ::
      , NoThunks (LedgerTables l ValuesMK)
      , HasLedgerTables l
      , CanSerializeLedgerTables l
+     , HasCallStack
      )
   => Tracer m BackingStoreTrace
   -> BackingStoreSelector m

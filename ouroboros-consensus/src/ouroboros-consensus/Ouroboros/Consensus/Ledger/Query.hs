@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes            #-}
@@ -37,7 +38,7 @@ import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
 import           Codec.Serialise (Serialise)
 import           Codec.Serialise.Class (decode, encode)
-import           Control.Exception (Exception, throw)
+import           Control.Exception (throw)
 import           Data.Kind (Type)
 import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
@@ -63,11 +64,14 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Serialisation
                      (SerialiseNodeToClient (..), SerialiseResult (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView (..),
+                     closeLedgerDBView)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbChangelog
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
 import           Ouroboros.Consensus.Util.DepPair
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
+import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Block (HeaderHash, Point (..), StandardHash,
                      decodePoint, encodePoint)
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -330,15 +334,15 @@ data DiskLedgerView m l =
 
 mkDiskLedgerView ::
      (GetTip l, IOLike m, HasLedgerTables l)
-  => (LedgerBackingStoreValueHandle m l, DbChangelog l)
+  => LedgerDBView m l
   -> DiskLedgerView m l
-mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb) =
+mkDiskLedgerView h@(LedgerDBView lvh ldb) =
     DiskLedgerView
       (DbChangelog.current ldb)
       (\ks -> do
           let rew = rewindTableKeySets ldb ks
           unfwd <- readKeySetsWith
-                     (fmap (seqNo,) . BackingStore.bsvhRead vh)
+                     (BackingStore.lbsvhRead lvh)
                      rew
           case forwardTableKeySets ldb unfwd of
               Left _err -> error "impossible!"
@@ -353,7 +357,7 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb) =
                   (zipLedgerTables doDropLTE)
                   (BackingStore.rqPrev rq)
                   $ mapLedgerTables prj
-                  $ changelogDiffs ldb
+                  $ adcDiffs ldb
               -- (1) Ensure that we never delete everything read from disk (ie
               --     if our result is non-empty then it contains something read
               --     from disk).
@@ -364,11 +368,11 @@ mkDiskLedgerView (LedgerBackingStoreValueHandle seqNo vh, ldb) =
               maxDeletes = maybe 0 getMax
                          $ foldLedgerTables (Just . Max . numDeletesDiffMK) diffs
               nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
-
+          let LedgerBackingStoreValueHandle _ vh = lvh
           values <- BackingStore.bsvhRangeRead vh (rq{BackingStore.rqCount = nrequested})
           pure $ zipLedgerTables (doFixupReadResult nrequested) diffs values
       )
-      (bsvhClose vh)
+      (closeLedgerDBView h)
   where
     prj ::
          (Ord k, Eq v)

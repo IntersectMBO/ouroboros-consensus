@@ -4,7 +4,9 @@
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TupleSections              #-}
 
 -- | A store for key-value maps that can be extended with deltas.
 --
@@ -31,10 +33,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   , castLedgerBackingStoreValueHandle
   , lbsValueHandle
   , lbsvhClose
+  , lbsvhRead
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
 import           GHC.Generics (Generic)
+import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
@@ -62,7 +66,7 @@ data BackingStore m keys values diff = BackingStore {
   , bsCopy        :: !(FS.SomeHasFS m -> BackingStorePath -> m ())
     -- | Open a 'BackingStoreValueHandle' capturing the current value of the
     -- entire database
-  , bsValueHandle :: !(m (WithOrigin SlotNo, BackingStoreValueHandle m keys values))
+  , bsValueHandle :: !(HasCallStack => m (WithOrigin SlotNo, BackingStoreValueHandle m keys values))
     -- | Apply a valid diff to the contents of the backing store
   , bsWrite       :: !(SlotNo -> diff -> m ())
   }
@@ -177,7 +181,7 @@ newtype LedgerBackingStore m l = LedgerBackingStore
   deriving newtype (NoThunks)
 
 lbsValueHandle ::
-     IOLike m
+     (HasCallStack, IOLike m)
   => LedgerBackingStore m l
   -> m (LedgerBackingStoreValueHandle m l)
 lbsValueHandle (LedgerBackingStore bstore) =
@@ -198,6 +202,12 @@ type LedgerBackingStoreValueHandle' m blk =
 
 lbsvhClose :: LedgerBackingStoreValueHandle m l -> m ()
 lbsvhClose (LedgerBackingStoreValueHandle _ vh) = bsvhClose vh
+
+lbsvhRead :: Functor m
+          => LedgerBackingStoreValueHandle m l
+          -> LedgerTables l KeysMK
+          -> m (WithOrigin SlotNo, LedgerTables l ValuesMK)
+lbsvhRead (LedgerBackingStoreValueHandle s vh) = fmap (s,) . bsvhRead vh
 
 castLedgerBackingStoreValueHandle ::
      Functor m

@@ -9,7 +9,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query (
   , getPastLedgerAt
   , immutableTipSlot
   , isSaturated
-  , lastFlushedState
   , maxRollback
   , rollback
   , rollbackToAnchor
@@ -33,46 +32,41 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Prelude hiding (splitAt)
 
 -- | The ledger state at the tip of the chain
-current :: GetTip l => DbChangelog l -> l EmptyMK
+current :: GetTip l => AnchorlessDbChangelog l -> l EmptyMK
 current =
     either id id
   . AS.head
-  . changelogVolatileStates
+  . adcStates
 
 -- | Information about the state of the ledger at the anchor
-anchor :: DbChangelog l -> l EmptyMK
+anchor :: AnchorlessDbChangelog l -> l EmptyMK
 anchor =
     AS.anchor
-  . changelogVolatileStates
-
--- | Get the most recently flushed ledger state. This is what will be serialized
--- when snapshotting.
-lastFlushedState :: DbChangelog l -> l EmptyMK
-lastFlushedState = changelogLastFlushedState
+  . adcStates
 
 -- | All snapshots currently stored by the ledger DB (new to old)
 --
 -- This also includes the snapshot at the anchor. For each snapshot we also
 -- return the distance from the tip.
-snapshots :: DbChangelog l -> [(Word64, l EmptyMK)]
+snapshots :: AnchorlessDbChangelog l -> [(Word64, l EmptyMK)]
 snapshots =
       zip [0..]
     . AS.toNewestFirst
-    . changelogVolatileStates
+    . adcStates
 
 -- | How many blocks can we currently roll back?
-maxRollback :: GetTip l => DbChangelog l -> Word64
+maxRollback :: GetTip l => AnchorlessDbChangelog l -> Word64
 maxRollback =
     fromIntegral
   . AS.length
-  . changelogVolatileStates
+  . adcStates
 
 -- | Reference to the block at the tip of the chain
-tip :: GetTip l => DbChangelog l -> Point l
+tip :: GetTip l => AnchorlessDbChangelog l -> Point l
 tip = castPoint . getTip . current
 
 -- | Have we seen at least @k@ blocks?
-isSaturated :: GetTip l => SecurityParam -> DbChangelog l -> Bool
+isSaturated :: GetTip l => SecurityParam -> AnchorlessDbChangelog l -> Bool
 isSaturated (SecurityParam k) db =
     maxRollback db >= k
 
@@ -87,7 +81,7 @@ getPastLedgerAt ::
      , StandardHash l, HasTickedLedgerTables l
      )
   => Point blk
-  -> DbChangelog l
+  -> AnchorlessDbChangelog l
   -> Maybe (l EmptyMK)
 getPastLedgerAt pt db = current <$> rollback pt db
 
@@ -97,7 +91,7 @@ rollbackToPoint ::
      , GetTip l
      , HasLedgerTables l
      )
-  => Point l -> DbChangelog l -> Maybe (DbChangelog l)
+  => Point l -> AnchorlessDbChangelog l -> Maybe (AnchorlessDbChangelog l)
 rollbackToPoint pt dblog = do
     vol' <-
       AS.rollback
@@ -105,38 +99,38 @@ rollbackToPoint pt dblog = do
         ((== pt) . getTip . either id id)
         vol
     let ndropped = AS.length vol - AS.length vol'
-        diffs'   = mapLedgerTables (trunc ndropped) changelogDiffs
-    Exn.assert (ndropped >= 0) $ pure DbChangelog {
-          changelogLastFlushedState
-        , changelogDiffs          = diffs'
-        , changelogVolatileStates = vol'
+        diffs'   = mapLedgerTables (trunc ndropped) adcDiffs
+    Exn.assert (ndropped >= 0) $ pure AnchorlessDbChangelog {
+          adcSlot
+        , adcDiffs          = diffs'
+        , adcStates = vol'
         }
   where
-    DbChangelog {
-        changelogLastFlushedState
-      , changelogDiffs
-      , changelogVolatileStates = vol
+    AnchorlessDbChangelog {
+        adcSlot
+      , adcDiffs
+      , adcStates = vol
       } = dblog
 
 rollbackToAnchor ::
      (GetTip l, HasLedgerTables l)
-  => DbChangelog l -> DbChangelog l
+  => AnchorlessDbChangelog l -> AnchorlessDbChangelog l
 rollbackToAnchor dblog =
-    DbChangelog {
-        changelogLastFlushedState
-      , changelogDiffs          = diffs'
-      , changelogVolatileStates = AS.Empty (AS.anchor vol)
+    AnchorlessDbChangelog {
+        adcSlot
+      , adcDiffs          = diffs'
+      , adcStates = AS.Empty (AS.anchor vol)
       }
   where
-    DbChangelog {
-        changelogLastFlushedState
-      , changelogDiffs
-      , changelogVolatileStates = vol
+    AnchorlessDbChangelog {
+        adcSlot
+      , adcDiffs
+      , adcStates = vol
       } = dblog
 
     ndropped = AS.length vol
     diffs'   =
-      mapLedgerTables (trunc ndropped) changelogDiffs
+      mapLedgerTables (trunc ndropped) adcDiffs
 
 trunc ::
      (Ord k, Eq v)
@@ -156,8 +150,8 @@ rollback ::
      , StandardHash l, HasTickedLedgerTables l
      )
   => Point blk
-  -> DbChangelog l
-  -> Maybe (DbChangelog l)
+  -> AnchorlessDbChangelog l
+  -> Maybe (AnchorlessDbChangelog l)
 rollback pt db
     | pt == castPoint (getTip (anchor db))
     = Just $ rollbackToAnchor db
@@ -166,18 +160,18 @@ rollback pt db
 
 immutableTipSlot ::
      GetTip l
-  => DbChangelog l -> WithOrigin SlotNo
+  => AnchorlessDbChangelog l -> WithOrigin SlotNo
 immutableTipSlot =
       getTipSlot
     . AS.anchor
-    . changelogVolatileStates
+    . adcStates
 
 -- | This will be wrong once we have more than one table.
-flushableLength :: (HasLedgerTables l, GetTip l) => DbChangelog l -> Word64
+flushableLength :: (HasLedgerTables l, GetTip l) => AnchorlessDbChangelog l -> Word64
 flushableLength chlog =
-    (\(Sum x) -> x - fromIntegral (AS.length (changelogVolatileStates chlog)))
+    (\(Sum x) -> x - fromIntegral (AS.length (adcStates chlog)))
   . foldLedgerTables f
-  $ changelogDiffs chlog
+  $ adcDiffs chlog
  where
    f :: (Ord k, Eq v)
      => SeqDiffMK k v

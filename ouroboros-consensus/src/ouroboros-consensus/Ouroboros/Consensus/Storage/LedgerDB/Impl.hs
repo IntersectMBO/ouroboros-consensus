@@ -57,11 +57,12 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
 import           Ouroboros.Consensus.Storage.LedgerDB.Config
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog')
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+                     (DbChangelog (..), DbChangelog', onChangelog, onChangelogM)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
-                     (Ap (..), splitForFlushing)
+                     (Ap (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.Lock hiding
                      (withWriteLock)
@@ -76,7 +77,6 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Block (Point (Point))
 import           System.FS.API
 import           System.FS.API.Types (mkFsPath)
-
 {-------------------------------------------------------------------------------
   Initialize the DB
 -------------------------------------------------------------------------------}
@@ -153,7 +153,7 @@ openDB args@LedgerDBArgs { lgrHasFS = SomeHasFS fs } replayTracer immutableDB ge
     -- >k blocks long. Thus 'Lbn' is the oldest point we can roll back to.
     -- Therefore, we need to make the newest state (current) of the ledger DB
     -- the anchor.
-    let dbPrunedToImmDBTip = DbChangelog.prune (SecurityParam 0) db
+    let dbPrunedToImmDBTip = onChangelog (DbChangelog.prune (SecurityParam 0)) db
     (varDB, prevApplied) <-
       (,) <$> newTVarIO dbPrunedToImmDBTip <*> newTVarIO Set.empty
     flushLock <- mkLedgerDBLock
@@ -199,25 +199,19 @@ mkLedgerDB st args getBlock = do
     , garbageCollect = getStateSTM1 h $ \st' ->
         Update.garbageCollectPrevApplied (varPrevApplied st')
 
-    , setCurrent = \chlog upd -> getStateSTM h $ \st' ->
-        Update.setCurrent (ldbChangelog st') chlog upd
+    , setCurrent = getStateSTM1 h $ \st' ->
+        Update.setCurrent (ldbChangelog st')
 
     , tryFlush = getState h $ \st' -> do
         ldb <- atomically $ Query.getCurrent st'
-        when (onDiskShouldFlush policy $ flushableLength ldb)
-           (Lock.withWriteLock (ldbLock st') $ do
-               diffs <- atomically $ do
-                 ldb' <- Query.getCurrent st'
-                 let (toFlush, toKeep) = splitForFlushing ldb'
-                 mapM_ ( const $
-                         Update.setCurrent (ldbChangelog st') toKeep Update.Prune
-                       ) toFlush
-                 pure toFlush
-               mapM_ (Update.flushIntoBackingStore (ldbBackingStore st')) diffs
+        when (onDiskShouldFlush policy $ flushableLength $ anchorlessChangelog ldb)
+           (Lock.withWriteLock
+              (ldbLock st')
+              (Update.flushLedgerDB (ldbChangelog st') (ldbBackingStore st'))
            )
 
-    , validate = \vh ch cache rb tr hs -> getState h $ \st' ->
-        Update.validate  (varPrevApplied st') getBlock cfg vh ch cache rb tr hs
+    , validate = \ldbh chg cache rb tr hs -> getState h $ \st' ->
+        Update.validate (varPrevApplied st') getBlock cfg ldbh chg cache rb tr hs
 
     , tryTakeSnapshot = \mTime nrBlocks -> getState h $ \st' ->
         if onDiskShouldTakeSnapshot policy (uncurry diffTime <$> mTime) nrBlocks then do
@@ -457,7 +451,7 @@ replayStartingWith ::
   -> DbChangelog' blk
   -> ExceptT (Snapshots.SnapshotFailure blk) m (DbChangelog' blk, Word64)
 replayStartingWith tracer cfg policy backingStore stream initDb = do
-    streamAll stream (castPoint (tip initDb))
+    streamAll stream (castPoint (tip $ anchorlessChangelog initDb))
         Snapshots.InitFailureTooRecent
         (initDb, 0)
         push
@@ -468,13 +462,13 @@ replayStartingWith tracer cfg policy backingStore stream initDb = do
          -> (DbChangelog' blk, Word64)
          -> m (DbChangelog' blk, Word64)
     push blk (!db, !replayed) = do
-        !db' <- DbChangelog.push cfg (ReapplyVal blk) (readKeySets backingStore) db
+        !db' <- onChangelogM (DbChangelog.push cfg (ReapplyVal blk) (readKeySets backingStore)) db
 
         -- It's OK to flush without a lock here, since the `LedgerDB` has not
         -- finishined initializing: only this thread has access to the backing
         -- store.
         db'' <-
-          if onDiskShouldFlush (flushableLength db')
+          if onDiskShouldFlush (flushableLength $ anchorlessChangelog db')
           then do
             let (toFlush, toKeep) = DbChangelog.splitForFlushing db'
             mapM_ (Update.flushIntoBackingStore backingStore) toFlush
@@ -487,8 +481,8 @@ replayStartingWith tracer cfg policy backingStore stream initDb = do
             events :: [LedgerEvent blk]
             events = inspectLedger
                        (getExtLedgerCfg (ledgerDbCfg cfg))
-                       (ledgerState (current db))
-                       (ledgerState (current db''))
+                       (ledgerState (current $ anchorlessChangelog db))
+                       (ledgerState (current $ anchorlessChangelog db''))
 
         traceWith tracer (ReplayedBlock (blockRealPoint blk) events)
         return (db'', replayed')

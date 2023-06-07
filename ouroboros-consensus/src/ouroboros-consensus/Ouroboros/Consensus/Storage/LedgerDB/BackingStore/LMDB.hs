@@ -45,6 +45,7 @@ import qualified Database.LMDB.Simple.Extra as LMDB
 import qualified Database.LMDB.Simple.Internal as LMDB.Internal
 import qualified Database.LMDB.Simple.TransactionHandle as TrH
 import           GHC.Generics (Generic)
+import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as HD
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Bridge as Bridge
@@ -378,7 +379,7 @@ lmdbCopy tracer e to = do
 
 -- | Initialise a backing store.
 newLMDBBackingStoreInitialiser ::
-     forall m l. (HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m)
+     forall m l. (HasCallStack, HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m)
   => Trace.Tracer m TraceLMDB
   -> LMDBLimits
      -- ^ Configuration parameters for the LMDB database that we
@@ -453,7 +454,7 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
        HD.InitFromValues slot vals -> initFromVals dbTracer slot vals dbEnv dbState dbBackingTables
        _                           -> pure ()
 
-   mkBackingStore :: Db m l -> LMDBBackingStore l m
+   mkBackingStore :: HasCallStack => Db m l -> LMDBBackingStore l m
    mkBackingStore db =
        let bsClose :: m ()
            bsClose = Status.withWriteAccess dbStatusLock DbErrClosed $ do
@@ -501,7 +502,7 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
 -- with @`DbState`@).
 mkLMDBBackingStoreValueHandle ::
      forall l m.
-     (HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m)
+     (HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m, HasCallStack)
   => Db m l
      -- ^ The LMDB database for which the backing store value handle is
      -- created.

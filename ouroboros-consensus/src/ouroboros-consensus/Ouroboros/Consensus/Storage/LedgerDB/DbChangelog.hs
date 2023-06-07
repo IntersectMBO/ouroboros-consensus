@@ -36,8 +36,14 @@ module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (
     -- * The DbChangelog
     DbChangelog (..)
   , DbChangelog'
+  , StatesSequence
     -- * Construction
   , empty
+    -- * Views
+  , AnchorlessDbChangelog (..)
+  , AnchorlessDbChangelog'
+  , onChangelog
+  , onChangelogM
   ) where
 
 import           Cardano.Slotting.Slot
@@ -52,6 +58,11 @@ import           Ouroboros.Network.AnchoredSeq (Anchorable (..),
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Prelude hiding (splitAt)
+
+type StatesSequence l = AnchoredSeq
+                        (WithOrigin SlotNo)
+                        (l EmptyMK)
+                        (l EmptyMK)
 
 -- | Holds a sequence of split ledger states, where the in-memory part is in a
 -- sequence and the on-disk part is represented by a sequence of differences
@@ -98,22 +109,8 @@ data DbChangelog l = DbChangelog {
     -- disk when we make a snapshot
     changelogLastFlushedState :: !(l EmptyMK)
 
-    -- | The sequence of differences between the last flushed state
-    -- ('changelogLastFlushedState') and the tip of the volatile sequence
-    -- ('changelogVolatileStates').
-  , changelogDiffs            :: !(LedgerTables l SeqDiffMK)
-
-    -- | The volatile sequence of states.
-    --
-    -- The anchor of this sequence is the immutable tip, so whenever we flush,
-    -- we should do so up until that point. The length of this sequence will be
-    -- @k@ except in abnormal circumstances like rollbacks or data corruption.
-  , changelogVolatileStates   ::
-      !(AnchoredSeq
-          (WithOrigin SlotNo)
-          (l EmptyMK)
-          (l EmptyMK)
-       )
+    -- | The in memory part of the DbChangelog
+  , anchorlessChangelog       :: !(AnchorlessDbChangelog l)
   }
   deriving (Generic)
 
@@ -123,6 +120,34 @@ deriving instance (NoThunks (LedgerTables l SeqDiffMK), NoThunks (l EmptyMK))
                =>  NoThunks (DbChangelog l)
 deriving instance (Show     (LedgerTables l SeqDiffMK), Show     (l EmptyMK))
                =>  Show     (DbChangelog l)
+
+data AnchorlessDbChangelog l = AnchorlessDbChangelog {
+    -- | The slot at which this view was created, it is the slot of the last
+    -- flushed state on the changelog. Used just for asserting correctness when
+    -- forwarding
+    adcSlot   :: !(WithOrigin SlotNo)
+    -- | The sequence of differences between the last flushed state
+    -- ('changelogLastFlushedState') and the tip of the volatile sequence
+    -- ('adcStates').
+  , adcDiffs  :: !(LedgerTables l SeqDiffMK)
+    -- | The volatile sequence of states.
+    --
+    -- The anchor of this sequence is the immutable tip, so whenever we flush,
+    -- we should do so up until that point. The length of this sequence will be
+    -- @k@ except in abnormal circumstances like rollbacks or data corruption.
+  , adcStates :: !(StatesSequence l)
+  } deriving (Generic)
+
+deriving instance (Eq       (LedgerTables l SeqDiffMK), Eq       (l EmptyMK))
+               =>  Eq       (AnchorlessDbChangelog l)
+deriving instance (NoThunks (LedgerTables l SeqDiffMK), NoThunks (l EmptyMK))
+               =>  NoThunks (AnchorlessDbChangelog l)
+deriving instance (Show     (LedgerTables l SeqDiffMK), Show     (l EmptyMK))
+               =>  Show     (AnchorlessDbChangelog l)
+
+type AnchorlessDbChangelog' blk = AnchorlessDbChangelog (ExtLedgerState blk)
+
+
 
 instance GetTip l => AS.Anchorable (WithOrigin SlotNo) (l EmptyMK) (l EmptyMK) where
   asAnchor = id
@@ -135,7 +160,8 @@ instance ( IsLedger l
          . getTip
          . either id id
          . AS.head
-         . changelogVolatileStates
+         . adcStates
+         . anchorlessChangelog
          . unK
 
 type instance HeaderHash (K @MapKind (DbChangelog l)) =
@@ -153,7 +179,21 @@ empty ::
 empty theAnchor =
     DbChangelog {
         changelogLastFlushedState = theAnchor
-      , changelogDiffs            = pureLedgerTables (SeqDiffMK DS.empty)
-      , changelogVolatileStates   = AS.Empty theAnchor
+        , anchorlessChangelog = AnchorlessDbChangelog {
+              adcSlot = pointSlot $ getTip theAnchor
+            , adcDiffs = pureLedgerTables (SeqDiffMK DS.empty)
+            , adcStates = AS.Empty theAnchor
+            }
       }
 
+{-------------------------------------------------------------------------------
+  Views
+-------------------------------------------------------------------------------}
+
+onChangelog :: (AnchorlessDbChangelog l -> AnchorlessDbChangelog l) -> DbChangelog l -> DbChangelog l
+onChangelog f dbch = dbch { anchorlessChangelog = f $ anchorlessChangelog dbch  }
+
+onChangelogM :: Monad m => (AnchorlessDbChangelog l -> m (AnchorlessDbChangelog l)) -> DbChangelog l -> m (DbChangelog l)
+onChangelogM f dbch = do
+  anchorlessChangelog' <- f $ anchorlessChangelog dbch
+  pure dbch { anchorlessChangelog =  anchorlessChangelog' }

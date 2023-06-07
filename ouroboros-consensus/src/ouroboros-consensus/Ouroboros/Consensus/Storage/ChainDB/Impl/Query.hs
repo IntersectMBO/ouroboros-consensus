@@ -12,7 +12,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getIsFetched
   , getIsInvalidBlock
   , getIsValid
-  , getLedgerBackingStoreValueHandle
   , getLedgerDB
   , getLedgerDBViewAtPoint
   , getMaxSlotNo
@@ -25,7 +24,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getAnyKnownBlockComponent
   ) where
 
-import           Control.Monad (void)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
@@ -37,14 +35,12 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (StaticEither (..), eitherToMaybe,
                      fromStaticLeft, fromStaticRight)
 import           Ouroboros.Consensus.Util.IOLike
-import qualified Ouroboros.Consensus.Util.ResourceRegistry as RR
 import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -186,59 +182,13 @@ getMaxSlotNo CDB{..} = do
     volatileDbMaxSlotNo    <- VolatileDB.getMaxSlotNo cdbVolatileDB
     return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo
 
-getLedgerBackingStoreValueHandle :: forall b m blk.
-     IOLike m
-  => ChainDbEnv m blk
-  -> RR.ResourceRegistry m
-  -> StaticEither b () (Point blk)
-  -> m (StaticEither
-         b
-         ( BackingStore.LedgerBackingStoreValueHandle' m blk
-         , DbChangelog' blk
-         , m ()
-         )
-         (Either
-            (Point blk)
-            ( BackingStore.LedgerBackingStoreValueHandle' m blk
-            , DbChangelog' blk
-            , m ()
-            )
-         )
-       )
-getLedgerBackingStoreValueHandle CDB{..} rreg seP = do
-  ((), view) <- LedgerDB.acquireLDBReadView cdbLedgerDB seP (pure ())
-  case view of
-    StaticRight (Left p)          -> pure (StaticRight (Left p))
-    StaticLeft (vh, ldb)          -> StaticLeft          <$> allocateInReg vh ldb
-    StaticRight (Right (vh, ldb)) -> StaticRight . Right <$> allocateInReg vh ldb
-  where
-    allocateInReg ::
-         BackingStore.LedgerBackingStoreValueHandle' m blk
-      -> DbChangelog' blk
-      -> m ( BackingStore.LedgerBackingStoreValueHandle' m blk
-           , DbChangelog' blk
-           , m ()
-           )
-    allocateInReg vh ldb = do
-      let BackingStore.LedgerBackingStoreValueHandle _ vh' = vh
-      (key, _) <- RR.allocate
-        rreg
-        (const $ pure vh)
-        (const $ BackingStore.bsvhClose vh')
-      pure ( vh
-           , ldb
-           , void $ RR.release key
-           )
-
 getLedgerDBViewAtPoint ::
      IOLike m
   => ChainDbEnv m blk
   -> Maybe (Point blk)
   -> m ( Either
            (Point blk)
-           ( BackingStore.LedgerBackingStoreValueHandle' m blk
-           , DbChangelog' blk
-           )
+           (LedgerDB.LedgerDBView' m blk)
        )
 getLedgerDBViewAtPoint CDB{..} Nothing = do
   ((), s) <- LedgerDB.acquireLDBReadView cdbLedgerDB (StaticLeft ()) (pure ())
