@@ -396,7 +396,7 @@ library consensus-testlib
     , file-embed
     , filepath
     , fs-api
-    , fs-sim
+    , fs-sim                                                  >=0.2
     , generics-sop
     , io-sim
     , mtl
@@ -611,7 +611,7 @@ test-suite storage-test
     , containers
     , contra-tracer
     , fs-api
-    , fs-sim
+    , fs-sim                    >=0.2
     , generics-sop
     , hashable
     , io-classes
