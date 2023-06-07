@@ -31,8 +31,8 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
                      tickChainDepState)
 import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB (ChainDB,
-                     addBlockAsync, blockProcessed, getCurrentChain,
-                     getPastLedger)
+                     AddBlockResult (..), addBlockAsync, blockProcessed,
+                     getCurrentChain, getPastLedger)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
                      (noPunishment)
 import           Ouroboros.Consensus.Util.IOLike (atomically)
@@ -171,9 +171,9 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
         -- Add the block to the chain DB (synchronously) and verify adoption
         let noPunish = InvalidBlockPunishment.noPunishment
         result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
-        curTip <- lift $ atomically $ ChainDB.blockProcessed result
+        mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 
-        when (curTip /= blockPoint newBlock) $
+        when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $
             exitEarly' "block not adopted"
 
 -- | Context required to forge a block

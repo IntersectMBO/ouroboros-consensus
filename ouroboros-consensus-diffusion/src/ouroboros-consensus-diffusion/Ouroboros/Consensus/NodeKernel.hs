@@ -58,7 +58,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as 
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB,
+                     AddBlockResult (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
@@ -432,10 +433,10 @@ forkBlockForging IS{..} blockForging =
         uninterruptibleMask_ $ do
           result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
           -- Block until we have processed the block
-          curTip <- lift $ atomically $ ChainDB.blockProcessed result
+          mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
 
           -- Check whether we adopted our block
-          when (curTip /= blockPoint newBlock) $ do
+          when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $ do
             isInvalid <- lift $ atomically $
               ($ blockHash newBlock) . forgetFingerprint <$>
               ChainDB.getIsInvalidBlock chainDB

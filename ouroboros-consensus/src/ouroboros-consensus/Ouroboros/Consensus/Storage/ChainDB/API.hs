@@ -27,6 +27,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , getTipBlockNo
     -- * Adding a block
   , AddBlockPromise (..)
+  , AddBlockResult (..)
   , addBlock
   , addBlockWaitWrittenToDisk
   , addBlock_
@@ -405,7 +406,7 @@ data AddBlockPromise m blk = AddBlockPromise
       -- NOTE: Even when the result is 'False', 'getIsFetched' might still
       -- return 'True', e.g., the block was older than @k@, but it has been
       -- downloaded and stored on disk before.
-    , blockProcessed     :: STM m (Point blk)
+    , blockProcessed     :: STM m (AddBlockResult blk)
       -- ^ Use this 'STM' transaction to wait until the block has been
       -- processed: the block has been written to disk and chain selection has
       -- been performed for the block, /unless/ the block is from the future.
@@ -415,6 +416,8 @@ data AddBlockPromise m blk = AddBlockPromise
       -- wasn't adopted. We might have adopted a longer chain of which the
       -- added block is a part, but not the tip.
       --
+      -- It returns 'FailedToAddBlock' if the thread adding the block died.
+      --
       -- NOTE: When the block is from the future, chain selection for the
       -- block won't be performed until the block is no longer in the future,
       -- which might take some time. For that reason, this transaction will
@@ -422,6 +425,18 @@ data AddBlockPromise m blk = AddBlockPromise
       -- return the current tip of the ChainDB after writing the block to
       -- disk.
     }
+
+-- | This is a wrapper type for 'blockProcessed' function above.
+--
+-- As it is mentioned the 'SuccessfullyAddedBlock' constructor will containt
+-- the ChainDB's tip after chain selection is returned.
+--
+-- The 'FailedToAddBlock' case will be returned if the thread adding the block
+-- died.
+--
+data AddBlockResult blk = SuccesfullyAddedBlock (Point blk)
+                        | FailedToAddBlock String
+                        deriving (Eq, Show)
 
 -- | Add a block synchronously: wait until the block has been written to disk
 -- (see 'blockWrittenToDisk').
@@ -431,14 +446,19 @@ addBlockWaitWrittenToDisk chainDB punish blk = do
     atomically $ blockWrittenToDisk promise
 
 -- | Add a block synchronously: wait until the block has been processed (see
--- 'blockProcessed'). The new tip of the ChainDB is returned.
-addBlock :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m (Point blk)
+-- 'blockProcessed'). The new tip of the ChainDB is returned unless the thread adding the
+-- block died, in that case 'FailedToAddBlock' will be returned.
+--
+-- Note: this is a partial function, only to support tests.
+addBlock :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m (AddBlockResult blk)
 addBlock chainDB punish blk = do
     promise <- addBlockAsync chainDB punish blk
     atomically $ blockProcessed promise
 
 -- | Add a block synchronously. Variant of 'addBlock' that doesn't return the
 -- new tip of the ChainDB.
+--
+-- Note: this is a partial function, only to support tests.
 addBlock_ :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m ()
 addBlock_  = void ..: addBlock
 

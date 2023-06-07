@@ -426,7 +426,11 @@ run env@ChainDBEnv { varDB, .. } cmd =
     advanceAndAdd :: ChainDBState m blk -> SlotNo -> blk -> m (Point blk)
     advanceAndAdd ChainDBState { chainDB } newCurSlot blk = do
       atomically $ modifyTVar varCurSlot (max newCurSlot)
-      addBlock chainDB InvalidBlockPunishment.noPunishment blk
+      -- `blockProcessed` always returns 'Just'
+      res <- addBlock chainDB InvalidBlockPunishment.noPunishment blk
+      return $ case res of
+        FailedToAddBlock f       -> error $ "advanceAndAdd: block not added - " ++ f
+        SuccesfullyAddedBlock pt -> pt
 
     wipeVolatileDB :: ChainDBState m blk -> m (Point blk)
     wipeVolatileDB st = do

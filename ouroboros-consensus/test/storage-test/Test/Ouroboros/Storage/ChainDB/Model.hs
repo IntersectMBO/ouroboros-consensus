@@ -103,8 +103,8 @@ import           Ouroboros.Consensus.Protocol.MockChainSel
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      BlockComponent (..), ChainDbError (..),
                      InvalidBlockReason (..), IteratorResult (..),
-                     StreamFrom (..), StreamTo (..), UnknownRange (..),
-                     validBounds)
+                     AddBlockResult (..), StreamFrom (..), StreamTo (..),
+                     UnknownRange (..), validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (repeatedly)
@@ -560,7 +560,7 @@ addBlockPromise cfg blk m = (result, m')
                 && Map.member    (blockHash blk) (blocks m')
     result = AddBlockPromise
       { blockWrittenToDisk = return blockWritten
-      , blockProcessed     = return $ tipPoint m'
+      , blockProcessed     = return $ SuccesfullyAddedBlock $ tipPoint m'
       }
 
 {-------------------------------------------------------------------------------
