@@ -1045,30 +1045,34 @@ runDB standalone@DB{..} cmd =
 
     go :: SomeHasFS m -> Cmd DiskSnapshot -> m (Success DiskSnapshot)
     go _ Current =
-        atomically $ Ledger . DbChangelog.current <$> readTVar dbChlog
+        atomically $ Ledger . DbChangelog.current . anchorlessChangelog <$> readTVar dbChlog
     go _ (Push b) = do
         atomically $ modifyTVar dbBlocks $
           uncurry Map.insert (refValPair b)
         upd (push b) $ \db ->
           fmap (first annLedgerErr') $
             DbChangelog.defaultThrowLedgerErrors $
-              DbChangelog.push
+               onChangelogM (
+                DbChangelog.push
                 dbLedgerDbCfg
                 (DbChangelog.ApplyVal b)
-                (Trans.lift . reader)
-                db
+                (Trans.lift . reader)) db
+
     go _ (Switch n bs) = do
         atomically $ modifyTVar dbBlocks $
           repeatedly (uncurry Map.insert) (map refValPair bs)
         upd (switch n bs) $ \db ->
-          fmap (bimap annLedgerErr' ignoreExceedRollback) $
+          fmap (first annLedgerErr') $
             DbChangelog.defaultResolveWithErrors dbResolve $
-              DbChangelog.switch
-                dbLedgerDbCfg
-                n
-                (const $ pure ())
-                (map DbChangelog.ApplyVal bs)
-                (Trans.lift . Trans.lift . reader)
+             onChangelogM (
+                fmap ignoreExceedRollback .
+                DbChangelog.switch
+                  dbLedgerDbCfg
+                  n
+                  (const $ pure ())
+                  (map DbChangelog.ApplyVal bs)
+                  (Trans.lift . Trans.lift . reader)
+                )
                 db
 
     go _ Flush = do
@@ -1112,7 +1116,7 @@ runDB standalone@DB{..} cmd =
         atomically $ do
           modifyTVar dbChlog (const db)
           writeTVar dbBackingStore backingStore
-        return $ Restored (fromInitLog initLog, DbChangelog.current db)
+        return $ Restored (fromInitLog initLog, DbChangelog.current $ anchorlessChangelog db)
     go hasFS (Corrupt c ss) =
         catch
           (case c of
@@ -1128,7 +1132,7 @@ runDB standalone@DB{..} cmd =
         go hasFS Restore
     go hasFS g@(GetTablesAtFor pt keys) = do
         (bstore, lgrDb) <- atomically $ do
-          db :: DbChangelog' TestBlock <- readTVar dbChlog
+          db :: AnchorlessDbChangelog' TestBlock <- anchorlessChangelog <$> readTVar dbChlog
           bstore <- readTVar dbBackingStore
           pure (bstore, db)
         case DbChangelog.rollback pt lgrDb of

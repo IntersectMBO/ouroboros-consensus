@@ -3,8 +3,8 @@
 {-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
@@ -23,8 +23,6 @@ module Ouroboros.Consensus.NodeKernel (
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
   ) where
-
-
 
 import           Control.DeepSeq (force)
 import           Control.Monad
@@ -60,7 +58,9 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
 import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
@@ -239,7 +239,9 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
 
 forkBlockForging
     :: forall m addrNTN addrNTC blk.
-       (IOLike m, RunNode blk)
+       ( IOLike m
+       , RunNode blk
+       )
     => InternalState m addrNTN addrNTC blk
     -> BlockForging m blk
     -> m ()
@@ -254,7 +256,7 @@ forkBlockForging IS{..} blockForging =
         "NodeKernel.blockForging." <> Text.unpack (forgeLabel blockForging)
 
     go :: SlotNo -> WithEarlyExit m ()
-    go currentSlot = do
+    go currentSlot = withRegistry $ \reg -> do
       trace $ TraceStartLeadershipCheck currentSlot
 
       -- Figure out which block to connect to
@@ -282,11 +284,16 @@ forkBlockForging IS{..} blockForging =
       eLedgerDBView <- lift $ ChainDB.getLedgerDBViewAtPoint chainDB (Just bcPrevPoint)
       -- before 'earlyExit' we need to 'lbsvhClose' this value handle. Once we get
       -- a snapshot we can just close it.
-      (vh, ldb, unticked) <- case eLedgerDBView of
+      (vh, chdiffs, unticked) <- case eLedgerDBView of
         Left _ -> do
           trace $ TraceNoLedgerState currentSlot bcPrevPoint
           exitEarly
-        Right (vh, ldb) -> pure (vh, ldb, LedgerDB.current ldb)
+        Right (LedgerDBView { viewHandle, viewChangelog }) -> do
+          _ <- allocate reg (\_ -> pure viewHandle) (lift . lbsvhClose)
+          pure ( viewHandle
+               , adcDiffs         viewChangelog
+               , LedgerDB.current viewChangelog
+               )
 
       trace $ TraceLedgerState currentSlot bcPrevPoint
 
@@ -306,7 +313,7 @@ forkBlockForging IS{..} blockForging =
             -- produce a block in this case; we are most likely missing a blocks
             -- on our chain.
             trace $ TraceNoLedgerView currentSlot err
-            exitEarlyWith (lbsvhClose vh)
+            exitEarly
           Right lv ->
             return lv
 
@@ -336,13 +343,13 @@ forkBlockForging IS{..} blockForging =
         case shouldForge of
           ForgeStateUpdateError err -> do
             trace $ TraceForgeStateUpdateError currentSlot err
-            exitEarlyWith (lbsvhClose vh)
+            exitEarly
           CannotForge cannotForge -> do
             trace $ TraceNodeCannotForge currentSlot cannotForge
-            exitEarlyWith (lbsvhClose vh)
+            exitEarly
           NotLeader -> do
             trace $ TraceNodeNotLeader currentSlot
-            exitEarlyWith (lbsvhClose vh)
+            exitEarly
           ShouldForge p -> return p
 
       -- At this point we have established that we are indeed slot leader
@@ -376,10 +383,8 @@ forkBlockForging IS{..} blockForging =
                                   mempool
                                   currentSlot
                                   tickedLedgerState
-                                  ldb
+                                  chdiffs
                                   vh
-
-      lift $ lbsvhClose vh
 
       let txs = map fst $ snapshotTxs mempoolSnapshot
 

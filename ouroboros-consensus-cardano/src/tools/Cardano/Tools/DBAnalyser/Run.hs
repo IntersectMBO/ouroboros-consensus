@@ -110,6 +110,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               , limit = confLimit
               , tracer = analysisTracer
               , bstore = bs
+              , policy = defaultDiskPolicy (configSecurityParam cfg) DefaultSnapshotInterval
               }
             tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
             putStrLn $ "ImmutableDB tip: " ++ show tipPoint
@@ -126,6 +127,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               , limit = confLimit
               , tracer = analysisTracer
               , bstore = bs
+              , policy = defaultDiskPolicy (configSecurityParam cfg) DefaultSnapshotInterval
               }
             tipPoint <- atomically $ ChainDB.getTipPoint chainDB
             putStrLn $ "ChainDB tip: " ++ show tipPoint

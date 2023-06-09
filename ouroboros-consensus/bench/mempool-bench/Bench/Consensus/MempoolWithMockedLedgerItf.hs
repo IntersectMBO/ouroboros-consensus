@@ -84,17 +84,17 @@ openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
 
     -- Set up an empty changelog and populate it by applying blocks
     let ldb0 = empty $ Ledger.forgetLedgerTables backingState
-    ldb <- pushMany
+    ldb <- onChangelogM (pushMany
               (const $ pure ())
               ldbcfg
               (fmap ReapplyVal blks)
-              (LedgerDB.readKeySets lbs)
+              (LedgerDB.readKeySets lbs))
               ldb0
     dbVar <- newTVarIO ldb
     -- Create a ledger interface, mimicking @getLedgerTablesAtFor@ from the
     -- @ChainDB.Impl.LgrDB@ module.
     let ledgerItf = Mempool.LedgerInterface {
-            Mempool.getCurrentLedgerState = pure $ current ldb
+            Mempool.getCurrentLedgerState = pure $ current $ anchorlessChangelog ldb
           , Mempool.getLedgerTablesAtFor = \pt txs -> do
               let keys = foldMap' Ledger.getTransactionKeySets txs
               Query.getLedgerTablesAtFor pt keys dbVar lbs
