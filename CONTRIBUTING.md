@@ -13,7 +13,7 @@ proposals are welcome.
 
 We have two types of documentation:
 
-- Markdown files, which can be found in the [docs](docs/website/docs) directory.
+- Markdown files, which can be found in the [docs](docs/website/contents) directory.
   They contain information that is not strictly related to the code itself, such
   as getting started guides, references, tutorials, etc.
 - [Haddock][haddock-site] comments. They contain more low level information
@@ -22,7 +22,7 @@ We have two types of documentation:
 When adding or improving documentation about the implementation, it is
 preferable to add haddock comments since they are closer to the code. However
 not all documentation can be placed inside haddock comments, and in such cases
-the contributor can update the markdown files in [docs](docs/website/docs).
+the contributor can update the markdown files in [docs](docs/website/contents).
 
 This repository also contains a [technical report](docs/report) that describes
 the implementation of the Consensus layer. We will not update this report. We
@@ -129,7 +129,7 @@ will guide you through the process when reviewing your pull request.
 
 ## Following our git process
 
-Our [git process](docs/website/docs/GitProcess.md) describes the `git` practices we
+Our [git process](docs/website/contents/for-developers/GitProcess.md) describes the `git` practices we
 encourage when working with the code in this repository.
 
 ## Updating the documentation
@@ -139,7 +139,7 @@ documentation (see [this section](#documentation)).
 
 ## Following the style guide
 
-We have a [Haskell style guide](docs/website/docs/StyleGuide.md) that should be followed when
+We have a [Haskell style guide](docs/website/contents/for-developers/StyleGuide.md) that should be followed when
 writing code in Consensus. Our style guide is not set in stone, and improvements
 are always welcome.
 
@@ -171,12 +171,12 @@ frustrations later on in the process.
 
 We maintain a changelog. If your pull request requires a changelog entry, please
 follow [these
-instructions](docs/website/docs/ReleaseProcess.md#adding-a-changelog-fragment).
+instructions](docs/website/contents/for-developers/ReleaseProcess.md#adding-a-changelog-fragment).
 Even if your change doesn't require a changelog fragment, create an empty one as
 CI will reject your change otherwise. We made this choice to ensure authors of
 PRs would always take a moment to consider whether a changelog fragment should
 be added for their PR. For more information see [our release
-process](docs/website/docs/ReleaseProcess.md).
+process](docs/website/contents/for-developers/ReleaseProcess.md).
 
 When creating a pull-request (PR), it is **crucial** that the PR:
 

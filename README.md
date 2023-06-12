@@ -7,7 +7,7 @@
 
 [![docs](https://img.shields.io/badge/Documentation-yellow)](https://input-output-hk.github.io/ouroboros-consensus/)
 
-Implementation of the [Ouroboros-family](docs/website/docs/References.md) of consensus
+Implementation of the [Ouroboros-family](docs/website/README.md) of consensus
 algorithms.
 
 ## Libraries and executables
