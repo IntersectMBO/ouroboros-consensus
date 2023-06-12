@@ -429,23 +429,16 @@ instance MonadTimer.MonadDelay (OverrideDelay IO) where
 instance MonadDelay (OverrideDelay IO) where
   threadDelay d = OverrideDelay $ ReaderT $ \_schedule -> threadDelay d
 
-newtype OverrideDelaySTM m a = OverrideDelaySTM {
-      unOverrideDelaySTM :: ReaderT (StrictTVar m Schedule) (STM m) a
-    }
+newtype OverrideDelaySTM m a =
+    OverrideDelaySTM (ReaderT (StrictTVar m Schedule) (STM m) a)
 
 deriving instance Alternative (STM m) => Alternative (OverrideDelaySTM m)
 deriving instance Applicative (STM m) => Applicative (OverrideDelaySTM m)
 deriving instance Functor     (STM m) => Functor     (OverrideDelaySTM m)
 deriving instance Monad       (STM m) => Monad       (OverrideDelaySTM m)
 deriving instance MonadPlus   (STM m) => MonadPlus   (OverrideDelaySTM m)
-
-instance (MonadSTM m, MonadThrow (STM m)) => MonadThrow (OverrideDelaySTM m) where
-    throwIO = OverrideDelaySTM . lift . throwIO
-    bracket before after f =
-         OverrideDelaySTM $ ReaderT $ \schedule ->
-          bracket       (runReaderT (unOverrideDelaySTM  before)   schedule)
-                  (\a -> runReaderT (unOverrideDelaySTM (after a)) schedule)
-                  (\a -> runReaderT (unOverrideDelaySTM (f a))     schedule)
+deriving instance MonadThrow  (STM m) => MonadThrow  (OverrideDelaySTM m)
+deriving instance MonadCatch  (STM m) => MonadCatch  (OverrideDelaySTM m)
 
 instance MonadSTM m => MonadSTM (OverrideDelay m) where
   type STM   (OverrideDelay m) = OverrideDelaySTM m
