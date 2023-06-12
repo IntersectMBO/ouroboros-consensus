@@ -283,11 +283,5 @@ instance MonadEventlog m => MonadEventlog (WithEarlyExit m) where
 instance ( IOLike m
          , forall a. NoThunks (StrictTVar (WithEarlyExit m) a)
          , forall a. NoThunks (StrictSVar (WithEarlyExit m) a)
-           -- The simulator does not currently support @MonadCatch (STM m)@,
-           -- making this @IOLike@ instance applicable to @IO@ only. Once that
-           -- missing @MonadCatch@ instance is added, @IOLike@ should require
-           -- @MonadCatch (STM m)@ intsead of @MonadThrow (STM m)@.
-           -- <https://github.com/input-output-hk/ouroboros-network/issues/1461>
-         , MonadCatch (STM m)
          ) => IOLike (WithEarlyExit m) where
   forgetSignKeyKES = lift . forgetSignKeyKES
