@@ -45,8 +45,8 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts)
 import qualified Cardano.Ledger.Shelley.PParams as SL (emptyPPPUpdates)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
-import           Cardano.Ledger.UMap (UMap (..), rdReward, tripDelegation,
-                     tripReward)
+import           Cardano.Ledger.UMap (UMap (..), rdReward, umElemSPool,
+                     umElemRDPair)
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
@@ -589,9 +589,9 @@ getFilteredDelegationsAndRewardAccounts ss creds =
     UMap umElems _ = SL.dsUnified $ getDState ss
     umElemsRestricted = Map.restrictKeys umElems creds
 
-    filteredDelegations = Map.mapMaybe tripDelegation umElemsRestricted
+    filteredDelegations = Map.mapMaybe umElemSPool umElemsRestricted
     filteredRwdAcnts =
-      Map.mapMaybe (\e -> fromCompact . rdReward <$> tripReward e) umElemsRestricted
+      Map.mapMaybe (\e -> fromCompact . rdReward <$> umElemRDPair e) umElemsRestricted
 
 {-------------------------------------------------------------------------------
   Serialisation
