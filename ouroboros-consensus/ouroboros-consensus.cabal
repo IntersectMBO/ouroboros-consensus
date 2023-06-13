@@ -671,7 +671,7 @@ test-suite storage-test
     , directory
     , fingertree-rm                  >=1.0
     , fs-api
-    , fs-sim                    >=0.2
+    , fs-sim                         >=0.2
     , generics-sop
     , hashable
     , io-classes

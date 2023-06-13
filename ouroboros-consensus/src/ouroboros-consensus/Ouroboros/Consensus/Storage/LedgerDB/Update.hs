@@ -58,11 +58,10 @@ setCurrent v dblog =
           $ changelogLastFlushedState pruned
     in DbChangelog {
           changelogLastFlushedState = changelogLastFlushedState pruned
-        , anchorlessChangelog =
-            AnchorlessDbChangelog {
-              adcSlot = adcSlot $ anchorlessChangelog pruned
-            , adcStates = adcStates dblog
-            , adcDiffs =
+        , anchorlessChangelog       = AnchorlessDbChangelog {
+              adcLastFlushedSlot = adcLastFlushedSlot $ anchorlessChangelog pruned
+            , adcStates          = adcStates dblog
+            , adcDiffs           =
                 zipLedgerTables (f s) (adcDiffs $ anchorlessChangelog pruned) (adcDiffs dblog)
             }
         })

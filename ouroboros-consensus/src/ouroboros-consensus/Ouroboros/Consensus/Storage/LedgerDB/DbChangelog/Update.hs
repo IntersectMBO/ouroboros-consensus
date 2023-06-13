@@ -279,9 +279,9 @@ extend :: (GetTip l, HasLedgerTables l)
        -> AnchorlessDbChangelog l
 extend newState dblog =
   AnchorlessDbChangelog {
-      adcSlot   = adcSlot
-    , adcDiffs  = zipLedgerTables ext adcDiffs tablesDiff
-    , adcStates = adcStates AS.:> l'
+      adcLastFlushedSlot = adcLastFlushedSlot
+    , adcDiffs           = zipLedgerTables ext adcDiffs tablesDiff
+    , adcStates          = adcStates AS.:> l'
     }
   where
     slot = case getTipSlot l' of
@@ -300,7 +300,7 @@ extend newState dblog =
     tablesDiff = projectLedgerTables newState
 
     AnchorlessDbChangelog {
-        adcSlot
+        adcLastFlushedSlot
       , adcDiffs
       , adcStates
       } = dblog
@@ -475,9 +475,9 @@ splitForFlushing dblog =
     rdblog = DbChangelog {
         changelogLastFlushedState = newTip
       , anchorlessChangelog       = AnchorlessDbChangelog {
-            adcSlot   = getTipSlot newTip
-          , adcDiffs  = r
-          , adcStates = newStates
+            adcLastFlushedSlot = getTipSlot newTip
+          , adcDiffs           = r
+          , adcStates          = newStates
           }
       }
 

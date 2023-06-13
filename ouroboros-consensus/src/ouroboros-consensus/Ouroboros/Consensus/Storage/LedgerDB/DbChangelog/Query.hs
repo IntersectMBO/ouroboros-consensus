@@ -101,13 +101,13 @@ rollbackToPoint pt dblog = do
     let ndropped = AS.length adcStates - AS.length vol'
         diffs'   = mapLedgerTables (trunc ndropped) adcDiffs
     Exn.assert (ndropped >= 0) $ pure AnchorlessDbChangelog {
-          adcSlot
+          adcLastFlushedSlot
         , adcDiffs  = diffs'
         , adcStates = vol'
         }
   where
     AnchorlessDbChangelog {
-        adcSlot
+        adcLastFlushedSlot
       , adcDiffs
       , adcStates
       } = dblog
@@ -117,13 +117,13 @@ rollbackToAnchor ::
   => AnchorlessDbChangelog l -> AnchorlessDbChangelog l
 rollbackToAnchor dblog =
     AnchorlessDbChangelog {
-        adcSlot
+        adcLastFlushedSlot
       , adcDiffs  = diffs'
       , adcStates = AS.Empty (AS.anchor vol)
       }
   where
     AnchorlessDbChangelog {
-        adcSlot
+        adcLastFlushedSlot
       , adcDiffs
       , adcStates = vol
       } = dblog

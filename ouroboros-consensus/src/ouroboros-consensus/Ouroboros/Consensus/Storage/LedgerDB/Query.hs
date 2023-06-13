@@ -96,11 +96,11 @@ acquireLDBReadView p dbvar lock (LedgerBackingStore bs) stmAct =
      -> m (LedgerDBView' m blk)
    acquire l = do
      (slot, vh) <- bsValueHandle bs
-     if slot == adcSlot l
+     if slot == adcLastFlushedSlot l
        then pure $ LedgerDBView (LedgerBackingStoreValueHandle slot vh) l
        else error ("Critical error: Value handles are created at "
                    <> show slot
                    <> " while the db changelog is at "
-                   <> show (adcSlot l)
+                   <> show (adcLastFlushedSlot l)
                    <> ". There is either a race condition or a logic bug"
                   )

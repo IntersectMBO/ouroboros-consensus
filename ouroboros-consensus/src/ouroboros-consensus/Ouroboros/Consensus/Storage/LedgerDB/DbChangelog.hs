@@ -122,17 +122,17 @@ deriving instance (Show     (LedgerTables l SeqDiffMK), Show     (l EmptyMK))
 data AnchorlessDbChangelog l = AnchorlessDbChangelog {
     -- | Slot of the last flushed changelog state from which this variant
     -- originated. Used just for asserting correctness when forwarding
-    adcSlot   :: !(WithOrigin SlotNo)
+    adcLastFlushedSlot :: !(WithOrigin SlotNo)
     -- | The sequence of differences between the last flushed state
     -- ('changelogLastFlushedState') and the tip of the volatile sequence
     -- ('adcStates').
-  , adcDiffs  :: !(LedgerTables l SeqDiffMK)
+  , adcDiffs           :: !(LedgerTables l SeqDiffMK)
     -- | The volatile sequence of states.
     --
     -- The anchor of this sequence is the immutable tip, so whenever we flush,
     -- we should do so up until that point. The length of this sequence will be
     -- @k@ except in abnormal circumstances like rollbacks or data corruption.
-  , adcStates :: !(StatesSequence l)
+  , adcStates          :: !(StatesSequence l)
   } deriving (Generic)
 
 deriving instance (Eq       (LedgerTables l SeqDiffMK), Eq       (l EmptyMK))
@@ -180,9 +180,9 @@ empty theAnchor =
     DbChangelog {
         changelogLastFlushedState = theAnchor
         , anchorlessChangelog     = AnchorlessDbChangelog {
-              adcSlot   = pointSlot $ getTip theAnchor
-            , adcDiffs  = pureLedgerTables (SeqDiffMK DS.empty)
-            , adcStates = AS.Empty theAnchor
+              adcLastFlushedSlot = pointSlot $ getTip theAnchor
+            , adcDiffs           = pureLedgerTables (SeqDiffMK DS.empty)
+            , adcStates          = AS.Empty theAnchor
             }
       }
 

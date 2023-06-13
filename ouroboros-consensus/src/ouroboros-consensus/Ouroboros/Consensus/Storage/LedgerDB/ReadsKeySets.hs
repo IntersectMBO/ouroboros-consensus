@@ -42,7 +42,7 @@ rewindTableKeySets :: AnchorlessDbChangelog l
                    -> LedgerTables l KeysMK
                    -> RewoundTableKeySets l
 rewindTableKeySets =
-    RewoundTableKeySets . adcSlot
+    RewoundTableKeySets . adcLastFlushedSlot
 
 {-------------------------------------------------------------------------------
   Read
@@ -180,5 +180,5 @@ forwardTableKeySets ::
             (LedgerTables l ValuesMK)
 forwardTableKeySets dblog =
   forwardTableKeySets'
-    (adcSlot dblog)
+    (adcLastFlushedSlot dblog)
     (adcDiffs dblog)
