@@ -44,6 +44,10 @@ type View m b blk =
      (Point blk)
      (LedgerDBView' m blk))
 
+{-------------------------------------------------------------------------------
+  The LedgerDB API
+-------------------------------------------------------------------------------}
+
 data LedgerDB m blk = LedgerDB {
     -- | Set the current DbChangelog in the LedgerDB.
     setCurrent            :: AnchorlessDbChangelog' blk -> STM m ()

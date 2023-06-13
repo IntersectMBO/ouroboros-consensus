@@ -120,11 +120,12 @@ reference cfg (ClockSkew clockSkew) SystemTime{..} = CheckInFuture {
         -- summary can be used to check all of the blocks in the fragment
         return $
           checkFragment
-            (hardForkSummary cfg (ledgerState $ either id id $ AS.head $ adcStates $ VF.validatedLedger validated))
+            (hardForkSummary cfg (st validated))
             now
             (VF.validatedFragment validated)
     }
   where
+    st = ledgerState . AS.headAnchor . adcStates . VF.validatedLedger
     checkFragment :: HF.Summary (HardForkIndices blk)
                   -> RelativeTime
                   -> AnchoredFragment (Header blk)

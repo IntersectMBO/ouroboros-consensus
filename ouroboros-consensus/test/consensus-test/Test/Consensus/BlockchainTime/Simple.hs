@@ -376,8 +376,8 @@ deriving via AllowThunk (OverrideDelay s a)
 deriving via AllowThunk (StrictTVar (OverrideDelay s) a)
          instance NoThunks (StrictTVar (OverrideDelay s) a)
 
-deriving via AllowThunk (StrictMVar (OverrideDelay s) a)
-         instance NoThunks (StrictMVar (OverrideDelay s) a)
+deriving via AllowThunk (StrictSVar (OverrideDelay s) a)
+         instance NoThunks (StrictSVar (OverrideDelay s) a)
 
 instance MonadTimer.MonadDelay (OverrideDelay (IOSim s)) where
   threadDelay d = OverrideDelay $ ReaderT $ \schedule -> do
@@ -429,47 +429,16 @@ instance MonadTimer.MonadDelay (OverrideDelay IO) where
 instance MonadDelay (OverrideDelay IO) where
   threadDelay d = OverrideDelay $ ReaderT $ \_schedule -> threadDelay d
 
-newtype OverrideDelaySTM m a = OverrideDelaySTM {
-      unOverrideDelaySTM :: ReaderT (StrictTVar m Schedule) (STM m) a
-    }
+newtype OverrideDelaySTM m a =
+    OverrideDelaySTM (ReaderT (StrictTVar m Schedule) (STM m) a)
 
 deriving instance Alternative (STM m) => Alternative (OverrideDelaySTM m)
 deriving instance Applicative (STM m) => Applicative (OverrideDelaySTM m)
 deriving instance Functor     (STM m) => Functor     (OverrideDelaySTM m)
 deriving instance Monad       (STM m) => Monad       (OverrideDelaySTM m)
 deriving instance MonadPlus   (STM m) => MonadPlus   (OverrideDelaySTM m)
-
-instance ( MonadSTM m
-         , MonadCatch (STM m)
-         ) => MonadCatch (OverrideDelaySTM m) where
-  catch
-    o hd = OverrideDelaySTM $ ReaderT $ \schedule -> do
-      catch (runReaderT (unOverrideDelaySTM o) schedule) (flip runReaderT schedule . unOverrideDelaySTM . fromHandler hd)
-   where
-      -- Get a total handler from the given handler
-      fromHandler :: Exception e
-                  => (e -> OverrideDelaySTM m a)
-                  -> SomeException
-                  -> OverrideDelaySTM m a
-      fromHandler h e = case fromException e of
-        Nothing -> throwIO e  -- Rethrow the exception if handler does not handle it.
-        Just e' -> h e'
-
-  generalBracket acquire rel use = do
-    resource <- acquire
-    b <- use resource `catch` \e -> do
-      _ <- rel resource (ExitCaseException e)
-      throwIO e
-    c <- rel resource (ExitCaseSuccess b)
-    return (b, c)
-
-instance (MonadSTM m, MonadThrow (STM m)) => MonadThrow (OverrideDelaySTM m) where
-    throwIO = OverrideDelaySTM . lift . throwIO
-    bracket before after f =
-         OverrideDelaySTM $ ReaderT $ \schedule ->
-          bracket       (runReaderT (unOverrideDelaySTM  before)   schedule)
-                  (\a -> runReaderT (unOverrideDelaySTM (after a)) schedule)
-                  (\a -> runReaderT (unOverrideDelaySTM (f a))     schedule)
+deriving instance MonadThrow  (STM m) => MonadThrow  (OverrideDelaySTM m)
+deriving instance MonadCatch  (STM m) => MonadCatch  (OverrideDelaySTM m)
 
 instance MonadSTM m => MonadSTM (OverrideDelay m) where
   type STM   (OverrideDelay m) = OverrideDelaySTM m
@@ -583,7 +552,7 @@ instance (MonadAsync m, MonadMask m, MonadThrow (STM m)) => MonadAsync (Override
   waitCatchSTM = OverrideDelaySTM . lift . waitCatchSTM . unOverrideDelayAsync
   pollSTM      = OverrideDelaySTM . lift . pollSTM . unOverrideDelayAsync
 
-instance (IOLike m, MonadDelay (OverrideDelay m), MonadCatch (OverrideDelaySTM m)) => IOLike (OverrideDelay m) where
+instance (IOLike m, MonadDelay (OverrideDelay m)) => IOLike (OverrideDelay m) where
   forgetSignKeyKES = OverrideDelay . lift . forgetSignKeyKES
 
 overrideDelay :: UTCTime

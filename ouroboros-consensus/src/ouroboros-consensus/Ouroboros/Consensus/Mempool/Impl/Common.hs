@@ -65,7 +65,8 @@ import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
                      (PointNotFound)
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util (repeatedly)
-import           Ouroboros.Consensus.Util.IOLike hiding (newMVar)
+import           Ouroboros.Consensus.Util.IOLike
+
 {-------------------------------------------------------------------------------
   Internal State
 -------------------------------------------------------------------------------}

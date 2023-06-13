@@ -28,6 +28,7 @@ module Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Lockstep (
   ) where
 
 import           Cardano.Slotting.Slot
+import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.IOSim

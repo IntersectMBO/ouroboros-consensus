@@ -152,7 +152,7 @@ newWithDelay :: (IOLike m, HasCallStack)
              -> m (LogicalClock m)
 newWithDelay registry (NumTicks numTicks) tickLen = do
     current <- newTVarIO 0
-    done    <- newEmptyMVar ()
+    done    <- newEmptySVar ()
     _thread <- forkThread registry "ticker" $ do
                  -- Tick 0 is the first tick, so increment @numTicks - 1@ times
                  replicateM_ (fromIntegral numTicks - 1) $ do
@@ -163,11 +163,11 @@ newWithDelay registry (NumTicks numTicks) tickLen = do
                  -- Give tests that need to do some final processing on the last
                  -- tick a chance to do that before we indicate completion.
                  threadDelay (nominalDelay tickLen)
-                 putMVar done ()
+                 putSVar done ()
 
     return LogicalClock {
         getCurrentTick = Tick <$> readTVar current
-      , waitUntilDone  = readMVar done
+      , waitUntilDone  = readSVar done
       , mockSystemTime = BTime.SystemTime {
             BTime.systemTimeCurrent = do
               tick <- atomically $ readTVar current

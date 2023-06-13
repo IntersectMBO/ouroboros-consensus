@@ -74,11 +74,10 @@ class ( MonadAsync              m
       , MonadMonotonicTime      m
       , MonadEvaluate           m
       , Alternative        (STM m)
-      , MonadThrow         (STM m)
       , MonadCatch         (STM m)
       , forall a. NoThunks (m a)
       , forall a. NoThunks a => NoThunks (StrictTVar m a)
-      , forall a. NoThunks a => NoThunks (StrictMVar m a)
+      , forall a. NoThunks a => NoThunks (StrictSVar m a)
       ) => IOLike m where
   -- | Securely forget a KES signing key.
   --

@@ -213,7 +213,7 @@ mkLedgerDB st args getBlock = do
     , validate = \ldbh chg cache rb tr hs -> getState h $ \st' ->
         Update.validate (varPrevApplied st') getBlock cfg ldbh chg cache rb tr hs
 
-    , tryTakeSnapshot = \mTime nrBlocks -> getState h $ \st' ->
+    , tryTakeSnapshot = getState2 h $ \st' mTime nrBlocks ->
         if onDiskShouldTakeSnapshot policy (uncurry diffTime <$> mTime) nrBlocks then do
           void $ Snapshots.takeSnapshot
                    (ldbChangelog st')

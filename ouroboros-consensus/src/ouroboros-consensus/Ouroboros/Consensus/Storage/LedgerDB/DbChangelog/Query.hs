@@ -97,19 +97,19 @@ rollbackToPoint pt dblog = do
       AS.rollback
         (pointSlot pt)
         ((== pt) . getTip . either id id)
-        vol
-    let ndropped = AS.length vol - AS.length vol'
+        adcStates
+    let ndropped = AS.length adcStates - AS.length vol'
         diffs'   = mapLedgerTables (trunc ndropped) adcDiffs
     Exn.assert (ndropped >= 0) $ pure AnchorlessDbChangelog {
           adcSlot
-        , adcDiffs          = diffs'
+        , adcDiffs  = diffs'
         , adcStates = vol'
         }
   where
     AnchorlessDbChangelog {
         adcSlot
       , adcDiffs
-      , adcStates = vol
+      , adcStates
       } = dblog
 
 rollbackToAnchor ::
@@ -118,7 +118,7 @@ rollbackToAnchor ::
 rollbackToAnchor dblog =
     AnchorlessDbChangelog {
         adcSlot
-      , adcDiffs          = diffs'
+      , adcDiffs  = diffs'
       , adcStates = AS.Empty (AS.anchor vol)
       }
   where
@@ -137,7 +137,6 @@ trunc ::
   => Int -> SeqDiffMK k v -> SeqDiffMK k v
 trunc n (SeqDiffMK sq) =
   SeqDiffMK $ fst $ splitAtFromEnd n sq
-
 
 -- | Get a prefix of the DbChangelog that ends at the given point
 --

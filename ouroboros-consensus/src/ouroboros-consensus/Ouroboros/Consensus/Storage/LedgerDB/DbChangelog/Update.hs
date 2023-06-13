@@ -147,7 +147,7 @@ applyBlock cfg ap ksReader db = case ap of
     l = Query.current db
 
     withValues :: blk -> (l ValuesMK -> m (l DiffMK)) -> m (l DiffMK)
-    withValues blk = withKeysReadSets l ksReader db (getBlockKeySets blk)
+    withValues = withKeysReadSets l ksReader db . getBlockKeySets
 
 {-------------------------------------------------------------------------------
   Resolving blocks maybe from disk
@@ -243,13 +243,9 @@ volatileStatesBimap f g =
 -- excluding the one stored at the anchor.
 prune :: GetTip l => SecurityParam -> AnchorlessDbChangelog l -> AnchorlessDbChangelog l
 prune (SecurityParam k) dblog =
-    dblog {
-        adcStates = vol'
-      }
+    dblog { adcStates = vol' }
   where
-    AnchorlessDbChangelog {
-        adcStates
-      } = dblog
+    AnchorlessDbChangelog { adcStates } = dblog
 
     nvol = AS.length adcStates
 
@@ -283,11 +279,9 @@ extend :: (GetTip l, HasLedgerTables l)
        -> AnchorlessDbChangelog l
 extend newState dblog =
   AnchorlessDbChangelog {
-      adcSlot = adcSlot
-    , adcDiffs          =
-        zipLedgerTables ext adcDiffs tablesDiff
-    , adcStates =
-        adcStates AS.:> l'
+      adcSlot   = adcSlot
+    , adcDiffs  = zipLedgerTables ext adcDiffs tablesDiff
+    , adcStates = adcStates AS.:> l'
     }
   where
     slot = case getTipSlot l' of
@@ -325,15 +319,13 @@ rollbackN ::
 rollbackN n dblog
     | n <= Query.maxRollback dblog
     = Just $ dblog {
-        adcDiffs          = mapLedgerTables trunc adcDiffs
+        adcDiffs  = mapLedgerTables trunc adcDiffs
       , adcStates = AS.dropNewest (fromIntegral n) adcStates
       }
     | otherwise
     = Nothing
   where
-    trunc ::
-      (Ord k, Eq v)
-      => SeqDiffMK k v -> SeqDiffMK k v
+    trunc :: (Ord k, Eq v) => SeqDiffMK k v -> SeqDiffMK k v
     trunc (SeqDiffMK sq) =
       SeqDiffMK $ fst $ DS.splitAtFromEnd (fromIntegral n) sq
 
@@ -360,7 +352,10 @@ data ExceededRollback = ExceededRollback {
 
 push :: (ApplyBlock l blk, Monad m, c)
      => LedgerDbCfg l
-     -> Ap m l blk c -> KeySetsReader m l -> AnchorlessDbChangelog l -> m (AnchorlessDbChangelog l)
+     -> Ap m l blk c
+     -> KeySetsReader m l
+     ->    AnchorlessDbChangelog l
+     -> m (AnchorlessDbChangelog l)
 push cfg ap ksReader db =
     (\current' -> pushLedgerState (ledgerDbCfgSecParam cfg) current' db) <$>
       applyBlock (ledgerDbCfg cfg) ap ksReader db
@@ -434,9 +429,10 @@ splitForFlushing dblog =
   where
     DbChangelog {
         changelogLastFlushedState
-      , anchorlessChangelog = AnchorlessDbChangelog { adcDiffs
-                                        , adcStates
-                                        }
+      , anchorlessChangelog = AnchorlessDbChangelog {
+            adcDiffs
+          , adcStates
+          }
       } = dblog
 
     immTip = AS.anchor adcStates
@@ -455,8 +451,8 @@ splitForFlushing dblog =
           else (Nothing, sq)
 
     lr = mapLedgerTables (uncurry Pair2 . splitSeqDiff) adcDiffs
-    l = mapLedgerTables (\(Pair2 x _) -> x) lr
-    r = mapLedgerTables (\(Pair2 _ y) -> y) lr
+    l  = mapLedgerTables (\(Pair2 x _) -> x) lr
+    r  = mapLedgerTables (\(Pair2 _ y) -> y) lr
 
     (newTip, newStates) =
         if getAll $ foldLedgerTables (\(SeqDiffMK sq) -> All $ 0 == DS.length sq) l
@@ -478,10 +474,10 @@ splitForFlushing dblog =
 
     rdblog = DbChangelog {
         changelogLastFlushedState = newTip
-      , anchorlessChangelog = AnchorlessDbChangelog {
-            adcSlot = getTipSlot newTip
-          , adcDiffs = r
-          , adcStates   = newStates
+      , anchorlessChangelog       = AnchorlessDbChangelog {
+            adcSlot   = getTipSlot newTip
+          , adcDiffs  = r
+          , adcStates = newStates
           }
       }
 

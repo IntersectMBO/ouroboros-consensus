@@ -81,3 +81,12 @@ package text-short
 package quickcheck-state-machine
   constraints:
     ansi-wl-pprint < 1.0
+
+-- TODO: remove when a new version of strict-mvar is released
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/io-sim
+  tag: ec202298c420378ef90b3fc0126c39e0f52290a3
+  --sha256: 1p6pn83kwp66x2m0cw9a27blfcpmw0lrra72qd0pi5bj3v1bcrl9
+  subdir:
+    strict-mvar

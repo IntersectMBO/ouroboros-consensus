@@ -66,7 +66,7 @@ invariant (ValidatedFragment fragment ledger)
     = Right ()
   where
    ledgerTip, headPoint :: Point b
-   ledgerTip = castPoint $ getTip $ either id id $ AS.head $ adcStates ledger
+   ledgerTip = castPoint $ getTip $ AS.headAnchor $ adcStates ledger
    headPoint = castPoint $ AF.headPoint fragment
 
 -- | Constructor for 'ValidatedFragment' that checks the invariant

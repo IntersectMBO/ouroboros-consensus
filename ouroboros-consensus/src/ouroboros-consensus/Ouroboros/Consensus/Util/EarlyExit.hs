@@ -40,8 +40,8 @@ import           Data.Function (on)
 import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
-import           Ouroboros.Consensus.Util.IOLike (IOLike (..), StrictMVar,
-                     StrictTVar, castStrictMVar, castStrictTVar)
+import           Ouroboros.Consensus.Util.IOLike (IOLike (..), StrictSVar,
+                     StrictTVar, castStrictSVar, castStrictTVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions
@@ -64,11 +64,11 @@ instance NoThunks (StrictTVar m a)
   wNoThunks ctxt tv = do
       wNoThunks ctxt (castStrictTVar tv :: StrictTVar m a)
 
-instance NoThunks (StrictMVar m a)
-      => NoThunks (StrictMVar (WithEarlyExit m) a) where
-  showTypeOf _ = "StrictMVar (WithEarlyExit m)"
+instance NoThunks (StrictSVar m a)
+      => NoThunks (StrictSVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictSVar (WithEarlyExit m)"
   wNoThunks ctxt tv = do
-      wNoThunks ctxt (castStrictMVar tv :: StrictMVar m a)
+      wNoThunks ctxt (castStrictSVar tv :: StrictSVar m a)
 
 -- | Internal only
 earlyExit :: m (Maybe a) -> WithEarlyExit m a

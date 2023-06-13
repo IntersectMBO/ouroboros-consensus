@@ -2,13 +2,11 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
@@ -368,8 +366,7 @@ mkDiskLedgerView h@(LedgerDBView lvh ldb) =
               maxDeletes = maybe 0 getMax
                          $ foldLedgerTables (Just . Max . numDeletesDiffMK) diffs
               nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
-          let LedgerBackingStoreValueHandle _ vh = lvh
-          values <- BackingStore.bsvhRangeRead vh (rq{BackingStore.rqCount = nrequested})
+          values <- BackingStore.lbsvhRangeRead lvh (rq{BackingStore.rqCount = nrequested})
           pure $ zipLedgerTables (doFixupReadResult nrequested) diffs values
       )
       (closeLedgerDBView h)

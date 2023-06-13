@@ -285,14 +285,14 @@ data ThreadInstr m :: Type -> Type where
   -- | Raise an exception in the thread
   ThreadCrash :: ThreadInstr m ()
 
--- | Instruction along with an MVar for the result
-data QueuedInstr m = forall a. QueuedInstr (ThreadInstr m a) (StrictMVar m a)
+-- | Instruction along with an SVar for the result
+data QueuedInstr m = forall a. QueuedInstr (ThreadInstr m a) (StrictSVar m a)
 
 runInThread :: IOLike m => TestThread m -> ThreadInstr m a -> m a
 runInThread TestThread{..} instr = do
-    result <- uncheckedNewEmptyMVar (error "no result yet")
+    result <- uncheckedNewEmptySVar (error "no result yet")
     atomically $ writeTQueue threadComms (QueuedInstr instr result)
-    takeMVar result
+    takeSVar result
 
 instance (IOLike m) => Show (TestThread m) where
   show TestThread{..} = "<Thread " ++ show (threadId testThread) ++ ">"
@@ -312,7 +312,7 @@ newThread :: forall m. IOLike m
           -> m (TestThread m)
 newThread alive parentReg = \shouldLink -> do
     comms      <- atomically $ newTQueue
-    spawned    <- uncheckedNewEmptyMVar (error "no thread spawned yet")
+    spawned    <- uncheckedNewEmptySVar (error "no thread spawned yet")
 
     thread <- forkThread parentReg "newThread" $
                 withRegistry $ \childReg ->
@@ -330,15 +330,15 @@ newThread alive parentReg = \shouldLink -> do
 
     -- Make sure to register thread before starting it
     atomically $ modifyTVar alive (testThread:)
-    putMVar spawned testThread
+    putSVar spawned testThread
     return testThread
   where
     threadBody :: ResourceRegistry m
-               -> StrictMVar m (TestThread m)
+               -> StrictSVar m (TestThread m)
                -> TQueue m (QueuedInstr m)
                -> m ()
     threadBody childReg spawned comms = do
-        us <- readMVar spawned
+        us <- readSVar spawned
         loop us `finally` (atomically $ modifyTVar alive (delete us))
       where
         loop :: TestThread m -> m ()
@@ -347,12 +347,12 @@ newThread alive parentReg = \shouldLink -> do
           case instr of
             ThreadFork linked -> do
               child <- newThread alive childReg (const us <$> linked)
-              putMVar result child
+              putSVar result child
               loop us
             ThreadTerminate -> do
-              putMVar result ()
+              putSVar result ()
             ThreadCrash -> do
-              putMVar result ()
+              putSVar result ()
               error "crashing"
 
 runIO :: forall m. (IOLike m, MonadTimer m)

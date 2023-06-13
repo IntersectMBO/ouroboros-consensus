@@ -33,12 +33,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   , castLedgerBackingStoreValueHandle
   , lbsValueHandle
   , lbsvhClose
+  , lbsvhRangeRead
   , lbsvhRead
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
 import           GHC.Generics (Generic)
-import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
@@ -66,7 +66,7 @@ data BackingStore m keys values diff = BackingStore {
   , bsCopy        :: !(FS.SomeHasFS m -> BackingStorePath -> m ())
     -- | Open a 'BackingStoreValueHandle' capturing the current value of the
     -- entire database
-  , bsValueHandle :: !(HasCallStack => m (WithOrigin SlotNo, BackingStoreValueHandle m keys values))
+  , bsValueHandle :: !(m (WithOrigin SlotNo, BackingStoreValueHandle m keys values))
     -- | Apply a valid diff to the contents of the backing store
   , bsWrite       :: !(SlotNo -> diff -> m ())
   }
@@ -181,7 +181,7 @@ newtype LedgerBackingStore m l = LedgerBackingStore
   deriving newtype (NoThunks)
 
 lbsValueHandle ::
-     (HasCallStack, IOLike m)
+     IOLike m
   => LedgerBackingStore m l
   -> m (LedgerBackingStoreValueHandle m l)
 lbsValueHandle (LedgerBackingStore bstore) =
@@ -208,6 +208,12 @@ lbsvhRead :: Functor m
           -> LedgerTables l KeysMK
           -> m (WithOrigin SlotNo, LedgerTables l ValuesMK)
 lbsvhRead (LedgerBackingStoreValueHandle s vh) = fmap (s,) . bsvhRead vh
+
+lbsvhRangeRead :: LedgerBackingStoreValueHandle m l
+               -> RangeQuery (LedgerTables l KeysMK)
+               -> m (LedgerTables l ValuesMK)
+lbsvhRangeRead (LedgerBackingStoreValueHandle _ vh) =
+  bsvhRangeRead vh
 
 castLedgerBackingStoreValueHandle ::
      Functor m

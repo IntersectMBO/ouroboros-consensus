@@ -226,7 +226,7 @@ data ChainDbEnv m blk = CDB
     -- not when hashes are garbage-collected from the map.
   , cdbNextIteratorKey :: !(StrictTVar m IteratorKey)
   , cdbNextFollowerKey :: !(StrictTVar m FollowerKey)
-  , cdbCopyLock        :: !(StrictMVar m ())
+  , cdbCopyLock        :: !(StrictSVar m ())
     -- ^ Lock used to ensure that 'copyToImmutableDB' is not executed more than
     -- once concurrently.
     --

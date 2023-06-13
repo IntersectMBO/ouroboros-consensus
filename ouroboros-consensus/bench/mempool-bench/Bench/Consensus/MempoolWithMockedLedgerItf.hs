@@ -131,9 +131,9 @@ addTx = Mempool.addTx . getMempool
 
 removeTxs ::
      MempoolWithMockedLedgerItf m blk
-  -> [Ledger.GenTxId blk]
+  -> NE.NonEmpty (Ledger.GenTxId blk)
   -> m ()
-removeTxs m = Mempool.removeTxs (getMempool m) .  NE.fromList
+removeTxs = Mempool.removeTxs . getMempool
 
 getTxs ::
      (Ledger.LedgerSupportsMempool blk)

@@ -161,7 +161,6 @@ putBS ::
   -> v
   -> Transaction ReadWrite ()
 putBS (CodecMK _ encVal _ _) (Internal.Db _ dbi) keyBS value = Internal.Txn $ \txn ->
-  -- Debug.trace ("Writing entry for: " <> show keyBS) $
   Internal.marshalOutBS keyBS $ \kval -> do
     let valueLBS = serialiseLBS encVal value
         sz = fromIntegral (LBS.length valueLBS)
@@ -174,10 +173,7 @@ delete ::
   -> Database k v
   -> k
   -> Transaction ReadWrite Bool
-delete (CodecMK encKey _ _ _) db k =
-  let bs = serialiseBS encKey k
-  in -- Debug.trace ("Deleting entry for: " <> show bs) $
-  deleteBS db bs
+delete (CodecMK encKey _ _ _) db = deleteBS db . serialiseBS encKey
 
 deleteBS :: Database k v -> BS.ByteString -> Transaction ReadWrite Bool
 deleteBS = Internal.deleteBS

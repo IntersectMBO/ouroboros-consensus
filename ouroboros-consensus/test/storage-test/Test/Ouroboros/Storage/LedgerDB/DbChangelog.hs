@@ -217,7 +217,7 @@ prop_extendingAdvancesTipOfVolatileStates setup =
     dblog  = resultingDbChangelog setup
     state  = nextState dblog
     dblog' = DbChangelog.onChangelog (DbChangelog.extend state) dblog
-    new    = either id id $ AS.head (DbChangelog.adcStates $ anchorlessChangelog dblog')
+    new    = AS.headAnchor (DbChangelog.adcStates $ anchorlessChangelog dblog')
 
 -- | Rolling back n extensions is the same as doing nothing.
 prop_rollbackAfterExtendIsNoop :: DbChangelogTestSetup -> Positive Int -> Property
