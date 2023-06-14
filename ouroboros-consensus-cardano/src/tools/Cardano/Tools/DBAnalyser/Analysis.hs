@@ -473,7 +473,7 @@ traceLedgerProcessing ::
   ) =>
   Analysis blk
 traceLedgerProcessing
-  (AnalysisEnv {db, registry, initLedger, cfg, limit, bstore}) = do
+  (AnalysisEnv {db, registry, initLedger, cfg, limit, policy, bstore}) = do
     void $ processAll db registry GetBlock initLedger limit (DbChangelog.empty initLedger) process
     pure Nothing
   where
@@ -488,7 +488,7 @@ traceLedgerProcessing
               HasAnalysis.WithLedgerState blk (ledgerState (DbChangelog.current $ anchorlessChangelog oldLedger)) (ledgerState (DbChangelog.current $ anchorlessChangelog ldb'))
       mapM_ Debug.traceMarkerIO traces
 
-      if unBlockNo (blockNo blk) `mod` 100 == 0
+      if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
       then do
         let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
         mapM_ (flushIntoBackingStore bstore) toFlush
@@ -518,7 +518,7 @@ benchmarkLedgerOps ::
      , LedgerSupportsProtocol blk
      )
   => Maybe FilePath -> Analysis blk
-benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, bstore} =
+benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, policy, bstore} =
     withFile mOutfile $ \outFileHandle -> do
       let line = Builder.run $ showHeaders separator
                              <> separator
@@ -573,7 +573,7 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, b
                  . DbChangelog.extend st) ldb
 
         (ldb'', tFlush) <-
-          if unBlockNo (blockNo blk) `mod` 100 == 0
+          if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
           then do
             let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
             ((), tFlush) <- time $ mapM_ (flushIntoBackingStore bstore) toFlush
@@ -730,6 +730,7 @@ reproMempoolForge numBlks env = do
     , registry
     , limit
     , tracer
+    , policy
     , bstore
     } = env
 
@@ -802,7 +803,7 @@ reproMempoolForge numBlks env = do
           -- doing this sharing optimization?
           ldb' <- onChangelogM (DbChangelog.push (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
           ldb'' <-
-            if unBlockNo (blockNo blk) `mod` 100 == 0
+            if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
             then do
               let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
               mapM_ (flushIntoBackingStore bstore) toFlush

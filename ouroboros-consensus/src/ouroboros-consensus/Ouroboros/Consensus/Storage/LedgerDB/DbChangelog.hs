@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
@@ -44,6 +45,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (
   , AnchorlessDbChangelog'
   , onChangelog
   , onChangelogM
+    -- * Mapping
+  , mapAnchorlessDbChangelog
+  , mapDbChangelog
   ) where
 
 import           Cardano.Slotting.Slot
@@ -116,6 +120,20 @@ deriving instance (NoThunks (LedgerTables l SeqDiffMK), NoThunks (l EmptyMK))
 deriving instance (Show     (LedgerTables l SeqDiffMK), Show     (l EmptyMK))
                =>  Show     (DbChangelog l)
 
+mapDbChangelog :: GetTip l'
+               => (l EmptyMK -> l' EmptyMK)
+               -> (LedgerTables l SeqDiffMK -> LedgerTables l' SeqDiffMK)
+               -> DbChangelog l
+               -> DbChangelog l'
+mapDbChangelog mapState mapTable dblog =
+  DbChangelog {
+      changelogLastFlushedState = mapState changelogLastFlushedState
+    , anchorlessChangelog       =
+        mapAnchorlessDbChangelog mapState mapTable anchorlessChangelog
+    }
+  where
+    DbChangelog { changelogLastFlushedState, anchorlessChangelog } = dblog
+
 -- | A 'DbChangelog' variant that contains only the information in memory. To
 -- perform reads of Ledger Tables, this needs to be coupled with a
 -- BackingStoreValueHandle as done in 'LedgerDBView'.
@@ -141,6 +159,20 @@ deriving instance (NoThunks (LedgerTables l SeqDiffMK), NoThunks (l EmptyMK))
                =>  NoThunks (AnchorlessDbChangelog l)
 deriving instance (Show     (LedgerTables l SeqDiffMK), Show     (l EmptyMK))
                =>  Show     (AnchorlessDbChangelog l)
+
+mapAnchorlessDbChangelog :: GetTip l'
+                         => (l EmptyMK -> l' EmptyMK)
+                         -> (LedgerTables l SeqDiffMK -> LedgerTables l' SeqDiffMK)
+                         -> AnchorlessDbChangelog l
+                         -> AnchorlessDbChangelog l'
+mapAnchorlessDbChangelog mapState mapTable adb =
+    AnchorlessDbChangelog {
+        adcLastFlushedSlot
+      , adcDiffs           = mapTable adcDiffs
+      , adcStates          = AS.bimap mapState mapState adcStates
+      }
+  where
+    AnchorlessDbChangelog { adcLastFlushedSlot, adcDiffs, adcStates } = adb
 
 type StatesSequence l = AnchoredSeq
                         (WithOrigin SlotNo)
