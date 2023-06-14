@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns  #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies  #-}
 {-# LANGUAGE TypeOperators #-}
@@ -36,15 +35,13 @@ module Control.Concurrent.Class.MonadMVar.Strict.Checked (
   , MonadMVar
   ) where
 
-import           Control.Concurrent.Class.MonadMVar (MonadMVar)
-import qualified Control.Concurrent.Class.MonadMVar as Lazy
+import           Control.Concurrent.Class.MonadMVar.Strict (LazyMVar, MonadMVar)
+import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import           GHC.Stack (HasCallStack)
 
 --
 -- StrictMVar
 --
-
-type LazyMVar m = Lazy.MVar m
 
 -- | A strict MVar with invariant checking.
 --
@@ -59,12 +56,12 @@ type LazyMVar m = Lazy.MVar m
 data StrictMVar m a = StrictMVar {
     -- | The invariant that is checked whenever the 'StrictMVar' is updated.
     invariant :: !(a -> Maybe String)
-  , mvar      :: !(LazyMVar m a)
+  , mvar      :: !(Strict.StrictMVar m a)
   }
 
 castStrictMVar :: LazyMVar m ~ LazyMVar n
                => StrictMVar m a -> StrictMVar n a
-castStrictMVar v = StrictMVar (invariant v) (mvar v)
+castStrictMVar v = StrictMVar (invariant v) (Strict.castStrictMVar $ mvar v)
 
 -- | Get the underlying @MVar@
 --
@@ -74,7 +71,7 @@ castStrictMVar v = StrictMVar (invariant v) (mvar v)
 -- Similarly, we can not guarantee that updates to this 'LazyMVar' do not break
 -- the original invariant that the 'StrictMVar' held.
 toLazyMVar :: StrictMVar m a -> LazyMVar m a
-toLazyMVar = mvar
+toLazyMVar = Strict.toLazyMVar . mvar
 
 -- | Create a 'StrictMVar' from a 'LazyMVar'
 --
@@ -83,60 +80,60 @@ toLazyMVar = mvar
 -- is in WHNF. This should be used with caution.
 --
 -- The resulting 'StrictMVar' has a trivial invariant.
-fromLazyMVar :: Lazy.MVar m a -> StrictMVar m a
-fromLazyMVar = StrictMVar (const Nothing)
+fromLazyMVar :: LazyMVar m a -> StrictMVar m a
+fromLazyMVar = StrictMVar (const Nothing) . Strict.fromLazyMVar
 
 newEmptyMVar :: MonadMVar m => m (StrictMVar m a)
-newEmptyMVar = fromLazyMVar <$> Lazy.newEmptyMVar
+newEmptyMVar = StrictMVar (const Nothing) <$> Strict.newEmptyMVar
 
 newEmptyMVarWithInvariant :: MonadMVar m
                           => (a -> Maybe String)
                           -> m (StrictMVar m a)
-newEmptyMVarWithInvariant inv = StrictMVar inv <$> Lazy.newEmptyMVar
+newEmptyMVarWithInvariant inv = StrictMVar inv <$> Strict.newEmptyMVar
 
 newMVar :: MonadMVar m => a -> m (StrictMVar m a)
-newMVar !a = fromLazyMVar <$> Lazy.newMVar a
+newMVar a = StrictMVar (const Nothing) <$> Strict.newMVar a
 
 newMVarWithInvariant :: (HasCallStack, MonadMVar m)
                      => (a -> Maybe String)
                      -> a
                      -> m (StrictMVar m a)
-newMVarWithInvariant inv !a =
+newMVarWithInvariant inv a =
   checkInvariant (inv a) $
-  StrictMVar inv <$> Lazy.newMVar a
+  StrictMVar inv <$> Strict.newMVar a
 
 takeMVar :: MonadMVar m => StrictMVar m a -> m a
-takeMVar = Lazy.takeMVar . mvar
+takeMVar = Strict.takeMVar . mvar
 
 putMVar :: (HasCallStack, MonadMVar m) => StrictMVar m a -> a -> m ()
-putMVar v !a = do
-  Lazy.putMVar (mvar v) a
+putMVar v a = do
+  Strict.putMVar (mvar v) a
   checkInvariant (invariant v a) $ pure ()
 
 readMVar :: MonadMVar m => StrictMVar m a -> m a
-readMVar v = Lazy.readMVar (mvar v)
+readMVar v = Strict.readMVar (mvar v)
 
 swapMVar :: (HasCallStack, MonadMVar m) => StrictMVar m a -> a -> m a
-swapMVar v !a = do
-  oldValue <- Lazy.swapMVar (mvar v) a
+swapMVar v a = do
+  oldValue <- Strict.swapMVar (mvar v) a
   checkInvariant (invariant v a) $ pure oldValue
 
 tryTakeMVar :: MonadMVar m => StrictMVar m a -> m (Maybe a)
-tryTakeMVar v = Lazy.tryTakeMVar (mvar v)
+tryTakeMVar v = Strict.tryTakeMVar (mvar v)
 
 tryPutMVar :: (HasCallStack, MonadMVar m) => StrictMVar m a -> a -> m Bool
-tryPutMVar v !a = do
-  didPut <- Lazy.tryPutMVar (mvar v) a
+tryPutMVar v a = do
+  didPut <- Strict.tryPutMVar (mvar v) a
   checkInvariant (invariant v a) $ pure didPut
 
 isEmptyMVar :: MonadMVar m => StrictMVar m a -> m Bool
-isEmptyMVar v = Lazy.isEmptyMVar (mvar v)
+isEmptyMVar v = Strict.isEmptyMVar (mvar v)
 
 withMVar :: MonadMVar m => StrictMVar m a -> (a -> m b) -> m b
-withMVar v = Lazy.withMVar (mvar v)
+withMVar v = Strict.withMVar (mvar v)
 
 withMVarMasked :: MonadMVar m => StrictMVar m a -> (a -> m b) -> m b
-withMVarMasked v = Lazy.withMVarMasked (mvar v)
+withMVarMasked v = Strict.withMVarMasked (mvar v)
 
 -- | 'modifyMVar_' is defined in terms of 'modifyMVar'.
 modifyMVar_ :: (HasCallStack, MonadMVar m)
@@ -151,11 +148,11 @@ modifyMVar :: (HasCallStack, MonadMVar m)
            -> (a -> m (a,b))
            -> m b
 modifyMVar v io = do
-    (a', b) <- Lazy.modifyMVar (mvar v) io'
+    (a', b) <- Strict.modifyMVar (mvar v) io'
     checkInvariant (invariant v a') $ pure b
   where
     io' a = do
-      (!a', b) <- io a
+      (a', b) <- io a
       -- Returning @a'@ along with @b@ allows us to check the invariant /after/
       -- filling in the MVar.
       pure (a' , (a', b))
@@ -173,17 +170,17 @@ modifyMVarMasked :: (HasCallStack, MonadMVar m)
                  -> (a -> m (a,b))
                  -> m b
 modifyMVarMasked v io = do
-    (a', b) <- Lazy.modifyMVar (mvar v) io'
+    (a', b) <- Strict.modifyMVarMasked (mvar v) io'
     checkInvariant (invariant v a') $ pure b
   where
     io' a = do
-      (!a', b) <- io a
+      (a', b) <- io a
       -- Returning @a'@ along with @b@ allows us to check the invariant /after/
       -- filling in the MVar.
       pure (a', (a', b))
 
 tryReadMVar :: MonadMVar m => StrictMVar m a -> m (Maybe a)
-tryReadMVar v = Lazy.tryReadMVar (mvar v)
+tryReadMVar v = Strict.tryReadMVar (mvar v)
 
 --
 -- Dealing with invariants

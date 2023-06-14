@@ -35,7 +35,8 @@ newEmptyMVarWithInvariant :: MonadMVar m
 **Note:** though the checked module is a drop-in replacement for the unchecked
 module, the `StrictMVar` type from `*.Strict` and the `StrictMVar` type from
 `*.Strict.Checked` do not share the same internal representation, and so they
-are distinct types.
+are distinct types. This means we can't make mixed use of the checked and
+unchecked modules.
 
 ## Guarantees for invariant checking
 
