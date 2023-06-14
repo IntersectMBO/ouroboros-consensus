@@ -38,26 +38,23 @@ type BackingStoreInitializer m l =
 
 -- | Overwrite the ChainDB tables with the snapshot's tables
 restoreBackingStore ::
-     IOLike m
-  => BackingStoreInitializer m l
+     BackingStoreInitializer m l
   -> SomeHasFS m
   -> DiskSnapshot
   -> m (LedgerBackingStore m l)
 restoreBackingStore bsi someHasFs snapshot =
-        LedgerBackingStore
-    <$> bsi someHasFs (InitFromCopy (BackingStorePath loadPath))
+    bsi someHasFs (InitFromCopy (BackingStorePath loadPath))
   where
     loadPath = snapshotToTablesPath snapshot
 
 -- | Create a backing store from the given genesis ledger state
 newBackingStore ::
-     IOLike m
-  => BackingStoreInitializer m l
+     BackingStoreInitializer m l
   -> SomeHasFS m
   -> LedgerTables l ValuesMK
   -> m (LedgerBackingStore m l)
 newBackingStore bsi someHasFS tables =
-    LedgerBackingStore <$> bsi someHasFS (InitFromValues Origin tables)
+    bsi someHasFS (InitFromValues Origin tables)
 
 newBackingStoreInitialiser ::
      ( IOLike m

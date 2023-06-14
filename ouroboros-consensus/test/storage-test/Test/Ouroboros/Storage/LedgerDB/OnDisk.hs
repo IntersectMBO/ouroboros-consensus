@@ -932,7 +932,7 @@ initStandaloneDB dbEnv@DbEnv{..} dbRegistry dbSecParam = do
     let bsi = newBackingStoreInitialiser
                 (BackingStoreEvent `Trace.contramap` dbTracer)
                 dbBackingStoreSelector
-    dbBackingStore <- uncheckedNewTVarM . HD.LedgerBackingStore
+    dbBackingStore <- uncheckedNewTVarM
                       =<< bsi
                              dbHasFS
                              (HD.InitFromValues
@@ -1098,7 +1098,7 @@ runDB standalone@DB{..} cmd =
             hasFS
             bs
     go hasFS Restore = do
-        HD.LedgerBackingStore old_db <- atomically . readTVar $ dbBackingStore
+        old_db <- atomically . readTVar $ dbBackingStore
         HD.bsClose old_db
         (initLog, db, _replayed, backingStore) <-
           initialize
@@ -1514,7 +1514,7 @@ sm secParam cd db = StateMachine {
     , semantics     = semantics db
     , mock          = symbolicResp
     , cleanup       = \_ -> do
-        HD.LedgerBackingStore bs <- atomically . readTVar $ dbBackingStore db
+        bs <- atomically . readTVar $ dbBackingStore db
         HD.bsClose bs
         dbCleanup $ dbEnv db
     }

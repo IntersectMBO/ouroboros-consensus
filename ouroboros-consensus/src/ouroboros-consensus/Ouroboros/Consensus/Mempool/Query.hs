@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns   #-}
 
 -- | Queries to the mempool
 module Ouroboros.Consensus.Mempool.Query (
@@ -46,8 +47,8 @@ implGetSnapshotFor mpEnv slot ticked extChlog extLbsvh = do
                   | tx <- TxSeq.toList $ isTxs is
                   ]
        values <- bsvhRead vh keys
-       let eTbs = forwardTableKeySets' vhSlot chlog $ UnforwardedReadSets {
-                   ursSeqNo  = vhSlot
+       let eTbs = forwardTableKeySets' bsvhAtSlot chlog $ UnforwardedReadSets {
+                   ursSeqNo  = bsvhAtSlot
                  , ursValues = values
                  , ursKeys   = keys
                  }
@@ -57,11 +58,11 @@ implGetSnapshotFor mpEnv slot ticked extChlog extLbsvh = do
                            \should be in the same slot thanks to the RAWLock. \
                            \Seeing this means the RAWLock has failed! " <> show e
   where
-    LedgerBackingStoreValueHandle vhSlot vh =
-      castLedgerBackingStoreValueHandle
-      unExtLedgerStateTables
-      ExtLedgerStateTables
-      extLbsvh
+    vh@BackingStoreValueHandle { bsvhAtSlot } =
+      castBackingStoreValueHandle
+         unExtLedgerStateTables
+         ExtLedgerStateTables
+         extLbsvh
 
     chlog = unExtLedgerStateTables extChlog
 

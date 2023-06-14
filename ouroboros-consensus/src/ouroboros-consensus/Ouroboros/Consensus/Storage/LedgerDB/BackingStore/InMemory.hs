@@ -131,8 +131,9 @@ newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ enc dec 
               throwSTM TVarBackingStoreClosedExn
             TVarBackingStoreContents slot values -> pure $ do
               refHandleClosed <- newTVarIO False
-              pure $ (,) slot $ BackingStoreValueHandle {
-                  bsvhClose     = atomically $ do
+              pure $ BackingStoreValueHandle {
+                  bsvhAtSlot    = slot
+                , bsvhClose     = atomically $ do
                     guardClosed ref
                     guardHandleClosed refHandleClosed
                     writeTVar refHandleClosed True

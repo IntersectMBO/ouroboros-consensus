@@ -122,7 +122,7 @@ validate prevApplied
                numRollbacks
                (lift . lift . trace)
                aps
-               (lift . lift . readKeySetsWith (lbsvhRead ldbhandle))
+               (lift . lift . readKeySetsWith ldbhandle)
                changelog
     atomically $ modifyTVar prevApplied $
       addPoints (validBlockPoints res (map headerRealPoint hdrs))
@@ -189,7 +189,7 @@ flushLedgerDB chlogVar bstore = do
 -- 'Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB.flushLock' write lock must be
 -- held before calling this function.
 flushIntoBackingStore :: LedgerBackingStore m l -> DiffsToFlush l -> m ()
-flushIntoBackingStore (LedgerBackingStore backingStore) dblog =
+flushIntoBackingStore backingStore dblog =
   bsWrite
     backingStore
     (toFlushSlot dblog)

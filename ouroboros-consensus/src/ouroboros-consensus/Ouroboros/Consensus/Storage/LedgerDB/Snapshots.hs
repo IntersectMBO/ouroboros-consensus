@@ -330,7 +330,7 @@ writeSnapshot (SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     withFile hasFS (snapshotToStatePath snapshot) (WriteMode MustBeNew) $ \h ->
       void $ hPut hasFS h $ CBOR.toBuilder (encoder cs)
     BackingStore.bsCopy
-      (let BackingStore.LedgerBackingStore store = backingStore in store)
+      backingStore
       (SomeHasFS hasFS)
       (BackingStore.BackingStorePath (snapshotToTablesPath snapshot))
   where

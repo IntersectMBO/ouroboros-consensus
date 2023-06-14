@@ -33,7 +33,7 @@ data LedgerDBView m l = LedgerDBView {
   }
 
 closeLedgerDBView :: LedgerDBView m l -> m ()
-closeLedgerDBView LedgerDBView {viewHandle} = lbsvhClose viewHandle
+closeLedgerDBView LedgerDBView {viewHandle} = bsvhClose viewHandle
 
 type LedgerDBView' m blk = LedgerDBView m (ExtLedgerState blk)
 

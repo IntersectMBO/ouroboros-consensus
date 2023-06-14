@@ -482,11 +482,11 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
                pure (dbsSeq, s {dbsSeq = At slot})
              Trace.traceWith dbTracer $ TDBWrite oldSlot slot
 
-       in HD.BackingStore { HD.bsClose = bsClose
-                           , HD.bsCopy = bsCopy
-                           , HD.bsValueHandle = bsValueHandle
-                           , HD.bsWrite = bsWrite
-                           }
+       in HD.BackingStore { HD.bsClose       = bsClose
+                          , HD.bsCopy        = bsCopy
+                          , HD.bsValueHandle = bsValueHandle
+                          , HD.bsWrite       = bsWrite
+                          }
 
       where
         Db { dbEnv
@@ -506,7 +506,7 @@ mkLMDBBackingStoreValueHandle ::
   => Db m l
      -- ^ The LMDB database for which the backing store value handle is
      -- created.
-  -> m (WithOrigin SlotNo, LMDBValueHandle l m)
+  -> m (LMDBValueHandle l m)
 mkLMDBBackingStoreValueHandle db = do
   vhId <- IOLike.atomically $ do
     vhId <- IOLike.readTVar dbNextId
@@ -579,7 +579,8 @@ mkLMDBBackingStoreValueHandle db = do
      where
       HD.RangeQuery rqPrev rqCount = rq
 
-    bsvh = HD.BackingStoreValueHandle { HD.bsvhClose = bsvhClose
+    bsvh = HD.BackingStoreValueHandle { HD.bsvhAtSlot = initSlot
+                                      , HD.bsvhClose = bsvhClose
                                       , HD.bsvhRead = bsvhRead
                                       , HD.bsvhRangeRead = bsvhRangeRead
                                       }
@@ -587,7 +588,7 @@ mkLMDBBackingStoreValueHandle db = do
   IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.insert vhId cleanup)
 
   Trace.traceWith tracer TVHOpened
-  pure (initSlot, bsvh)
+  pure bsvh
 
  where
    Db { dbEnv

@@ -54,18 +54,18 @@ readKeySets ::
      IOLike m
   => LedgerBackingStore m l
   -> KeySetsReader m l
-readKeySets (LedgerBackingStore backingStore) rew = do
-    readKeySetsWith (bsRead backingStore) rew
+readKeySets backingStore rew = do
+    withBsValueHandle backingStore (\vh -> readKeySetsWith vh rew)
 
 readKeySetsWith ::
      Monad m
-  => (LedgerTables l KeysMK -> m (WithOrigin SlotNo, LedgerTables l ValuesMK))
+  => LedgerBackingStoreValueHandle m l-- (LedgerTables l KeysMK -> m (WithOrigin SlotNo, LedgerTables l ValuesMK))
   -> RewoundTableKeySets l
   -> m (UnforwardedReadSets l)
-readKeySetsWith readKeys (RewoundTableKeySets _seqNo rew) = do
-    (slot, values) <- readKeys rew
+readKeySetsWith bsvh (RewoundTableKeySets _seqNo rew) = do
+    values <- bsvhRead bsvh rew
     pure UnforwardedReadSets {
-        ursSeqNo  = slot
+        ursSeqNo  = bsvhAtSlot bsvh
       , ursValues = values
       , ursKeys   = rew
     }

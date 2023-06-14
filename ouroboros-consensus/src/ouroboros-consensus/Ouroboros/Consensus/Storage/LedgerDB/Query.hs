@@ -80,7 +80,7 @@ acquireLDBReadView ::
             (Point blk)
             (LedgerDBView' m blk))
        )
-acquireLDBReadView p dbvar lock (LedgerBackingStore bs) stmAct =
+acquireLDBReadView p dbvar lock bs stmAct =
   withReadLock lock $ do
     (a, ldb') <- atomically $ do
       (,) <$> stmAct <*> (anchorlessChangelog <$> readTVar dbvar)
@@ -95,11 +95,11 @@ acquireLDBReadView p dbvar lock (LedgerBackingStore bs) stmAct =
         AnchorlessDbChangelog' blk
      -> m (LedgerDBView' m blk)
    acquire l = do
-     (slot, vh) <- bsValueHandle bs
-     if slot == adcLastFlushedSlot l
-       then pure $ LedgerDBView (LedgerBackingStoreValueHandle slot vh) l
+     vh <- bsValueHandle bs
+     if bsvhAtSlot vh == adcLastFlushedSlot l
+       then pure $ LedgerDBView vh l
        else error ("Critical error: Value handles are created at "
-                   <> show slot
+                   <> show (bsvhAtSlot vh)
                    <> " while the db changelog is at "
                    <> show (adcLastFlushedSlot l)
                    <> ". There is either a race condition or a logic bug"

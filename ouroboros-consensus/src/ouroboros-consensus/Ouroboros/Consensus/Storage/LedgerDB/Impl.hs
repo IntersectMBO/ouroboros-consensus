@@ -361,7 +361,7 @@ initialize replayTracer
       genesisLedger <- getGenesisLedger
       let replayTracer' = decorateReplayTracerWithStart (Point Origin) replayTracer
           initDb        = DbChangelog.empty (forgetLedgerTables genesisLedger)
-      backingStore@(LedgerBackingStore bs) <-
+      backingStore <-
           newBackingStore lbsi hasFS (projectLedgerTables genesisLedger)
       traceWith (BackingStoreInitEvent `contramap` tracer) bsiTrace
       eDB <- runExceptT $ replayStartingWith
@@ -373,7 +373,7 @@ initialize replayTracer
                             initDb
       case eDB of
         Left err -> do
-          bsClose bs
+          bsClose backingStore
           error $ "Invariant violation: invalid immutable chain " <> show err
         Right (db, replayed) -> do
           return ( acc InitFromGenesis
@@ -405,7 +405,7 @@ initialize replayTracer
               tryNewestFirst (acc . InitFailure s Snapshots.InitFailureGenesis) []
 
             NotOrigin pt -> do
-              backingStore@(LedgerBackingStore bs) <- restoreBackingStore lbsi hasFS s
+              backingStore <- restoreBackingStore lbsi hasFS s
               traceWith (BackingStoreInitEvent `contramap` tracer) bsiTrace
               traceWith replayTracer $
                 ReplayFromSnapshot s pt (ReplayStart initialPoint)
@@ -422,7 +422,7 @@ initialize replayTracer
                 Left err -> do
                   traceWith tracer . LedgerDBSnapshotEvent . Snapshots.InvalidSnapshot s $ err
                   when (Snapshots.diskSnapshotIsTemporary s) $ Snapshots.deleteSnapshot hasFS s
-                  bsClose bs
+                  bsClose backingStore
                   tryNewestFirst (acc . InitFailure s err) ss
                 Right (db, replayed) -> do
                   return (acc (InitFromSnapshot s pt), db, replayed, backingStore)

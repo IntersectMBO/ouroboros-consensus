@@ -340,7 +340,7 @@ mkDiskLedgerView h@(LedgerDBView lvh ldb) =
       (\ks -> do
           let rew = rewindTableKeySets ldb ks
           unfwd <- readKeySetsWith
-                     (BackingStore.lbsvhRead lvh)
+                     lvh
                      rew
           case forwardTableKeySets ldb unfwd of
               Left _err -> error "impossible!"
@@ -366,7 +366,7 @@ mkDiskLedgerView h@(LedgerDBView lvh ldb) =
               maxDeletes = maybe 0 getMax
                          $ foldLedgerTables (Just . Max . numDeletesDiffMK) diffs
               nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
-          values <- BackingStore.lbsvhRangeRead lvh (rq{BackingStore.rqCount = nrequested})
+          values <- BackingStore.bsvhRangeRead lvh (rq{BackingStore.rqCount = nrequested})
           pure $ zipLedgerTables (doFixupReadResult nrequested) diffs values
       )
       (closeLedgerDBView h)

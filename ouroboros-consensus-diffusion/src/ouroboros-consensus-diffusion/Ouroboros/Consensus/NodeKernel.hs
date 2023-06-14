@@ -288,7 +288,7 @@ forkBlockForging IS{..} blockForging =
           trace $ TraceNoLedgerState currentSlot bcPrevPoint
           exitEarly
         Right (LedgerDBView { viewHandle, viewChangelog }) -> do
-          _ <- allocate reg (\_ -> pure viewHandle) (lift . lbsvhClose)
+          _ <- allocate reg (\_ -> pure viewHandle) (lift . bsvhClose)
           pure ( viewHandle
                , adcDiffs         viewChangelog
                , LedgerDB.current viewChangelog

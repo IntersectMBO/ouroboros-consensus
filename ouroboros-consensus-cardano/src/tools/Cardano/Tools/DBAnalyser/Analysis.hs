@@ -773,7 +773,7 @@ reproMempoolForge numBlks env = do
           -- Primary caveat: that thread's mempool may have had more transactions in it.
           do
             let slot = blockSlot blk
-            vh <- lbsValueHandle bstore
+            vh <- bsValueHandle bstore
             (ticked, durTick) <- timed $ IOLike.evaluate $
               applyChainTick lCfg slot (ledgerState $ DbChangelog.current $ anchorlessChangelog ldb)
             ((), durSnap) <- timed $ do
@@ -781,7 +781,7 @@ reproMempoolForge numBlks env = do
 
               pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotState snap `seq` ()
 
-            lbsvhClose vh
+            bsvhClose vh
 
             let sizes = HasAnalysis.blockTxSizes blk
             traceWith tracer $
