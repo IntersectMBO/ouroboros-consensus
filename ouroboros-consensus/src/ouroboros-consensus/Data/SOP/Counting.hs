@@ -1,20 +1,22 @@
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE DeriveFoldable      #-}
-{-# LANGUAGE DeriveFunctor       #-}
-{-# LANGUAGE DeriveTraversable   #-}
-{-# LANGUAGE EmptyCase           #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE KindSignatures      #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE PatternSynonyms     #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving  #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeOperators       #-}
-{-# LANGUAGE ViewPatterns        #-}
+{-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE DeriveFoldable       #-}
+{-# LANGUAGE DeriveFunctor        #-}
+{-# LANGUAGE DeriveTraversable    #-}
+{-# LANGUAGE EmptyCase            #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE GADTs                #-}
+{-# LANGUAGE InstanceSigs         #-}
+{-# LANGUAGE KindSignatures       #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE PatternSynonyms      #-}
+{-# LANGUAGE RankNTypes           #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE StandaloneDeriving   #-}
+{-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE TypeOperators        #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns         #-}
 
 -- | Type-level counting
 --
@@ -270,9 +272,14 @@ atMostNonEmpty = \case
   Working with 'NonEmpty'
 -------------------------------------------------------------------------------}
 
-instance IsNonEmpty xs => Applicative (NonEmpty xs) where
-  pure x = case isNonEmpty (Proxy @xs) of
-             ProofNonEmpty{} -> NonEmptyOne x
+instance (IsNonEmpty xs, SListI xs) => Applicative (NonEmpty xs) where
+  pure :: forall a. a -> NonEmpty xs a
+  pure a = case isNonEmpty (Proxy @xs) of
+             ProofNonEmpty{} -> go shape
+    where
+      go :: forall x xs'. Shape xs' -> NonEmpty (x : xs') a
+      go ShapeNil        = NonEmptyOne a
+      go (ShapeCons xs') = NonEmptyCons a (go xs')
   (<*>) = go
     where
       go :: NonEmpty xs' (a -> b) -> NonEmpty xs' a -> NonEmpty xs' b
