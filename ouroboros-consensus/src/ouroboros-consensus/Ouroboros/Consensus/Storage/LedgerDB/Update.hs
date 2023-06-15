@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeFamilies        #-}
@@ -9,6 +10,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Update (
     DiffsToFlush (..)
   , ValidateResult (..)
   , flushIntoBackingStore
+  , flushLedgerDB
   , garbageCollectPrevApplied
   , setCurrent
   , validate
@@ -23,8 +25,10 @@ import           Data.Word
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
@@ -38,26 +42,40 @@ import           Ouroboros.Consensus.Util.IOLike
 -- 'LedgerDB.ledgerDbSwitch' or 'LedgerDB.ledgerDbPushMany' on the current
 -- 'LedgerDB'.
 setCurrent ::
-     MonadSTM m
+     forall blk m.
+     ( MonadSTM m
+     , IsLedger (LedgerState blk)
+     , HasLedgerTables (LedgerState blk)
+     )
   => StrictTVar m (DbChangelog' blk)
-  -> DbChangelog' blk
+  -> AnchorlessDbChangelog' blk
   -> STM m ()
-setCurrent = writeTVar
+setCurrent v dblog =
+  modifyTVar v (\pruned ->
+    let s = fromWithOrigin 0
+          . pointSlot
+          . getTip
+          $ changelogLastFlushedState pruned
+    in DbChangelog {
+          changelogLastFlushedState = changelogLastFlushedState pruned
+        , anchorlessChangelog       = AnchorlessDbChangelog {
+              adcLastFlushedSlot = adcLastFlushedSlot $ anchorlessChangelog pruned
+            , adcStates          = adcStates dblog
+            , adcDiffs           =
+                zipLedgerTables (f s) (adcDiffs $ anchorlessChangelog pruned) (adcDiffs dblog)
+            }
+        })
+  where
+    f :: (Ord k, Eq v)
+      => SlotNo
+      -> SeqDiffMK k v
+      -> SeqDiffMK k v
+      -> SeqDiffMK k v
+    f s (SeqDiffMK prunedSeq) (SeqDiffMK extendedSeq) = SeqDiffMK $
+      if DS.minSlot prunedSeq == DS.minSlot extendedSeq
+      then extendedSeq
+      else snd $ DS.splitAtSlot s extendedSeq
 
--- | Flush **all the changes in this DbChangelog** into the backing store
---
--- Note that 'flush' must have been called to split the 'DbChangelog' on the
--- immutable tip and produce two 'DbChangelog's, one to flush and one to keep.
---
--- The 'Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB.LgrDb'
--- 'Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB.flushLock' write lock must be
--- held before calling this function.
-flushIntoBackingStore :: LedgerBackingStore m l -> DiffsToFlush l -> m ()
-flushIntoBackingStore (LedgerBackingStore backingStore) dblog =
-  bsWrite
-    backingStore
-    (toFlushSlot dblog)
-    (toFlushDiffs dblog)
 
 -- | Remove all points with a slot older than the given slot from the set of
 -- previously applied points.
@@ -73,7 +91,7 @@ garbageCollectPrevApplied prevApplied slotNo = modifyTVar prevApplied $
 -------------------------------------------------------------------------------}
 
 data ValidateResult blk =
-    ValidateSuccessful       (DbChangelog' blk)
+    ValidateSuccessful       (AnchorlessDbChangelog' blk)
   | ValidateLedgerError      (AnnLedgerError' blk)
   | ValidateExceededRollBack ExceededRollback
 
@@ -82,7 +100,7 @@ validate :: forall m blk. (IOLike m, LedgerSupportsProtocol blk, HasCallStack)
          -> ResolveBlock m blk
          -> TopLevelConfig blk
          -> LedgerBackingStoreValueHandle' m blk
-         -> DbChangelog' blk
+         -> AnchorlessDbChangelog' blk
          -> BlockCache blk
          -> Word64  -- ^ How many blocks to roll back
          -> (UpdateLedgerDbTraceEvent blk -> m ())
@@ -91,8 +109,8 @@ validate :: forall m blk. (IOLike m, LedgerSupportsProtocol blk, HasCallStack)
 validate prevApplied
          resolve
          config
-         (LedgerBackingStoreValueHandle s vh)
-         ledgerDB
+         ldbhandle
+         changelog
          blockCache
          numRollbacks
          trace
@@ -104,13 +122,13 @@ validate prevApplied
                numRollbacks
                (lift . lift . trace)
                aps
-               (lift . lift . readKeySetsWith (fmap (s,) . bsvhRead vh))
-               ledgerDB
+               (lift . lift . readKeySetsWith ldbhandle)
+               changelog
     atomically $ modifyTVar prevApplied $
       addPoints (validBlockPoints res (map headerRealPoint hdrs))
     return res
   where
-    rewrap :: Either (AnnLedgerError' blk) (Either ExceededRollback (DbChangelog' blk))
+    rewrap :: Either (AnnLedgerError' blk) (Either ExceededRollback (AnchorlessDbChangelog' blk))
            -> ValidateResult blk
     rewrap (Left         e)  = ValidateLedgerError      e
     rewrap (Right (Left  e)) = ValidateExceededRollBack e
@@ -143,3 +161,36 @@ validate prevApplied
     addPoints :: [RealPoint blk]
               -> Set (RealPoint blk) -> Set (RealPoint blk)
     addPoints hs set = foldl' (flip Set.insert) set hs
+
+{-------------------------------------------------------------------------------
+  Flushing
+-------------------------------------------------------------------------------}
+
+flushLedgerDB :: (MonadSTM m, GetTip l, HasLedgerTables l)
+              => StrictTVar m (DbChangelog l)
+              -> LedgerBackingStore m l
+              -> m ()
+flushLedgerDB chlogVar bstore = do
+  diffs <- atomically $ do
+    ldb' <- readTVar chlogVar
+    let (toFlush, toKeep) = splitForFlushing ldb'
+    case toFlush of
+      Nothing -> pure ()
+      Just {} -> writeTVar chlogVar toKeep
+    pure toFlush
+  mapM_ (flushIntoBackingStore bstore) diffs
+
+-- | Flush **all the changes in this DbChangelog** into the backing store
+--
+-- Note that 'flush' must have been called to split the 'DbChangelog' on the
+-- immutable tip and produce two 'DbChangelog's, one to flush and one to keep.
+--
+-- The 'Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB.LgrDb'
+-- 'Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB.flushLock' write lock must be
+-- held before calling this function.
+flushIntoBackingStore :: LedgerBackingStore m l -> DiffsToFlush l -> m ()
+flushIntoBackingStore backingStore dblog =
+  bsWrite
+    backingStore
+    (toFlushSlot dblog)
+    (toFlushDiffs dblog)

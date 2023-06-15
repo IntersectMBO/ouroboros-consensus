@@ -644,7 +644,7 @@ releaseResources rr sortedKeys releaser = do
 -- | Create a new registry
 --
 -- See documentation of 'ResourceRegistry' for a detailed discussion.
-withRegistry :: (IOLike m, HasCallStack) => (ResourceRegistry m -> m a) -> m a
+withRegistry :: forall m a. (IOLike m, HasCallStack) => (ResourceRegistry m -> m a) -> m a
 withRegistry = bracket unsafeNewRegistry closeRegistry
 
 -- | Create a new private registry for use by a bracketed resource

@@ -9,7 +9,7 @@ import           Control.Monad.IOSim
 import           GHC.Generics
 import           NoThunks.Class
 import           Ouroboros.Consensus.Util.MonadSTM.NormalForm (MonadSTM,
-                     newMVar, updateMVar)
+                     newSVar, updateSVar)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
@@ -23,16 +23,16 @@ import           Test.Tasty.QuickCheck
 -- GHC 8.10 and GHC 9.2).
 tests :: TestTree
 tests = testGroup "Ouroboros.Consensus.Util.MonadSTM.NormalForm"
-  [ testGroup "updateMVar"
-    [ testGroup "updateMVar strictness"
+  [ testGroup "updateSVar"
+    [ testGroup "updateSVar strictness"
       [ testProperty "IO @Integer @String"
-          (prop_update_mvar_strictness_io @Integer @String)
+          (prop_update_svar_strictness_io @Integer @String)
       , testProperty "IOSim @Integer @String"
-          (prop_update_mvar_strictness_iosim @Integer @String)
+          (prop_update_svar_strictness_iosim @Integer @String)
       , testProperty "IO @StrictnessTestType @String"
-          (prop_update_mvar_strictness_io @StrictnessTestType @String)
+          (prop_update_svar_strictness_io @StrictnessTestType @String)
       , testProperty "IOSim @StrictnessTestType @String"
-          (prop_update_mvar_strictness_iosim @StrictnessTestType @String)
+          (prop_update_svar_strictness_iosim @StrictnessTestType @String)
       ]
     ]
   ]
@@ -46,20 +46,20 @@ instance Arbitrary StrictnessTestType where
   shrink (StrictnessTestType a b) = do
     StrictnessTestType <$> shrink a <*> shrink b
 
-prop_update_mvar_strictness_io
+prop_update_svar_strictness_io
   :: forall a b. NoThunks a
   => Fun a (a, b) -> a -> Property
-prop_update_mvar_strictness_io f a =
-  ioProperty $ updateMVarTest f a
+prop_update_svar_strictness_io f a =
+  ioProperty $ updateSVarTest f a
 
-prop_update_mvar_strictness_iosim
+prop_update_svar_strictness_iosim
   :: forall a b. NoThunks a
   => Fun a (a, b) -> a -> Property
-prop_update_mvar_strictness_iosim f a =
-  property $ runSimOrThrow $ updateMVarTest f a
+prop_update_svar_strictness_iosim f a =
+  property $ runSimOrThrow $ updateSVarTest f a
 
-updateMVarTest :: (MonadSTM m, NoThunks a) => Fun a (a, b) -> a -> m ()
-updateMVarTest (Fun _ f) a = do
-  mvar <- newMVar a
-  _ <- updateMVar mvar f
+updateSVarTest :: (MonadSTM m, NoThunks a) => Fun a (a, b) -> a -> m ()
+updateSVarTest (Fun _ f) a = do
+  mvar <- newSVar a
+  _ <- updateSVar mvar f
   pure ()

@@ -124,7 +124,7 @@ applyBlock :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
            => LedgerCfg l
            -> Ap m l blk c
            -> KeySetsReader m l
-           -> DbChangelog l
+           -> AnchorlessDbChangelog l
            -> m (l DiffMK)
 applyBlock cfg ap ksReader db = case ap of
     ReapplyVal b ->
@@ -192,7 +192,7 @@ instance Monad m
 -- | Annotated ledger errors
 data AnnLedgerError l blk = AnnLedgerError {
       -- | The ledger DB just /before/ this block was applied
-      annLedgerState  :: DbChangelog l
+      annLedgerState  :: AnchorlessDbChangelog l
 
       -- | Reference to the block that had the error
     , annLedgerErrRef :: RealPoint blk
@@ -204,7 +204,7 @@ data AnnLedgerError l blk = AnnLedgerError {
 type AnnLedgerError' blk = AnnLedgerError (ExtLedgerState blk) blk
 
 class Monad m => ThrowsLedgerError m l blk where
-  throwLedgerError :: DbChangelog l -> RealPoint blk -> LedgerErr l -> m a
+  throwLedgerError :: AnchorlessDbChangelog l -> RealPoint blk -> LedgerErr l -> m a
 
 instance Monad m
       => ThrowsLedgerError (ExceptT (AnnLedgerError l blk) m) l blk where
@@ -236,26 +236,23 @@ volatileStatesBimap ::
   -> AnchoredSeq (WithOrigin SlotNo) a b
 volatileStatesBimap f g =
       AS.bimap f g
-    . changelogVolatileStates
+    . adcStates
+    . anchorlessChangelog
 
 -- | Prune ledger states until at we have at most @k@ in the DbChangelog,
 -- excluding the one stored at the anchor.
-prune :: GetTip l => SecurityParam -> DbChangelog l -> DbChangelog l
+prune :: GetTip l => SecurityParam -> AnchorlessDbChangelog l -> AnchorlessDbChangelog l
 prune (SecurityParam k) dblog =
-    dblog {
-        changelogVolatileStates = vol'
-      }
+    dblog { adcStates = vol' }
   where
-    DbChangelog {
-        changelogVolatileStates = vol
-      } = dblog
+    AnchorlessDbChangelog { adcStates } = dblog
 
-    nvol = AS.length vol
+    nvol = AS.length adcStates
 
     vol' =
       if toEnum nvol <= k
-      then vol
-      else snd $ AS.splitAt (nvol - fromEnum k) vol
+      then adcStates
+      else snd $ AS.splitAt (nvol - fromEnum k) adcStates
 
  -- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
  -- 'DbChangelog' and thus a space leak. Alternatively, we could disable the
@@ -271,22 +268,20 @@ pushLedgerState ::
      (IsLedger l, HasLedgerTables l)
   => SecurityParam
   -> l DiffMK -- ^ Updated ledger state
-  -> DbChangelog l
-  -> DbChangelog l
+  -> AnchorlessDbChangelog l
+  -> AnchorlessDbChangelog l
 pushLedgerState secParam =
     prune secParam .: extend
 
 extend :: (GetTip l, HasLedgerTables l)
        => l DiffMK
-       -> DbChangelog l
-       -> DbChangelog l
+       -> AnchorlessDbChangelog l
+       -> AnchorlessDbChangelog l
 extend newState dblog =
-  DbChangelog {
-      changelogLastFlushedState
-    , changelogDiffs          =
-        zipLedgerTables ext changelogDiffs tablesDiff
-    , changelogVolatileStates =
-        changelogVolatileStates AS.:> l'
+  AnchorlessDbChangelog {
+      adcLastFlushedSlot = adcLastFlushedSlot
+    , adcDiffs           = zipLedgerTables ext adcDiffs tablesDiff
+    , adcStates          = adcStates AS.:> l'
     }
   where
     slot = case getTipSlot l' of
@@ -304,10 +299,10 @@ extend newState dblog =
     l'         = forgetLedgerTables  newState
     tablesDiff = projectLedgerTables newState
 
-    DbChangelog {
-        changelogLastFlushedState
-      , changelogDiffs
-      , changelogVolatileStates
+    AnchorlessDbChangelog {
+        adcLastFlushedSlot
+      , adcDiffs
+      , adcStates
       } = dblog
 {-------------------------------------------------------------------------------
   Internal: rolling back
@@ -319,26 +314,24 @@ extend newState dblog =
 rollbackN ::
      (GetTip l, HasLedgerTables l)
   => Word64
-  -> DbChangelog l
-  -> Maybe (DbChangelog l)
+  -> AnchorlessDbChangelog l
+  -> Maybe (AnchorlessDbChangelog l)
 rollbackN n dblog
     | n <= Query.maxRollback dblog
     = Just $ dblog {
-        changelogDiffs          = mapLedgerTables trunc changelogDiffs
-      , changelogVolatileStates = AS.dropNewest (fromIntegral n) changelogVolatileStates
+        adcDiffs  = mapLedgerTables trunc adcDiffs
+      , adcStates = AS.dropNewest (fromIntegral n) adcStates
       }
     | otherwise
     = Nothing
   where
-    trunc ::
-      (Ord k, Eq v)
-      => SeqDiffMK k v -> SeqDiffMK k v
+    trunc :: (Ord k, Eq v) => SeqDiffMK k v -> SeqDiffMK k v
     trunc (SeqDiffMK sq) =
       SeqDiffMK $ fst $ DS.splitAtFromEnd (fromIntegral n) sq
 
-    DbChangelog {
-        changelogDiffs
-      , changelogVolatileStates
+    AnchorlessDbChangelog {
+        adcDiffs
+      , adcStates
       } = dblog
 
 {-------------------------------------------------------------------------------
@@ -359,7 +352,10 @@ data ExceededRollback = ExceededRollback {
 
 push :: (ApplyBlock l blk, Monad m, c)
      => LedgerDbCfg l
-     -> Ap m l blk c -> KeySetsReader m l -> DbChangelog l -> m (DbChangelog l)
+     -> Ap m l blk c
+     -> KeySetsReader m l
+     ->    AnchorlessDbChangelog l
+     -> m (AnchorlessDbChangelog l)
 push cfg ap ksReader db =
     (\current' -> pushLedgerState (ledgerDbCfgSecParam cfg) current' db) <$>
       applyBlock (ledgerDbCfg cfg) ap ksReader db
@@ -370,8 +366,8 @@ pushMany :: (ApplyBlock l blk, Monad m, c)
          -> LedgerDbCfg l
          -> [Ap m l blk c]
          -> KeySetsReader m l
-         -> DbChangelog l
-         -> m (DbChangelog l)
+         -> AnchorlessDbChangelog l
+         -> m (AnchorlessDbChangelog l)
 pushMany trace cfg aps ksReader = repeatedlyM pushAndTrace aps
   where
     pushAndTrace ap db = do
@@ -386,8 +382,8 @@ switch :: (ApplyBlock l blk, Monad m, c)
        -> (UpdateLedgerDbTraceEvent blk -> m ())
        -> [Ap m l blk c]  -- ^ New blocks to apply
        -> KeySetsReader m l
-       -> DbChangelog l
-       -> m (Either ExceededRollback (DbChangelog l))
+       -> AnchorlessDbChangelog l
+       -> m (Either ExceededRollback (AnchorlessDbChangelog l))
 switch cfg numRollbacks trace newBlocks ksReader db =
   case rollbackN numRollbacks db of
       Nothing ->
@@ -424,48 +420,44 @@ data DiffsToFlush l = DiffsToFlush {
 splitForFlushing ::
      forall l.
      (GetTip l, HasLedgerTables l)
-  => FlushPolicy
-  -> DbChangelog l
+  => DbChangelog l
   -> (Maybe (DiffsToFlush l), DbChangelog l)
-splitForFlushing policy dblog =
+splitForFlushing dblog =
     if getTipSlot immTip == Origin || foldLedgerTables (\(SeqDiffMK sq) -> Sum $ DS.length sq) l == 0
     then (Nothing, dblog)
     else (Just ldblog, rdblog)
   where
     DbChangelog {
         changelogLastFlushedState
-      , changelogDiffs
-      , changelogVolatileStates
+      , anchorlessChangelog = AnchorlessDbChangelog {
+            adcDiffs
+          , adcStates
+          }
       } = dblog
 
-    immTip = AS.anchor changelogVolatileStates
-    volTip = either id id $ AS.head changelogVolatileStates
+    immTip = AS.anchor adcStates
 
     -- TODO: #4371 by point, not by count, so sequences can be ragged
     splitSeqDiff ::
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> (SeqDiffMK k v, SeqDiffMK k v)
-    splitSeqDiff (SeqDiffMK sq) = case policy of
-      FlushAll          -> (SeqDiffMK sq, emptyMK)
-      FlushAllImmutable ->
-       let numToFlush = DS.length sq - AS.length changelogVolatileStates
+    splitSeqDiff (SeqDiffMK sq) =
+       let numToFlush = DS.length sq - AS.length adcStates
        in bimap (maybe emptyMK SeqDiffMK) SeqDiffMK
         $ if numToFlush > 0
           then let (tf, tk) = DS.splitAt numToFlush sq
                in (Just tf, tk)
           else (Nothing, sq)
 
-    lr = mapLedgerTables (uncurry Pair2 . splitSeqDiff) changelogDiffs
-    l = mapLedgerTables (\(Pair2 x _) -> x) lr
-    r = mapLedgerTables (\(Pair2 _ y) -> y) lr
+    lr = mapLedgerTables (uncurry Pair2 . splitSeqDiff) adcDiffs
+    l  = mapLedgerTables (\(Pair2 x _) -> x) lr
+    r  = mapLedgerTables (\(Pair2 _ y) -> y) lr
 
     (newTip, newStates) =
         if getAll $ foldLedgerTables (\(SeqDiffMK sq) -> All $ 0 == DS.length sq) l
-        then (changelogLastFlushedState, changelogVolatileStates)
-        else case policy of
-          FlushAll          -> (volTip, AS.Empty volTip)
-          FlushAllImmutable -> (immTip, changelogVolatileStates)
+        then (changelogLastFlushedState, adcStates)
+        else (immTip, adcStates)
 
     prj ::
          (Ord k, Eq v)
@@ -477,16 +469,16 @@ splitForFlushing policy dblog =
         toFlushDiffs = mapLedgerTables prj l
       , toFlushSlot  =
             fromWithOrigin (error "Flushing a DbChangelog at origin should never happen")
-          $ getTipSlot
-          $ case policy of
-              FlushAll          -> volTip
-              FlushAllImmutable -> immTip
+          $ getTipSlot immTip
       }
 
     rdblog = DbChangelog {
         changelogLastFlushedState = newTip
-      , changelogDiffs            = r
-      , changelogVolatileStates   = newStates
+      , anchorlessChangelog       = AnchorlessDbChangelog {
+            adcLastFlushedSlot = getTipSlot newTip
+          , adcDiffs           = r
+          , adcStates          = newStates
+          }
       }
 
 {-------------------------------------------------------------------------------
@@ -526,16 +518,16 @@ push' :: ApplyBlock l blk
       => LedgerDbCfg l
       -> blk
       -> KeySetsReader Identity l
-      -> DbChangelog l
-      -> DbChangelog l
+      -> AnchorlessDbChangelog l
+      -> AnchorlessDbChangelog l
 push' cfg b bk = runIdentity . push cfg (pureBlock b) bk
 
 pushMany' :: ApplyBlock l blk
           => LedgerDbCfg l
           -> [blk]
           -> KeySetsReader Identity l
-          -> DbChangelog l
-          -> DbChangelog l
+          -> AnchorlessDbChangelog l
+          -> AnchorlessDbChangelog l
 pushMany' cfg bs bk =
   runIdentity . pushMany (const $ pure ()) cfg (map pureBlock bs) bk
 
@@ -544,8 +536,8 @@ switch' :: ApplyBlock l blk
         -> Word64
         -> [blk]
         -> KeySetsReader Identity l
-        -> DbChangelog l
-        -> Maybe (DbChangelog l)
+        -> AnchorlessDbChangelog l
+        -> Maybe (AnchorlessDbChangelog l)
 switch' cfg n bs bk db =
   case runIdentity $ switch cfg n (const $ pure ()) (map pureBlock bs) bk db of
     Left  ExceededRollback{} -> Nothing

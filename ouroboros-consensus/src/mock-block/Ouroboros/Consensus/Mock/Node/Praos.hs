@@ -96,16 +96,16 @@ praosBlockForging ::
   -> HotKey PraosMockCrypto
   -> m (BlockForging m MockPraosBlock)
 praosBlockForging cid initHotKey = do
-    varHotKey <- newMVar initHotKey
+    varHotKey <- newSVar initHotKey
     return $ BlockForging {
         forgeLabel       = "praosBlockForging"
       , canBeLeader      = cid
-      , updateForgeState = \_ sno _ -> updateMVar varHotKey $
+      , updateForgeState = \_ sno _ -> updateSVar varHotKey $
                                  second forgeStateUpdateInfoFromUpdateInfo
                                . evolveKey sno
       , checkCanForge    = \_ _ _ _ _ -> return ()
       , forgeBlock       = \cfg bno sno tickedLedgerSt txs isLeader -> do
-                               hotKey <- readMVar varHotKey
+                               hotKey <- readSVar varHotKey
                                return $
                                  forgeSimple
                                    (forgePraosExt hotKey)

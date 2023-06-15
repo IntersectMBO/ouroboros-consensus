@@ -84,6 +84,7 @@ module Ouroboros.Consensus.Ledger.Tables.DiffSeq (
   , split
   , splitAt
   , splitAtFromEnd
+  , splitAtSlot
     -- * Maps
   , mapDiffSeq
   ) where
@@ -99,6 +100,7 @@ import           Data.Monoid (Sum (..))
 import           Data.Semigroup (Max (..), Min (..))
 import           Data.Semigroup.Cancellative
 import           GHC.Generics (Generic)
+import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
 import           Prelude hiding (length, splitAt)
 
@@ -310,6 +312,14 @@ minSlot (UnsafeDiffSeq ft) = unSlotNoLB <$> imSlotNoL (measure ft)
 instance Sized (InternalMeasure k v) where
   size = unLength . imLength
 
+splitAtSlot ::
+     SM k v
+  => Slot.SlotNo
+  -> DiffSeq k v
+  -> (DiffSeq k v, DiffSeq k v)
+splitAtSlot slot =
+    split (strictMaybe False (slot <=) . fmap unSlotNoUB . imSlotNoR)
+
 split ::
      SM k v
   => (InternalMeasure k v -> Bool)
@@ -325,7 +335,7 @@ splitAt ::
 splitAt n = split ((Length n<) . imLength)
 
 splitAtFromEnd ::
-     SM k v
+     (SM k v, HasCallStack)
   => Int
   -> DiffSeq k v
   -> (DiffSeq k v, DiffSeq k v)

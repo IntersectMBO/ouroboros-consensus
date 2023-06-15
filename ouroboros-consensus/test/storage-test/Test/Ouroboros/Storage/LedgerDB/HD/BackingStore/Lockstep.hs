@@ -28,6 +28,7 @@ module Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Lockstep (
   ) where
 
 import           Cardano.Slotting.Slot
+import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.IOSim
@@ -183,7 +184,7 @@ instance ( Show ks, Show vs, Show d
     BSClose          :: BSAct ks vs d ()
     BSCopy           :: BS.BackingStorePath
                      -> BSAct ks vs d ()
-    BSValueHandle    :: BSAct ks vs d (WithOrigin SlotNo, Handle)
+    BSValueHandle    :: BSAct ks vs d Handle
     BSWrite          :: SlotNo
                      -> d
                      -> BSAct ks vs d ()
@@ -195,6 +196,8 @@ instance ( Show ks, Show vs, Show d
     BSVHRead         :: BSVar ks vs d Handle
                      -> ks
                      -> BSAct ks vs d (Values vs)
+    BSVHAtSlot       :: BSVar ks vs d Handle
+                     -> BSAct ks vs d (WithOrigin SlotNo)
 
   initialState        = Lockstep.initialState initState
   nextState           = Lockstep.nextState
@@ -321,6 +324,7 @@ instance ( Show ks, Show vs, Show d
     BSVHClose h          -> [SomeGVar h]
     BSVHRangeRead h _    -> [SomeGVar h]
     BSVHRead h _         -> [SomeGVar h]
+    BSVHAtSlot h         -> [SomeGVar h]
 
   arbitraryWithVars ::
        ModelFindVariables (BackingStoreState ks vs d)
@@ -371,11 +375,12 @@ instance ( Show ks, Show vs, Show d
     BSInitFromCopy _     -> OEither . bimap OId OId
     BSClose              -> OEither . bimap OId OId
     BSCopy _             -> OEither . bimap OId OId
-    BSValueHandle        -> OEither . bimap OId (OPair . bimap OId (const OValueHandle))
+    BSValueHandle        -> OEither . bimap OId (const OValueHandle)
     BSWrite _ _          -> OEither . bimap OId OId
     BSVHClose _          -> OEither . bimap OId OId
     BSVHRangeRead _ _    -> OEither . bimap OId (OValues . unValues)
     BSVHRead _ _         -> OEither . bimap OId (OValues . unValues)
+    BSVHAtSlot _         -> OEither . bimap OId OId
 
   showRealResponse ::
        Proxy (RealMonad m ks vs d)
@@ -391,6 +396,7 @@ instance ( Show ks, Show vs, Show d
     BSVHClose _          -> Just Dict
     BSVHRangeRead _ _    -> Just Dict
     BSVHRead _ _         -> Just Dict
+    BSVHAtSlot _         -> Just Dict
 
 {-------------------------------------------------------------------------------
   Interpreter against the model
@@ -414,7 +420,7 @@ runMock lookUp = \case
     BSCopy bsp         ->
       wrap MUnit . runMockState (Mock.mBSCopy bsp)
     BSValueHandle      ->
-      wrap mBSValueHandle . runMockState Mock.mBSValueHandle
+      wrap MValueHandle . runMockState Mock.mBSValueHandle
     BSWrite sl d       ->
       wrap MUnit . runMockState (Mock.mBSWrite sl d)
     BSVHClose h        ->
@@ -423,17 +429,14 @@ runMock lookUp = \case
       wrap MValues . runMockState (Mock.mBSVHRangeRead (getHandle $ lookUp h) rq)
     BSVHRead h ks      ->
       wrap MValues . runMockState (Mock.mBSVHRead (getHandle $ lookUp h) ks)
+    BSVHAtSlot h       ->
+      wrap MSlotNo . runMockState (Mock.mBSVHAtSlot (getHandle $ lookUp h))
   where
     wrap ::
          (a -> BSVal ks vs d b)
       -> (Either Err a, Mock vs)
       -> (BSVal ks vs d (Either Err b), Mock vs)
     wrap f = first (MEither . bimap MErr f)
-
-    mBSValueHandle ::
-         (WithOrigin SlotNo, ValueHandle vs)
-      -> BSVal ks vs d (WithOrigin SlotNo, Handle)
-    mBSValueHandle (sl, h) = MPair (MSlotNo sl, MValueHandle h)
 
     getHandle :: BSVal ks vs d Handle -> ValueHandle vs
     getHandle (MValueHandle h) = h
@@ -455,7 +458,7 @@ arbitraryBackingStoreAction ::
 arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
     QC.frequency $
          withoutVars
-      ++ case findVars (Proxy @(Either Err (WithOrigin SlotNo, Handle))) of
+      ++ case findVars (Proxy @(Either Err Handle)) of
           []   -> []
           vars -> withVars (QC.elements vars)
   where
@@ -470,18 +473,19 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
       ]
 
     withVars ::
-         Gen (BSVar ks vs d (Either Err (WithOrigin SlotNo, Handle)))
+         Gen (BSVar ks vs d (Either Err Handle))
       -> [(Int, Gen (Any (LockstepAction (BackingStoreState ks vs d))))]
     withVars genVar = [
           (5, fmap Some $ BSVHClose <$> (fhandle <$> genVar))
         , (5, fmap Some $ BSVHRangeRead <$> (fhandle <$> genVar) <*> QC.arbitrary)
         , (5, fmap Some $ BSVHRead <$> (fhandle <$> genVar) <*> QC.arbitrary)
+        , (5, fmap Some $ BSVHAtSlot <$> (fhandle <$> genVar))
         ]
       where
         fhandle ::
-             GVar Op (Either Err (WithOrigin SlotNo, Handle))
+             GVar Op (Either Err Handle)
           -> GVar Op Handle
-        fhandle = mapGVar (\op -> OpSnd `OpComp` OpRight `OpComp` op)
+        fhandle = mapGVar (\op -> OpRight `OpComp` op)
 
     genBackingStorePath :: Gen BS.BackingStorePath
     genBackingStorePath = do
@@ -574,7 +578,7 @@ runIO action lookUp = ReaderT $ \renv ->
         BSCopy bsp         -> catchErr $
           readMVar bsVar >>= \bs -> BS.bsCopy bs sfhs bsp
         BSValueHandle      -> catchErr $
-          readMVar bsVar >>= (BS.bsValueHandle >=> mapM (registerHandle rr))
+          readMVar bsVar >>= (BS.bsValueHandle >=> registerHandle rr)
         BSWrite sl d       -> catchErr $
           readMVar bsVar >>= \bs -> BS.bsWrite bs sl d
         BSVHClose h        -> catchErr $
@@ -583,6 +587,8 @@ runIO action lookUp = ReaderT $ \renv ->
           (readHandle rr (lookUp' h) >>= \vh -> BS.bsvhRangeRead vh rq)
         BSVHRead h ks      -> catchErr $ Values <$>
           (readHandle rr (lookUp' h) >>= \vh -> BS.bsvhRead vh ks)
+        BSVHAtSlot h       -> catchErr $
+          readHandle rr (lookUp' h) >>= pure . BS.bsvhAtSlot
       where
         RealEnv{
             reSomeHasFS        = sfhs
@@ -646,8 +652,8 @@ updateStats action lookUp result stats@Stats{handleSlots, writeSlots} =
 
     updateHandleSlots :: Stats ks vs d -> Stats ks vs d
     updateHandleSlots s = case (action, result) of
-      (BSValueHandle, MEither (Right (MPair (MSlotNo sl, MValueHandle h))))
-        -> s {handleSlots = Map.insert h sl handleSlots}
+      (BSValueHandle, MEither (Right (MValueHandle h)))
+        -> s {handleSlots = Map.insert h (seqNo h) handleSlots}
       (BSClose, MEither (Right _))
         -> s {handleSlots = Map.empty}
       (BSVHClose h, MEither (Right _))
@@ -695,6 +701,7 @@ data TagAction =
   | TBSVHClose
   | TBSVHRangeRead
   | TBSVHRead
+  | TBSVHAtSlot
   deriving (Show, Eq, Ord, Bounded, Enum)
 
 -- | Identify actions by their constructor.
@@ -709,6 +716,7 @@ tAction = \case
   BSVHClose _          -> TBSVHClose
   BSVHRangeRead _ _    -> TBSVHRangeRead
   BSVHRead _ _         -> TBSVHRead
+  BSVHAtSlot _         -> TBSVHAtSlot
 
 data Tag =
     -- | A value handle is created before a write, and read after the write. The

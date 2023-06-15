@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE QuantifiedConstraints      #-}
@@ -39,8 +40,8 @@ import           Data.Function (on)
 import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
-import           Ouroboros.Consensus.Util.IOLike (IOLike (..), StrictMVar,
-                     StrictTVar)
+import           Ouroboros.Consensus.Util.IOLike (IOLike (..), StrictSVar,
+                     StrictTVar, castStrictSVar, castStrictTVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions
@@ -56,6 +57,18 @@ newtype WithEarlyExit m a = WithEarlyExit {
            , MonadTrans
            , MonadPlus
            )
+
+instance NoThunks (StrictTVar m a)
+      => NoThunks (StrictTVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictTVar (WithEarlyExit m)"
+  wNoThunks ctxt tv = do
+      wNoThunks ctxt (castStrictTVar tv :: StrictTVar m a)
+
+instance NoThunks (StrictSVar m a)
+      => NoThunks (StrictSVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictSVar (WithEarlyExit m)"
+  wNoThunks ctxt tv = do
+      wNoThunks ctxt (castStrictSVar tv :: StrictSVar m a)
 
 -- | Internal only
 earlyExit :: m (Maybe a) -> WithEarlyExit m a
@@ -213,7 +226,7 @@ instance MonadThread m => MonadThread (WithEarlyExit m) where
   myThreadId   = lift    myThreadId
   labelThread  = lift .: labelThread
 
-instance (MonadMask m, MonadAsync m, MonadCatch (STM m))
+instance (MonadCatch (STM m), MonadMask m, MonadAsync m)
       => MonadAsync (WithEarlyExit m) where
   type Async (WithEarlyExit m) = WithEarlyExit (Async m)
 
@@ -284,14 +297,5 @@ instance MonadEventlog m => MonadEventlog (WithEarlyExit m) where
   Finally, the consensus IOLike wrapper
 -------------------------------------------------------------------------------}
 
-instance ( IOLike m
-         , forall a. NoThunks (StrictTVar (WithEarlyExit m) a)
-         , forall a. NoThunks (StrictMVar (WithEarlyExit m) a)
-           -- The simulator does not currently support @MonadCatch (STM m)@,
-           -- making this @IOLike@ instance applicable to @IO@ only. Once that
-           -- missing @MonadCatch@ instance is added, @IOLike@ should require
-           -- @MonadCatch (STM m)@ intsead of @MonadThrow (STM m)@.
-           -- <https://github.com/input-output-hk/ouroboros-network/issues/1461>
-         , MonadCatch (STM m)
-         ) => IOLike (WithEarlyExit m) where
+instance IOLike m => IOLike (WithEarlyExit m) where
   forgetSignKeyKES = lift . forgetSignKeyKES

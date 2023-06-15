@@ -59,7 +59,7 @@ deriving instance (BlockSupportsProtocol blk, HasAnnTip blk)
                 => NoThunks (HeaderStateHistory blk)
 
 current :: HeaderStateHistory blk -> HeaderState blk
-current = either id id . AS.head . unHeaderStateHistory
+current = AS.headAnchor . unHeaderStateHistory
 
 -- | Append a 'HeaderState' to the history.
 append :: HeaderState blk -> HeaderStateHistory blk -> HeaderStateHistory blk

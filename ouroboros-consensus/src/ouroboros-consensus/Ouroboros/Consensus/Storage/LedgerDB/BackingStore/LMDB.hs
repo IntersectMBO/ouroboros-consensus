@@ -45,6 +45,7 @@ import qualified Database.LMDB.Simple.Extra as LMDB
 import qualified Database.LMDB.Simple.Internal as LMDB.Internal
 import qualified Database.LMDB.Simple.TransactionHandle as TrH
 import           GHC.Generics (Generic)
+import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Tables
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as HD
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Bridge as Bridge
@@ -378,7 +379,7 @@ lmdbCopy tracer e to = do
 
 -- | Initialise a backing store.
 newLMDBBackingStoreInitialiser ::
-     forall m l. (HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m)
+     forall m l. (HasCallStack, HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m)
   => Trace.Tracer m TraceLMDB
   -> LMDBLimits
      -- ^ Configuration parameters for the LMDB database that we
@@ -453,7 +454,7 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
        HD.InitFromValues slot vals -> initFromVals dbTracer slot vals dbEnv dbState dbBackingTables
        _                           -> pure ()
 
-   mkBackingStore :: Db m l -> LMDBBackingStore l m
+   mkBackingStore :: HasCallStack => Db m l -> LMDBBackingStore l m
    mkBackingStore db =
        let bsClose :: m ()
            bsClose = Status.withWriteAccess dbStatusLock DbErrClosed $ do
@@ -481,11 +482,11 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
                pure (dbsSeq, s {dbsSeq = At slot})
              Trace.traceWith dbTracer $ TDBWrite oldSlot slot
 
-       in HD.BackingStore { HD.bsClose = bsClose
-                           , HD.bsCopy = bsCopy
-                           , HD.bsValueHandle = bsValueHandle
-                           , HD.bsWrite = bsWrite
-                           }
+       in HD.BackingStore { HD.bsClose       = bsClose
+                          , HD.bsCopy        = bsCopy
+                          , HD.bsValueHandle = bsValueHandle
+                          , HD.bsWrite       = bsWrite
+                          }
 
       where
         Db { dbEnv
@@ -501,11 +502,11 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
 -- with @`DbState`@).
 mkLMDBBackingStoreValueHandle ::
      forall l m.
-     (HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m)
+     (HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m, HasCallStack)
   => Db m l
      -- ^ The LMDB database for which the backing store value handle is
      -- created.
-  -> m (WithOrigin SlotNo, LMDBValueHandle l m)
+  -> m (LMDBValueHandle l m)
 mkLMDBBackingStoreValueHandle db = do
   vhId <- IOLike.atomically $ do
     vhId <- IOLike.readTVar dbNextId
@@ -578,7 +579,8 @@ mkLMDBBackingStoreValueHandle db = do
      where
       HD.RangeQuery rqPrev rqCount = rq
 
-    bsvh = HD.BackingStoreValueHandle { HD.bsvhClose = bsvhClose
+    bsvh = HD.BackingStoreValueHandle { HD.bsvhAtSlot = initSlot
+                                      , HD.bsvhClose = bsvhClose
                                       , HD.bsvhRead = bsvhRead
                                       , HD.bsvhRangeRead = bsvhRangeRead
                                       }
@@ -586,7 +588,7 @@ mkLMDBBackingStoreValueHandle db = do
   IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.insert vhId cleanup)
 
   Trace.traceWith tracer TVHOpened
-  pure (initSlot, bsvh)
+  pure bsvh
 
  where
    Db { dbEnv

@@ -19,7 +19,6 @@ import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.Query
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Mempool.Update
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM
@@ -111,8 +110,7 @@ mkMempool mpEnv = Mempool
     , removeTxs      = implRemoveTxs mpEnv
     , syncWithLedger = fst <$> implSyncWithLedger mpEnv
     , getSnapshot    = snapshotFromIS <$> readTMVar istate
-    , getSnapshotFor = \slot st ->
-          implGetSnapshotFor mpEnv slot st . changelogDiffs
+    , getSnapshotFor = implGetSnapshotFor mpEnv
     , getCapacity    = isCapacity <$> readTMVar istate
     , getRemainingCapacity = do
         is <- readTMVar istate

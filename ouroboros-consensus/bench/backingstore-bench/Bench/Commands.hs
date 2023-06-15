@@ -191,7 +191,7 @@ runCmd = \case
 
     bsValueHandle i = do
         bs <- fromJust <$> gets stBackingStore
-        (_sl, vh) <- lift $ BS.bsValueHandle bs
+        vh <- lift $ BS.bsValueHandle bs
         let f vhMay = case vhMay of
                         Nothing -> Just vh
                         Just _  -> error "bsValueHandle"

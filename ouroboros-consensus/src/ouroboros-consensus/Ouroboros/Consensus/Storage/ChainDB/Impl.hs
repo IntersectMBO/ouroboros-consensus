@@ -40,7 +40,6 @@ import           Data.Functor ((<&>))
 import           Data.Functor.Identity (Identity)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict (StrictMaybe (..))
-import           Data.SOP (K (..))
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
@@ -159,7 +158,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       traceWith initChainSelTracer InitalChainSelected
 
       let chain  = VF.validatedFragment chainAndLedger
-          K ledger = VF.validatedLedger   chainAndLedger
+          ledger = VF.validatedLedger   chainAndLedger
           cfg    = Args.cdbTopLevelConfig args
 
       atomically $ LedgerDB.setCurrent lgrDB ledger
@@ -173,7 +172,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       varFollowers       <- newTVarIO Map.empty
       varNextIteratorKey <- newTVarIO (IteratorKey 0)
       varNextFollowerKey <- newTVarIO (FollowerKey   0)
-      varCopyLock        <- newMVar  ()
+      varCopyLock        <- newSVar  ()
       varKillBgThreads   <- newTVarIO $ return ()
       blocksToAdd        <- newBlocksToAdd (Args.cdbBlocksToAddSize args)
 

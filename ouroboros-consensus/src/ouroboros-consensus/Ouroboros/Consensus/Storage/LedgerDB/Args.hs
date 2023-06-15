@@ -22,7 +22,7 @@ data LedgerDBArgs f m blk = LedgerDBArgs {
     , lgrGenesis              :: HKD f (m (ExtLedgerState blk ValuesMK))
     , lgrHasFS                :: SomeHasFS m
     , lgrTopLevelConfig       :: HKD f (TopLevelConfig blk)
-    , lgrTraceLedger          :: Tracer m (DbChangelog' blk)
+    , lgrTraceLedger          :: Tracer m (AnchorlessDbChangelog' blk)
     , lgrTracer               :: Tracer m (TraceLedgerDBEvent blk)
     , lgrBackingStoreSelector :: !(BackingStoreSelector m)
     }

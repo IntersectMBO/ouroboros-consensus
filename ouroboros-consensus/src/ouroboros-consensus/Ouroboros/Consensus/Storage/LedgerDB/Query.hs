@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 -- | Queries on the ledger db
@@ -16,6 +17,8 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView (..),
+                     LedgerDBView')
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
@@ -48,7 +51,7 @@ getLedgerTablesAtFor ::
         (PointNotFound blk)
         (LedgerTables l ValuesMK))
 getLedgerTablesAtFor pt keys dbvar bstore = do
-  lgrDb <- readTVarIO dbvar
+  lgrDb <- anchorlessChangelog <$> readTVarIO dbvar
   case rollback pt lgrDb of
     Nothing -> pure $ Left $ PointNotFound pt
     Just l  -> do
@@ -72,15 +75,15 @@ acquireLDBReadView ::
      -- acquisition of the LedgerDB
   -> m ( a
        , StaticEither b
-           (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk)
+           (LedgerDBView' m blk)
            (Either
             (Point blk)
-            (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk))
+            (LedgerDBView' m blk))
        )
-acquireLDBReadView p dbvar lock (LedgerBackingStore bs) stmAct =
+acquireLDBReadView p dbvar lock bs stmAct =
   withReadLock lock $ do
     (a, ldb') <- atomically $ do
-      (,) <$> stmAct <*> readTVar dbvar
+      (,) <$> stmAct <*> (anchorlessChangelog <$> readTVar dbvar)
     (a,) <$> case p of
       StaticLeft () -> StaticLeft <$> acquire ldb'
       StaticRight actualPoint -> StaticRight <$>
@@ -89,15 +92,15 @@ acquireLDBReadView p dbvar lock (LedgerBackingStore bs) stmAct =
           Just ldb'' -> Right <$> acquire ldb''
  where
    acquire ::
-        DbChangelog' blk
-     -> m (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk)
+        AnchorlessDbChangelog' blk
+     -> m (LedgerDBView' m blk)
    acquire l = do
-     (slot, vh) <- bsValueHandle bs
-     if slot == getTipSlot (changelogLastFlushedState l)
-       then pure (LedgerBackingStoreValueHandle slot vh, l)
+     vh <- bsValueHandle bs
+     if bsvhAtSlot vh == adcLastFlushedSlot l
+       then pure $ LedgerDBView vh l
        else error ("Critical error: Value handles are created at "
-                   <> show slot
+                   <> show (bsvhAtSlot vh)
                    <> " while the db changelog is at "
-                   <> show (getTipSlot $ changelogLastFlushedState l)
+                   <> show (adcLastFlushedSlot l)
                    <> ". There is either a race condition or a logic bug"
                   )

@@ -328,8 +328,10 @@ getLedgerDB ::
   -> Model blk
   -> DbChangelog.DbChangelog' blk
 getLedgerDB cfg m@Model{..} =
-      DbChangelog.prune (SecurityParam (maxActualRollback k m))
-    $ DbChangelog.pushMany' ledgerDbCfg blks trivialKeySetsReader
+      DbChangelog.onChangelog
+      ( DbChangelog.prune (SecurityParam (maxActualRollback k m))
+      . DbChangelog.pushMany' ledgerDbCfg blks trivialKeySetsReader
+      )
     $ DbChangelog.empty initLedger
   where
     blks = Chain.toOldestFirst $ currentChain m

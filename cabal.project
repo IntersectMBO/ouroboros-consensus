@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2023-06-02T09:05:32Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2023-05-23T16:25:08Z
+  , cardano-haskell-packages 2023-06-02T10:52:00Z
 
 packages:
   ./ouroboros-consensus
@@ -78,22 +78,15 @@ package strict-stm
 package text-short
   flags: +asserts
 
-source-repository-package
-  type: git
-  location: https://github.com/jasagredo/quickcheck-state-machine
-  tag: 44b2fa5970229d502ae8181b9dccbf1bb511f286
-  --sha256: 1chfw51rbciwnn86vvry71wff0sxws3lr0cir51w357hrldj68xh
+constraints:
+  -- this version deprecates the package with makes nix builders fail
+  ansi-wl-pprint < 1.0
 
+-- TODO: remove when a new version of strict-mvar is released
 source-repository-package
   type: git
-  location: https://github.com/jasagredo/tree-diff
-  tag: a97c7ab0792efee192a11d693cef69801c0fb280
-  --sha256: 1wag4gqrcg2r82qqj9wfllavrynhrzgd7rmrhmah6z2nf968kka2
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/cardano-ledger
-  tag: febddc58683186232db5fa376de65c58973f9686
+  location: https://github.com/input-output-hk/io-sim
+  tag: ec202298c420378ef90b3fc0126c39e0f52290a3
+  --sha256: 1p6pn83kwp66x2m0cw9a27blfcpmw0lrra72qd0pi5bj3v1bcrl9
   subdir:
-   libs/cardano-ledger-binary
-  --sha256: 0q6c2f4ld5l85153q8xrm2qc64k8p0y66j6adcl8bga31yd0pl16
+    strict-mvar

@@ -58,7 +58,7 @@ import           Ouroboros.Network.Block (MaxSlotNo)
 import           Prelude hiding (elem)
 import           System.FS.API (SomeHasFS (..), hPutAll, withFile)
 import           System.FS.API.Types
-import           System.FS.Sim.Error hiding (null)
+import           System.FS.Sim.Error
 import qualified System.FS.Sim.MockFS as Mock
 import           System.Random (getStdRandom, randomR)
 import           Test.Ouroboros.Storage.Orphans ()
@@ -480,7 +480,7 @@ shrinkCmd _ cmd = case cmd of
 -- | Environment to run commands against the real VolatileDB implementation.
 data VolatileDBEnv = VolatileDBEnv
   { varErrors :: StrictTVar IO Errors
-  , varDB     :: StrictMVar IO (VolatileDB IO Block)
+  , varDB     :: StrictSVar IO (VolatileDB IO Block)
   , args      :: VolatileDbArgs Identity IO Block
   }
 
@@ -490,7 +490,7 @@ data VolatileDBEnv = VolatileDBEnv
 reopenDB :: VolatileDBEnv -> IO ()
 reopenDB VolatileDBEnv { varDB, args } = do
     db <- openDB args runWithTempRegistry
-    void $ swapMVar varDB db
+    void $ swapSVar varDB db
 
 semanticsImpl :: VolatileDBEnv -> At CmdErr Concrete -> IO (At Resp Concrete)
 semanticsImpl env@VolatileDBEnv { varDB, varErrors }  (At (CmdErr cmd mbErrors)) =
@@ -501,7 +501,7 @@ semanticsImpl env@VolatileDBEnv { varDB, varErrors }  (At (CmdErr cmd mbErrors))
           tryVolatileDB (Proxy @Block) (runDB env cmd)
         -- As all operations on the VolatileDB are idempotent, close (not
         -- idempotent by default!), reopen it, and run the command again.
-        readMVar varDB >>= idemPotentCloseDB
+        readSVar varDB >>= idemPotentCloseDB
         reopenDB env
         tryVolatileDB (Proxy @Block) (runDB env cmd)
 
@@ -517,7 +517,7 @@ idemPotentCloseDB db =
     isClosedDBError _                             = Nothing
 
 runDB :: HasCallStack => VolatileDBEnv -> Cmd -> IO Success
-runDB env@VolatileDBEnv { varDB, args = VolatileDbArgs { volHasFS = SomeHasFS hasFS } } cmd = readMVar varDB >>= \db -> case cmd of
+runDB env@VolatileDBEnv { varDB, args = VolatileDbArgs { volHasFS = SomeHasFS hasFS } } cmd = readSVar varDB >>= \db -> case cmd of
     GetBlockComponent hash          -> MbAllComponents           <$> getBlockComponent db allComponents hash
     PutBlock blk                    -> Unit                      <$> putBlock db blk
     FilterByPredecessor hashes      -> Successors . (<$> hashes) <$> atomically (filterByPredecessor db)
@@ -526,7 +526,7 @@ runDB env@VolatileDBEnv { varDB, args = VolatileDbArgs { volHasFS = SomeHasFS ha
     GetMaxSlotNo                    -> MaxSlot                   <$> atomically (getMaxSlotNo db)
     Close                           -> Unit                      <$> closeDB db
     ReOpen                          -> do
-        readMVar varDB >>= idemPotentCloseDB
+        readSVar varDB >>= idemPotentCloseDB
         Unit <$> reopenDB env
     Corruption corrs                ->
       withClosedDB $
@@ -538,7 +538,7 @@ runDB env@VolatileDBEnv { varDB, args = VolatileDbArgs { volHasFS = SomeHasFS ha
   where
     withClosedDB :: IO () -> IO Success
     withClosedDB action = do
-      readMVar varDB >>= closeDB
+      readSVar varDB >>= closeDB
       action
       reopenDB env
       return $ Unit ()
@@ -578,7 +578,7 @@ prop_sequential = forAllCommands smUnused Nothing $ \cmds -> monadicIO $ do
 test :: Commands (At CmdErr) (At Resp)
      -> IO (History (At CmdErr) (At Resp), Property)
 test cmds = do
-    varErrors          <- uncheckedNewTVarM mempty
+    varErrors          <- uncheckedNewTVarM emptyErrors
     varFs              <- uncheckedNewTVarM Mock.empty
     (tracer, getTrace) <- recordingTracerIORef
 
@@ -593,11 +593,11 @@ test cmds = do
                  }
 
     (hist, res, trace) <- bracket
-      (openDB args runWithTempRegistry >>= newMVar)
+      (openDB args runWithTempRegistry >>= newSVar)
       -- Note: we might be closing a different VolatileDB than the one we
       -- opened, as we can reopen it the VolatileDB, swapping the VolatileDB
-      -- in the MVar.
-      (\varDB -> readMVar varDB >>= closeDB)
+      -- in the SVar.
+      (\varDB -> readSVar varDB >>= closeDB)
       $ \varDB -> do
         let env = VolatileDBEnv { varErrors, varDB, args }
             sm' = sm env dbm

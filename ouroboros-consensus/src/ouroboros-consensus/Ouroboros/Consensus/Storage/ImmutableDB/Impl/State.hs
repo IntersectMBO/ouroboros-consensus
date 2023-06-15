@@ -56,7 +56,7 @@ import           System.FS.API.Types
 -- | The environment used by the immutable database.
 data ImmutableDBEnv m blk = forall h. Eq h => ImmutableDBEnv {
       hasFS            :: !(HasFS m h)
-    , varInternalState :: !(StrictMVar m (InternalState m blk h))
+    , varInternalState :: !(StrictSVar m (InternalState m blk h))
     , checkIntegrity   :: !(blk -> Bool)
     , chunkInfo        :: !ChunkInfo
     , tracer           :: !(Tracer m (TraceEvent blk))
@@ -151,9 +151,9 @@ getOpenState ::
   => ImmutableDBEnv m blk
   -> STM m (SomePair (HasFS m) (OpenState m blk))
 getOpenState ImmutableDBEnv {..} = do
-    -- We use 'readMVarSTM' to read a potentially stale internal state if
+    -- We use 'readSVarSTM' to read a potentially stale internal state if
     -- somebody's appending to the ImmutableDB at the same time.
-    internalState <- readMVarSTM varInternalState
+    internalState <- readSVarSTM varInternalState
     case internalState of
        DbClosed         -> throwApiMisuse $ ClosedDBError @blk
        DbOpen openState -> return (SomePair hasFS openState)
@@ -176,6 +176,7 @@ type ModifyOpenState m blk h =
 -- approach makes sure that no resources are leaked when an exception is
 -- thrown while running the action modifying the state.
 --
+-- TODO: update this comment
 -- __Note__: This /takes/ the 'TMVar', /then/ runs the action (which might be
 -- in 'IO'), and then puts the 'TMVar' back, just like
 -- 'Control.Concurrent.MVar.modifyMVar' does. Consequently, it has the same
@@ -190,16 +191,16 @@ modifyOpenState ImmutableDBEnv { hasFS = hasFS :: HasFS m h, .. } modSt =
     wrapFsError (Proxy @blk) $ modifyWithTempRegistry getSt putSt (modSt hasFS)
   where
     getSt :: m (OpenState m blk h)
-    getSt = mask_ $ takeMVar varInternalState >>= \case
+    getSt = mask_ $ takeSVar varInternalState >>= \case
       DbOpen ost -> return ost
       DbClosed   -> do
-        putMVar varInternalState DbClosed
+        putSVar varInternalState DbClosed
         throwApiMisuse $ ClosedDBError @blk
 
     putSt :: OpenState m blk h -> ExitCase (OpenState m blk h) -> m ()
     putSt ost ec = do
-        -- It is crucial to replace the MVar.
-        putMVar varInternalState st'
+        -- It is crucial to replace the SVar.
+        putSVar varInternalState st'
         unless (dbIsOpen st') $ cleanUp hasFS ost
       where
         st' = case ec of
@@ -241,18 +242,18 @@ withOpenState ImmutableDBEnv { hasFS = hasFS :: HasFS m h, .. } action = do
       Left  e -> throwIO e
       Right r -> return r
   where
-    -- We use 'readMVarSTM' to read a potentially stale internal state if
+    -- We use 'readSVarSTM' to read a potentially stale internal state if
     -- somebody's appending to the ImmutableDB at the same time. Reads can
     -- safely happen concurrently with appends, so this is fine and allows for
     -- some extra concurrency.
     open :: m (OpenState m blk h)
-    open = atomically (readMVarSTM varInternalState) >>= \case
+    open = atomically (readSVarSTM varInternalState) >>= \case
       DbOpen ost -> return ost
       DbClosed   -> throwApiMisuse $ ClosedDBError @blk
 
     -- close doesn't take the state that @open@ returned, because the state
     -- may have been updated by someone else since we got it (remember we're
-    -- using 'readMVarSTM' here, not 'takeMVar'). So we need to get the most
+    -- using 'readSVarSTM' here, not 'takeSVar'). So we need to get the most
     -- recent state anyway.
     close :: ExitCase (Either (ImmutableDBError blk) r)
           -> m ()
@@ -265,7 +266,7 @@ withOpenState ImmutableDBEnv { hasFS = hasFS :: HasFS m h, .. } action = do
       ExitCaseSuccess (Left (ApiMisuse {}))         -> return ()
 
     shutDown :: m ()
-    shutDown = swapMVar varInternalState DbClosed >>= \case
+    shutDown = swapSVar varInternalState DbClosed >>= \case
       DbOpen ost -> wrapFsError (Proxy @blk) $ cleanUp hasFS ost
       DbClosed   -> return ()
 

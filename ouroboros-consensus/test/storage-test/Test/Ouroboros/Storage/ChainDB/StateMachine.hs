@@ -121,7 +121,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Config as DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl as LedgerDB
@@ -358,7 +357,7 @@ data ChainDBState m blk = ChainDBState
 
 -- | Environment to run commands against the real ChainDB implementation.
 data ChainDBEnv m blk = ChainDBEnv {
-    varDB           :: StrictMVar m (ChainDBState m blk)
+    varDB           :: StrictSVar m (ChainDBState m blk)
   , registry        :: ResourceRegistry m
   , varCurSlot      :: StrictTVar m SlotNo
   , varNextId       :: StrictTVar m Id
@@ -382,7 +381,7 @@ reopen
   => ChainDBEnv m blk -> m ()
 reopen ChainDBEnv { varDB, args } = do
     chainDBState <- open args
-    void $ swapMVar varDB chainDBState
+    void $ swapSVar varDB chainDBState
 
 close :: IOLike m => ChainDBState m blk -> m ()
 close ChainDBState { chainDB, addBlockAsync } = do
@@ -395,7 +394,7 @@ run :: forall m blk.
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
 run env@ChainDBEnv { varDB, .. } cmd =
-    readMVar varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
+    readSVar varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
       AddBlock blk             -> Point               <$> advanceAndAdd st (blockSlot blk) blk
       AddFutureBlock blk s     -> Point               <$> advanceAndAdd st s               blk
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
@@ -439,7 +438,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       close st
       atomically $ writeTVar varVolatileDbFs Mock.empty
       reopen env
-      ChainDB { getTipPoint } <- chainDB <$> readMVar varDB
+      ChainDB { getTipPoint } <- chainDB <$> readSVar varDB
       atomically getTipPoint
 
     giveWithEq :: a -> m (WithEq a)
@@ -471,7 +470,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
 flush ::
      (LedgerSupportsProtocol blk)
   => DbChangelog.DbChangelog' blk -> DbChangelog.DbChangelog' blk
-flush = snd . DbChangelog.splitForFlushing DbChangelog.FlushAllImmutable
+flush = snd . DbChangelog.splitForFlushing
 
 persistBlks :: IOLike m => ShouldGarbageCollect -> ChainDB.Internal m blk -> m ()
 persistBlks collectGarbage ChainDB.Internal{..} = do
@@ -1574,11 +1573,11 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                    maxClockSkew varCurSlot
 
       (hist, model, res, trace) <- bracket
-        (open args >>= newMVar)
+        (open args >>= newSVar)
         -- Note: we might be closing a different ChainDB than the one we
         -- opened, as we can reopen it the ChainDB, swapping the ChainDB in
-        -- the MVar.
-        (\varDB -> readMVar varDB >>= close)
+        -- the SVar.
+        (\varDB -> readSVar varDB >>= close)
 
         $ \varDB -> do
           let env = ChainDBEnv

@@ -38,7 +38,8 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDB (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDB (..),
+                     LedgerDBView (viewHandle))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Args as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init as LedgerDB
@@ -186,7 +187,7 @@ mkServer k chain = do
       localStateQueryServer
         cfg
         (\mpt -> do
-           ldb0 <- atomically $ LedgerDB.getCurrent lgrDB
+           ldb0 <- LedgerDB.anchorlessChangelog <$> atomically (LedgerDB.getCurrent lgrDB)
            pure $ case mpt of
              Nothing -> Right $ mkDLV ldb0
              Just pt -> case LedgerDB.rollback pt ldb0 of
@@ -228,8 +229,8 @@ initLedgerDB k chain = do
       LedgerDB.mkLedgerDB st args resolve
 
     ((), seP) <- LedgerDB.acquireLDBReadView ledgerDB (StaticLeft ()) (pure ())
-    let vh = fst $ fromStaticLeft seP
-    LedgerDB.validate ledgerDB vh genesisLedgerDB BlockCache.empty 0 (traceWith nullTracer)
+    let vh = fromStaticLeft seP
+    LedgerDB.validate ledgerDB (viewHandle vh) (LedgerDB.anchorlessChangelog $ genesisLedgerDB) BlockCache.empty 0 (traceWith nullTracer)
       (map getHeader (Chain.toOldestFirst chain)) >>= \case
         LedgerDB.ValidateExceededRollBack _ ->
           error "impossible: rollback was 0"

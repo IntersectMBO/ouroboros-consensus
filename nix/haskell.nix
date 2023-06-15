@@ -5,10 +5,10 @@ let
   inherit (final) haskell-nix;
 
   # from https://github.com/input-output-hk/haskell.nix/issues/298#issuecomment-767936405
-  forAllLocalPackages = cfg: { lib, ... }: {
+  forAllProjectPackages = cfg: { lib, ... }: {
     options.packages = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule ({ config, ... }: {
-        config = lib.mkIf config.package.isLocal cfg;
+        config = lib.mkIf config.package.isProject cfg;
       }));
     };
   };
@@ -21,7 +21,7 @@ in
       "https://input-output-hk.github.io/cardano-haskell-packages" = inputs.CHaP;
     };
     modules = [
-      (forAllLocalPackages {
+      (forAllProjectPackages {
         ghcOptions = [ "-Werror" ];
       })
       {

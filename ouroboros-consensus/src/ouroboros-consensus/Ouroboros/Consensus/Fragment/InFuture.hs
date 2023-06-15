@@ -3,7 +3,6 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 
 -- | Intended for qualified import
 --
@@ -38,9 +37,11 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (adcStates)
 import           Ouroboros.Consensus.Util.Time
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)))
+import qualified Ouroboros.Network.AnchoredSeq as AS
 
 data CheckInFuture m blk = CheckInFuture {
        -- | POSTCONDITION:
@@ -118,11 +119,13 @@ reference cfg (ClockSkew clockSkew) SystemTime{..} = CheckInFuture {
         -- summary can be used to check all of the blocks in the fragment
         return $
           checkFragment
-            (hardForkSummary cfg (VF.validatedLedger validated))
+            (hardForkSummary cfg (st validated))
             now
             (VF.validatedFragment validated)
     }
   where
+    st = AS.headAnchor . adcStates . VF.validatedLedger
+
     checkFragment :: HF.Summary (HardForkIndices blk)
                   -> RelativeTime
                   -> AnchoredFragment (Header blk)

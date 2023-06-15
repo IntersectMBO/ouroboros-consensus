@@ -33,11 +33,11 @@ module Ouroboros.Consensus.Mempool.API (
 import qualified Data.List.NonEmpty as NE
 import           Ouroboros.Consensus.Block (ChainHash, SlotNo)
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import           Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.TxSubmission2.Type (TxSizeInBytes)
 
@@ -199,7 +199,7 @@ data Mempool m blk = Mempool {
            SlotNo    -- ^ The current slot in which we want the snapshot
         -> TickedLedgerState blk DiffMK
                      -- ^ The ledger state ticked to the given slot number
-        -> DbChangelog' blk
+        -> LedgerTables (ExtLedgerState blk) SeqDiffMK
         -> LedgerBackingStoreValueHandle' m blk
         -> m (MempoolSnapshot blk)
 

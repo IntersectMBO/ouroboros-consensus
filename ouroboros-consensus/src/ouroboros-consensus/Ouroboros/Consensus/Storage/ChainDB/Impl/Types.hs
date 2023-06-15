@@ -226,14 +226,14 @@ data ChainDbEnv m blk = CDB
     -- not when hashes are garbage-collected from the map.
   , cdbNextIteratorKey :: !(StrictTVar m IteratorKey)
   , cdbNextFollowerKey :: !(StrictTVar m FollowerKey)
-  , cdbCopyLock        :: !(StrictMVar m ())
+  , cdbCopyLock        :: !(StrictSVar m ())
     -- ^ Lock used to ensure that 'copyToImmutableDB' is not executed more than
     -- once concurrently.
     --
     -- Note that 'copyToImmutableDB' can still be executed concurrently with all
     -- others functions, just not with itself.
   , cdbTracer          :: !(Tracer m (TraceEvent blk))
-  , cdbTraceLedger     :: !(Tracer m (DbChangelog' blk))
+  , cdbTraceLedger     :: !(Tracer m (AnchorlessDbChangelog' blk))
   , cdbRegistry        :: !(ResourceRegistry m)
     -- ^ Resource registry that will be used to (re)start the background
     -- threads, see 'cdbBgThreads'.

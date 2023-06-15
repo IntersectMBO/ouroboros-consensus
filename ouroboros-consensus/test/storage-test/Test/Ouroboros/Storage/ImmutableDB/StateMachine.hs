@@ -80,7 +80,8 @@ import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Prelude hiding (elem, notElem)
 import           System.FS.API (HasFS (..), SomeHasFS (..))
 import           System.FS.API.Types (FsError (..), FsPath, mkFsPath)
-import           System.FS.Sim.Error (Errors, mkSimErrorHasFS, withErrors)
+import           System.FS.Sim.Error (Errors, emptyErrors, mkSimErrorHasFS,
+                     withErrors)
 import qualified System.FS.Sim.MockFS as Mock
 import           System.Random (getStdRandom, randomR)
 import           Test.Ouroboros.Storage.ImmutableDB.Model
@@ -216,7 +217,7 @@ open args = do
 reopen :: ImmutableDBEnv -> ValidationPolicy -> IO ()
 reopen ImmutableDBEnv { varDB, args } valPol = do
     immutableDbState <- open args { immValidationPolicy = valPol }
-    void $ swapMVar varDB immutableDbState
+    void $ swapSVar varDB immutableDbState
 
 -- | Run the command against the given database.
 run ::
@@ -233,7 +234,7 @@ run env@ImmutableDBEnv {
           , immHasFS = SomeHasFS hasFS
           }
       } cmd =
-    readMVar varDB >>= \ImmutableDBState { db, internal } -> case cmd of
+    readSVar varDB >>= \ImmutableDBState { db, internal } -> case cmd of
       GetTip               -> ImmTip          <$> atomically (getTip            db)
       GetBlockComponent pt -> ErAllComponents <$>             getBlockComponent db allComponents pt
       AppendBlock blk      -> Unit            <$>             appendBlock       db blk
@@ -799,15 +800,15 @@ data ImmutableDBEnv = ImmutableDBEnv {
       -- During truncation we might need to delete a file that is still opened
       -- by an iterator. As this is not allowed by the MockFS implementation, we
       -- first close all open iterators in these cases.
-    , varDB     :: StrictMVar IO ImmutableDBState
+    , varDB     :: StrictSVar IO ImmutableDBState
     , args      :: ImmutableDbArgs Identity IO TestBlock
     }
 
 getImmutableDB :: ImmutableDBEnv -> IO (ImmutableDB IO TestBlock)
-getImmutableDB = fmap db . readMVar . varDB
+getImmutableDB = fmap db . readSVar . varDB
 
 getInternal :: ImmutableDBEnv -> IO (ImmutableDB.Internal IO TestBlock)
-getInternal = fmap internal . readMVar . varDB
+getInternal = fmap internal . readSVar . varDB
 
 semantics ::
      ImmutableDBEnv
@@ -1189,7 +1190,7 @@ test :: Index.CacheConfig
      -> IO (QSM.History (At CmdErr IO) (At Resp IO), Property)
 test cacheConfig chunkInfo cmds = do
     fsVar              <- uncheckedNewTVarM Mock.empty
-    varErrors          <- uncheckedNewTVarM mempty
+    varErrors          <- uncheckedNewTVarM emptyErrors
     varNextId          <- uncheckedNewTVarM 0
     varIters           <- uncheckedNewTVarM []
     (tracer, getTrace) <- recordingTracerIORef
@@ -1208,11 +1209,11 @@ test cacheConfig chunkInfo cmds = do
             }
 
       (hist, model, res, trace) <- bracket
-        (open args >>= newMVar)
+        (open args >>= newSVar)
         -- Note: we might be closing a different ImmutableDB than the one we
         -- opened, as we can reopen it the ImmutableDB, swapping the
-        -- ImmutableDB in the MVar.
-        (\varDB -> readMVar varDB >>= closeDB . db)
+        -- ImmutableDB in the SVar.
+        (\varDB -> readSVar varDB >>= closeDB . db)
         $ \varDB -> do
           let env = ImmutableDBEnv
                 { varErrors

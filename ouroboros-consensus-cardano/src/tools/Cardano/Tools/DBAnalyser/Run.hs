@@ -56,7 +56,7 @@ analyse ::
   -> IO (Maybe AnalysisResult)
 analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbose} args =
     withRegistry $ \registry -> do
-      lock           <- newMVar ()
+      lock           <- newSVar ()
       chainDBTracer  <- mkTracer lock verbose
       analysisTracer <- mkTracer lock True
       ProtocolInfo { pInfoInitLedger = genesisLedger, pInfoConfig = cfg } <-
@@ -110,6 +110,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               , limit = confLimit
               , tracer = analysisTracer
               , bstore = bs
+              , policy = defaultDiskPolicy (configSecurityParam cfg) DefaultSnapshotInterval
               }
             tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
             putStrLn $ "ImmutableDB tip: " ++ show tipPoint
@@ -126,6 +127,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               , limit = confLimit
               , tracer = analysisTracer
               , bstore = bs
+              , policy = defaultDiskPolicy (configSecurityParam cfg) DefaultSnapshotInterval
               }
             tipPoint <- atomically $ ChainDB.getTipPoint chainDB
             putStrLn $ "ChainDB tip: " ++ show tipPoint
@@ -140,7 +142,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
         hPutStrLn stderr $ concat ["[", show diff, "] ", show ev]
         hFlush stderr
       where
-        withLock = bracket_ (takeMVar lock) (putMVar lock ())
+        withLock = bracket_ (takeSVar lock) (putSVar lock ())
 
     immValidationPolicy = case (analysis, validation) of
       (_, Just ValidateAllBlocks)      -> ImmutableDB.ValidateAllChunks

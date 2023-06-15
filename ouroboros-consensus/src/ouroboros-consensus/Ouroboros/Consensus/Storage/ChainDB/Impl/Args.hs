@@ -68,7 +68,7 @@ data ChainDbArgs f m blk = ChainDbArgs {
 
       -- Misc
     , cdbTracer                 :: Tracer m (TraceEvent blk)
-    , cdbTraceLedger            :: Tracer m (DbChangelog' blk)
+    , cdbTraceLedger            :: Tracer m (AnchorlessDbChangelog' blk)
     , cdbRegistry               :: HKD f (ResourceRegistry m)
     , cdbGcDelay                :: DiffTime
     , cdbGcInterval             :: DiffTime
