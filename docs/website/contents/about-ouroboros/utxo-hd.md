@@ -1,9 +1,9 @@
-# UTxO HD 
+# UTxO HD
 
-This document describes the design followed to move the ledger state 
+This document describes the design followed to move the ledger state
 from memory to disk.
 
-## Expected performance 
+## Expected performance
 
 On a 64G machine, with a AMD Ryzen 9 5900X processor, we obtained the following
 results when replaying and syncing from scratch up to slot 75M:
@@ -23,6 +23,6 @@ These results correspond to obtained around 18 January 2023.
 The plots below show how replay and syncing a node from scratch progress over
 time, and how the memory usage evolves.
 
-![replay times](images/utxo-hd-replay-01-19-23.png)
+![replay times](/img/utxo-hd/utxo-hd-replay-01-19-23.png)
 
-![sync times](images/utxo-hd-sync-01-19-23.png)
+![sync times](/img/utxo-hd/utxo-hd-sync-01-19-23.png)
