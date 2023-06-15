@@ -192,8 +192,8 @@ copyToImmutableDB CDB{..} = withCopyLock $ do
 
     withCopyLock :: forall a. HasCallStack => m a -> m a
     withCopyLock = bracket_
-      (mustBeUnlocked <$> tryTakeMVar cdbCopyLock)
-      (putMVar  cdbCopyLock ())
+      (mustBeUnlocked <$> tryTakeSVar cdbCopyLock)
+      (putSVar cdbCopyLock ())
 
     mustBeUnlocked :: forall b. HasCallStack => Maybe b -> b
     mustBeUnlocked = fromMaybe

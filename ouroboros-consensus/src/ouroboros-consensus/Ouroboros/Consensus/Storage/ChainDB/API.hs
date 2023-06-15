@@ -74,7 +74,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.Common
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView')
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+                     (anchorlessChangelog)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
@@ -177,9 +179,7 @@ data ChainDB m blk = ChainDB {
            Maybe (Point blk)
         -> m ( Either
                (Point blk)
-               ( LedgerBackingStoreValueHandle' m blk
-               , LedgerDB.DbChangelog' blk
-               )
+               (LedgerDBView' m blk)
              )
 
       -- | Get block at the tip of the chain, if one exists
@@ -383,13 +383,13 @@ getTipBlockNo = fmap Network.getTipBlockNo . getCurrentTip
 getCurrentLedger ::
      (Monad (STM m), IsLedger (LedgerState blk))
   => ChainDB m blk -> STM m (ExtLedgerState blk EmptyMK)
-getCurrentLedger = fmap LedgerDB.current . getLedgerDB
+getCurrentLedger = fmap (LedgerDB.current . anchorlessChangelog) . getLedgerDB
 
 -- | Get the immutable ledger, i.e., typically @k@ blocks back.
 getImmutableLedger ::
      Monad (STM m)
   => ChainDB m blk -> STM m (ExtLedgerState blk EmptyMK)
-getImmutableLedger = fmap LedgerDB.anchor . getLedgerDB
+getImmutableLedger = fmap (LedgerDB.anchor . anchorlessChangelog) . getLedgerDB
 
 -- | Get the ledger for the given point.
 --
@@ -399,7 +399,7 @@ getImmutableLedger = fmap LedgerDB.anchor . getLedgerDB
 getPastLedger ::
      (Monad (STM m), LedgerSupportsProtocol blk, StandardHash (ExtLedgerState blk))
   => ChainDB m blk -> Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
-getPastLedger db pt = LedgerDB.getPastLedgerAt pt <$> getLedgerDB db
+getPastLedger db pt = LedgerDB.getPastLedgerAt pt . anchorlessChangelog <$> getLedgerDB db
 
 -- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
 -- last @k@ blocks of the current chain.

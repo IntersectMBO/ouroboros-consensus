@@ -149,8 +149,6 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query hiding
-                     (snapshots)
 import           Ouroboros.Consensus.Storage.LedgerDB.Lock
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
@@ -297,7 +295,7 @@ takeSnapshot ::
   -> m (Maybe (DiskSnapshot, RealPoint blk))
 takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore =
   withReadLock lock $ do
-    state <- lastFlushedState <$> atomically (readTVar ldbvar)
+    state <- changelogLastFlushedState <$> atomically (readTVar ldbvar)
     case pointToWithOriginRealPoint (castPoint (getTip state)) of
       Origin ->
         return Nothing
@@ -332,7 +330,7 @@ writeSnapshot (SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     withFile hasFS (snapshotToStatePath snapshot) (WriteMode MustBeNew) $ \h ->
       void $ hPut hasFS h $ CBOR.toBuilder (encoder cs)
     BackingStore.bsCopy
-      (let BackingStore.LedgerBackingStore store = backingStore in store)
+      backingStore
       (SomeHasFS hasFS)
       (BackingStore.BackingStorePath (snapshotToTablesPath snapshot))
   where

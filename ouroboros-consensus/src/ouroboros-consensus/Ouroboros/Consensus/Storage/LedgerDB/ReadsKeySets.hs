@@ -38,12 +38,11 @@ data RewoundTableKeySets l =
       !(WithOrigin SlotNo)   -- ^ the slot to which the keys were rewound
       !(LedgerTables l KeysMK)
 
-rewindTableKeySets :: GetTip l
-                   => DbChangelog l
+rewindTableKeySets :: AnchorlessDbChangelog l
                    -> LedgerTables l KeysMK
                    -> RewoundTableKeySets l
 rewindTableKeySets =
-    RewoundTableKeySets . getTipSlot . changelogLastFlushedState
+    RewoundTableKeySets . adcLastFlushedSlot
 
 {-------------------------------------------------------------------------------
   Read
@@ -55,27 +54,27 @@ readKeySets ::
      IOLike m
   => LedgerBackingStore m l
   -> KeySetsReader m l
-readKeySets (LedgerBackingStore backingStore) rew = do
-    readKeySetsWith (bsRead backingStore) rew
+readKeySets backingStore rew = do
+    withBsValueHandle backingStore (\vh -> readKeySetsWith vh rew)
 
 readKeySetsWith ::
      Monad m
-  => (LedgerTables l KeysMK -> m (WithOrigin SlotNo, LedgerTables l ValuesMK))
+  => LedgerBackingStoreValueHandle m l-- (LedgerTables l KeysMK -> m (WithOrigin SlotNo, LedgerTables l ValuesMK))
   -> RewoundTableKeySets l
   -> m (UnforwardedReadSets l)
-readKeySetsWith readKeys (RewoundTableKeySets _seqNo rew) = do
-    (slot, values) <- readKeys rew
+readKeySetsWith bsvh (RewoundTableKeySets _seqNo rew) = do
+    values <- bsvhRead bsvh rew
     pure UnforwardedReadSets {
-        ursSeqNo  = slot
+        ursSeqNo  = bsvhAtSlot bsvh
       , ursValues = values
       , ursKeys   = rew
     }
 
 withKeysReadSets ::
-     (HasLedgerTables l, GetTip l, Monad m)
+     (HasLedgerTables l, Monad m)
   => l mk1
   -> KeySetsReader m l
-  -> DbChangelog l
+  -> AnchorlessDbChangelog l
   -> LedgerTables l KeysMK
   -> (l ValuesMK -> m a)
   -> m a
@@ -98,9 +97,9 @@ withKeysReadSets st ksReader dbch ks f = do
         Right res -> res
 
 withHydratedLedgerState ::
-     (GetTip l, HasLedgerTables l)
+     HasLedgerTables l
   => l mk1
-  -> DbChangelog l
+  -> AnchorlessDbChangelog l
   -> UnforwardedReadSets l
   -> (l ValuesMK -> a)
   -> Either RewindReadFwdError a
@@ -117,8 +116,8 @@ newtype PointNotFound blk = PointNotFound (Point blk) deriving (Eq, Show)
 -- unlucky and scheduling of events happened to move the backing store. Reading
 -- again the LedgerDB and calling this function must eventually succeed.
 getLedgerTablesFor ::
-     (Monad m, HasLedgerTables l, IsLedger l)
-  => DbChangelog l
+     (Monad m, HasLedgerTables l)
+  => AnchorlessDbChangelog l
   -> LedgerTables l KeysMK
   -> KeySetsReader m l
   -> m (Either RewindReadFwdError (LedgerTables l ValuesMK))
@@ -174,12 +173,12 @@ forwardTableKeySets' seqNo chdiffs = \(UnforwardedReadSets seqNo' values keys) -
       ValuesMK $ applyDiffForKeys values keys (cumulativeDiff diffs)
 
 forwardTableKeySets ::
-     (GetTip l, HasLedgerTables l)
-  => DbChangelog l
+     HasLedgerTables l
+  => AnchorlessDbChangelog l
   -> UnforwardedReadSets l
   -> Either RewindReadFwdError
             (LedgerTables l ValuesMK)
 forwardTableKeySets dblog =
   forwardTableKeySets'
-    (getTipSlot $ changelogLastFlushedState dblog)
-    (changelogDiffs dblog)
+    (adcLastFlushedSlot dblog)
+    (adcDiffs dblog)

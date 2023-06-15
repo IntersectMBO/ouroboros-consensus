@@ -4,7 +4,9 @@
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TupleSections              #-}
 
 -- | A store for key-value maps that can be extended with deltas.
 --
@@ -21,20 +23,16 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   , InitFrom (..)
   , RangeQuery (..)
   , bsRead
+  , castBackingStoreValueHandle
   , withBsValueHandle
     -- * Ledger DB wrappers
-  , LedgerBackingStore (..)
+  , LedgerBackingStore
   , LedgerBackingStore'
-  , LedgerBackingStoreValueHandle (..)
+  , LedgerBackingStoreValueHandle
   , LedgerBackingStoreValueHandle'
-  , castBackingStoreValueHandle
-  , castLedgerBackingStoreValueHandle
-  , lbsValueHandle
-  , lbsvhClose
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
-import           GHC.Generics (Generic)
 import           NoThunks.Class (OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
@@ -62,7 +60,7 @@ data BackingStore m keys values diff = BackingStore {
   , bsCopy        :: !(FS.SomeHasFS m -> BackingStorePath -> m ())
     -- | Open a 'BackingStoreValueHandle' capturing the current value of the
     -- entire database
-  , bsValueHandle :: !(m (WithOrigin SlotNo, BackingStoreValueHandle m keys values))
+  , bsValueHandle :: !(m (BackingStoreValueHandle m keys values))
     -- | Apply a valid diff to the contents of the backing store
   , bsWrite       :: !(SlotNo -> diff -> m ())
   }
@@ -84,10 +82,12 @@ newtype BackingStorePath = BackingStorePath FS.FsPath
 -- long. We expect clients of the BackingStore to not retain handles for a long
 -- time.
 data BackingStoreValueHandle m keys values = BackingStoreValueHandle {
+    -- | At which slot this Value Handle was created
+    bsvhAtSlot    :: !(WithOrigin SlotNo)
     -- | Close the handle
     --
     -- Other methods throw exceptions if called on a closed handle.
-    bsvhClose     :: !(m ())
+  , bsvhClose     :: !(m ())
     -- | See 'RangeQuery'
   , bsvhRangeRead :: !(RangeQuery keys -> m values)
     -- | Read the given keys from the handle
@@ -105,7 +105,8 @@ castBackingStoreValueHandle ::
   -> BackingStoreValueHandle m keys' values'
 castBackingStoreValueHandle f g bsvh =
   BackingStoreValueHandle {
-    bsvhClose
+      bsvhAtSlot
+    , bsvhClose
     , bsvhRangeRead = \(RangeQuery prev count) ->
         fmap f . bsvhRangeRead $  RangeQuery (fmap g prev) count
     , bsvhRead = fmap f . bsvhRead . g
@@ -113,6 +114,7 @@ castBackingStoreValueHandle f g bsvh =
   where
     BackingStoreValueHandle {
         bsvhClose
+      , bsvhAtSlot
       , bsvhRangeRead
       , bsvhRead
       } = bsvh
@@ -147,67 +149,38 @@ bsRead ::
   => BackingStore m keys values diff
   -> keys
   -> m (WithOrigin SlotNo, values)
-bsRead store keys = withBsValueHandle store $ \slot vh -> do
+bsRead store keys = withBsValueHandle store $ \vh -> do
     values <- bsvhRead vh keys
-    pure (slot, values)
+    pure (bsvhAtSlot vh, values)
 
 -- | A 'IOLike.bracket'ed 'bsValueHandle'
 withBsValueHandle ::
      MonadThrow m
   => BackingStore m keys values diff
-  -> (WithOrigin SlotNo -> BackingStoreValueHandle m keys values -> m a)
+  -> (BackingStoreValueHandle m keys values -> m a)
   -> m a
 withBsValueHandle store kont =
     bracket
       (bsValueHandle store)
-      (bsvhClose . snd)
-      (uncurry kont)
+      bsvhClose
+      kont
 
 {-------------------------------------------------------------------------------
   Ledger DB wrappers
 -------------------------------------------------------------------------------}
 
 -- | A handle to the backing store for the ledger tables
-newtype LedgerBackingStore m l = LedgerBackingStore
-    (BackingStore m
+type LedgerBackingStore m l = BackingStore m
       (LedgerTables l KeysMK)
       (LedgerTables l ValuesMK)
       (LedgerTables l DiffMK)
-    )
-  deriving newtype (NoThunks)
-
-lbsValueHandle ::
-     IOLike m
-  => LedgerBackingStore m l
-  -> m (LedgerBackingStoreValueHandle m l)
-lbsValueHandle (LedgerBackingStore bstore) =
-  uncurry LedgerBackingStoreValueHandle <$> bsValueHandle bstore
 
 -- | A handle to the backing store for the ledger tables
-data LedgerBackingStoreValueHandle m l = LedgerBackingStoreValueHandle
-    !(WithOrigin SlotNo)
-    !(BackingStoreValueHandle m
+type LedgerBackingStoreValueHandle m l = BackingStoreValueHandle m
       (LedgerTables l KeysMK)
       (LedgerTables l ValuesMK)
-    )
-  deriving stock    (Generic)
-  deriving anyclass (NoThunks)
 
 type LedgerBackingStoreValueHandle' m blk =
      LedgerBackingStoreValueHandle  m (ExtLedgerState blk)
-
-lbsvhClose :: LedgerBackingStoreValueHandle m l -> m ()
-lbsvhClose (LedgerBackingStoreValueHandle _ vh) = bsvhClose vh
-
-castLedgerBackingStoreValueHandle ::
-     Functor m
-  => (LedgerTables l ValuesMK -> LedgerTables l' ValuesMK)
-  -> (LedgerTables l' KeysMK -> LedgerTables l KeysMK)
-  -> LedgerBackingStoreValueHandle m l
-  -> LedgerBackingStoreValueHandle m l'
-castLedgerBackingStoreValueHandle f g lbsvh =
-    LedgerBackingStoreValueHandle s $ castBackingStoreValueHandle f g bsvh
-  where
-    LedgerBackingStoreValueHandle s bsvh = lbsvh
 
 type LedgerBackingStore' m blk = LedgerBackingStore m (ExtLedgerState blk)

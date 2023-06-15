@@ -88,10 +88,11 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
                      (BackingStoreSelector (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog')
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
@@ -596,7 +597,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> (SlotNo -> STM m ())
       -> LedgerConfig blk
       -> STM m (Point blk)
-      -> m ( DbChangelog' blk
+      -> m ( AnchorlessDbChangelog' blk
            , LedgerBackingStoreValueHandle' m blk
            , DiskLedgerView m (ExtLedgerState blk)
            )
@@ -632,11 +633,11 @@ runThreadNetwork systemTime ThreadNetworkArgs
               -- This node would include these crucial txs if it leads in
               -- this slot.
               let ledger' = applyChainTick lcfg slot ledger
-              snap1 <- getSnapshotFor mempool slot ledger' ldb vh
+              snap1 <- getSnapshotFor mempool slot ledger' (adcDiffs ldb) vh
               -- Other nodes might include these crucial txs when leading
               -- in the next slot.
               let ledger'' = applyChainTick lcfg (succ slot) ledger
-              snap2 <- getSnapshotFor mempool (succ slot) ledger'' ldb vh
+              snap2 <- getSnapshotFor mempool (succ slot) ledger'' (adcDiffs ldb) vh
 
 
               -- Don't attempt to add them if we're sure they'll be invalid.
@@ -1057,7 +1058,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
             eLDBView <- ChainDB.getLedgerDBViewAtPoint chainDB Nothing
             case eLDBView of
               Left e          -> error $ show e
-              Right (vh, ldb) -> pure (ldb, vh, mkDiskLedgerView (vh, ldb))
+              Right l@(LedgerDBView { viewHandle, viewChangelog }) -> pure (viewChangelog, viewHandle, mkDiskLedgerView l)
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the

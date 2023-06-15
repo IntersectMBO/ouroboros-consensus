@@ -135,7 +135,7 @@ import           Prelude hiding (read)
 --   such a scenario.
 --
 -- * When you have no writers and you only need a read-append lock, consider
---   using a @StrictMVar@ instead. The \"stale\" state can be used by the
+--   using a @StrictSVar@ instead. The \"stale\" state can be used by the
 --   readers.
 --
 -- * The state @st@ is always evaluated to WHNF and is subject to the

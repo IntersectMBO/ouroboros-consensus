@@ -257,7 +257,7 @@ openDBInternal ImmutableDbArgs { immHasFS = SomeHasFS hasFS, .. } cont = cont $ 
           }
     ost <- validateAndReopen validateEnv immRegistry immValidationPolicy
 
-    stVar <- lift $ newMVar (DbOpen ost)
+    stVar <- lift $ newSVar (DbOpen ost)
 
     let dbEnv = ImmutableDBEnv {
             hasFS            = hasFS
@@ -286,16 +286,16 @@ closeDBImpl ::
   => ImmutableDBEnv m blk
   -> m ()
 closeDBImpl ImmutableDBEnv { hasFS, tracer, varInternalState } = do
-    internalState <- takeMVar varInternalState
+    internalState <- takeSVar varInternalState
     case internalState of
       -- Already closed
       DbClosed -> do
-        putMVar varInternalState internalState
+        putSVar varInternalState internalState
         traceWith tracer $ DBAlreadyClosed
       DbOpen openState -> do
         -- Close the database before doing the file-system operations so that
         -- in case these fail, we don't leave the database open.
-        putMVar varInternalState DbClosed
+        putSVar varInternalState DbClosed
         cleanUp hasFS openState
         traceWith tracer DBClosed
 

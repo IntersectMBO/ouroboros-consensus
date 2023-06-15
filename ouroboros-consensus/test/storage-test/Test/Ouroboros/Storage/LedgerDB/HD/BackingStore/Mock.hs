@@ -34,6 +34,7 @@ module Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Mock (
   , mBSCopy
   , mBSInitFromCopy
   , mBSInitFromValues
+  , mBSVHAtSlot
   , mBSVHClose
   , mBSVHRangeRead
   , mBSVHRead
@@ -224,7 +225,7 @@ mBSCopy bsp = do
 -- at the time of opening the handle.
 mBSValueHandle ::
      (MonadState (Mock vs) m, MonadError Err m)
-  => m (WithOrigin SlotNo, ValueHandle vs)
+  => m (ValueHandle vs)
 mBSValueHandle = do
   mGuardBSClosed
   vs <- gets backingValues
@@ -237,7 +238,7 @@ mBSValueHandle = do
     , nextId = nxt + 1
     })
 
-  pure (seqNo, vh)
+  pure vh
 
 -- | Write a diff to the backing store.
 mBSWrite ::
@@ -308,3 +309,7 @@ mBSVHRead vh ks = do
   mGuardBSVHClosed vh
   let vs = values vh
   pure $ lookupKeys ks vs
+
+-- | Read the slot number out of a value handle
+mBSVHAtSlot :: Monad m => ValueHandle vs -> m (WithOrigin SlotNo)
+mBSVHAtSlot = pure . seqNo

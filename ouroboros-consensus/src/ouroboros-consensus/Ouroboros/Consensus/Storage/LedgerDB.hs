@@ -8,9 +8,9 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , DiskSnapshot (..)
   , InitFrom (..)
   , KeySetsReader
-  , LedgerBackingStore (..)
+  , LedgerBackingStore
   , LedgerBackingStore'
-  , LedgerBackingStoreValueHandle (..)
+  , LedgerBackingStoreValueHandle
   , LedgerBackingStoreValueHandle'
   , LedgerDB (..)
   , LedgerDBHandle (..)
@@ -27,7 +27,6 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , UnforwardedReadSets (..)
   , bsRead
   , castBackingStoreValueHandle
-  , castLedgerBackingStoreValueHandle
   , decodeSnapshotBackwardsCompatible
   , deleteSnapshot
   , diskSnapshotIsTemporary
@@ -41,8 +40,6 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , getState2
   , getStateSTM
   , getStateSTM1
-  , lbsValueHandle
-  , lbsvhClose
   , listSnapshots
   , readKeySets
   , readKeySetsWith
@@ -60,12 +57,10 @@ import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDB (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
                      (BackingStore (..), BackingStorePath (..),
                      BackingStoreValueHandle (..), InitFrom (..),
-                     LedgerBackingStore (..), LedgerBackingStore',
-                     LedgerBackingStoreValueHandle (..),
+                     LedgerBackingStore, LedgerBackingStore',
+                     LedgerBackingStoreValueHandle,
                      LedgerBackingStoreValueHandle', RangeQuery (..), bsRead,
-                     castBackingStoreValueHandle,
-                     castLedgerBackingStoreValueHandle, lbsValueHandle,
-                     lbsvhClose, withBsValueHandle)
+                     castBackingStoreValueHandle, withBsValueHandle)
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
                      (DbChangelog (..), DbChangelog', empty)
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets

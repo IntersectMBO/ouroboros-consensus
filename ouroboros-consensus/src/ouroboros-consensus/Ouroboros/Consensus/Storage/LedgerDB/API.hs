@@ -1,8 +1,14 @@
-{-# LANGUAGE DataKinds   #-}
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE RankNTypes  #-}
+{-# LANGUAGE DataKinds      #-}
+{-# LANGUAGE DerivingVia    #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes     #-}
 
-module Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDB (..)) where
+module Ouroboros.Consensus.Storage.LedgerDB.API (
+    LedgerDB (..)
+  , LedgerDBView (..)
+  , LedgerDBView'
+  , closeLedgerDBView
+  ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict
 import           Data.Set (Set)
@@ -21,16 +27,30 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Update
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike (Time)
 
-type LedgerDBView m b blk =
+data LedgerDBView m l = LedgerDBView {
+    viewHandle    :: !(LedgerBackingStoreValueHandle m l)
+  , viewChangelog :: !(AnchorlessDbChangelog l)
+  }
+
+closeLedgerDBView :: LedgerDBView m l -> m ()
+closeLedgerDBView LedgerDBView {viewHandle} = bsvhClose viewHandle
+
+type LedgerDBView' m blk = LedgerDBView m (ExtLedgerState blk)
+
+type View m b blk =
   StaticEither b
-   (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk)
+   (LedgerDBView' m blk)
    (Either
      (Point blk)
-     (LedgerBackingStoreValueHandle' m blk, DbChangelog' blk))
+     (LedgerDBView' m blk))
+
+{-------------------------------------------------------------------------------
+  The LedgerDB API
+-------------------------------------------------------------------------------}
 
 data LedgerDB m blk = LedgerDB {
     -- | Set the current DbChangelog in the LedgerDB.
-    setCurrent            :: DbChangelog' blk -> LedgerDBUpdate -> STM m ()
+    setCurrent            :: AnchorlessDbChangelog' blk -> STM m ()
     -- | Get the current DbChangelog in the LedgerDB.
   , getCurrent            :: STM m (DbChangelog' blk)
     -- | Get the set of previously succesfully applied blocks.
@@ -52,11 +72,11 @@ data LedgerDB m blk = LedgerDB {
       -> STM m a
          -- ^ STM operation that we want to run in the same atomic block as the
          -- acquisition of the LedgerDB
-      -> m (a, LedgerDBView m b blk)
+      -> m (a, View m b blk)
     -- | Apply a list of blocks on top of the given DbChangelog.
   , validate              ::
          LedgerBackingStoreValueHandle' m blk
-      -> DbChangelog' blk
+      -> AnchorlessDbChangelog' blk
          -- ^ This is used as the starting point for validation, not the one
          -- in the 'LgrDB'.
       -> BlockCache blk

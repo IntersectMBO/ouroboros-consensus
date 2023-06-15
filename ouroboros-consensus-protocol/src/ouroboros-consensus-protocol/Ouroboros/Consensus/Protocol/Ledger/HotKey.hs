@@ -173,13 +173,13 @@ mkHotKey ::
   -> Word64              -- ^ Max KES evolutions
   -> m (HotKey c m)
 mkHotKey initKey startPeriod@(Absolute.KESPeriod start) maxKESEvolutions = do
-    varKESState <- newMVar initKESState
+    varKESState <- newSVar initKESState
     return HotKey {
         evolve     = evolveKey varKESState
-      , getInfo    = kesStateInfo <$> readMVar varKESState
-      , isPoisoned = kesKeyIsPoisoned . kesStateKey <$> readMVar varKESState
+      , getInfo    = kesStateInfo <$> readSVar varKESState
+      , isPoisoned = kesKeyIsPoisoned . kesStateKey <$> readSVar varKESState
       , sign_      = \toSign -> do
-          KESState { kesStateInfo, kesStateKey } <- readMVar varKESState
+          KESState { kesStateInfo, kesStateKey } <- readSVar varKESState
           case kesStateKey of
             KESKeyPoisoned -> error "trying to sign with a poisoned key"
             KESKey key     -> do
@@ -217,8 +217,8 @@ mkHotKey initKey startPeriod@(Absolute.KESPeriod start) maxKESEvolutions = do
 -- When the key is poisoned, we always return 'UpdateFailed'.
 evolveKey ::
      forall m c. (Crypto c, IOLike m)
-  => StrictMVar m (KESState c) -> Absolute.KESPeriod -> m KESEvolutionInfo
-evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
+  => StrictSVar m (KESState c) -> Absolute.KESPeriod -> m KESEvolutionInfo
+evolveKey varKESState targetPeriod = modifySVar varKESState $ \kesState -> do
     let info = kesStateInfo kesState
     -- We mask the evolution process because if we got interrupted after
     -- calling 'forgetSignKeyKES', which destructively updates the current

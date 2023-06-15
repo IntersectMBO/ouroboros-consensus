@@ -21,6 +21,7 @@ module Test.Ouroboros.Storage.LedgerDB.HD.BackingStore (
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import           Cardano.Slotting.Slot
+import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Except hiding (lift)
 import           Control.Monad.IOSim
