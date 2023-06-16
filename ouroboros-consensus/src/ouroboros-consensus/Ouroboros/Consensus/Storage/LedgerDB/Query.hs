@@ -24,6 +24,8 @@ import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView (..),
                      LedgerDBView')
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
+                     (DiskPolicy (onDiskQueryBatchSize))
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
 import           Ouroboros.Consensus.Storage.LedgerDB.Lock
@@ -74,6 +76,7 @@ acquireLDBReadView ::
   -> StrictTVar m (DbChangelog' blk)
   -> LedgerDBLock m
   -> LedgerBackingStore' m blk
+  -> DiskPolicy
   -> STM m a
      -- ^ STM operation that we want to run in the same atomic block as the
      -- acquisition of the LedgerDB
@@ -84,7 +87,7 @@ acquireLDBReadView ::
             (Point blk)
             (LedgerDBView' m blk))
        )
-acquireLDBReadView p dbvar lock bs stmAct =
+acquireLDBReadView p dbvar lock bs policy stmAct =
   withReadLock lock $ do
     (a, ldb') <- atomically $ do
       (,) <$> stmAct <*> (anchorlessChangelog <$> readTVar dbvar)
@@ -101,7 +104,7 @@ acquireLDBReadView p dbvar lock bs stmAct =
    acquire l = do
      vh <- bsValueHandle bs
      if bsvhAtSlot vh == adcLastFlushedSlot l
-       then pure $ LedgerDBView vh l
+       then pure $ LedgerDBView vh l (onDiskQueryBatchSize policy)
        else error ("Critical error: Value handles are created at "
                    <> show (bsvhAtSlot vh)
                    <> " while the db changelog is at "

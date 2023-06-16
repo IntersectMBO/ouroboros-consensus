@@ -126,6 +126,9 @@ data DiskPolicy = DiskPolicy {
       -- Flushing means only applying part of the diffs to the backing store, in
       -- particular we /don't/ serialize the ledger state.
     , onDiskShouldFlush        :: Word64 -> Bool
+
+      -- | Size of a batch of lookups used in range queries for ledger tables.
+    , onDiskQueryBatchSize     :: Word64
     }
   deriving NoThunks via OnlyCheckWhnf DiskPolicy
 
@@ -137,6 +140,7 @@ defaultDiskPolicy (SecurityParam k) requestedInterval =
         onDiskNumSnapshots
       , onDiskShouldFlush
       , onDiskShouldTakeSnapshot
+      , onDiskQueryBatchSize
       }
   where
     onDiskNumSnapshots :: Word
@@ -183,3 +187,5 @@ defaultDiskPolicy (SecurityParam k) requestedInterval =
     snapshotInterval = case requestedInterval of
       RequestedSnapshotInterval value -> value
       DefaultSnapshotInterval           -> secondsToDiffTime $ fromIntegral $ k * 2
+
+    onDiskQueryBatchSize = 100_000

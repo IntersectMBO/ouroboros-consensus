@@ -194,6 +194,7 @@ mkLedgerDB st args getBlock = do
           (ldbChangelog st')
           (ldbLock st')
           (ldbBackingStore st')
+          policy
           stm
 
     , garbageCollect = getStateSTM1 h $ \st' ->

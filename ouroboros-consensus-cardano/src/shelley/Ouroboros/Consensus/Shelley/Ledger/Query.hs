@@ -379,7 +379,7 @@ instance ( ShelleyCompatible proto era
       lst = ledgerState ext
       hst = headerState ext
       st  = shelleyLedgerState lst
-      DiskLedgerView ext _ _ _ = dlv
+      DiskLedgerView ext _ _ _ _ = dlv
 
   getQueryKeySets = \case
     GetUTxOByTxIn ks -> ShelleyLedgerTables $ KeysMK ks

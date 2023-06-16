@@ -122,7 +122,7 @@ instance ( HasLedgerTables (LedgerState (HardForkBlock xs))
   answerBlockQuery
     (ExtLedgerCfg cfg)
     query
-    dlv@(DiskLedgerView (ExtLedgerState st@(HardForkLedgerState hardForkState) _) _ _ _) =
+    dlv@(DiskLedgerView (ExtLedgerState st@(HardForkLedgerState hardForkState) _) _ _ _ _) =
       case query of
         QueryIfCurrent queryIfCurrent ->
           interpretQueryIfCurrent
@@ -170,7 +170,7 @@ distribDiskLedgerView dlv =
      (distribHeaderState headerState)
      (State.tip (hardForkLedgerStatePerEra ledgerState))
  where
-   DiskLedgerView (ExtLedgerState ledgerState headerState) query rangeQuery closer = dlv
+   DiskLedgerView (ExtLedgerState ledgerState headerState) query rangeQuery closer batchSize = dlv
 
    f :: Index xs x
      -> Product HeaderState (Flip LedgerState EmptyMK) x
@@ -181,6 +181,7 @@ distribDiskLedgerView dlv =
                             (query' idx)
                             (rangeQuery' idx)
                             closer
+                            batchSize
 
    query' :: forall x.
         Index xs x
@@ -335,8 +336,8 @@ interpretQueryIfCurrent = go
     go _         (QZ qry) (S st) =
         pure $ Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle f st)
       where
-        f (Comp (DiskLedgerView s _ _ _)) = ledgerInfo s
-    go _         (QS qry) (Z (Comp (DiskLedgerView st _ _ _))) =
+        f (Comp (DiskLedgerView s _ _ _ _)) = ledgerInfo s
+    go _         (QS qry) (Z (Comp (DiskLedgerView st _ _ _ _))) =
         pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 getQueryKeySetsIfCurrent ::
