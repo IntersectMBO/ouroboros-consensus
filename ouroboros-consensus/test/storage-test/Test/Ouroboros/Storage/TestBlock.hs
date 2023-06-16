@@ -562,8 +562,10 @@ instance CanStowLedgerTables (LedgerState TestBlock) where
 
 instance HasTickedLedgerTables (LedgerState TestBlock)
 
-instance LedgerTablesAreTrivial (LedgerState TestBlock)
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock))
+instance LedgerTablesAreTrivial (LedgerState TestBlock) where
+  convertMapKind (TestLedger x y) = TestLedger x y
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where
+  convertMapKind (TickedTestLedger x) = TickedTestLedger (convertMapKind x)
 
 instance ApplyBlock (LedgerState TestBlock) TestBlock where
   applyBlockLedgerResult _ tb@TestBlock{..} (TickedTestLedger TestLedger{..})

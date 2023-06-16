@@ -460,11 +460,13 @@ type instance LedgerCfg (LedgerState TestBlock) = HardFork.EraParams
 type instance Key   (LedgerState TestBlock) = Void
 type instance Value (LedgerState TestBlock) = Void
 
-instance HasLedgerTables (LedgerState TestBlock)
-instance HasLedgerTables (Ticked1 (LedgerState TestBlock))
+instance HasLedgerTables (LedgerState TestBlock) where
+instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
 
-instance LedgerTablesAreTrivial (LedgerState TestBlock)
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock))
+instance LedgerTablesAreTrivial (LedgerState TestBlock) where
+  convertMapKind (TestLedger x EmptyPLDS) = TestLedger x EmptyPLDS
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where
+  convertMapKind (TickedTestLedger x) = TickedTestLedger $ convertMapKind x
 
 instance CanSerializeLedgerTables (LedgerState TestBlock)
 

@@ -5,8 +5,10 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE QuantifiedConstraints      #-}
 {-# LANGUAGE Rank2Types                 #-}
 {-# LANGUAGE StandaloneKindSignatures   #-}
@@ -55,6 +57,8 @@ module Ouroboros.Consensus.Ledger.Tables (
   , LedgerTablesAreTrivial
   , convertMapKind
   , trivialLedgerTables
+    -- * Utility
+  , ComposeWithTicked1 (..)
   ) where
 
 import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
@@ -62,7 +66,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Control.Exception as Exn
 import           Control.Monad (replicateM)
-import           Data.Kind (Constraint)
+import           Data.Kind (Constraint, Type)
 import           Data.Map.Diff.Strict (Diff)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -156,14 +160,14 @@ class CanStowLedgerTables l where
 
   stowLedgerTables     :: l ValuesMK -> l EmptyMK
   default stowLedgerTables ::
-       (LedgerTablesAreTrivial l, HasLedgerTables l)
+       (LedgerTablesAreTrivial l)
     => l ValuesMK
     -> l EmptyMK
   stowLedgerTables = convertMapKind
 
   unstowLedgerTables   :: l EmptyMK  -> l ValuesMK
   default unstowLedgerTables ::
-       (LedgerTablesAreTrivial l, HasLedgerTables l)
+       (LedgerTablesAreTrivial l)
     => l EmptyMK
     -> l ValuesMK
   unstowLedgerTables = convertMapKind
@@ -481,19 +485,32 @@ type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
 -- allows for easy manipulation of the types of @mk@ required at any step of the
 -- program.
 class (Key l ~ Void, Value l ~ Void) => LedgerTablesAreTrivial l where
+  -- | If the ledger state is always in memory, then @l mk@ will be isomorphic
+  -- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
+  -- states indexed by different map kinds.
+  --
+  -- This function is useful to combine functions that operate on functions that
+  -- transform the map kind on a ledger state (eg @applyChainTickLedgerResult@).
+  convertMapKind :: IsMapKind mk' => l mk -> l mk'
 
 trivialLedgerTables ::
      (IsMapKind mk, LedgerTablesAreTrivial l)
   => LedgerTables l mk
 trivialLedgerTables = LedgerTables emptyMK
 
--- | If the ledger state is always in memory, then @l mk@ will be isomorphic
--- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers
--- states indexed by different map kinds.
---
--- This function is useful to combine functions that operate on functions that
--- transform the map kind on a ledger state (eg @applyChainTickLedgerResult@).
-convertMapKind ::
-     (HasLedgerTables l, IsMapKind mk', LedgerTablesAreTrivial l)
-  => l mk -> l mk'
-convertMapKind l = l `withLedgerTables` LedgerTables emptyMK
+{-------------------------------------------------------------------------------
+  Utility
+-------------------------------------------------------------------------------}
+
+type instance Key (ComposeWithTicked1 f blk) = Key (Ticked1 (f blk))
+type instance Value (ComposeWithTicked1 f blk) = Value (Ticked1 (f blk))
+
+-- | Useful if you want to partially apply some 'Ticked1' of @f@ to a @blk@.
+type ComposeWithTicked1 :: (Type -> LedgerStateKind) -> Type -> LedgerStateKind
+newtype ComposeWithTicked1 f blk mk = ComposeWithTicked1 {
+    unComposeWithTicked1 :: Ticked1 (f blk) mk
+  }
+
+instance LedgerTablesAreTrivial (Ticked1 (f blk))
+      => LedgerTablesAreTrivial (ComposeWithTicked1 f blk) where
+  convertMapKind (ComposeWithTicked1 x) = ComposeWithTicked1 $ convertMapKind x

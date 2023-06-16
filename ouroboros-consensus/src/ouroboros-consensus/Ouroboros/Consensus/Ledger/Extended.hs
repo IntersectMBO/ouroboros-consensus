@@ -241,10 +241,13 @@ instance CanSerializeLedgerTables (LedgerState blk)
   codecLedgerTables = castLedgerTables $ codecLedgerTables @(LedgerState blk)
 
 instance LedgerTablesAreTrivial (LedgerState blk)
-      => LedgerTablesAreTrivial (ExtLedgerState blk)
+      => LedgerTablesAreTrivial (ExtLedgerState blk) where
+  convertMapKind (ExtLedgerState x y) = ExtLedgerState (convertMapKind x) y
 
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState blk))
-      => LedgerTablesAreTrivial (Ticked1 (ExtLedgerState blk))
+      => LedgerTablesAreTrivial (Ticked1 (ExtLedgerState blk)) where
+  convertMapKind (TickedExtLedgerState x y z) =
+      TickedExtLedgerState (convertMapKind x) y z
 
 instance HasLedgerTables (Ticked1 (LedgerState blk))
       => HasLedgerTables (Ticked1 (ExtLedgerState blk)) where

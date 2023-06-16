@@ -190,8 +190,10 @@ instance HasLedgerTables (Ticked1 (LedgerState ByronBlock))
 instance HasTickedLedgerTables (LedgerState ByronBlock)
 instance CanSerializeLedgerTables (LedgerState ByronBlock)
 instance CanStowLedgerTables (LedgerState ByronBlock)
-instance LedgerTablesAreTrivial (LedgerState ByronBlock)
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronBlock))
+instance LedgerTablesAreTrivial (LedgerState ByronBlock) where
+  convertMapKind (ByronLedgerState x y z) = ByronLedgerState x y z
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronBlock)) where
+  convertMapKind (TickedByronLedgerState x y) = TickedByronLedgerState x y
 
 {-------------------------------------------------------------------------------
   Supporting the various consensus interfaces

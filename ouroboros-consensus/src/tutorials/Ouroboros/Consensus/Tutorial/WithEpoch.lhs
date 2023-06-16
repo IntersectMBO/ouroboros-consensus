@@ -692,5 +692,8 @@ For reference on these instances and their meaning, please see the appendix in
 > instance HasTickedLedgerTables (LedgerState BlockD)
 > instance CanSerializeLedgerTables (LedgerState BlockD)
 > instance CanStowLedgerTables (LedgerState BlockD)
-> instance LedgerTablesAreTrivial (LedgerState BlockD)
-> instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockD))
+> instance LedgerTablesAreTrivial (LedgerState BlockD) where
+>   convertMapKind (LedgerD x y z z') = LedgerD x y z z'
+> instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockD)) where
+>   convertMapKind (TickedLedgerStateD x) =
+>       TickedLedgerStateD (convertMapKind x)

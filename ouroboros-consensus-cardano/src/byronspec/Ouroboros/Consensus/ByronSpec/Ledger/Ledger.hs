@@ -128,8 +128,12 @@ instance HasLedgerTables (LedgerState ByronSpecBlock)
 instance HasLedgerTables (Ticked1 (LedgerState ByronSpecBlock))
 instance CanSerializeLedgerTables (LedgerState ByronSpecBlock)
 instance HasTickedLedgerTables (LedgerState ByronSpecBlock)
-instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock)
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronSpecBlock))
+instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock) where
+  convertMapKind (ByronSpecLedgerState x y) =
+      ByronSpecLedgerState x y
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronSpecBlock)) where
+  convertMapKind (TickedByronSpecLedgerState x y) =
+      TickedByronSpecLedgerState x y
 instance CanStowLedgerTables (LedgerState ByronSpecBlock)
 
 {-------------------------------------------------------------------------------

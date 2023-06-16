@@ -366,8 +366,23 @@ instance HasLedgerTables (Ticked1 (LedgerState TestBlock))
 instance HasTickedLedgerTables (LedgerState TestBlock)
 instance CanSerializeLedgerTables (LedgerState TestBlock)
 instance CanStowLedgerTables (LedgerState TestBlock)
-instance LedgerTablesAreTrivial (LedgerState TestBlock)
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock))
+instance LedgerTablesAreTrivial (LedgerState TestBlock) where
+  convertMapKind (HardForkLedgerState st) = HardForkLedgerState $
+      hcmap
+        (Proxy @(Compose LedgerTablesAreTrivial LedgerState))
+        (Flip . convertMapKind . unFlip)
+        st
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where
+  convertMapKind (TickedHardForkLedgerState x st) = TickedHardForkLedgerState x $
+      hcmap
+        (Proxy @(Compose LedgerTablesAreTrivial (ComposeWithTicked1 LedgerState)))
+        ( FlipTickedLedgerState
+        . unComposeWithTicked1
+        . convertMapKind
+        . ComposeWithTicked1
+        . getFlipTickedLedgerState
+        )
+        st
 
 instance LedgerTablesCanHardFork '[BlockA, BlockB] where
   hardForkInjectLedgerTables =

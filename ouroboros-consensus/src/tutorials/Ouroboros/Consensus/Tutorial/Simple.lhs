@@ -745,5 +745,8 @@ and we use the default implementation
 > instance HasTickedLedgerTables (LedgerState BlockC)
 > instance CanSerializeLedgerTables (LedgerState BlockC)
 > instance CanStowLedgerTables (LedgerState BlockC)
-> instance LedgerTablesAreTrivial (LedgerState BlockC)
-> instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockC))
+> instance LedgerTablesAreTrivial (LedgerState BlockC) where
+>   convertMapKind (LedgerC x y) = LedgerC x y
+> instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockC)) where
+>   convertMapKind (TickedLedgerStateC x) =
+>       TickedLedgerStateC (convertMapKind x)

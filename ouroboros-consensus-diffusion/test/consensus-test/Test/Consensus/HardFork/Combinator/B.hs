@@ -180,8 +180,10 @@ instance HasLedgerTables (Ticked1 (LedgerState BlockB))
 instance HasTickedLedgerTables (LedgerState BlockB)
 instance CanSerializeLedgerTables (LedgerState BlockB)
 instance CanStowLedgerTables (LedgerState BlockB)
-instance LedgerTablesAreTrivial (LedgerState BlockB)
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockB))
+instance LedgerTablesAreTrivial (LedgerState BlockB) where
+  convertMapKind (LgrB x) = LgrB x
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockB)) where
+  convertMapKind (TickedLedgerStateB x) = TickedLedgerStateB (convertMapKind x)
 
 type instance LedgerCfg (LedgerState BlockB) = ()
 

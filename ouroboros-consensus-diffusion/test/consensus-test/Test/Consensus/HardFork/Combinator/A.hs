@@ -203,8 +203,10 @@ instance HasLedgerTables (Ticked1 (LedgerState BlockA))
 instance HasTickedLedgerTables (LedgerState BlockA)
 instance CanSerializeLedgerTables (LedgerState BlockA)
 instance CanStowLedgerTables (LedgerState BlockA)
-instance LedgerTablesAreTrivial (LedgerState BlockA)
-instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockA))
+instance LedgerTablesAreTrivial (LedgerState BlockA) where
+  convertMapKind (LgrA x y) = LgrA x y
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockA)) where
+  convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
 
 data PartialLedgerConfigA = LCfgA {
       lcfgA_k           :: SecurityParam

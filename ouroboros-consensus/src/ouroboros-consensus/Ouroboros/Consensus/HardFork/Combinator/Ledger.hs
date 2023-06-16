@@ -825,6 +825,8 @@ instance CanSerializeLedgerTables (LedgerState blk)
 
 instance LedgerTablesAreTrivial (LedgerState blk)
       => LedgerTablesAreTrivial (LedgerState (HardForkBlock '[blk])) where
+  convertMapKind (HardForkLedgerState st) = HardForkLedgerState $
+      hcmap (Proxy @(Compose LedgerTablesAreTrivial LedgerState)) (Flip . convertMapKind . unFlip) st
 
 instance HasLedgerTables (Ticked1 (LedgerState blk))
       => HasLedgerTables (Ticked1 (LedgerState (HardForkBlock '[blk]))) where
