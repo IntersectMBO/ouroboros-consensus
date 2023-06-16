@@ -39,20 +39,19 @@ import           Control.Concurrent.Class.MonadMVar.Strict (LazyMVar, MonadMVar)
 import qualified Control.Concurrent.Class.MonadMVar.Strict as Strict
 import           GHC.Stack (HasCallStack)
 
---
--- StrictMVar
---
+{-------------------------------------------------------------------------------
+  StrictMVar
+-------------------------------------------------------------------------------}
 
 -- | A strict MVar with invariant checking.
 --
--- There is a weaker invariant for a 'StrictMVar' than for a 'StrictTVar' (see
--- the @strict-stm@ package): although all functions that modify the
--- 'StrictMVar' check the invariant, we do /not/ guarantee that the value inside
--- the 'StrictMVar' always satisfies the invariant. Instead, we /do/ guarantee
--- that if the 'StrictMVar' is updated with a value that does not satisfy the
--- invariant, an exception is thrown. The reason for this weaker guarantee is
--- that leaving an 'MVar' empty can lead to very hard to debug "blocked
--- indefinitely" problems.
+-- There is a weaker invariant for a 'StrictMVar' than for a 'StrictTVar':
+-- although all functions that modify the 'StrictMVar' check the invariant, we
+-- do /not/ guarantee that the value inside the 'StrictMVar' always satisfies
+-- the invariant. Instead, we /do/ guarantee that if the 'StrictMVar' is updated
+-- with a value that does not satisfy the invariant, an exception is thrown. The
+-- reason for this weaker guarantee is that leaving an 'MVar' empty can lead to
+-- very hard to debug "blocked indefinitely" problems.
 data StrictMVar m a = StrictMVar {
     -- | The invariant that is checked whenever the 'StrictMVar' is updated.
     invariant :: !(a -> Maybe String)

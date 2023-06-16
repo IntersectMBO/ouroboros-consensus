@@ -23,7 +23,7 @@ packages:
   ./ouroboros-consensus-cardano
   ./ouroboros-consensus-protocol
   ./ouroboros-consensus-diffusion
-  ./strict-mvar-checked
+  ./strict-checked-vars
 
 tests: True
 benchmarks: True

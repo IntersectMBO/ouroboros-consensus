@@ -14,7 +14,7 @@ fd -p $(pwd)/ouroboros-consensus \
     -X stylish-haskell \
     -c .stylish-haskell.yaml -i
 
-fd -p $(pwd)/strict-mvar-checked \
+fd -p $(pwd)/strict-checked-vars \
     -e hs \
     -X stylish-haskell \
     -c .stylish-haskell.yaml -i
