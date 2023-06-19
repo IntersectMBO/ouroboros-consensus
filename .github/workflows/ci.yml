@@ -177,15 +177,13 @@ jobs:
 
     # The `fail-if-slower` value is determined ad-hoc based on the variability
     # we observed in our benchmarks.
-    #
-    # TODO: Uncomment this after this is merged to main. We need to generate the baseline benchmarks first.
-    # - name: Run mempool benchmarks on pull requests
-    #   if: ${{ github.event_name == 'pull_request' }}
-    #   run: |
-    #     cabal new-run ouroboros-consensus:mempool-bench -- \
-    #     --timeout=60 --baseline baseline-mempool-benchmarks.csv \
-    #     --fail-if-slower 20 \
-    #     +RTS -T
+    - name: Run mempool benchmarks on pull requests
+      if: ${{ github.event_name == 'pull_request' }}
+      run: |
+        cabal new-run ouroboros-consensus:mempool-bench -- \
+        --timeout=60 --baseline baseline-mempool-benchmarks.csv \
+        --fail-if-slower 20 \
+        +RTS -T
 
     # NB: build the haddocks at the end to avoid unecessary recompilations.
     # We build the haddocks only for one GHC version.
