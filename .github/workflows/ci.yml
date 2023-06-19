@@ -257,7 +257,7 @@ jobs:
           cache: yarn
           cache-dependency-path: './docs/website/yarn.lock'
 
-      - uses: cachix/install-nix-action@v21
+      - uses: cachix/install-nix-action@v22
 
       - name: Build PDFs (Consensus report)
         run: |
