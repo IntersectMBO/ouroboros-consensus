@@ -134,8 +134,6 @@ class ( Core.EraSegWits era
 
       , DecCBOR (PredicateFailure (EraRule "LEDGER" era))
       , EncCBOR (PredicateFailure (EraRule "LEDGER" era))
-      , DecCBOR (PredicateFailure (EraRule "DELEGS" era))
-      , EncCBOR (PredicateFailure (EraRule "DELEGS" era))
       , DecCBOR (PredicateFailure (EraRule "UTXOW" era))
       , EncCBOR (PredicateFailure (EraRule "UTXOW" era))
 
