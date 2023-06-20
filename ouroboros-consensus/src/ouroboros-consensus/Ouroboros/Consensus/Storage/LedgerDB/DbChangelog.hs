@@ -185,9 +185,7 @@ instance GetTip l => AS.Anchorable (WithOrigin SlotNo) (l EmptyMK) (l EmptyMK) w
   asAnchor = id
   getAnchorMeasure _ = getTipSlot
 
-instance ( IsLedger l
-         , HeaderHash (K @MapKind (DbChangelog l)) ~ HeaderHash l
-         ) => GetTip (K (DbChangelog l)) where
+instance IsLedger l => GetTip (K (DbChangelog l)) where
   getTip = castPoint
          . getTip
          . either id id
@@ -196,7 +194,18 @@ instance ( IsLedger l
          . anchorlessChangelog
          . unK
 
+instance IsLedger l => GetTip (K (AnchorlessDbChangelog l)) where
+  getTip = castPoint
+         . getTip
+         . either id id
+         . AS.head
+         . adcStates
+         . unK
+
 type instance HeaderHash (K @MapKind (DbChangelog l)) =
+              HeaderHash l
+
+type instance HeaderHash (K @MapKind (AnchorlessDbChangelog l)) =
               HeaderHash l
 
 type DbChangelog' blk = DbChangelog (ExtLedgerState blk)

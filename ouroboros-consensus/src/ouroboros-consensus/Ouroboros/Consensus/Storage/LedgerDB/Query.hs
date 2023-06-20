@@ -9,14 +9,18 @@ module Ouroboros.Consensus.Storage.LedgerDB.Query (
   , getCurrent
   , getLedgerTablesAtFor
   , getPrevApplied
+  , getStatistics
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict
+import           Data.Monoid (Sum (..))
 import           Data.Set
+import           Data.SOP (K (K))
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView (..),
                      LedgerDBView')
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
@@ -104,3 +108,29 @@ acquireLDBReadView p dbvar lock bs stmAct =
                    <> show (adcLastFlushedSlot l)
                    <> ". There is either a race condition or a logic bug"
                   )
+
+-- | Obtain statistics for a combination of backing store value handle and
+-- changelog.
+getStatistics ::
+     (Monad m, IsLedger l, HasLedgerTables l)
+  => LedgerDBView m l
+  -> m Statistics
+getStatistics (LedgerDBView lbsvh dblog) = do
+    Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat lbsvh
+    if seqNo /= seqNo' then
+      error $ show (seqNo, seqNo')
+    else
+      pure $ Statistics {
+          sequenceNumber = getTipSlot $ K dblog
+        , numEntries     = n + nInserts - nDeletes
+        }
+  where
+    diffs = adcDiffs  dblog
+    seqNo = adcLastFlushedSlot dblog
+
+    nInserts = getSum
+            $ foldLedgerTables (numInserts . getSeqDiffMK)
+              diffs
+    nDeletes = getSum
+            $ foldLedgerTables (numDeletes . getSeqDiffMK)
+              diffs

@@ -38,6 +38,7 @@ module Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Mock (
   , mBSVHClose
   , mBSVHRangeRead
   , mBSVHRead
+  , mBSVHStat
   , mBSValueHandle
   , mBSWrite
   , mGuardBSClosed
@@ -313,3 +314,13 @@ mBSVHRead vh ks = do
 -- | Read the slot number out of a value handle
 mBSVHAtSlot :: Monad m => ValueHandle vs -> m (WithOrigin SlotNo)
 mBSVHAtSlot = pure . seqNo
+
+-- | Retrieve statistics for the backing store value handle.
+mBSVHStat ::
+     (MonadState (Mock vs) m, MonadError Err m, ValuesLength vs)
+  => ValueHandle vs
+  -> m BS.Statistics
+mBSVHStat vh = do
+  mGuardBSClosed
+  mGuardBSVHClosed vh
+  pure $ BS.Statistics (seqNo vh) (valuesLength $ values vh)

@@ -16,6 +16,7 @@ import           Control.Tracer
 import           Data.Functor.Contravariant
 import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
+import           Data.Monoid (Sum (..))
 import qualified Data.Set as Set
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Extended
@@ -82,6 +83,7 @@ newBackingStoreInitialiser trcr bss =
             zipLedgerTables (rangeRead_  (rqCount rq)) keys values
       )
       (zipLedgerTables applyDiff_)
+      (getSum . foldLedgerTables count_)
       valuesMKEncoder
       valuesMKDecoder
   where
@@ -118,6 +120,9 @@ newBackingStoreInitialiser trcr bss =
       -> ValuesMK k v
     applyDiff_ (ValuesMK values) (DiffMK diff) =
       ValuesMK (Diff.applyDiff values diff)
+
+    count_ :: ValuesMK k v -> Sum Int
+    count_ (ValuesMK values) = Sum $ Map.size values
 
 -- | The backing store selector
 data BackingStoreSelector m where

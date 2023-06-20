@@ -78,12 +78,13 @@ newTVarBackingStoreInitialiser ::
   -> (keys -> values -> values)
   -> (RangeQuery keys -> values -> values)
   -> (values -> diff -> values)
+  -> (values -> Int)
   -> (values -> CBOR.Encoding)
   -> (forall s. CBOR.Decoder s values)
   -> SomeHasFS m
   -> InitFrom values
   -> m (BackingStore m keys values diff)
-newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ enc dec (SomeHasFS fs0) initialization = do
+newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ count_ enc dec (SomeHasFS fs0) initialization = do
     traceWith tracer TVarTraceOpening
     ref <- do
       (slot, values) <- case initialization of
@@ -145,6 +146,10 @@ newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ enc dec 
                     guardClosed ref
                     guardHandleClosed refHandleClosed
                     pure $ lookup_ keys values
+                , bsvhStat = atomically $ do
+                    guardClosed ref
+                    guardHandleClosed refHandleClosed
+                    pure $ Statistics slot (count_ values)
                 }
       , bsWrite    = \slot2 diff -> do
          slot1 <- atomically $ do

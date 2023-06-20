@@ -198,6 +198,9 @@ instance ( Show ks, Show vs, Show d
                      -> BSAct ks vs d (Values vs)
     BSVHAtSlot       :: BSVar ks vs d Handle
                      -> BSAct ks vs d (WithOrigin SlotNo)
+    -- | Corresponds to 'bsvhStat'
+    BSVHStat         :: BSVar ks vs d Handle
+                     -> BSAct ks vs d BS.Statistics
 
   initialState        = Lockstep.initialState initState
   nextState           = Lockstep.nextState
@@ -262,14 +265,16 @@ instance ( Show ks, Show vs, Show d
   data instance ModelValue (BackingStoreState ks vs d) a where
     MValueHandle :: ValueHandle vs -> BSVal ks vs d Handle
 
-    MErr    :: Err
-            -> BSVal ks vs d Err
-    MSlotNo :: WithOrigin SlotNo
-            -> BSVal ks vs d (WithOrigin SlotNo)
-    MValues :: vs
-            -> BSVal ks vs d (Values vs)
-    MUnit   :: ()
-            -> BSVal ks vs d ()
+    MErr        :: Err
+                -> BSVal ks vs d Err
+    MSlotNo     :: WithOrigin SlotNo
+                -> BSVal ks vs d (WithOrigin SlotNo)
+    MValues     :: vs
+                -> BSVal ks vs d (Values vs)
+    MUnit       :: ()
+                -> BSVal ks vs d ()
+    MStatistics :: BS.Statistics
+                -> BSVal ks vs d BS.Statistics
 
     MEither :: Either (BSVal ks vs d a) (BSVal ks vs d b)
             -> BSVal ks vs d (Either a b)
@@ -291,6 +296,7 @@ instance ( Show ks, Show vs, Show d
     MSlotNo x      -> OId x
     MValues x      -> OValues x
     MUnit x        -> OId x
+    MStatistics x  -> OId x
     MEither x      -> OEither $ bimap observeModel observeModel x
     MPair x        -> OPair   $ bimap observeModel observeModel x
 
@@ -325,6 +331,7 @@ instance ( Show ks, Show vs, Show d
     BSVHRangeRead h _    -> [SomeGVar h]
     BSVHRead h _         -> [SomeGVar h]
     BSVHAtSlot h         -> [SomeGVar h]
+    BSVHStat h           -> [SomeGVar h]
 
   arbitraryWithVars ::
        ModelFindVariables (BackingStoreState ks vs d)
@@ -381,6 +388,7 @@ instance ( Show ks, Show vs, Show d
     BSVHRangeRead _ _    -> OEither . bimap OId (OValues . unValues)
     BSVHRead _ _         -> OEither . bimap OId (OValues . unValues)
     BSVHAtSlot _         -> OEither . bimap OId OId
+    BSVHStat _           -> OEither . bimap OId OId
 
   showRealResponse ::
        Proxy (RealMonad m ks vs d)
@@ -397,6 +405,7 @@ instance ( Show ks, Show vs, Show d
     BSVHRangeRead _ _    -> Just Dict
     BSVHRead _ _         -> Just Dict
     BSVHAtSlot _         -> Just Dict
+    BSVHStat _           -> Just Dict
 
 {-------------------------------------------------------------------------------
   Interpreter against the model
@@ -431,6 +440,8 @@ runMock lookUp = \case
       wrap MValues . runMockState (Mock.mBSVHRead (getHandle $ lookUp h) ks)
     BSVHAtSlot h       ->
       wrap MSlotNo . runMockState (Mock.mBSVHAtSlot (getHandle $ lookUp h))
+    BSVHStat h         ->
+      wrap MStatistics . runMockState (Mock.mBSVHStat (getHandle $ lookUp h))
   where
     wrap ::
          (a -> BSVal ks vs d b)
@@ -480,6 +491,7 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
         , (5, fmap Some $ BSVHRangeRead <$> (fhandle <$> genVar) <*> QC.arbitrary)
         , (5, fmap Some $ BSVHRead <$> (fhandle <$> genVar) <*> QC.arbitrary)
         , (5, fmap Some $ BSVHAtSlot <$> (fhandle <$> genVar))
+        , (5, fmap Some $ BSVHStat <$> (fhandle <$> genVar))
         ]
       where
         fhandle ::
@@ -589,6 +601,8 @@ runIO action lookUp = ReaderT $ \renv ->
           (readHandle rr (lookUp' h) >>= \vh -> BS.bsvhRead vh ks)
         BSVHAtSlot h       -> catchErr $
           readHandle rr (lookUp' h) >>= pure . BS.bsvhAtSlot
+        BSVHStat h         -> catchErr $
+          readHandle rr (lookUp' h) >>= \vh -> BS.bsvhStat vh
       where
         RealEnv{
             reSomeHasFS        = sfhs
@@ -702,6 +716,7 @@ data TagAction =
   | TBSVHRangeRead
   | TBSVHRead
   | TBSVHAtSlot
+  | TBSVHStat
   deriving (Show, Eq, Ord, Bounded, Enum)
 
 -- | Identify actions by their constructor.
@@ -717,6 +732,7 @@ tAction = \case
   BSVHRangeRead _ _    -> TBSVHRangeRead
   BSVHRead _ _         -> TBSVHRead
   BSVHAtSlot _         -> TBSVHAtSlot
+  BSVHStat _           -> TBSVHStat
 
 data Tag =
     -- | A value handle is created before a write, and read after the write. The
