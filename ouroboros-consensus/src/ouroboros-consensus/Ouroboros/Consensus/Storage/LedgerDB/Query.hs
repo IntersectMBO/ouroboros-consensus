@@ -118,7 +118,7 @@ getStatistics ::
      (Monad m, IsLedger l, HasLedgerTables l)
   => LedgerDBView m l
   -> m Statistics
-getStatistics (LedgerDBView lbsvh dblog) = do
+getStatistics (LedgerDBView lbsvh dblog _) = do
     Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat lbsvh
     if seqNo /= seqNo' then
       error $ show (seqNo, seqNo')

@@ -635,7 +635,7 @@ data instance BlockQuery TestBlock result where
 instance QueryLedger TestBlock where
   answerBlockQuery _cfg QueryLedgerTip dlv =
     let
-      DiskLedgerView (ExtLedgerState TestLedger{ lastAppliedPoint } _) _ _ _ _ = dlv
+      TestLedger{ lastAppliedPoint } = ledgerState $ dlvCurrent dlv
     in
       pure $ lastAppliedPoint
   getQueryKeySets = const emptyLedgerTables

@@ -58,7 +58,7 @@ localStateQueryServer cfg getDLV =
         , recvMsgRelease   =        do close; return idle
         }
       where
-        DiskLedgerView _st _dbRead _dbReadRange close _queryBatchSize = dlv
+        close = dlvClose dlv
 
     handleQuery ::
          DiskLedgerView m (ExtLedgerState blk)

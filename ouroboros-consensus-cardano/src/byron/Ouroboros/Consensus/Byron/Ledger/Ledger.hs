@@ -218,8 +218,10 @@ data instance BlockQuery ByronBlock :: Type -> Type where
   GetUpdateInterfaceState :: BlockQuery ByronBlock UPI.State
 
 instance QueryLedger ByronBlock where
-  answerBlockQuery _cfg GetUpdateInterfaceState (DiskLedgerView (ExtLedgerState ledgerState _) _ _ _ _) =
-    pure $ CC.cvsUpdateState (byronLedgerState ledgerState)
+  answerBlockQuery _cfg GetUpdateInterfaceState dlv =
+      pure $ CC.cvsUpdateState (byronLedgerState ledgerState)
+    where
+      ExtLedgerState { ledgerState } = dlvCurrent dlv
   getQueryKeySets _ = NoByronLedgerTables
   tableTraversingQuery _ = Nothing
 

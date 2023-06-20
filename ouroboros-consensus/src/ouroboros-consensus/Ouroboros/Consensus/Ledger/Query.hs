@@ -45,7 +45,6 @@ import           Data.Monoid
 import           Data.Semigroup
 import qualified Data.Set as Set
 import           Data.Typeable (Typeable)
-import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (CodecConfig)
 import           Ouroboros.Consensus.BlockchainTime (SystemStart)
 import           Ouroboros.Consensus.Config
@@ -66,6 +65,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView (..),
                      closeLedgerDBView)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.Config (QueryBatchSize)
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbChangelog
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
@@ -296,7 +296,7 @@ answerQuery config dlv query = case query of
     GetChainBlockNo -> pure $ headerStateBlockNo (headerState st)
     GetChainPoint -> pure $ headerStatePoint (headerState st)
   where
-    DiskLedgerView st _ _ _ _ = dlv
+    st = dlvCurrent dlv
 
 
 -- | Different queries supported by the ledger, indexed by the result type.
@@ -330,7 +330,7 @@ data DiskLedgerView m l = DiskLedgerView {
   , dlvRangeRead      :: !(RangeQuery (LedgerTables l KeysMK)
                          -> m (LedgerTables l ValuesMK))
   , dlvClose          :: !(m ())
-  , dlvQueryBatchSize :: !Word64
+  , dlvQueryBatchSize :: !QueryBatchSize
   }
 
 mkDiskLedgerView ::
@@ -466,8 +466,9 @@ handleQueryWithStowedKeySets ::
   -> (ExtLedgerState blk EmptyMK -> result)
   -> m result
 handleQueryWithStowedKeySets dlv query f = do
-    let DiskLedgerView st dbRead _dbReadRange _dbClose _queryBatchSize = dlv
-        keys                                                           = getQueryKeySets query
+    let st     = dlvCurrent dlv
+        dbRead = dlvRead dlv
+        keys   = getQueryKeySets query
     values <- dbRead (ExtLedgerStateTables keys)
     pure $ f (stowLedgerTables $ st `withLedgerTables` values)
 
@@ -505,7 +506,9 @@ handleTraversingQuery dlv query =
        in
         post <$> loop Nothing mt
   where
-    DiskLedgerView st _dbRead dbReadRange _dbClose queryBatchSize = dlv
+    st             = dlvCurrent dlv
+    dbReadRange    = dlvRangeRead dlv
+    queryBatchSize = dlvQueryBatchSize dlv
 
     f :: ValuesMK k v -> Bool
     f (ValuesMK vs) = Map.null vs

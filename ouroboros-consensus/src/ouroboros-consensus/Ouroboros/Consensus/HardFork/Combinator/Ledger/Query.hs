@@ -6,6 +6,7 @@
 {-# LANGUAGE KindSignatures        #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
@@ -119,10 +120,7 @@ instance ( HasLedgerTables (LedgerState (HardForkBlock xs))
          , LedgerTablesCanHardFork xs
          )
       => QueryLedger (HardForkBlock xs) where
-  answerBlockQuery
-    (ExtLedgerCfg cfg)
-    query
-    dlv@(DiskLedgerView (ExtLedgerState st@(HardForkLedgerState hardForkState) _) _ _ _ _) =
+  answerBlockQuery (ExtLedgerCfg cfg) query dlv =
       case query of
         QueryIfCurrent queryIfCurrent ->
           interpretQueryIfCurrent
@@ -141,9 +139,11 @@ instance ( HasLedgerTables (LedgerState (HardForkBlock xs))
             queryHardFork
             st
     where
-      cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
-      lcfg = configLedger cfg
-      ei   = State.epochInfoLedger lcfg hardForkState
+      cfgs          = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
+      lcfg          = configLedger cfg
+      ei            = State.epochInfoLedger lcfg hardForkState
+      st            = ledgerState $ dlvCurrent dlv
+      hardForkState = hardForkLedgerStatePerEra st
 
   getQueryKeySets = \case
     QueryIfCurrent queryIfCurrent -> getQueryKeySetsIfCurrent queryIfCurrent
@@ -170,18 +170,24 @@ distribDiskLedgerView dlv =
      (distribHeaderState headerState)
      (State.tip (hardForkLedgerStatePerEra ledgerState))
  where
-   DiskLedgerView (ExtLedgerState ledgerState headerState) query rangeQuery closer batchSize = dlv
+   DiskLedgerView {
+        dlvCurrent   = ExtLedgerState ledgerState headerState
+      , dlvRead      = query
+      , dlvRangeRead = rangeQuery
+      , dlvClose
+      , dlvQueryBatchSize
+      } = dlv
 
    f :: Index xs x
      -> Product HeaderState (Flip LedgerState EmptyMK) x
      -> (DiskLedgerView m :.: ExtLedgerState) x
-   f idx (Pair hst lst) = Comp
-                        $ DiskLedgerView
-                            (ExtLedgerState (unFlip lst) hst)
-                            (query' idx)
-                            (rangeQuery' idx)
-                            closer
-                            batchSize
+   f idx (Pair hst lst) = Comp $ DiskLedgerView {
+          dlvCurrent   = ExtLedgerState (unFlip lst) hst
+        , dlvRead      = query' idx
+        , dlvRangeRead = rangeQuery' idx
+        , dlvClose
+        , dlvQueryBatchSize
+        }
 
    query' :: forall x.
         Index xs x
@@ -336,9 +342,10 @@ interpretQueryIfCurrent = go
     go _         (QZ qry) (S st) =
         pure $ Left $ MismatchEraInfo $ ML (queryInfo qry) (hcmap proxySingle f st)
       where
-        f (Comp (DiskLedgerView s _ _ _ _)) = ledgerInfo s
-    go _         (QS qry) (Z (Comp (DiskLedgerView st _ _ _ _))) =
-        pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
+        f (Comp dlv) = ledgerInfo $ dlvCurrent dlv
+    go _         (QS qry) (Z (Comp dlv)) =
+        pure $ Left $ MismatchEraInfo $
+          MR (hardForkQueryInfo qry) (ledgerInfo $ dlvCurrent dlv)
 
 getQueryKeySetsIfCurrent ::
      forall result xs. (All SingleEraBlock xs, LedgerTablesCanHardFork xs)
