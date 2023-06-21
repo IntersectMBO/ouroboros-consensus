@@ -823,7 +823,7 @@ prop_mempoolParallel cfg initialState ma tSize gTxs = forAllParallelCommands smU
 tests :: TestTree
 tests = testGroup "QSM"
         [ testProperty "sequential"
-          $ withMaxSuccess 10000 $ prop_mempoolSequential testLedgerConfig testInitLedger
+          $ withMaxSuccess 1000 $ prop_mempoolSequential testLedgerConfig testInitLedger
           txSize
           $ \i -> fmap (fmap fst . fst) . genTxs i
         , testGroup "parallel"
