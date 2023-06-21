@@ -256,7 +256,10 @@ initLedgerDB k chain = do
     args = LedgerDB.LedgerDBArgs
       { LedgerDB.lgrTopLevelConfig       = cfg
       , LedgerDB.lgrHasFS                = SomeHasFS (error "lgrHasFS" :: HasFS m ())
-      , LedgerDB.lgrDiskPolicy           = LedgerDB.defaultDiskPolicy k LedgerDB.DefaultSnapshotInterval
+      , LedgerDB.lgrDiskPolicy           = LedgerDB.defaultDiskPolicy k
+                                            LedgerDB.DefaultSnapshotInterval
+                                            LedgerDB.DefaultFlushFrequency
+                                            LedgerDB.DefaultQueryBatchSize
       , LedgerDB.lgrGenesis              = return testInitExtLedger
       , LedgerDB.lgrTracer               = nullTracer
       , LedgerDB.lgrTraceLedger          = nullTracer

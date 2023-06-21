@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Config (
   , configLedgerDb
     -- * DiskPolicy
   , DiskPolicy (..)
+  , FlushFrequency (..)
   , QueryBatchSize (..)
   , SnapCounters (..)
   , SnapshotInterval (..)
@@ -74,15 +75,35 @@ data SnapshotInterval =
   | RequestedSnapshotInterval DiffTime
   deriving stock (Eq, Generic, Show)
 
--- | The number of keys to read /at most/ in a backing store range query.
+-- | The number of diffs in the immutable part of the chain that we have to see
+-- before we flush ledger state to disk. See 'onDiskShouldFlush'. It can be:
 --
--- INVARIANT: Should be at least 1!
+-- 1. either explicitly provided by a user in the number of diffs in the
+--    immutable part of the chain.
+-- 2. a default value, which is determined by a specific 'DiskPolicy'. See
+-- 'defaultDiskPolicy' as an example.
+--
+-- INVARIANT: Should be at least 0.
+data FlushFrequency =
+    DefaultFlushFrequency
+  | RequestedFlushFrequency Word64
+  deriving stock (Show, Eq, Generic)
+
+-- | The number of keys to read /at most/ in a backing store range query, as
+-- requested by the user. It can be:
+--
+-- 1. either explicitly provided by a user in the number of keys to read from disk.
+-- 2. a default value, which is determined by a specific 'DiskPolicy'. See
+-- 'defaultDiskPolicy' as an example.
+--
+-- INVARIANT: Should be at least 1.
 --
 -- It is fine if the result of a range read contains less than this number of
 -- keys, but it should never return more.
-newtype QueryBatchSize = QueryBatchSize { getQueryBatchSize :: Word64 }
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (Enum, Num, Real, Integral)
+data QueryBatchSize =
+    DefaultQueryBatchSize
+  | RequestedQueryBatchSize Word64
+  deriving stock (Show, Eq, Generic)
 
 -- | On-disk policy
 --
@@ -140,26 +161,32 @@ data DiskPolicy = DiskPolicy {
     , onDiskShouldFlush        :: Word64 -> Bool
 
       -- | Size of a batch of lookups used in range queries for ledger tables.
-    , onDiskQueryBatchSize     :: QueryBatchSize
+    , onDiskQueryBatchSize     :: Word64
     }
   deriving NoThunks via OnlyCheckWhnf DiskPolicy
 
 -- | Default on-disk policy suitable to use with cardano-node
 --
-defaultDiskPolicy :: SecurityParam -> SnapshotInterval -> DiskPolicy
-defaultDiskPolicy (SecurityParam k) requestedInterval =
+defaultDiskPolicy ::
+     SecurityParam
+  -> SnapshotInterval
+  -> FlushFrequency
+  -> QueryBatchSize
+  -> DiskPolicy
+defaultDiskPolicy
+  (SecurityParam k)
+  requestedInterval
+  requestedFlushFrequency
+  requestedQueryBatchSize =
     DiskPolicy {
         onDiskNumSnapshots
-      , onDiskShouldFlush
       , onDiskShouldTakeSnapshot
+      , onDiskShouldFlush
       , onDiskQueryBatchSize
       }
   where
     onDiskNumSnapshots :: Word
     onDiskNumSnapshots = 2
-
-    onDiskShouldFlush :: Word64 -> Bool
-    onDiskShouldFlush = (>= 100)
 
     onDiskShouldTakeSnapshot ::
          Maybe DiffTime
@@ -200,4 +227,10 @@ defaultDiskPolicy (SecurityParam k) requestedInterval =
       RequestedSnapshotInterval value -> value
       DefaultSnapshotInterval           -> secondsToDiffTime $ fromIntegral $ k * 2
 
-    onDiskQueryBatchSize = 100_000
+    onDiskShouldFlush = case requestedFlushFrequency of
+      RequestedFlushFrequency value -> (>= value)
+      DefaultFlushFrequency         -> (>= 100)
+
+    onDiskQueryBatchSize = case requestedQueryBatchSize of
+      RequestedQueryBatchSize value -> value
+      DefaultQueryBatchSize         -> 100_000

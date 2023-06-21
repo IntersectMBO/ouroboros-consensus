@@ -10,6 +10,7 @@ import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
 import           Data.Word
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.Config (DiskPolicy (..),
+                     FlushFrequency (..), QueryBatchSize (..),
                      SnapshotInterval (..), defaultDiskPolicy)
 import           Test.QuickCheck
 import           Test.Tasty
@@ -43,7 +44,10 @@ data TestSetup = TestSetup {
 
 -- | The represented default 'DiskPolicy'
 toDiskPolicy :: TestSetup -> DiskPolicy
-toDiskPolicy ts = defaultDiskPolicy (tsK ts) (tsSnapshotInterval ts)
+toDiskPolicy ts =
+    defaultDiskPolicy (tsK ts) (tsSnapshotInterval ts)
+      DefaultFlushFrequency
+      DefaultQueryBatchSize
 
 -- | The result of the represented call to 'onDiskShouldTakeSnapshot'
 shouldTakeSnapshot :: TestSetup -> Bool
