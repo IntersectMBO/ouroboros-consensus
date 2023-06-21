@@ -40,7 +40,6 @@ module Ouroboros.Consensus.Ledger.Tables (
     -- ** Concrete definitions
   , Canonical (..)
   , CodecMK (..)
-  , ConstMK (..)
   , DiffMK (..)
   , EmptyMK (..)
   , KeysMK (..)
@@ -407,12 +406,6 @@ instance Ord k => Monoid (KeysMK k v) where
 
 instance Functor (DiffMK k) where
   fmap f (DiffMK d) = DiffMK $ fmap f d
-
-newtype ConstMK a k v = ConstMK { getConstMK :: a }
-  deriving stock (Generic, Eq, Show, Functor)
-  deriving newtype (Semigroup, Monoid)
-  deriving anyclass NoThunks
-  deriving anyclass IsMapKind
 
 {-------------------------------------------------------------------------------
   Serialization Codecs

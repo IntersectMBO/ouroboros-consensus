@@ -592,8 +592,8 @@ mkLMDBBackingStoreValueHandle db = do
         Trace.traceWith tracer TVHStatStarted
         let transaction = do
               DbState{dbsSeq} <- readDbState dbState
-              constn <- traverseLedgerTables (\(LMDBMK _ dbx) -> ConstMK <$> LMDB.size dbx) dbBackingTables
-              let n = getSum $ foldLedgerTables (Sum . getConstMK) constn
+              constn <- traverseLedgerTables (\(LMDBMK _ dbx) -> K2 <$> LMDB.size dbx) dbBackingTables
+              let n = getSum $ foldLedgerTables (Sum . unK2) constn
               pure $ HD.Statistics dbsSeq n
         res <- liftIO $ TrH.submitReadOnly trh transaction
         Trace.traceWith tracer TVHStatEnded
