@@ -27,7 +27,6 @@
       url = "github:input-output-hk/iohk-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    tullia.url = "github:input-output-hk/tullia";
     flake-compat = {
       url = "github:edolstra/flake-compat";
       flake = false;
@@ -69,6 +68,6 @@
         };
         hydraJobs = import ./nix/ci.nix { inherit inputs pkgs devShell; };
         legacyPackages = pkgs;
-      } // inputs.tullia.fromSimple system (import ./nix/tullia.nix)
+      }
     );
 }
