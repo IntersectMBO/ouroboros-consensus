@@ -203,6 +203,7 @@ mkServer k chain = do
         (\(ExtLedgerStateTables NoTestLedgerTables) -> pure $ ExtLedgerStateTables NoTestLedgerTables)
         (\_rq -> pure $ ExtLedgerStateTables NoTestLedgerTables)
         (pure ())
+        1
 
 -- | Initialise a 'LedgerDB' with the given chain.
 initLedgerDB

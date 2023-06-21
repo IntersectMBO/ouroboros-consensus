@@ -631,12 +631,12 @@ data instance BlockQuery (SimpleBlock c ext) result where
     QueryLedgerTip :: BlockQuery (SimpleBlock c ext) (Point (SimpleBlock c ext))
 
 instance MockProtocolSpecific c ext => QueryLedger (SimpleBlock c ext) where
-  answerBlockQuery _cfg QueryLedgerTip (DiskLedgerView st _ _ _)=
+  answerBlockQuery _cfg QueryLedgerTip =
         pure
       . castPoint
       . ledgerTipPoint
       . ledgerState
-      $ st
+      . dlvCurrent
 
   getQueryKeySets _ = emptyLedgerTables
 

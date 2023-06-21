@@ -1,11 +1,12 @@
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE DeriveGeneric        #-}
-{-# LANGUAGE DerivingVia          #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE NamedFieldPuns       #-}
-{-# LANGUAGE NumericUnderscores   #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE NumericUnderscores         #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 -- | Configuration of the LedgerDB
 module Ouroboros.Consensus.Storage.LedgerDB.Config (
@@ -13,6 +14,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Config (
   , configLedgerDb
     -- * DiskPolicy
   , DiskPolicy (..)
+  , QueryBatchSize (..)
   , SnapCounters (..)
   , SnapshotInterval (..)
   , defaultDiskPolicy
@@ -72,6 +74,16 @@ data SnapshotInterval =
   | RequestedSnapshotInterval DiffTime
   deriving stock (Eq, Generic, Show)
 
+-- | The number of keys to read /at most/ in a backing store range query.
+--
+-- INVARIANT: Should be at least 1!
+--
+-- It is fine if the result of a range read contains less than this number of
+-- keys, but it should never return more.
+newtype QueryBatchSize = QueryBatchSize { getQueryBatchSize :: Word64 }
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Enum, Num, Real, Integral)
+
 -- | On-disk policy
 --
 -- We only write ledger states that are older than @k@ blocks to disk (that is,
@@ -126,6 +138,9 @@ data DiskPolicy = DiskPolicy {
       -- Flushing means only applying part of the diffs to the backing store, in
       -- particular we /don't/ serialize the ledger state.
     , onDiskShouldFlush        :: Word64 -> Bool
+
+      -- | Size of a batch of lookups used in range queries for ledger tables.
+    , onDiskQueryBatchSize     :: QueryBatchSize
     }
   deriving NoThunks via OnlyCheckWhnf DiskPolicy
 
@@ -137,6 +152,7 @@ defaultDiskPolicy (SecurityParam k) requestedInterval =
         onDiskNumSnapshots
       , onDiskShouldFlush
       , onDiskShouldTakeSnapshot
+      , onDiskQueryBatchSize
       }
   where
     onDiskNumSnapshots :: Word
@@ -183,3 +199,5 @@ defaultDiskPolicy (SecurityParam k) requestedInterval =
     snapshotInterval = case requestedInterval of
       RequestedSnapshotInterval value -> value
       DefaultSnapshotInterval           -> secondsToDiffTime $ fromIntegral $ k * 2
+
+    onDiskQueryBatchSize = 100_000

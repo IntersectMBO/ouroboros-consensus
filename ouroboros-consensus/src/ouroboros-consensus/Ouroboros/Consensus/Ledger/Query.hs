@@ -65,6 +65,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView (..),
                      closeLedgerDBView)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.Config (QueryBatchSize)
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbChangelog
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
@@ -295,7 +296,7 @@ answerQuery config dlv query = case query of
     GetChainBlockNo -> pure $ headerStateBlockNo (headerState st)
     GetChainPoint -> pure $ headerStatePoint (headerState st)
   where
-    DiskLedgerView st _ _ _ = dlv
+    st = dlvCurrent dlv
 
 
 -- | Different queries supported by the ledger, indexed by the result type.
@@ -323,18 +324,20 @@ deriving instance (forall result. Show (BlockQuery blk result)) => Show (SomeSec
   Ledger Tables queries
 -------------------------------------------------------------------------------}
 
-data DiskLedgerView m l =
-    DiskLedgerView
-      !(l EmptyMK)
-      (LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
-      (RangeQuery (LedgerTables l KeysMK) -> m (LedgerTables l ValuesMK))
-      (m ())
+data DiskLedgerView m l = DiskLedgerView {
+    dlvCurrent        :: !(l EmptyMK)
+  , dlvRead           :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+  , dlvRangeRead      :: !(RangeQuery (LedgerTables l KeysMK)
+                         -> m (LedgerTables l ValuesMK))
+  , dlvClose          :: !(m ())
+  , dlvQueryBatchSize :: !QueryBatchSize
+  }
 
 mkDiskLedgerView ::
      (GetTip l, IOLike m, HasLedgerTables l)
   => LedgerDBView m l
   -> DiskLedgerView m l
-mkDiskLedgerView h@(LedgerDBView lvh ldb) =
+mkDiskLedgerView h@(LedgerDBView lvh ldb queryBatchSize) =
     DiskLedgerView
       (DbChangelog.current ldb)
       (\ks -> do
@@ -370,6 +373,7 @@ mkDiskLedgerView h@(LedgerDBView lvh ldb) =
           pure $ zipLedgerTables (doFixupReadResult nrequested) diffs values
       )
       (closeLedgerDBView h)
+      queryBatchSize
   where
     prj ::
          (Ord k, Eq v)
@@ -462,8 +466,9 @@ handleQueryWithStowedKeySets ::
   -> (ExtLedgerState blk EmptyMK -> result)
   -> m result
 handleQueryWithStowedKeySets dlv query f = do
-    let DiskLedgerView st dbRead _dbReadRange _dbClose = dlv
-        keys                                           = getQueryKeySets query
+    let st     = dlvCurrent dlv
+        dbRead = dlvRead dlv
+        keys   = getQueryKeySets query
     values <- dbRead (ExtLedgerStateTables keys)
     pure $ f (stowLedgerTables $ st `withLedgerTables` values)
 
@@ -492,7 +497,7 @@ handleTraversingQuery dlv query =
       let
         loop !prev !acc = do
           extValues <-
-            dbReadRange RangeQuery{rqPrev = prev, rqCount = batchSize}
+            dbReadRange RangeQuery{rqPrev = prev, rqCount = fromIntegral queryBatchSize}
           if getAll $ foldLedgerTables (All . f) extValues
           then pure acc
           else loop
@@ -501,12 +506,12 @@ handleTraversingQuery dlv query =
        in
         post <$> loop Nothing mt
   where
-    DiskLedgerView st _dbRead dbReadRange _dbClose = dlv
+    st             = dlvCurrent dlv
+    dbReadRange    = dlvRangeRead dlv
+    queryBatchSize = dlvQueryBatchSize dlv
 
     f :: ValuesMK k v -> Bool
     f (ValuesMK vs) = Map.null vs
 
     toKeys :: ValuesMK k v -> KeysMK k v
     toKeys (ValuesMK vs) = KeysMK $ Map.keysSet vs
-
-    batchSize = 100000   -- TODO: #4401 tune, expose as config, etc

@@ -15,7 +15,6 @@
 {-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE ViewPatterns         #-}
 
 -- | Setup network
 module Test.ThreadNet.Network (
@@ -629,7 +628,9 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 or <$> mapM (wouldBeValid slot doRangeQuery (snapshotState snap)) txs0
 
         let loop (slot, mempFp) = do
-              (ldb, vh, DiskLedgerView (ledgerState -> ledger) _ doRangeQuery _) <- mdlv
+              (ldb, vh, dlv) <- mdlv
+              let ledger       = ledgerState $ dlvCurrent dlv
+                  doRangeQuery = dlvRangeRead dlv
               -- This node would include these crucial txs if it leads in
               -- this slot.
               let ledger' = applyChainTick lcfg slot ledger
@@ -698,7 +699,9 @@ runThreadNetwork systemTime ThreadNetworkArgs
                    -> m ()
     forkTxProducer coreNodeId registry clock cfg nodeSeed mdlv mempool =
         void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
-          (_, _, DiskLedgerView emptySt _ doRangeQuery _) <- mdlv
+          (_, _, dlv) <- mdlv
+          let emptySt      = dlvCurrent dlv
+              doRangeQuery = dlvRangeRead dlv
           fullLedgerSt <- fmap ledgerState $ do
                 -- FIXME: we know that the range query implemetation will add at
                 -- most 1 to the number of requested keys, hence the

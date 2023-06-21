@@ -28,8 +28,9 @@ import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike (Time)
 
 data LedgerDBView m l = LedgerDBView {
-    viewHandle    :: !(LedgerBackingStoreValueHandle m l)
-  , viewChangelog :: !(AnchorlessDbChangelog l)
+    viewHandle         :: !(LedgerBackingStoreValueHandle m l)
+  , viewChangelog      :: !(AnchorlessDbChangelog l)
+  , viewQueryBatchSize :: !QueryBatchSize
   }
 
 closeLedgerDBView :: LedgerDBView m l -> m ()
