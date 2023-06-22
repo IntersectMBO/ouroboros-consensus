@@ -45,8 +45,8 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts)
 import qualified Cardano.Ledger.Shelley.PParams as SL (emptyPPPUpdates)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
-import           Cardano.Ledger.UMap (UMap (..), rdReward, umElemSPool,
-                     umElemRDPair)
+import           Cardano.Ledger.UMap (UMap (..), rdReward, umElemRDPair,
+                     umElemSPool)
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
