@@ -150,10 +150,10 @@ class (HasLedgerTables l, HasLedgerTables (Ticked1 l))
 -- able to provide a Ledger State with a restricted UTxO set that is enough to
 -- execute the Ledger rules.
 --
--- In particular, HardForkBlocks are never given diretly to the ledger but
--- rather unwrapped and then it is the inner ledger state the one we give to the
--- ledger. This means that all the single era blocks must be an instance of this
--- class, but HardForkBlocks might avoid doing so.
+-- In particular, HardForkBlock LedgerStates are never given diretly to the
+-- ledger but rather unwrapped and then it is the inner ledger state the one we
+-- give to the ledger. This means that all the single era blocks must be an
+-- instance of this class, but HardForkBlocks might avoid doing so.
 type CanStowLedgerTables :: LedgerStateKind -> Constraint
 class CanStowLedgerTables l where
 
