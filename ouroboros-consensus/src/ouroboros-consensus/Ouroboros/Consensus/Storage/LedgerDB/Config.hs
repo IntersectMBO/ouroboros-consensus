@@ -64,44 +64,45 @@ data SnapCounters = SnapCounters {
   , ntBlocksSinceLastSnap :: !Word64
   }
 
--- | Length of time, requested by the user, that has to pass after which
--- a snapshot is taken. It can be:
---
--- 1. either explicitly provided by user in seconds
--- 2. or default value can be requested - the specific DiskPolicy determines
---    what that is exactly, see `defaultDiskPolicy` as an example
+-- | Length of time that has to pass after which a snapshot is taken.
 data SnapshotInterval =
+    -- | A default value, which is determined by a specific 'DiskPolicy'. See
+    -- 'defaultDiskPolicy' as an example.
     DefaultSnapshotInterval
+    -- | A requested value: provided in seconds.
   | RequestedSnapshotInterval DiffTime
   deriving stock (Eq, Generic, Show)
 
 -- | The number of diffs in the immutable part of the chain that we have to see
--- before we flush ledger state to disk. See 'onDiskShouldFlush'. It can be:
---
--- 1. either explicitly provided by a user in the number of diffs in the
---    immutable part of the chain.
--- 2. a default value, which is determined by a specific 'DiskPolicy'. See
--- 'defaultDiskPolicy' as an example.
+-- before we flush the ledger state to disk. See 'onDiskShouldFlush'.
 --
 -- INVARIANT: Should be at least 0.
 data FlushFrequency =
+  -- | A default value, which is determined by a specific 'DiskPolicy'. See
+    -- 'defaultDiskPolicy' as an example.
     DefaultFlushFrequency
+    -- | A requested value: the number of diffs in the immutable part of the
+    -- chain required before flushing.
   | RequestedFlushFrequency Word64
   deriving stock (Show, Eq, Generic)
 
--- | The number of keys to read /at most/ in a backing store range query, as
--- requested by the user. It can be:
+-- | The /maximum/ number of keys to read in a backing store range query.
 --
--- 1. either explicitly provided by a user in the number of keys to read from disk.
--- 2. a default value, which is determined by a specific 'DiskPolicy'. See
--- 'defaultDiskPolicy' as an example.
+-- When performing a ledger state query that involves on-disk parts of the
+-- ledger state, we might have to read ranges of key-value pair data (e.g.,
+-- UTxO) from disk using backing store range queries. Instead of reading all
+-- data in one go, we read it in batches. 'QueryBatchSize' determines the size
+-- of these batches.
 --
 -- INVARIANT: Should be at least 1.
 --
 -- It is fine if the result of a range read contains less than this number of
 -- keys, but it should never return more.
 data QueryBatchSize =
+    -- | A default value, which is determined by a specific 'DiskPolicy'. See
+    -- 'defaultDiskPolicy' as an example.
     DefaultQueryBatchSize
+    -- | A requested value: the number of keys to read from disk in each batch.
   | RequestedQueryBatchSize Word64
   deriving stock (Show, Eq, Generic)
 
