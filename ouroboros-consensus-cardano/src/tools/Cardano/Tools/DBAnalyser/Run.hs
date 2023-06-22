@@ -63,7 +63,10 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
         mkProtocolInfo args
       let chunkInfo  = Node.nodeImmutableDbChunkInfo (configStorage cfg)
           k          = configSecurityParam cfg
-          diskPolicy = defaultDiskPolicy k DefaultSnapshotInterval
+          diskPolicy = defaultDiskPolicy k
+                         DefaultSnapshotInterval
+                         DefaultFlushFrequency
+                         DefaultQueryBatchSize
           args' =
             Node.mkChainDbArgs
               registry InFuture.dontCheck cfg genesisLedger chunkInfo $
@@ -110,7 +113,10 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               , limit = confLimit
               , tracer = analysisTracer
               , bstore = bs
-              , policy = defaultDiskPolicy (configSecurityParam cfg) DefaultSnapshotInterval
+              , policy = defaultDiskPolicy (configSecurityParam cfg)
+                           DefaultSnapshotInterval
+                           DefaultFlushFrequency
+                           DefaultQueryBatchSize
               }
             tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
             putStrLn $ "ImmutableDB tip: " ++ show tipPoint
@@ -127,7 +133,10 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               , limit = confLimit
               , tracer = analysisTracer
               , bstore = bs
-              , policy = defaultDiskPolicy (configSecurityParam cfg) DefaultSnapshotInterval
+              , policy = defaultDiskPolicy (configSecurityParam cfg)
+                           DefaultSnapshotInterval
+                           DefaultFlushFrequency
+                           DefaultQueryBatchSize
               }
             tipPoint <- atomically $ ChainDB.getTipPoint chainDB
             putStrLn $ "ChainDB tip: " ++ show tipPoint

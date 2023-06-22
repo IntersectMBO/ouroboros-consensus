@@ -773,7 +773,6 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
   , srnBfcMaxConcurrencyDeadline    :: Maybe Word
   , srnChainDbValidateOverride      :: Bool
     -- ^ If @True@, validate the ChainDB on init no matter what
-  , srnSnapshotInterval             :: SnapshotInterval
   , srnDatabasePath                 :: FilePath
     -- ^ Location of the DBs
   , srnDiffusionArguments           :: Diffusion.Arguments
@@ -793,6 +792,11 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
   , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
     -- ^ Determine whether to use the system default mempool capacity or explicitly set
     -- capacity of the mempool.
+
+    -- LedgerDB
+  , srnSnapshotInterval :: SnapshotInterval
+  , srnFlushFrequency   :: FlushFrequency
+  , srnQueryBatchSize   :: QueryBatchSize
   }
 
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
@@ -865,7 +869,10 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       let
         cfg = pInfoConfig rnProtocolInfo
         k   = configSecurityParam cfg
-      in defaultDiskPolicy k srnSnapshotInterval
+      in defaultDiskPolicy k
+           srnSnapshotInterval
+           srnFlushFrequency
+           srnQueryBatchSize
 
     mkHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS IO
     mkHasFS = stdMkChainDbHasFS srnDatabasePath

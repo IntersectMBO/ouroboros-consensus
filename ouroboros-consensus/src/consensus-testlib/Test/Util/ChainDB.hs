@@ -92,6 +92,8 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
   , cdbMaxBlocksPerFile       = VolatileDB.mkBlocksPerFile 4
   , cdbDiskPolicy             = LedgerDB.defaultDiskPolicy (configSecurityParam mcdbTopLevelConfig)
                                   LedgerDB.DefaultSnapshotInterval
+                                  LedgerDB.DefaultFlushFrequency
+                                  LedgerDB.DefaultQueryBatchSize
   -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 * k seconds, where k is the
   -- security parameter.
   , cdbTopLevelConfig         = mcdbTopLevelConfig

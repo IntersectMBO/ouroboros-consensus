@@ -1095,7 +1095,10 @@ runDB standalone@DB{..} cmd =
             S.decode
             S.decode
             dbLedgerDbCfg
-            (defaultDiskPolicy (SecurityParam 100) DefaultSnapshotInterval)
+            (defaultDiskPolicy (SecurityParam 100)
+               DefaultSnapshotInterval
+               DefaultFlushFrequency
+               DefaultQueryBatchSize)
             (return (testInitExtLedgerWithState initialTestLedgerState))
             streamAPI
             sdbBackingStoreSelector

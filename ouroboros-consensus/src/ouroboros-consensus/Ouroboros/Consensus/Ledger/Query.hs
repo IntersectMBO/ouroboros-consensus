@@ -45,6 +45,7 @@ import           Data.Monoid
 import           Data.Semigroup
 import qualified Data.Set as Set
 import           Data.Typeable (Typeable)
+import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (CodecConfig)
 import           Ouroboros.Consensus.BlockchainTime (SystemStart)
 import           Ouroboros.Consensus.Config
@@ -65,7 +66,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView (..),
                      closeLedgerDBView)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.Config (QueryBatchSize)
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbChangelog
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
@@ -330,7 +330,8 @@ data DiskLedgerView m l = DiskLedgerView {
   , dlvRangeRead      :: !(RangeQuery (LedgerTables l KeysMK)
                          -> m (LedgerTables l ValuesMK))
   , dlvClose          :: !(m ())
-  , dlvQueryBatchSize :: !QueryBatchSize
+    -- | See 'onDiskQueryBatchSize'.
+  , dlvQueryBatchSize :: !Word64
   }
 
 mkDiskLedgerView ::

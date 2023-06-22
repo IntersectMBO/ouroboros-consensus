@@ -30,7 +30,8 @@ import           Ouroboros.Consensus.Util.IOLike (Time)
 data LedgerDBView m l = LedgerDBView {
     viewHandle         :: !(LedgerBackingStoreValueHandle m l)
   , viewChangelog      :: !(AnchorlessDbChangelog l)
-  , viewQueryBatchSize :: !QueryBatchSize
+    -- | See 'onDiskQueryBatchSize'.
+  , viewQueryBatchSize :: !Word64
   }
 
 closeLedgerDBView :: LedgerDBView m l -> m ()
