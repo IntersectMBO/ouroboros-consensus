@@ -33,8 +33,15 @@
       flake = false;
     };
   };
-  outputs = inputs: inputs.flake-utils.lib.eachDefaultSystem (system:
-    let
+  outputs = inputs: let
+    supportedSystems = [
+      "x86_64-linux"
+      "x86_64-darwin"
+      #"aarch64-linux"
+      #"aarch64-darwin"
+    ];
+  in inputs.flake-utils.lib.eachSystem supportedSystems (
+    system: let
       pkgs = import inputs.nixpkgs {
         inherit system;
         inherit (inputs.haskellNix) config;
