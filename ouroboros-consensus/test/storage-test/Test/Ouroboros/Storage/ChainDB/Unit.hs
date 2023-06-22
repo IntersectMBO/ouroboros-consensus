@@ -8,15 +8,20 @@
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
 module Test.Ouroboros.Storage.ChainDB.Unit (tests) where
 
 
 import           Cardano.Slotting.Slot (WithOrigin (..))
-import           Control.Monad.Except
-import           Control.Monad.Reader
-import           Control.Monad.State
+import           Control.Monad (replicateM, unless, void)
+import           Control.Monad.Except (Except, ExceptT, MonadError, runExcept,
+                     runExceptT, throwError)
+import           Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
+import           Control.Monad.State (MonadState, StateT, evalStateT, get,
+                     modify, put)
+import           Control.Monad.Trans.Class (lift)
 import           Data.Maybe (isJust)
 import           Ouroboros.Consensus.Block.Abstract (blockSlot)
 import           Ouroboros.Consensus.Block.RealPoint

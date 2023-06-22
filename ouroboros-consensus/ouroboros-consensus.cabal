@@ -290,7 +290,7 @@ library
     ViewPatterns
 
   build-depends:
-    , base                         >=4.14     && <4.17
+    , base                         >=4.14     && <4.19
     , base16-bytestring
     , bimap                        >=0.4      && <0.5
     , binary                       >=0.8      && <0.11
@@ -309,7 +309,7 @@ library
     , hashable
     , io-classes                   ^>=1.1
     , measures
-    , mtl                          >=2.2      && <2.3
+    , mtl
     , nothunks                     >=0.1.2    && <0.2
     , ouroboros-network-api        ^>=0.5
     , ouroboros-network-mock       ^>=0.1.0.1
@@ -322,8 +322,8 @@ library
     , sop-core                     >=0.5      && <0.6
     , streaming
     , strict-stm                   ^>=1.1
-    , text                         >=1.2      && <1.3
-    , these                        >=1.1      && <1.2
+    , text                         ^>=2.0
+    , these                        ^>=1.2
     , time
     , transformers
     , typed-protocols
@@ -613,7 +613,7 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-state-machine  >=0.7.0 && <0.7.1
+    , quickcheck-state-machine  ^>=0.7
     , random
     , serialise
     , tasty
@@ -621,6 +621,7 @@ test-suite storage-test
     , tasty-quickcheck
     , text
     , time
+    , transformers
     , tree-diff
     , vector
 

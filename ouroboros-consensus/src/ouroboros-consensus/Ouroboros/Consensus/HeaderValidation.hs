@@ -13,6 +13,7 @@
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 -- | Header validation
 module Ouroboros.Consensus.HeaderValidation (
@@ -59,7 +60,9 @@ import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Codec.Serialise (decode, encode)
-import           Control.Monad.Except
+import           Control.Monad (unless)
+import           Control.Monad.Except (Except, runExcept, throwError,
+                     withExcept)
 import           Data.Coerce
 import           Data.Kind (Type)
 import           Data.Proxy

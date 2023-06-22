@@ -53,8 +53,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.Update (
   , UpdateLedgerDbTraceEvent (..)
   ) where
 
-import           Control.Monad.Except hiding (ap)
-import           Control.Monad.Reader hiding (ap)
+import           Control.Monad.Except (ExceptT, runExcept, runExceptT,
+                     throwError)
+import           Control.Monad.Reader (ReaderT (..), runReaderT)
+import           Control.Monad.Trans.Class (lift)
 import           Data.Functor.Identity
 import           Data.Kind (Constraint, Type)
 import           Data.Word

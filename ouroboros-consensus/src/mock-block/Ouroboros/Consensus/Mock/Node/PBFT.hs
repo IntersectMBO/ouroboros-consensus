@@ -2,6 +2,7 @@
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE TypeOperators     #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Ouroboros.Consensus.Mock.Node.PBFT (

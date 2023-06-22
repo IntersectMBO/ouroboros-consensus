@@ -133,7 +133,7 @@ decodeAsFlatTerm bs0 =
     provideInput bs
       | BS.null bs = return []
       | otherwise      = do
-          next <- lift $ ST.Lazy.strictToLazyST $ do
+          next <- S.lift $ ST.Lazy.strictToLazyST $ do
               -- This will always be a 'Partial' here because decodeTermToken
               -- always starts by requesting initial input. Only decoders that
               -- fail or return a value without looking at their input can give
@@ -157,7 +157,7 @@ decodeAsFlatTerm bs0 =
          CBOR.R.IDecode s CBOR.F.TermToken
       -> ExceptT CBOR.R.DeserialiseFailure (ST.Lazy.ST s) CBOR.F.FlatTerm
     collectOutput (CBOR.R.Fail _ _ err) = throwError err
-    collectOutput (CBOR.R.Partial    k) = lift (ST.Lazy.strictToLazyST (k Nothing)) >>=
+    collectOutput (CBOR.R.Partial    k) = S.lift (ST.Lazy.strictToLazyST (k Nothing)) >>=
                                           collectOutput
     collectOutput (CBOR.R.Done bs' _ x) = do xs <- provideInput bs'
                                              return (x : xs)

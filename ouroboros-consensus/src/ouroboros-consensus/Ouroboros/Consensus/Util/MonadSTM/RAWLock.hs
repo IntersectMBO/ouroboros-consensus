@@ -25,7 +25,8 @@ module Ouroboros.Consensus.Util.MonadSTM.RAWLock (
   , unsafeReleaseWriteAccess
   ) where
 
-import           Control.Monad.Except
+import           Control.Monad (join)
+import           Control.Monad.Except (Except, runExcept, throwError)
 import           Data.Functor (($>))
 import           GHC.Generics (Generic)
 import           GHC.Stack (CallStack, HasCallStack, callStack)

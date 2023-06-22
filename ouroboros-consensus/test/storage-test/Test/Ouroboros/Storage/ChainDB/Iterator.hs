@@ -10,8 +10,10 @@
 --
 module Test.Ouroboros.Storage.ChainDB.Iterator (tests) where
 
-import           Control.Monad.Except
+import           Control.Monad (forM_)
+import           Control.Monad.Except (ExceptT (..), runExceptT)
 import           Control.Monad.IOSim (runSimOrThrow)
+import           Control.Monad.Trans.Class (lift)
 import           Control.Tracer
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map

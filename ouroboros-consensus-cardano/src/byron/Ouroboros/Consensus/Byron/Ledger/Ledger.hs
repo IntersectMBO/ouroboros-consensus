@@ -56,7 +56,8 @@ import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
-import           Control.Monad.Except
+import           Control.Monad (replicateM)
+import           Control.Monad.Except (Except, runExcept, throwError)
 import           Data.ByteString (ByteString)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)

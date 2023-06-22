@@ -19,8 +19,9 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator (
   ) where
 
 import           Control.Monad (unless, when)
-import           Control.Monad.Except (ExceptT (..), catchError, lift,
-                     runExceptT, throwError, withExceptT)
+import           Control.Monad.Except (ExceptT (..), catchError, runExceptT,
+                     throwError, withExceptT)
+import           Control.Monad.Trans.Class (lift)
 import           Control.Tracer
 import           Data.Functor (($>))
 import           Data.List.NonEmpty (NonEmpty)

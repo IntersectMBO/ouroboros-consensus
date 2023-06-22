@@ -25,7 +25,8 @@ module Ouroboros.Consensus.Util.STM (
   , simStateT
   ) where
 
-import           Control.Monad.State
+import           Control.Monad (void)
+import           Control.Monad.State (StateT (..))
 import           Data.Void
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)

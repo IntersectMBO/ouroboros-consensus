@@ -56,7 +56,8 @@ import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
-import           Control.Monad.Except
+import           Control.Monad (void)
+import           Control.Monad.Except (Except)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy

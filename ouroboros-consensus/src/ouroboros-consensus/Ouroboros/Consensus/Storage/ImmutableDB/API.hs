@@ -52,8 +52,8 @@ module Ouroboros.Consensus.Storage.ImmutableDB.API (
   ) where
 
 import qualified Codec.CBOR.Read as CBOR
-import           Control.Monad.Except (ExceptT (..), lift, runExceptT,
-                     throwError)
+import           Control.Monad.Except (ExceptT (..), runExceptT, throwError)
+import           Control.Monad.Trans.Class (lift)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Either (isRight)
 import           Data.Function (on)

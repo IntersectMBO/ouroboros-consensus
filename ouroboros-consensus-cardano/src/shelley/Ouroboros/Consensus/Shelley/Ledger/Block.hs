@@ -11,6 +11,7 @@
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilyDependencies     #-}
+{-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableSuperClasses    #-}
 module Ouroboros.Consensus.Shelley.Ledger.Block (
     GetHeader (..)

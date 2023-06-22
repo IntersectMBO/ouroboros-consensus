@@ -48,7 +48,8 @@ module Ouroboros.Consensus.Protocol.PBFT (
 import           Cardano.Crypto.DSIGN.Class
 import           Codec.Serialise (Serialise (..))
 import qualified Control.Exception as Exn
-import           Control.Monad.Except
+import           Control.Monad (unless)
+import           Control.Monad.Except (throwError)
 import           Data.Bifunctor (first)
 import           Data.Bimap (Bimap)
 import qualified Data.Bimap as Bimap

@@ -10,6 +10,12 @@
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
+
+-- Get an invalid redundant constraint warning due to
+-- https://gitlab.haskell.org/ghc/ghc/-/issues/23323
+-- which hopefully will be fixed in ghc-9.6.3.
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+
 -- | Tests for the computation of blockchain time.
 --
 -- The @BlockchainTime@ in consensus used to be ubiquitous throughout the code
@@ -38,13 +44,14 @@ module Test.Consensus.BlockchainTime.Simple (tests) where
 
 import           Control.Applicative (Alternative (..))
 import           Control.Concurrent.Class.MonadMVar (MonadMVar)
+import           Control.Monad (MonadPlus, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as LazySTM
 import           Control.Monad.Class.MonadTime
 import qualified Control.Monad.Class.MonadTimer as MonadTimer
 import           Control.Monad.Class.MonadTimer.SI
-import           Control.Monad.Except
+import           Control.Monad.Except (Except, runExcept, throwError)
 import           Control.Monad.IOSim
-import           Control.Monad.Reader
+import           Control.Monad.Reader (ReaderT (..), lift)
 import           Control.Tracer
 import           Data.Fixed
 import qualified Data.Time.Clock as Time

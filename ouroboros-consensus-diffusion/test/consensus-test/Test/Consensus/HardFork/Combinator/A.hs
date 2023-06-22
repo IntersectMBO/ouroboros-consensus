@@ -40,7 +40,8 @@ module Test.Consensus.HardFork.Combinator.A (
 
 import           Cardano.Slotting.EpochInfo
 import           Codec.Serialise
-import           Control.Monad.Except
+import           Control.Monad (guard)
+import           Control.Monad.Except (runExcept)
 import qualified Data.Binary as B
 import           Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy

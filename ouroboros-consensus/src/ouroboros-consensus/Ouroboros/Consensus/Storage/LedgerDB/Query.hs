@@ -15,6 +15,7 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE UndecidableInstances     #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.Query (

@@ -25,9 +25,9 @@
 module Test.Consensus.MiniProtocol.ChainSync.Client (tests) where
 
 import           Cardano.Crypto.DSIGN.Mock
+import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.IOSim (runSimOrThrow)
-import           Control.Monad.State.Strict
 import           Control.Tracer (contramap, nullTracer)
 import           Data.Bifunctor (first)
 import           Data.List (intercalate)

@@ -19,7 +19,8 @@ module Ouroboros.Consensus.Mock.Ledger.State (
 import           Cardano.Binary (toCBOR)
 import           Cardano.Crypto.Hash
 import           Codec.Serialise (Serialise)
-import           Control.Monad.Except
+import           Control.Monad (guard)
+import           Control.Monad.Except (Except, throwError, withExcept)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable (Typeable)

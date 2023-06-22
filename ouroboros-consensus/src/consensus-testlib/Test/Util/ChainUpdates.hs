@@ -12,7 +12,9 @@ module Test.Util.ChainUpdates (
   , prop_genChainUpdates
   ) where
 
-import           Control.Monad.State.Strict
+import           Control.Monad (replicateM, replicateM_)
+import           Control.Monad.State.Strict (MonadTrans, execStateT, get, lift,
+                     modify)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Util.Condense (Condense (..))

@@ -27,7 +27,8 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.State (
   , withOpenState
   ) where
 
-import           Control.Monad.State.Strict
+import           Control.Monad (unless)
+import           Control.Monad.State.Strict (StateT, lift)
 import           Control.Tracer (Tracer)
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)

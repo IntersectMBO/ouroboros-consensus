@@ -22,7 +22,9 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad.Except
+import           Control.Monad (forM, forM_, unless, void, when)
+import           Control.Monad.Except ()
+import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Function (on)

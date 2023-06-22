@@ -19,7 +19,8 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation (
 
 import           Control.Exception (assert)
 import           Control.Monad (forM_, unless, when)
-import           Control.Monad.Except (ExceptT, lift, runExceptT, throwError)
+import           Control.Monad.Except (ExceptT, runExceptT, throwError)
+import           Control.Monad.Trans.Class (lift)
 import           Control.Tracer (Tracer, contramap, traceWith)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Functor (($>))

@@ -1557,7 +1557,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                 , args
                 }
               sm' = sm env (genBlk chunkInfo) testCfg testInitExtLedger maxClockSkew
-          (hist, model, res) <- QSM.runCommands' sm' cmds'
+          (hist, model, res) <- QSM.runCommands' (pure sm') cmds'
           trace <- getTrace
           return (hist, model, res, trace)
 

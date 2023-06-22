@@ -7,6 +7,7 @@
 {-# LANGUAGE PolyKinds           #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeOperators       #-}
 
 -- | Infrastructure for doing chain selection across eras
 module Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel (
