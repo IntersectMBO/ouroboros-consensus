@@ -171,22 +171,19 @@ data instance LedgerState BlockB mk = LgrB {
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-instance HasLedgerTables (LedgerState BlockB) where
-  data instance LedgerTables (LedgerState BlockB) mk = NoBTables
-    deriving stock    (Generic, Eq, Show)
-    deriving anyclass (NoThunks)
 
-instance HasTickedLedgerTables (LedgerState BlockB) where
-  withLedgerTablesTicked (TickedLedgerStateB st) tables =
-      TickedLedgerStateB $ withLedgerTables st tables
+type instance Key   (LedgerState BlockB) = Void
+type instance Value (LedgerState BlockB) = Void
 
-instance CanSerializeLedgerTables (LedgerState BlockB) where
-
-instance CanStowLedgerTables (LedgerState BlockB) where
-
+instance HasLedgerTables (LedgerState BlockB)
+instance HasLedgerTables (Ticked1 (LedgerState BlockB))
+instance HasTickedLedgerTables (LedgerState BlockB)
+instance CanSerializeLedgerTables (LedgerState BlockB)
+instance CanStowLedgerTables (LedgerState BlockB)
 instance LedgerTablesAreTrivial (LedgerState BlockB) where
-  convertMapKind (LgrB t) = LgrB t
-  trivialLedgerTables = NoBTables
+  convertMapKind (LgrB x) = LgrB x
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockB)) where
+  convertMapKind (TickedLedgerStateB x) = TickedLedgerStateB (convertMapKind x)
 
 type instance LedgerCfg (LedgerState BlockB) = ()
 
@@ -216,7 +213,7 @@ instance ApplyBlock (LedgerState BlockB) BlockB where
   applyBlockLedgerResult   = \_ b _ -> return $ pureLedgerResult $ LgrB (blockPoint b)
   reapplyBlockLedgerResult = \_ b _ ->          pureLedgerResult $ LgrB (blockPoint b)
 
-  getBlockKeySets _blk = NoBTables
+  getBlockKeySets _blk = trivialLedgerTables
 
 instance UpdateLedger BlockB
 
@@ -293,7 +290,7 @@ instance LedgerSupportsMempool BlockB where
 
   txForgetValidated = \case {}
 
-  getTransactionKeySets _tx = NoBTables
+  getTransactionKeySets _tx = trivialLedgerTables
 
 data instance TxId (GenTx BlockB)
   deriving stock    (Show, Eq, Ord, Generic)
@@ -310,7 +307,7 @@ data instance BlockQuery BlockB result
 
 instance QueryLedger BlockB where
   answerBlockQuery _ qry = case qry of {}
-  getQueryKeySets _ = NoBTables
+  getQueryKeySets _ = trivialLedgerTables
   tableTraversingQuery _ = Nothing
 
 instance SameDepIndex (BlockQuery BlockB) where

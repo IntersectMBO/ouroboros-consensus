@@ -32,7 +32,6 @@ module Ouroboros.Consensus.Ledger.Extended (
 import           Codec.CBOR.Decoding (Decoder, decodeListLenOf)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Control.Monad.Except
-import           Data.Coerce
 import           Data.Functor ((<&>))
 import           Data.Proxy
 import           Data.Typeable
@@ -182,7 +181,7 @@ instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
           (getHeader blk)
           tickedHeaderState
 
-  getBlockKeySets = ExtLedgerStateTables . getBlockKeySets
+  getBlockKeySets = castLedgerTables . getBlockKeySets @(LedgerState blk)
 
 {-------------------------------------------------------------------------------
   Serialisation
@@ -225,64 +224,45 @@ decodeExtLedgerState decodeLedgerState
   Ledger Tables
 -------------------------------------------------------------------------------}
 
+type instance Key   (ExtLedgerState blk) = Key   (LedgerState blk)
+type instance Value (ExtLedgerState blk) = Value (LedgerState blk)
+
 instance HasLedgerTables (LedgerState blk)
       => HasLedgerTables (ExtLedgerState blk) where
-
-  newtype LedgerTables (ExtLedgerState blk) mk = ExtLedgerStateTables {
-      unExtLedgerStateTables :: LedgerTables (LedgerState blk) mk
-      }
-    deriving (Generic)
-
   projectLedgerTables (ExtLedgerState lstate _) =
-      ExtLedgerStateTables (projectLedgerTables lstate)
-  withLedgerTables (ExtLedgerState lstate hstate) (ExtLedgerStateTables tables) =
-      ExtLedgerState (lstate `withLedgerTables` tables) hstate
-
-  traverseLedgerTables f (ExtLedgerStateTables l) =
-    ExtLedgerStateTables <$> traverseLedgerTables f l
-
-  pureLedgerTables  f = coerce $ pureLedgerTables  @(LedgerState blk) f
-  mapLedgerTables   f = coerce $ mapLedgerTables   @(LedgerState blk) f
-  zipLedgerTables   f = coerce $ zipLedgerTables   @(LedgerState blk) f
-  zipLedgerTables3  f = coerce $ zipLedgerTables3  @(LedgerState blk) f
-  foldLedgerTables  f = coerce $ foldLedgerTables  @(LedgerState blk) f
-  foldLedgerTables2 f = coerce $ foldLedgerTables2 @(LedgerState blk) f
-  namesLedgerTables   = coerce $ namesLedgerTables @(LedgerState blk)
-  zipLedgerTablesA  f (ExtLedgerStateTables l) (ExtLedgerStateTables r) =
-    ExtLedgerStateTables <$> zipLedgerTablesA f l r
-  zipLedgerTables3A  f tl tc tr =
-     ExtLedgerStateTables <$> zipLedgerTables3A f l c r
-   where
-     ExtLedgerStateTables l = tl
-     ExtLedgerStateTables c = tc
-     ExtLedgerStateTables r = tr
-
-deriving instance Eq (LedgerTables (LedgerState blk) mk)
-               => Eq (LedgerTables (ExtLedgerState blk) mk)
-deriving newtype instance NoThunks (LedgerTables (LedgerState blk) mk)
-                       => NoThunks (LedgerTables (ExtLedgerState blk) mk)
-deriving instance Show (LedgerTables (LedgerState blk) mk)
-               => Show (LedgerTables (ExtLedgerState blk) mk)
+      castLedgerTables (projectLedgerTables lstate)
+  withLedgerTables (ExtLedgerState lstate hstate) tables =
+      ExtLedgerState
+        (lstate `withLedgerTables` castLedgerTables tables)
+        hstate
 
 instance CanSerializeLedgerTables (LedgerState blk)
       => CanSerializeLedgerTables (ExtLedgerState blk) where
-  codecLedgerTables = ExtLedgerStateTables codecLedgerTables
+  codecLedgerTables = castLedgerTables $ codecLedgerTables @(LedgerState blk)
 
 instance LedgerTablesAreTrivial (LedgerState blk)
       => LedgerTablesAreTrivial (ExtLedgerState blk) where
-  convertMapKind (ExtLedgerState st hst) =
-      flip ExtLedgerState hst $ convertMapKind st
+  convertMapKind (ExtLedgerState x y) = ExtLedgerState (convertMapKind x) y
 
-  trivialLedgerTables = ExtLedgerStateTables trivialLedgerTables
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState blk))
+      => LedgerTablesAreTrivial (Ticked1 (ExtLedgerState blk)) where
+  convertMapKind (TickedExtLedgerState x y z) =
+      TickedExtLedgerState (convertMapKind x) y z
+
+instance HasLedgerTables (Ticked1 (LedgerState blk))
+      => HasLedgerTables (Ticked1 (ExtLedgerState blk)) where
+  projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
+      castLedgerTables (projectLedgerTables lstate)
+  withLedgerTables
+    (TickedExtLedgerState lstate view hstate)
+    tables =
+      TickedExtLedgerState
+        (lstate `withLedgerTables` castLedgerTables tables)
+        view
+        hstate
 
 instance HasTickedLedgerTables (LedgerState blk)
-      => HasTickedLedgerTables (ExtLedgerState blk) where
-  projectLedgerTablesTicked (TickedExtLedgerState lstate _view _hstate) =
-      ExtLedgerStateTables (projectLedgerTablesTicked lstate)
-  withLedgerTablesTicked
-    (TickedExtLedgerState lstate view hstate)
-    (ExtLedgerStateTables tables) =
-      TickedExtLedgerState (lstate `withLedgerTablesTicked` tables) view hstate
+      => HasTickedLedgerTables (ExtLedgerState blk)
 
 instance CanStowLedgerTables (LedgerState blk)
       => CanStowLedgerTables (ExtLedgerState blk) where

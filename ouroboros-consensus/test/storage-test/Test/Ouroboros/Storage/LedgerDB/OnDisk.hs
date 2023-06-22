@@ -14,6 +14,7 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
@@ -66,7 +67,8 @@ import           Data.Word
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Abstract hiding (Key, Value)
+import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import           Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
@@ -270,14 +272,14 @@ instance PayloadSemantics Tx where
       track :: PayloadDependentState Tx ValuesMK -> PayloadDependentState Tx TrackingMK
       track stAfter =
           stAfter { utxtoktables =
-                      TokenToTValue $ rawCalculateDifference utxtokBefore utxtokAfter
+                      LedgerTables $ rawCalculateDifference utxtokBefore utxtokAfter
                   }
         where
-          utxtokBefore = testUtxtokTable $ utxtoktables st
-          utxtokAfter  = testUtxtokTable $ utxtoktables stAfter
+          utxtokBefore = getLedgerTables $ utxtoktables st
+          utxtokAfter  = getLedgerTables $ utxtoktables stAfter
 
   getPayloadKeySets Tx{consumed} =
-    TokenToTValue $ KeysMK $ Set.singleton consumed
+    LedgerTables $ KeysMK $ Set.singleton consumed
 
 deriving instance Eq (LedgerTables (LedgerState TestBlock) mk) => Eq (PayloadDependentState Tx mk)
 deriving instance NoThunks (LedgerTables (LedgerState TestBlock) mk) => NoThunks (PayloadDependentState Tx mk)
@@ -288,7 +290,7 @@ onValues ::
      (Map Token TValue -> Map Token TValue)
   -> LedgerTables (LedgerState TestBlock) ValuesMK
   -> LedgerTables (LedgerState TestBlock) ValuesMK
-onValues f TokenToTValue {testUtxtokTable} = TokenToTValue $ updateMap testUtxtokTable
+onValues f (LedgerTables testUtxtokTable) = LedgerTables $ updateMap testUtxtokTable
   where
     updateMap :: ValuesMK Token TValue -> ValuesMK Token TValue
     updateMap (ValuesMK utxovals) =
@@ -298,45 +300,33 @@ queryKeys ::
      (Map Token TValue -> a)
   -> LedgerTables (LedgerState TestBlock) ValuesMK
   -> a
-queryKeys f (TokenToTValue (ValuesMK utxovals)) = f utxovals
+queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
 
 {-------------------------------------------------------------------------------
   Instances required for HD storage of ledger state tables
 -------------------------------------------------------------------------------}
 
-instance HasLedgerTables (LedgerState TestBlock) where
-  newtype LedgerTables (LedgerState TestBlock) mk =
-    TokenToTValue { testUtxtokTable :: mk Token TValue }
-    deriving stock (Generic)
+type instance Ledger.Key   (LedgerState TestBlock) = Token
+type instance Ledger.Value (LedgerState TestBlock) = TValue
 
+instance HasLedgerTables (LedgerState TestBlock) where
   projectLedgerTables st       = utxtoktables $ payloadDependentState st
   withLedgerTables    st table = st { payloadDependentState =
                                         (payloadDependentState st) {utxtoktables = table}
                                     }
 
-  pureLedgerTables = TokenToTValue
+instance HasLedgerTables (Ticked1 (LedgerState TestBlock)) where
+  projectLedgerTables (TickedTestLedger st)        =
+    castLedgerTables $ projectLedgerTables st
+  withLedgerTables    (TickedTestLedger st) tables =
+    TickedTestLedger $ withLedgerTables st $ castLedgerTables tables
 
-  mapLedgerTables      f                                     (TokenToTValue x) = TokenToTValue    (f x)
-  traverseLedgerTables f                                     (TokenToTValue x) = TokenToTValue <$> f x
-  zipLedgerTables      f                   (TokenToTValue x) (TokenToTValue y) = TokenToTValue    (f x y)
-  zipLedgerTables3     f (TokenToTValue x) (TokenToTValue y) (TokenToTValue z) = TokenToTValue    (f x y z)
-  zipLedgerTablesA     f                   (TokenToTValue x) (TokenToTValue y) = TokenToTValue <$> f x y
-  zipLedgerTables3A    f (TokenToTValue x) (TokenToTValue y) (TokenToTValue z) = TokenToTValue <$> f x y z
-  foldLedgerTables     f                                     (TokenToTValue x) =                   f x
-  foldLedgerTables2    f                   (TokenToTValue x) (TokenToTValue y) =                   f x y
-  namesLedgerTables                                                            = TokenToTValue $ NameMK "testblocktables"
-
-deriving instance Eq (mk Token TValue) => Eq (LedgerTables (LedgerState TestBlock) mk)
-deriving anyclass instance NoThunks (mk Token TValue) => NoThunks (LedgerTables (LedgerState TestBlock) mk)
-deriving instance Show (mk Token TValue) => Show (LedgerTables (LedgerState TestBlock) mk)
-
-instance CanSerializeLedgerTables (LedgerState TestBlock) where
-  codecLedgerTables = TokenToTValue $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
+instance CanSerializeLedgerTables (LedgerState TestBlock)
 
 instance Serialise (LedgerTables (LedgerState TestBlock) EmptyMK) where
-  encode (TokenToTValue (_ :: EmptyMK Token TValue))
+  encode (LedgerTables (_ :: EmptyMK Token TValue))
          = CBOR.encodeNull
-  decode = TokenToTValue EmptyMK <$ CBOR.decodeNull
+  decode = LedgerTables EmptyMK <$ CBOR.decodeNull
 
 instance ToCBOR Token where
   toCBOR (Token pt) = S.encode pt
@@ -350,10 +340,7 @@ instance ToCBOR TValue where
 instance FromCBOR TValue where
   fromCBOR = fmap TValue S.decode
 
-instance HasTickedLedgerTables (LedgerState TestBlock) where
-  projectLedgerTablesTicked (TickedTestLedger st)        = projectLedgerTables st
-  withLedgerTablesTicked    (TickedTestLedger st) tables =
-    TickedTestLedger $ withLedgerTables st tables
+instance HasTickedLedgerTables (LedgerState TestBlock)
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables     = stowErr "stowLedgerTables"
@@ -418,7 +405,7 @@ instance ToExpr (LedgerState (TestBlockWith Tx) ValuesMK) where
 
 initialTestLedgerState :: PayloadDependentState Tx ValuesMK
 initialTestLedgerState = UTxTok {
-    utxtoktables =   TokenToTValue
+    utxtoktables =   LedgerTables
                    $ ValuesMK
                    $ Map.singleton initialToken (pointTValue initialToken)
   , utxhist      = Set.singleton initialToken
@@ -1319,8 +1306,7 @@ generator cd secParam (Model mock hs) =
         genGetTables =
           let randomGetTablesAtFor = do
                 pt <- QC.arbitrary
-                keys <- ExtLedgerStateTables
-                      . TokenToTValue
+                keys <- LedgerTables @(ExtLedgerState TestBlock)
                       . KeysMK
                     <$> QC.arbitrary
                 pure $ GetTablesAtFor pt keys
@@ -1337,8 +1323,7 @@ generator cd secParam (Model mock hs) =
                , (1, do
                      -- existing point, random keys
                      (blk, _) <- QC.elements (mockLedger mock)
-                     keys <- ExtLedgerStateTables
-                          .  TokenToTValue
+                     keys <- LedgerTables @(ExtLedgerState TestBlock)
                           .  KeysMK
                          <$> QC.arbitrary
                      pure $ GetTablesAtFor (blockPoint blk) keys)

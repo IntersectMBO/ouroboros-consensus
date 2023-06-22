@@ -195,22 +195,18 @@ newtype instance Ticked1 (LedgerState BlockA) mk = TickedLedgerStateA {
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-instance HasLedgerTables (LedgerState BlockA) where
-  data instance LedgerTables (LedgerState BlockA) mk = NoATables
-    deriving stock    (Generic, Eq, Show)
-    deriving anyclass (NoThunks)
+type instance Key   (LedgerState BlockA) = Void
+type instance Value (LedgerState BlockA) = Void
 
-instance HasTickedLedgerTables (LedgerState BlockA) where
-  withLedgerTablesTicked (TickedLedgerStateA st) tables =
-      TickedLedgerStateA $ withLedgerTables st tables
-
-instance CanSerializeLedgerTables (LedgerState BlockA) where
-
-instance CanStowLedgerTables (LedgerState BlockA) where
-
+instance HasLedgerTables (LedgerState BlockA)
+instance HasLedgerTables (Ticked1 (LedgerState BlockA))
+instance HasTickedLedgerTables (LedgerState BlockA)
+instance CanSerializeLedgerTables (LedgerState BlockA)
+instance CanStowLedgerTables (LedgerState BlockA)
 instance LedgerTablesAreTrivial (LedgerState BlockA) where
-  convertMapKind (LgrA tip tr) = LgrA tip tr
-  trivialLedgerTables = NoATables
+  convertMapKind (LgrA x y) = LgrA x y
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState BlockA)) where
+  convertMapKind (TickedLedgerStateA x) = TickedLedgerStateA (convertMapKind x)
 
 data PartialLedgerConfigA = LCfgA {
       lcfgA_k           :: SecurityParam
@@ -265,7 +261,7 @@ instance ApplyBlock (LedgerState BlockA) BlockA where
         Left  _ -> error "reapplyBlockLedgerResult: unexpected error"
         Right b -> b
 
-  getBlockKeySets _blk = NoATables
+  getBlockKeySets _blk = trivialLedgerTables
 
 instance UpdateLedger BlockA
 
@@ -365,7 +361,7 @@ instance LedgerSupportsMempool BlockA where
 
   txForgetValidated = forgetValidatedGenTxA
 
-  getTransactionKeySets _tx = NoATables
+  getTransactionKeySets _tx = trivialLedgerTables
 
 newtype instance TxId (GenTx BlockA) = TxIdA Int
   deriving stock   (Show, Eq, Ord, Generic)
@@ -382,7 +378,7 @@ data instance BlockQuery BlockA result
 
 instance QueryLedger BlockA where
   answerBlockQuery _ qry = case qry of {}
-  getQueryKeySets _ = NoATables
+  getQueryKeySets _ = trivialLedgerTables
   tableTraversingQuery _ = Nothing
 
 instance SameDepIndex (BlockQuery BlockA) where

@@ -366,8 +366,8 @@ translateShelleyTables ::
   => SL.TranslationContext era
   -> LedgerTables (LedgerState (ShelleyBlock proto (SL.PreviousEra era))) mk
   -> LedgerTables (LedgerState (ShelleyBlock proto                 era))  mk
-translateShelleyTables ctxt (ShelleyLedgerTables utxoTable) =
-      ShelleyLedgerTables
+translateShelleyTables ctxt (LedgerTables utxoTable) =
+      LedgerTables
     $ mapMK
         (unTxOutWrapper . SL.translateEra' ctxt . TxOutWrapper)
         utxoTable

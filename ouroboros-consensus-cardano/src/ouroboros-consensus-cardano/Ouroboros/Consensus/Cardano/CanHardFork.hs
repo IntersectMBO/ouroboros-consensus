@@ -421,7 +421,7 @@ translateLedgerStateByronToShelleyWrapper =
                       ShelleyTransitionInfo{shelleyAfterVoting = 0}
                   , shelleyLedgerTables = emptyLedgerTables
                   }
-          , translateLedgerTablesWith = \NoByronLedgerTables -> emptyLedgerTables
+          , translateLedgerTablesWith = const emptyLedgerTables
           }
 
 translateChainDepStateByronToShelleyWrapper ::
@@ -555,7 +555,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   -- this, for now we choose to generate the differences out of
                   -- thin air and when the time comes in which ticking produces
                   -- differences, we will have to revisit this.
-                  avvmsAsDeletions = ShelleyLedgerTables
+                  avvmsAsDeletions = LedgerTables
                                    . DiffMK
                                    . Diff.Internal.fromMapDeletes
                                    . Map.map (  unTxOutWrapper
@@ -570,7 +570,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   -- them, modifying the reserves accordingly.
                   stowedState = stowLedgerTables
                               . withLedgerTables ls
-                              . ShelleyLedgerTables
+                              . LedgerTables
                               . ValuesMK
                               $ avvms
 
@@ -582,7 +582,7 @@ translateLedgerStateShelleyToAllegraWrapper =
               in resultingState `withLedgerTables` avvmsAsDeletions
 
         , translateLedgerTablesWith =
-             ShelleyLedgerTables . fmap (SL.translateEra' ()) . shelleyUTxOTable
+             LedgerTables . fmap (SL.translateEra' ()) . getLedgerTables
         }
 
 translateTxShelleyToAllegraWrapper ::
@@ -623,9 +623,8 @@ translateLedgerStateAllegraToMaryWrapper =
               . Comp
               . Flip
         , translateLedgerTablesWith =
-            \ShelleyLedgerTables { shelleyUTxOTable = diffMK } ->
-             ShelleyLedgerTables { shelleyUTxOTable = fmap (SL.translateEra' ()) diffMK
-                                 }
+            \(LedgerTables diffMK) ->
+             LedgerTables $ fmap (SL.translateEra' ()) diffMK
         }
 
 translateTxAllegraToMaryWrapper ::
@@ -666,9 +665,8 @@ translateLedgerStateMaryToAlonzoWrapper =
               . Comp
               . Flip
         , translateLedgerTablesWith =
-            \ShelleyLedgerTables { shelleyUTxOTable = diffMK } ->
-             ShelleyLedgerTables { shelleyUTxOTable = fmap Alonzo.translateTxOut diffMK
-                                 }
+            \(LedgerTables diffMK) ->
+             LedgerTables $ fmap Alonzo.translateTxOut diffMK
         }
 
 getAlonzoTranslationContext ::
@@ -719,9 +717,8 @@ translateLedgerStateAlonzoToBabbageWrapper =
               . Flip
               . transPraosLS
         , translateLedgerTablesWith =
-            \ShelleyLedgerTables { shelleyUTxOTable = diffMK } ->
-             ShelleyLedgerTables { shelleyUTxOTable = fmap Babbage.translateTxOut diffMK
-                                 }
+            \(LedgerTables diffMK) ->
+             LedgerTables $ fmap Babbage.translateTxOut diffMK
         }
   where
     transPraosLS ::
@@ -793,9 +790,8 @@ translateLedgerStateBabbageToConwayWrapper =
               . Comp
               . Flip
         , translateLedgerTablesWith =
-            \ShelleyLedgerTables { shelleyUTxOTable = diffMK } ->
-             ShelleyLedgerTables { shelleyUTxOTable = fmap Conway.translateTxOut diffMK
-                                 }
+            \(LedgerTables diffMK)  ->
+             LedgerTables $ fmap Conway.translateTxOut diffMK
         }
 
 getConwayTranslationContext ::

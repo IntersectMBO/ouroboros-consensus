@@ -24,6 +24,7 @@ import qualified Byron.Spec.Ledger.Update as Spec
 import           Codec.Serialise
 import           Control.Monad.Except
 import qualified Control.State.Transition as Spec
+import           Data.Void (Void)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (AllowThunk (..), NoThunks)
 import           Ouroboros.Consensus.Block
@@ -121,39 +122,19 @@ instance IsLedger (LedgerState ByronSpecBlock) where
   Ledger Tables
 -------------------------------------------------------------------------------}
 
-instance HasLedgerTables (LedgerState ByronSpecBlock) where
-  data LedgerTables (LedgerState ByronSpecBlock) mk = NoByronSpecLedgerTables
-    deriving (Generic, Eq, Show, NoThunks)
-
-instance CanSerializeLedgerTables (LedgerState ByronSpecBlock) where
-    codecLedgerTables = NoByronSpecLedgerTables
-
-instance HasTickedLedgerTables (LedgerState ByronSpecBlock) where
-  projectLedgerTablesTicked _st                     = NoByronSpecLedgerTables
-  withLedgerTablesTicked st NoByronSpecLedgerTables =
-      TickedByronSpecLedgerState { untickedByronSpecLedgerTip
-                                 , tickedByronSpecLedgerState
-                                 }
-    where
-      TickedByronSpecLedgerState { untickedByronSpecLedgerTip
-                                 , tickedByronSpecLedgerState
-                                 } = st
-
+type instance Key   (LedgerState ByronSpecBlock) = Void
+type instance Value (LedgerState ByronSpecBlock) = Void
+instance HasLedgerTables (LedgerState ByronSpecBlock)
+instance HasLedgerTables (Ticked1 (LedgerState ByronSpecBlock))
+instance CanSerializeLedgerTables (LedgerState ByronSpecBlock)
+instance HasTickedLedgerTables (LedgerState ByronSpecBlock)
 instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock) where
-  convertMapKind st =
-      ByronSpecLedgerState { byronSpecLedgerTip
-                           , byronSpecLedgerState
-                           }
-    where
-      ByronSpecLedgerState { byronSpecLedgerTip
-                           , byronSpecLedgerState
-                           } = st
-
-  trivialLedgerTables = NoByronSpecLedgerTables
-
-instance CanStowLedgerTables (LedgerState ByronSpecBlock) where
-  stowLedgerTables     = convertMapKind
-  unstowLedgerTables   = convertMapKind
+  convertMapKind (ByronSpecLedgerState x y) =
+      ByronSpecLedgerState x y
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState ByronSpecBlock)) where
+  convertMapKind (TickedByronSpecLedgerState x y) =
+      TickedByronSpecLedgerState x y
+instance CanStowLedgerTables (LedgerState ByronSpecBlock)
 
 {-------------------------------------------------------------------------------
   Applying blocks

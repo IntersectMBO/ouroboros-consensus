@@ -27,7 +27,8 @@ import qualified Data.Set as Set
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import           Ouroboros.Consensus.Ledger.Basics hiding (LedgerState)
+import           Ouroboros.Consensus.Ledger.Basics hiding (Key, LedgerState)
+import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
                      (DbChangelog (..))
@@ -102,24 +103,12 @@ instance StandardHash TestLedger
 
 deriving instance Eq (TestLedger EmptyMK)
 
-instance HasLedgerTables TestLedger where
-  data LedgerTables TestLedger mk = TestTables { unTestTables :: mk Key Int } deriving (Generic)
-  projectLedgerTables                                                 = TestTables . tlUtxos
-  withLedgerTables st    (TestTables x)                               = st { tlUtxos = x }
-  pureLedgerTables                                                    = TestTables
-  mapLedgerTables f      (TestTables x)                               = TestTables (f x)
-  traverseLedgerTables f (TestTables x)                               = TestTables <$> f x
-  zipLedgerTables f      (TestTables x) (TestTables y)                = TestTables (f x y)
-  zipLedgerTables3 f     (TestTables x) (TestTables y) (TestTables z) = TestTables (f x y z)
-  zipLedgerTablesA f     (TestTables x) (TestTables y)                = TestTables <$> f x y
-  zipLedgerTables3A f    (TestTables x) (TestTables y) (TestTables z) = TestTables <$> f x y z
-  foldLedgerTables f     (TestTables x)                               = f x
-  foldLedgerTables2 f    (TestTables x) (TestTables y)                = f x y
-  namesLedgerTables = TestTables $ NameMK "TestTables"
+type instance Ledger.Key   TestLedger = Key
+type instance Ledger.Value TestLedger = Int
 
-deriving instance (IsMapKind mk, Eq (mk Key Int)) => Eq (LedgerTables TestLedger mk)
-deriving instance (IsMapKind mk, NoThunks (mk Key Int)) => NoThunks (LedgerTables TestLedger mk)
-deriving instance (IsMapKind mk, Show (mk Key Int)) => Show (LedgerTables TestLedger mk)
+instance HasLedgerTables TestLedger where
+  projectLedgerTables                     = LedgerTables . tlUtxos
+  withLedgerTables st    (LedgerTables x) = st { tlUtxos = x }
 
 data DbChangelogTestSetup = DbChangelogTestSetup {
   -- The operations are applied on the right, i.e., the newest operation is at the head of the list.
@@ -205,9 +194,9 @@ prop_flushingSplitsTheChangelog setup = isNothing toFlush .||.
     (toFlush, toKeep)                        = DbChangelog.splitForFlushing dblog
     toFlushTip                               = maybe undefined DbChangelog.toFlushSlot toFlush
     toKeepTip                                = DbChangelog.immutableTipSlot $ anchorlessChangelog toKeep
-    TestTables (SeqDiffMK toKeepDiffs)  = DbChangelog.adcDiffs $ anchorlessChangelog toKeep
-    TestTables (DiffMK toFlushDiffs)    = maybe undefined DbChangelog.toFlushDiffs toFlush
-    TestTables (SeqDiffMK diffs)        = DbChangelog.adcDiffs $ anchorlessChangelog dblog
+    LedgerTables (SeqDiffMK toKeepDiffs)  = DbChangelog.adcDiffs $ anchorlessChangelog toKeep
+    LedgerTables (DiffMK toFlushDiffs)    = maybe undefined DbChangelog.toFlushDiffs toFlush
+    LedgerTables (SeqDiffMK diffs)        = DbChangelog.adcDiffs $ anchorlessChangelog dblog
 
 -- | Extending the changelog adds the correct head to the volatile states.
 prop_extendingAdvancesTipOfVolatileStates :: DbChangelogTestSetup -> Property

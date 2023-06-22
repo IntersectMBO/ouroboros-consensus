@@ -68,7 +68,6 @@ import           Ouroboros.Consensus.Shelley.Ledger.Ledger
                      (ShelleyLedgerConfig (shelleyLedgerGlobals),
                      Ticked1 (TickedShelleyLedgerState, tickedShelleyLedgerState),
                      getPParams)
-import qualified Ouroboros.Consensus.Shelley.Ledger.Ledger as ShelleyLedger
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Network.Block (unwrapCBORinCBOR, wrapCBORinCBOR)
@@ -148,7 +147,7 @@ instance ShelleyCompatible proto era
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
   getTransactionKeySets (ShelleyTx _ tx) =
-        ShelleyLedger.ShelleyLedgerTables
+        LedgerTables
       $ KeysMK
       $ SL.getAllTxInputs (tx ^. bodyTxL)
 

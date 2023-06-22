@@ -24,7 +24,7 @@
 -- > import Ouroboros.Consensus.Cardano.Tables ()
 module Ouroboros.Consensus.Cardano.Tables (
     -- * Testing
-    LedgerTables (CardanoLedgerTables, cardanoUTxOTable)
+    LedgerTables (..)
   , TranslateTxOutWrapper (..)
   , composeTxOutTranslationPairs
   ) where
@@ -35,17 +35,13 @@ import qualified Cardano.Ledger.Babbage.Translation as Babbage
 import qualified Cardano.Ledger.Conway.Translation as Conway
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Era as SL
-import           Cardano.Ledger.Hashes (EraIndependentTxBody)
-import           Cardano.Ledger.Keys (DSignable, Hash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Data.Proxy
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index
 import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
-import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node ()
 import           Ouroboros.Consensus.Cardano.Block
@@ -54,8 +50,6 @@ import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
@@ -128,16 +122,14 @@ withLedgerTablesHelper withLT (HardForkState st) tbs =
                         tbs
               }
 
+type instance Key   (LedgerState (CardanoBlock c)) = SL.TxIn c
+type instance Value (LedgerState (CardanoBlock c)) = ShelleyTxOut (ShelleyBasedEras c)
+
 -- Note that this is a HardForkBlock instance, but it's not compositional. This
 -- is because the LedgerTables relies on knowledge specific to Cardano and we
 -- have so far not found a pleasant way to express that compositionally.
 instance CardanoHardForkConstraints c
       => HasLedgerTables (LedgerState (CardanoBlock c)) where
-  newtype LedgerTables (LedgerState (CardanoBlock c)) mk = CardanoLedgerTables {
-        cardanoUTxOTable :: mk (SL.TxIn c) (ShelleyTxOut (ShelleyBasedEras c))
-      }
-    deriving (Generic)
-
   projectLedgerTables (HardForkLedgerState hfstate) =
       projectLedgerTablesHelper
         (projectLedgerTables . unFlip)
@@ -150,69 +142,24 @@ instance CardanoHardForkConstraints c
           hfstate
           tables
 
-  pureLedgerTables = CardanoLedgerTables
-  mapLedgerTables      f (CardanoLedgerTables x) =
-    CardanoLedgerTables (f x)
-  traverseLedgerTables f (CardanoLedgerTables x) =
-    CardanoLedgerTables <$> f x
-  zipLedgerTables      f (CardanoLedgerTables l) (CardanoLedgerTables r) =
-    CardanoLedgerTables (f l r)
-  zipLedgerTables3     f
-    (CardanoLedgerTables l)
-    (CardanoLedgerTables c)
-    (CardanoLedgerTables r) =
-    CardanoLedgerTables (f l c r)
-  zipLedgerTablesA     f (CardanoLedgerTables l) (CardanoLedgerTables r) =
-    CardanoLedgerTables <$> f l r
-  zipLedgerTables3A    f
-    (CardanoLedgerTables l)
-    (CardanoLedgerTables c)
-    (CardanoLedgerTables r) =
-    CardanoLedgerTables <$> f l c r
-  foldLedgerTables     f (CardanoLedgerTables x) = f x
-  foldLedgerTables2    f (CardanoLedgerTables l) (CardanoLedgerTables r) = f l r
-
-  namesLedgerTables = CardanoLedgerTables {
-      cardanoUTxOTable = NameMK "cardanoUTxOTable"
-    }
-
-deriving newtype
-         instance ( IsMapKind mk
-                  , Praos.PraosCrypto c
-                  , TPraos.PraosCrypto c
-                  , DSignable c (Hash c EraIndependentTxBody)
-                  )
-                  => Eq (LedgerTables (LedgerState (CardanoBlock c)) mk)
-deriving newtype
-         instance ( IsMapKind mk
-                  , Praos.PraosCrypto c
-                  , TPraos.PraosCrypto c
-                  , DSignable c (Hash c EraIndependentTxBody)
-                  )
-                  => NoThunks (LedgerTables (LedgerState (CardanoBlock c)) mk)
-deriving newtype
-         instance ( IsMapKind mk
-                  , Praos.PraosCrypto c
-                  , TPraos.PraosCrypto c
-                  , DSignable c (Hash c EraIndependentTxBody)
-                  )
-                  => Show (LedgerTables (LedgerState (CardanoBlock c)) mk)
-
 instance CardanoHardForkConstraints c
-      => HasTickedLedgerTables (LedgerState (CardanoBlock c)) where
-  projectLedgerTablesTicked st = projectLedgerTablesHelper
-        (\(FlipTickedLedgerState st') -> projectLedgerTablesTicked st')
+      => HasLedgerTables (Ticked1 (LedgerState (CardanoBlock c))) where
+  projectLedgerTables st = castLedgerTables $ projectLedgerTablesHelper
+        (\(FlipTickedLedgerState st') -> castLedgerTables $ projectLedgerTables st')
         (tickedHardForkLedgerStatePerEra st)
-  withLedgerTablesTicked st tables =
+  withLedgerTables st tables =
       st { tickedHardForkLedgerStatePerEra     =
              withLedgerTablesHelper
                (\(FlipTickedLedgerState st') tables' ->
-                  FlipTickedLedgerState $ withLedgerTablesTicked st' tables')
+                  FlipTickedLedgerState $ withLedgerTables st' $ castLedgerTables tables')
                tickedHardForkLedgerStatePerEra
-               tables
+               (castLedgerTables tables)
          }
     where
       TickedHardForkLedgerState{ tickedHardForkLedgerStatePerEra } = st
+
+instance CardanoHardForkConstraints c
+      => HasTickedLedgerTables (LedgerState (CardanoBlock c)) where
 
 instance CardanoHardForkConstraints c
       => CanSerializeLedgerTables (LedgerState (CardanoBlock c)) where
@@ -222,11 +169,11 @@ instance CardanoHardForkConstraints c
     -- serialization that doesn't change between eras. For now we are using
     -- @'toEraCBOR' \@('ShelleyEra' c)@ as a stop-gap, but Ledger will provide a
     -- serialization function into something more efficient.
-    codecLedgerTables = CardanoLedgerTables (CodecMK
-                                             (Core.toEraCBOR @(ShelleyEra c))
-                                             toCBOR
-                                             (Core.fromEraCBOR @(ShelleyEra c))
-                                             fromCBOR)
+    codecLedgerTables = LedgerTables (CodecMK
+                                       (Core.toEraCBOR @(ShelleyEra c))
+                                       toCBOR
+                                       (Core.fromEraCBOR @(ShelleyEra c))
+                                       fromCBOR)
 
 {-------------------------------------------------------------------------------
   LedgerTablesCanHardFork
@@ -247,7 +194,7 @@ instance CardanoHardForkConstraints c
       byron :: InjectLedgerTables (CardanoEras c) ByronBlock
       byron = InjectLedgerTables {
           applyInjectLedgerTables  = const emptyLedgerTables
-        , applyDistribLedgerTables = const NoByronLedgerTables
+        , applyDistribLedgerTables = const emptyLedgerTables
         }
 
       shelley ::
@@ -256,9 +203,9 @@ instance CardanoHardForkConstraints c
         -> InjectLedgerTables (CardanoEras c) (ShelleyBlock proto era)
       shelley idx = InjectLedgerTables {
           applyInjectLedgerTables  =
-              CardanoLedgerTables . mapMK inj . shelleyUTxOTable
+              LedgerTables . mapMK inj . getLedgerTables
         , applyDistribLedgerTables =
-              ShelleyLedgerTables . mapMK distrib . cardanoUTxOTable
+              LedgerTables . mapMK distrib . getLedgerTables
         }
         where
           inj :: Core.TxOut era -> ShelleyTxOut (ShelleyBasedEras c)

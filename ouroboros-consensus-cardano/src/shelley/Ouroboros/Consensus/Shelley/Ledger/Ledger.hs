@@ -251,14 +251,11 @@ shelleyLedgerTipPoint = shelleyTipToPoint . shelleyLedgerTip
 
 instance ShelleyCompatible proto era => UpdateLedger (ShelleyBlock proto era)
 
+type instance Key   (LedgerState (ShelleyBlock proto era)) = SL.TxIn (EraCrypto era)
+type instance Value (LedgerState (ShelleyBlock proto era)) = Core.TxOut era
+
 instance ShelleyBasedEra era
       => HasLedgerTables (LedgerState (ShelleyBlock proto era)) where
-  newtype LedgerTables (LedgerState (ShelleyBlock proto era)) mk =
-      ShelleyLedgerTables {
-          shelleyUTxOTable :: mk (SL.TxIn (EraCrypto era)) (Core.TxOut era)
-        }
-    deriving (Generic)
-
   projectLedgerTables        = shelleyLedgerTables
   withLedgerTables st tables =
       ShelleyLedgerState {
@@ -274,49 +271,15 @@ instance ShelleyBasedEra era
         , shelleyLedgerTransition
         } = st
 
-  pureLedgerTables f = ShelleyLedgerTables f
-
-  mapLedgerTables f (ShelleyLedgerTables utxo) = ShelleyLedgerTables (f utxo)
-
-  traverseLedgerTables f (ShelleyLedgerTables utxo) =
-    ShelleyLedgerTables <$> f utxo
-
-  zipLedgerTables f (ShelleyLedgerTables utxoL) (ShelleyLedgerTables utxoR) =
-      ShelleyLedgerTables (f utxoL utxoR)
-
-  zipLedgerTables3
-    f
-    (ShelleyLedgerTables utxoL)
-    (ShelleyLedgerTables utxoC)
-    (ShelleyLedgerTables utxoR) =
-      ShelleyLedgerTables (f utxoL utxoC utxoR)
-
-  zipLedgerTablesA f (ShelleyLedgerTables utxoL) (ShelleyLedgerTables utxoR) =
-      ShelleyLedgerTables <$> f utxoL utxoR
-
-  zipLedgerTables3A
-    f
-    (ShelleyLedgerTables utxoL)
-    (ShelleyLedgerTables utxoC)
-    (ShelleyLedgerTables utxoR) =
-      ShelleyLedgerTables <$> f utxoL utxoC utxoR
-
-  foldLedgerTables f (ShelleyLedgerTables utxo) = f utxo
-
-  foldLedgerTables2 f (ShelleyLedgerTables utxoL) (ShelleyLedgerTables utxoR) =
-    f utxoL utxoR
-
-  namesLedgerTables = ShelleyLedgerTables (NameMK "utxo")
-
 instance ShelleyBasedEra era
-      => HasTickedLedgerTables (LedgerState (ShelleyBlock proto era)) where
-  projectLedgerTablesTicked        = tickedShelleyLedgerTables
-  withLedgerTablesTicked st tables =
+      => HasLedgerTables (Ticked1 (LedgerState (ShelleyBlock proto era))) where
+  projectLedgerTables       = castLedgerTables . tickedShelleyLedgerTables
+  withLedgerTables st tables =
       TickedShelleyLedgerState {
           untickedShelleyLedgerTip
         , tickedShelleyLedgerTransition
         , tickedShelleyLedgerState
-        , tickedShelleyLedgerTables     = tables
+        , tickedShelleyLedgerTables     = castLedgerTables tables
         }
     where
       TickedShelleyLedgerState {
@@ -325,23 +288,16 @@ instance ShelleyBasedEra era
         , tickedShelleyLedgerState
         } = st
 
-deriving newtype  instance ( ShelleyBasedEra era
-                           , Eq (mk (SL.TxIn (EraCrypto era)) (Core.TxOut era))
-                           ) => Eq  (LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
-deriving anyclass instance ( ShelleyBasedEra era
-                           , NoThunks (mk (SL.TxIn (EraCrypto era)) (Core.TxOut era))
-                           ) => NoThunks (LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
-deriving newtype  instance ( ShelleyBasedEra era
-                           , Show(mk (SL.TxIn (EraCrypto era)) (Core.TxOut era))
-                           ) => Show (LedgerTables (LedgerState (ShelleyBlock proto era)) mk)
+instance ShelleyBasedEra era
+      => HasTickedLedgerTables (LedgerState (ShelleyBlock proto era))
 
 instance ShelleyBasedEra era
       => CanSerializeLedgerTables (LedgerState (ShelleyBlock proto era)) where
-    codecLedgerTables = ShelleyLedgerTables (CodecMK
-                                               (Core.toEraCBOR @era)
-                                               toCBOR
-                                               (Core.fromEraCBOR @era)
-                                               fromCBOR)
+    codecLedgerTables = LedgerTables (CodecMK
+                                       (Core.toEraCBOR @era)
+                                       toCBOR
+                                       (Core.fromEraCBOR @era)
+                                       fromCBOR)
 
 instance ShelleyBasedEra era
       => CanStowLedgerTables (LedgerState (ShelleyBlock proto era)) where
@@ -349,7 +305,7 @@ instance ShelleyBasedEra era
       ShelleyLedgerState {
           shelleyLedgerTip        = shelleyLedgerTip
         , shelleyLedgerState      =
-            shelleyLedgerState `withUtxoSL` shelleyUTxOTable shelleyLedgerTables
+            shelleyLedgerState `withUtxoSL` getLedgerTables shelleyLedgerTables
         , shelleyLedgerTransition = shelleyLedgerTransition
         , shelleyLedgerTables     = emptyLedgerTables
         }
@@ -364,10 +320,10 @@ instance ShelleyBasedEra era
       ShelleyLedgerState {
           shelleyLedgerTip        = shelleyLedgerTip
         , shelleyLedgerState      =
-            shelleyLedgerState `withUtxoSL` shelleyUTxOTable emptyLedgerTables
+            shelleyLedgerState `withUtxoSL` emptyMK
         , shelleyLedgerTransition = shelleyLedgerTransition
         , shelleyLedgerTables     =
-            ShelleyLedgerTables $ projectUtxoSL shelleyLedgerState
+            LedgerTables $ projectUtxoSL shelleyLedgerState
         }
     where
       ShelleyLedgerState {
@@ -383,7 +339,7 @@ instance ShelleyBasedEra era
          untickedShelleyLedgerTip      = untickedShelleyLedgerTip
        , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
        , tickedShelleyLedgerState      =
-           tickedShelleyLedgerState `withUtxoSL` shelleyUTxOTable tickedShelleyLedgerTables
+           tickedShelleyLedgerState `withUtxoSL` getLedgerTables tickedShelleyLedgerTables
        , tickedShelleyLedgerTables     = emptyLedgerTables
        }
     where
@@ -399,9 +355,9 @@ instance ShelleyBasedEra era
          untickedShelleyLedgerTip      = untickedShelleyLedgerTip
        , tickedShelleyLedgerTransition = tickedShelleyLedgerTransition
        , tickedShelleyLedgerState      =
-           tickedShelleyLedgerState `withUtxoSL` shelleyUTxOTable emptyLedgerTables
+           tickedShelleyLedgerState `withUtxoSL` emptyMK
        , tickedShelleyLedgerTables     =
-           ShelleyLedgerTables $ projectUtxoSL tickedShelleyLedgerState
+           LedgerTables $ projectUtxoSL tickedShelleyLedgerState
        }
     where
       TickedShelleyLedgerState {
@@ -583,7 +539,7 @@ instance ShelleyCompatible proto era
                 }
 
   getBlockKeySets =
-        ShelleyLedgerTables
+        LedgerTables
       . KeysMK
       . Core.neededTxInsForBlock
       . shelleyBlockRaw
@@ -808,5 +764,5 @@ decodeShelleyLedgerState = decodeVersion [
           shelleyLedgerTip
         , shelleyLedgerState
         , shelleyLedgerTransition
-        , shelleyLedgerTables = ShelleyLedgerTables EmptyMK
+        , shelleyLedgerTables = emptyLedgerTables
         }

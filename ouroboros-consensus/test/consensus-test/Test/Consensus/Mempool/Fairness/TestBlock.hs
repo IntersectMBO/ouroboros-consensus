@@ -18,14 +18,16 @@ module Test.Consensus.Mempool.Fairness.TestBlock (
 
 import           Codec.Serialise
 import           Control.DeepSeq (NFData)
+import           Data.Void (Void)
 import           Data.Word (Word32)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
-import           Ouroboros.Consensus.Ledger.Abstract
-                     (LedgerTablesAreTrivial (convertMapKind))
+import           Ouroboros.Consensus.Ledger.Abstract (convertMapKind,
+                     trivialLedgerTables)
 import qualified Ouroboros.Consensus.Ledger.Abstract as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
+import           Ouroboros.Consensus.Ticked (Ticked1)
 import qualified Test.Util.TestBlock as TestBlock
 import           Test.Util.TestBlock (TestBlockWith)
 
@@ -57,7 +59,7 @@ instance TestBlock.PayloadSemantics Tx where
 
   applyPayload NoPayLoadDependentState _tx = Right NoPayLoadDependentState
 
-  getPayloadKeySets = const NoTestLedgerTables
+  getPayloadKeySets = const trivialLedgerTables
 
 
 data instance Block.CodecConfig TestBlock = TestBlockCodecConfig
@@ -118,7 +120,7 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
   txForgetValidated (ValidatedGenTx tx) = tx
 
-  getTransactionKeySets _ = NoTestLedgerTables
+  getTransactionKeySets _ = trivialLedgerTables
 
 {-------------------------------------------------------------------------------
   Ledger support (empty tables)
@@ -126,21 +128,17 @@ instance Ledger.LedgerSupportsMempool TestBlock where
 
 type instance Ledger.ApplyTxErr TestBlock = ()
 
-instance Ledger.HasLedgerTables (Ledger.LedgerState TestBlock) where
-  data LedgerTables (Ledger.LedgerState TestBlock) mk = NoTestLedgerTables
-    deriving stock    (Generic, Eq, Show)
-    deriving anyclass (NoThunks)
+type instance Ledger.Key   (Ledger.LedgerState TestBlock) = Void
+type instance Ledger.Value (Ledger.LedgerState TestBlock) = Void
 
+instance Ledger.HasLedgerTables (Ledger.LedgerState TestBlock)
+instance Ledger.HasLedgerTables (Ticked1 (Ledger.LedgerState TestBlock))
+instance Ledger.HasTickedLedgerTables (Ledger.LedgerState TestBlock)
 instance Ledger.LedgerTablesAreTrivial (Ledger.LedgerState TestBlock) where
-  convertMapKind st = TestBlock.TestLedger lap NoPayLoadDependentState
-    where
-        TestBlock.TestLedger lap NoPayLoadDependentState = st
-  trivialLedgerTables = NoTestLedgerTables
-
-instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock) where
-
-instance Ledger.HasTickedLedgerTables (Ledger.LedgerState TestBlock) where
-  withLedgerTablesTicked (TestBlock.TickedTestLedger st) tables =
-      TestBlock.TickedTestLedger $ Ledger.withLedgerTables st tables
-
-instance Ledger.CanSerializeLedgerTables (Ledger.LedgerState TestBlock) where
+  convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =
+      TestBlock.TestLedger x NoPayLoadDependentState
+instance Ledger.LedgerTablesAreTrivial (Ticked1 (Ledger.LedgerState TestBlock)) where
+  convertMapKind (TestBlock.TickedTestLedger x) =
+      TestBlock.TickedTestLedger (Ledger.convertMapKind x)
+instance Ledger.CanStowLedgerTables (Ledger.LedgerState TestBlock)
+instance Ledger.CanSerializeLedgerTables (Ledger.LedgerState TestBlock)

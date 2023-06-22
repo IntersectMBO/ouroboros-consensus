@@ -206,9 +206,9 @@ distribDiskLedgerView dlv =
      => Index xs x
      -> LedgerTables (ExtLedgerState x) mk
      -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
-   injectLedgerTables i = ExtLedgerStateTables
+   injectLedgerTables i = castLedgerTables
                         . applyInjectLedgerTables (projectNP i hardForkInjectLedgerTables)
-                        . unExtLedgerStateTables
+                        . castLedgerTables
 
    injectRangeQuery :: forall x mk.
         IsMapKind mk
@@ -222,9 +222,9 @@ distribDiskLedgerView dlv =
      => Index xs x
      -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
      -> LedgerTables (ExtLedgerState x) mk
-   distribLedgerTables i = ExtLedgerStateTables
+   distribLedgerTables i = castLedgerTables
                          . applyDistribLedgerTables (projectNP i hardForkInjectLedgerTables)
-                         . unExtLedgerStateTables
+                         . castLedgerTables
 
 -- | Precondition: the 'ledgerState' and 'headerState' should be from the same
 -- era. In practice, this is _always_ the case, unless the 'ExtLedgerState' was

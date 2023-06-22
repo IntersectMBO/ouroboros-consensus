@@ -68,7 +68,6 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool (TxLimits)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -312,9 +311,9 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
     initLedgerState :: LedgerState (ShelleyBlock (TPraos c) era) ValuesMK
     initLedgerState = ShelleyLedgerState {
           shelleyLedgerTip        = Origin
-        , shelleyLedgerState      = st `withUtxoSL` shelleyUTxOTable emptyLedgerTables
+        , shelleyLedgerState      = st `withUtxoSL` emptyMK
         , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
-        , shelleyLedgerTables     = ShelleyLedgerTables $ projectUtxoSL st
+        , shelleyLedgerTables     = LedgerTables $ projectUtxoSL st
         }
       where
         st = registerGenesisStaking (SL.sgStaking genesis) $

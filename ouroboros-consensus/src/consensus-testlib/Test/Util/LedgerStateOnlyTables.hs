@@ -16,16 +16,14 @@ module Test.Util.LedgerStateOnlyTables (
     OTLedgerState
   , OTLedgerTables
   , pattern OTLedgerState
-  , pattern OTLedgerTables
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
-import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
-import           Ouroboros.Consensus.Ledger.Tables
-                     (CanSerializeLedgerTables (..), CanStowLedgerTables (..),
-                     CodecMK (..), HasLedgerTables (..), MapKind, NameMK (..),
+import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
+                     CanStowLedgerTables (..), HasLedgerTables (..),
+                     IsMapKind (..), Key, LedgerTables (..), MapKind, Value,
                      ValuesMK)
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 
@@ -52,7 +50,6 @@ deriving stock instance (Show k, Show v, Show (mk k v))
 
 instance (ToCBOR k, FromCBOR k, ToCBOR v, FromCBOR v)
       => CanSerializeLedgerTables (OTLedgerState k v) where
-  codecLedgerTables = OTLedgerTables $ CodecMK toCBOR toCBOR fromCBOR fromCBOR
 
 {-------------------------------------------------------------------------------
   Stowable
@@ -61,66 +58,25 @@ instance (ToCBOR k, FromCBOR k, ToCBOR v, FromCBOR v)
 instance (Ord k, Eq v, Show k, Show v, NoThunks k, NoThunks v)
     => CanStowLedgerTables (OTLedgerState k v) where
   stowLedgerTables OTLedgerState{otlsLedgerTables} =
-    OTLedgerState (otltLedgerTables otlsLedgerTables) emptyLedgerTables
+    OTLedgerState (getLedgerTables otlsLedgerTables) emptyLedgerTables
 
   unstowLedgerTables OTLedgerState{otlsLedgerState} =
     OTLedgerState
-      (otltLedgerTables emptyLedgerTables)
-      (OTLedgerTables otlsLedgerState)
+      emptyMK
+      (LedgerTables otlsLedgerState)
 
 {-------------------------------------------------------------------------------
   Simple ledger tables
 -------------------------------------------------------------------------------}
 
+type instance Key   (OTLedgerState k v) = k
+type instance Value (OTLedgerState k v) = v
+
 instance (Ord k, Eq v, Show k, Show v, NoThunks k, NoThunks v)
       => HasLedgerTables (OTLedgerState k v) where
-  newtype LedgerTables (OTLedgerState k v) mk = OTLedgerTables {
-      otltLedgerTables :: mk k v
-    } deriving Generic
-
   projectLedgerTables OTLedgerState{otlsLedgerTables} =
     otlsLedgerTables
 
   withLedgerTables st lt =
     st { otlsLedgerTables = lt }
 
-  pureLedgerTables f =
-    OTLedgerTables { otltLedgerTables = f }
-
-  mapLedgerTables f OTLedgerTables{otltLedgerTables} =
-    OTLedgerTables $ f otltLedgerTables
-
-  traverseLedgerTables f OTLedgerTables{otltLedgerTables} =
-    OTLedgerTables <$> f otltLedgerTables
-
-  zipLedgerTables f l r =
-    OTLedgerTables (f (otltLedgerTables l) (otltLedgerTables r))
-
-  zipLedgerTablesA f l r =
-    OTLedgerTables <$> f (otltLedgerTables l) (otltLedgerTables r)
-
-  zipLedgerTables3 f l m r =
-    OTLedgerTables $
-      f (otltLedgerTables l) (otltLedgerTables m) (otltLedgerTables r)
-
-  zipLedgerTables3A f l c r =
-    OTLedgerTables <$>
-      f (otltLedgerTables l) (otltLedgerTables c) (otltLedgerTables r)
-
-  foldLedgerTables f OTLedgerTables{otltLedgerTables} =
-    f otltLedgerTables
-
-  foldLedgerTables2 f l r =
-    f (otltLedgerTables l) (otltLedgerTables r)
-
-  namesLedgerTables =
-    OTLedgerTables { otltLedgerTables = NameMK "otltLedgerTables" }
-
-deriving stock instance (Eq (mk k v))
-               => Eq (OTLedgerTables k v mk)
-
-deriving stock instance (Show (mk k v))
-               => Show (OTLedgerTables k v mk)
-
-deriving newtype instance NoThunks (mk k v)
-               => NoThunks (OTLedgerTables k v mk)

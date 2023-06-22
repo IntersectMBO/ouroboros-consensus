@@ -428,7 +428,9 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
                        dualBlockMain
                        tickedDualLedgerStateMain
 
-  getBlockKeySets = DualBlockLedgerTables . getBlockKeySets . dualBlockMain
+  getBlockKeySets = castLedgerTables
+                  . getBlockKeySets @(LedgerState m)
+                  . dualBlockMain
 
 data instance LedgerState (DualBlock m a) mk = DualLedgerState {
       dualLedgerStateMain   :: LedgerState m mk
@@ -636,7 +638,9 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
           , vDualGenTxBridge
           } = vtx
 
-  getTransactionKeySets = DualBlockLedgerTables . getTransactionKeySets . dualGenTxMain
+  getTransactionKeySets = castLedgerTables
+                        . getTransactionKeySets @m
+                        . dualGenTxMain
 
 -- We don't need a pair of IDs, as long as we can unique ID the transaction
 newtype instance TxId (GenTx (DualBlock m a)) = DualGenTxId {
@@ -924,103 +928,44 @@ decodeDualLedgerState decodeMain = do
   Ledger Tables
 -------------------------------------------------------------------------------}
 
+type instance Key   (LedgerState (DualBlock m a)) = Key   (LedgerState m)
+type instance Value (LedgerState (DualBlock m a)) = Value (LedgerState m)
+
 instance Bridge m a => HasLedgerTables (LedgerState (DualBlock m a)) where
-
-  newtype LedgerTables (LedgerState (DualBlock m a)) mk =
-      DualBlockLedgerTables
-        (LedgerTables (LedgerState m) mk)
-    deriving (Generic)
-    deriving NoThunks via AllowThunk (LedgerTables (LedgerState (DualBlock m a)) mk)
-
   projectLedgerTables DualLedgerState{..} =
-      DualBlockLedgerTables
+      castLedgerTables
         (projectLedgerTables dualLedgerStateMain)
 
-  withLedgerTables DualLedgerState{..} (DualBlockLedgerTables main) =
+  withLedgerTables DualLedgerState{..} main =
       DualLedgerState {
-          dualLedgerStateMain   = withLedgerTables dualLedgerStateMain main
+          dualLedgerStateMain   = withLedgerTables dualLedgerStateMain
+                                $ castLedgerTables main
         , dualLedgerStateAux    = dualLedgerStateAux
         , dualLedgerStateBridge = dualLedgerStateBridge
         }
 
-  pureLedgerTables f =
-      DualBlockLedgerTables
-        (pureLedgerTables f)
+instance Bridge m a
+      => HasLedgerTables (Ticked1 (LedgerState (DualBlock m a))) where
+  projectLedgerTables TickedDualLedgerState{..} =
+      castLedgerTables
+        (projectLedgerTables tickedDualLedgerStateMain)
 
-  mapLedgerTables f (DualBlockLedgerTables main) =
-      DualBlockLedgerTables
-        (mapLedgerTables f main)
-
-  traverseLedgerTables f (DualBlockLedgerTables main) =
-          DualBlockLedgerTables
-      <$> traverseLedgerTables f main
-
-  zipLedgerTables
-    f
-    (DualBlockLedgerTables mainL)
-    (DualBlockLedgerTables mainR) =
-      DualBlockLedgerTables
-        (zipLedgerTables f mainL mainR)
-
-  zipLedgerTablesA
-    f
-    (DualBlockLedgerTables mainL)
-    (DualBlockLedgerTables mainR) =
-          DualBlockLedgerTables
-      <$> (zipLedgerTablesA f mainL mainR)
-
-  zipLedgerTables3A
-    f
-    (DualBlockLedgerTables main0)
-    (DualBlockLedgerTables main1)
-    (DualBlockLedgerTables main2) =
-          DualBlockLedgerTables
-      <$> (zipLedgerTables3A f main0 main1 main2)
-
-  zipLedgerTables3
-    f
-    (DualBlockLedgerTables mainL)
-    (DualBlockLedgerTables mainM)
-    (DualBlockLedgerTables mainR) =
-      DualBlockLedgerTables
-        (zipLedgerTables3 f mainL mainM mainR)
-
-  foldLedgerTables f (DualBlockLedgerTables main) =
-       foldLedgerTables f main
-
-  foldLedgerTables2
-    f
-    (DualBlockLedgerTables main1)
-    (DualBlockLedgerTables main2) =
-           foldLedgerTables2 f main1 main2
-
-  namesLedgerTables = DualBlockLedgerTables namesLedgerTables
-
-deriving newtype instance Eq (LedgerTables (LedgerState blk) mk)
-                       => Eq (LedgerTables (LedgerState (DualBlock blk aux)) mk)
-deriving newtype instance Show (LedgerTables (LedgerState blk) mk)
-                       => Show (LedgerTables (LedgerState (DualBlock blk aux)) mk)
-
-instance Bridge m a => HasTickedLedgerTables (LedgerState (DualBlock m a)) where
-
-  projectLedgerTablesTicked TickedDualLedgerState{..} =
-      DualBlockLedgerTables
-        (projectLedgerTablesTicked tickedDualLedgerStateMain)
-
-  withLedgerTablesTicked
+  withLedgerTables
     TickedDualLedgerState{..}
-    (DualBlockLedgerTables main) =
+    main =
       TickedDualLedgerState {
           tickedDualLedgerStateMain   =
-            withLedgerTablesTicked tickedDualLedgerStateMain main
+            withLedgerTables tickedDualLedgerStateMain $ castLedgerTables main
         , tickedDualLedgerStateAux
         , tickedDualLedgerStateBridge
         , tickedDualLedgerStateAuxOrig
         }
 
+instance Bridge m a => HasTickedLedgerTables (LedgerState (DualBlock m a))
+
 instance CanSerializeLedgerTables (LedgerState m)
       => CanSerializeLedgerTables (LedgerState (DualBlock m a)) where
-  codecLedgerTables = DualBlockLedgerTables codecLedgerTables
+  codecLedgerTables = castLedgerTables $ codecLedgerTables @(LedgerState m)
 
 instance CanStowLedgerTables (LedgerState m)
       => CanStowLedgerTables (LedgerState (DualBlock m a)) where

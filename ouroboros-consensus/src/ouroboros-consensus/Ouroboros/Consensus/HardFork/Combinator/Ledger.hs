@@ -32,7 +32,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   ) where
 
 import           Control.Monad.Except
-import           Data.Coerce
 import           Data.Functor ((<&>))
 import           Data.Functor.Product
 import           Data.Proxy
@@ -809,64 +808,37 @@ injectLedgerEvent index =
   for the unary HF block.
 -------------------------------------------------------------------------------}
 
+type instance Key   (LedgerState (HardForkBlock '[blk])) = Key   (LedgerState blk)
+type instance Value (LedgerState (HardForkBlock '[blk])) = Value (LedgerState blk)
+
 instance HasLedgerTables (LedgerState blk)
       => HasLedgerTables (LedgerState (HardForkBlock '[blk])) where
 
-  newtype LedgerTables (LedgerState (HardForkBlock '[blk])) mk = OneEraLedgerTables {
-      unOneEraLedgerTables :: LedgerTables (LedgerState blk) mk
-      }
-    deriving (Generic)
-
   projectLedgerTables (HardForkLedgerState (HardForkState (Telescope.TZ (Current _ (Flip lstate))))) =
-      OneEraLedgerTables (projectLedgerTables lstate)
-  withLedgerTables (HardForkLedgerState (HardForkState (Telescope.TZ (Current s (Flip lstate))))) (OneEraLedgerTables tables) =
-      HardForkLedgerState (HardForkState (Telescope.TZ (Current s (Flip $ lstate `withLedgerTables` tables))))
-
-  traverseLedgerTables f (OneEraLedgerTables  l) =
-    OneEraLedgerTables  <$> traverseLedgerTables f l
-
-  pureLedgerTables  f = coerce $ pureLedgerTables  @(LedgerState blk) f
-  mapLedgerTables   f = coerce $ mapLedgerTables   @(LedgerState blk) f
-  zipLedgerTables   f = coerce $ zipLedgerTables   @(LedgerState blk) f
-  zipLedgerTables3  f = coerce $ zipLedgerTables3  @(LedgerState blk) f
-  foldLedgerTables  f = coerce $ foldLedgerTables  @(LedgerState blk) f
-  foldLedgerTables2 f = coerce $ foldLedgerTables2 @(LedgerState blk) f
-  namesLedgerTables   = coerce $ namesLedgerTables @(LedgerState blk)
-  zipLedgerTablesA  f (OneEraLedgerTables l) (OneEraLedgerTables r) =
-    OneEraLedgerTables <$> zipLedgerTablesA f l r
-  zipLedgerTables3A  f tl tc tr =
-     OneEraLedgerTables <$> zipLedgerTables3A f l c r
-   where
-     OneEraLedgerTables l = tl
-     OneEraLedgerTables c = tc
-     OneEraLedgerTables r = tr
-
-deriving instance Eq (LedgerTables (LedgerState blk) mk)
-               => Eq (LedgerTables (LedgerState (HardForkBlock '[blk])) mk)
-deriving newtype instance NoThunks (LedgerTables (LedgerState blk) mk)
-                       => NoThunks (LedgerTables (LedgerState (HardForkBlock '[blk])) mk)
-deriving instance Show (LedgerTables (LedgerState blk) mk)
-               => Show (LedgerTables (LedgerState (HardForkBlock '[blk])) mk)
+      castLedgerTables (projectLedgerTables lstate)
+  withLedgerTables (HardForkLedgerState (HardForkState (Telescope.TZ (Current s (Flip lstate))))) tables =
+      HardForkLedgerState (HardForkState (Telescope.TZ (Current s (Flip $ lstate `withLedgerTables` castLedgerTables tables))))
 
 instance CanSerializeLedgerTables (LedgerState blk)
       => CanSerializeLedgerTables (LedgerState (HardForkBlock '[blk])) where
-  codecLedgerTables = OneEraLedgerTables codecLedgerTables
+  codecLedgerTables = castLedgerTables $ codecLedgerTables @(LedgerState blk)
 
 instance LedgerTablesAreTrivial (LedgerState blk)
       => LedgerTablesAreTrivial (LedgerState (HardForkBlock '[blk])) where
-  convertMapKind (HardForkLedgerState (HardForkState (Telescope.TZ (Current s (Flip lstate))))) =
-      HardForkLedgerState (HardForkState (Telescope.TZ (Current s (Flip $ convertMapKind lstate))))
+  convertMapKind (HardForkLedgerState st) = HardForkLedgerState $
+      hcmap (Proxy @(Compose LedgerTablesAreTrivial LedgerState)) (Flip . convertMapKind . unFlip) st
 
-  trivialLedgerTables = OneEraLedgerTables trivialLedgerTables
+instance HasLedgerTables (Ticked1 (LedgerState blk))
+      => HasLedgerTables (Ticked1 (LedgerState (HardForkBlock '[blk]))) where
+  projectLedgerTables (TickedHardForkLedgerState _ (HardForkState (Telescope.TZ (Current _ (FlipTickedLedgerState lstate))))) =
+      castLedgerTables (projectLedgerTables lstate)
+  withLedgerTables
+    (TickedHardForkLedgerState i (HardForkState (Telescope.TZ (Current s (FlipTickedLedgerState lstate)))))
+    tables =
+      TickedHardForkLedgerState i (HardForkState (Telescope.TZ (Current s (FlipTickedLedgerState $ lstate `withLedgerTables` castLedgerTables tables))))
 
 instance HasTickedLedgerTables (LedgerState blk)
       => HasTickedLedgerTables (LedgerState (HardForkBlock '[blk])) where
-  projectLedgerTablesTicked (TickedHardForkLedgerState _ (HardForkState (Telescope.TZ (Current _ (FlipTickedLedgerState lstate))))) =
-      OneEraLedgerTables (projectLedgerTablesTicked lstate)
-  withLedgerTablesTicked
-    (TickedHardForkLedgerState i (HardForkState (Telescope.TZ (Current s (FlipTickedLedgerState lstate)))))
-    (OneEraLedgerTables tables) =
-      TickedHardForkLedgerState i (HardForkState (Telescope.TZ (Current s (FlipTickedLedgerState $ lstate `withLedgerTablesTicked` tables))))
 
 instance CanStowLedgerTables (LedgerState blk)
       => CanStowLedgerTables (LedgerState (HardForkBlock '[blk])) where
@@ -878,7 +850,7 @@ instance CanStowLedgerTables (LedgerState blk)
 
 instance LedgerTablesCanHardFork '[blk] where
   hardForkInjectLedgerTables =
-       (InjectLedgerTables { applyInjectLedgerTables = OneEraLedgerTables
-                           , applyDistribLedgerTables = unOneEraLedgerTables
+       (InjectLedgerTables { applyInjectLedgerTables = castLedgerTables
+                           , applyDistribLedgerTables = castLedgerTables
                            })
     :* Nil

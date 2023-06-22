@@ -200,8 +200,8 @@ mkServer k chain = do
     mkDLV ldb =
       DiskLedgerView
         (LedgerDB.current ldb)
-        (\(ExtLedgerStateTables NoTestLedgerTables) -> pure $ ExtLedgerStateTables NoTestLedgerTables)
-        (\_rq -> pure $ ExtLedgerStateTables NoTestLedgerTables)
+        (\_ -> pure trivialLedgerTables)
+        (\_rq -> pure trivialLedgerTables)
         (pure ())
         1
 
@@ -225,7 +225,7 @@ initLedgerDB k chain = do
       bstore <- LedgerDB.newBackingStore
         backingStoreInitialiser
         (SomeHasFS (simHasFS v))
-        (ExtLedgerStateTables NoTestLedgerTables)
+        trivialLedgerTables
       let st = LedgerDB.LedgerDBState varDB bstore rawLock varPrevApplied
       LedgerDB.mkLedgerDB st args resolve
 
