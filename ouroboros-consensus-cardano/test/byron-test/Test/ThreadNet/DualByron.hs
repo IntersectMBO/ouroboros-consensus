@@ -260,7 +260,7 @@ instance TxGen DualByronBlock where
   testGenTxs _coreNodeId _numCoreNodes curSlotNo cfg () = \st -> do
       n <- choose (0, 20)
       go [] n
-        $ applyLedgerTablesDiffsTicked st
+        $ applyDiffs st
         $ applyChainTick (configLedger cfg) curSlotNo
         $ forgetLedgerTables st
     where
@@ -280,7 +280,7 @@ instance TxGen DualByronBlock where
                              tx
                              st of
             Right (st', _vtx) ->
-              go (tx:acc) (n - 1) (forgetLedgerTablesDiffsTicked st')
+              go (tx:acc) (n - 1) (forgetTrackingDiffs st')
             Left _            -> error "testGenTxs: unexpected invalid tx"
 
 -- | Generate transaction

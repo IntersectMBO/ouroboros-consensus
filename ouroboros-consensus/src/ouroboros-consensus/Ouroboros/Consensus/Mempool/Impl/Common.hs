@@ -326,12 +326,12 @@ extendVRPrevApplied :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
                     -> ValidationResult (Validated (GenTx blk)) blk
                     -> ValidationResult (Validated (GenTx blk)) blk
 extendVRPrevApplied cfg txTicket vr =
-    case runExcept (reapplyTx cfg vrSlotNo tx (forgetLedgerTablesDiffsTicked vrAfter)) of
+    case runExcept (reapplyTx cfg vrSlotNo tx (forgetTrackingDiffs vrAfter)) of
       Left err  -> vr { vrInvalid    = (tx, err) : vrInvalid
                       }
       Right st' -> vr { vrValid      = vrValid :> txTicket
                       , vrValidTxIds = Set.insert (txId (txForgetValidated tx)) vrValidTxIds
-                      , vrAfter      = prependLedgerTablesTrackingDiffs st' vrAfter
+                      , vrAfter      = prependTrackingDiffs vrAfter st'
                       }
   where
     TxTicket { txTicketTx = tx } = txTicket
@@ -353,7 +353,7 @@ extendVRNew :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
                , ValidationResult (GenTx blk) blk
                )
 extendVRNew cfg txSize wti tx vr = assert (isNothing vrNewValid) $
-    case runExcept (applyTx cfg wti vrSlotNo tx $ forgetLedgerTablesDiffsTicked vrAfter) of
+    case runExcept (applyTx cfg wti vrSlotNo tx $ forgetTrackingDiffs vrAfter) of
       Left err         ->
         ( Left err
         , vr { vrInvalid      = (tx, err) : vrInvalid
@@ -364,7 +364,7 @@ extendVRNew cfg txSize wti tx vr = assert (isNothing vrNewValid) $
         , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo (txSize tx)
              , vrValidTxIds   = Set.insert (txId tx) vrValidTxIds
              , vrNewValid     = Just vtx
-             , vrAfter        = prependLedgerTablesTrackingDiffs st' vrAfter
+             , vrAfter        = prependTrackingDiffs vrAfter st'
              , vrLastTicketNo = nextTicketNo
              }
         )
@@ -395,7 +395,7 @@ internalStateFromVR ::
 internalStateFromVR vr = IS {
       isTxs          = vrValid
     , isTxIds        = vrValidTxIds
-    , isLedgerState  = forgetLedgerTablesValuesTicked vrAfter
+    , isLedgerState  = forgetTrackingValues vrAfter
     , isTip          = vrBeforeTip
     , isSlotNo       = vrSlotNo
     , isLastTicketNo = vrLastTicketNo
@@ -425,7 +425,7 @@ validationResultFromIS values is = ValidationResult {
     , vrValid          = isTxs
     , vrValidTxIds     = isTxIds
     , vrNewValid       = Nothing
-    , vrAfter          = attachAndApplyDiffsTickedToTables isLedgerState values
+    , vrAfter          = attachAndApplyDiffs isLedgerState values
     , vrInvalid        = []
     , vrLastTicketNo   = isLastTicketNo
     }

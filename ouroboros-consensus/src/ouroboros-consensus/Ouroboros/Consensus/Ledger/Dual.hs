@@ -368,7 +368,7 @@ instance Bridge m a => IsLedger (LedgerState (DualBlock m a)) where
                              DualLedgerState{..} =
       castLedgerResult ledgerResult <&> \main -> TickedDualLedgerState {
           tickedDualLedgerStateMain    = main
-        , tickedDualLedgerStateAux     = applyLedgerTablesDiffsTicked dualLedgerStateAux dualLedger
+        , tickedDualLedgerStateAux     = applyDiffs dualLedgerStateAux dualLedger
         , tickedDualLedgerStateAuxOrig = dualLedgerStateAux
         , tickedDualLedgerStateBridge  = dualLedgerStateBridge
         }
@@ -401,7 +401,7 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
           )
       return $ castLedgerResult ledgerResult <&> \main' -> DualLedgerState {
           dualLedgerStateMain   = main'
-        , dualLedgerStateAux    = applyLedgerTablesDiffsFromTicked tickedDualLedgerStateAux aux'
+        , dualLedgerStateAux    = applyDiffs tickedDualLedgerStateAux aux'
         , dualLedgerStateBridge = updateBridgeWithBlock
                                     block
                                     tickedDualLedgerStateBridge
@@ -412,7 +412,7 @@ instance Bridge m a => ApplyBlock (LedgerState (DualBlock m a)) (DualBlock m a) 
                            TickedDualLedgerState{..} =
     castLedgerResult ledgerResult <&> \main' -> DualLedgerState {
         dualLedgerStateMain   = main'
-      , dualLedgerStateAux    = applyLedgerTablesDiffsFromTicked tickedDualLedgerStateAux auxLedger
+      , dualLedgerStateAux    = applyDiffs tickedDualLedgerStateAux auxLedger
       , dualLedgerStateBridge = updateBridgeWithBlock
                                   block
                                   tickedDualLedgerStateBridge
@@ -588,7 +588,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
               }
       return $ flip (,) vtx $ TickedDualLedgerState {
           tickedDualLedgerStateMain    = main'
-        , tickedDualLedgerStateAux     = forgetLedgerTablesDiffsTicked aux'
+        , tickedDualLedgerStateAux     = forgetTrackingDiffs aux'
         , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
         , tickedDualLedgerStateBridge  = updateBridgeWithTx
                                            vtx
@@ -615,7 +615,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
           )
       return $ TickedDualLedgerState {
           tickedDualLedgerStateMain    = main'
-        , tickedDualLedgerStateAux     = forgetLedgerTablesDiffsTicked aux'
+        , tickedDualLedgerStateAux     = forgetTrackingDiffs aux'
         , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
         , tickedDualLedgerStateBridge  = updateBridgeWithTx
                                            tx

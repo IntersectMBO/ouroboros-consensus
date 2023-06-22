@@ -59,7 +59,7 @@ instance HashAlgorithm h => TxGen (ShelleyBlock (TPraos (MockCrypto h)) (MockShe
       | otherwise               = do
       n <- choose (0, 20)
       go [] n
-        $ applyLedgerTablesDiffsTicked lst
+        $ applyDiffs lst
         $ applyChainTick lcfg curSlotNo
         $ forgetLedgerTables lst
     where
@@ -83,7 +83,7 @@ instance HashAlgorithm h => TxGen (ShelleyBlock (TPraos (MockCrypto h)) (MockShe
           Just tx -> case runExcept $ fst <$> applyTx lcfg DoNotIntervene curSlotNo tx st of
               -- We don't mind generating invalid transactions
               Left  _   -> go (tx:acc) (n - 1) st
-              Right st' -> go (tx:acc) (n - 1) (forgetLedgerTablesDiffsTicked st')
+              Right st' -> go (tx:acc) (n - 1) (forgetTrackingDiffs st')
 
 genTx
   :: forall h. HashAlgorithm h

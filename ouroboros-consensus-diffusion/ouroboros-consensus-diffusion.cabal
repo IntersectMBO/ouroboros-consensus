@@ -148,7 +148,6 @@ library diffusion-testlib
     , cborg
     , containers
     , contra-tracer
-    , diff-containers                                               >=1.0
     , fgl
     , fs-sim                                                        >=0.2
     , graphviz                                                      >=2999.20.1.0

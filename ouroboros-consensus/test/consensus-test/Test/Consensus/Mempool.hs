@@ -692,7 +692,7 @@ withTestMempool setup@TestSetup {..} prop =
         case runExcept $ repeatedlyM
                applyTx'
                [ txForgetValidated tx | (tx, _) <- snapshotTxs ]
-               (mapOverLedgerTables f $ TickedSimpleLedgerState ledgerState) of
+               (attachEmptyDiffs $ TickedSimpleLedgerState ledgerState) of
           Right _ -> property True
           Left  e -> counterexample (mkErrMsg e) $ property False
       where
@@ -701,15 +701,9 @@ withTestMempool setup@TestSetup {..} prop =
                          DoNotIntervene
                          snapshotSlotNo
                          tx
-                         (forgetLedgerTablesDiffsTicked st)
-          let origTables = castLedgerTables $ projectLedgerTables st
-          pure (zipOverLedgerTablesTicked rawPrependTrackingDiffs
-                                          (fst st')
-                                          origTables
-               )
-
-        f :: Ord k => ValuesMK k v -> TrackingMK k v
-        f (ValuesMK v) = TrackingMK v mempty
+                         (forgetTrackingDiffs st)
+          let origTables = projectLedgerTables st
+          pure $ prependTrackingDiffs origTables (fst st')
 
         mkErrMsg e =
           "At the end of the test, the Mempool contents were invalid: " <>

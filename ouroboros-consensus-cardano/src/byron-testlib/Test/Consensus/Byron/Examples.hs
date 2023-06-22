@@ -184,18 +184,18 @@ emptyLedgerState = ByronLedgerState {
 
 ledgerStateAfterEBB :: LedgerState ByronBlock ValuesMK
 ledgerStateAfterEBB =
-      applyLedgerTablesDiffs emptyLedgerState
+      applyDiffs emptyLedgerState
     . reapplyLedgerBlock ledgerConfig exampleEBB
-    . applyLedgerTablesDiffsTicked emptyLedgerState
+    . applyDiffs emptyLedgerState
     . applyChainTick ledgerConfig (SlotNo 0)
     . forgetLedgerTables
     $ emptyLedgerState
 
 exampleLedgerState :: LedgerState ByronBlock ValuesMK
 exampleLedgerState =
-      applyLedgerTablesDiffs emptyLedgerState
+      applyDiffs emptyLedgerState
     . reapplyLedgerBlock ledgerConfig exampleBlock
-    . applyLedgerTablesDiffsTicked ledgerStateAfterEBB
+    . applyDiffs ledgerStateAfterEBB
     . applyChainTick ledgerConfig (SlotNo 1)
     . forgetLedgerTables
     $ ledgerStateAfterEBB

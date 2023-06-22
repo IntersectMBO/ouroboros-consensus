@@ -49,7 +49,6 @@ import           Data.Either (isRight)
 import           Data.Functor.Identity (Identity)
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
-import           Data.Map.Diff.Strict (applyDiff)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
@@ -618,9 +617,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 -- most 1 to the number of requested keys, hence the
                 -- subtraction. When we revisit the range query implementation
                 -- we should remove this workaround.
-                fullUTxO <- castLedgerTables <$> doRangeQuery (RangeQuery Nothing (maxBound-1))
-                let f (DiffMK d) (ValuesMK m) = ValuesMK $ applyDiff m d
-                pure $! zipOverLedgerTablesTicked f st fullUTxO
+                fullUTxO <- doRangeQuery (RangeQuery Nothing (maxBound-1))
+                pure $! applyDiffs fullUTxO st
               pure $ isRight $ Exc.runExcept $ applyTx lcfg DoNotIntervene slot tx fullLedgerSt
 
 
