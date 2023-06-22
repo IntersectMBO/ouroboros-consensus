@@ -381,6 +381,7 @@ registerGenesisStaking staking nes = nes {
             ( Map.map (const $ UM.RDPair (SL.CompactCoin 0) (SL.CompactCoin 0))
                       . Map.mapKeys SL.KeyHashObj
                       $ sgsStakeMap)
+            mempty
             ( Map.mapKeys SL.KeyHashObj sgsStakeMap )
             mempty
         }

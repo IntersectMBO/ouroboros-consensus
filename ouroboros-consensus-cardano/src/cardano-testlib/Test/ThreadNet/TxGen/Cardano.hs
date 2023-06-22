@@ -19,6 +19,7 @@ import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
 import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
+import qualified Cardano.Ledger.Shelley.TxCert as SL
 import           Cardano.Ledger.Val ((<->))
 import           Control.Exception (assert)
 import           Data.Map.Strict (Map)
@@ -157,12 +158,10 @@ migrateUTxO migrationInfo curSlot lcfg lst
         body :: SL.TxBody (ShelleyEra c)
         body = SL.mkBasicTxBody
           & SL.certsTxBodyL   .~ StrictSeq.fromList
-              [ SL.DCertDeleg $ SL.RegKey $ Shelley.mkCredential stakingSK
-              , SL.DCertPool  $ SL.RegPool $ poolParams unspentCoin
-              , SL.DCertDeleg $ SL.Delegate $ SL.Delegation
-                  { SL.dDelegator = Shelley.mkCredential stakingSK
-                  , SL.dDelegatee = Shelley.mkKeyHash poolSK
-                  }
+              [ SL.RegTxCert $ Shelley.mkCredential stakingSK
+              , SL.RegPoolTxCert $ poolParams unspentCoin
+              , SL.DelegStakeTxCert
+                  (Shelley.mkCredential stakingSK) (Shelley.mkKeyHash poolSK)
               ]
           & SL.inputsTxBodyL  .~ Map.keysSet picked
           & SL.outputsTxBodyL .~
