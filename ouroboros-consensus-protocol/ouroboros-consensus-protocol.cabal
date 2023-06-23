@@ -53,7 +53,7 @@ library
     , containers
     , mtl
     , nothunks
-    , ouroboros-consensus      >=0.5  && <0.9
+    , ouroboros-consensus      >=0.8  && <0.9
     , serialise
     , text
 
