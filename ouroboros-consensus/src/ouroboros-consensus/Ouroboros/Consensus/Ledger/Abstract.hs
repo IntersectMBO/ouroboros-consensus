@@ -157,7 +157,7 @@ tickThenReapplyLedgerResult ::
   -> LedgerResult l (l DiffMK)
 tickThenReapplyLedgerResult cfg blk l =
   let lrTick  = applyChainTickLedgerResult cfg (blockSlot blk) (forgetLedgerTables l)
-      lrBlock = reapplyBlockLedgerResult     cfg          blk  (applyDiffs l (lrResult lrTick))
+      lrBlock = reapplyBlockLedgerResult   cfg            blk  (applyDiffs l (lrResult lrTick))
   in LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = prependDiffs (lrResult lrTick) (lrResult lrBlock)

@@ -220,6 +220,12 @@ attachEmptyDiffs l1 = over l1 $ ltmap rawAttachEmptyDiffs (ltprj l1)
 -- Prepend tracking diffs
 --
 
+-- | Prepend the former tracking diffs to the latter tracking diffs. Keep the
+-- second tracking values.
+--
+-- PRECONDITION: Given that the first argument is @TrackingMK v1 d1@, and the
+-- second argument is @TrackingMK v2 d2@, it should be the case that @applyDiff
+-- v1 d2 == v2@.
 rawPrependTrackingDiffs ::
       Ord k
    => TrackingMK k v
@@ -228,12 +234,18 @@ rawPrependTrackingDiffs ::
 rawPrependTrackingDiffs (TrackingMK _ d1) (TrackingMK v d2) =
   TrackingMK v (d1 <> d2)
 
-
+-- | Prepend tracking diffs from the first ledger state to the tracking diffs
+-- from the second ledger state. Keep the tracking values of the second ledger
+-- state.
+--
+-- PRECONDITION:  See 'rawPrependTrackingDiffs'.
 prependTrackingDiffs' ::
      (Castable l l'', Castable l' l'', HasLedgerTables l, HasLedgerTables l')
   => l TrackingMK -> l' TrackingMK -> LedgerTables l'' TrackingMK
 prependTrackingDiffs' l1 l2 = ltliftA2 rawPrependTrackingDiffs (ltprj l1) (ltprj l2)
 
+-- | Like 'prependTrackingDiffs'', but puts the ledger tables inside the second
+-- leger state.
 prependTrackingDiffs ::
      (Castable l l', HasLedgerTables l, HasLedgerTables l')
   => l TrackingMK -> l' TrackingMK -> l' TrackingMK
