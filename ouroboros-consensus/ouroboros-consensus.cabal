@@ -517,6 +517,8 @@ test-suite consensus-test
     Test.Consensus.MiniProtocol.BlockFetch.Client
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
+    Test.Consensus.MiniProtocol.LocalTxSubmission.FaultyLedger
+    Test.Consensus.MiniProtocol.LocalTxSubmission.Server
     Test.Consensus.ResourceRegistry
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.MonadSTM.RAWLock
@@ -538,6 +540,7 @@ test-suite consensus-test
     , hashable
     , io-classes
     , io-sim
+    , mempool-test-utils
     , mock-block
     , mtl
     , nothunks
@@ -555,6 +558,7 @@ test-suite consensus-test
     , tasty-hunit
     , tasty-quickcheck
     , time
+    , transformers
     , tree-diff
     , typed-protocols
     , typed-protocols-examples
