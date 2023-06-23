@@ -29,7 +29,7 @@
 
 ### Breaking
 
-* Removed `ConnectionId` `Condense` instance.
+- Remove `ConnectionId` `Condense` instance.
 
 - Rename the `StrictMVar` type to `StrictSVar`. Rename related definitions and
   variables to mention `SVar` instead of `MVar`. Rename the `StrictMVar` module
