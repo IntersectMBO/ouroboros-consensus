@@ -38,7 +38,7 @@
         "x86_64-linux"
         "x86_64-darwin"
         #"aarch64-linux"
-        #"aarch64-darwin"
+        "aarch64-darwin"
       ];
     in
     inputs.flake-utils.lib.eachSystem supportedSystems (
@@ -55,8 +55,6 @@
             (import ./nix/pdfs.nix)
           ];
         };
-        inherit (pkgs) lib haskell-nix;
-        inherit (haskell-nix) haskellLib;
         devShell = import ./nix/shell.nix pkgs;
       in
       {
