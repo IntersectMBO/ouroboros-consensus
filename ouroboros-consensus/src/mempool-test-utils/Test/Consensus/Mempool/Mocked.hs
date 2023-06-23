@@ -2,11 +2,10 @@
 {-# LANGUAGE NamedFieldPuns   #-}
 
 -- | Mempool with a mocked ledger interface
-module Bench.Consensus.MempoolWithMockedLedgerItf (
-    InitialMempoolAndModelParams (..)
+module Test.Consensus.Mempool.Mocked (
     -- * Mempool with a mocked LedgerDB interface
-  , MempoolWithMockedLedgerItf (getMempool)
-  , openMempoolWithMockedLedgerItf
+    MockedMempool (getMempool)
+  , openMockedMempool
   , setLedgerState
     -- * Mempool API functions
   , addTx
@@ -27,29 +26,24 @@ import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf,
                      MempoolAddTxResult)
 
-data MempoolWithMockedLedgerItf m blk = MempoolWithMockedLedgerItf {
+data MockedMempool m blk = MockedMempool {
       getLedgerInterface :: !(Mempool.LedgerInterface m blk)
     , getLedgerStateTVar :: !(StrictTVar m (LedgerState blk))
     , getMempool         :: !(Mempool m blk)
     }
 
-instance NFData (MempoolWithMockedLedgerItf m blk) where
+instance NFData (MockedMempool m blk) where
   -- TODO: check we're OK with skipping the evaluation of the
-  -- MempoolWithMockedLedgerItf. The only data we could force here is the
+  -- MockedMempool. The only data we could force here is the
   -- 'LedgerState' inside 'getLedgerStateTVar', but that would require adding a
   -- 'NFData' constraint and perform unsafe IO. Since we only require this
   -- instance to be able to use
   -- [env](<https://hackage.haskell.org/package/tasty-bench-0.3.3/docs/Test-Tasty-Bench.html#v:env),
   -- and we only care about initializing the mempool before running the
   -- benchmarks, maybe this definition is enough.
-  rnf MempoolWithMockedLedgerItf {} = ()
+  rnf MockedMempool {} = ()
 
-data InitialMempoolAndModelParams blk = MempoolAndModelParams {
-      immpInitialState :: !(Ledger.LedgerState blk)
-    , immpLedgerConfig :: !(Ledger.LedgerConfig blk)
-    }
-
-openMempoolWithMockedLedgerItf ::
+openMockedMempool ::
      ( Ledger.LedgerSupportsMempool blk
      , Ledger.HasTxId (Ledger.GenTx blk)
      , Header.ValidateEnvelope blk
@@ -57,49 +51,51 @@ openMempoolWithMockedLedgerItf ::
   => Mempool.MempoolCapacityBytesOverride
   -> Tracer IO (Mempool.TraceEventMempool blk)
   -> (Ledger.GenTx blk -> Mempool.TxSizeInBytes)
-  -> InitialMempoolAndModelParams blk
+  -> Ledger.LedgerState blk
     -- ^ Initial ledger state for the mocked Ledger DB interface.
-  -> IO (MempoolWithMockedLedgerItf IO blk)
-openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
-    currentLedgerStateTVar <- newTVarIO (immpInitialState params)
+  -> Ledger.LedgerConfig blk
+    -- ^ Ledger configuration, which is needed to open the mempool.
+  -> IO (MockedMempool IO blk)
+openMockedMempool capacityOverride tracer txSizeImpl initialLedgerSt ledgerCfg = do
+    currentLedgerStateTVar <- newTVarIO initialLedgerSt
     let ledgerItf = Mempool.LedgerInterface {
             Mempool.getCurrentLedgerState = readTVar currentLedgerStateTVar
         }
     mempool <- Mempool.openMempoolWithoutSyncThread
                    ledgerItf
-                   (immpLedgerConfig params)
+                   ledgerCfg
                    capacityOverride
                    tracer
                    txSizeImpl
-    pure MempoolWithMockedLedgerItf {
+    pure MockedMempool {
         getLedgerInterface = ledgerItf
       , getLedgerStateTVar = currentLedgerStateTVar
       , getMempool         = mempool
     }
 
 setLedgerState ::
-     MempoolWithMockedLedgerItf IO blk
+     MockedMempool IO blk
   -> LedgerState blk
   -> IO ()
-setLedgerState MempoolWithMockedLedgerItf {getLedgerStateTVar} newSt =
+setLedgerState MockedMempool {getLedgerStateTVar} newSt =
   atomically $ writeTVar getLedgerStateTVar newSt
 
 addTx ::
-     MempoolWithMockedLedgerItf m blk
+     MockedMempool m blk
   -> AddTxOnBehalfOf
   -> Ledger.GenTx blk
   -> m (MempoolAddTxResult blk)
 addTx = Mempool.addTx . getMempool
 
 removeTxs ::
-     MempoolWithMockedLedgerItf m blk
+     MockedMempool m blk
   -> [Ledger.GenTxId blk]
   -> m ()
 removeTxs = Mempool.removeTxs . getMempool
 
 getTxs ::
      (Ledger.LedgerSupportsMempool blk)
-  => MempoolWithMockedLedgerItf IO blk -> IO [Ledger.GenTx blk]
+  => MockedMempool IO blk -> IO [Ledger.GenTx blk]
 getTxs mockedMempool = do
     snapshotTxs <- fmap Mempool.snapshotTxs $ atomically
                                             $ Mempool.getSnapshot

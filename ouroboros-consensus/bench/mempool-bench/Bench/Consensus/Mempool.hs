@@ -20,8 +20,6 @@ module Bench.Consensus.Mempool (
   ) where
 
 import           Bench.Consensus.Mempool.TestBlock ()
-import           Bench.Consensus.MempoolWithMockedLedgerItf
-                     (MempoolWithMockedLedgerItf, addTx)
 import           Control.DeepSeq (NFData)
 import           Control.Monad (void)
 import           Data.Foldable (traverse_)
@@ -29,6 +27,8 @@ import           Data.Maybe (mapMaybe)
 import           GHC.Generics (Generic)
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf (..))
+import qualified Test.Consensus.Mempool.Mocked as Mocked
+import           Test.Consensus.Mempool.Mocked (MockedMempool)
 
 {-------------------------------------------------------------------------------
   Commands
@@ -70,11 +70,11 @@ getCmdsTxIds = mapMaybe getCmdTxId
 -- and tested by state-mathine tests.
 run ::
      Monad m
-  => MempoolWithMockedLedgerItf m blk -> [MempoolCmd blk] -> m ()
+  => MockedMempool m blk -> [MempoolCmd blk] -> m ()
 run mempool = traverse_ (runCmd mempool)
 
 runCmd ::
      Monad m
-  => MempoolWithMockedLedgerItf m blk -> MempoolCmd blk -> m ()
+  => MockedMempool m blk -> MempoolCmd blk -> m ()
 runCmd mempool = \case
-    AddTx tx -> void $ addTx mempool AddTxForRemotePeer tx -- TODO: we might want to benchmark the 'Intervene' case
+    AddTx tx -> void $ Mocked.addTx mempool AddTxForRemotePeer tx -- TODO: we might want to benchmark the 'Intervene' case

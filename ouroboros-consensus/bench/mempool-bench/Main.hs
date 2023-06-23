@@ -10,7 +10,6 @@ module Main (main) where
 import           Bench.Consensus.Mempool
 import           Bench.Consensus.Mempool.TestBlock (TestBlock)
 import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
-import           Bench.Consensus.MempoolWithMockedLedgerItf
 import           Control.Arrow (first)
 import           Control.Monad (unless, void)
 import qualified Control.Tracer as Tracer
@@ -23,6 +22,8 @@ import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           System.Exit (die, exitFailure)
+import qualified Test.Consensus.Mempool.Mocked as Mocked
+import           Test.Consensus.Mempool.Mocked (MockedMempool)
 import           Test.Tasty (withResource)
 import           Test.Tasty.Bench (CsvPath (CsvPath), bench, benchIngredients,
                      bgroup, nfIO)
@@ -59,7 +60,7 @@ main = do
                             (mempool, txs) <- getAcquiredRes
                             void $ act mempool txs
                             -- TODO: consider adding a 'reset' command to the mempool to make sure its state is not tainted.
-                            removeTxs mempool $ getCmdsTxIds txs
+                            Mocked.removeTxs mempool $ getCmdsTxIds txs
                       bgroup (show n <> " transactions") [
                           bench "benchmark" $ nfIO $ withAcquiredMempool $ \mempool txs -> do
                             run mempool txs
@@ -72,7 +73,7 @@ main = do
               where
                 testAddTxs mempool txs = do
                     run mempool txs
-                    mempoolTxs <- getTxs mempool
+                    mempoolTxs <- Mocked.getTxs mempool
                     mempoolTxs @?= getCmdsTxs txs
 
     parseBenchmarkResults csvFilePath = do
@@ -124,12 +125,13 @@ main = do
   Adding TestBlock transactions to a mempool
 -------------------------------------------------------------------------------}
 
-openMempoolWithCapacityFor :: [MempoolCmd TestBlock] ->  IO (MempoolWithMockedLedgerItf IO TestBlock)
+openMempoolWithCapacityFor :: [MempoolCmd TestBlock] ->  IO (MockedMempool IO TestBlock)
 openMempoolWithCapacityFor cmds =
-    openMempoolWithMockedLedgerItf capacityRequiredByCmds
-                                   Tracer.nullTracer
-                                   TestBlock.txSize
-                                   TestBlock.sampleMempoolAndModelParams
+    Mocked.openMockedMempool capacityRequiredByCmds
+                             Tracer.nullTracer
+                             TestBlock.txSize
+                             TestBlock.initialLedgerState
+                             TestBlock.sampleLedgerConfig
   where
     capacityRequiredByCmds = Mempool.mkCapacityBytesOverride totalTxsSize
       where totalTxsSize = sum $ fmap TestBlock.txSize $ getCmdsTxs cmds
