@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.5.0.3'></a>
+## 0.5.0.3 — 2023-06-23
+
+### Patch
+
+- Rename `StrictMVar` to `StrictSVar`
+
 <a id='changelog-0.5.0.2'></a>
 ## 0.5.0.2 — 2023-05-19
 

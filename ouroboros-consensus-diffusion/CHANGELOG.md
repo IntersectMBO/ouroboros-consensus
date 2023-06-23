@@ -2,6 +2,21 @@
 
 # Changelog entries
 
+<a id='changelog-0.6.1.0'></a>
+## 0.6.1.0 — 2023-06-23
+
+### Patch
+
+- Add lower bound on graphviz
+
+- Allow ouroboros-network-0.8.0.0
+
+- Require `fs-sim >= 0.2` in test libraries.
+
+### Non-Breaking
+
+- Update a comment in Ouroboros.Consensus.NodeKernel.forkBlockForging
+
 <a id='changelog-0.6.0.0'></a>
 ## 0.6.0.0 — 2023-05-19
 

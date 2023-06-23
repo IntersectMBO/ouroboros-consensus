@@ -94,7 +94,7 @@ git checkout -b ${branch%?} >/dev/null 2>&1
 if [[ -n $consensus_new_version ]]; then
     echo "Updating ouroboros-consensus package"
 
-    sed -E -i "/^version:/ s/$consensus_last_version/$consensus_new_version/g" ouroboros-consensus/ouroboros-consensus.cabal
+    sed -E -i '' "/^version:/ s/$consensus_last_version/$consensus_new_version/g" ouroboros-consensus/ouroboros-consensus.cabal
 
     echo "- Updating changelog"
 
@@ -116,14 +116,14 @@ function replace_caret_up_to {
   if [[ -n $new_ver ]]; then
       # update caret dep bounds for packages in ouroboros-consensus
       regex=$(echo "$packages" | tr '\n' '|')
-      sed -E -i "/${regex%?}/ s/$(echo $old_ver | cut -d'.' -f1-$up_to)/$(echo $new_ver | cut -d'.' -f1-$up_to)/g" $cabal_file
+      sed -E -i '' "/${regex%?}/ s/$(echo $old_ver | cut -d'.' -f1-$up_to)/$(echo $new_ver | cut -d'.' -f1-$up_to)/g" $cabal_file
   fi
 }
 
 if [[ -n $protocol_new_version ]]; then
     echo "Updating ouroboros-consensus-protocol package"
 
-    sed -E -i "/^version:/ s/$protocol_last_version/$protocol_new_version/g" ouroboros-consensus-protocol/ouroboros-consensus-protocol.cabal
+    sed -E -i '' "/^version:/ s/$protocol_last_version/$protocol_new_version/g" ouroboros-consensus-protocol/ouroboros-consensus-protocol.cabal
 
     replace_caret_up_to \
       ouroboros-consensus  \
@@ -145,7 +145,7 @@ fi
 
 if [[ -n $cardano_new_version ]]; then
     echo "Updating ouroboros-consensus-cardano package"
-    sed -E -i "/^version:/ s/$cardano_last_version/$cardano_new_version/g" ouroboros-consensus-cardano/ouroboros-consensus-cardano.cabal
+    sed -E -i '' "/^version:/ s/$cardano_last_version/$cardano_new_version/g" ouroboros-consensus-cardano/ouroboros-consensus-cardano.cabal
 
     replace_caret_up_to \
         ouroboros-consensus  \
@@ -174,7 +174,7 @@ fi
 if [[ -n $diffusion_new_version ]]; then
     echo "Updating ouroboros-consensus-diffusion package"
 
-    sed -E -i "/^version:/ s/$diffusion_last_version/$diffusion_new_version/g" ouroboros-consensus-diffusion/ouroboros-consensus-diffusion.cabal
+    sed -E -i '' "/^version:/ s/$diffusion_last_version/$diffusion_new_version/g" ouroboros-consensus-diffusion/ouroboros-consensus-diffusion.cabal
 
     replace_caret_up_to \
       ouroboros-consensus  \
