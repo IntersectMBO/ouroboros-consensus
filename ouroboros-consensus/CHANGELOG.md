@@ -2,6 +2,41 @@
 
 # Changelog entries
 
+<a id='changelog-0.8.0.0'></a>
+## 0.8.0.0 — 2023-06-23
+
+### Patch
+
+- Don't depend on cardano-ledger-binary
+
+- Require `fs-sim >= 0.2` in test libraries.
+
+### Non-Breaking
+
+- Call `cryptoInit` in `defaultMainWithTestEnv`
+
+- Always force new value of StrictMVar before calling putTMVar in updateMVar
+
+- Add a new `Control.Concurrent.Class.MonadMVar.Strict.NoThunks` module, which
+  provides `StrictMVar`s (from the `strict-mvar` package) with `NoThunks`
+  invariants checks. These checks can be enabled using a package flag
+  `+checkmvarinvariants`.
+
+- Fix the mempool benchmarks.
+
+- The `pure @(NonEmpty xs)` implementation was unlawful; this has been fixed by
+  making it return an `a` for every `xs` (similar to `ZipList`).
+
+### Breaking
+
+* Removed `ConnectionId` `Condense` instance.
+
+- Rename the `StrictMVar` type to `StrictSVar`. Rename related definitions and
+  variables to mention `SVar` instead of `MVar`. Rename the `StrictMVar` module
+  to `StrictSVar`.
+
+- `IOLike m` now requires `MonadCatch (STM m)` instead of just `MonadThrow (STM m)`.
+
 <a id='changelog-0.7.0.0'></a>
 ## 0.7.0.0 — 2023-05-19
 
