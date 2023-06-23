@@ -27,7 +27,6 @@
       url = "github:input-output-hk/iohk-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    tullia.url = "github:input-output-hk/tullia";
     flake-compat = {
       url = "github:edolstra/flake-compat";
       flake = false;
@@ -39,7 +38,7 @@
         "x86_64-linux"
         "x86_64-darwin"
         #"aarch64-linux"
-        #"aarch64-darwin"
+        "aarch64-darwin"
       ];
     in
     inputs.flake-utils.lib.eachSystem supportedSystems (
@@ -56,8 +55,6 @@
             (import ./nix/pdfs.nix)
           ];
         };
-        inherit (pkgs) lib haskell-nix;
-        inherit (haskell-nix) haskellLib;
         devShell = import ./nix/shell.nix pkgs;
       in
       {
@@ -69,6 +66,6 @@
         };
         hydraJobs = import ./nix/ci.nix { inherit inputs pkgs devShell; };
         legacyPackages = pkgs;
-      } // inputs.tullia.fromSimple system (import ./nix/tullia.nix)
+      }
     );
 }
