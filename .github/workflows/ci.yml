@@ -64,11 +64,7 @@ jobs:
 
     - name: Configure Cabal to use libsodium
       run: |
-        cat > cabal.project.local <<EOF
-        package cardano-crypto-praos
-          flags: -external-libsodium-vrf
-        EOF
-        cat cabal.project.local
+        cp .github/workflows/cabal.project.local .
 
     - name: "LINUX: Install build environment (for secp256k1)"
       run: sudo apt-get -y install autoconf automake libtool
