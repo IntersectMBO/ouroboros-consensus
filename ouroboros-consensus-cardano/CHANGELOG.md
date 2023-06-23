@@ -2,6 +2,25 @@
 
 # Changelog entries
 
+<a id='changelog-0.6.1.0'></a>
+## 0.6.1.0 — 2023-06-23
+
+### Patch
+
+- Rename `StrictMVar` to `StrictSVar`
+
+- Add support for new `cardano-ledger` package versions
+
+### Non-Breaking
+
+- Call `cryptoInit` before running test suites
+
+- Make sure `defaultMainWithTestEnv` is used everywhere
+
+- Call `cryptoInit` in `defaultMainWithTestEnv`
+
+- Call `cryptoInit` in our utility tools
+
 <a id='changelog-0.6.0.0'></a>
 ## 0.6.0.0 — 2023-05-19
 
