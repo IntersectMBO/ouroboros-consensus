@@ -40,7 +40,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as LMDB
-import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..))
 import qualified System.Directory as Dir
 import           System.FS.API hiding (Handle)
@@ -226,7 +225,7 @@ instance Mock.EmptyValues V where
   emptyValues = emptyLedgerTables
 
 instance Mock.ApplyDiff V D where
-  applyDiff = zipLedgerTables rawApplyDiffs
+  applyDiff = applyDiffs'
 
 instance Mock.LookupKeysRange K V where
   lookupKeysRange = \prev n vs ->
@@ -271,7 +270,7 @@ instance Mock.ValuesLength V where
     Map.size m
 
 instance Mock.MakeDiff V D where
-  diff t1 t2 = zipLedgerTables (rawForgetValues .: rawCalculateDifference) t1 t2
+  diff t1 t2 = forgetTrackingValues $ calculateDifference t1 t2
 
 instance Mock.DiffSize D where
   diffSize (LedgerTables (DiffMK (Diff.Diff m))) = Map.size m

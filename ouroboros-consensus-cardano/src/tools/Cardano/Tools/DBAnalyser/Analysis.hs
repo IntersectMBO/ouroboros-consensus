@@ -568,7 +568,7 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, p
         (ldgrSt',    tBlkApp)   <- time $ applyTheBlock                                       hydTkLdgrSt
 
         -- this is an inline of DbChangelog.Update.pushLedgerState
-        let st   = ExtLedgerState (prependLedgerTablesDiffsFromTicked tkLdgrSt ldgrSt') hdrSt'
+        let st   = ExtLedgerState (prependDiffs tkLdgrSt ldgrSt') hdrSt'
             ldb' = onChangelog (DbChangelog.prune (ledgerDbCfgSecParam $ configLedgerDb cfg)
                  . DbChangelog.extend st) ldb
 
@@ -652,8 +652,8 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, p
               aks = rewindTableKeySets (anchorlessChangelog ldb) ks
           urs <- readKeySets bstore aks
           case forwardTableKeySets (anchorlessChangelog ldb) urs of
-            Left err -> error $ "Rewind;read;forward failed" <> show err
-            Right forwarded -> pure $ applyLedgerTablesDiffsTicked' (castLedgerTables forwarded) st
+            Left err        -> error $ "Rewind;read;forward failed" <> show err
+            Right forwarded -> pure $ applyDiffs forwarded st
 
         tickTheLedgerState ::
              SlotNo

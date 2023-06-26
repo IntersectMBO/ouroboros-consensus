@@ -207,16 +207,18 @@ injectInitialExtLedgerState cfg extLedgerState0 =
           cfg
 
     targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
-    targetEraLedgerState =
-       applyLedgerTablesDiffs
-         (HardForkLedgerState . initHardForkState . Flip . ledgerState $ extLedgerState0)
-         (HardForkLedgerState
-           -- We can immediately extend it to the right slot, executing any
-           -- scheduled hard forks in the first slot
-             (State.extendToSlot
-                (configLedger cfg)
-                (SlotNo 0)
-                (initHardForkState $ Flip $ forgetLedgerTables $ ledgerState extLedgerState0)))
+    targetEraLedgerState = applyDiffs st st'
+      where
+        st :: LedgerState (HardForkBlock (x ': xs)) ValuesMK
+        st = HardForkLedgerState . initHardForkState . Flip . ledgerState $ extLedgerState0
+        st' = HardForkLedgerState
+                -- We can immediately extend it to the right slot, executing any
+                -- scheduled hard forks in the first slot
+                  (State.extendToSlot
+                      (configLedger cfg)
+                      (SlotNo 0)
+                      (initHardForkState $ Flip $ forgetLedgerTables $ ledgerState extLedgerState0))
+
 
     firstEraChainDepState :: HardForkChainDepState (x ': xs)
     firstEraChainDepState =

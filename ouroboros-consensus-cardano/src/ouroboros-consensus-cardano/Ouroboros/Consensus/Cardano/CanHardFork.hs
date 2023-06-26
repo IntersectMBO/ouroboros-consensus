@@ -404,7 +404,7 @@ translateLedgerStateByronToShelleyWrapper =
     $ \_ (WrapLedgerConfig cfgShelley) ->
         TranslateLedgerState {
             translateLedgerStateWith = \epochNo ledgerByron ->
-                forgetLedgerTablesValues
+                forgetTrackingValues
               . calculateAdditions
               . unstowLedgerTables
               $ ShelleyLedgerState {

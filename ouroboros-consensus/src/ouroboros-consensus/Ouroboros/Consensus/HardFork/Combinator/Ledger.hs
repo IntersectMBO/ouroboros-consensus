@@ -172,7 +172,7 @@ tickOne :: SingleEraBlock blk
 tickOne ei slot sopIdx partialCfg st =
       Comp
     . fmap ( FlipTickedLedgerState
-           . prependLedgerTablesDiffsTicked (unFlip st)
+           . prependDiffs (unFlip st)
            )
     . embedLedgerResult (injectLedgerEvent sopIdx)
     . applyChainTickLedgerResult (completeLedgerConfig' ei partialCfg) slot

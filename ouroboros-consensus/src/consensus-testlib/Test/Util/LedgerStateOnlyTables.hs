@@ -55,8 +55,8 @@ instance (ToCBOR k, FromCBOR k, ToCBOR v, FromCBOR v)
   Stowable
 -------------------------------------------------------------------------------}
 
-instance (Ord k, Eq v, Show k, Show v, NoThunks k, NoThunks v)
-    => CanStowLedgerTables (OTLedgerState k v) where
+instance (Ord k, Eq v)
+      => CanStowLedgerTables (OTLedgerState k v) where
   stowLedgerTables OTLedgerState{otlsLedgerTables} =
     OTLedgerState (getLedgerTables otlsLedgerTables) emptyLedgerTables
 

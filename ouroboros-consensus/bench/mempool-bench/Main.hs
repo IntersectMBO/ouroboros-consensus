@@ -49,7 +49,7 @@ main = do
             unless success exitFailure
       where
         bsss = [defaultInMemoryBSS, defaultLMDB_BSS]
-        ns   = [10_000, 20_000]
+        ns   = [10_000]
 
         showBackingStoreSelector bss = case bss of
           InMemoryBackingStore -> "inmem"

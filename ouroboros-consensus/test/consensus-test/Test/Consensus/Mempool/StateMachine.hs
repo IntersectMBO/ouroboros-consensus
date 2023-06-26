@@ -457,7 +457,7 @@ foldTxs cfg nextTk remainingCap initialState  =
             go ( MempoolTxAdded vtx:acc
                , succ tk
                , if txInBlockSize tx > cap then 0 else cap - txInBlockSize tx
-               , forgetLedgerTablesDiffsTicked st'
+               , forgetTrackingDiffs st'
                )
                next
 
@@ -468,11 +468,7 @@ tick ::
   => LedgerConfig blk
   -> LedgerState blk ValuesMK
   -> TickedLedgerState blk ValuesMK
-tick cfg st =
-  zipOverLedgerTablesTicked
-    (flip rawApplyDiffs)
-    ticked
-    (projectLedgerTables st)
+tick cfg st = applyDiffs st ticked
   where
     ticked = snd
            . tickLedgerState cfg

@@ -595,7 +595,7 @@ applyHelper f cfg blk stBefore = do
 
 
     return $ ledgerResult <&> \newNewEpochState ->
-      forgetLedgerTablesValues $ track $ unstowLedgerTables $
+      forgetTrackingValues $ track $ unstowLedgerTables $
       ShelleyLedgerState {
           shelleyLedgerTip = NotOrigin ShelleyTip {
               shelleyTipBlockNo = blockNo   blk
