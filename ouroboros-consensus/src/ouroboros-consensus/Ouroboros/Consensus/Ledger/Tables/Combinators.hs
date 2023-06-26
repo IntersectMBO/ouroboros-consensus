@@ -44,6 +44,8 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
   , ltliftA2
   , ltliftA3
   , ltliftA4
+    -- * Applicative and Traversable
+  , ltzipWith3A
     -- * Collapsing
   , ltcollapse
     -- * Lifted functions
@@ -52,6 +54,10 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
   , fn2_3
   , fn2_4
   , type (-..->) (..)
+    -- ** Re-exports of utils
+  , (...:)
+  , (..:)
+  , (.:)
     -- * Basic bifunctors
   , K2 (..)
   , type (:..:) (..)
@@ -61,6 +67,7 @@ import           Data.Bifunctor
 import           Data.Kind
 import           Data.SOP.Functors
 import           Ouroboros.Consensus.Ledger.Tables.Common
+import           Ouroboros.Consensus.Util ((...:), (..:), (.:))
 
 {-------------------------------------------------------------------------------
   Common constraints
@@ -165,6 +172,19 @@ ltliftA4 ::
   -> LedgerTables l mk5
 ltliftA4 f x x' x'' x''' =
   ltpure (fn2_4 f) `ltap` x `ltap` x' `ltap` x'' `ltap` x'''
+
+{-------------------------------------------------------------------------------
+  Applicative and Traversable
+-------------------------------------------------------------------------------}
+
+ltzipWith3A ::
+     (Applicative f, LedgerTableConstraints l)
+  => (forall k v. (Ord k, Eq v) => mk1 k v -> mk2 k v -> mk3 k v -> f (mk4 k v))
+  -> LedgerTables l mk1
+  -> LedgerTables l mk2
+  -> LedgerTables l mk3
+  -> f (LedgerTables l mk4)
+ltzipWith3A f = ltsequence ..: ltliftA3 (Comp2 ..: f)
 
 {-------------------------------------------------------------------------------
   Collapsing
