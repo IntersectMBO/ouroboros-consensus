@@ -45,7 +45,8 @@ import           Cardano.Ledger.Binary (ByteSpan, annotationBytes, byronProtVer,
 import           Cardano.Ledger.Binary.Plain (Decoder, Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (Serialise (..))
-import           Control.Monad.Except
+import           Control.Monad (guard)
+import           Control.Monad.Except (Except, throwError)
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Word (Word32)

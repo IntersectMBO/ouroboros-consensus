@@ -41,7 +41,8 @@ module Ouroboros.Consensus.HardFork.History.Qry (
 
 import           Codec.Serialise (Serialise (..))
 import           Control.Exception (throw)
-import           Control.Monad.Except
+import           Control.Monad (ap, guard, liftM, (>=>))
+import           Control.Monad.Except ()
 import           Data.Bifunctor
 import           Data.Fixed (divMod')
 import           Data.Foldable (toList)

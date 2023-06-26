@@ -4,6 +4,7 @@
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TupleSections     #-}
 {-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE TypeOperators     #-}
 
 module Ouroboros.Consensus.Util.MonadSTM.StrictSVar (
     castStrictSVar

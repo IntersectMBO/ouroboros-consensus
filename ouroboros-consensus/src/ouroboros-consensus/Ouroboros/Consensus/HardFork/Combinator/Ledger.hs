@@ -29,7 +29,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   , mkHardForkForecast
   ) where
 
-import           Control.Monad.Except
+import           Control.Monad (guard)
+import           Control.Monad.Except (throwError, withExcept)
 import           Data.Functor ((<&>))
 import           Data.Functor.Product
 import           Data.Proxy

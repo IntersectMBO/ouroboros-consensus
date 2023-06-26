@@ -11,7 +11,8 @@ module Ouroboros.Consensus.Forecast (
   ) where
 
 import           Control.Exception (Exception)
-import           Control.Monad.Except
+import           Control.Monad (guard)
+import           Control.Monad.Except (Except)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.History.Util (addSlots)

@@ -39,7 +39,8 @@ module Ouroboros.Consensus.Protocol.PBFT.State (
 import           Codec.Serialise (Serialise (..))
 import           Codec.Serialise.Decoding (Decoder)
 import           Codec.Serialise.Encoding (Encoding)
-import           Control.Monad.Except
+import           Control.Monad (unless)
+import           Control.Monad.Except (Except, runExcept, throwError)
 import qualified Data.Foldable as Foldable
 import           Data.List (sortOn)
 import           Data.Map.Strict (Map)

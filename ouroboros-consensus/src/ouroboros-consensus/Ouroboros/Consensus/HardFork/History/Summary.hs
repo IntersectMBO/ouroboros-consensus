@@ -49,7 +49,8 @@ import           Codec.CBOR.Decoding (TokenType (TypeNull), decodeNull,
                      peekTokenType)
 import           Codec.CBOR.Encoding (encodeListLen, encodeNull)
 import           Codec.Serialise
-import           Control.Monad.Except
+import           Control.Monad (unless)
+import           Control.Monad.Except (Except, throwError)
 import           Data.Bifunctor
 import           Data.Foldable (toList)
 import           Data.Kind (Type)

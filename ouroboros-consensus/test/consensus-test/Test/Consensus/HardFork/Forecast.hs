@@ -17,7 +17,8 @@ module Test.Consensus.HardFork.Forecast (
   ) where
 
 import           Control.Exception (assert)
-import           Control.Monad.Except
+import           Control.Monad (forM, replicateM, unless, when)
+import           Control.Monad.Except (Except, runExcept, throwError)
 import           Data.Either (isRight)
 import           Data.Foldable (toList)
 import           Data.List (intercalate)

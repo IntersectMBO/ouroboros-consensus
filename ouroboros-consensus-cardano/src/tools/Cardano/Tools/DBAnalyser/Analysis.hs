@@ -22,7 +22,8 @@ import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPo
 import           Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
 import           Codec.CBOR.Encoding (Encoding)
-import           Control.Monad.Except
+import           Control.Monad (unless, void, when)
+import           Control.Monad.Except (runExcept)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map

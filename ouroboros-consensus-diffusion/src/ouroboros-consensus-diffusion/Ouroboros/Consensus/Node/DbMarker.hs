@@ -11,7 +11,9 @@ module Ouroboros.Consensus.Node.DbMarker (
   , dbMarkerParse
   ) where
 
-import           Control.Monad.Except
+import           Control.Monad (void, when)
+import           Control.Monad.Except (ExceptT (..), runExceptT, throwError)
+import           Control.Monad.Trans.Class (lift)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS.Char8
 import           Data.ByteString.Lazy (fromStrict, toStrict)

@@ -9,6 +9,7 @@
 {-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeOperators       #-}
 
 -- | Thin wrapper around the LedgerDB
 module Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (

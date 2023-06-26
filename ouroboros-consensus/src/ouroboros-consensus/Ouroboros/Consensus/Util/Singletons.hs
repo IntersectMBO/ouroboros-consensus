@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds              #-}
 {-# LANGUAGE GADTs                  #-}
 {-# LANGUAGE PolyKinds              #-}
 {-# LANGUAGE RankNTypes             #-}
@@ -5,7 +6,6 @@
 {-# LANGUAGE TypeApplications       #-}
 {-# LANGUAGE TypeFamilies           #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
-{-# LANGUAGE TypeInType             #-}
 {-# LANGUAGE TypeOperators          #-}
 
 -- | Singletons

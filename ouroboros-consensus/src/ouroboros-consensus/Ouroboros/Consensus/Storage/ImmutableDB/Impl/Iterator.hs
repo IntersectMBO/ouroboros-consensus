@@ -16,7 +16,9 @@ module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator (
 
 import           Cardano.Prelude (forceElemsToWHNF)
 import qualified Codec.CBOR.Read as CBOR
-import           Control.Monad.Except
+import           Control.Monad (unless, void, when)
+import           Control.Monad.Except (ExceptT, runExceptT, throwError)
+import           Control.Monad.Trans.Class (lift)
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Short as Short
 import           Data.Foldable (find)

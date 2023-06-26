@@ -27,7 +27,7 @@ import           Cardano.Chain.ProtocolConstants (kEpochSlots)
 import           Cardano.Chain.Slotting (EpochSlots (..))
 import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Crypto as Crypto
-import           Control.Monad.Except
+import           Control.Monad (guard)
 import           Data.Coerce (coerce)
 import           Data.Maybe
 import           Data.Text (Text)

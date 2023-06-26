@@ -34,7 +34,7 @@ jobs:
     strategy:
        fail-fast: false
        matrix:
-         ghc: ["8.10.7"] # ["9.2.7"]
+         ghc: ["8.10.7", "9.2.7", "9.6.1"]
          cabal: ["3.10.1.0"]
          os: [ubuntu-latest]
     env:
@@ -64,11 +64,7 @@ jobs:
 
     - name: Configure Cabal to use libsodium
       run: |
-        cat > cabal.project.local <<EOF
-        package cardano-crypto-praos
-          flags: -external-libsodium-vrf
-        EOF
-        cat cabal.project.local
+        cp .github/workflows/cabal.project.local .
 
     - name: "LINUX: Install build environment (for secp256k1)"
       run: sudo apt-get -y install autoconf automake libtool
@@ -180,10 +176,15 @@ jobs:
     - name: Run mempool benchmarks on pull requests
       if: ${{ github.event_name == 'pull_request' }}
       run: |
-        cabal new-run ouroboros-consensus:mempool-bench -- \
-        --timeout=60 --baseline baseline-mempool-benchmarks.csv \
-        --fail-if-slower 20 \
-        +RTS -T
+        if [ -f baseline-mempool-benchmarks.csv ]; then
+          cabal new-run ouroboros-consensus:mempool-bench -- \
+          --timeout=60 --baseline baseline-mempool-benchmarks.csv \
+          --fail-if-slower 20 \
+          +RTS -T
+        else
+          echo "No baseline benchmarks found. This likely happened when adding a new GHC version to the build matrix."
+          echo "Benchmarks comparison skipped."
+        fi
 
     # NB: build the haddocks at the end to avoid unecessary recompilations.
     # We build the haddocks only for one GHC version.

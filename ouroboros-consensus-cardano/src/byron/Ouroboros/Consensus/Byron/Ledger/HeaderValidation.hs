@@ -11,7 +11,8 @@ module Ouroboros.Consensus.Byron.Ledger.HeaderValidation (
   ) where
 
 import qualified Cardano.Chain.Slotting as CC
-import           Control.Monad.Except
+import           Control.Monad (when)
+import           Control.Monad.Except (throwError)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)

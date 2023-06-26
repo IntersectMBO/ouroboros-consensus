@@ -29,9 +29,11 @@
 -- up resources as threads terminate or crash.
 --
 module Test.Consensus.ResourceRegistry (tests) where
-
+import           Control.Monad ((>=>))
 import           Control.Monad.Class.MonadTimer.SI
-import           Control.Monad.Except
+import           Control.Monad.Except (Except, MonadError, runExcept,
+                     throwError)
+import           Control.Monad.IO.Class (liftIO)
 import           Data.Foldable (toList)
 import           Data.Function (on)
 import           Data.Functor.Classes
