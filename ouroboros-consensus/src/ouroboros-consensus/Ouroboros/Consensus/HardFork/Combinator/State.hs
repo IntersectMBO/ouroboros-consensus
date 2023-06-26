@@ -51,7 +51,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Util ((.:))
 import           Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------

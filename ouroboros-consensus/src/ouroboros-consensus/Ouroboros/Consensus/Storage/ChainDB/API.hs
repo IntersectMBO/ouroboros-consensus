@@ -82,7 +82,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as Ledg
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
                      (PointNotFound)
 import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry

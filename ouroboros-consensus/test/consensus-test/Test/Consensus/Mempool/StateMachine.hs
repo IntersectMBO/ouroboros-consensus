@@ -519,13 +519,13 @@ newLedgerInterface initialLedger = do
   pure (LedgerInterface {
       getCurrentLedgerState = forgetLedgerTables . ldbTip <$> readTVar t
     , getLedgerTablesAtFor  = \pt txs -> do
-        let keys = foldl' (zipLedgerTables (<>)) emptyLedgerTables
+        let keys = foldl' (ltliftA2 (<>)) emptyLedgerTables
                  $ map getTransactionKeySets txs
         MockedLedgerDB ti oldReachableTips _ <- atomically $ readTVar t
         if pt == castPoint (getTip ti) -- if asking for tables at the tip of the
                                        -- ledger db
         then
-          let tbs = zipLedgerTables f keys $ projectLedgerTables ti
+          let tbs = ltliftA2 f keys $ projectLedgerTables ti
           in  pure $ Right tbs
         else case find ((castPoint pt ==). getTip) oldReachableTips of
            Nothing -> pure $ Left $ PointNotFound pt
@@ -533,7 +533,7 @@ newLedgerInterface initialLedger = do
              if pt == castPoint (getTip mtip)
              -- if asking for tables at some still reachable state
              then
-               let tbs = zipLedgerTables f keys $ projectLedgerTables mtip
+               let tbs = ltliftA2 f keys $ projectLedgerTables mtip
                in  pure $ Right tbs
              else
                -- if asking for tables at other point or at the mempool tip but

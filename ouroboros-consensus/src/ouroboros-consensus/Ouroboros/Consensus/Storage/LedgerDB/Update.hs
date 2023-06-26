@@ -62,7 +62,7 @@ setCurrent v dblog =
               adcLastFlushedSlot = adcLastFlushedSlot $ anchorlessChangelog pruned
             , adcStates          = adcStates dblog
             , adcDiffs           =
-                zipLedgerTables (f s) (adcDiffs $ anchorlessChangelog pruned) (adcDiffs dblog)
+                ltliftA2 (f s) (adcDiffs $ anchorlessChangelog pruned) (adcDiffs dblog)
             }
         })
   where

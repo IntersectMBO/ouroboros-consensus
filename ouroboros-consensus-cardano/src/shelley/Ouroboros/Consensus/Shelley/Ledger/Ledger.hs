@@ -97,7 +97,6 @@ import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
                      (EnvelopeCheckError, envelopeChecks, mkHeaderView)
-import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
 import           Ouroboros.Consensus.Util.Versioned

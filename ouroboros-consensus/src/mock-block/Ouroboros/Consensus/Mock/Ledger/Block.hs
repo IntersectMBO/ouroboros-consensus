@@ -98,8 +98,7 @@ import           Ouroboros.Consensus.Mock.Ledger.Address
 import           Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
-import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE,
-                     (..:))
+import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
 

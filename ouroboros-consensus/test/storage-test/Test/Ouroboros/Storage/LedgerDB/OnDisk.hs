@@ -1321,7 +1321,7 @@ generator cd secParam (Model mock hs) =
                [ (5, do
                      -- existing point, subset of keys
                      (blk, st) <- QC.elements (mockLedger mock)
-                     keys <- traverseLedgerTables f (projectLedgerTables st)
+                     keys <- lttraverse f (projectLedgerTables st)
                      pure $ GetTablesAtFor (blockPoint blk) keys)
                , (1, do
                      -- existing point, random keys

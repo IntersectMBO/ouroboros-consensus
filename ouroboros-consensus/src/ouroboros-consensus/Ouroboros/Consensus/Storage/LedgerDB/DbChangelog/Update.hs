@@ -58,7 +58,6 @@ import           Control.Monad.Reader hiding (ap)
 import           Data.Bifunctor (bimap)
 import           Data.Functor.Identity
 import           Data.Kind (Constraint, Type)
-import           Data.Semigroup (All (..), Sum (..))
 import           Data.SOP.Functors
 import           Data.Word
 import           GHC.Generics
@@ -280,7 +279,7 @@ extend :: (GetTip l, HasLedgerTables l)
 extend newState dblog =
   AnchorlessDbChangelog {
       adcLastFlushedSlot = adcLastFlushedSlot
-    , adcDiffs           = zipLedgerTables ext adcDiffs tablesDiff
+    , adcDiffs           = ltliftA2 ext adcDiffs tablesDiff
     , adcStates          = adcStates AS.:> l'
     }
   where
@@ -319,7 +318,7 @@ rollbackN ::
 rollbackN n dblog
     | n <= Query.maxRollback dblog
     = Just $ dblog {
-        adcDiffs  = mapLedgerTables trunc adcDiffs
+        adcDiffs  = ltmap trunc adcDiffs
       , adcStates = AS.dropNewest (fromIntegral n) adcStates
       }
     | otherwise
@@ -423,7 +422,7 @@ splitForFlushing ::
   => DbChangelog l
   -> (Maybe (DiffsToFlush l), DbChangelog l)
 splitForFlushing dblog =
-    if getTipSlot immTip == Origin || foldLedgerTables (\(SeqDiffMK sq) -> Sum $ DS.length sq) l == 0
+    if getTipSlot immTip == Origin || ltcollapse (ltmap (K2 . DS.length . getSeqDiffMK) l) == 0
     then (Nothing, dblog)
     else (Just ldblog, rdblog)
   where
@@ -450,12 +449,12 @@ splitForFlushing dblog =
                in (Just tf, tk)
           else (Nothing, sq)
 
-    lr = mapLedgerTables (uncurry Pair2 . splitSeqDiff) adcDiffs
-    l  = mapLedgerTables (\(Pair2 x _) -> x) lr
-    r  = mapLedgerTables (\(Pair2 _ y) -> y) lr
+    lr = ltmap (uncurry Pair2 . splitSeqDiff) adcDiffs
+    l  = ltmap (\(Pair2 x _) -> x) lr
+    r  = ltmap (\(Pair2 _ y) -> y) lr
 
     (newTip, newStates) =
-        if getAll $ foldLedgerTables (\(SeqDiffMK sq) -> All $ 0 == DS.length sq) l
+        if ltcollapse $ ltmap (\(SeqDiffMK sq) -> K2 $ 0 == DS.length sq) l
         then (changelogLastFlushedState, adcStates)
         else (immTip, adcStates)
 
@@ -466,7 +465,7 @@ splitForFlushing dblog =
     prj (SeqDiffMK sq) = DiffMK (DS.cumulativeDiff sq)
 
     ldblog = DiffsToFlush {
-        toFlushDiffs = mapLedgerTables prj l
+        toFlushDiffs = ltmap prj l
       , toFlushSlot  =
             fromWithOrigin (error "Flushing a DbChangelog at origin should never happen")
           $ getTipSlot immTip

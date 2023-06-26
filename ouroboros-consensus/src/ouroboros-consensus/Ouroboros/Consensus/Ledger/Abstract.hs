@@ -40,7 +40,7 @@ import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM, (..:))
+import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM)
 
 -- | " Validated " transaction or block
 --

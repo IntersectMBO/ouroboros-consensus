@@ -612,11 +612,11 @@ withTestMempool setup@TestSetup {..} prop =
       let ledgerInterface = LedgerInterface
             { getCurrentLedgerState = forgetLedgerTables <$> readTVar varCurrentLedgerState
             , getLedgerTablesAtFor = \pt txs -> do
-                let keys = foldl' (zipLedgerTables (<>)) emptyLedgerTables
+                let keys = foldl' (ltliftA2 (<>)) emptyLedgerTables
                       $ map getTransactionKeySets txs
                 st <- atomically $ readTVar varCurrentLedgerState
                 if castPoint (getTip st) == pt
-                  then pure $ Right $ zipLedgerTables f
+                  then pure $ Right $ ltliftA2 f
                                                       (projectLedgerTables st)
                                                       keys
                   else pure $ Left $ PointNotFound pt

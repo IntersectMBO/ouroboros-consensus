@@ -337,7 +337,7 @@ initFromVals tracer dbsSeq vals env st backingTables = do
   Trace.traceWith tracer $ TDBInitialisingFromValues dbsSeq
   liftIO $ LMDB.readWriteTransaction env $
     withDbStateRWMaybeNull st $ \case
-      Nothing -> zipLedgerTables3A initLMDBTable backingTables codecLedgerTables vals
+      Nothing -> ltzipWith3A initLMDBTable backingTables codecLedgerTables vals
                  $> ((), DbState{dbsSeq})
       Just _ -> liftIO . throwIO $ DbErrInitialisingAlreadyHasState
   Trace.traceWith tracer $ TDBInitialisedFromValues dbsSeq
@@ -436,7 +436,7 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
      -- Here we get the LMDB.Databases for the tables of the ledger state
      -- Must be read-write transaction because tables may need to be created
      dbBackingTables <- liftIO $ LMDB.readWriteTransaction dbEnv $
-       traverseLedgerTables getDb (pureLedgerTables $ NameMK "utxo")
+       lttraverse getDb (ltpure $ NameMK "utxo")
 
      dbNextId <- IOLike.newTVarIO 0
 
@@ -484,7 +484,7 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
            bsWrite slot diffs = Status.withReadAccess dbStatusLock DbErrClosed $ do
              oldSlot <- liftIO $ LMDB.readWriteTransaction dbEnv $ withDbStateRW dbState $ \s@DbState{dbsSeq} -> do
                unless (dbsSeq <= At slot) $ liftIO . throwIO $ DbErrNonMonotonicSeq (At slot) dbsSeq
-               void $ zipLedgerTables3A writeLMDBTable dbBackingTables codecLedgerTables diffs
+               void $ ltzipWith3A writeLMDBTable dbBackingTables codecLedgerTables diffs
                pure (dbsSeq, s {dbsSeq = At slot})
              Trace.traceWith dbTracer $ TDBWrite oldSlot slot
 
@@ -553,7 +553,7 @@ mkLMDBBackingStoreValueHandle db = do
       Status.withReadAccess dbStatusLock DbErrClosed $ do
       Status.withReadAccess vhStatusLock (DbErrNoValueHandle vhId) $ do
         Trace.traceWith tracer TVHReadStarted
-        res <- liftIO $ TrH.submitReadOnly trh (zipLedgerTables3A readLMDBTable dbBackingTables codecLedgerTables keys)
+        res <- liftIO $ TrH.submitReadOnly trh (ltzipWith3A readLMDBTable dbBackingTables codecLedgerTables keys)
         Trace.traceWith tracer TVHReadEnded
         pure res
 
@@ -569,11 +569,11 @@ mkLMDBBackingStoreValueHandle db = do
           outsideIn ::
               Maybe (LedgerTables l mk1)
             -> LedgerTables l (Maybe :..: mk1)
-          outsideIn Nothing       = pureLedgerTables (Comp2 Nothing)
-          outsideIn (Just tables) = mapLedgerTables (Comp2 . Just) tables
+          outsideIn Nothing       = ltpure (Comp2 Nothing)
+          outsideIn (Just tables) = ltmap (Comp2 . Just) tables
 
           transaction =
-            zipLedgerTables3A
+            ltzipWith3A
               (rangeRead rqCount)
               dbBackingTables
               codecLedgerTables
@@ -592,8 +592,8 @@ mkLMDBBackingStoreValueHandle db = do
         Trace.traceWith tracer TVHStatStarted
         let transaction = do
               DbState{dbsSeq} <- readDbState dbState
-              constn <- traverseLedgerTables (\(LMDBMK _ dbx) -> K2 <$> LMDB.size dbx) dbBackingTables
-              let n = getSum $ foldLedgerTables (Sum . unK2) constn
+              constn <- lttraverse (\(LMDBMK _ dbx) -> K2 <$> LMDB.size dbx) dbBackingTables
+              let n = getSum $ ltcollapse $ ltmap (K2 . Sum . unK2) constn
               pure $ HD.Statistics dbsSeq n
         res <- liftIO $ TrH.submitReadOnly trh transaction
         Trace.traceWith tracer TVHStatEnded

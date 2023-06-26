@@ -21,7 +21,6 @@ import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Storage.ChainDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Ouroboros.Consensus.Util ((.:))
 
 instance SerialiseHFC xs => SerialiseDiskConstraints  (HardForkBlock xs)
 

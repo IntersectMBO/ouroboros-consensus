@@ -40,7 +40,6 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util ((..:))
 
 {-------------------------------------------------------------------------------
   Tip

@@ -231,9 +231,9 @@ instance Mock.LookupKeysRange K V where
   lookupKeysRange = \prev n vs ->
       case prev of
         Nothing ->
-          mapLedgerTables (rangeRead n) vs
+          ltmap (rangeRead n) vs
         Just ks ->
-          zipLedgerTables (rangeRead' n) ks vs
+          ltliftA2 (rangeRead' n) ks vs
     where
       rangeRead :: Int -> ValuesMK k v -> ValuesMK k v
       rangeRead n (ValuesMK vs) =
@@ -255,7 +255,7 @@ instance Mock.LookupKeysRange K V where
           ValuesMK vs = vsmk
 
 instance Mock.LookupKeys K V where
-  lookupKeys = zipLedgerTables readKeys
+  lookupKeys = ltliftA2 readKeys
     where
       readKeys ::
           Ord k
