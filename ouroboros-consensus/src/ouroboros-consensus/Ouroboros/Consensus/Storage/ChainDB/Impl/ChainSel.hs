@@ -1227,14 +1227,13 @@ futureCheckCandidate chainSelEnv validatedChainDiff =
 
     ValidatedChainDiff chainDiff@(ChainDiff _ suffix) _ = validatedChainDiff
 
-    validatedSuffix :: ValidatedFragment (Header blk) (LedgerState blk)
+    validatedSuffix :: ValidatedFragment (Header blk) (ExtLedgerState blk)
     validatedSuffix =
       let
         validatedChainDiff' = ValidatedDiff.toValidatedFragment validatedChainDiff
       in
         validatedChainDiff' {
-          VF.validatedLedger = mapAnchorlessDbChangelog ledgerState castLedgerTables
-                             . VF.validatedLedger
+          VF.validatedLedger = VF.validatedLedger
                              $ validatedChainDiff'
                             }
 

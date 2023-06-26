@@ -787,7 +787,7 @@ runWithTempRegistry m = withRegistry $ \rr -> do
 -- closed and then the composite resource will be closed. This means there's a
 -- risk of /double freeing/, which can be harmless if anticipated.
 runInnerWithTempRegistry
-  :: forall innerSt st m res a. IOLike m
+  :: forall innerSt st m res a. (IOLike m, HasCallStack)
   => WithTempRegistry innerSt m (a, innerSt, res)
      -- ^ The embedded computation; see ASSUMPTION above
   -> (res -> m Bool)
@@ -918,7 +918,7 @@ allocateTemp alloc free isTransferred = WithTempRegistry $ do
 -- allocating resources in the process that will be transferred to the
 -- returned @st@.
 modifyWithTempRegistry
-  :: forall m st a. IOLike m
+  :: forall m st a. (IOLike m, HasCallStack)
   => m st                                 -- ^ Get the state
   -> (st -> ExitCase st -> m ())          -- ^ Store the new state
   -> StateT st (WithTempRegistry st m) a  -- ^ Modify the state

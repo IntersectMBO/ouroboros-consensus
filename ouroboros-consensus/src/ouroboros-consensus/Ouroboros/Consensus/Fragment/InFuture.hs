@@ -34,6 +34,7 @@ import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -48,7 +49,7 @@ data CheckInFuture m blk = CheckInFuture {
        --
        -- > checkInFuture vf >>= \(af, fut) ->
        -- >   validatedFragment vf == af <=> null fut
-       checkInFuture :: ValidatedFragment (Header blk) (LedgerState blk)
+       checkInFuture :: ValidatedFragment (Header blk) (ExtLedgerState blk)
                      -> m (AnchoredFragment (Header blk), [InFuture m blk])
     }
   deriving NoThunks
@@ -124,7 +125,7 @@ reference cfg (ClockSkew clockSkew) SystemTime{..} = CheckInFuture {
             (VF.validatedFragment validated)
     }
   where
-    st = AS.headAnchor . adcStates . VF.validatedLedger
+    st = ledgerState . AS.headAnchor . adcStates . VF.validatedLedger
 
     checkFragment :: HF.Summary (HardForkIndices blk)
                   -> RelativeTime

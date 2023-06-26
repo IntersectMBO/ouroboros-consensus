@@ -62,6 +62,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isNothing)
 import           Data.Typeable (Typeable)
+import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import           Ouroboros.Consensus.Config
@@ -234,8 +235,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       --
       -- 'run' will not return before this does.
     , llrnRunDataDiffusion ::
-           ResourceRegistry m
-        -> Diffusion.Applications
+           Diffusion.Applications
              addrNTN NodeToNodeVersion   versionDataNTN
              addrNTC NodeToClientVersion versionDataNTC
              m NodeToNodeInitiatorResult
@@ -289,6 +289,7 @@ runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      ( RunNode blk
      , IOLike m, MonadTime m, MonadTimer m
      , Hashable addrNTN, Ord addrNTN, Typeable addrNTN
+     , HasCallStack
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (addrNTN -> CBOR.Encoding)
@@ -389,7 +390,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                         nodeKernel
                                         peerMetrics
 
-          llrnRunDataDiffusion registry apps appsExtra
+          llrnRunDataDiffusion apps appsExtra
   where
     ProtocolInfo
       { pInfoConfig       = cfg
@@ -831,7 +832,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnCustomiseChainDbArgs = id
       , llrnCustomiseNodeKernelArgs
       , llrnRunDataDiffusion =
-          \_reg apps extraApps ->
+          \apps extraApps ->
             stdRunDataDiffusion srnDiffusionTracers
                                 srnDiffusionTracersExtra
                                 srnDiffusionArguments

@@ -110,6 +110,7 @@ openDBInternal
      , HasHardForkHistory blk
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
+     , HasCallStack
      )
   => ChainDbArgs Identity m blk
   -> Bool -- ^ 'True' = Launch background tasks
@@ -247,7 +248,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
 -- | We use 'runInnerWithTempRegistry' for the component databases.
 innerOpenCont ::
-     IOLike m
+     (IOLike m, HasCallStack)
   => (innerDB -> m ())
   -> WithTempRegistry st m (innerDB, st)
   -> WithTempRegistry (ChainDbEnv m blk) m innerDB
