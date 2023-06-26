@@ -176,10 +176,15 @@ jobs:
     - name: Run mempool benchmarks on pull requests
       if: ${{ github.event_name == 'pull_request' }}
       run: |
-        cabal new-run ouroboros-consensus:mempool-bench -- \
-        --timeout=60 --baseline baseline-mempool-benchmarks.csv \
-        --fail-if-slower 20 \
-        +RTS -T
+        if [ -f baseline-mempool-benchmarks.csv ]; then
+          cabal new-run ouroboros-consensus:mempool-bench -- \
+          --timeout=60 --baseline baseline-mempool-benchmarks.csv \
+          --fail-if-slower 20 \
+          +RTS -T
+        else
+          echo "No baseline benchmarks found. This likely happened when adding a new GHC version to the build matrix."
+          echo "Benchmarks comparison skipped."
+        fi
 
     # NB: build the haddocks at the end to avoid unecessary recompilations.
     # We build the haddocks only for one GHC version.
