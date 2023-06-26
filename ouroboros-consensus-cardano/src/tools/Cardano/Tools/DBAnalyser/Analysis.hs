@@ -700,7 +700,7 @@ reproMempoolForge numBlks env = do
           Mempool.getCurrentLedgerState = ledgerState . DbChangelog.current . DbChangelog.anchorlessChangelog <$> IOLike.readTVar ref
         , Mempool.getLedgerTablesAtFor = \pt txs -> do
             let keys = castLedgerTables
-                  $ foldl' (ltliftA2 (<>)) emptyLedgerTables
+                  $ foldl' (<>) emptyLedgerTables
                   $ map getTransactionKeySets txs
             let f = do
                   lgrDb <- anchorlessChangelog <$> IOLike.atomically (IOLike.readTVar ref)

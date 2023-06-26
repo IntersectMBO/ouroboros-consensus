@@ -519,7 +519,7 @@ newLedgerInterface initialLedger = do
   pure (LedgerInterface {
       getCurrentLedgerState = forgetLedgerTables . ldbTip <$> readTVar t
     , getLedgerTablesAtFor  = \pt txs -> do
-        let keys = foldl' (ltliftA2 (<>)) emptyLedgerTables
+        let keys = foldl' (<>) emptyLedgerTables
                  $ map getTransactionKeySets txs
         MockedLedgerDB ti oldReachableTips _ <- atomically $ readTVar t
         if pt == castPoint (getTip ti) -- if asking for tables at the tip of the
