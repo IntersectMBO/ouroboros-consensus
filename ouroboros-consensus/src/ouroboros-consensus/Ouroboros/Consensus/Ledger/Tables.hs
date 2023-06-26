@@ -353,7 +353,6 @@ valuesMKDecoder = do
   Special classes of ledger states
 -------------------------------------------------------------------------------}
 
--- | TODO: make this a type synonym.
 type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
 -- | For some ledger states we won't be defining 'LedgerTables' and instead the
 -- ledger state will be fully stored in memory, as before UTxO-HD. The ledger
