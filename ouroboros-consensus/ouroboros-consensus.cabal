@@ -517,7 +517,7 @@ test-suite consensus-test
     , io-classes
     , io-sim
     , mock-block
-    , mtl
+    ,  mtl
     , nothunks
     , ouroboros-consensus
     , ouroboros-network
