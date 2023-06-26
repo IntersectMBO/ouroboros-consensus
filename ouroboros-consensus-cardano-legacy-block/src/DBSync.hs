@@ -24,7 +24,6 @@ module DBSync (
   ) where
 
 import           Cardano.Ledger.Crypto
-import           Data.Map.Diff.Strict (applyDiff)
 import           Data.SOP.Functors
 import           Data.SOP.Strict
 import           Legacy.Cardano.Block
@@ -51,15 +50,11 @@ reapplyBlock ::
        (ExtLedgerState (LegacyCardanoBlock StandardCrypto))
        (ExtLedgerState (LegacyCardanoBlock StandardCrypto) EmptyMK)
 reapplyBlock cfg block lsb =
-    fmap (stowLedgerTables . applyDiffToTables) res
+    fmap (stowLedgerTables . applyDiffs tables) res
   where
     unstowedLedger = unstowLedgerTables lsb
     tables = projectLedgerTables unstowedLedger
     res = tickThenReapplyLedgerResult cfg block unstowedLedger
-    applyDiffToTables st = zipOverLedgerTables f st tables
-
-    f :: Ord k => DiffMK k v -> ValuesMK k v -> ValuesMK k v
-    f (DiffMK d) (ValuesMK v) = ValuesMK (applyDiff v d)
 
 {-------------------------------------------------------------------------------
   Conversion

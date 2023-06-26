@@ -66,7 +66,6 @@ library
     , cardano-protocol-tpraos       >=1.0.1 && <1.1
     , cardano-slotting
     , containers                    >=0.5   && <0.7
-    , diff-containers
     , mtl                           >=2.2   && <2.3
     , nothunks
     , ouroboros-consensus           ^>=0.7

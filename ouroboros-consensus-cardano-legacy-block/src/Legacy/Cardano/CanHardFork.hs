@@ -79,7 +79,7 @@ type LegacyCardanoHardForkConstraints c = CardanoHardForkConstraints c
 
 instance LegacyCardanoHardForkConstraints c => CanHardFork (LegacyCardanoEras c) where
   hardForkEraTranslation = EraTranslation {
-      translateLedgerState   =
+      translateLedgerState =
           PCons translateLedgerStateByronToShelleyWrapper
         $ PCons translateLedgerStateShelleyToAllegraWrapper
         $ PCons translateLedgerStateAllegraToMaryWrapper
@@ -95,7 +95,7 @@ instance LegacyCardanoHardForkConstraints c => CanHardFork (LegacyCardanoEras c)
         $ PCons translateChainDepStateAcrossShelley'
         $ PCons translateChainDepStateAcrossShelley'
         $ PNil
-    , translateLedgerView    =
+    , crossEraForecast =
           PCons translateLedgerViewByronToShelleyWrapper
         $ PCons translateLedgerViewAcrossShelley'
         $ PCons translateLedgerViewAcrossShelley'
@@ -262,12 +262,12 @@ translateLedgerViewByronToShelleyWrapper ::
      forall c. Crypto c =>
      RequiringBoth
        WrapLedgerConfig
-       (TranslateForecast LedgerState WrapLedgerView)
+       (CrossEraForecaster LedgerState WrapLedgerView)
        (LegacyBlock ByronBlock)
        (LegacyBlock (ShelleyBlock (TPraos c) (ShelleyEra c)))
 translateLedgerViewByronToShelleyWrapper =
     RequireBoth $ \_ (WrapLedgerConfig cfgShelley) ->
-      TranslateForecast (forecast cfgShelley)
+      CrossEraForecaster (forecast cfgShelley)
   where
     -- We ignore the Byron ledger view and create a new Shelley.
     --
@@ -347,7 +347,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   -- them, modifying the reserves accordingly.
                   stowedState = stowLedgerTables
                               . withLedgerTables ls
-                              . ShelleyLedgerTables
+                              . LedgerTables
                               . ValuesMK
                               $ avvms
 
@@ -737,10 +737,10 @@ translateLedgerViewAcrossShelley' ::
      )
   => RequiringBoth
        WrapLedgerConfig
-       (TranslateForecast LedgerState WrapLedgerView)
+       (CrossEraForecaster LedgerState WrapLedgerView)
        (LegacyBlock (ShelleyBlock protoFrom eraFrom))
        (LegacyBlock (ShelleyBlock protoTo eraTo))
 translateLedgerViewAcrossShelley' =
     RequireBoth $ \(WrapLedgerConfig cfgFrom)
                    (WrapLedgerConfig cfgTo) ->
-      TranslateForecast $ forecastAcrossShelley' cfgFrom cfgTo
+      CrossEraForecaster $ forecastAcrossShelley' cfgFrom cfgTo

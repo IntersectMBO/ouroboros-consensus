@@ -46,7 +46,7 @@ instance IsLedger (LedgerState ByronBlock)
            Ticked1 (LedgerState ByronBlock) DiffMK
         -> Ticked1 (LedgerState (LegacyBlock ByronBlock)) DiffMK
       castTickedLedgerState = TickedLegacyLedgerState
-                            . flip withLedgerTablesTicked emptyLedgerTables
+                            . flip withLedgerTables emptyLedgerTables
 
 instance ( ApplyBlock (LedgerState ByronBlock) ByronBlock
          ) => ApplyBlock (LedgerState (LegacyBlock ByronBlock)) (LegacyBlock ByronBlock) where
@@ -68,7 +68,7 @@ instance ( ApplyBlock (LedgerState ByronBlock) ByronBlock
       blk = getLegacyBlock blk0
 
       tst :: Ticked1 (LedgerState ByronBlock) ValuesMK
-      tst = flip withLedgerTablesTicked emptyLedgerTables
+      tst = flip withLedgerTables emptyLedgerTables
           $ getTickedLegacyLedgerState tst0
 
       inner :: Except
@@ -100,7 +100,7 @@ instance ( ApplyBlock (LedgerState ByronBlock) ByronBlock
       blk = getLegacyBlock blk0
 
       tst :: Ticked1 (LedgerState ByronBlock) ValuesMK
-      tst = flip withLedgerTablesTicked emptyLedgerTables
+      tst = flip withLedgerTables emptyLedgerTables
           $ getTickedLegacyLedgerState tst0
 
       inner :: LedgerResult
@@ -117,4 +117,4 @@ instance ( ApplyBlock (LedgerState ByronBlock) ByronBlock
   getBlockKeySets ::
        LegacyBlock ByronBlock
     -> LedgerTables (LedgerState (LegacyBlock ByronBlock)) KeysMK
-  getBlockKeySets = const NoLegacyLedgerTables
+  getBlockKeySets = const trivialLedgerTables

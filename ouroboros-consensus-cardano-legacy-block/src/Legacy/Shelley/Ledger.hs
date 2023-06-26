@@ -139,7 +139,7 @@ instance ( ShelleyCompatible proto era
                 , asoEvents     = STS.EPReturn
                 }
 
-  getBlockKeySets = const NoLegacyLedgerTables
+  getBlockKeySets = const trivialLedgerTables
 
 applyHelper ::
      forall proto m era. (ShelleyCompatible proto era, Monad m)

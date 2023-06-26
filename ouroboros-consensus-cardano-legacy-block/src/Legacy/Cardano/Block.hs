@@ -27,10 +27,9 @@ import           Data.Kind
 import           Data.Proxy
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Strict hiding (shape, tl)
-import           GHC.Generics (Generic)
+import           Data.Void (Void)
 import           GHC.Stack (HasCallStack)
 import           Legacy.LegacyBlock
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Cardano.Block
@@ -93,7 +92,7 @@ instance CanHardFork (LegacyCardanoEras c)
            Ticked1 (LedgerState (HardForkBlock (LegacyCardanoEras c))) DiffMK
         -> Ticked1 (LedgerState (LegacyCardanoBlock c)) DiffMK
       castTickedLedgerState = TickedLegacyLedgerState
-                            . flip withLedgerTablesTicked emptyLedgerTables
+                            . flip withLedgerTables emptyLedgerTables
 
 {-------------------------------------------------------------------------------
   ApplyBlock
@@ -119,7 +118,7 @@ instance CanHardFork (LegacyCardanoEras c)
       blk = getLegacyBlock blk0
 
       tst :: Ticked1 (LedgerState (HardForkBlock (LegacyCardanoEras c))) ValuesMK
-      tst = flip withLedgerTablesTicked emptyLedgerTables
+      tst = flip withLedgerTables emptyLedgerTables
           $ getTickedLegacyLedgerState tst0
 
       inner :: Except
@@ -151,7 +150,7 @@ instance CanHardFork (LegacyCardanoEras c)
       blk = getLegacyBlock blk0
 
       tst :: Ticked1 (LedgerState (HardForkBlock (LegacyCardanoEras c))) ValuesMK
-      tst = flip withLedgerTablesTicked emptyLedgerTables
+      tst = flip withLedgerTables emptyLedgerTables
           $ getTickedLegacyLedgerState tst0
 
       inner :: LedgerResult
@@ -168,16 +167,18 @@ instance CanHardFork (LegacyCardanoEras c)
   getBlockKeySets ::
         LegacyCardanoBlock c
     -> LedgerTables (LedgerState (LegacyCardanoBlock c)) KeysMK
-  getBlockKeySets = const NoLegacyLedgerTables
+  getBlockKeySets = const trivialLedgerTables
 
 {-------------------------------------------------------------------------------
   Ledger tables
 -------------------------------------------------------------------------------}
 
+type instance Key   (LedgerState (HardForkBlock (LegacyCardanoEras c))) = Void
+type instance Value (LedgerState (HardForkBlock (LegacyCardanoEras c))) = Void
+
 instance HasLedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c))) where
-  data instance LedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c))) mk =
-      NoLegacyCardanoLedgerTables
-    deriving (Show, Eq, Generic, NoThunks)
+instance HasLedgerTables (Ticked1 (LedgerState (HardForkBlock (LegacyCardanoEras c)))) where
+instance HasTickedLedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c))) where
 
 instance LedgerTablesAreTrivial (LedgerState (HardForkBlock (LegacyCardanoEras c))) where
   convertMapKind (HardForkLedgerState x) = HardForkLedgerState $
@@ -185,25 +186,21 @@ instance LedgerTablesAreTrivial (LedgerState (HardForkBlock (LegacyCardanoEras c
         (Proxy @(Compose LedgerTablesAreTrivial LedgerState))
         (Flip . convertMapKind . unFlip) x
 
-  trivialLedgerTables = NoLegacyCardanoLedgerTables
-
-instance CanSerializeLedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c)))
-
-instance CanStowLedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c)))
-
-instance HasTickedLedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c))) where
-  withLedgerTablesTicked (TickedHardForkLedgerState x st) NoLegacyCardanoLedgerTables =
+instance All (Compose LedgerTablesAreTrivial (ComposeWithTicked1 LedgerState)) (LegacyCardanoEras c)
+      => LedgerTablesAreTrivial (Ticked1 (LedgerState (HardForkBlock (LegacyCardanoEras c)))) where
+  convertMapKind (TickedHardForkLedgerState x st) =
       TickedHardForkLedgerState x $
         hcmap
-          (Proxy @(And
-                    (Compose HasTickedLedgerTables LedgerState)
-                    (Compose LedgerTablesAreTrivial LedgerState)
-          ))
+          (Proxy @(Compose LedgerTablesAreTrivial (ComposeWithTicked1 LedgerState)))
           ( FlipTickedLedgerState
-          . flip withLedgerTablesTicked trivialLedgerTables
+          . unComposeWithTicked1
+          . convertMapKind
+          . ComposeWithTicked1
           . getFlipTickedLedgerState
           )
           st
+
+instance CanSerializeLedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c)))
 
 {-------------------------------------------------------------------------------
   LedgerTablesCanHardFork
@@ -223,5 +220,5 @@ instance LedgerTablesCanHardFork (LegacyCardanoEras c) where
       injLegacyLedgerTables :: InjectLedgerTables (LegacyCardanoEras c) (LegacyBlock blk)
       injLegacyLedgerTables = InjectLedgerTables {
           applyInjectLedgerTables  = const emptyLedgerTables
-        , applyDistribLedgerTables = const NoLegacyLedgerTables
+        , applyDistribLedgerTables = const trivialLedgerTables
         }

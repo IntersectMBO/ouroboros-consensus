@@ -29,6 +29,7 @@ import           Cardano.Prelude (Bifunctor (..), ByteString, Coercible, Word32)
 import           Data.ByteString.Short (ShortByteString)
 import           Data.Coerce (coerce)
 import           Data.Kind (Type)
+import           Data.Void (Void)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
@@ -243,13 +244,13 @@ instance ( LedgerSupportsMempool blk
          (TickedLedgerState (LegacyBlock blk) TrackingMK,
          Validated (GenTx (LegacyBlock blk)))
   applyTx lcfg toIntervene sl tx tst =
-      bimap (coerce . flip withLedgerTablesTicked emptyLedgerTables) coerce <$>
+      bimap (coerce . flip withLedgerTables emptyLedgerTables) coerce <$>
         applyTx
           (coerce lcfg)
           toIntervene
           sl
           (coerce tx)
-          (flip withLedgerTablesTicked emptyLedgerTables . coerce $ tst)
+          (flip withLedgerTables emptyLedgerTables . coerce $ tst)
 
   reapplyTx ::
        LedgerConfig (LegacyBlock blk)
@@ -260,12 +261,12 @@ instance ( LedgerSupportsMempool blk
          (ApplyTxErr (LegacyBlock blk))
          (TickedLedgerState (LegacyBlock blk) TrackingMK)
   reapplyTx lcfg sl tx tst =
-      coerce . flip withLedgerTablesTicked emptyLedgerTables <$>
+      coerce . flip withLedgerTables emptyLedgerTables <$>
         reapplyTx
           (coerce lcfg)
           sl
           (coerce tx)
-          (flip withLedgerTablesTicked emptyLedgerTables . coerce $ tst)
+          (flip withLedgerTables emptyLedgerTables . coerce $ tst)
 
   txsMaxBytes :: TickedLedgerState (LegacyBlock blk) mk -> Word32
   txsMaxBytes = txsMaxBytes . coerce
@@ -473,7 +474,7 @@ instance QueryLedger blk => QueryLedger (LegacyBlock blk) where
   getQueryKeySets ::
        BlockQuery (LegacyBlock blk) result
     -> LedgerTables (LedgerState (LegacyBlock blk)) KeysMK
-  getQueryKeySets = const NoLegacyLedgerTables
+  getQueryKeySets = const trivialLedgerTables
 
   tableTraversingQuery ::
        BlockQuery (LegacyBlock blk) result
@@ -605,10 +606,13 @@ castHeaderFieldsHeader HeaderFields{..} = HeaderFields{..}
   LedgerState: tables
 -------------------------------------------------------------------------------}
 
-instance HasLedgerTables (LedgerState (LegacyBlock blk)) where
-  data instance LedgerTables (LedgerState (LegacyBlock blk)) mk =
-      NoLegacyLedgerTables
-    deriving (Show, Eq, Generic, NoThunks)
+type instance Key   (LedgerState (LegacyBlock blk)) = Void
+type instance Value (LedgerState (LegacyBlock blk)) = Void
+
+instance HasLedgerTables (LedgerState (LegacyBlock blk))
+instance HasLedgerTables (Ticked1 (LedgerState (LegacyBlock blk)))
+
+instance HasTickedLedgerTables (LedgerState (LegacyBlock blk))
 
 instance LedgerTablesAreTrivial (LedgerState (LegacyBlock blk)) where
   convertMapKind ::
@@ -616,17 +620,12 @@ instance LedgerTablesAreTrivial (LedgerState (LegacyBlock blk)) where
     -> LedgerState (LegacyBlock blk) mk'
   convertMapKind (LegacyLedgerState x) = LegacyLedgerState x
 
-  trivialLedgerTables :: LedgerTables (LedgerState (LegacyBlock blk)) mk
-  trivialLedgerTables = NoLegacyLedgerTables
+instance LedgerTablesAreTrivial (Ticked1 (LedgerState (LegacyBlock blk))) where
+  convertMapKind ::
+       Ticked1 (LedgerState (LegacyBlock blk)) mk
+    -> Ticked1 (LedgerState (LegacyBlock blk)) mk'
+  convertMapKind (TickedLegacyLedgerState x) = TickedLegacyLedgerState x
 
 instance CanSerializeLedgerTables (LedgerState (LegacyBlock blk))
 
 instance CanStowLedgerTables (LedgerState (LegacyBlock blk))
-
-instance HasTickedLedgerTables (LedgerState (LegacyBlock blk)) where
-  withLedgerTablesTicked ::
-       Ticked1 (LedgerState (LegacyBlock blk)) any
-    -> LedgerTables (LedgerState (LegacyBlock blk)) mk
-    -> Ticked1 (LedgerState (LegacyBlock blk)) mk
-  withLedgerTablesTicked (TickedLegacyLedgerState st) NoLegacyLedgerTables =
-      TickedLegacyLedgerState st
