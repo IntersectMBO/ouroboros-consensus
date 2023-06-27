@@ -178,7 +178,7 @@ library byronspec
 
   build-depends:
     , base                       >=4.14  && <4.19
-    , bimap                      >=0.4   && <0.5
+    , bimap                      >=0.4   && <0.6
     , byron-spec-chain
     , byron-spec-ledger
     , cardano-ledger-binary
