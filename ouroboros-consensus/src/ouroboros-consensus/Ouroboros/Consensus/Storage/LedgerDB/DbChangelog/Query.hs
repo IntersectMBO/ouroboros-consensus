@@ -99,7 +99,7 @@ rollbackToPoint pt dblog = do
         ((== pt) . getTip . either id id)
         adcStates
     let ndropped = AS.length adcStates - AS.length vol'
-        diffs'   = mapLedgerTables (trunc ndropped) adcDiffs
+        diffs'   = ltmap (trunc ndropped) adcDiffs
     Exn.assert (ndropped >= 0) $ pure AnchorlessDbChangelog {
           adcLastFlushedSlot
         , adcDiffs  = diffs'
@@ -130,7 +130,7 @@ rollbackToAnchor dblog =
 
     ndropped = AS.length vol
     diffs'   =
-      mapLedgerTables (trunc ndropped) adcDiffs
+      ltmap (trunc ndropped) adcDiffs
 
 trunc ::
      (Ord k, Eq v)
@@ -169,7 +169,8 @@ immutableTipSlot =
 flushableLength :: (HasLedgerTables l, GetTip l) => AnchorlessDbChangelog l -> Word64
 flushableLength chlog =
     (\(Sum x) -> x - fromIntegral (AS.length (adcStates chlog)))
-  . foldLedgerTables f
+  . ltcollapse
+  . ltmap (K2 . f)
   $ adcDiffs chlog
  where
    f :: (Ord k, Eq v)

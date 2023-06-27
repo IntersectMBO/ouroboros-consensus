@@ -132,8 +132,10 @@ getStatistics (LedgerDBView lbsvh dblog _) = do
     seqNo = adcLastFlushedSlot dblog
 
     nInserts = getSum
-            $ foldLedgerTables (numInserts . getSeqDiffMK)
+            $ ltcollapse
+            $ ltmap (K2 . numInserts . getSeqDiffMK)
               diffs
     nDeletes = getSum
-            $ foldLedgerTables (numDeletes . getSeqDiffMK)
+            $ ltcollapse
+            $ ltmap (K2 . numDeletes . getSeqDiffMK)
               diffs

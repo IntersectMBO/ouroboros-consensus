@@ -42,7 +42,6 @@ import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Monoid
-import           Data.Semigroup
 import qualified Data.Set as Set
 import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
@@ -356,9 +355,9 @@ mkDiskLedgerView h@(LedgerDBView lvh ldb queryBatchSize) =
               diffs =
                 maybe
                   id
-                  (zipLedgerTables doDropLTE)
+                  (ltliftA2 doDropLTE)
                   (BackingStore.rqPrev rq)
-                  $ mapLedgerTables prj
+                  $ ltmap prj
                   $ adcDiffs ldb
               -- (1) Ensure that we never delete everything read from disk (ie
               --     if our result is non-empty then it contains something read
@@ -367,11 +366,10 @@ mkDiskLedgerView h@(LedgerDBView lvh ldb queryBatchSize) =
               -- (2) Also, read one additional key, which we will not include in
               --     the result but need in order to know which in-memory
               --     insertions to include.
-              maxDeletes = maybe 0 getMax
-                         $ foldLedgerTables (Just . Max . numDeletesDiffMK) diffs
+              maxDeletes = ltcollapse $ ltmap (K2 . numDeletesDiffMK) diffs
               nrequested = 1 + max (BackingStore.rqCount rq) (1 + maxDeletes)
           values <- BackingStore.bsvhRangeRead lvh (rq{BackingStore.rqCount = nrequested})
-          pure $ zipLedgerTables (doFixupReadResult nrequested) diffs values
+          pure $ ltliftA2 (doFixupReadResult nrequested) diffs values
       )
       (closeLedgerDBView h)
       queryBatchSize
@@ -499,10 +497,10 @@ handleTraversingQuery dlv query =
         loop !prev !acc = do
           extValues <-
             dbReadRange RangeQuery{rqPrev = prev, rqCount = fromIntegral queryBatchSize}
-          if getAll $ foldLedgerTables (All . f) extValues
+          if ltcollapse $ ltmap (K2 . f) extValues
           then pure acc
           else loop
-                (Just $ mapLedgerTables toKeys extValues)
+                (Just $ ltmap toKeys extValues)
                 (comb acc $ partial (stowLedgerTables (st `withLedgerTables` extValues) `withLedgerTables` emptyLedgerTables))
        in
         post <$> loop Nothing mt

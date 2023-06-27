@@ -72,7 +72,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks (ChunkInfo)
 import           Ouroboros.Consensus.Storage.Serialisation (PrefixLen,
                      ReconstructNestedCtxt (..), SizeInBytes)
 import           Ouroboros.Consensus.Ticked (Ticked1)
-import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 
 {-------------------------------------------------------------------------------

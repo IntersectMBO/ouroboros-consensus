@@ -75,15 +75,15 @@ newBackingStoreInitialiser trcr bss =
         limits
     InMemoryBackingStore -> InMemory.newTVarBackingStoreInitialiser
       (InMemoryTrace >$< trcr)
-      (zipLedgerTables lookup_)
+      (ltliftA2 lookup_)
       (\rq values -> case rqPrev rq of
           Nothing   ->
-            mapLedgerTables (rangeRead0_ (rqCount rq))      values
+            ltmap (rangeRead0_ (rqCount rq))      values
           Just keys ->
-            zipLedgerTables (rangeRead_  (rqCount rq)) keys values
+            ltliftA2 (rangeRead_  (rqCount rq)) keys values
       )
-      (zipLedgerTables applyDiff_)
-      (getSum . foldLedgerTables count_)
+      (ltliftA2 applyDiff_)
+      (getSum . ltcollapse . ltmap (K2 . count_))
       valuesMKEncoder
       valuesMKDecoder
   where

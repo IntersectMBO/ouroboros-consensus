@@ -24,16 +24,6 @@ module Ouroboros.Consensus.Ledger.Tables (
   , CanStowLedgerTables (..)
   , HasLedgerTables (..)
   , HasTickedLedgerTables
-    -- * TODO: To be removed
-  , foldLedgerTables
-  , foldLedgerTables2
-  , mapLedgerTables
-  , pureLedgerTables
-  , traverseLedgerTables
-  , zipLedgerTables
-  , zipLedgerTables3
-  , zipLedgerTables3A
-  , zipLedgerTablesA
     -- * @MapKind@s
     -- ** Interface
   , IsMapKind (..)
@@ -69,7 +59,6 @@ import           Data.Kind (Constraint, Type)
 import           Data.Map.Diff.Strict (Diff)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Monoid (Sum (..))
 import           Data.Set (Set)
 import           Data.Void (Void)
 import           GHC.Generics
@@ -79,7 +68,6 @@ import           Ouroboros.Consensus.Ledger.Tables.Common
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (DiffSeq, empty,
                      mapDiffSeq)
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util ((..:), (.:))
 
 {-------------------------------------------------------------------------------
   Basic LedgerState classes
@@ -171,111 +159,6 @@ class CanStowLedgerTables l where
     -> l ValuesMK
   unstowLedgerTables = convertMapKind
 
-{-------------------------------------------------------------------------------
-  To be removed
--------------------------------------------------------------------------------}
-
-pureLedgerTables ::
-     HasLedgerTables l
-  => (forall k v.
-          (Ord k, Eq v)
-       => mk k v
-     )
-  -> LedgerTables l mk
-pureLedgerTables = ltpure
-
-mapLedgerTables ::
-     HasLedgerTables l
-  => (forall k v.
-          (Ord k, Eq v)
-       => mk1 k v
-       -> mk2 k v
-     )
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-mapLedgerTables = ltmap
-
-traverseLedgerTables ::
-      (Applicative f, HasLedgerTables l)
-  => (forall k v .
-          (Ord k, Eq v)
-       =>    mk1 k v
-       -> f (mk2 k v)
-     )
-  ->    LedgerTables l mk1
-  -> f (LedgerTables l mk2)
-traverseLedgerTables = lttraverse
-
-zipLedgerTables ::
-     HasLedgerTables l
-  => (forall k v.
-          (Ord k, Eq v)
-       => mk1 k v
-       -> mk2 k v
-       -> mk3 k v
-     )
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-  -> LedgerTables l mk3
-zipLedgerTables = ltliftA2
-
-zipLedgerTables3 ::
-     HasLedgerTables l
-  => (forall k v.
-          (Ord k, Eq v)
-       => mk1 k v
-       -> mk2 k v
-       -> mk3 k v
-       -> mk4 k v
-     )
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-  -> LedgerTables l mk3
-  -> LedgerTables l mk4
-zipLedgerTables3 = ltliftA3
-
-zipLedgerTablesA ::
-     (Applicative f, HasLedgerTables l)
-  => (forall k v.
-          (Ord k, Eq v)
-       => mk1 k v
-       -> mk2 k v
-       -> f (mk3 k v)
-     )
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-  -> f (LedgerTables l mk3)
-zipLedgerTablesA f = ltsequence .: ltliftA2 (Comp2 .: f)
-
-zipLedgerTables3A ::
-     (Applicative f, HasLedgerTables l)
-  => (forall k v.
-          (Ord k, Eq v)
-       => mk1 k v
-       -> mk2 k v
-       -> mk3 k v
-       -> f (mk4 k v)
-     )
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-  -> LedgerTables l mk3
-  -> f (LedgerTables l mk4)
-zipLedgerTables3A f = ltsequence ..: ltliftA3 (Comp2 ..: f)
-
-foldLedgerTables ::
-      HasLedgerTables l
-  => (forall k v. (Ord k, Eq v) => mk k v -> m)
-  -> LedgerTables l mk
-  -> m
-foldLedgerTables f = ltcollapse . ltliftA (K2 . f)
-
-foldLedgerTables2 ::
-     HasLedgerTables l
-  => (forall k v. (Ord k, Eq v) => mk1 k v -> mk2 k v -> m)
-  -> LedgerTables l mk1
-  -> LedgerTables l mk2
-  -> m
-foldLedgerTables2 f = ltcollapse .: ltliftA2 (K2 .: f)
 
 {-------------------------------------------------------------------------------
   @MapKind@s
@@ -432,8 +315,8 @@ valuesMKEncoder ::
   => LedgerTables l ValuesMK
   -> CBOR.Encoding
 valuesMKEncoder tables =
-       CBOR.encodeListLen (getSum (foldLedgerTables (\_ -> Sum 1) tables))
-    <> foldLedgerTables2 go codecLedgerTables tables
+       CBOR.encodeListLen (ltcollapse $ ltmap (K2 . const 1) tables)
+    <> ltcollapse (ltliftA2 (K2 .: go) codecLedgerTables tables)
   where
     go :: CodecMK k v -> ValuesMK k v -> CBOR.Encoding
     go (CodecMK encK encV _decK _decV) (ValuesMK m) =
@@ -451,11 +334,11 @@ valuesMKDecoder = do
     numTables <- CBOR.decodeListLen
     if numTables == 0
       then
-        return $ pureLedgerTables emptyMK
+        return $ ltpure emptyMK
       else do
         mapLen <- CBOR.decodeMapLen
-        ret    <- traverseLedgerTables (go mapLen) codecLedgerTables
-        Exn.assert (getSum (foldLedgerTables (\_ -> Sum 1) ret) == numTables)
+        ret    <- lttraverse (go mapLen) codecLedgerTables
+        Exn.assert (ltcollapse (ltmap (K2 . const 1) ret) == numTables)
           $ return ret
  where
   go :: Ord k
@@ -470,7 +353,6 @@ valuesMKDecoder = do
   Special classes of ledger states
 -------------------------------------------------------------------------------}
 
--- | TODO: make this a type synonym.
 type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
 -- | For some ledger states we won't be defining 'LedgerTables' and instead the
 -- ledger state will be fully stored in memory, as before UTxO-HD. The ledger

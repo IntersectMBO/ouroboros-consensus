@@ -222,7 +222,7 @@ empty theAnchor =
         changelogLastFlushedState = theAnchor
         , anchorlessChangelog     = AnchorlessDbChangelog {
               adcLastFlushedSlot = pointSlot $ getTip theAnchor
-            , adcDiffs           = pureLedgerTables (SeqDiffMK DS.empty)
+            , adcDiffs           = ltpure (SeqDiffMK DS.empty)
             , adcStates          = AS.Empty theAnchor
             }
       }
