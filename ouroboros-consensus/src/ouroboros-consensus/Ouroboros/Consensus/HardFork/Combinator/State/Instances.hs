@@ -2,11 +2,13 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
@@ -25,6 +27,7 @@ import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Codec.Serialise
+import           Data.Coerce (coerce)
 import           Data.SOP.Classes (Same)
 import           Data.SOP.Strict hiding (shape)
 import qualified Data.SOP.Telescope as Telescope
@@ -60,10 +63,20 @@ instance HSequence HardForkState where
 instance HCollapse HardForkState where
   hcollapse = hcollapse . hmap currentState . Telescope.tip . getHardForkState
 
--- TODO: implement class members. Is this even possible for a telescope?
 instance HTrans HardForkState HardForkState where
-  htrans _ _ = undefined
-  hcoerce    = undefined
+  htrans p t (HardForkState st) = HardForkState $
+      htrans p (\(Current b fx) -> Current b $ t fx) st
+
+  hcoerce ::
+       forall f g xs ys. AllZipN (Prod HardForkState) (LiftedCoercible f g) xs ys
+    => HardForkState f xs
+    -> HardForkState g ys
+  hcoerce (HardForkState st) = HardForkState $
+      htrans
+        (Proxy @(LiftedCoercible f g))
+        (\(Current b fx) -> Current b $ coerce fx)
+        st
+
 type instance Same HardForkState = HardForkState
 
 {-------------------------------------------------------------------------------

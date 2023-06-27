@@ -49,13 +49,13 @@ import           Ouroboros.Consensus.Ledger.Abstract (ApplyBlock, UpdateLedger)
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
                      (CommonProtocolParams (..))
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerCfg,
-                     ExtLedgerState (ExtLedgerState))
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerCfg (..),
+                     ExtLedgerState (..))
 import           Ouroboros.Consensus.Ledger.Inspect (InspectLedger (..),
                      LedgerEvent, castLedgerEvent)
 import           Ouroboros.Consensus.Ledger.Query (ConfigSupportsNode,
-                     DiskLedgerView, QueryLedger (..), ShowQuery,
-                     TraversingQueryHandler (TraversingQueryHandler))
+                     DiskLedgerView (..), QueryLedger (..), ShowQuery,
+                     TraversingQueryHandler (..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr,
                      HasTxId (..), LedgerSupportsMempool (..), TxId,
                      WhetherToIntervene)
@@ -469,7 +469,8 @@ instance QueryLedger blk => QueryLedger (LegacyBlock blk) where
     -> BlockQuery (LegacyBlock blk) result
     -> DiskLedgerView m (ExtLedgerState (LegacyBlock blk))
     -> m result
-  answerBlockQuery _elcfg _bq _dlv = undefined -- TODO
+  answerBlockQuery =
+      error "answerBlockQuery: LegacyBlock does not support ledger queries"
 
   getQueryKeySets ::
        BlockQuery (LegacyBlock blk) result
