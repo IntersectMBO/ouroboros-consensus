@@ -31,7 +31,6 @@ import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (mkHeaderView)
-import           Ouroboros.Consensus.Util ((..:))
 
 {-------------------------------------------------------------------------------
   Ticking
