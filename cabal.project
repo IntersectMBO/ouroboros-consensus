@@ -21,6 +21,7 @@ index-state:
 packages:
   ./ouroboros-consensus
   ./ouroboros-consensus-cardano
+  ./ouroboros-consensus-cardano-legacy-block
   ./ouroboros-consensus-protocol
   ./ouroboros-consensus-diffusion
 
@@ -49,6 +50,9 @@ package ouroboros-consensus
   flags: +asserts
 
 package ouroboros-consensus-cardano
+  flags: +asserts
+
+package ouroboros-consensus-cardano-legacy-block
   flags: +asserts
 
 package ouroboros-consensus-diffusion
