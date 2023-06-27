@@ -48,8 +48,8 @@ instance IsLedger (LedgerState ByronBlock)
       castTickedLedgerState = TickedLegacyLedgerState
                             . flip withLedgerTables emptyLedgerTables
 
-instance ( ApplyBlock (LedgerState ByronBlock) ByronBlock
-         ) => ApplyBlock (LedgerState (LegacyBlock ByronBlock)) (LegacyBlock ByronBlock) where
+instance ApplyBlock (LedgerState ByronBlock) ByronBlock
+      => ApplyBlock (LedgerState (LegacyBlock ByronBlock)) (LegacyBlock ByronBlock) where
   applyBlockLedgerResult ::
        HasCallStack
     => LedgerCfg (LedgerState (LegacyBlock ByronBlock))

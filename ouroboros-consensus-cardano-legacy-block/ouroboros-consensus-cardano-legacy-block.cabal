@@ -68,7 +68,7 @@ library
     , containers                    >=0.5   && <0.7
     , mtl                           >=2.2   && <2.3
     , nothunks
-    , ouroboros-consensus           ^>=0.7
+    , ouroboros-consensus
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-protocol  ^>=0.5
+    , ouroboros-consensus-protocol
     , small-steps
