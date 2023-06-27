@@ -595,8 +595,8 @@ executable beacon
     , base
     , bytestring
     , cassava
-    , Chart
-    , Chart-cairo
+    , Chart              >=1.9
+    , Chart-cairo        >=1.9
     , containers
     , directory
     , extra
