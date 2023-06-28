@@ -4,6 +4,7 @@ The following is a set of guidelines for contributing to the Consensus component
 of Cardano. If you have suggestions on how to improve this document, please feel
 free to [propose changes](#contributing-to-the-code) to it in a pull request.
 Bear in mind that the document should remain simple.
+See [the quick reference section](#quick-reference) if you are in a hurry.
 
 # Documentation
 
@@ -127,6 +128,13 @@ contributing to the Consensus code base. Please take some time to go through
 them. We do not expect newcomers to adhere to these guidelines perfectly, and we
 will guide you through the process when reviewing your pull request.
 
+## Quick reference
+
+This section contain guidelines on what to check when making a pull request.
+
+- When bumping version bounds on the dependencies *it is not necessary* to increase the package version number. See [this section](#updating-the-dependencies-bounds).
+- When you want to create a changelog entry, follow [this and the following section](docs/website/contents/for-developers/ReleaseProcess.md#installing-scriv).
+
 ## Following our git process
 
 Our [git process](docs/website/contents/for-developers/GitProcess.md) describes the `git` practices we
@@ -193,7 +201,7 @@ When creating a pull-request (PR), it is **crucial** that the PR:
 
 Our Haskell packages come from two package repositories:
 - Hackage
-- [CHaP](https://github.com/input-output-hk/cardano-haskell-packages) (which is essentially another Hackage)
+- [CHaP][chap] (which is essentially another Hackage)
 
 The `index-state` of each repository is pinned to a particular time in
 `cabal.project`.  This tells Cabal to treat the repository as if it was
@@ -228,6 +236,10 @@ error: Unknown index-state 2021-08-08T00:00:00Z, the latest index-state I know a
 The `index-state` of the tools is pinned in `./nix/tools.nix` to ensure that an
 incompatible change in the set of packages available in Hackage doesn't break
 the shell. From time to time, this `index-state` should be updated manually.
+
+## Updating the dependencies bounds
+
+Sometimes, when creating pull requests to [CHaP][chap], it is desirable to loose/tighten certain dependencies bounds via a revision. If you do so for a Consensus package, please first open a PR to Consensus mirroring the change in CHaP; but do not increment the version number of the Consensus package.
 
 ### Use of `source-repository-package`s
 
@@ -316,3 +328,4 @@ handbook](https://github.com/input-output-hk/cardano-engineering-handbook/blob/m
 code of conduct.
 
 [haddock-site]: https://haskell-haddock.readthedocs.io/en/latest/
+[chap]: https://github.com/input-output-hk/cardano-haskell-packages
