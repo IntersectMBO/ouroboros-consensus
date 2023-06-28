@@ -605,6 +605,9 @@ executable beacon
     , vector
     , vector-algorithms
 
+  if os(windows)
+    buildable: False
+
 test-suite tools-test
   import:         common-test
   type:           exitcode-stdio-1.0
