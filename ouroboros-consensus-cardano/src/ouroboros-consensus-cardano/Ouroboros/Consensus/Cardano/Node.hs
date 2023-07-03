@@ -522,7 +522,7 @@ pattern CardanoNodeToClientVersion12 =
       :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
       :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
       :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
-      :* EraNodeToClientEnabled ShelleyNodeToClientVersion7
+      :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
       :* Nil
       )
 
