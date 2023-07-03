@@ -9,12 +9,16 @@ There are also test-suites for each of the block definitions.
 
 # Consensus DB tools
 
-This package also contains two executables:
+This package also contains a few executables:
 
 * `app/db-analyser.hs`: performs different analyses on a ChainDB, for
   performance measurements or ensuring validity.
 
-* `app/db-synthesizer`: builds a chain, to be used with benchmarking purposes.
+* `app/db-synthesizer.hs`: builds a chain, to be used with benchmarking purposes.
+
+* `app/db-truncater.hs`: truncate an immutable DB to a specific block/slot number.
+
+* `app/immdb-server.hs`: serve an immutable DB via ChainSync and BlockFetch.
 
 NB: our top level `cabal.project` enables assertions in both our local packages
 and the ones we depend on. If you build these tools from this repository, it is
@@ -257,5 +261,21 @@ cabal run immdb-server -- \
   --db /path/to/db/immutable/ \
   --config /path/to/cardano/config.json
 ```
+It also accepts a `--port` argument; if unspecified, it will serve on port 3001.
+
+Currently, the ImmDB server has very sparse log output, i.e. it will only trace handshakes and exceptions.
 
 The ChainSync miniprotocol will terminate with an exception when it receives a `MsgRequestNext` after the immutable tip.
+
+To point a node to a running ImmDB server, use a topology file like
+```json
+{
+  "Producers": [
+    {
+      "addr": "127.0.0.1",
+      "port": 3001,
+      "valency": 1
+    }
+  ]
+}
+```

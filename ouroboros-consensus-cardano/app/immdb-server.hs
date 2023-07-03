@@ -46,6 +46,7 @@ optsParser =
         [ long "port"
         , help "Port to serve on"
         , value 3001
+        , showDefault
         ]
       configFile <- strOption $ mconcat
         [ long "config"
