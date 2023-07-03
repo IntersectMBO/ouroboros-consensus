@@ -44,6 +44,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , BlockToAdd (..)
   , BlocksToAdd
   , addBlockToAdd
+  , closeBlocksToAdd
   , getBlockToAdd
   , newBlocksToAdd
     -- * Trace types
@@ -61,6 +62,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   ) where
 
 import           Control.Tracer
+import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Set (Set)
@@ -77,8 +79,8 @@ import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
-                     ChainDbError (..), ChainType, InvalidBlockReason,
-                     StreamFrom, StreamTo, UnknownRange)
+                     AddBlockResult (..), ChainDbError (..), ChainType,
+                     InvalidBlockReason, StreamFrom, StreamTo, UnknownRange)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB',
@@ -446,7 +448,7 @@ data BlockToAdd m blk = BlockToAdd
   , blockToAdd            :: !blk
   , varBlockWrittenToDisk :: !(StrictTMVar m Bool)
     -- ^ Used for the 'blockWrittenToDisk' field of 'AddBlockPromise'.
-  , varBlockProcessed     :: !(StrictTMVar m (Point blk))
+  , varBlockProcessed     :: !(StrictTMVar m (AddBlockResult blk))
     -- ^ Used for the 'blockProcessed' field of 'AddBlockPromise'.
   }
 
@@ -487,6 +489,15 @@ addBlockToAdd tracer (BlocksToAdd queue) punish blk = do
 -- queue is empty.
 getBlockToAdd :: IOLike m => BlocksToAdd m blk -> m (BlockToAdd m blk)
 getBlockToAdd (BlocksToAdd queue) = atomically $ readTBQueue queue
+
+-- | Flush the 'BlocksToAdd' queue and notify the waiting threads.
+--
+closeBlocksToAdd :: IOLike m => BlocksToAdd m blk -> STM m ()
+closeBlocksToAdd (BlocksToAdd queue) = do
+  as <- flushTBQueue queue
+  traverse_ (\a -> tryPutTMVar (varBlockProcessed a)
+                              (FailedToAddBlock "Queue flushed"))
+            as
 
 {-------------------------------------------------------------------------------
   Trace types

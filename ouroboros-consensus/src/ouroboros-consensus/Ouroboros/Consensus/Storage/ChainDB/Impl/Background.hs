@@ -57,7 +57,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..))
+import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockResult (..),
+                     BlockComponent (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
                      (addBlockSync)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
@@ -531,7 +532,16 @@ addBlockRunner
 addBlockRunner cdb@CDB{..} = forever $ do
     let trace = traceWith cdbTracer . TraceAddBlockEvent
     trace $ PoppedBlockFromQueue RisingEdge
-    blkToAdd <- getBlockToAdd cdbBlocksToAdd
-    trace $ PoppedBlockFromQueue $ FallingEdgeWith $
-      blockRealPoint $ blockToAdd blkToAdd
-    addBlockSync cdb blkToAdd
+    -- if the `addBlockSync` does not complete because it was killed by an async
+    -- exception (or it errored), notify the blocked thread
+    bracketOnError (getBlockToAdd cdbBlocksToAdd)
+                   (\blkToAdd -> atomically $ do
+                     _ <- tryPutTMVar (varBlockWrittenToDisk blkToAdd)
+                                     False
+                     _ <- tryPutTMVar (varBlockProcessed blkToAdd)
+                                     (FailedToAddBlock "Failed to add block synchronously")
+                     closeBlocksToAdd cdbBlocksToAdd)
+                   (\blkToAdd -> do
+                     trace $ PoppedBlockFromQueue $ FallingEdgeWith $
+                             blockRealPoint $ blockToAdd blkToAdd
+                     addBlockSync cdb blkToAdd)

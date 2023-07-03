@@ -9,6 +9,7 @@
 module Ouroboros.Consensus.Byron.Node (
     PBftSignatureThreshold (..)
   , ProtocolParamsByron (..)
+  , blockForgingByron
   , byronBlockForging
   , defaultPBftSignatureThreshold
   , mkByronConfig
@@ -149,6 +150,15 @@ mkPBftCanBeLeader (ByronLeaderCredentials sk cert nid _) = PBftCanBeLeader {
     , pbftCanBeLeaderDlgCert    = cert
     }
 
+blockForgingByron :: Monad m
+                  => ProtocolParamsByron
+                  -> [BlockForging m ByronBlock]
+blockForgingByron ProtocolParamsByron { byronLeaderCredentials      = mLeaderCreds
+                                      , byronMaxTxCapacityOverrides = maxTxCapacityOverrides
+                                      } =
+            byronBlockForging maxTxCapacityOverrides
+            <$> maybeToList mLeaderCreds
+
 {-------------------------------------------------------------------------------
   ProtocolInfo
 -------------------------------------------------------------------------------}
@@ -168,17 +178,13 @@ data ProtocolParamsByron = ProtocolParamsByron {
     , byronMaxTxCapacityOverrides :: Mempool.TxOverrides ByronBlock
     }
 
-protocolInfoByron ::
-     forall m. Monad m
-  => ProtocolParamsByron
-  -> ProtocolInfo m ByronBlock
+protocolInfoByron :: ProtocolParamsByron
+                  -> ProtocolInfo ByronBlock
 protocolInfoByron ProtocolParamsByron {
                       byronGenesis                = genesisConfig
                     , byronPbftSignatureThreshold = mSigThresh
                     , byronProtocolVersion        = pVer
                     , byronSoftwareVersion        = sVer
-                    , byronLeaderCredentials      = mLeaderCreds
-                    , byronMaxTxCapacityOverrides = maxTxCapacityOverrides
                     } =
     ProtocolInfo {
         pInfoConfig = TopLevelConfig {
@@ -197,10 +203,6 @@ protocolInfoByron ProtocolParamsByron {
             ledgerState = initByronLedgerState genesisConfig Nothing
           , headerState = genesisHeaderState S.empty
           }
-      , pInfoBlockForging =
-            return
-          $ fmap (byronBlockForging maxTxCapacityOverrides)
-          $ maybeToList mLeaderCreds
       }
   where
     compactedGenesisConfig = compactGenesisConfig genesisConfig

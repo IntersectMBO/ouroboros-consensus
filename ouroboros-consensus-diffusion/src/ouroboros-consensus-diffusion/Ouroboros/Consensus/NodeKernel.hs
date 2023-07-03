@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns          #-}
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE DerivingVia           #-}
@@ -26,18 +27,21 @@ module Ouroboros.Consensus.NodeKernel (
 
 
 
+import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import           Control.DeepSeq (force)
 import           Control.Monad
 import           Control.Monad.Except
 import           Control.Tracer
 import           Data.Bifunctor (second)
 import           Data.Data (Typeable)
+import           Data.Foldable (traverse_)
 import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map.Strict (Map)
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Proxy
 import qualified Data.Text as Text
+import           Data.Void (Void)
 import           Ouroboros.Consensus.Block hiding (blockMatchesHeader)
 import qualified Ouroboros.Consensus.Block as Block
 import           Ouroboros.Consensus.BlockchainTime
@@ -54,7 +58,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as 
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
+import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockResult (..),
+                     ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
@@ -111,6 +116,12 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
 
       -- | The node's tracers
     , getTracers             :: Tracers m (ConnectionId addrNTN) addrNTC blk
+
+      -- | Set block forging
+      --
+      -- When set with the empty list '[]' block forging will be disabled.
+      --
+    , setBlockForging        :: [BlockForging m blk] -> m ()
     }
 
 -- | Arguments required when initializing a node
@@ -122,7 +133,6 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , chainDB                 :: ChainDB m blk
     , initChainDB             :: StorageConfig blk -> InitChainDB m blk -> m ()
     , blockFetchSize          :: Header blk -> SizeInBytes
-    , blockForging            :: [BlockForging m blk]
     , mempoolCapacityOverride :: MempoolCapacityBytesOverride
     , miniProtocolParameters  :: MiniProtocolParameters
     , blockFetchConfiguration :: BlockFetchConfiguration
@@ -140,15 +150,17 @@ initNodeKernel
     => NodeKernelArgs m addrNTN addrNTC blk
     -> m (NodeKernel m addrNTN addrNTC blk)
 initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
-                                   , blockForging, chainDB, initChainDB
+                                   , chainDB, initChainDB
                                    , blockFetchConfiguration
                                    } = do
-
+    -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
+    blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
     st <- initInternalState args
 
-    mapM_ (forkBlockForging st) blockForging
+    void $ forkLinkedThread registry "NodeKernel.blockForging" $
+                            blockForgingController st (LazySTM.takeTMVar blockForgingVar)
 
     let IS { blockFetchInterface, fetchClientRegistry, varCandidates,
              peerSharingRegistry, mempool } = st
@@ -172,7 +184,20 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getNodeCandidates      = varCandidates
       , getPeerSharingRegistry = peerSharingRegistry
       , getTracers             = tracers
+      , setBlockForging        = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
       }
+  where
+    blockForgingController :: InternalState m remotePeer localPeer blk
+                           -> STM m [BlockForging m blk]
+                           -> m Void
+    blockForgingController st getBlockForging = go []
+      where
+        go :: [Thread m Void] -> m Void
+        go !forgingThreads = do
+          blockForging <- atomically getBlockForging
+          traverse_ cancelThread forgingThreads
+          blockForging' <- traverse (forkBlockForging st) blockForging
+          go blockForging'
 
 {-------------------------------------------------------------------------------
   Internal node components
@@ -239,10 +264,9 @@ forkBlockForging
        (IOLike m, RunNode blk)
     => InternalState m addrNTN addrNTC blk
     -> BlockForging m blk
-    -> m ()
+    -> m (Thread m Void)
 forkBlockForging IS{..} blockForging =
-      void
-    $ forkLinkedWatcher registry threadLabel
+    forkLinkedWatcher registry threadLabel
     $ knownSlotWatcher btime
     $ withEarlyExit_ . go
   where
@@ -399,30 +423,38 @@ forkBlockForging IS{..} blockForging =
 
         -- Add the block to the chain DB
         let noPunish = InvalidBlockPunishment.noPunishment   -- no way to punish yourself
-        result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
-        -- Block until we have processed the block
-        curTip <- lift $ atomically $ ChainDB.blockProcessed result
+        -- Make sure that if an async exception is thrown while a block is
+        -- added to the chain db, we will remove txs from the mempool.
 
-        -- Check whether we adopted our block
-        when (curTip /= blockPoint newBlock) $ do
-          isInvalid <- lift $ atomically $
-            ($ blockHash newBlock) . forgetFingerprint <$>
-            ChainDB.getIsInvalidBlock chainDB
-          case isInvalid of
-            Nothing ->
-              trace $ TraceDidntAdoptBlock currentSlot newBlock
-            Just reason -> do
-              trace $ TraceForgedInvalidBlock currentSlot newBlock reason
-              -- We just produced a block that is invalid according to the
-              -- ledger in the ChainDB, while the mempool said it is valid.
-              -- There is an inconsistency between the two!
-              --
-              -- Remove all the transactions in that block, otherwise we'll
-              -- run the risk of forging the same invalid block again. This
-              -- means that we'll throw away some good transactions in the
-              -- process.
-              lift $ removeTxs mempool (map (txId . txForgetValidated) txs)
-          exitEarly
+        -- 'addBlockAsync' is a non-blocking action, so `mask_` would suffice,
+        -- but the finalizer is a blocking operation, hence we need to use
+        -- 'uninterruptibleMask_' to make sure that async exceptions do not
+        -- interrupt it.
+        uninterruptibleMask_ $ do
+          result <- lift $ ChainDB.addBlockAsync chainDB noPunish newBlock
+          -- Block until we have processed the block
+          mbCurTip <- lift $ atomically $ ChainDB.blockProcessed result
+
+          -- Check whether we adopted our block
+          when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $ do
+            isInvalid <- lift $ atomically $
+              ($ blockHash newBlock) . forgetFingerprint <$>
+              ChainDB.getIsInvalidBlock chainDB
+            case isInvalid of
+              Nothing ->
+                trace $ TraceDidntAdoptBlock currentSlot newBlock
+              Just reason -> do
+                trace $ TraceForgedInvalidBlock currentSlot newBlock reason
+                -- We just produced a block that is invalid according to the
+                -- ledger in the ChainDB, while the mempool said it is valid.
+                -- There is an inconsistency between the two!
+                --
+                -- Remove all the transactions in that block, otherwise we'll
+                -- run the risk of forging the same invalid block again. This
+                -- means that we'll throw away some good transactions in the
+                -- process.
+                lift $ removeTxs mempool (map (txId . txForgetValidated) txs)
+            exitEarly
 
         -- We successfully produced /and/ adopted a block
         --

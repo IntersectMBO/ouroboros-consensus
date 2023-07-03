@@ -18,7 +18,6 @@ import qualified Cardano.Chain.Block as CC.Block
 import qualified Cardano.Chain.Update as CC.Update
 import           Codec.CBOR.Write (toLazyByteString)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Functor.Identity
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Config
@@ -93,7 +92,7 @@ prop_detectCorruption_RegularBlock (RegularBlock blk) =
 testCfg :: TopLevelConfig ByronBlock
 testCfg = pInfoConfig protocolInfo
   where
-    protocolInfo :: ProtocolInfo Identity ByronBlock
+    protocolInfo :: ProtocolInfo ByronBlock
     protocolInfo =
       protocolInfoByron $ ProtocolParamsByron {
           byronGenesis                = CC.dummyConfig

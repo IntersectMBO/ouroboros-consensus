@@ -294,9 +294,9 @@ mkCardanoProtocolInfo ::
   -> SL.ConwayGenesis StandardCrypto
   -> Nonce
   -> NP ShelleyTransitionArguments (CardanoShelleyEras StandardCrypto)
-  -> ProtocolInfo IO (CardanoBlock StandardCrypto)
+  -> ProtocolInfo (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlonzo genesisConway initialNonce hardForkTriggers =
-    protocolInfoCardano
+    fst $ protocolInfoCardano @_ @IO
       ProtocolParamsByron {
           byronGenesis                = genesisByron
         , byronPbftSignatureThreshold = signatureThreshold

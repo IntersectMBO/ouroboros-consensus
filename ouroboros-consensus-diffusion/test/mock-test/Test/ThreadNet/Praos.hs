@@ -14,7 +14,7 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Mock.Ledger
 import           Ouroboros.Consensus.Mock.Node ()
 import           Ouroboros.Consensus.Mock.Node.Praos (MockPraosBlock,
-                     protocolInfoPraos)
+                     blockForgingPraos, protocolInfoPraos)
 import           Ouroboros.Consensus.Mock.Protocol.Praos
 import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes), enumCoreNodes)
@@ -141,15 +141,16 @@ prop_simple_praos_convergence TestSetup
 
     testOutput@TestOutput{testOutputNodes} =
         runTestNetwork testConfig testConfigB TestConfigMB
-            { nodeInfo = \nid -> plainTestNodeInitialization $
-                                    protocolInfoPraos
-                                      numCoreNodes
-                                      nid
-                                      params
-                                      (HardFork.defaultEraParams
-                                        k
-                                        slotLength)
-                                      setupInitialNonce
-                                      evolvingStake
+            { nodeInfo = \nid -> plainTestNodeInitialization
+                                  (protocolInfoPraos
+                                    numCoreNodes
+                                    nid
+                                    params
+                                    (HardFork.defaultEraParams
+                                       k
+                                       slotLength)
+                                    setupInitialNonce
+                                    evolvingStake)
+                                  (blockForgingPraos numCoreNodes nid)
             , mkRekeyM = Nothing
             }

@@ -222,7 +222,9 @@ protocolInfoShelley ::
       )
   => ProtocolParamsShelleyBased (ShelleyEra c)
   -> ProtocolParamsShelley c
-  -> ProtocolInfo m (ShelleyBlock (TPraos c)(ShelleyEra c) )
+  -> ( ProtocolInfo (ShelleyBlock (TPraos c)(ShelleyEra c) )
+     , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
+     )
 protocolInfoShelley protocolParamsShelleyBased
                     ProtocolParamsShelley {
                         shelleyProtVer                = protVer
@@ -246,7 +248,9 @@ protocolInfoTPraosShelleyBased ::
   -> (SL.AdditionalGenesisConfig era, Core.TranslationContext era)
   -> SL.ProtVer
   -> Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
-  -> ProtocolInfo m     (ShelleyBlock (TPraos c) era)
+  -> ( ProtocolInfo (ShelleyBlock (TPraos c) era)
+     , m [BlockForging m (ShelleyBlock (TPraos c) era)]
+     )
 protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                              shelleyBasedGenesis           = genesis
                            , shelleyBasedInitialNonce      = initialNonce
@@ -256,14 +260,14 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                          protVer
                          maxTxCapacityOverrides =
     assertWithMsg (validateGenesis genesis) $
-    ProtocolInfo {
+    ( ProtocolInfo {
         pInfoConfig       = topLevelConfig
       , pInfoInitLedger   = initExtLedgerState
-      , pInfoBlockForging =
-          traverse
-            (shelleyBlockForging tpraosParams maxTxCapacityOverrides)
-            credentialss
       }
+    , traverse
+        (shelleyBlockForging tpraosParams maxTxCapacityOverrides)
+        credentialss
+    )
   where
     maxMajorProtVer :: MaxMajorProtVer
     maxMajorProtVer = MaxMajorProtVer $ SL.pvMajor protVer

@@ -33,6 +33,7 @@ import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import           Data.Void (Void)
+import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano.CanHardFork
                      (ShelleyPartialLedgerConfig (..), forecastAcrossShelley,
                      translateChainDepStateAcrossShelley)
@@ -228,7 +229,9 @@ protocolInfoShelleyBasedHardFork ::
   -> SL.ProtVer
   -> SL.TranslationContext era1
   -> ProtocolTransitionParamsShelleyBased era2
-  -> ProtocolInfo m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
+  -> ( ProtocolInfo      (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
+     , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
+     )
 protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
                                  protVer1
                                  protVer2
@@ -237,11 +240,13 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
     protocolInfoBinary
       -- Era 1
       protocolInfo1
+      blockForging1
       eraParams1
       tpraosParams
       toPartialLedgerConfig1
       -- Era 2
       protocolInfo2
+      blockForging2
       eraParams2
       tpraosParams
       toPartialLedgerConfig2
@@ -257,8 +262,9 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
     genesis :: SL.ShelleyGenesis (EraCrypto era1)
     genesis = shelleyBasedGenesis
 
-    protocolInfo1 :: ProtocolInfo m (ShelleyBlock proto1 era1)
-    protocolInfo1 =
+    protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
+    blockForging1 :: m [BlockForging m (ShelleyBlock proto1 era1)]
+    (protocolInfo1, blockForging1) =
         protocolInfoTPraosShelleyBased
           protocolParamsShelleyBased
           ((), transCtx1)
@@ -283,8 +289,9 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
 
     -- Era 2
 
-    protocolInfo2 :: ProtocolInfo m (ShelleyBlock proto2 era2)
-    protocolInfo2 =
+    protocolInfo2 :: ProtocolInfo (ShelleyBlock proto2 era2)
+    blockForging2 :: m [BlockForging m (ShelleyBlock proto2 era2)]
+    (protocolInfo2, blockForging2) =
         protocolInfoTPraosShelleyBased
           ProtocolParamsShelleyBased {
               shelleyBasedGenesis = genesis

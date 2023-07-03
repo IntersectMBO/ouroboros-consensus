@@ -1,6 +1,7 @@
 -- | Test the Praos chain selection rule but with explicit leader schedule
 module Ouroboros.Consensus.Mock.Node.PraosRule (
     MockPraosRuleBlock
+  , blockForgingPraosRule
   , protocolInfoPraosRule
   ) where
 
@@ -8,6 +9,7 @@ import           Cardano.Crypto.KES
 import           Cardano.Crypto.VRF
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.HeaderValidation
@@ -21,14 +23,13 @@ import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 
 type MockPraosRuleBlock = SimplePraosRuleBlock SimpleMockCrypto
 
-protocolInfoPraosRule :: Monad m
-                      => NumCoreNodes
+protocolInfoPraosRule :: NumCoreNodes
                       -> CoreNodeId
                       -> PraosParams
                       -> HardFork.EraParams
                       -> LeaderSchedule
                       -> PraosEvolvingStake
-                      -> ProtocolInfo m MockPraosRuleBlock
+                      -> ProtocolInfo MockPraosRuleBlock
 protocolInfoPraosRule numCoreNodes
                       nid
                       params
@@ -58,7 +59,6 @@ protocolInfoPraosRule numCoreNodes
         { ledgerState = genesisSimpleLedgerState addrDist
         , headerState = genesisHeaderState ()
         }
-    , pInfoBlockForging = return [simpleBlockForging () forgePraosRuleExt]
     }
   where
     addrDist :: AddrDist
@@ -68,3 +68,6 @@ protocolInfoPraosRule numCoreNodes
     verKeys = Map.fromList [ (nid', (NeverUsedVerKeyKES, NeverUsedVerKeyVRF))
                            | nid' <- enumCoreNodes numCoreNodes
                            ]
+
+blockForgingPraosRule :: Monad m => [BlockForging m MockPraosRuleBlock]
+blockForgingPraosRule = [simpleBlockForging () forgePraosRuleExt]

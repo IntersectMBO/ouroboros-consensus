@@ -58,7 +58,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
-                     BlockComponent (..), ChainType (..),
+                     AddBlockResult (..), BlockComponent (..), ChainType (..),
                      InvalidBlockReason (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
@@ -342,7 +342,7 @@ addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
     -- 'AddBlockPromise' with the given tip.
     deliverProcessed :: Point blk -> m ()
     deliverProcessed tip = atomically $
-        putTMVar varBlockProcessed tip
+        putTMVar varBlockProcessed (SuccesfullyAddedBlock tip)
 
 -- | Return 'True' when the given header should be ignored when adding it
 -- because it is too old, i.e., we wouldn't be able to switch to a chain
