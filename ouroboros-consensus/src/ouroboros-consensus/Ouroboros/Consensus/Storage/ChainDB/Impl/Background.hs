@@ -57,8 +57,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
-                     AddBlockResult (..))
+import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockResult (..),
+                     BlockComponent (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
                      (addBlockSync)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB

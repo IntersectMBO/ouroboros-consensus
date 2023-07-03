@@ -58,8 +58,8 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
-                     BlockComponent (..), ChainType (..),
-                     InvalidBlockReason (..), AddBlockResult (..))
+                     AddBlockResult (..), BlockComponent (..), ChainType (..),
+                     InvalidBlockReason (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment

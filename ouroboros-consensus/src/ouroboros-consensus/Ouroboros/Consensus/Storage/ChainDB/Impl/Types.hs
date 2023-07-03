@@ -79,8 +79,8 @@ import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
-                     ChainDbError (..), ChainType, InvalidBlockReason,
-                     AddBlockResult (..), StreamFrom, StreamTo, UnknownRange)
+                     AddBlockResult (..), ChainDbError (..), ChainType,
+                     InvalidBlockReason, StreamFrom, StreamTo, UnknownRange)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB',

@@ -58,8 +58,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as 
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB,
-                     AddBlockResult (..))
+import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockResult (..),
+                     ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)

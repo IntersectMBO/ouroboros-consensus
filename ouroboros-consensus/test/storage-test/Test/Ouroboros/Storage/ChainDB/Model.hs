@@ -101,9 +101,9 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.MockChainSel
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
-                     BlockComponent (..), ChainDbError (..),
-                     InvalidBlockReason (..), IteratorResult (..),
-                     AddBlockResult (..), StreamFrom (..), StreamTo (..),
+                     AddBlockResult (..), BlockComponent (..),
+                     ChainDbError (..), InvalidBlockReason (..),
+                     IteratorResult (..), StreamFrom (..), StreamTo (..),
                      UnknownRange (..), validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
 import           Ouroboros.Consensus.Storage.LedgerDB

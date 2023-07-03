@@ -30,9 +30,9 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
                      tickChainDepState)
-import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB (ChainDB,
-                     AddBlockResult (..), addBlockAsync, blockProcessed,
-                     getCurrentChain, getPastLedger)
+import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+                     (AddBlockResult (..), ChainDB, addBlockAsync,
+                     blockProcessed, getCurrentChain, getPastLedger)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
                      (noPunishment)
 import           Ouroboros.Consensus.Util.IOLike (atomically)
