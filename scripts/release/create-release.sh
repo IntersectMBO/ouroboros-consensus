@@ -8,7 +8,7 @@ function increment_version {
   local array=($(echo "$1" | tr $delimiter '\n'))
   array[$2]=$((array[$2]+1))
   for i in $(seq $(($2 + 1)) 3); do
-    array[$i]=0
+    array[i]=0
   done
   echo $(local IFS=$delimiter ; echo "${array[*]}")
 }
@@ -33,29 +33,29 @@ if [[ $(ls ouroboros-consensus/changelog.d ouroboros-consensus-cardano/changelog
     exit 1
 fi
 
-consensus_last_version=$(last_version ouroboros-consensus)
-protocol_last_version=$(last_version ouroboros-consensus-protocol)
-cardano_last_version=$(last_version ouroboros-consensus-cardano)
-diffusion_last_version=$(last_version ouroboros-consensus-diffusion)
+consensus_last_version="$(last_version ouroboros-consensus)"
+protocol_last_version="$(last_version ouroboros-consensus-protocol)"
+cardano_last_version="$(last_version ouroboros-consensus-cardano)"
+diffusion_last_version="$(last_version ouroboros-consensus-diffusion)"
 
 echo "Preparing a release for:"
 if [[ $(ls ouroboros-consensus/changelog.d | wc -l) != 1 ]]; then
-    consensus_new_version=$(compute_new_version ouroboros-consensus $consensus_last_version)
+    consensus_new_version="$(compute_new_version ouroboros-consensus $consensus_last_version)"
     echo "- consensus $consensus_last_version -> $consensus_new_version"
 fi
 
 if [[ $(ls ouroboros-consensus-protocol/changelog.d | wc -l) != 1 ]]; then
-    protocol_new_version=$(compute_new_version ouroboros-consensus-protocol $protocol_last_version)
+    protocol_new_version="$(compute_new_version ouroboros-consensus-protocol $protocol_last_version)"
     echo "- protocol  $protocol_last_version -> $protocol_new_version"
 fi
 
 if [[ $(ls ouroboros-consensus-cardano/changelog.d | wc -l) != 1 ]]; then
-    cardano_new_version=$(compute_new_version ouroboros-consensus-cardano $cardano_last_version)
+    cardano_new_version="$(compute_new_version ouroboros-consensus-cardano $cardano_last_version)"
     echo "- cardano   $cardano_last_version -> $cardano_new_version"
 fi
 
 if [[ $(ls ouroboros-consensus-diffusion/changelog.d | wc -l) != 1 ]]; then
-    diffusion_new_version=$(compute_new_version ouroboros-consensus-diffusion $diffusion_last_version)
+    diffusion_new_version="$(compute_new_version ouroboros-consensus-diffusion $diffusion_last_version)"
     echo "- diffusion $diffusion_last_version -> $diffusion_new_version"
 fi
 
@@ -79,13 +79,13 @@ if [[ -z $cardano_new_version && -z $consensus_new_version && -z $protocol_new_v
 fi
 
 branch="rel/"
-branch+="$(release_num "co" $consensus_new_version)"
-branch+="$(release_num "p" $protocol_new_version)"
-branch+="$(release_num "ca" $cardano_new_version)"
-branch+="$(release_num "d" $diffusion_new_version)"
-printf "Creating branch %s\n\n" ${branch%?}
+branch+="$(release_num "co" "$consensus_new_version")"
+branch+="$(release_num "p" "$protocol_new_version")"
+branch+="$(release_num "ca" "$cardano_new_version")"
+branch+="$(release_num "d" "$diffusion_new_version")"
+printf "Creating branch %s\n\n" "${branch%?}"
 # remove last slash
-git checkout -b ${branch%?} >/dev/null 2>&1
+git checkout -b "${branch%?}" >/dev/null 2>&1
 
 ################################################################################
 ## Update cabal files, update changelogs and create commits
@@ -98,7 +98,7 @@ if [[ -n $consensus_new_version ]]; then
 
     echo "- Updating changelog"
 
-    ( cd ouroboros-consensus
+    ( cd ouroboros-consensus || exit
       scriv collect >/dev/null 2>&1
     )
 
@@ -134,7 +134,7 @@ if [[ -n $protocol_new_version ]]; then
 
     echo "- Updating changelog"
 
-    ( cd ouroboros-consensus-protocol
+    ( cd ouroboros-consensus-protocol || exit
       scriv collect >/dev/null 2>&1
     )
 
@@ -162,7 +162,7 @@ if [[ -n $cardano_new_version ]]; then
         ouroboros-consensus-cardano/ouroboros-consensus-cardano.cabal
 
     echo "- Updating changelog"
-    ( cd ouroboros-consensus-cardano
+    ( cd ouroboros-consensus-cardano || exit
       scriv collect >/dev/null 2>&1
     )
 
@@ -184,7 +184,7 @@ if [[ -n $diffusion_new_version ]]; then
       ouroboros-consensus-diffusion/ouroboros-consensus-diffusion.cabal
 
     echo "- Updating changelog"
-    ( cd ouroboros-consensus-diffusion
+    ( cd ouroboros-consensus-diffusion || exit
       scriv collect >/dev/null 2>&1
     )
 
