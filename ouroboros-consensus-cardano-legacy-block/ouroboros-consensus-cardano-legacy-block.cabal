@@ -47,8 +47,10 @@ library
   exposed-modules:
     DBSync
     Legacy.Byron.Ledger
+    Legacy.Cardano
     Legacy.Cardano.Block
     Legacy.Cardano.CanHardFork
+    Legacy.Cardano.Ledger
     Legacy.Convert
     Legacy.LegacyBlock
     Legacy.Shelley.Ledger

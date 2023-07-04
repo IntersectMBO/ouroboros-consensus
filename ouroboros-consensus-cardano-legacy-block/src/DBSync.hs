@@ -6,6 +6,7 @@ module DBSync (
   , reapplyBlock
   ) where
 
+import           Legacy.Cardano ()
 import           Legacy.Cardano.Block
 import           Legacy.Cardano.CanHardFork
 import           Ouroboros.Consensus.Cardano.Block
