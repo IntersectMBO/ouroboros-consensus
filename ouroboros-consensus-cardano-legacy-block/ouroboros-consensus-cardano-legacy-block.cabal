@@ -49,6 +49,7 @@ library
     Legacy.Byron.Ledger
     Legacy.Cardano.Block
     Legacy.Cardano.CanHardFork
+    Legacy.Convert
     Legacy.LegacyBlock
     Legacy.Shelley.Ledger
 
