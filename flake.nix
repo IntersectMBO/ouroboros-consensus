@@ -48,23 +48,25 @@
           inherit system;
           inherit (inputs.haskellNix) config;
           overlays = [
-            inputs.haskellNix.overlay
             inputs.iohkNix.overlays.crypto
+            inputs.haskellNix.overlay
+            inputs.iohkNix.overlays.haskell-nix-crypto
             (import ./nix/tools.nix inputs)
             (import ./nix/haskell.nix inputs)
             (import ./nix/pdfs.nix)
           ];
         };
-        devShell = import ./nix/shell.nix pkgs;
+        hydraJobs = import ./nix/ci.nix pkgs;
       in
       {
         devShells = {
-          default = devShell;
+          default = hydraJobs.native.haskell.devShell;
+          ghc96 = hydraJobs.native.haskell96.devShell;
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];
           };
         };
-        hydraJobs = import ./nix/ci.nix { inherit inputs pkgs devShell; };
+        inherit hydraJobs;
         legacyPackages = pkgs;
       }
     );

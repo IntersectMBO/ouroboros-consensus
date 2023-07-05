@@ -232,11 +232,11 @@
         "stackage": "stackage"
       },
       "locked": {
-        "lastModified": 1686041216,
-        "narHash": "sha256-RP0i9YtZbUkPtPVRz3GuBt9bwfoWCKcJ8888vocTiyg=",
+        "lastModified": 1688518296,
+        "narHash": "sha256-8c6I2aRGg1mHVHHWj49sbcdbkxoXbL5d6fWcHsvwCw4=",
         "owner": "input-output-hk",
         "repo": "haskell.nix",
-        "rev": "bc3f8b660a3b40f52139f59213652e083e6d2418",
+        "rev": "0f0cbc1c42adc9dfa017ce5836abd87d652efdfb",
         "type": "github"
       },
       "original": {
@@ -328,11 +328,11 @@
         "sodium": "sodium"
       },
       "locked": {
-        "lastModified": 1684223806,
-        "narHash": "sha256-IyLoP+zhuyygLtr83XXsrvKyqqLQ8FHXTiySFf4FJOI=",
+        "lastModified": 1687951625,
+        "narHash": "sha256-jwUD9tyGAvcuIl4TZYc+qGFTCEwIMriim+whXO+fiE4=",
         "owner": "input-output-hk",
         "repo": "iohk-nix",
-        "rev": "86421fdd89b3af43fa716ccd07638f96c6ecd1e4",
+        "rev": "7bb42e5de0c1318e57017eedbe206751d58b78b3",
         "type": "github"
       },
       "original": {
