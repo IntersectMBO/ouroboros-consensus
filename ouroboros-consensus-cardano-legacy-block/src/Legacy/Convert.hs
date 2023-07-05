@@ -1,34 +1,63 @@
+{-# LANGUAGE ConstraintKinds          #-}
 {-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE FlexibleInstances        #-}
+{-# LANGUAGE InstanceSigs             #-}
+{-# LANGUAGE LambdaCase               #-}
 {-# LANGUAGE MultiParamTypeClasses    #-}
 {-# LANGUAGE NamedFieldPuns           #-}
+{-# LANGUAGE PolyKinds                #-}
+{-# LANGUAGE QuantifiedConstraints    #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE UndecidableInstances     #-}
 
--- TODO: remove
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
+-- | Convert between 'CardanoBlock' and 'LegacyCardanoBlock' types.
 module Legacy.Convert (
-    Convert (..)
-  , Convert'
+    -- * Classes
+    Convert
+  , ConvertSym
+    -- * Block
   , convertBlock
-  , convertExtLedgerState
-  , convertExtLedgerState'
-  , convertLedgerConfig
-  , convertLedgerError
-  , convertLedgerResult
+  , convertBlock'
+    -- * Ledger state
   , convertLedgerState
   , convertLedgerState'
+    -- * Extended ledger state
+  , convertExtLedgerState
+  , convertExtLedgerState'
+    -- * Header state
+  , convertHeaderState
+  , convertHeaderState'
+    -- * Annotated tip
+  , convertAnnTip
+  , convertAnnTip'
+    -- * Tip info
+  , convertTipInfo
+  , convertTipInfo'
+    -- * Chain dependent state
+  , convertChainDepState
+  , convertChainDepState'
+    -- * Ledger error
+  , convertLedgerError
+    -- * Ledger result
+  , convertLedgerResult
+    -- * Ledger config
+  , convertLedgerConfig
   ) where
 
 import           Data.Coerce
-import           Data.Kind
+import           Data.Constraint
+import           Data.SOP.Classes
 import           Data.SOP.Counting
 import           Data.SOP.Functors
+import           Data.SOP.Match
 import           Data.SOP.Strict
 import           Legacy.Byron.Ledger ()
 import           Legacy.Cardano.Block
@@ -46,24 +75,47 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Unsafe.Coerce
+
+{-------------------------------------------------------------------------------
+  Classes
+-------------------------------------------------------------------------------}
+
+-- | A relation between types @x@ and @'LegacyBlock' x@. Read: blocks @x@ are
+-- related to their legacy version @'LegacyBlock' x@.
+class y ~ LegacyBlock x => Convert x y where
+-- | This is the only instance for 'Convert' that can and should exist.
+instance Convert x (LegacyBlock x)
+
+-- | Symmetry for 'Convert'.
+class Convert x y => ConvertSym y x
+-- | This is the only instance for 'Convert'' that can and should exist.
+instance Convert x y => ConvertSym y x
 
 {-------------------------------------------------------------------------------
   Block
 -------------------------------------------------------------------------------}
 
 convertBlock ::
-        CardanoBlock StandardCrypto
+        CardanoBlock       StandardCrypto
      -> LegacyCardanoBlock StandardCrypto
-convertBlock = LegacyBlock
-             . HardForkBlock
-             . OneEraBlock
-             . htrans (Proxy @Convert) transOne
-             . getOneEraBlock
-             . getHardForkBlock
-    where
-      transOne :: I x -> I (LegacyBlock x)
-      transOne = I . LegacyBlock . unI
+convertBlock =
+        LegacyBlock
+      . HardForkBlock
+      . OneEraBlock
+      . hcoerce
+      . getOneEraBlock
+      . getHardForkBlock
+
+convertBlock' ::
+        LegacyCardanoBlock StandardCrypto
+     -> CardanoBlock       StandardCrypto
+convertBlock' =
+        HardForkBlock
+      . OneEraBlock
+      . hcoerce
+      . getOneEraBlock
+      . getHardForkBlock
+      . getLegacyBlock
 
 {-------------------------------------------------------------------------------
   Ledger state
@@ -75,27 +127,17 @@ convertLedgerState ::
 convertLedgerState =
       LegacyLedgerState
     . HardForkLedgerState
-    . htrans (Proxy @Convert) transOne
+    . hcoerce
     . hardForkLedgerStatePerEra
-  where
-    transOne ::
-             (Flip LedgerState EmptyMK) x
-          -> (Flip LedgerState EmptyMK) (LegacyBlock x)
-    transOne = Flip . mkLegacyLedgerState . unFlip
 
 convertLedgerState' ::
      LedgerState (LegacyCardanoBlock StandardCrypto) EmptyMK
   -> LedgerState (CardanoBlock StandardCrypto) EmptyMK
 convertLedgerState' =
       HardForkLedgerState
-    . htrans (Proxy @Convert') transOne
+    . hcoerce
     . hardForkLedgerStatePerEra
     . getLegacyLedgerState
-  where
-    transOne ::
-             (Flip LedgerState EmptyMK) (LegacyBlock x)
-          -> (Flip LedgerState EmptyMK) x
-    transOne = Flip . unmkLegacyLedgerState . unFlip
 
 {-------------------------------------------------------------------------------
   Extended ledger state
@@ -158,7 +200,7 @@ convertHeaderState' hstate = HeaderState {
       } = hstate
 
 {-------------------------------------------------------------------------------
-  AnnTip
+  Annotated tip
 -------------------------------------------------------------------------------}
 
 convertAnnTip ::
@@ -192,34 +234,18 @@ convertAnnTip' anntip = AnnTip {
       } = anntip
 
 {-------------------------------------------------------------------------------
-  TipInfo
+  Tip info
 -------------------------------------------------------------------------------}
 
 convertTipInfo ::
      TipInfo (CardanoBlock StandardCrypto)
   -> TipInfo (LegacyCardanoBlock StandardCrypto)
-convertTipInfo =
-      OneEraTipInfo
-    . htrans (Proxy @Convert) transOne
-    . getOneEraTipInfo
-  where
-    transOne ::
-         WrapTipInfo blk
-      -> WrapTipInfo (LegacyBlock blk)
-    transOne = WrapTipInfo . coerce . unwrapTipInfo
+convertTipInfo = OneEraTipInfo . hcoerce . getOneEraTipInfo
 
 convertTipInfo' ::
      TipInfo (LegacyCardanoBlock StandardCrypto)
   -> TipInfo (CardanoBlock StandardCrypto)
-convertTipInfo' =
-      OneEraTipInfo
-    . htrans (Proxy @Convert') transOne
-    . getOneEraTipInfo
-  where
-    transOne ::
-         WrapTipInfo (LegacyBlock blk)
-      -> WrapTipInfo blk
-    transOne = WrapTipInfo . coerce . unwrapTipInfo
+convertTipInfo' = OneEraTipInfo . hcoerce . getOneEraTipInfo
 
 {-------------------------------------------------------------------------------
   Chain dependent state
@@ -228,25 +254,12 @@ convertTipInfo' =
 convertChainDepState ::
      ChainDepState (BlockProtocol (CardanoBlock StandardCrypto))
   -> ChainDepState (BlockProtocol (LegacyCardanoBlock StandardCrypto))
-convertChainDepState  =
-    htrans (Proxy @Convert) transOne
-  where
-    transOne ::
-         WrapChainDepState blk
-      -> WrapChainDepState (LegacyBlock blk)
-    transOne = WrapChainDepState . coerce . unwrapChainDepState
+convertChainDepState = hcoerce
 
 convertChainDepState' ::
      ChainDepState (BlockProtocol (LegacyCardanoBlock StandardCrypto))
   -> ChainDepState (BlockProtocol (CardanoBlock StandardCrypto))
-convertChainDepState'  =
-    htrans (Proxy @Convert') transOne
-  where
-    transOne ::
-         WrapChainDepState (LegacyBlock blk)
-      -> WrapChainDepState blk
-    transOne = WrapChainDepState . coerce . unwrapChainDepState
-
+convertChainDepState' = hcoerce
 
 {-------------------------------------------------------------------------------
   Ledger error
@@ -256,39 +269,68 @@ convertLedgerError ::
      LedgerErr (LedgerState (LegacyCardanoBlock StandardCrypto))
   -> LedgerErr (LedgerState (CardanoBlock StandardCrypto))
 convertLedgerError (HardForkLedgerErrorFromEra oe) =
-    HardForkLedgerErrorFromEra
-  . OneEraLedgerError
-  . htrans (Proxy @Convert'') coerce
-  . getOneEraLedgerError
-  $ oe
-
+      HardForkLedgerErrorFromEra
+    . OneEraLedgerError
+    . hcoerce
+    . getOneEraLedgerError
+    $ oe
 convertLedgerError (HardForkLedgerErrorWrongEra we) =
-    HardForkLedgerErrorWrongEra
-  . MismatchEraInfo
-  . unsafeCoerce
-    -- This should not be problematic because the LedgerEraInfo and
-    -- SingleEraInfo are just wrappers over a Text, so everything should be
-    -- safely coerced, but SOP complains about not being able to resolve the Top
-    -- constraint for every type.
-  . getMismatchEraInfo
-  $ we
+      HardForkLedgerErrorWrongEra
+    . MismatchEraInfo
+    . hcoerce
+    . getMismatchEraInfo
+    $ we
 
-  -- where
-  --   convertMismatch :: forall xxs x xs . (xxs ~ x ': xs) =>
-  --        Mismatch SingleEraInfo LedgerEraInfo (Map LegacyBlock xxs)
-  --     -> Mismatch SingleEraInfo LedgerEraInfo xxs
-  --   convertMismatch (ML (SingleEraInfo sei) nslei) =
-  --                    ML (SingleEraInfo sei)
-  --                       (htrans (Proxy @Top2) coerce nslei)
-  --   convertMismatch (MR nssei (LedgerEraInfo (SingleEraInfo lei))) =
-  --                    MR (htrans (Proxy @Top2) coerce nssei)
-  --                       (LedgerEraInfo (SingleEraInfo lei))
-  --   convertMismatch (MS n) = MS $ convertMismatch n
+type instance Same (Mismatch f) = Mismatch f
+
+-- NOTE(jdral): some of this code could technically be optimised using
+-- 'unsafeCoerce', but this would sacrifice type safety. For now, this version
+-- should be sufficient.
+instance (forall x y. LiftedCoercible p p x y)
+      => HTrans (Mismatch p) (Mismatch p) where
+  htrans ::
+       forall proxy c f g xs ys. AllZipN (Prod (Mismatch p)) c xs ys
+    => proxy c
+    -> (forall x y. c x y => f x -> g y)
+    -> Mismatch p f xs
+    -> Mismatch p g ys
+  htrans p t = \case
+      ML fx gy -> ML (coerce fx) $ htrans p t gy
+      MR fy gx | Dict <- tailDict -> MR (hcoerce fy) $ t gx
+        where
+          tailDict :: Dict (AllZip (LiftedCoercible p p) (Tail xs) (Tail ys))
+          tailDict = replaceAllZipConstraint (Proxy @c)
+      MS m     -> MS $ htrans p t m
+
+  hcoerce ::
+       forall f g xs ys. AllZipN (Prod (Mismatch p)) (LiftedCoercible f g) xs ys
+    => Mismatch p f xs
+    -> Mismatch p g ys
+  hcoerce = \case
+      ML fx gy -> ML (coerce fx) $ hcoerce gy
+      MR fy gx | Dict <- tailDict -> MR (hcoerce fy) $ coerce gx
+        where
+          tailDict :: Dict (AllZip (LiftedCoercible p p) (Tail xs) (Tail ys))
+          tailDict = replaceAllZipConstraint (Proxy @(LiftedCoercible f g))
+      MS m     -> MS $ hcoerce m
+
+replaceAllZipConstraint ::
+     forall c c' xs ys.
+     (AllZip c xs ys, forall x y. c' x y)
+  => Proxy c -> Dict (AllZip c' xs ys)
+replaceAllZipConstraint _ = go sList sList
+  where
+    go ::
+         forall as bs. AllZip c as bs
+      => SList as -> SList bs
+      -> Dict (AllZip c' as bs)
+    go SNil  SNil  = Dict
+    go SCons SCons = case go (sList @(Tail as)) (sList @(Tail bs)) of
+        Dict -> Dict
 
 {-------------------------------------------------------------------------------
   Ledger result
 -------------------------------------------------------------------------------}
-
 
 convertLedgerResult ::
      LedgerResult
@@ -297,10 +339,9 @@ convertLedgerResult ::
   -> LedgerResult
       (LedgerState (CardanoBlock StandardCrypto))
       (LedgerState (CardanoBlock StandardCrypto) EmptyMK)
-convertLedgerResult le =
-     LedgerResult {
+convertLedgerResult le = LedgerResult {
       lrEvents = map ( OneEraLedgerEvent
-                     . htrans (Proxy @Convert'') coerce
+                     . hcoerce
                      . getOneEraLedgerEvent
                      ) lrEvents
     , lrResult = convertLedgerState' $ convertMapKind lrResult
@@ -317,63 +358,22 @@ convertLedgerResult le =
 convertLedgerConfig ::
      LedgerConfig (CardanoBlock StandardCrypto)
   -> LedgerConfig (LegacyCardanoBlock StandardCrypto)
-convertLedgerConfig cfg =
-  HardForkLedgerConfig {
+convertLedgerConfig cfg = HardForkLedgerConfig {
       hardForkLedgerConfigShape =
-        Shape
-      . Exactly
-      . htrans (Proxy @Top2) (K . unK)
-      . getExactly
-      . getShape
-      $ hardForkLedgerConfigShape
+          Shape
+        . Exactly
+        . hcoerce
+        . getExactly
+        . getShape
+        $ hardForkLedgerConfigShape
     , hardForkLedgerConfigPerEra =
-      PerEraLedgerConfig
-      . htrans (Proxy @Convert) (
-          WrapPartialLedgerConfig
-        . unwrapPartialLedgerConfig
-          )
-      . getPerEraLedgerConfig
-      $ hardForkLedgerConfigPerEra
-  }
+          PerEraLedgerConfig
+        . hcoerce
+        . getPerEraLedgerConfig
+        $ hardForkLedgerConfigPerEra
+    }
   where
     HardForkLedgerConfig {
         hardForkLedgerConfigShape
       , hardForkLedgerConfigPerEra
       } = cfg
-
-{-------------------------------------------------------------------------------
-  Classes
--------------------------------------------------------------------------------}
-
-class y ~ LegacyBlock x => Convert x y where
-  mkLegacyBlock :: x -> y
-  mkLegacyLedgerState :: LedgerState x EmptyMK -> LedgerState y EmptyMK
-  unmkLegacyBlock :: y -> x
-  unmkLegacyLedgerState :: LedgerState y EmptyMK -> LedgerState x EmptyMK
-
-class Convert x y => Convert' y x
-
-instance Convert x y => Convert' y x
-
-instance Convert x (LegacyBlock x) where
-  mkLegacyBlock = LegacyBlock
-  mkLegacyLedgerState = LegacyLedgerState
-  unmkLegacyBlock = getLegacyBlock
-  unmkLegacyLedgerState = getLegacyLedgerState
-
-class (Top x, Top y) => Top2 x y
-instance (Top x, Top y) => Top2 x y
-
-class ( Convert' x y
-      , LedgerErr (LedgerState (LegacyBlock y)) ~ LedgerErr (LedgerState y)
-      , AuxLedgerEvent (LedgerState (LegacyBlock y)) ~ AuxLedgerEvent (LedgerState y)
-      ) => Convert'' x y
-instance ( Convert' x y
-         , LedgerErr (LedgerState (LegacyBlock y)) ~ LedgerErr (LedgerState y)
-         , AuxLedgerEvent (LedgerState (LegacyBlock y)) ~ AuxLedgerEvent (LedgerState y)
-         ) => Convert'' x y
-
-type Map :: (Type -> Type) -> [Type] -> [Type]
-type family Map f xs where
-  Map f '[] = '[]
-  Map f (x ': xs) = f x ': Map f xs
