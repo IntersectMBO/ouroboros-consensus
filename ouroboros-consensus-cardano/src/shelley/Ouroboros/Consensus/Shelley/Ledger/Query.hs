@@ -33,6 +33,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), encodeListLen,
                      enforceSize)
+import qualified Cardano.Ledger.Api.State.Query as SL (queryConstitutionHash)
 import           Cardano.Ledger.CertState (lookupDepositDState)
 import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
@@ -40,6 +41,7 @@ import           Cardano.Ledger.Credential (StakeCredential)
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.EpochBoundary as SL
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
+import           Cardano.Ledger.SafeHash (SafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
 import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts)
@@ -54,6 +56,7 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.DeepSeq (NFData)
+import           Data.ByteString (ByteString)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -221,6 +224,8 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     -> BlockQuery (ShelleyBlock proto era)
                   (Map (StakeCredential (EraCrypto era)) Coin)
 
+  GetConstitutionHash :: BlockQuery (ShelleyBlock proto era) (Maybe (SafeHash (EraCrypto era) ByteString))
+
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
   -- with the en/decoders, as we want the CBOR tags to be ordered.
@@ -359,6 +364,8 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto) => QueryLedge
                   Nothing      -> acc
                   Just deposit -> Map.insert cred deposit acc
           in Set.foldl' lookupInsert Map.empty stakeCreds
+        GetConstitutionHash ->
+          SL.queryConstitutionHash st
     where
       lcfg    = configLedger $ getExtLedgerCfg cfg
       globals = shelleyLedgerGlobals lcfg
@@ -494,6 +501,8 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
     = Nothing
   sameDepIndex (GetStakeDelegDeposits _) _
     = Nothing
+  sameDepIndex GetConstitutionHash GetConstitutionHash = Just Refl
+  sameDepIndex GetConstitutionHash _ = Nothing
 
 deriving instance Eq   (BlockQuery (ShelleyBlock proto era) result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) result)
@@ -523,6 +532,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetStakeSnapshots {}                       -> show
       GetPoolDistr {}                            -> show
       GetStakeDelegDeposits {}                   -> show
+      GetConstitutionHash                        -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
 querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
@@ -550,6 +560,7 @@ querySupportedVersion = \case
     GetStakeSnapshots {}                       -> (>= v6)
     GetPoolDistr {}                            -> (>= v6)
     GetStakeDelegDeposits {}                   -> (>= v7)
+    GetConstitutionHash                        -> (>= v8)
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
   where
@@ -560,6 +571,7 @@ querySupportedVersion = \case
     v5 = ShelleyNodeToClientVersion5
     v6 = ShelleyNodeToClientVersion6
     v7 = ShelleyNodeToClientVersion7
+    v8 = ShelleyNodeToClientVersion8
 
 {-------------------------------------------------------------------------------
   Auxiliary
@@ -648,6 +660,8 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 21 <> toCBOR poolids
     GetStakeDelegDeposits stakeCreds ->
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 22 <> toCBOR stakeCreds
+    GetConstitutionHash ->
+      CBOR.encodeListLen 1 <> CBOR.encodeWord8 23
 
 decodeShelleyQuery ::
      forall era proto. ShelleyBasedEra era
@@ -679,6 +693,7 @@ decodeShelleyQuery = do
       (2, 20) -> SomeSecond . GetStakeSnapshots <$> fromCBOR
       (2, 21) -> SomeSecond . GetPoolDistr <$> fromCBOR
       (2, 22) -> SomeSecond . GetStakeDelegDeposits <$> fromCBOR
+      (1, 23) -> return $ SomeSecond GetConstitutionHash
       _       -> fail $
         "decodeShelleyQuery: invalid (len, tag): (" <>
         show len <> ", " <> show tag <> ")"
@@ -711,6 +726,7 @@ encodeShelleyResult v query = case query of
     GetStakeSnapshots {}                       -> toCBOR
     GetPoolDistr {}                            -> LC.toEraCBOR @era
     GetStakeDelegDeposits {}                   -> LC.toEraCBOR @era
+    GetConstitutionHash                        -> toCBOR
 
 decodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
@@ -741,6 +757,7 @@ decodeShelleyResult v query = case query of
     GetStakeSnapshots {}                       -> fromCBOR
     GetPoolDistr {}                            -> LC.fromEraCBOR @era
     GetStakeDelegDeposits {}                   -> LC.fromEraCBOR @era
+    GetConstitutionHash                        -> fromCBOR
 
 currentPParamsEnDecoding ::
      forall era s.
