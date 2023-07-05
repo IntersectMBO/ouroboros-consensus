@@ -59,10 +59,8 @@ import           Data.SOP.Counting
 import           Data.SOP.Functors
 import           Data.SOP.Match
 import           Data.SOP.Strict
-import           Legacy.Byron.Ledger ()
-import           Legacy.Cardano.Block
+import           Legacy.Cardano
 import           Legacy.LegacyBlock
-import           Legacy.Shelley.Ledger ()
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
