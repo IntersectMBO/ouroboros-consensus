@@ -1,20 +1,21 @@
 inputs: final: prev:
 
 let
+  tool-index-state = "2023-07-05T00:00:00Z";
   tool = name: version: other:
     final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
       version = version;
-      index-state = "2023-05-30T00:00:00Z";
+      index-state = tool-index-state;
     } // other);
 in
 {
+  inherit tool-index-state;
+
   cabal = tool "cabal" "latest" { };
 
   stylish-haskell = tool "stylish-haskell" "0.14.4.0" { };
 
   cabal-fmt = tool "cabal-fmt" "0.1.6" { };
-
-  haskell-language-server = tool "haskell-language-server" "2.0.0.0" { };
 
   scriv = prev.scriv.overrideAttrs (_: {
     version = "1.2.0-custom-iog";
