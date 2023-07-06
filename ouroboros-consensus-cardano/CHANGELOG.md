@@ -2,6 +2,23 @@
 
 # Changelog entries
 
+<a id='changelog-0.7.0.0'></a>
+## 0.7.0.0 — 2023-07-06
+
+### Non-Breaking
+
+- Refactor code because block forging credentials got extracted out of
+  `ProtocolInfo` type.
+
+### Breaking
+
+- Change the return type of numerous functions to include block forging credentials since
+  they got extracted out of `ProtocolInfo` type.
+  - Refactor the type signatures to accommodate the fact that `ProtocolInfo` does not
+  need monad type variable.
+
+- Add `GetConstitutionHash` ledger query
+
 <a id='changelog-0.6.1.0'></a>
 ## 0.6.1.0 — 2023-06-23
 
