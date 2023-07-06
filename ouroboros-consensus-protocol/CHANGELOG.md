@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.5.0.4'></a>
+## 0.5.0.4 — 2023-07-06
+
+### Non-Breaking
+
+- Relax upper bound on `ouroboros-consensus`
+
 <a id='changelog-0.5.0.3'></a>
 ## 0.5.0.3 — 2023-06-23
 
