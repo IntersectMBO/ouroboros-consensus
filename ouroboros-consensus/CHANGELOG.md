@@ -2,6 +2,29 @@
 
 # Changelog entries
 
+<a id='changelog-0.9.0.0'></a>
+## 0.9.0.0 — 2023-07-06
+
+### Non-Breaking
+
+- Change the behaviour of `addBlockRunner` so that it notifies all blocked threads if interrupted.
+
+- Add `closeBlocksToAdd` function
+
+### Breaking
+
+- Remove the `pInfoBlockForging` record field from the `ProtocolInfo` type.
+
+- Remove `ProtocolInfo` monad parameter
+
+- Change `AddBlockPromise` API
+  - `blockProcessed` now wraps the return value in a new `Processed` type. This is needed
+  for improving the async exception safety.
+
+- Change `BlockToAdd` API
+  - `varBlockProcessed` now wraps the return value in a new `Processed` type. This is needed
+  for improving the async exception safety.
+
 <a id='changelog-0.8.0.0'></a>
 ## 0.8.0.0 — 2023-06-23
 
