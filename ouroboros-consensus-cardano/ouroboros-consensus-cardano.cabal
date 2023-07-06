@@ -128,7 +128,7 @@ library
     , cardano-ledger-binary
     , cardano-ledger-byron
     , cardano-ledger-conway
-    , cardano-ledger-core           ^>=1.3.1
+    , cardano-ledger-core           >=1.3 && < 1.5
     , cardano-ledger-mary
     , cardano-ledger-shelley
     , cardano-prelude
