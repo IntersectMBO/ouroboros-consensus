@@ -21,6 +21,7 @@ index-state:
 packages:
   ./ouroboros-consensus
   ./ouroboros-consensus-cardano
+  ./ouroboros-consensus-beacon
   ./ouroboros-consensus-protocol
   ./ouroboros-consensus-diffusion
 

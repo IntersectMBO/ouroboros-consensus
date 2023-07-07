@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            ouroboros-consensus-cardano
-version:         0.7.0.0
+version:         0.7.0.1
 synopsis:
   The instantation of the Ouroboros consensus layer used by Cardano
 
@@ -586,29 +586,6 @@ executable immdb-server
     , optparse-applicative
     , ouroboros-consensus
     , ouroboros-consensus-cardano:cardano-tools
-
-executable beacon
-  import:         common-exe
-  hs-source-dirs: app
-  main-is:        beacon.hs
-  build-depends:
-    , ansi-terminal
-    , base
-    , bytestring
-    , cassava
-    , Chart              >=1.9
-    , Chart-cairo        >=1.9
-    , containers
-    , directory
-    , extra
-    , process
-    , text
-    , vector
-    , vector-algorithms
-
-  -- Chart does not compile on 9.6 right now: https://github.com/timbod7/haskell-chart/issues/248
-  if (os(windows) || impl(ghc >=9.6))
-    buildable: False
 
 test-suite tools-test
   import:         common-test
