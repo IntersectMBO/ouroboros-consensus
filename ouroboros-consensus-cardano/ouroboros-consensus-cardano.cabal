@@ -371,6 +371,7 @@ library cardano-testlib
     Test.Consensus.Cardano.Examples
     Test.Consensus.Cardano.Generators
     Test.Consensus.Cardano.MockCrypto
+    Test.Consensus.Cardano.ProtocolInfo
     Test.ThreadNet.Infra.ShelleyBasedHardFork
     Test.ThreadNet.Infra.TwoEras
     Test.ThreadNet.TxGen.Allegra
@@ -386,6 +387,7 @@ library cardano-testlib
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
     , cardano-ledger-byron
+    , cardano-ledger-conway
     , cardano-ledger-conway-test
     , cardano-ledger-core:{cardano-ledger-core, testlib}
     , cardano-ledger-shelley
