@@ -6,9 +6,8 @@
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE Rank2Types                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeApplications           #-}
 
-module Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Mock (
+module Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock (
     -- * Types
     Err (..)
   , ID (..)

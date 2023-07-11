@@ -7,7 +7,7 @@
 
 -- | A utility for storing and retrieving resources in a registry using handles
 -- to identify resources in the registry.
-module Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Registry (
+module Test.Ouroboros.Storage.LedgerDB.BackingStore.Registry (
     Handle
   , HandleRegistry
   , initHandleRegistry

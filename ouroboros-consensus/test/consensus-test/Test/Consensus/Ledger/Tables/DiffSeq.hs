@@ -5,7 +5,7 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Ouroboros.Storage.LedgerDB.HD.DiffSeq (tests) where
+module Test.Consensus.Ledger.Tables.DiffSeq (tests) where
 
 import           Control.Monad (liftM)
 import qualified Data.FingerTree.RootMeasured.Strict as RMFT
@@ -16,7 +16,6 @@ import           Data.Sequence.NonEmpty (NESeq (..))
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
-import           Test.Cardano.Ledger.Binary.Arbitrary ()
 import           Test.QuickCheck.Classes
 import           Test.QuickCheck.Classes.Semigroup.Cancellative
 import           Test.Tasty
