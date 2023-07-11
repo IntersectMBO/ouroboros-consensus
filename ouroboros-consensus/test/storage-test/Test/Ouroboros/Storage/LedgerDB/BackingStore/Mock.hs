@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE Rank2Types                 #-}
@@ -46,7 +47,7 @@ module Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock (
 
 import           Control.Monad
 import           Control.Monad.Except (ExceptT (..), MonadError (throwError),
-                     runExceptT)
+                     catchError, runExceptT)
 import           Control.Monad.State (MonadState, State, StateT (StateT), gets,
                      modify, runState)
 import           Data.Map.Strict (Map)
@@ -193,8 +194,7 @@ mBSInitFromCopy bsp = do
   , isClosed      = False
       })
 
--- | Throw an error if the backing store has been closed, which prevents any
--- other operations from succeeding.
+-- | Throw an error if the backing store has been closed.
 mGuardBSClosed :: (MonadState (Mock vs) m, MonadError Err m) => m ()
 mGuardBSClosed = do
   closed <- gets isClosed
@@ -202,13 +202,18 @@ mGuardBSClosed = do
     throwError ErrBackingStoreClosed
 
 -- | Close the backing store.
+--
+-- Closing is idempotent.
 mBSClose :: (MonadState (Mock vs) m, MonadError Err m) => m ()
-mBSClose = do
-  mGuardBSClosed
-  modify (\m -> m {
-      isClosed = True
-    , valueHandles = fmap (const ClosedByStore) (valueHandles m)
-    })
+mBSClose = (mGuardBSClosed >> close) `catchError` handler
+  where
+    close = modify (\m -> m {
+        isClosed = True
+      , valueHandles = fmap (const ClosedByStore) (valueHandles m)
+      })
+    handler = \case
+      ErrBackingStoreClosed -> pure ()
+      e                     -> throwError e
 
 -- | Copy the contents of the backing store to the given path.
 mBSCopy :: (MonadState (Mock vs) m, MonadError Err m) => BS.BackingStorePath ->  m ()
@@ -257,7 +262,7 @@ mBSWrite sl d = do
     , backingSeqNo = NotOrigin sl
     })
 
--- | Throw an error if the required backing store value handle has been closed.
+-- | Throw an error if the given backing store value handle has been closed.
 mGuardBSVHClosed ::
      (MonadState (Mock vs) m, MonadError Err m)
   => ValueHandle vs
@@ -273,17 +278,24 @@ mGuardBSVHClosed vh = do
         _              -> pure ()
 
 -- | Close a backing store value handle.
+--
+-- Closing is idempotent.
 mBSVHClose ::
      (MonadState (Mock vs) m, MonadError Err m)
   => ValueHandle vs
   -> m ()
-mBSVHClose vh = do
-  mGuardBSClosed
-  mGuardBSVHClosed vh
-  vhs <- gets valueHandles
-  modify (\m -> m {
-    valueHandles = Map.adjust (const ClosedByHandle) (getId vh) vhs
-  })
+mBSVHClose vh =
+    (mGuardBSClosed >> mGuardBSVHClosed vh >> close) `catchError` handler
+  where
+    close = do
+      vhs <- gets valueHandles
+      modify (\m -> m {
+          valueHandles = Map.adjust (const ClosedByHandle) (getId vh) vhs
+        })
+    handler = \case
+      ErrBackingStoreClosed            -> pure ()
+      ErrBackingStoreValueHandleClosed -> pure ()
+      e                                -> throwError e
 
 -- | Perform a range read on a backing store value handle.
 mBSVHRangeRead ::

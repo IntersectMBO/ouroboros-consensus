@@ -50,7 +50,8 @@ import qualified System.FS.API.Types as FS
 data BackingStore m keys values diff = BackingStore {
     -- | Close the backing store
     --
-    -- Other methods throw exceptions if called on a closed store.
+    -- Other methods throw exceptions if called on a closed store. 'bsClose'
+    -- itself is idempotent.
     bsClose       :: !(m ())
     -- | Create a persistent copy
     --
@@ -88,7 +89,8 @@ data BackingStoreValueHandle m keys values = BackingStoreValueHandle {
     bsvhAtSlot    :: !(WithOrigin SlotNo)
     -- | Close the handle
     --
-    -- Other methods throw exceptions if called on a closed handle.
+    -- Other methods throw exceptions if called on a closed handle. 'bsvhClose'
+    -- itself is idempotent.
   , bsvhClose     :: !(m ())
     -- | See 'RangeQuery'
   , bsvhRangeRead :: !(RangeQuery keys -> m values)
