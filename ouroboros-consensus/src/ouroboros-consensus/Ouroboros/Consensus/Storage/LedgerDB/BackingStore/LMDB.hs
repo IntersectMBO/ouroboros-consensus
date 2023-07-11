@@ -463,7 +463,7 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
    mkBackingStore :: HasCallStack => Db m l -> LMDBBackingStore l m
    mkBackingStore db =
        let bsClose :: m ()
-           bsClose = Status.withWriteAccess dbStatusLock DbErrClosed $ do
+           bsClose = Status.withWriteAccess' dbStatusLock (pure ()) $ do
              Trace.traceWith dbTracer $ TDBClosing dbFilePath
              openHandles <- IOLike.readTVarIO dbOpenHandles
              forM_ openHandles runCleanup
@@ -540,8 +540,8 @@ mkLMDBBackingStoreValueHandle db = do
 
     bsvhClose :: m ()
     bsvhClose =
-      Status.withReadAccess dbStatusLock DbErrClosed $ do
-      Status.withWriteAccess vhStatusLock (DbErrNoValueHandle vhId) $ do
+      Status.withReadAccess' dbStatusLock (pure ()) $ do
+      Status.withWriteAccess' vhStatusLock (pure ()) $ do
         Trace.traceWith tracer TVHClosing
         runCleanup cleanup
         IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.delete vhId)

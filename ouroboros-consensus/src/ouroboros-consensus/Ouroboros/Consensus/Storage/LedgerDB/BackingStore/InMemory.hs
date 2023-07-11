@@ -21,6 +21,7 @@ import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
 import           Control.Monad (join, unless, void, when)
+import           Control.Monad.Class.MonadThrow (catch)
 import           Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.String (fromString)
@@ -109,9 +110,15 @@ newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ count_ e
     pure BackingStore {
         bsClose    = do
             traceWith tracer TVarTraceClosing
-            atomically $ do
-              guardClosed ref
-              writeTVar ref TVarBackingStoreContentsClosed
+            catch
+              (atomically $ do
+                guardClosed ref
+                writeTVar ref TVarBackingStoreContentsClosed
+              )
+              (\case
+                TVarBackingStoreClosedExn -> pure ()
+                e -> throwIO e
+              )
             traceWith tracer TVarTraceClosed
       , bsCopy = \(SomeHasFS fs) (BackingStorePath path) -> do
           traceWith tracer $ TVarTraceCopying path
@@ -134,10 +141,18 @@ newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ count_ e
               refHandleClosed <- newTVarIO False
               pure $ BackingStoreValueHandle {
                   bsvhAtSlot    = slot
-                , bsvhClose     = atomically $ do
-                    guardClosed ref
-                    guardHandleClosed refHandleClosed
-                    writeTVar refHandleClosed True
+                , bsvhClose     =
+                    catch
+                      (atomically $ do
+                        guardClosed ref
+                        guardHandleClosed refHandleClosed
+                        writeTVar refHandleClosed True
+                      )
+                      (\case
+                        TVarBackingStoreClosedExn            -> pure ()
+                        TVarBackingStoreValueHandleClosedExn -> pure ()
+                        e                                    -> throwIO e
+                      )
                 , bsvhRangeRead = \rq -> atomically $ do
                     guardClosed ref
                     guardHandleClosed refHandleClosed
