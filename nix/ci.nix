@@ -42,9 +42,9 @@ let
         [ "checks" "devShell" ];
 
       # ensure we can already build with 9.6, but do not yet run tests to reduce CI load
-      haskell96 = builtins.removeAttrs
-        (mkHaskellJobsFor (hsPkgsForGhc "ghc962"))
-        [ "checks" ];
+      #haskell96 = builtins.removeAttrs
+      #  (mkHaskellJobsFor (hsPkgsForGhc "ghc962"))
+      #  [ "checks" ];
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
