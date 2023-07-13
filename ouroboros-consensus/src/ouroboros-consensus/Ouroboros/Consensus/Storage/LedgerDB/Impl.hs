@@ -364,7 +364,7 @@ initialize replayTracer
           initDb        = DbChangelog.empty (forgetLedgerTables genesisLedger)
       backingStore <-
           newBackingStore lbsi hasFS (projectLedgerTables genesisLedger)
-      traceWith (BackingStoreInitEvent `contramap` tracer) bsiTrace
+      traceWith (BackingStoreInitEvent >$< tracer) bsiTrace
       eDB <- runExceptT $ replayStartingWith
                             replayTracer'
                             cfg
@@ -407,7 +407,7 @@ initialize replayTracer
 
             NotOrigin pt -> do
               backingStore <- restoreBackingStore lbsi hasFS s
-              traceWith (BackingStoreInitEvent `contramap` tracer) bsiTrace
+              traceWith (BackingStoreInitEvent >$< tracer) bsiTrace
               traceWith replayTracer $
                 ReplayFromSnapshot s pt (ReplayStart initialPoint)
               let tracer' = decorateReplayTracerWithStart initialPoint replayTracer
@@ -500,7 +500,7 @@ decorateReplayTracerWithGoal
   :: Point blk -- ^ Tip of the ImmutableDB
   -> Tracer m (TraceReplayEvent blk)
   -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
-decorateReplayTracerWithGoal immTip = contramap ($ ReplayGoal immTip)
+decorateReplayTracerWithGoal immTip = (($ ReplayGoal immTip) >$<)
 
 -- | Add the block at which a replay started.
 --
@@ -509,7 +509,7 @@ decorateReplayTracerWithStart
   :: Point blk -- ^ Starting point of the replay
   -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
   -> Tracer m (ReplayStart blk -> ReplayGoal blk -> TraceReplayEvent blk)
-decorateReplayTracerWithStart start = contramap ($ ReplayStart start)
+decorateReplayTracerWithStart start = (($ ReplayStart start) >$<)
 
 -- | Which point the replay started from
 newtype ReplayStart blk = ReplayStart (Point blk) deriving (Eq, Show)

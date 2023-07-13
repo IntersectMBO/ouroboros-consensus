@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators       #-}
@@ -19,6 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB (
   , newLMDBBackingStoreInitialiser
     -- * Tracing
   , TraceLMDB (..)
+  , showTrace
     -- * Errors
   , DbErr (..)
     -- * Exported for `ledger-db-backends-checker`
@@ -39,6 +41,7 @@ import           Data.Map.Diff.Strict
 import qualified Data.Map.Strict as Map
 import           Data.Monoid (Sum (..))
 import qualified Data.Set as Set
+import           Data.Text (Text, pack)
 import qualified Data.Text as Strict
 import qualified Database.LMDB.Simple as LMDB
 import qualified Database.LMDB.Simple.Cursor as LMDB.Cursor
@@ -666,6 +669,33 @@ data TraceValueHandle
   | TVHStatStarted
   | TVHStatEnded
   deriving stock(Show, Eq)
+
+showT :: Show a => a -> Text
+showT = pack . show
+
+showTrace :: TraceLMDB -> Text
+showTrace TDBOpening     = "Opening LMDB"
+showTrace (TDBOpened p)  = "Opened LMDB at " <> showT p
+showTrace (TDBClosing p) = "Closing LMDB at " <> showT p
+showTrace (TDBClosed p)  = "Closed LMDB at " <> showT p
+showTrace (TDBCopying p1 p2) = "Copying LMDB from " <> showT p1 <> " to " <> showT p2
+showTrace (TDBCopied p1 p2)  = "Copied LMDB from " <> showT p1 <> " to " <> showT p2
+showTrace (TDBWrite sl1 sl2)  = "Wrote to LMDB up to slot " <> showT sl2 <> " onto " <> showT sl1
+showTrace (TDBValueHandle i tvh) = "Value handle " <> showT i <> ": " <> case tvh of
+  TVHOpening          -> "Open"
+  TVHOpened           -> "Opened"
+  TVHClosing          -> "Closing"
+  TVHClosed           -> "Closed"
+  TVHReadStarted      -> "Read started"
+  TVHReadEnded        -> "Read ended"
+  TVHRangeReadStarted -> "Range read started"
+  TVHRangeReadEnded   -> "Range read ended"
+  TVHStatStarted      -> "Stat started"
+  TVHStatEnded        -> "Stat ended"
+showTrace (TDBInitialisingFromLMDB p) = "Initialising LMDB from LMDB at " <> showT p
+showTrace (TDBInitialisedFromLMDB p) = "Initialised LMDB from LMDB at " <> showT p
+showTrace (TDBInitialisingFromValues s) = "Initialising LMDB from values at " <> showT s
+showTrace (TDBInitialisedFromValues s) = "Initialised LMDB from values at " <> showT s
 
 {-------------------------------------------------------------------------------
  Errors

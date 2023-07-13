@@ -37,6 +37,7 @@ import           Control.Monad (void, when)
 import           Control.Monad.Trans.Class (lift)
 import           Control.Tracer
 import           Data.Functor ((<&>))
+import           Data.Functor.Contravariant ((>$<))
 import           Data.Functor.Identity (Identity)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict (StrictMaybe (..))
@@ -133,7 +134,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       let lgrReplayTracer =
             LedgerDB.decorateReplayTracerWithGoal
               immutableDbTipPoint
-              (contramap TraceLedgerReplayEvent tracer)
+              (TraceLedgerReplayEvent >$< tracer)
       traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
       (lgrDB, replayed) <- LedgerDB.openDB argsLgrDb
                             lgrReplayTracer
@@ -144,7 +145,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       varInvalid      <- newTVarIO (WithFingerprint Map.empty (Fingerprint 0))
       varFutureBlocks <- newTVarIO Map.empty
 
-      let initChainSelTracer = contramap TraceInitChainSelEvent tracer
+      let initChainSelTracer = TraceInitChainSelEvent >$< tracer
 
       traceWith initChainSelTracer StartedInitChainSelection
       chainAndLedger <- ChainSel.initialChainSelection

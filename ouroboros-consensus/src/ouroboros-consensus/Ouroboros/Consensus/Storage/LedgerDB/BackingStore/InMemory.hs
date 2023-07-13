@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE RankNTypes         #-}
 
 -- | An implementation of a 'BackingStore' using a TVar. This is the
@@ -11,6 +12,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory (
     newTVarBackingStoreInitialiser
     -- * Traces
   , TVarTraceEvent (..)
+  , showTrace
     -- * Errors
   , StoreDirIsIncompatible (..)
   , TVarBackingStoreExn (..)
@@ -25,6 +27,7 @@ import           Control.Monad.Class.MonadThrow (catch)
 import           Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as BSL
 import           Data.String (fromString)
+import           Data.Text (Text, pack)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
@@ -58,20 +61,6 @@ data TVarBackingStoreExn =
   | TVarIncompleteDeserialiseExn
   deriving anyclass (Exception)
   deriving stock    (Show)
-
-data TVarTraceEvent =
-    TVarTraceOpening
-  | TVarTraceOpened
-  | TVarTraceClosing
-  | TVarTraceClosed
-  | TVarTraceAlreadyClosed
-  | TVarTraceCopying                  !FS.FsPath -- ^ To
-  | TVarTraceCopied                   !FS.FsPath -- ^ To
-  | TVarTraceInitialisingFromSnapshot !FS.FsPath
-  | TVarTraceInitialisedFromSnapshot  !FS.FsPath
-  | TVarTraceWrite   !(WithOrigin SlotNo) !SlotNo
-  | TVarTraceInitialisingFromValues !(WithOrigin SlotNo)
-  deriving (Show, Eq)
 
 -- | Use a 'TVar' as a trivial backing store
 newTVarBackingStoreInitialiser ::
@@ -214,3 +203,35 @@ instance Show StoreDirIsIncompatible where
     <> show p
     <> ".\nPre-UTxO-HD and LMDB implementations are incompatible with the In-Memory \
        \ implementation. Please delete your ledger database directory."
+
+{-------------------------------------------------------------------------------
+  Tracing
+-------------------------------------------------------------------------------}
+
+data TVarTraceEvent =
+    TVarTraceOpening
+  | TVarTraceOpened
+  | TVarTraceClosing
+  | TVarTraceClosed
+  | TVarTraceCopying                  !FS.FsPath -- ^ To
+  | TVarTraceCopied                   !FS.FsPath -- ^ To
+  | TVarTraceInitialisingFromSnapshot !FS.FsPath
+  | TVarTraceInitialisedFromSnapshot  !FS.FsPath
+  | TVarTraceWrite   !(WithOrigin SlotNo) !SlotNo
+  | TVarTraceInitialisingFromValues !(WithOrigin SlotNo)
+  deriving (Show, Eq)
+
+showT :: Show a => a -> Text
+showT = pack . show
+
+showTrace :: TVarTraceEvent -> Text
+showTrace TVarTraceOpening = "Opening InMemory backing store"
+showTrace TVarTraceOpened  = "Opened InMemory backing store"
+showTrace TVarTraceClosing = "Closing InMemory backing store"
+showTrace TVarTraceClosed  = "Closed InMemory backing store"
+showTrace (TVarTraceCopying p) = "Copying InMemory backing store to path " <> showT p
+showTrace (TVarTraceCopied p) = "Copied InMemory backing store to path " <> showT p
+showTrace (TVarTraceInitialisingFromSnapshot p) = "Initialising InMemory backing store from snapshot at " <> showT p
+showTrace (TVarTraceInitialisedFromSnapshot p) = "Initialised InMemory backing store from snapshot at " <> showT p
+showTrace (TVarTraceInitialisingFromValues s) = "Initialising InMemory backing store from values at slot " <> showT s
+showTrace (TVarTraceWrite sl1 sl2) = "Wrote to InMemory backing store up to slot " <> showT sl2 <> " onto " <> showT sl1
