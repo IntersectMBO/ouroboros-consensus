@@ -224,7 +224,7 @@ initMempoolEnv :: ( IOLike m
                -> Tracer m (TraceEventMempool blk)
                -> (GenTx blk -> TxSizeInBytes)
                -> m (MempoolEnv m blk)
-initMempoolEnv ledgerInterface cfg capacityOverride _tracer txSize = do
+initMempoolEnv ledgerInterface cfg capacityOverride tracer txSize = do
     st <- atomically $ getCurrentLedgerState ledgerInterface
     let (slot, st') = tickLedgerState cfg (ForgeInUnknownSlot st)
     isVar <- newTMVarIO $ initInternalState capacityOverride TxSeq.zeroTicketNo slot st'
@@ -236,7 +236,7 @@ initMempoolEnv ledgerInterface cfg capacityOverride _tracer txSize = do
       , mpEnvStateVar         = isVar
       , mpEnvAddTxsRemoteFifo = addTxRemoteFifo
       , mpEnvAddTxsAllFifo    = addTxAllFifo
-      , mpEnvTracer           = nullTracer
+      , mpEnvTracer           = tracer
       , mpEnvTxSize           = txSize
       , mpEnvCapacityOverride = capacityOverride
       }
