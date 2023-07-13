@@ -562,7 +562,7 @@ chainSyncClient mkPipelineDecision0 tracer cfg
           -- ('rollBackward'), so we have nothing to do.
           return $ Just kis
 
-        | Just intersection <- AF.intersectionPoint ourFrag' theirFrag ->
+        | Just (intersection, trimmedCandidateFrag) <- cross ourFrag' theirFrag
           -- Our current chain changed, but it still intersects with candidate
           -- fragment, so update the 'ourFrag' field and trim to the
           -- candidate fragment to the same anchor point.
@@ -572,37 +572,20 @@ chainSyncClient mkPipelineDecision0 tracer cfg
           -- in two ways: 1. we adopted them, i.e., our chain changed (handled
           -- in this function); 2. we will /never/ adopt them, which is
           -- handled in the "no more intersection case".
-          case AF.splitAfterPoint theirFrag (AF.anchorPoint ourFrag') of
-           -- + Before the update to our fragment, both fragments were
-           --   anchored at the same anchor.
-           -- + We still have an intersection.
-           -- + The number of blocks after the intersection cannot have
-           --   shrunk, but could have increased.
-           -- + If it did increase, the anchor point will have shifted up.
-           -- + It can't have moved up past the intersection point (because
-           --   then there would be no intersection anymore).
-           -- + This means the new anchor point must be between the old anchor
-           --   point and the new intersection point.
-           -- + Since we know both the old anchor point and the new
-           --   intersection point exist on their fragment, the new anchor
-           --   point must also.
-           Nothing -> error
-               "anchor point must be on candidate fragment if they intersect"
-           Just (_, trimmedCandidateFrag) -> return $ Just $
-               assertKnownIntersectionInvariants (configConsensus cfg) $
-                 KnownIntersectionState {
-                     ourFrag                 = ourFrag'
-                   , theirFrag               = trimmedCandidateFrag
-                   , theirHeaderStateHistory = trimmedHeaderStateHistory'
-                   , mostRecentIntersection  = castPoint intersection
-                   }
-             where
-               -- We trim the 'HeaderStateHistory' to the same size as our
-               -- fragment so they keep in sync.
-               trimmedHeaderStateHistory' =
+        , let -- We trim the 'HeaderStateHistory' to the same size as our
+              -- fragment so they keep in sync.
+              trimmedHeaderStateHistory' =
                  HeaderStateHistory.trim
                    (AF.length trimmedCandidateFrag)
-                   theirHeaderStateHistory
+                   theirHeaderStateHistory ->
+          return $ Just $
+            assertKnownIntersectionInvariants (configConsensus cfg) $
+              KnownIntersectionState {
+                  ourFrag                 = ourFrag'
+                , theirFrag               = trimmedCandidateFrag
+                , theirHeaderStateHistory = trimmedHeaderStateHistory'
+                , mostRecentIntersection  = castPoint intersection
+                }
 
         | otherwise ->
           -- No more intersection with the current chain
@@ -954,6 +937,24 @@ chainSyncClient mkPipelineDecision0 tracer cfg
     offsets maxOffset = [0] ++ takeWhile (< l) [fib n | n <- [2..]] ++ [l]
       where
         l = k `min` maxOffset
+
+    -- If the two fragments `c1` and `c2` intersect, return the intersection
+    -- point and join the prefix of `c1` before the intersection with the suffix
+    -- of `c2` after the intersection. The resulting fragment has the same
+    -- anchor as `c1` and the same head as `c2`.
+    cross ::
+         HasHeader block
+      => AnchoredFragment block
+      -> AnchoredFragment block
+      -> Maybe (Point block, AnchoredFragment block)
+    cross c1 c2 = do
+        (p1, _p2, _s1, s2) <- AF.intersect c1 c2
+        -- Note that the head of `p1` and `_p2` is the intersection point, and
+        -- `_s1` and `s2` are anchored in the intersection point.
+        let crossed = case AF.join p1 s2 of
+              Just c  -> c
+              Nothing -> error "invariant violation of AF.intersect"
+        pure (AF.anchorPoint s2, crossed)
 
     k :: Word64
     k = maxRollbacks $ configSecurityParam cfg
