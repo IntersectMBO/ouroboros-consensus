@@ -41,15 +41,31 @@ data TestSetup = TestSetup {
     secParam      :: SecurityParam
   , genesisWindow :: GenesisWindow
   , goodChain     :: AnchoredFragment TestBlock
+    -- has to be less dense than goodChain in the genesisWindow
   , badChain      :: AnchoredFragment TestBlock
   }
 
 runTest ::
      forall m. IOLike m
   => TestSetup
-     -- | Final selection
-  -> m (AnchoredFragment TestBlock)
-runTest TestSetup{secParam} = undefined
+  -> m ()
+runTest TestSetup{secParam} =
+    -- remaining stuff to do:
+    --
+    --  - run two ChainSync clients against the boringChainSyncServer,
+    --    with a large threadDelay for the "good" server.
+    --
+    --  - key function: runConnectedPeersPipelined
+    --
+    --  - things to check in the end (signalling "failure", i.e. demonstrating
+    --    that the Praos longest chain rule is insufficient):
+    --
+    --     - the final getCurrentChain forks off by more than k from the good
+    --       chain
+    --
+    --     - optional: the good ChainSync client disconnected (as the fork was
+    --       too deep)
+    undefined
   where
     SecurityParam k = secParam
 
@@ -59,6 +75,8 @@ runTest TestSetup{secParam} = undefined
       -> ChainDbView m TestBlock
     chainDbView varGoodCandidate varBadCandidate = ChainDbView {
           getCurrentChain       = getCurChain
+          -- These two can be implemented like in
+          -- Test.Consensus.MiniProtocol.ChainSync.Client.
         , getHeaderStateHistory = undefined
         , getPastLedger         = undefined
         , getIsInvalidBlock     =
@@ -75,14 +93,14 @@ runTest TestSetup{secParam} = undefined
 
     theChainSyncClient chainDbView varCandidate =
       chainSyncClient
-                   (pipelineDecisionLowHighMark 10 20)
-                   nullTracer
-                   nodeCfg
-                   chainDbView
-                   maxBound
-                   (return Continue)
-                   nullTracer
-                   varCandidate
+        (pipelineDecisionLowHighMark 10 20)
+        nullTracer
+        nodeCfg
+        chainDbView
+        maxBound
+        (return Continue)
+        nullTracer
+        varCandidate
 
     boringChainSyncServer ::
          m ()
