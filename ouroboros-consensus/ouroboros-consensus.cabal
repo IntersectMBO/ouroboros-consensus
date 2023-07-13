@@ -499,6 +499,7 @@ test-suite consensus-test
     Test.Consensus.Util.MonadSTM.NormalForm
     Test.Consensus.Util.MonadSTM.RAWLock
     Test.Consensus.Util.Versioned
+    Test.Consensus.SyncingTest
 
   build-depends:
     , async
