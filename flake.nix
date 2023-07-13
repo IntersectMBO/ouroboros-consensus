@@ -27,38 +27,47 @@
       url = "github:input-output-hk/iohk-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    tullia.url = "github:input-output-hk/tullia";
     flake-compat = {
       url = "github:edolstra/flake-compat";
       flake = false;
     };
   };
-  outputs = inputs: inputs.flake-utils.lib.eachDefaultSystem (system:
+  outputs = inputs:
     let
-      pkgs = import inputs.nixpkgs {
-        inherit system;
-        inherit (inputs.haskellNix) config;
-        overlays = [
-          inputs.haskellNix.overlay
-          inputs.iohkNix.overlays.crypto
-          (import ./nix/tools.nix inputs)
-          (import ./nix/haskell.nix inputs)
-          (import ./nix/pdfs.nix)
-        ];
-      };
-      inherit (pkgs) lib haskell-nix;
-      inherit (haskell-nix) haskellLib;
-      devShell = import ./nix/shell.nix pkgs;
+      supportedSystems = [
+        "x86_64-linux"
+        "x86_64-darwin"
+        #"aarch64-linux"
+        "aarch64-darwin"
+      ];
     in
-    {
-      devShells = {
-        default = devShell;
-        website = pkgs.mkShell {
-          packages = [ pkgs.nodejs pkgs.yarn ];
+    inputs.flake-utils.lib.eachSystem supportedSystems (
+      system:
+      let
+        pkgs = import inputs.nixpkgs {
+          inherit system;
+          inherit (inputs.haskellNix) config;
+          overlays = [
+            inputs.iohkNix.overlays.crypto
+            inputs.haskellNix.overlay
+            inputs.iohkNix.overlays.haskell-nix-crypto
+            (import ./nix/tools.nix inputs)
+            (import ./nix/haskell.nix inputs)
+            (import ./nix/pdfs.nix)
+          ];
         };
-      };
-      hydraJobs = import ./nix/ci.nix { inherit inputs pkgs devShell; };
-      legacyPackages = pkgs;
-    } // inputs.tullia.fromSimple system (import ./nix/tullia.nix)
-  );
+        hydraJobs = import ./nix/ci.nix pkgs;
+      in
+      {
+        devShells = {
+          default = hydraJobs.native.haskell.devShell;
+          ghc96 = hydraJobs.native.haskell96.devShell;
+          website = pkgs.mkShell {
+            packages = [ pkgs.nodejs pkgs.yarn ];
+          };
+        };
+        inherit hydraJobs;
+        legacyPackages = pkgs;
+      }
+    );
 }

@@ -34,7 +34,7 @@ jobs:
     strategy:
        fail-fast: false
        matrix:
-         ghc: ["8.10.7"] # ["9.2.7"]
+         ghc: ["8.10.7"] # "9.2.7", "9.6.1"
          cabal: ["3.10.1.0"]
          os: [ubuntu-latest]
     env:
@@ -65,11 +65,7 @@ jobs:
 
     - name: Configure Cabal to use libsodium
       run: |
-        cat > cabal.project.local <<EOF
-        package cardano-crypto-praos
-          flags: -external-libsodium-vrf
-        EOF
-        cat cabal.project.local
+        cp .github/workflows/cabal.project.local .
 
     - name: "LINUX: Install build environment (for secp256k1)"
       run: sudo apt-get -y install autoconf automake libtool
@@ -114,18 +110,23 @@ jobs:
     - name: Store week number as environment variable
       run: echo "WEEKNUM=$(/usr/bin/date -u '+%W')" >> $GITHUB_ENV
 
-    # When we restore a previous cache and store a new key, we also store files
-    # that were part of the last restoration but were not actually used. To
-    # prevent the cache from growing too quickly we only store a new cache every
-    # week.
-    - uses: actions/cache@v3
-      name: "Cache `dist-newstyle`"
-      with:
-        path: |
-          dist-newstyle
-          !dist-newstyle/**/.git
-        key: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}
-        restore-keys: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}
+    # NOTE: We skip caching of the dist-newstyle folder for now, since we're
+    # often getting the following cabal warning, which leads to compilation
+    # failures: "Warning: This package indirectly depends on multiple versions
+    # of the same package. This is very likely to cause a compile failure.".
+    #
+    # # When we restore a previous cache and store a new key, we also store files
+    # # that were part of the last restoration but were not actually used. To
+    # # prevent the cache from growing too quickly we only store a new cache every
+    # # week.
+    # - uses: actions/cache@v3
+    #   name: "Cache `dist-newstyle`"
+    #   with:
+    #     path: |
+    #       dist-newstyle
+    #       !dist-newstyle/**/.git
+    #     key: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}
+    #     restore-keys: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}
 
     - name: Build dependencies
       run: cabal build --only-dependencies all -j
@@ -173,15 +174,18 @@ jobs:
 
     # The `fail-if-slower` value is determined ad-hoc based on the variability
     # we observed in our benchmarks.
-    #
-    # TODO: Uncomment this after this is merged to main. We need to generate the baseline benchmarks first.
-    # - name: Run mempool benchmarks on pull requests
-    #   if: ${{ github.event_name == 'pull_request' }}
-    #   run: |
-    #     cabal new-run ouroboros-consensus:mempool-bench -- \
-    #     --timeout=60 --baseline baseline-mempool-benchmarks.csv \
-    #     --fail-if-slower 20 \
-    #     +RTS -T
+    - name: Run mempool benchmarks on pull requests
+      if: ${{ github.event_name == 'pull_request' }}
+      run: |
+        if [ -f baseline-mempool-benchmarks.csv ]; then
+          cabal new-run ouroboros-consensus:mempool-bench -- \
+          --timeout=60 --baseline baseline-mempool-benchmarks.csv \
+          --fail-if-slower 20 \
+          +RTS -T
+        else
+          echo "No baseline benchmarks found. This likely happened when adding a new GHC version to the build matrix."
+          echo "Benchmarks comparison skipped."
+        fi
 
     # NB: build the haddocks at the end to avoid unecessary recompilations.
     # We build the haddocks only for one GHC version.
@@ -253,7 +257,7 @@ jobs:
           cache: yarn
           cache-dependency-path: './docs/website/yarn.lock'
 
-      - uses: cachix/install-nix-action@v21
+      - uses: cachix/install-nix-action@v22
 
       - name: Build PDFs (Consensus report)
         run: |
@@ -276,7 +280,7 @@ jobs:
       - name: Build website
         run: yarn build
 
-      - uses: actions/upload-pages-artifact@v1
+      - uses: actions/upload-pages-artifact@v2
         with:
           path: ./docs/website/build
 
