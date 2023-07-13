@@ -31,6 +31,7 @@ import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.Void (Void)
 import           GHC.Generics (Generic)
+import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, castTopLevelConfig)
@@ -49,13 +50,11 @@ import           Ouroboros.Consensus.Ledger.Abstract (ApplyBlock, UpdateLedger)
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
                      (CommonProtocolParams (..))
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerCfg (..),
-                     ExtLedgerState (..))
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import           Ouroboros.Consensus.Ledger.Inspect (InspectLedger (..),
                      LedgerEvent, castLedgerEvent)
 import           Ouroboros.Consensus.Ledger.Query (ConfigSupportsNode,
-                     DiskLedgerView (..), QueryLedger (..), ShowQuery,
-                     TraversingQueryHandler (..))
+                     QueryLedger (..), ShowQuery, TraversingQueryHandler (..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr,
                      HasTxId (..), LedgerSupportsMempool (..), TxId,
                      WhetherToIntervene)
@@ -252,7 +251,8 @@ instance ( LedgerSupportsMempool blk
           (flip withLedgerTables emptyLedgerTables . coerce $ tst)
 
   reapplyTx ::
-       LedgerConfig (LegacyBlock blk)
+       HasCallStack
+    => LedgerConfig (LegacyBlock blk)
     -> SlotNo
     -> Validated (GenTx (LegacyBlock blk))
     -> TickedLedgerState (LegacyBlock blk) ValuesMK
@@ -364,7 +364,8 @@ instance ( ApplyBlock (LedgerState (LegacyBlock blk)) (LegacyBlock blk)
       coerce $ protocolLedgerView (coerce lcfg) (coerce tst)
 
   ledgerViewForecastAt ::
-       LedgerConfig (LegacyBlock blk)
+       HasCallStack
+    => LedgerConfig (LegacyBlock blk)
     -> LedgerState (LegacyBlock blk) mk
     -> Forecast (LedgerView (BlockProtocol (LegacyBlock blk)))
   ledgerViewForecastAt lcfg st =
@@ -463,11 +464,6 @@ deriving newtype instance SameDepIndex (BlockQuery blk)
 --
 
 instance QueryLedger blk => QueryLedger (LegacyBlock blk) where
-  answerBlockQuery ::
-       ExtLedgerCfg (LegacyBlock blk)
-    -> BlockQuery (LegacyBlock blk) result
-    -> DiskLedgerView m (ExtLedgerState (LegacyBlock blk))
-    -> m result
   answerBlockQuery =
       error "answerBlockQuery: LegacyBlock does not support ledger queries"
 
@@ -615,15 +611,9 @@ instance HasLedgerTables (Ticked1 (LedgerState (LegacyBlock blk)))
 instance HasTickedLedgerTables (LedgerState (LegacyBlock blk))
 
 instance LedgerTablesAreTrivial (LedgerState (LegacyBlock blk)) where
-  convertMapKind ::
-       LedgerState (LegacyBlock blk) mk
-    -> LedgerState (LegacyBlock blk) mk'
   convertMapKind (LegacyLedgerState x) = LegacyLedgerState x
 
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState (LegacyBlock blk))) where
-  convertMapKind ::
-       Ticked1 (LedgerState (LegacyBlock blk)) mk
-    -> Ticked1 (LedgerState (LegacyBlock blk)) mk'
   convertMapKind (TickedLegacyLedgerState x) = TickedLegacyLedgerState x
 
 instance CanSerializeLedgerTables (LedgerState (LegacyBlock blk))
