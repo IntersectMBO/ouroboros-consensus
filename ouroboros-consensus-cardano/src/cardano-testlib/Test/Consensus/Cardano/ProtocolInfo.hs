@@ -99,7 +99,8 @@ data HardForkSpec =
     , conwayHardForkSpec  :: (SL.ProtVer, TriggerHardFork)
     }
 
-data Era = Shelley
+data Era = Byron
+         | Shelley
          | Allegra
          | Mary
          | Alonzo
@@ -108,6 +109,7 @@ data Era = Shelley
   deriving (Show, Eq, Ord, Enum)
 
 selectEra :: Era -> HardForkSpec -> (SL.ProtVer, TriggerHardFork)
+selectEra Byron   _                                    = error "Byron is the first era, therefore there is no hard fork spec."
 selectEra Shelley HardForkSpec { shelleyHardForkSpec } = shelleyHardForkSpec
 selectEra Allegra HardForkSpec { allegraHardForkSpec } = allegraHardForkSpec
 selectEra Mary    HardForkSpec { maryHardForkSpec    } = maryHardForkSpec
@@ -136,6 +138,7 @@ versionZero :: SL.Version
 versionZero = SL.natVersion @0
 
 hardForkInto :: Era -> HardForkSpec
+hardForkInto Byron   = stayInByron
 hardForkInto Shelley =
     stayInByron
       { shelleyHardForkSpec = (SL.ProtVer versionZero 0, TriggerHardForkAtEpoch 0) }

@@ -39,7 +39,7 @@ import           Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStrin
 import           Test.Consensus.Cardano.ProtocolInfo
                      (ByronSlotLengthInSeconds (..), Era (..),
                      ShelleySlotLengthInSeconds (..), hardForkInto,
-                     mkSimpleTestProtocolInfo, stayInByron)
+                     mkSimpleTestProtocolInfo)
 import qualified Test.Consensus.Mempool.Mocked as Mocked
 import           Test.Consensus.Mempool.Mocked (MockedMempool)
 import           Test.Tasty (TestTree, testGroup)
@@ -49,21 +49,10 @@ import qualified Test.ThreadNet.Infra.Shelley as Shelley
 tests :: TestTree
 tests =
     testGroup "LocalTxSubmissionServer"
-      $  [ localServerPassesRegressionTests (stayInByron         , 0) ]
-      <> fmap localServerPassesRegressionTests [(hardForkInto era, fromEnum era + 1) | era <- [Shelley ..]]
-      -- fromEnum Shelley == 0, hence the '+ 1' to account for the Byron era
+      $ fmap localServerPassesRegressionTests [Byron ..]
   where
-    eraName 0 = "Byron"
-    eraName 1 = "Shelley"
-    eraName 2 = "Allegra"
-    eraName 3 = "Mary"
-    eraName 4 = "Alonzo"
-    eraName 5 = "Babbage"
-    eraName 6 = "Conway"
-    eraName i = error $ "Unknown era index: " ++ show i
-
-    localServerPassesRegressionTests (hardForkSpec, i) =
-        testCase ("Passes the regression tests (" ++ eraName i ++ ")") $ do
+    localServerPassesRegressionTests era =
+        testCase ("Passes the regression tests (" ++ show era ++ ")") $ do
           let
             pInfo :: ProtocolInfo (CardanoBlock StandardCrypto)
             pInfo = mkSimpleTestProtocolInfo
@@ -71,7 +60,8 @@ tests =
                         (Consensus.SecurityParam 10)
                         (ByronSlotLengthInSeconds 1)
                         (ShelleySlotLengthInSeconds 1)
-                        hardForkSpec
+                        (hardForkInto era)
+
             eraIndex = index_NS
                      . Telescope.tip
                      . getHardForkState
@@ -79,7 +69,7 @@ tests =
                      . ledgerState
                      $ pInfoInitLedger pInfo
 
-          eraIndex @=? i
+          eraIndex @=? fromEnum era
 
           mempool <- Mocked.openMockedMempool (Mempool.mkCapacityBytesOverride 100_000) -- We don't want the mempool to fill up during these tests.
                                               nullTracer                                -- Use 'show >$< stdoutTracer' for debugging.
