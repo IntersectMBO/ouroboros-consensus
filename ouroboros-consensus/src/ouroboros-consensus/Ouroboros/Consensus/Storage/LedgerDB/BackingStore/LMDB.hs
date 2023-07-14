@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB (
   , newLMDBBackingStoreInitialiser
     -- * Tracing
   , TraceLMDB (..)
+  , TraceValueHandle (..)
   , showTrace
     -- * Errors
   , DbErr (..)
