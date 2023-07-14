@@ -227,7 +227,13 @@ instance Arbitrary CC.Genesis.GenesisHash where
   arbitrary = CC.Genesis.GenesisHash <$> arbitrary
 
 instance Arbitrary CC.UTxO.UTxO where
-  arbitrary = hedgehog CC.genUTxO
+  arbitrary = oneof [
+      hedgehog CC.genUTxO
+      -- We would sometimes like to run tests using an empty UTxO, but 'genUTxO'
+      -- generates an empty UTxO with only a very low probability.
+    , CC.UTxO.fromList <$>
+        listOf ((,) <$> hedgehog CC.genTxIn <*> hedgehog CC.genTxOut)
+    ]
 
 instance Arbitrary CC.Act.State where
   arbitrary = CC.Act.State

@@ -87,8 +87,10 @@ tests = testGroup "UpdateTablesOnEraTransition"
                           byronToShelleyLedgerStateTranslation
                           byronUtxosAreInsertsInShelleyUtxoDiff
                           (\st -> cover 50 (      nonEmptyUtxosByron st) "UTxO set is not empty"
-                                -- TODO: #4473 we should test with empyt UTxO!
-                                -- . cover 1  (not $ nonEmptyUtxosByron st) "UTxO set is empty"
+                                . cover 1  (not $ nonEmptyUtxosByron st) "UTxO set is empty"
+                          --(\st -> coverTable "UTxO set non-empty" [("True", 50), ("False", 1)]
+                          --      . tabulate "UTxO set non-empty" [show $ nonEmptyUtxosByron st]
+
                           )
   , testTablesTranslation "Shelley to Allegra"
                           shelleyToAllegraLedgerStateTranslation
