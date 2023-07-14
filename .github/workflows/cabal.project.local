@@ -2,14 +2,5 @@
 package cardano-crypto-praos
   flags: -external-libsodium-vrf
 
-package ouroboros-consensus
-  ghc-options: -Werror
-
-package ouroboros-consensus-cardano
-  ghc-options: -Werror
-
-package ouroboros-consensus-protocol
-  ghc-options: -Werror
-
-package ouroboros-consensus-diffusion
+program-options
   ghc-options: -Werror
