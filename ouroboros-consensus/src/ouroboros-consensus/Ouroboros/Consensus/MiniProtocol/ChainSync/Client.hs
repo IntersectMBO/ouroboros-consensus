@@ -862,11 +862,11 @@ chainSyncClient mkPipelineDecision0 tracer cfg
                 theirTip
 
           Just (theirFrag', theirHeaderStateHistory') -> do
-            -- We just rolled back to @intersection@, either our most recent
-            -- intersection was after or at @intersection@, in which case
-            -- @intersection@ becomes the new most recent intersection.
+            -- We just rolled back to @rollBackPoint@, either our most recent
+            -- intersection was after or at @rollBackPoint@, in which case
+            -- @rollBackPoint@ becomes the new most recent intersection.
             --
-            -- But if the most recent intersection was /before/ @intersection@,
+            -- But if the most recent intersection was /before/ @rollBackPoint@,
             -- then the most recent intersection doesn't change.
             let mostRecentIntersection'
                   | AF.withinFragmentBounds (castPoint rollBackPoint) ourFrag
