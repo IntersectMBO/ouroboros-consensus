@@ -64,6 +64,7 @@ data TVarTraceEvent =
   | TVarTraceOpened
   | TVarTraceClosing
   | TVarTraceClosed
+  | TVarTraceAlreadyClosed
   | TVarTraceCopying                  !FS.FsPath -- ^ To
   | TVarTraceCopied                   !FS.FsPath -- ^ To
   | TVarTraceInitialisingFromSnapshot !FS.FsPath
@@ -109,14 +110,13 @@ newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ count_ e
     traceWith tracer TVarTraceOpened
     pure BackingStore {
         bsClose    = do
-            traceWith tracer TVarTraceClosing
             catch
               (atomically $ do
                 guardClosed ref
                 writeTVar ref TVarBackingStoreContentsClosed
               )
               (\case
-                TVarBackingStoreClosedExn -> pure ()
+                TVarBackingStoreClosedExn -> traceWith tracer TVarTraceAlreadyClosed
                 e -> throwIO e
               )
             traceWith tracer TVarTraceClosed
