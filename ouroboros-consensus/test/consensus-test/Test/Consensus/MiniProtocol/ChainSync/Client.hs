@@ -22,7 +22,11 @@
 -- them to be thrown based on the mock state changes (exceptions such as
 -- "fork is deep", "up-stream node asked for an invalid rollback", etc.).
 --
-module Test.Consensus.MiniProtocol.ChainSync.Client (tests) where
+module Test.Consensus.MiniProtocol.ChainSync.Client (
+    computeHeaderStateHistory
+  , computePastLedger
+  , tests
+  ) where
 
 import           Cardano.Crypto.DSIGN.Mock
 import           Control.Monad (unless, void, when)

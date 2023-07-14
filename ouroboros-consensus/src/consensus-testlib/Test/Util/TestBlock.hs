@@ -29,7 +29,7 @@ module Test.Util.TestBlock (
   , Header (..)
   , StorageConfig (..)
   , TestBlockError (..)
-  , TestBlockWith (tbPayload, tbValid)
+  , TestBlockWith (tbPayload, tbValid, tbSlot)
   , TestHash (TestHash)
   , Validity (..)
   , firstBlockWithPayload
