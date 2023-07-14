@@ -21,7 +21,8 @@ import qualified Data.Set as Set
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore hiding
+                     (BackingStoreTrace)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as LMDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots

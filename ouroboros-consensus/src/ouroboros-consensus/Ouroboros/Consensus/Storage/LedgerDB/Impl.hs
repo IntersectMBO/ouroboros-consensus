@@ -54,7 +54,8 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore hiding
+                     (BackingStoreTrace)
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
 import           Ouroboros.Consensus.Storage.LedgerDB.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog

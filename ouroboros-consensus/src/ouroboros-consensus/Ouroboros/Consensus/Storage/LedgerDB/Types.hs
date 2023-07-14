@@ -27,9 +27,11 @@ import           Data.Set (Set)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore hiding
+                     (BackingStoreTrace)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB
+                     (LMDBLimits)
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.Lock
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
@@ -156,6 +158,6 @@ data TraceBackingStoreInitEvent =
 
 -- | A tracing datatype that is the sum of the traces of the backing store
 -- implementations
-data BackingStoreTrace = LMDBTrace TraceLMDB
-                       | InMemoryTrace TVarTraceEvent
+data BackingStoreTrace = LMDBTrace BS.BackingStoreTrace
+                       | InMemoryTrace BS.BackingStoreTrace
                        deriving (Eq, Show)

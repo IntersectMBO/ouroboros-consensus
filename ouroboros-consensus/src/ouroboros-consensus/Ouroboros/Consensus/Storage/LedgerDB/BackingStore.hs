@@ -1,12 +1,9 @@
 {-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TupleSections              #-}
 
 -- | A store for key-value maps that can be extended with deltas.
 --
@@ -25,6 +22,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
   , bsRead
   , castBackingStoreValueHandle
   , withBsValueHandle
+    -- * Tracing
+  , BackingStoreTrace (..)
+  , BackingStoreValueHandleTrace (..)
     -- * Statistics
   , Statistics (..)
     -- * Ledger DB wrappers
@@ -167,11 +167,74 @@ withBsValueHandle ::
   => BackingStore m keys values diff
   -> (BackingStoreValueHandle m keys values -> m a)
   -> m a
-withBsValueHandle store kont =
+withBsValueHandle store =
     bracket
       (bsValueHandle store)
       bsvhClose
-      kont
+
+{-------------------------------------------------------------------------------
+  Tracing
+-------------------------------------------------------------------------------}
+
+data BackingStoreTrace =
+    BSOpening
+  | BSOpened                 !(Maybe FS.FsPath)
+  | BSInitialisingFromCopy   !FS.FsPath
+  | BSInitialisedFromCopy    !FS.FsPath
+  | BSInitialisingFromValues !(WithOrigin SlotNo)
+  | BSInitialisedFromValues  !(WithOrigin SlotNo)
+  | BSClosing
+  | BSAlreadyClosed
+  | BSClosed
+  | BSCopying                !FS.FsPath
+  | BSCopied                 !FS.FsPath
+  | BSCreatingValueHandle
+  | BSValueHandleTrace       !(Maybe Int) !BackingStoreValueHandleTrace
+  | BSCreatedValueHandle
+  | BSWriting                !SlotNo
+  | BSWritten                !(WithOrigin SlotNo) !SlotNo
+  deriving Eq
+
+data BackingStoreValueHandleTrace =
+    BSVHClosing
+  | BSVHAlreadyClosed
+  | BSVHClosed
+  | BSVHRangeReading
+  | BSVHRangeRead
+  | BSVHReading
+  | BSVHRead
+  | BSVHStatting
+  | BSVHStatted
+  deriving Eq
+
+instance Show BackingStoreTrace where
+  show BSOpening = "Opening backing store"
+  show (BSOpened s) = "Opened backing store" <> maybe mempty ((" at path: " <>) . show) s
+  show (BSInitialisingFromCopy p) = "Initialising from copy at " <> show p
+  show (BSInitialisedFromCopy p) = "Initialised from copy at " <> show p
+  show (BSInitialisingFromValues s) = "Initialising from values at slot " <> show s
+  show (BSInitialisedFromValues s) = "Initialised from values at slot " <> show s
+  show BSClosing = "Closing"
+  show BSAlreadyClosed = "Attempting to close an already closed backing store"
+  show BSClosed = "Closed"
+  show (BSCopying p) = "Copying into path " <> show p
+  show (BSCopied p) = "Copied into path " <> show p
+  show BSCreatingValueHandle = "Creating value handle"
+  show (BSValueHandleTrace i t) = "Value handle " <> maybe mempty show i <> ": " <> show t
+  show BSCreatedValueHandle = "Created value handle"
+  show (BSWriting s2) = "Writing to backing store, advancing the last written slot to " <> show s2
+  show (BSWritten s1 s2) = "Wrote to backing store, advancing the last written slot from " <> show s1 <> " to " <> show s2
+
+instance Show BackingStoreValueHandleTrace where
+  show BSVHClosing       = "Closing"
+  show BSVHAlreadyClosed = "Attempting to close and already closed value handle"
+  show BSVHClosed        = "Closed"
+  show BSVHRangeReading  = "Range reading"
+  show BSVHRangeRead     = "Range read"
+  show BSVHReading       = "Reading"
+  show BSVHRead          = "Read"
+  show BSVHStatting      = "Statting"
+  show BSVHStatted       = "Stat"
 
 {-------------------------------------------------------------------------------
   Statistics
