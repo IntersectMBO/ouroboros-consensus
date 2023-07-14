@@ -564,7 +564,7 @@ chainSyncClient mkPipelineDecision0 tracer cfg
 
         | Just (intersection, trimmedCandidateFrag) <- cross ourFrag' theirFrag
           -- Our current chain changed, but it still intersects with candidate
-          -- fragment, so update the 'ourFrag' field and trim to the
+          -- fragment, so update the 'ourFrag' field and trim the
           -- candidate fragment to the same anchor point.
           --
           -- Note that this is the only place we need to trim. Headers on
@@ -748,7 +748,7 @@ chainSyncClient mkPipelineDecision0 tracer cfg
               -- current chain. We have to wait until our chain and the
               -- intersection have advanced far enough. This will wait on
               -- changes to the current chain via the call to
-              -- 'intersectsWithCurrentChain' befoer it.
+              -- 'intersectsWithCurrentChain' before it.
               Left OutsideForecastRange{} ->
                 retry
               Right ledgerView ->
