@@ -171,7 +171,7 @@ bracketChainSyncClient tracer ChainDbView { getIsInvalidBlock } varCandidates
 -- We must keep the candidate chain synchronised with the corresponding
 -- upstream chain. The upstream node's chain might roll forward or
 -- backwards, and they will inform us about this. When we get these
--- messages, we will replicate these actions on our candidate chain.
+-- messages, we will replicate these actions on our current chain.
 --
 -- INVARIANT:
 --
@@ -522,8 +522,8 @@ chainSyncClient mkPipelineDecision0 tracer cfg
         (theirFrag, theirHeaderStateHistory) <- do
           case attemptRollback intersection (ourFrag, ourHeaderStateHistory) of
             Just (c, d) -> return (c, d)
-            -- The @intersection@ is not on the candidate chain, even though
-            -- we sent only points from the candidate chain to find an
+            -- The @intersection@ is not on our current chain, even though
+            -- we sent only points from our current chain to find an
             -- intersection with. The node must have sent us an invalid
             -- intersection point.
             Nothing -> disconnect $
