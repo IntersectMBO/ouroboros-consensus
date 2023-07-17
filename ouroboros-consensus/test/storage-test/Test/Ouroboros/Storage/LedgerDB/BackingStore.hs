@@ -342,12 +342,12 @@ instance (Ord k, QC.Arbitrary k, QC.Arbitrary v)
 deriving newtype instance (Ord k, QC.Arbitrary k, QC.Arbitrary v)
                        => QC.Arbitrary (Diff.Diff k v)
 
-instance QC.Arbitrary v => QC.Arbitrary (Diff.NEDiffHistory v) where
-  arbitrary = Diff.NEDiffHistory <$> ((:<||) <$> QC.arbitrary <*> QC.arbitrary)
-  shrink (Diff.NEDiffHistory h) =
-    fmap Diff.NEDiffHistory $ mapMaybe NESeq.nonEmptySeq $ QC.shrink (NESeq.toSeq h)
+instance QC.Arbitrary v => QC.Arbitrary (Diff.DeltaHistory v) where
+  arbitrary = Diff.DeltaHistory <$> ((:<||) <$> QC.arbitrary <*> QC.arbitrary)
+  shrink (Diff.DeltaHistory h) =
+    fmap Diff.DeltaHistory $ mapMaybe NESeq.nonEmptySeq $ QC.shrink (NESeq.toSeq h)
 
-instance QC.Arbitrary v => QC.Arbitrary (Diff.DiffEntry v) where
+instance QC.Arbitrary v => QC.Arbitrary (Diff.Delta v) where
   arbitrary = do
     constr <- QC.elements [
         Diff.Insert

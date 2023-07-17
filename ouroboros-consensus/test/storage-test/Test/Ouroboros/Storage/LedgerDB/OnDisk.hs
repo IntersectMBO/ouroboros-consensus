@@ -349,7 +349,7 @@ instance CanStowLedgerTables (LedgerState TestBlock) where
 stowErr :: String -> a
 stowErr fname = error $ "Function " <> fname <> " should not be used in these tests."
 
-deriving anyclass instance ToExpr v => ToExpr (DS.DiffEntry v)
+deriving anyclass instance ToExpr v => ToExpr (DS.Delta v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Diff k v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.RootMeasure k v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.InternalMeasure k v)
@@ -362,11 +362,8 @@ deriving instance ToExpr (LedgerTables (LedgerState TestBlock) mk) => ToExpr (Pa
 
 deriving newtype instance ToExpr (ValuesMK Token TValue)
 
-instance ToExpr v => ToExpr (DS.DiffHistory v) where
-  toExpr h = App "DiffHistory" [genericToExpr . toList . DS.getDiffHistory $ h]
-
-instance ToExpr v => ToExpr (DS.NEDiffHistory v) where
-  toExpr h = App "NEDiffHistory" [genericToExpr . toList . DS.getNEDiffHistory $ h]
+instance ToExpr v => ToExpr (DS.DeltaHistory v) where
+  toExpr h = App "DeltaHistory" [genericToExpr . toList . DS.getDeltaHistory $ h]
 
 instance ToExpr (ExtLedgerState TestBlock ValuesMK) where
   toExpr = genericToExpr

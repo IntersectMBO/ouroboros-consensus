@@ -9,8 +9,8 @@ module Test.Consensus.Ledger.Tables.DiffSeq (tests) where
 
 import           Control.Monad (liftM)
 import qualified Data.FingerTree.RootMeasured.Strict as RMFT
-import           Data.Map.Diff.Strict (Diff, DiffEntry (..))
-import           Data.Map.Diff.Strict.Internal (Diff (..), NEDiffHistory (..))
+import           Data.Map.Diff.Strict (Delta (..), Diff)
+import           Data.Map.Diff.Strict.Internal (DeltaHistory (..), Diff (..))
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Sequence.NonEmpty (NESeq (..))
 import           Data.Typeable
@@ -60,11 +60,11 @@ lawsTestOne p tts =
 deriving newtype instance (Ord k, Arbitrary k, Arbitrary v)
                        => Arbitrary (Diff k v)
 
-instance (Arbitrary v) => Arbitrary (NEDiffHistory v) where
-  arbitrary = NEDiffHistory <$>
+instance (Arbitrary v) => Arbitrary (DeltaHistory v) where
+  arbitrary = DeltaHistory <$>
     ((:<||) <$> arbitrary <*> arbitrary)
 
-instance (Arbitrary v) => Arbitrary (DiffEntry v) where
+instance (Arbitrary v) => Arbitrary (Delta v) where
   arbitrary = oneof [
       Insert <$> arbitrary
     , Delete <$> arbitrary
