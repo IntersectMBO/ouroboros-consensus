@@ -601,10 +601,6 @@ data TraceAddBlockEvent blk =
     -- ChainDB.
   | PoppedBlockFromQueue (Enclosing' (RealPoint blk))
 
-    -- | The block is from the future, i.e., its slot number is greater than
-    -- the current slot (the second argument).
-  | BlockInTheFuture (RealPoint blk) SlotNo
-
     -- | A block was added to the Volatile DB
   | AddedBlockToVolatileDB (RealPoint blk) BlockNo IsEBB Enclosing
 

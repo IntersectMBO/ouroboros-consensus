@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators       #-}
@@ -17,8 +18,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB (
   , LMDBLimits (LMDBLimits, lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders)
     -- * Initialization
   , newLMDBBackingStoreInitialiser
-    -- * Tracing
-  , TraceLMDB (..)
     -- * Errors
   , DbErr (..)
     -- * Exported for `ledger-db-backends-checker`
@@ -34,6 +33,7 @@ import qualified Control.Monad.Class.MonadSTM as IOLike
 import           Control.Monad.IO.Class (MonadIO (liftIO))
 import qualified Control.Tracer as Trace
 import           Data.Functor (($>), (<&>))
+import           Data.Functor.Contravariant ((>$<))
 import           Data.Map (Map)
 import           Data.Map.Diff.Strict
 import qualified Data.Map.Strict as Map
@@ -91,7 +91,7 @@ data Db m l = Db {
     -- | The LMDB tables with the key-value stores.
   , dbBackingTables :: !(LedgerTables l LMDBMK)
   , dbFilePath      :: !FilePath
-  , dbTracer        :: !(Trace.Tracer m TraceLMDB)
+  , dbTracer        :: !(Trace.Tracer m HD.BackingStoreTrace)
     -- | Status of the LMDB backing store. When 'Closed', all backing store
     -- (value handle) operations will fail.
   , dbStatusLock    :: !(StatusLock m)
@@ -322,7 +322,7 @@ guardDbDirWithRetry gdd shfs@(FS.SomeHasFS fs) path =
 -- | Initialise an LMDB database from these provided values.
 initFromVals ::
      (HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m)
-  => Trace.Tracer m TraceLMDB
+  => Trace.Tracer m HD.BackingStoreTrace
   -> WithOrigin SlotNo
      -- ^ The slot number up to which the ledger tables contain values.
   -> LedgerTables l ValuesMK
@@ -334,18 +334,18 @@ initFromVals ::
   -> LedgerTables l LMDBMK
   -> m ()
 initFromVals tracer dbsSeq vals env st backingTables = do
-  Trace.traceWith tracer $ TDBInitialisingFromValues dbsSeq
+  Trace.traceWith tracer $ HD.BSInitialisingFromValues dbsSeq
   liftIO $ LMDB.readWriteTransaction env $
     withDbStateRWMaybeNull st $ \case
       Nothing -> ltzipWith3A initLMDBTable backingTables codecLedgerTables vals
                  $> ((), DbState{dbsSeq})
       Just _ -> liftIO . throwIO $ DbErrInitialisingAlreadyHasState
-  Trace.traceWith tracer $ TDBInitialisedFromValues dbsSeq
+  Trace.traceWith tracer $ HD.BSInitialisedFromValues dbsSeq
 
 -- | Initialise an LMDB database from an existing LMDB database.
 initFromLMDBs ::
      (MonadIO m, IOLike m)
-  => Trace.Tracer m TraceLMDB
+  => Trace.Tracer m HD.BackingStoreTrace
   -> LMDBLimits
      -- ^ Configuration for the LMDB database that we initialise from.
   -> FS.SomeHasFS m
@@ -356,7 +356,7 @@ initFromLMDBs ::
      -- ^ The path where the new LMDB database should be initialised.
   -> m ()
 initFromLMDBs tracer limits shfs@(FS.SomeHasFS fs) from0 to0 = do
-    Trace.traceWith tracer $ TDBInitialisingFromLMDB from0
+    Trace.traceWith tracer $ HD.BSInitialisingFromCopy from0
     from <- guardDbDir DirMustExist shfs from0
     -- On Windows, if we don't choose the mapsize carefully it will make the
     -- snapshot grow. Therefore we are using the current filesize as mapsize
@@ -366,27 +366,27 @@ initFromLMDBs tracer limits shfs@(FS.SomeHasFS fs) from0 to0 = do
     bracket
       (liftIO $ LMDB.openEnvironment from ((unLMDBLimits limits) { LMDB.mapSize = fromIntegral stat }))
       (liftIO . LMDB.closeEnvironment)
-      (flip (lmdbCopy tracer) to)
-    Trace.traceWith tracer $ TDBInitialisedFromLMDB to0
+      (flip (lmdbCopy from0 tracer) to)
+    Trace.traceWith tracer $ HD.BSInitialisedFromCopy from0
 
 -- | Copy an existing LMDB database to a given directory.
 lmdbCopy :: MonadIO m
-  => Trace.Tracer m TraceLMDB
+  => FS.FsPath
+  -> Trace.Tracer m HD.BackingStoreTrace
   -> LMDB.Environment LMDB.ReadWrite
      -- ^ The environment in which the LMDB database lives.
   -> FilePath
      -- ^ The path where the copy should reside.
   -> m ()
-lmdbCopy tracer e to = do
-  from <- liftIO $ LMDB.getPathEnvironment e
-  Trace.traceWith tracer $ TDBCopying from to
+lmdbCopy from0 tracer e to = do
+  Trace.traceWith tracer $ HD.BSCopying from0
   liftIO $ LMDB.copyEnvironment e to
-  Trace.traceWith tracer $ TDBCopied from to
+  Trace.traceWith tracer $ HD.BSCopied from0
 
 -- | Initialise a backing store.
 newLMDBBackingStoreInitialiser ::
      forall m l. (HasCallStack, HasLedgerTables l, CanSerializeLedgerTables l, MonadIO m, IOLike m)
-  => Trace.Tracer m TraceLMDB
+  => Trace.Tracer m HD.BackingStoreTrace
   -> LMDBLimits
      -- ^ Configuration parameters for the LMDB database that we
      -- initialise. In case we initialise the LMDB database from
@@ -396,27 +396,27 @@ newLMDBBackingStoreInitialiser ::
   -> HD.InitFrom (LedgerTables l ValuesMK)
   -> m (LMDBBackingStore l m)
 newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
-   Trace.traceWith dbTracer TDBOpening
+   Trace.traceWith dbTracer HD.BSOpening
 
    db@Db { dbEnv
          , dbState
          , dbBackingTables
-         , dbFilePath
          } <- createOrGetDB
 
    maybePopulate dbEnv dbState dbBackingTables
 
-   Trace.traceWith dbTracer $ TDBOpened dbFilePath
+   Trace.traceWith dbTracer $ HD.BSOpened $ Just path
 
    pure $ mkBackingStore db
  where
+
+   path = FS.mkFsPath ["tables"]
+
    createOrGetDB :: m (Db m l)
    createOrGetDB = do
 
      dbOpenHandles <- IOLike.newTVarIO Map.empty
      dbStatusLock  <- Status.new Open
-
-     let path = FS.mkFsPath ["tables"]
 
      -- get the filepath for this db creates the directory if appropriate
      dbFilePath <- guardDbDirWithRetry DirMustNotExist sfs path
@@ -464,32 +464,33 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
    mkBackingStore db =
        let bsClose :: m ()
            bsClose = Status.withWriteAccess' dbStatusLock traceAlreadyClosed $ do
-              Trace.traceWith dbTracer $ TDBClosing dbFilePath
-              openHandles <- IOLike.readTVarIO dbOpenHandles
-              forM_ openHandles runCleanup
-              IOLike.atomically $ IOLike.writeTVar dbOpenHandles mempty
-              liftIO $ LMDB.closeEnvironment dbEnv
-              Trace.traceWith dbTracer $ TDBClosed dbFilePath
-              pure (Closed, ())
+             Trace.traceWith dbTracer HD.BSClosing
+             openHandles <- IOLike.readTVarIO dbOpenHandles
+             forM_ openHandles runCleanup
+             IOLike.atomically $ IOLike.writeTVar dbOpenHandles mempty
+             liftIO $ LMDB.closeEnvironment dbEnv
+             Trace.traceWith dbTracer HD.BSClosed
+             pure (Closed, ())
             where
-              traceAlreadyClosed = Trace.traceWith dbTracer $
-                  TDBAlreadyClosed dbFilePath
+              traceAlreadyClosed = Trace.traceWith dbTracer HD.BSAlreadyClosed
 
            bsCopy shfs bsp = Status.withReadAccess dbStatusLock DbErrClosed $ do
              let HD.BackingStorePath to0 = bsp
              to <- guardDbDir DirMustNotExist shfs to0
-             lmdbCopy dbTracer dbEnv to
+             lmdbCopy path dbTracer dbEnv to
 
            bsValueHandle = Status.withReadAccess dbStatusLock DbErrClosed $ do
              mkLMDBBackingStoreValueHandle db
 
            bsWrite :: SlotNo -> LedgerTables l DiffMK -> m ()
-           bsWrite slot diffs = Status.withReadAccess dbStatusLock DbErrClosed $ do
-             oldSlot <- liftIO $ LMDB.readWriteTransaction dbEnv $ withDbStateRW dbState $ \s@DbState{dbsSeq} -> do
-               unless (dbsSeq <= At slot) $ liftIO . throwIO $ DbErrNonMonotonicSeq (At slot) dbsSeq
-               void $ ltzipWith3A writeLMDBTable dbBackingTables codecLedgerTables diffs
-               pure (dbsSeq, s {dbsSeq = At slot})
-             Trace.traceWith dbTracer $ TDBWrite oldSlot slot
+           bsWrite slot diffs = do
+             Trace.traceWith dbTracer $ HD.BSWriting slot
+             Status.withReadAccess dbStatusLock DbErrClosed $ do
+               oldSlot <- liftIO $ LMDB.readWriteTransaction dbEnv $ withDbStateRW dbState $ \s@DbState{dbsSeq} -> do
+                 unless (dbsSeq <= At slot) $ liftIO . throwIO $ DbErrNonMonotonicSeq (At slot) dbsSeq
+                 void $ ltzipWith3A writeLMDBTable dbBackingTables codecLedgerTables diffs
+                 pure (dbsSeq, s {dbsSeq = At slot})
+               Trace.traceWith dbTracer $ HD.BSWritten oldSlot slot
 
        in HD.BackingStore { HD.bsClose       = bsClose
                           , HD.bsCopy        = bsCopy
@@ -501,7 +502,6 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
         Db { dbEnv
            , dbState
            , dbBackingTables
-           , dbFilePath
            , dbStatusLock
            , dbOpenHandles
            } = db
@@ -524,9 +524,9 @@ mkLMDBBackingStoreValueHandle db = do
 
   let
     dbEnvRo = LMDB.readOnlyEnvironment dbEnv
-    tracer = Trace.contramap (TDBValueHandle vhId) dbTracer
+    tracer = HD.BSValueHandleTrace (Just vhId) >$< dbTracer
 
-  Trace.traceWith tracer TVHOpening
+  Trace.traceWith dbTracer HD.BSCreatingValueHandle
 
   trh <- liftIO $ TrH.newReadOnly dbEnvRo
   mbInitSlot <- liftIO $ TrH.submitReadOnly trh $ readDbStateMaybeNull dbState
@@ -543,24 +543,24 @@ mkLMDBBackingStoreValueHandle db = do
 
     bsvhClose :: m ()
     bsvhClose =
-        Status.withReadAccess' dbStatusLock traceAlreadyClosed $ do
-        Status.withWriteAccess' vhStatusLock traceTVHAlreadyClosed $ do
-          Trace.traceWith tracer TVHClosing
-          runCleanup cleanup
-          IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.delete vhId)
-          Trace.traceWith tracer TVHClosed
-          pure (Closed, ())
+      Status.withReadAccess' dbStatusLock traceAlreadyClosed $ do
+      Status.withWriteAccess' vhStatusLock traceTVHAlreadyClosed $ do
+        Trace.traceWith tracer HD.BSVHClosing
+        runCleanup cleanup
+        IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.delete vhId)
+        Trace.traceWith tracer HD.BSVHClosed
+        pure (Closed, ())
       where
-        traceAlreadyClosed    = Trace.traceWith dbTracer (TDBAlreadyClosed dbFilePath)
-        traceTVHAlreadyClosed = Trace.traceWith tracer TVHAlreadyClosed
+        traceAlreadyClosed    = Trace.traceWith dbTracer HD.BSAlreadyClosed
+        traceTVHAlreadyClosed = Trace.traceWith tracer HD.BSVHAlreadyClosed
 
     bsvhRead :: LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)
     bsvhRead keys =
       Status.withReadAccess dbStatusLock DbErrClosed $ do
       Status.withReadAccess vhStatusLock (DbErrNoValueHandle vhId) $ do
-        Trace.traceWith tracer TVHReadStarted
+        Trace.traceWith tracer HD.BSVHReading
         res <- liftIO $ TrH.submitReadOnly trh (ltzipWith3A readLMDBTable dbBackingTables codecLedgerTables keys)
-        Trace.traceWith tracer TVHReadEnded
+        Trace.traceWith tracer HD.BSVHRead
         pure res
 
     bsvhRangeRead ::
@@ -569,7 +569,7 @@ mkLMDBBackingStoreValueHandle db = do
     bsvhRangeRead rq =
       Status.withReadAccess dbStatusLock DbErrClosed $ do
       Status.withReadAccess vhStatusLock (DbErrNoValueHandle vhId) $ do
-        Trace.traceWith tracer TVHRangeReadStarted
+        Trace.traceWith tracer HD.BSVHRangeReading
 
         let
           outsideIn ::
@@ -586,7 +586,7 @@ mkLMDBBackingStoreValueHandle db = do
               (outsideIn rqPrev)
 
         res <- liftIO $ TrH.submitReadOnly trh transaction
-        Trace.traceWith tracer TVHRangeReadEnded
+        Trace.traceWith tracer HD.BSVHRangeRead
         pure res
      where
       HD.RangeQuery rqPrev rqCount = rq
@@ -595,14 +595,14 @@ mkLMDBBackingStoreValueHandle db = do
     bsvhStat =
       Status.withReadAccess dbStatusLock DbErrClosed $ do
       Status.withReadAccess vhStatusLock (DbErrNoValueHandle vhId) $ do
-        Trace.traceWith tracer TVHStatStarted
+        Trace.traceWith tracer HD.BSVHStatting
         let transaction = do
               DbState{dbsSeq} <- readDbState dbState
               constn <- lttraverse (\(LMDBMK _ dbx) -> K2 <$> LMDB.size dbx) dbBackingTables
               let n = getSum $ ltcollapse $ ltmap (K2 . Sum . unK2) constn
               pure $ HD.Statistics dbsSeq n
         res <- liftIO $ TrH.submitReadOnly trh transaction
-        Trace.traceWith tracer TVHStatEnded
+        Trace.traceWith tracer HD.BSVHStatted
         pure res
 
     bsvh = HD.BackingStoreValueHandle { HD.bsvhAtSlot = initSlot
@@ -614,7 +614,7 @@ mkLMDBBackingStoreValueHandle db = do
 
   IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.insert vhId cleanup)
 
-  Trace.traceWith tracer TVHOpened
+  Trace.traceWith dbTracer HD.BSCreatedValueHandle
   pure bsvh
 
  where
@@ -623,49 +623,12 @@ mkLMDBBackingStoreValueHandle db = do
       , dbState
       , dbOpenHandles
       , dbBackingTables
-      , dbFilePath
       , dbNextId
       , dbStatusLock
       } = db
 
 -- | A monadic action used for cleaning up resources.
 newtype Cleanup m = Cleanup { runCleanup :: m () }
-
-{-------------------------------------------------------------------------------
- Tracing
--------------------------------------------------------------------------------}
-
-data TraceLMDB
-  = TDBOpening
-  | TDBOpened      !FilePath
-  | TDBClosing     !FilePath
-  | TDBClosed      !FilePath
-  | TDBAlreadyClosed !FilePath
-  | TDBCopying     !FilePath -- ^ From
-                   !FilePath -- ^ To
-  | TDBCopied      !FilePath -- ^ From
-                   !FilePath -- ^ To
-  | TDBWrite       !(WithOrigin SlotNo) !SlotNo
-  | TDBValueHandle Int TraceValueHandle
-  | TDBInitialisingFromLMDB !FS.FsPath
-  | TDBInitialisedFromLMDB !FS.FsPath
-  | TDBInitialisingFromValues !(WithOrigin SlotNo)
-  | TDBInitialisedFromValues !(WithOrigin SlotNo)
-  deriving (Show, Eq)
-
-data TraceValueHandle
-  = TVHOpening
-  | TVHOpened
-  | TVHClosing
-  | TVHClosed
-  | TVHAlreadyClosed
-  | TVHReadStarted
-  | TVHReadEnded
-  | TVHRangeReadStarted
-  | TVHRangeReadEnded
-  | TVHStatStarted
-  | TVHStatEnded
-  deriving stock(Show, Eq)
 
 {-------------------------------------------------------------------------------
  Errors

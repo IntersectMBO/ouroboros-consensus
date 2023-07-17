@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE RankNTypes         #-}
 
 -- | An implementation of a 'BackingStore' using a TVar. This is the
@@ -9,8 +10,6 @@
 module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory (
     -- * Constructor
     newTVarBackingStoreInitialiser
-    -- * Traces
-  , TVarTraceEvent (..)
     -- * Errors
   , StoreDirIsIncompatible (..)
   , TVarBackingStoreExn (..)
@@ -33,7 +32,6 @@ import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
 import           System.FS.API
                      (HasFS (createDirectory, doesDirectoryExist, doesFileExist, mkFsErrorPath),
                      SomeHasFS (SomeHasFS), hGetAll, hPutAll, withFile)
-import qualified System.FS.API.Types as FS
 import           System.FS.API.Types (AllowExisting (MustBeNew), FsErrorPath,
                      FsPath (fsPathToList), OpenMode (ReadMode, WriteMode),
                      fsPathFromList)
@@ -59,24 +57,10 @@ data TVarBackingStoreExn =
   deriving anyclass (Exception)
   deriving stock    (Show)
 
-data TVarTraceEvent =
-    TVarTraceOpening
-  | TVarTraceOpened
-  | TVarTraceClosing
-  | TVarTraceClosed
-  | TVarTraceAlreadyClosed
-  | TVarTraceCopying                  !FS.FsPath -- ^ To
-  | TVarTraceCopied                   !FS.FsPath -- ^ To
-  | TVarTraceInitialisingFromSnapshot !FS.FsPath
-  | TVarTraceInitialisedFromSnapshot  !FS.FsPath
-  | TVarTraceWrite   !(WithOrigin SlotNo) !SlotNo
-  | TVarTraceInitialisingFromValues !(WithOrigin SlotNo)
-  deriving (Show, Eq)
-
 -- | Use a 'TVar' as a trivial backing store
 newTVarBackingStoreInitialiser ::
      (IOLike m, NoThunks values)
-  => Tracer m TVarTraceEvent
+  => Tracer m BackingStoreTrace
   -> (keys -> values -> values)
   -> (RangeQuery keys -> values -> values)
   -> (values -> diff -> values)
@@ -87,11 +71,11 @@ newTVarBackingStoreInitialiser ::
   -> InitFrom values
   -> m (BackingStore m keys values diff)
 newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ count_ enc dec (SomeHasFS fs0) initialization = do
-    traceWith tracer TVarTraceOpening
+    traceWith tracer BSOpening
     ref <- do
       (slot, values) <- case initialization of
         InitFromCopy (BackingStorePath path) -> do
-          traceWith tracer $ TVarTraceInitialisingFromSnapshot path
+          traceWith tracer $ BSInitialisingFromCopy path
           tvarFileExists <- doesFileExist fs0 (extendPath path)
           unless tvarFileExists $
             throwIO . StoreDirIsIncompatible $ mkFsErrorPath fs0 path
@@ -101,27 +85,28 @@ newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ count_ e
               Left  err        -> throwIO $ TVarBackingStoreDeserialiseExn err
               Right (extra, x) -> do
                 unless (BSL.null extra) $ throwIO TVarIncompleteDeserialiseExn
-                traceWith tracer $ TVarTraceInitialisedFromSnapshot path
+                traceWith tracer $ BSInitialisedFromCopy path
                 pure x
         InitFromValues slot values -> do
-          traceWith tracer $ TVarTraceInitialisingFromValues slot
+          traceWith tracer $ BSInitialisingFromValues slot
           pure (slot, values)
       newTVarIO $ TVarBackingStoreContents slot values
-    traceWith tracer TVarTraceOpened
+    traceWith tracer $ BSOpened Nothing
     pure BackingStore {
         bsClose    = do
+            traceWith tracer BSClosing
             catch
               (atomically $ do
-                guardClosed ref
-                writeTVar ref TVarBackingStoreContentsClosed
+                  guardClosed ref
+                  writeTVar ref TVarBackingStoreContentsClosed
               )
               (\case
-                TVarBackingStoreClosedExn -> traceWith tracer TVarTraceAlreadyClosed
+                TVarBackingStoreClosedExn -> traceWith tracer BSAlreadyClosed
                 e -> throwIO e
               )
-            traceWith tracer TVarTraceClosed
+            traceWith tracer BSClosed
       , bsCopy = \(SomeHasFS fs) (BackingStorePath path) -> do
-          traceWith tracer $ TVarTraceCopying path
+          traceWith tracer $ BSCopying path
           join $ atomically $ do
             readTVar ref >>= \case
               TVarBackingStoreContentsClosed                ->
@@ -132,41 +117,60 @@ newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ count_ e
                 createDirectory fs path
                 withFile fs (extendPath path) (WriteMode MustBeNew) $ \h -> do
                   void $ hPutAll fs h $ CBOR.toLazyByteString $ CBOR.toCBOR slot <> enc values
-          traceWith tracer $ TVarTraceCopied path
-      , bsValueHandle = join $ atomically $ do
-          readTVar ref >>= \case
-            TVarBackingStoreContentsClosed                ->
-              throwSTM TVarBackingStoreClosedExn
-            TVarBackingStoreContents slot values -> pure $ do
-              refHandleClosed <- newTVarIO False
-              pure $ BackingStoreValueHandle {
-                  bsvhAtSlot    = slot
-                , bsvhClose     =
-                    catch
+          traceWith tracer $ BSCopied path
+      , bsValueHandle = do
+          traceWith tracer BSCreatingValueHandle
+          vh <- join $ atomically $ do
+           readTVar ref >>= \case
+             TVarBackingStoreContentsClosed                ->
+               throwSTM TVarBackingStoreClosedExn
+             TVarBackingStoreContents slot values -> pure $ do
+               refHandleClosed <- newTVarIO False
+               pure $ BackingStoreValueHandle {
+                   bsvhAtSlot    = slot
+                 , bsvhClose     = do
+                     traceWith tracer $ BSValueHandleTrace Nothing BSVHClosing
+                     catch
                       (atomically $ do
                         guardClosed ref
                         guardHandleClosed refHandleClosed
                         writeTVar refHandleClosed True
                       )
                       (\case
-                        TVarBackingStoreClosedExn            -> pure ()
-                        TVarBackingStoreValueHandleClosedExn -> pure ()
+                        TVarBackingStoreClosedExn            -> traceWith tracer BSAlreadyClosed
+                        TVarBackingStoreValueHandleClosedExn -> traceWith tracer (BSValueHandleTrace Nothing BSVHAlreadyClosed)
                         e                                    -> throwIO e
                       )
-                , bsvhRangeRead = \rq -> atomically $ do
-                    guardClosed ref
-                    guardHandleClosed refHandleClosed
-                    pure $ rangeRead_ rq values
-                , bsvhRead      = \keys -> atomically $ do
-                    guardClosed ref
-                    guardHandleClosed refHandleClosed
-                    pure $ lookup_ keys values
-                , bsvhStat = atomically $ do
-                    guardClosed ref
-                    guardHandleClosed refHandleClosed
-                    pure $ Statistics slot (count_ values)
-                }
+                     traceWith tracer $ BSValueHandleTrace Nothing BSVHClosed
+                 , bsvhRangeRead = \rq -> do
+                     traceWith tracer $ BSValueHandleTrace Nothing BSVHRangeReading
+                     r <- atomically $ do
+                       guardClosed ref
+                       guardHandleClosed refHandleClosed
+                       pure $ rangeRead_ rq values
+                     traceWith tracer $ BSValueHandleTrace Nothing BSVHRangeRead
+                     pure r
+                 , bsvhRead      = \keys -> do
+                     traceWith tracer $ BSValueHandleTrace Nothing BSVHReading
+                     r <- atomically $ do
+                       guardClosed ref
+                       guardHandleClosed refHandleClosed
+                       pure $ lookup_ keys values
+                     traceWith tracer $ BSValueHandleTrace Nothing BSVHRead
+                     pure r
+                 , bsvhStat = do
+                     traceWith tracer $ BSValueHandleTrace Nothing BSVHStatting
+                     r <- atomically $ do
+                       guardClosed ref
+                       guardHandleClosed refHandleClosed
+                       pure $ Statistics slot (count_ values)
+                     traceWith tracer $ BSValueHandleTrace Nothing BSVHStatted
+                     pure r
+                 }
+          traceWith tracer BSCreatedValueHandle
+          pure vh
       , bsWrite    = \slot2 diff -> do
+         traceWith tracer $ BSWriting slot2
          slot1 <- atomically $ do
           readTVar ref >>= \case
             TVarBackingStoreContentsClosed        ->
@@ -179,7 +183,7 @@ newTVarBackingStoreInitialiser tracer lookup_ rangeRead_ forwardValues_ count_ e
                   (At slot2)
                   (forwardValues_ values diff)
               pure slot1
-         traceWith tracer $ TVarTraceWrite slot1 slot2
+         traceWith tracer $ BSWritten slot1 slot2
       }
   where
     extendPath path =
