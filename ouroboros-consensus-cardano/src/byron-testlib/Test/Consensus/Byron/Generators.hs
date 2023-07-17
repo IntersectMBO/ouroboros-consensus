@@ -229,8 +229,10 @@ instance Arbitrary CC.Genesis.GenesisHash where
 instance Arbitrary CC.UTxO.UTxO where
   arbitrary = oneof [
       hedgehog CC.genUTxO
-      -- We would sometimes like to run tests using an empty UTxO, but 'genUTxO'
-      -- generates an empty UTxO with only a very low probability.
+      -- We would sometimes like to run tests using a smaller (or even empty)
+      -- UTxO, but 'genUTxO' generates a UTxO without depending on the QC size
+      -- parameter. The probability of generating smaller (or empty) UTxOs is
+      -- therefore low.
     , CC.UTxO.fromList <$>
         listOf ((,) <$> hedgehog CC.genTxIn <*> hedgehog CC.genTxOut)
     ]

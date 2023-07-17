@@ -86,11 +86,15 @@ tests = testGroup "UpdateTablesOnEraTransition"
   [ testTablesTranslation "Byron to Shelley"
                           byronToShelleyLedgerStateTranslation
                           byronUtxosAreInsertsInShelleyUtxoDiff
-                          (\st -> cover 50 (      nonEmptyUtxosByron st) "UTxO set is not empty"
-                                . cover 1  (not $ nonEmptyUtxosByron st) "UTxO set is empty"
-                          --(\st -> coverTable "UTxO set non-empty" [("True", 50), ("False", 1)]
-                          --      . tabulate "UTxO set non-empty" [show $ nonEmptyUtxosByron st]
-
+                          (\st -> cover 50  (      nonEmptyUtxosByron st) "UTxO set is not empty"
+                                  -- The Byron ledger generators are very
+                                  -- unlikely to generate an empty UTxO, but we
+                                  -- want to test with the empty UTxO as well.
+                                  -- See 'Test.Cardano.Chain.UTxO.Gen.genUTxO'
+                                  -- and the @Arbitrary
+                                  -- 'Cardano.Chain.UTxO.UTxO'@ instance in
+                                  -- "Test.Consensus.Byron.Generators".
+                                . cover 0.1 (not $ nonEmptyUtxosByron st) "UTxO set is empty"
                           )
   , testTablesTranslation "Shelley to Allegra"
                           shelleyToAllegraLedgerStateTranslation
