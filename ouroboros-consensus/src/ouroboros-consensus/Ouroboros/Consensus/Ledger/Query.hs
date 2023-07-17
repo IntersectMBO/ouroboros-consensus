@@ -395,7 +395,7 @@ mkDiskLedgerView h@(LedgerDBView lvh ldb queryBatchSize) =
     -- NOTE: this is counting the deletions wrt disk.
     numDeletesDiffMK :: DiffMK k v -> Int
     numDeletesDiffMK (DiffMK d) =
-      getSum $ Diff.foldMapDiffEntry (Sum . oneIfDel) d
+      getSum $ Diff.foldMapDelta (Sum . oneIfDel) d
       where
         oneIfDel x = case x of
           Diff.Delete _ -> 1

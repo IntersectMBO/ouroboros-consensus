@@ -230,7 +230,7 @@ writeLMDBTable ::
 writeLMDBTable (LMDBMK _ db) codecMK (DiffMK d) =
     EmptyMK <$ lmdbWriteTable
   where
-    lmdbWriteTable = void $ traverseDiffEntryWithKey_ go d
+    lmdbWriteTable = void $ traverseDeltaWithKey_ go d
       where
         go k de = case de of
           Delete _v -> void $ Bridge.delete codecMK db k

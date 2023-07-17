@@ -308,7 +308,7 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
       modify' applyPending
       pure $ Diff.fromList entries
 
-    genUtxoDiffEntry :: StateT GenOperationsState Gen (Key, Diff.DiffEntry Int)
+    genUtxoDiffEntry :: StateT GenOperationsState Gen (Key, Diff.Delta Int)
     genUtxoDiffEntry = do
       activeUtxos <- gets gosActiveUtxos
       consumedUtxos <- gets gosConsumedUtxos
@@ -316,7 +316,7 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
         genDelEntry activeUtxos,
         genInsertEntry consumedUtxos]
 
-    genDelEntry :: Map Key Int -> Maybe (StateT GenOperationsState Gen (Key, Diff.DiffEntry Int))
+    genDelEntry :: Map Key Int -> Maybe (StateT GenOperationsState Gen (Key, Diff.Delta Int))
     genDelEntry activeUtxos =
       if Map.null activeUtxos then Nothing
       else Just $ do
@@ -326,7 +326,7 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
           }
         pure (k, Diff.Delete v )
 
-    genInsertEntry :: Set Key -> Maybe (StateT GenOperationsState Gen (Key, Diff.DiffEntry Int))
+    genInsertEntry :: Set Key -> Maybe (StateT GenOperationsState Gen (Key, Diff.Delta Int))
     genInsertEntry consumedUtxos = Just $ do
       k <- lift $ genKey `suchThat` (`Set.notMember` consumedUtxos)
       v <- lift arbitrary
