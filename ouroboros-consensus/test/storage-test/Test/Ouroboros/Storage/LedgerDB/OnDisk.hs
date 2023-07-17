@@ -99,7 +99,6 @@ import           System.FS.API.Types
 import qualified System.FS.IO as FSIO
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
-import           System.Info (os)
 import qualified System.IO.Temp as Temp
 import           System.Random (getStdRandom, randomR)
 import           Test.Ouroboros.Storage.LedgerDB.InMemory ()
@@ -122,15 +121,12 @@ import           Test.Util.TestBlock hiding (TestBlock, TestBlockCodecConfig,
 -------------------------------------------------------------------------------}
 
 tests :: TestTree
-tests = testGroup "OnDisk"
-  ([ testProperty "LedgerSimple-InMem" $
-     prop_sequential 100000 inMemDbEnv uniform
-   ] <>
-   [ testProperty "LedgerSimple-LMDB" $
-     prop_sequential 2000 (lmdbDbEnv testLMDBLimits) lmdbCustom
-   | os /= "mingw32"  -- FIXME: Should re-enable at some point, see #4022
-   ]
-  )
+tests = testGroup "OnDisk" [
+      testProperty "LedgerSimple-InMem" $
+        prop_sequential 100000 inMemDbEnv uniform
+    , testProperty "LedgerSimple-LMDB" $
+        prop_sequential 2000 (lmdbDbEnv testLMDBLimits) lmdbCustom
+    ]
   where
     uniform = CmdDistribution
         { freqCurrent   = 1
