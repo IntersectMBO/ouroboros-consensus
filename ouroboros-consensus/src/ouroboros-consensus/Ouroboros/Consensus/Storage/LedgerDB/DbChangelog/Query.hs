@@ -78,7 +78,7 @@ isSaturated (SecurityParam k) db =
 -- returned.
 getPastLedgerAt ::
      ( HasHeader blk, IsLedger l, HeaderHash l ~ HeaderHash blk
-     , StandardHash l, HasTickedLedgerTables l
+     , StandardHash l, HasLedgerTables l
      )
   => Point blk
   -> AnchorlessDbChangelog l
@@ -146,7 +146,7 @@ trunc n (SeqDiffMK sq) =
 -- returned.
 rollback ::
      ( HasHeader blk, IsLedger l, HeaderHash l ~ HeaderHash blk
-     , StandardHash l, HasTickedLedgerTables l
+     , StandardHash l, HasLedgerTables l
      )
   => Point blk
   -> AnchorlessDbChangelog l

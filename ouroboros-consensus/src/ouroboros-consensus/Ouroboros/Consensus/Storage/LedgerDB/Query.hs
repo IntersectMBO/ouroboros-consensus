@@ -47,7 +47,7 @@ getLedgerTablesAtFor ::
   , HeaderHash blk ~ HeaderHash l
   , IsLedger l
   , StandardHash l
-  , HasTickedLedgerTables l
+  , HasLedgerTables l
   )
   => Point blk
   -> LedgerTables l KeysMK

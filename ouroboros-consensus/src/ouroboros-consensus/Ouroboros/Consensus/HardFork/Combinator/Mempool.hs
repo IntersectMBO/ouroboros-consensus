@@ -92,7 +92,7 @@ instance Typeable xs => ShowProxy (GenTx (HardForkBlock xs)) where
 type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 
 instance ( CanHardFork xs
-         , HasTickedLedgerTables (LedgerState (HardForkBlock xs))
+         , HardForkHasLedgerTables xs
          , NoThunks (Ticked1 (LedgerState (HardForkBlock xs)) TrackingMK)
          , LedgerTablesCanHardFork xs
          ) => LedgerSupportsMempool (HardForkBlock xs) where

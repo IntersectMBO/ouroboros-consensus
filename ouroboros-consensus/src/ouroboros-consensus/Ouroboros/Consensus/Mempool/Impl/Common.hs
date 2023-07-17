@@ -389,7 +389,7 @@ extendVRNew cfg txSize wti tx vr = assert (isNothing vrNewValid) $
 --
 -- Discards information about invalid and newly valid transactions
 internalStateFromVR ::
-     HasTickedLedgerTables (LedgerState blk)
+     HasLedgerTables (Ticked1 (LedgerState blk))
   => ValidationResult invalidTx blk
   -> InternalState blk
 internalStateFromVR vr = IS {
@@ -414,7 +414,7 @@ internalStateFromVR vr = IS {
 
 -- | Construct a 'ValidationResult' from internal state.
 validationResultFromIS ::
-     HasTickedLedgerTables (LedgerState blk)
+     (HasLedgerTables (LedgerState blk), HasLedgerTables (Ticked1 (LedgerState blk)))
   => LedgerTables (LedgerState blk) ValuesMK
   -> InternalState blk
   -> ValidationResult invalidTx blk

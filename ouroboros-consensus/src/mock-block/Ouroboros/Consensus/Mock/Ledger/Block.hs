@@ -465,8 +465,6 @@ instance HasLedgerTables (Ticked1 (LedgerState (SimpleBlock c ext))) where
   withLedgerTables   (TickedSimpleLedgerState st) tables =
       TickedSimpleLedgerState $ withLedgerTables st $ castLedgerTables tables
 
-instance HasTickedLedgerTables (LedgerState (SimpleBlock c ext))
-
 instance CanSerializeLedgerTables (LedgerState (SimpleBlock c ext))
 
 instance CanStowLedgerTables (LedgerState (SimpleBlock c ext)) where

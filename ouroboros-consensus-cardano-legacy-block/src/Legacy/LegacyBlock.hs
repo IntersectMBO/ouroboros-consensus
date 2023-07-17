@@ -608,8 +608,6 @@ type instance Value (LedgerState (LegacyBlock blk)) = Void
 instance HasLedgerTables (LedgerState (LegacyBlock blk))
 instance HasLedgerTables (Ticked1 (LedgerState (LegacyBlock blk)))
 
-instance HasTickedLedgerTables (LedgerState (LegacyBlock blk))
-
 instance LedgerTablesAreTrivial (LedgerState (LegacyBlock blk)) where
   convertMapKind (LegacyLedgerState x) = LegacyLedgerState x
 

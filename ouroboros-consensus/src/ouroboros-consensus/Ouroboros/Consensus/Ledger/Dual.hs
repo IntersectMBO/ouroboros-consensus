@@ -961,8 +961,6 @@ instance Bridge m a
         , tickedDualLedgerStateAuxOrig
         }
 
-instance Bridge m a => HasTickedLedgerTables (LedgerState (DualBlock m a))
-
 instance CanSerializeLedgerTables (LedgerState m)
       => CanSerializeLedgerTables (LedgerState (DualBlock m a)) where
   codecLedgerTables = castLedgerTables $ codecLedgerTables @(LedgerState m)

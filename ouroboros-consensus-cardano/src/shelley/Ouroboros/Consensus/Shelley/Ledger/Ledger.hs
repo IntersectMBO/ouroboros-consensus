@@ -288,9 +288,6 @@ instance ShelleyBasedEra era
         } = st
 
 instance ShelleyBasedEra era
-      => HasTickedLedgerTables (LedgerState (ShelleyBlock proto era))
-
-instance ShelleyBasedEra era
       => CanSerializeLedgerTables (LedgerState (ShelleyBlock proto era)) where
     codecLedgerTables = LedgerTables (CodecMK
                                        (Core.toEraCBOR @era)

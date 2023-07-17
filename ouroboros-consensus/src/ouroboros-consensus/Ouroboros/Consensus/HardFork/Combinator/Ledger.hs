@@ -189,7 +189,7 @@ tickOne ei slot sopIdx partialCfg st =
 -------------------------------------------------------------------------------}
 
 instance ( CanHardFork xs
-         , HasTickedLedgerTables (LedgerState (HardForkBlock xs))
+         , HardForkHasLedgerTables xs
          , LedgerTablesCanHardFork xs
          )
       => ApplyBlock (LedgerState (HardForkBlock xs)) (HardForkBlock xs) where
@@ -277,7 +277,7 @@ reapply index (WrapLedgerConfig cfg) (Pair (I block) (FlipTickedLedgerState st))
 -------------------------------------------------------------------------------}
 
 instance ( CanHardFork xs
-         , HasTickedLedgerTables (LedgerState (HardForkBlock xs))
+         , HardForkHasLedgerTables xs
          , LedgerTablesCanHardFork xs
          )
       => UpdateLedger (HardForkBlock xs)
@@ -350,7 +350,7 @@ instance CanHardFork xs => ValidateEnvelope (HardForkBlock xs) where
 -------------------------------------------------------------------------------}
 
 instance ( CanHardFork xs
-         , HasTickedLedgerTables (LedgerState (HardForkBlock xs))
+         , HardForkHasLedgerTables xs
          , LedgerTablesCanHardFork xs
          )
       => LedgerSupportsProtocol (HardForkBlock xs) where
@@ -933,10 +933,6 @@ instance ( HardForkHasLedgerTables xs
         $ applyDistribLedgerTables
             (projectNP i hardForkInjectLedgerTables)
             (castLedgerTables tables)
-
-instance ( HardForkHasLedgerTables xs
-         , LedgerTablesCanHardFork xs
-         ) => HasTickedLedgerTables (LedgerState (HardForkBlock xs)) where
 
 instance ( Key (LedgerState (HardForkBlock xs)) ~ Void
          , Value (LedgerState (HardForkBlock xs)) ~ Void

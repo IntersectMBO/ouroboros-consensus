@@ -334,7 +334,8 @@ class ( Typeable ptype
       ,            Serialise (PayloadDependentState ptype EmptyMK)
 
 
-      , HasTickedLedgerTables     (LedgerState (TestBlockWith ptype))
+      , HasLedgerTables (LedgerState (TestBlockWith ptype))
+      , HasLedgerTables (Ticked1 (LedgerState (TestBlockWith ptype)))
       , CanStowLedgerTables (LedgerState (TestBlockWith ptype))
       , CanSerializeLedgerTables (LedgerState (TestBlockWith ptype))
 
@@ -469,8 +470,6 @@ instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where
   convertMapKind (TickedTestLedger x) = TickedTestLedger $ convertMapKind x
 
 instance CanSerializeLedgerTables (LedgerState TestBlock)
-
-instance HasTickedLedgerTables (LedgerState TestBlock)
 
 instance CanStowLedgerTables (LedgerState TestBlock)
 

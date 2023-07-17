@@ -126,7 +126,6 @@ type instance Value (LedgerState ByronSpecBlock) = Void
 instance HasLedgerTables (LedgerState ByronSpecBlock)
 instance HasLedgerTables (Ticked1 (LedgerState ByronSpecBlock))
 instance CanSerializeLedgerTables (LedgerState ByronSpecBlock)
-instance HasTickedLedgerTables (LedgerState ByronSpecBlock)
 instance LedgerTablesAreTrivial (LedgerState ByronSpecBlock) where
   convertMapKind (ByronSpecLedgerState x y) =
       ByronSpecLedgerState x y

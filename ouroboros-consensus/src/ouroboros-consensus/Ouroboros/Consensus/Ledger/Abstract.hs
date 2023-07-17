@@ -76,7 +76,8 @@ class ( IsLedger l
       , HeaderHash l ~ HeaderHash blk
       , HasHeader blk
       , HasHeader (Header blk)
-      , HasTickedLedgerTables l
+      , HasLedgerTables l
+      , HasLedgerTables (Ticked1 l)
       ) => ApplyBlock l blk where
 
   -- | Apply a block to the ledger state.

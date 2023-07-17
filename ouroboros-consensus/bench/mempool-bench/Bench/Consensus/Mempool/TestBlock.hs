@@ -41,8 +41,8 @@ import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
                      CanStowLedgerTables, DiffMK (..), EmptyMK, HasLedgerTables,
-                     HasTickedLedgerTables, IsMapKind (..), Key, KeysMK (..),
-                     LedgerTables (..), Value, ValuesMK (..))
+                     IsMapKind (..), Key, KeysMK (..), LedgerTables (..), Value,
+                     ValuesMK (..))
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
                      (rawAttachAndApplyDiffs)
 import qualified Ouroboros.Consensus.Mempool as Mempool
@@ -176,8 +176,6 @@ instance CanSerializeLedgerTables (LedgerState TestBlock)
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables     = error "unused: stowLedgerTables"
   unstowLedgerTables   = error "unused: unstowLedgerTables"
-
-instance HasTickedLedgerTables (LedgerState TestBlock) where
 
 {-------------------------------------------------------------------------------
   Mempool support

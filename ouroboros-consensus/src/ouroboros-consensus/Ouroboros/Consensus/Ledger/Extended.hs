@@ -261,9 +261,6 @@ instance HasLedgerTables (Ticked1 (LedgerState blk))
         view
         hstate
 
-instance HasTickedLedgerTables (LedgerState blk)
-      => HasTickedLedgerTables (ExtLedgerState blk)
-
 instance CanStowLedgerTables (LedgerState blk)
       => CanStowLedgerTables (ExtLedgerState blk) where
    stowLedgerTables (ExtLedgerState lstate hstate) =

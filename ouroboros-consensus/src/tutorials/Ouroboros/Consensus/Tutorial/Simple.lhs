@@ -742,7 +742,6 @@ and we use the default implementation
 >
 > instance HasLedgerTables (LedgerState BlockC)
 > instance HasLedgerTables (Ticked1 (LedgerState BlockC))
-> instance HasTickedLedgerTables (LedgerState BlockC)
 > instance CanSerializeLedgerTables (LedgerState BlockC)
 > instance CanStowLedgerTables (LedgerState BlockC)
 > instance LedgerTablesAreTrivial (LedgerState BlockC) where

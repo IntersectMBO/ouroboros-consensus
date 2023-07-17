@@ -133,7 +133,6 @@ type instance Ledger.Value (Ledger.LedgerState TestBlock) = Void
 
 instance Ledger.HasLedgerTables (Ledger.LedgerState TestBlock)
 instance Ledger.HasLedgerTables (Ticked1 (Ledger.LedgerState TestBlock))
-instance Ledger.HasTickedLedgerTables (Ledger.LedgerState TestBlock)
 instance Ledger.LedgerTablesAreTrivial (Ledger.LedgerState TestBlock) where
   convertMapKind (TestBlock.TestLedger x NoPayLoadDependentState) =
       TestBlock.TestLedger x NoPayLoadDependentState
