@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE TupleSections      #-}
 
 -- | LMDB resource status with read-append-write locking
 module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Status (
@@ -11,10 +12,13 @@ module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Status (
     -- * Locks
   , new
   , withReadAccess
+  , withReadAccess'
   , withWriteAccess
+  , withWriteAccess'
   ) where
 
 import           Control.Exception (Exception)
+import           Data.Functor ((<&>))
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadThrow (throwIO))
@@ -61,6 +65,18 @@ withWriteAccess lock exc k =
     Open   -> k
     Closed -> throwIO exc
 
+-- | Like 'withWriteAccess', but run an action when the status is 'Closed'.
+withWriteAccess' ::
+     IOLike m
+  => StatusLock m
+  -> m a
+  -> m (Status, a)
+  -> m a
+withWriteAccess' lock def k =
+    RAW.withWriteAccess (getStatusLock lock) $ \case
+      Open   -> k
+      Closed -> def <&> (Closed,)
+
 -- | A variant of 'RAW.withReadAccess' that throws an exception if @'Status' ==
 -- 'Closed'@.
 --
@@ -77,3 +93,15 @@ withReadAccess lock exc k =
   RAW.withReadAccess (getStatusLock lock) $ \case
     Open   -> k
     Closed -> throwIO exc
+
+-- | Like 'withReadAccess', but run an action when the status is 'Closed'.
+withReadAccess' ::
+     IOLike m
+  => StatusLock m
+  -> m a
+  -> m a
+  -> m a
+withReadAccess' lock def k =
+    RAW.withReadAccess (getStatusLock lock) $ \case
+      Open   -> k
+      Closed -> def

@@ -540,6 +540,7 @@ test-suite consensus-test
     Test.Consensus.HardFork.History
     Test.Consensus.HardFork.Infra
     Test.Consensus.HardFork.Summary
+    Test.Consensus.Ledger.Tables.DiffSeq
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
@@ -560,11 +561,14 @@ test-suite consensus-test
     , cardano-crypto-class
     , cardano-ledger-binary
     , cardano-slotting
+    , cardano-strict-containers
     , cborg
     , consensus-testlib
     , containers
     , contra-tracer
     , deepseq
+    , diff-containers                                                     >=1.0
+    , fingertree-rm                                                       >=1.0
     , fs-api
     , fs-sim
     , generics-sop
@@ -573,6 +577,7 @@ test-suite consensus-test
     , io-sim
     , mock-block
     , mtl
+    , nonempty-containers
     , nothunks
     , ouroboros-consensus
     , ouroboros-network
@@ -580,6 +585,8 @@ test-suite consensus-test
     , ouroboros-network-mock
     , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
     , QuickCheck
+    , quickcheck-classes
+    , quickcheck-monoid-subclasses
     , quickcheck-state-machine
     , random
     , serialise
@@ -635,14 +642,12 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.Primary
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB
+    Test.Ouroboros.Storage.LedgerDB.BackingStore
+    Test.Ouroboros.Storage.LedgerDB.BackingStore.Lockstep
+    Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock
+    Test.Ouroboros.Storage.LedgerDB.BackingStore.Registry
     Test.Ouroboros.Storage.LedgerDB.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.DiskPolicy
-    Test.Ouroboros.Storage.LedgerDB.HD
-    Test.Ouroboros.Storage.LedgerDB.HD.BackingStore
-    Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Lockstep
-    Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Mock
-    Test.Ouroboros.Storage.LedgerDB.HD.BackingStore.Registry
-    Test.Ouroboros.Storage.LedgerDB.HD.DiffSeq
     Test.Ouroboros.Storage.LedgerDB.InMemory
     Test.Ouroboros.Storage.LedgerDB.OnDisk
     Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary
@@ -661,19 +666,16 @@ test-suite storage-test
     , bytestring
     , cardano-binary
     , cardano-crypto-class
-    , cardano-ledger-binary:testlib
     , cardano-slotting
-    , cardano-strict-containers
     , cborg
     , consensus-testlib
     , constraints
     , containers
     , contra-tracer
-    , diff-containers                >=1.0
+    , diff-containers           >=1.0
     , directory
-    , fingertree-rm                  >=1.0
     , fs-api
-    , fs-sim                         >=0.2
+    , fs-sim                    >=0.2
     , generics-sop
     , hashable
     , io-classes
@@ -686,11 +688,9 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-classes
     , quickcheck-dynamic
     , quickcheck-lockstep
-    , quickcheck-monoid-subclasses
-    , quickcheck-state-machine       >=0.7.2
+    , quickcheck-state-machine  >=0.7.2
     , random
     , serialise
     , strict-mvar

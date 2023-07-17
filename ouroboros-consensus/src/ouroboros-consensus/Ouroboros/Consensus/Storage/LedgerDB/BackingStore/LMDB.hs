@@ -463,14 +463,17 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
    mkBackingStore :: HasCallStack => Db m l -> LMDBBackingStore l m
    mkBackingStore db =
        let bsClose :: m ()
-           bsClose = Status.withWriteAccess dbStatusLock DbErrClosed $ do
-             Trace.traceWith dbTracer $ TDBClosing dbFilePath
-             openHandles <- IOLike.readTVarIO dbOpenHandles
-             forM_ openHandles runCleanup
-             IOLike.atomically $ IOLike.writeTVar dbOpenHandles mempty
-             liftIO $ LMDB.closeEnvironment dbEnv
-             Trace.traceWith dbTracer $ TDBClosed dbFilePath
-             pure (Closed, ())
+           bsClose = Status.withWriteAccess' dbStatusLock traceAlreadyClosed $ do
+              Trace.traceWith dbTracer $ TDBClosing dbFilePath
+              openHandles <- IOLike.readTVarIO dbOpenHandles
+              forM_ openHandles runCleanup
+              IOLike.atomically $ IOLike.writeTVar dbOpenHandles mempty
+              liftIO $ LMDB.closeEnvironment dbEnv
+              Trace.traceWith dbTracer $ TDBClosed dbFilePath
+              pure (Closed, ())
+            where
+              traceAlreadyClosed = Trace.traceWith dbTracer $
+                  TDBAlreadyClosed dbFilePath
 
            bsCopy shfs bsp = Status.withReadAccess dbStatusLock DbErrClosed $ do
              let HD.BackingStorePath to0 = bsp
@@ -540,13 +543,16 @@ mkLMDBBackingStoreValueHandle db = do
 
     bsvhClose :: m ()
     bsvhClose =
-      Status.withReadAccess dbStatusLock DbErrClosed $ do
-      Status.withWriteAccess vhStatusLock (DbErrNoValueHandle vhId) $ do
-        Trace.traceWith tracer TVHClosing
-        runCleanup cleanup
-        IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.delete vhId)
-        Trace.traceWith tracer TVHClosed
-        pure (Closed, ())
+        Status.withReadAccess' dbStatusLock traceAlreadyClosed $ do
+        Status.withWriteAccess' vhStatusLock traceTVHAlreadyClosed $ do
+          Trace.traceWith tracer TVHClosing
+          runCleanup cleanup
+          IOLike.atomically $ IOLike.modifyTVar' dbOpenHandles (Map.delete vhId)
+          Trace.traceWith tracer TVHClosed
+          pure (Closed, ())
+      where
+        traceAlreadyClosed    = Trace.traceWith dbTracer (TDBAlreadyClosed dbFilePath)
+        traceTVHAlreadyClosed = Trace.traceWith tracer TVHAlreadyClosed
 
     bsvhRead :: LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)
     bsvhRead keys =
@@ -617,6 +623,7 @@ mkLMDBBackingStoreValueHandle db = do
       , dbState
       , dbOpenHandles
       , dbBackingTables
+      , dbFilePath
       , dbNextId
       , dbStatusLock
       } = db
@@ -633,6 +640,7 @@ data TraceLMDB
   | TDBOpened      !FilePath
   | TDBClosing     !FilePath
   | TDBClosed      !FilePath
+  | TDBAlreadyClosed !FilePath
   | TDBCopying     !FilePath -- ^ From
                    !FilePath -- ^ To
   | TDBCopied      !FilePath -- ^ From
@@ -650,6 +658,7 @@ data TraceValueHandle
   | TVHOpened
   | TVHClosing
   | TVHClosed
+  | TVHAlreadyClosed
   | TVHReadStarted
   | TVHReadEnded
   | TVHRangeReadStarted
