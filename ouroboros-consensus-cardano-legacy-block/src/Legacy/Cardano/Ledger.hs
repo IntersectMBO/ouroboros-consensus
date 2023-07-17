@@ -12,8 +12,6 @@
 module Legacy.Cardano.Ledger () where
 
 import           Control.Monad.Except
-import           Data.Proxy
-import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Strict hiding (shape, tl)
 import           Data.Void (Void)
 import           GHC.Stack (HasCallStack)
@@ -23,7 +21,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 

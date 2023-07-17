@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
@@ -25,11 +26,12 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   , HardForkLedgerWarning (..)
     -- * Type family instances
   , FlipTickedLedgerState (..)
-  , LedgerTables (..)
   , Ticked1 (..)
     -- * Low-level API (exported for the benefit of testing)
   , AnnForecast (..)
   , mkHardForkForecast
+    -- * Ledger tables
+  , HardForkHasLedgerTables
   ) where
 
 import           Control.Monad.Except
@@ -828,14 +830,19 @@ instance LedgerTablesCanHardFork '[blk] where
   Ledger Tables for the Nary HardForkBlock
 -------------------------------------------------------------------------------}
 
-instance ( Ord (Key (LedgerState (HardForkBlock xs)))
-         , Show (Key (LedgerState (HardForkBlock xs)))
-         , Show (Value (LedgerState (HardForkBlock xs)))
-         , Eq (Value (LedgerState (HardForkBlock xs)))
-         , NoThunks (Key (LedgerState (HardForkBlock xs)))
-         , NoThunks (Value (LedgerState (HardForkBlock xs)))
+type HardForkHasLedgerTables xs = (
+    Ord (Key (LedgerState (HardForkBlock xs)))
+  , Show (Key (LedgerState (HardForkBlock xs)))
+  , Show (Value (LedgerState (HardForkBlock xs)))
+  , Eq (Value (LedgerState (HardForkBlock xs)))
+  , NoThunks (Key (LedgerState (HardForkBlock xs)))
+  , NoThunks (Value (LedgerState (HardForkBlock xs)))
+  , All (Compose HasLedgerTables LedgerState) xs
+  , All (Compose HasTickedLedgerTables LedgerState) xs
+  )
+
+instance ( HardForkHasLedgerTables xs
          , LedgerTablesCanHardFork xs
-         , All (Compose HasLedgerTables LedgerState) xs
          ) => HasLedgerTables (LedgerState (HardForkBlock xs)) where
   projectLedgerTables ::
        forall mk. IsMapKind mk
@@ -875,14 +882,8 @@ instance ( Ord (Key (LedgerState (HardForkBlock xs)))
             (projectNP i hardForkInjectLedgerTables)
             tables
 
-instance ( Ord (Key (LedgerState (HardForkBlock xs)))
-         , Show (Key (LedgerState (HardForkBlock xs)))
-         , Show (Value (LedgerState (HardForkBlock xs)))
-         , Eq (Value (LedgerState (HardForkBlock xs)))
-         , NoThunks (Key (LedgerState (HardForkBlock xs)))
-         , NoThunks (Value (LedgerState (HardForkBlock xs)))
+instance ( HardForkHasLedgerTables xs
          , LedgerTablesCanHardFork xs
-         , All (Compose HasTickedLedgerTables LedgerState) xs
          ) => HasLedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) where
   projectLedgerTables ::
        forall mk. IsMapKind mk
@@ -933,15 +934,8 @@ instance ( Ord (Key (LedgerState (HardForkBlock xs)))
             (projectNP i hardForkInjectLedgerTables)
             (castLedgerTables tables)
 
-instance ( Ord (Key (LedgerState (HardForkBlock xs)))
-         , Show (Key (LedgerState (HardForkBlock xs)))
-         , Show (Value (LedgerState (HardForkBlock xs)))
-         , Eq (Value (LedgerState (HardForkBlock xs)))
-         , NoThunks (Key (LedgerState (HardForkBlock xs)))
-         , NoThunks (Value (LedgerState (HardForkBlock xs)))
+instance ( HardForkHasLedgerTables xs
          , LedgerTablesCanHardFork xs
-         , All (Compose HasLedgerTables LedgerState) xs
-         , All (Compose HasTickedLedgerTables LedgerState) xs
          ) => HasTickedLedgerTables (LedgerState (HardForkBlock xs)) where
 
 instance ( Key (LedgerState (HardForkBlock xs)) ~ Void

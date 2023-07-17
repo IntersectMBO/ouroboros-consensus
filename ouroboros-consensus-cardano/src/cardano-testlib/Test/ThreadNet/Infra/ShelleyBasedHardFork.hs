@@ -42,7 +42,6 @@ import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
-import           Data.Proxy (Proxy (Proxy))
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index
 import qualified Data.SOP.Index as SOP
@@ -51,7 +50,6 @@ import           Data.SOP.Strict (NP (..), NS (..), type (-.->), unComp,
                      (:.:) (..))
 import qualified Data.SOP.Strict as SOP
 import qualified Data.SOP.Tails as Tails
-import qualified Data.SOP.Telescope as Telescope
 import           Data.Void (Void)
 import           Ouroboros.Consensus.Cardano.CanHardFork
                      (ShelleyPartialLedgerConfig (..), forecastAcrossShelley,

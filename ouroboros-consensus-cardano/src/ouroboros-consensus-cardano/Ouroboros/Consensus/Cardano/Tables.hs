@@ -36,23 +36,16 @@ import qualified Cardano.Ledger.Conway.Translation as Conway
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import           Data.Proxy
-import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index
 import           Data.SOP.Strict
-import qualified Data.SOP.Telescope as Telescope
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Byron.Ledger
-import           Ouroboros.Consensus.Byron.Node ()
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.HardFork.Combinator
-import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Shelley.Ledger
-import           Ouroboros.Consensus.Shelley.Node ()
-import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Shelley.ShelleyHFC
 
 {-------------------------------------------------------------------------------
