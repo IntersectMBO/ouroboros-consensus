@@ -155,20 +155,20 @@ bracketChainSyncClient tracer ChainDbView { getIsInvalidBlock } varCandidates
 
 -- Our task: after connecting to an upstream node, try to maintain an
 -- up-to-date header-only fragment representing their chain. We maintain
--- such candidate chains in a map with upstream nodes as keys.
+-- such candidate fragments in a map with upstream nodes as keys.
 --
--- The block fetch logic will use these candidate chains to download
--- blocks from, prioritising certain candidate chains over others using
+-- The block fetch logic will use these candidate fragments to download
+-- blocks from, prioritising certain candidate fragments over others using
 -- the consensus protocol. Whenever such a block has been downloaded and
 -- added to the local 'ChainDB', the 'ChainDB' will perform chain
 -- selection.
 --
--- We also validate the headers of a candidate chain by advancing the
+-- We also validate the headers of a candidate fragment by advancing the
 -- 'ChainDepState' with the headers, which returns an error when validation
 -- failed. Thus, in addition to the chain fragment of each candidate, we also
--- store a 'ChainDepState' corresponding to the head of the candidate chain.
+-- store a 'ChainDepState' corresponding to the head of the candidate fragment.
 --
--- We must keep the candidate chain synchronised with the corresponding
+-- We must keep the candidate fragment synchronised with the corresponding
 -- upstream chain. The upstream node's chain might roll forward or
 -- backwards, and they will inform us about this. When we get these
 -- messages, we will replicate these actions on our fragment.
