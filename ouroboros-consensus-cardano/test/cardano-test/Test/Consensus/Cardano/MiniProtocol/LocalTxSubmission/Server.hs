@@ -71,13 +71,23 @@ tests =
 
           eraIndex @=? fromEnum era
 
-          mempool <- Mocked.openMockedMempool (Mempool.mkCapacityBytesOverride 100_000) -- We don't want the mempool to fill up during these tests.
-                                              nullTracer                                -- Use 'show >$< stdoutTracer' for debugging.
-                                              LedgerSupportsMempool.txInBlockSize
-                                              Mocked.MempoolAndModelParams {
-                                                  Mocked.immpInitialState = ledgerState $ pInfoInitLedger pInfo
-                                                , Mocked.immpLedgerConfig = topLevelConfigLedger $ pInfoConfig pInfo
-                                              }
+          let
+            -- We don't want the mempool to fill up during these tests.
+            capcityBytesOverride = Mempool.mkCapacityBytesOverride 100_000
+            -- Use 'show >$< stdoutTracer' for debugging.
+            tracer               = nullTracer
+            mempoolParams        = Mocked.MempoolAndModelParams {
+                Mocked.immpInitialState =
+                  ledgerState $ pInfoInitLedger pInfo
+              , Mocked.immpLedgerConfig =
+                  topLevelConfigLedger $ pInfoConfig pInfo
+              }
+
+          mempool <- Mocked.openMockedMempool
+                      capcityBytesOverride
+                      tracer
+                      LedgerSupportsMempool.txInBlockSize
+                      mempoolParams
 
           mempool `should_process` [ _137 ]
       where

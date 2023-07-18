@@ -1,4 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications  #-}
+
 -- | Utility functions to deserialize the hexadecimal representation of a CBOR
 -- encoded Cardano transaction.
 --
@@ -13,14 +15,17 @@ module Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser 
   , printDeserializedTx
   ) where
 
-
-import           Cardano.Chain.Slotting (EpochSlots (..))
+import           Cardano.Chain.Epoch.File (mainnetEpochSlots)
 import           Codec.CBOR.Read (DeserialiseFailure, deserialiseFromBytes)
 import           Data.ByteString.Base16.Lazy (decodeLenient)
 import qualified Data.ByteString.Lazy as BL
+import qualified Data.Map.Strict as Map
+import           Data.Proxy (Proxy (..))
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.Cardano.Node
+import           Ouroboros.Consensus.Cardano.Node ()
+import           Ouroboros.Consensus.Node.NetworkProtocolVersion
+                     (latestReleasedNodeVersion, supportedNodeToClientVersions)
 import           Ouroboros.Consensus.Node.Serialisation
                      (SerialiseNodeToClient (decodeNodeToClient))
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
@@ -32,7 +37,7 @@ import           Text.Pretty.Simple (pPrint)
 cardanoCodecCfg :: CodecConfig (CardanoBlock StandardCrypto)
 cardanoCodecCfg =
   CardanoCodecConfig
-            (ByronCodecConfig (EpochSlots 21600))
+            (ByronCodecConfig mainnetEpochSlots)
             ShelleyCodecConfig
             ShelleyCodecConfig
             ShelleyCodecConfig
@@ -45,7 +50,13 @@ deserialiseTx ::
   -> Either DeserialiseFailure (BL.ByteString, GenTx (CardanoBlock StandardCrypto))
 deserialiseTx = deserialiseFromBytes cborDecoder . decodeLenient
   where
-    cborDecoder = decodeNodeToClient cardanoCodecCfg CardanoNodeToClientVersion11
+    cborDecoder = decodeNodeToClient cardanoCodecCfg latestReleasedBlockNodeToClientVersion
+    latestReleasedBlockNodeToClientVersion =
+        case latestReleasedNodeVersion p of
+          (_, Just n2c) -> supportedNodeToClientVersions p Map.! n2c
+          _             -> error "no latest released Cardano NodeToClient version"
+      where
+        p = Proxy @(CardanoBlock StandardCrypto)
 
 printDeserializedTx :: BL.ByteString -> IO ()
 printDeserializedTx bs =

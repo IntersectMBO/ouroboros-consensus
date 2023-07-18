@@ -137,6 +137,8 @@ stayInByron =
 versionZero :: SL.Version
 versionZero = SL.natVersion @0
 
+-- TODO: could be simplified once we implement something like
+-- ouroboros-network#4115.
 hardForkInto :: Era -> HardForkSpec
 hardForkInto Byron   = stayInByron
 hardForkInto Shelley =
@@ -280,8 +282,6 @@ mkTestProtocolInfo
     protocolInfoCardano
         ProtocolParamsByron {
             byronGenesis                = genesisByron
-            -- Trivialize the PBFT signature window so that the forks induced by
-            -- the network partition are as deep as possible.
           , byronPbftSignatureThreshold = aByronPbftSignatureThreshold
           , byronProtocolVersion        = aByronProtocolVersion
           , byronSoftwareVersion        = softVerByron

@@ -486,7 +486,10 @@ mkProtocolCardanoAndHardForkTxs
         initialNonce
         genesisByron
         generatedSecretsByron
-        (Just $ PBftSignatureThreshold 1) -- Trivialize the PBFT signature window so that the forks induced by the network partition are as deep as possible.
+        (Just $ PBftSignatureThreshold 1) -- Trivialize the PBFT signature
+                                          -- window so that the forks induced by
+                                          -- the network partition are as deep
+                                          -- as possible.
         HardForkSpec {
             shelleyHardForkSpec =
               ( SL.ProtVer shelleyMajorVersion 0
