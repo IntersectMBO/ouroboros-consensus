@@ -17,10 +17,13 @@
 {-# LANGUAGE ViewPatterns               #-}
 
 module Legacy.LegacyBlock (
-    GenTx (..)
+    BlockConfig (..)
+  , CodecConfig (..)
+  , GenTx (..)
   , LedgerState (..)
   , LedgerTables (..)
   , LegacyBlock (..)
+  , StorageConfig (..)
   , Ticked1 (..)
   , Validated (..)
   ) where
