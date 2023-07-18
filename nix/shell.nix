@@ -6,6 +6,7 @@ in
 hsPkgs.shellFor {
   nativeBuildInputs = [
     pkgs.cabal
+    pkgs.cabal-multi-repl
     pkgs.fd
     pkgs.nixpkgs-fmt
     pkgs.stylish-haskell
