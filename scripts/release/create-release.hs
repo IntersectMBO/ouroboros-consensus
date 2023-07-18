@@ -1,38 +1,43 @@
-#!/usr/bin/env cabal 
-{- project:
-  with-compiler: ghc-9.4
--}
+#!/usr/bin/env cabal
 {- cabal:
   build-depends:
     base,
+    ansi-wl-pprint ^>=1.0,
     commonmark,
     containers,
     filepath,
     foldl,
+    prettyprinter,
     text,
     turtle ^>=1.6.0,
 -}
 {-# OPTIONS_GHC -Wall -Wextra #-}
-{-# LANGUAGE GHC2021 #-}
-{-# LANGUAGE BlockArguments, LambdaCase, OverloadedStrings, ScopedTypeVariables #-}
+{-# LANGUAGE BlockArguments      #-}
+{-# LANGUAGE GHC2021             #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
-import Commonmark
-import Control.Monad
-import Data.Map (Map)
-import Data.Monoid (First(..))
-import Data.Semigroup (Max(..))
-import Data.Version
-import System.FilePath
-import Turtle hiding (fp, d, o)
+module Main where
+
+import           Commonmark
+import qualified Control.Foldl as Foldl
+import           Control.Monad
+import           Data.Map (Map)
 import qualified Data.Map as Map
+import           Data.Monoid (First (..))
+import           Data.Semigroup (Max (..))
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
-import qualified Control.Foldl as Foldl
+import           Data.Version
+import           Prettyprinter
+import           System.FilePath
+import           Turtle hiding (d, fp, l, o)
 
 main :: IO ()
 main = sh do
 
-  (isDryRun, skipGit) <- options "Create releases for ouroboros-consensus packages" $
+  (isDryRun, skipGit) <- options helpDescription $
     (,) <$> switch "dry-run" 'd' "Make no changes"
         <*> switch "skip-git" 's' "Skip creating a new release branch or commits for these changes"
 
@@ -94,6 +99,39 @@ packages =
   , ("ouroboros-consensus-cardano", ["ouroboros-consensus", "ouroboros-consensus-protocol"])
   ]
 
+helpDescription :: Description
+helpDescription = Description $ vcat
+  [ "Create releases for ouroboros-consensus packages"
+  , line
+  , nest 2 do
+    mconcat
+      [ "This script does (broadly) six things:"
+      , line
+      , vcat
+          [ "1. Parses any Markdown (.md) files in the changelog.d directory "
+          , "for each of the packages to determine the severity of the changes "
+          , "made to that package since the last release, and accordingly "
+          , "calculate the new version number for that package;"
+          , line
+          , "2. Checks the new versions of each of the dependencies of each "
+          , "package to determine whether those dependency version bumps "
+          , "require a new version of the package (even if its changes are of "
+          , "lower severity;"
+          , line
+          , "3. Creates a new git branch for the current release;"
+          , line
+          , "4. For each package, updates its .cabal package description to "
+          , "incorporate both the new version and the new versions of each of "
+          , "the dependencies;"
+          , line
+          , "5. Runs `scriv collect` for each of the packages, updating their "
+          , "CHANGELOG.md files;"
+          , line
+          , "6. Creates a git commit for each of the package releases."
+          ]
+      ]
+  ]
+
 findChangelogFragments :: FilePath -> Shell FilePath
 findChangelogFragments pkg = do
   changeLogEntry <- ls $ pkg </> "changelog.d"
@@ -105,9 +143,9 @@ findChangelogFragments pkg = do
 findCurrentPackageVersion :: FilePath -> Shell Version
 findCurrentPackageVersion packageName = do
   maybeFirstMatch <- reduce (Foldl.foldMap (First . Just) getFirst) do
-    line <- input $ packageName </> packageName <.> "cabal"
-    case match versionLinePattern (lineToText line) of
-      [] -> mzero
+    l <- input $ packageName </> packageName <.> "cabal"
+    case match versionLinePattern (lineToText l) of
+      []          -> mzero
       version : _ -> pure version
   case maybeFirstMatch of
     Nothing -> do
@@ -120,12 +158,12 @@ calculateNextPackageVersion :: ChangeSeverity -> Version -> Version
 calculateNextPackageVersion c (Version branch tags) = do
   let incrementIndex :: Int -> [Int] -> [Int]
       incrementIndex 0 (h : t) = succ h : (0 <$ t)
-      incrementIndex n [] = 0 : incrementIndex (pred n) []
+      incrementIndex n []      = 0 : incrementIndex (pred n) []
       incrementIndex n (h : t) = h : incrementIndex (pred n) t
       ix = case c of
-        Breaking -> 1
+        Breaking    -> 1
         NonBreaking -> 2
-        Patch -> 3
+        Patch       -> 3
   Version (incrementIndex ix branch) tags
 
 versionLinePattern :: Pattern Version
@@ -167,7 +205,6 @@ collectSeverities = Foldl.Fold insert mempty id
 createGitBranch :: Map FilePath (Version, Version) -> Shell ()
 createGitBranch versions = do
   let branchName = Text.intercalate "/" ("release" : Map.foldMapWithKey (\p (_, v) -> pure (packageNameWithVersion p v)) versions)
-
   procs "git" ["branch", branchName] mempty
 
 inDirectory :: MonadIO m => FilePath -> m a -> m a
@@ -251,10 +288,10 @@ instance HasAttributes Headings where
 instance IsBlock HeadingText Headings where
   heading _lvl (HeadingText txt) =
     case txt of
-      "Patch" -> Headings (Just (Max Patch))
+      "Patch"        -> Headings (Just (Max Patch))
       "Non-Breaking" -> Headings (Just (Max NonBreaking))
-      "Breaking" -> Headings (Just (Max Breaking))
-      _ -> mempty
+      "Breaking"     -> Headings (Just (Max Breaking))
+      _              -> mempty
   paragraph = mempty
   plain = mempty
   thematicBreak = mempty
