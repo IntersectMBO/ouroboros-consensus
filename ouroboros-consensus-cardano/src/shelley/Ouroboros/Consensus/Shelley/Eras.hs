@@ -406,16 +406,19 @@ deriving instance Show     (Core.TxOut era) => Show     (TxOutWrapper era)
 instance ShelleyBasedEra (AllegraEra c)
       => Core.TranslateEra (AllegraEra c) TxOutWrapper where
   type TranslationError (AllegraEra c) TxOutWrapper = Void
+  type TranslationContextF (AllegraEra c) TxOutWrapper = ()
   translateEra ctxt = fmap TxOutWrapper . Core.translateEra ctxt . unTxOutWrapper
 
 instance ShelleyBasedEra (MaryEra c)
       => Core.TranslateEra (MaryEra c) TxOutWrapper where
   type TranslationError (MaryEra c) TxOutWrapper = Void
+  type TranslationContextF (MaryEra c) TxOutWrapper = ()
   translateEra ctxt = fmap TxOutWrapper . Core.translateEra ctxt . unTxOutWrapper
 
 instance ShelleyBasedEra (AlonzoEra c)
       => Core.TranslateEra (AlonzoEra c) TxOutWrapper where
   type TranslationError (AlonzoEra c) TxOutWrapper = Void
+  type TranslationContextF (AlonzoEra c) TxOutWrapper = ()
   translateEra _ctxt =
         pure
       . TxOutWrapper
@@ -425,6 +428,7 @@ instance ShelleyBasedEra (AlonzoEra c)
 instance ShelleyBasedEra (BabbageEra c)
       => Core.TranslateEra (BabbageEra c) TxOutWrapper where
   type TranslationError (BabbageEra c) TxOutWrapper = Void
+  type TranslationContextF (BabbageEra c) TxOutWrapper = ()
   translateEra _ctxt =
         pure
       . TxOutWrapper
@@ -434,6 +438,7 @@ instance ShelleyBasedEra (BabbageEra c)
 instance ShelleyBasedEra (ConwayEra c)
       => Core.TranslateEra (ConwayEra c) TxOutWrapper where
   type TranslationError (ConwayEra c) TxOutWrapper = Void
+  type TranslationContextF (ConwayEra c) TxOutWrapper = ()
   translateEra _ctxt =
         pure
       . TxOutWrapper

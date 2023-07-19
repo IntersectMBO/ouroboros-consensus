@@ -46,7 +46,7 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 
 class Inject f where
   inject ::
-       forall x xs. (CanHardFork xs, LedgerTablesCanHardFork xs)
+       forall x xs. (CanHardFork xs, HasCanonicalTxIn xs)
     => Exactly xs History.Bound
        -- ^ Start bound of each era
     -> Index xs x
@@ -57,7 +57,7 @@ inject' ::
      forall f a b x xs.
      ( Inject f
      , CanHardFork xs
-     , LedgerTablesCanHardFork xs
+     , HasCanonicalTxIn xs
      , Coercible a (f x)
      , Coercible b (f (HardForkBlock xs))
      )

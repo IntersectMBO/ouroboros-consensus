@@ -22,17 +22,20 @@
 
 module Test.Consensus.HardFork.Combinator (tests) where
 
+import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Data.Map.Strict as Map
 import           Data.SOP.Counting
 import           Data.SOP.Functors (Flip (..))
+import           Data.SOP.Index (Index (..))
 import           Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.OptNP (OptNP (..))
 import           Data.SOP.Strict hiding (shape)
 import qualified Data.SOP.Tails as Tails
-import           Data.Void (Void)
+import           Data.Void (Void, absurd)
 import           Data.Word
 import           GHC.Generics (Generic)
+import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
@@ -361,20 +364,26 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
 instance TxGen TestBlock where
   testGenTxs _ _ _ _ _ _ = return []
 
-type instance Key   (LedgerState TestBlock) = Void
-type instance Value (LedgerState TestBlock) = Void
+{-------------------------------------------------------------------------------
+  Canonical TxIn
+-------------------------------------------------------------------------------}
 
-instance CanSerializeLedgerTables (LedgerState TestBlock)
+instance HasCanonicalTxIn '[BlockA, BlockB] where
+  newtype instance CanonicalTxIn '[BlockA, BlockB] = BlockABTxIn {
+      getBlockABTxIn :: Void
+    }
+    deriving stock (Show, Eq, Ord)
+    deriving newtype (NoThunks, FromCBOR, ToCBOR)
 
-instance LedgerTablesCanHardFork '[BlockA, BlockB] where
-  hardForkInjectLedgerTables =
-       (InjectLedgerTables { applyInjectLedgerTables  = castLedgerTables
-                           , applyDistribLedgerTables = castLedgerTables
-                           })
-    :* (InjectLedgerTables { applyInjectLedgerTables  = castLedgerTables
-                           , applyDistribLedgerTables = castLedgerTables
-                           })
-    :* Nil
+  injectCanonicalTxIn IZ             key = absurd key
+  injectCanonicalTxIn (IS IZ)        key = absurd key
+  injectCanonicalTxIn (IS (IS idx')) _   = case idx' of {}
+
+  distribCanonicalTxIn _ key = absurd $ getBlockABTxIn key
+
+  serializeCanonicalTxIn   = toCBOR
+
+  deserializeCanonicalTxIn = fromCBOR
 
 {-------------------------------------------------------------------------------
   Hard fork
@@ -385,6 +394,7 @@ type TestBlock = HardForkBlock '[BlockA, BlockB]
 instance CanHardFork '[BlockA, BlockB] where
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons ledgerState_AtoB   PNil
+      , translateLedgerTables  = PCons ledgerTables_AtoB  PNil
       , translateChainDepState = PCons chainDepState_AtoB PNil
       , crossEraForecast       = PCons forecast_AtoB      PNil
       }
@@ -435,7 +445,12 @@ ledgerState_AtoB =
             LgrB {
               lgrB_tip = castPoint lgrA_tip
             }
-      , translateLedgerTablesWith = castLedgerTables
+    }
+
+ledgerTables_AtoB :: TranslateLedgerTables BlockA BlockB
+ledgerTables_AtoB =  TranslateLedgerTables {
+      translateTxInWith  = id
+    , translateTxOutWith = id
     }
 
 chainDepState_AtoB ::

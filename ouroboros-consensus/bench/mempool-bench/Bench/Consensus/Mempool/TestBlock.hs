@@ -40,9 +40,9 @@ import qualified Ouroboros.Consensus.Block as Block
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
-                     CanStowLedgerTables, DiffMK (..), EmptyMK, HasLedgerTables,
-                     IsMapKind (..), Key, KeysMK (..), LedgerTables (..), Value,
-                     ValuesMK (..))
+                     CanStowLedgerTables, DiffMK (..), EmptyMK, EqMK,
+                     HasLedgerTables, Key, KeysMK (..), LedgerTables (..),
+                     NoThunksMK, ShowMK, Value, ValuesMK (..))
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
                      (rawAttachAndApplyDiffs)
 import qualified Ouroboros.Consensus.Mempool as Mempool
@@ -128,11 +128,11 @@ instance PayloadSemantics Tx where
     where
       Tx {consumed, produced} = tx
 
-deriving stock instance (IsMapKind mk)
+deriving stock instance EqMK mk
                         => Eq (PayloadDependentState Tx mk)
-deriving stock instance (IsMapKind mk)
+deriving stock instance ShowMK mk
                         => Show (PayloadDependentState Tx mk)
-deriving anyclass instance (IsMapKind mk)
+deriving anyclass instance NoThunksMK mk
                         => NoThunks (PayloadDependentState Tx mk)
 
 instance Serialise (PayloadDependentState Tx EmptyMK) where
