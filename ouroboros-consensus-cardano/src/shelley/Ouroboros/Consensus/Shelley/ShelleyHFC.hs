@@ -130,7 +130,7 @@ type ProtocolShelley = HardForkProtocol '[ ShelleyBlock (TPraos StandardCrypto) 
 shelleyTransition ::
      forall era proto. ShelleyCompatible proto era
   => PartialLedgerConfig (ShelleyBlock proto era)
-  -> Word16   -- ^ Next era's major protocol version
+  -> Word16   -- ^ Next era's initial major protocol version
   -> LedgerState (ShelleyBlock proto era)
   -> Maybe EpochNo
 shelleyTransition ShelleyPartialLedgerConfig{..}
