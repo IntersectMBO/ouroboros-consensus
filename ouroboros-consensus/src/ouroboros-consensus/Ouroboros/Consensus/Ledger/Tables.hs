@@ -46,8 +46,6 @@ module Ouroboros.Consensus.Ledger.Tables (
   , LedgerTablesAreTrivial
   , convertMapKind
   , trivialLedgerTables
-    -- * Utility
-  , ComposeWithTicked1 (..)
   ) where
 
 import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
@@ -55,7 +53,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import qualified Control.Exception as Exn
 import           Control.Monad (replicateM)
-import           Data.Kind (Constraint, Type)
+import           Data.Kind (Constraint)
 import           Data.Map.Diff.Strict (Diff)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -127,10 +125,11 @@ instance ( Ord (Key l)
   projectLedgerTables = castLedgerTables
   withLedgerTables _ = castLedgerTables
 
--- | TODO: either remove this class, or make it a type synonym.
+-- | Convenience class, useful for partially applying the composition of
+-- 'HasLedgerTables' and 'Ticked1'.
 type HasTickedLedgerTables :: LedgerStateKind -> Constraint
-class (HasLedgerTables l, HasLedgerTables (Ticked1 l))
-   => HasTickedLedgerTables l where
+class HasLedgerTables (Ticked1 l) => HasTickedLedgerTables l where
+instance HasLedgerTables (Ticked1 l) => HasTickedLedgerTables l
 
 -- | LedgerTables are projections of data from a LedgerState and as such they
 -- can be injected back into a LedgerState. This is necessary because the Ledger
@@ -372,20 +371,3 @@ trivialLedgerTables ::
      (IsMapKind mk, LedgerTablesAreTrivial l)
   => LedgerTables l mk
 trivialLedgerTables = LedgerTables emptyMK
-
-{-------------------------------------------------------------------------------
-  Utility
--------------------------------------------------------------------------------}
-
-type instance Key (ComposeWithTicked1 f blk) = Key (Ticked1 (f blk))
-type instance Value (ComposeWithTicked1 f blk) = Value (Ticked1 (f blk))
-
--- | Useful if you want to partially apply some 'Ticked1' of @f@ to a @blk@.
-type ComposeWithTicked1 :: (Type -> LedgerStateKind) -> Type -> LedgerStateKind
-newtype ComposeWithTicked1 f blk mk = ComposeWithTicked1 {
-    unComposeWithTicked1 :: Ticked1 (f blk) mk
-  }
-
-instance LedgerTablesAreTrivial (Ticked1 (f blk))
-      => LedgerTablesAreTrivial (ComposeWithTicked1 f blk) where
-  convertMapKind (ComposeWithTicked1 x) = ComposeWithTicked1 $ convertMapKind x

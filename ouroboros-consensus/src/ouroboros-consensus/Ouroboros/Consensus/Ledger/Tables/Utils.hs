@@ -70,7 +70,7 @@ ltprj = castLedgerTables . projectLedgerTables
 -- | When applying a block that is not on an era transition, ticking won't
 -- generate new values, so this function can be used to wrap the call to the
 -- ledger rules that perform the tick.
-noNewTickingDiffs :: HasTickedLedgerTables l
+noNewTickingDiffs :: HasLedgerTables l
                   => l any
                   -> l DiffMK
 noNewTickingDiffs l = withLedgerTables l emptyLedgerTables

@@ -560,8 +560,6 @@ instance CanSerializeLedgerTables (LedgerState TestBlock) where
 
 instance CanStowLedgerTables (LedgerState TestBlock) where
 
-instance HasTickedLedgerTables (LedgerState TestBlock)
-
 instance LedgerTablesAreTrivial (LedgerState TestBlock) where
   convertMapKind (TestLedger x y) = TestLedger x y
 instance LedgerTablesAreTrivial (Ticked1 (LedgerState TestBlock)) where

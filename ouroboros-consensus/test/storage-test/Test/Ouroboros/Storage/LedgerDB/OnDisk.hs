@@ -337,8 +337,6 @@ instance ToCBOR TValue where
 instance FromCBOR TValue where
   fromCBOR = fmap TValue S.decode
 
-instance HasTickedLedgerTables (LedgerState TestBlock)
-
 instance CanStowLedgerTables (LedgerState TestBlock) where
   stowLedgerTables     = stowErr "stowLedgerTables"
   unstowLedgerTables   = stowErr "unstowLedgerTables"

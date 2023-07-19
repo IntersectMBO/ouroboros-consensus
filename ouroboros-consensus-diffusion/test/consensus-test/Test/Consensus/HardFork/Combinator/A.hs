@@ -200,7 +200,6 @@ type instance Value (LedgerState BlockA) = Void
 
 instance HasLedgerTables (LedgerState BlockA)
 instance HasLedgerTables (Ticked1 (LedgerState BlockA))
-instance HasTickedLedgerTables (LedgerState BlockA)
 instance CanSerializeLedgerTables (LedgerState BlockA)
 instance CanStowLedgerTables (LedgerState BlockA)
 instance LedgerTablesAreTrivial (LedgerState BlockA) where

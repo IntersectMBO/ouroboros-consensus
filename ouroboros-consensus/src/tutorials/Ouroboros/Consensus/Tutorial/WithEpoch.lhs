@@ -689,7 +689,6 @@ For reference on these instances and their meaning, please see the appendix in
 >
 > instance HasLedgerTables (LedgerState BlockD)
 > instance HasLedgerTables (Ticked1 (LedgerState BlockD))
-> instance HasTickedLedgerTables (LedgerState BlockD)
 > instance CanSerializeLedgerTables (LedgerState BlockD)
 > instance CanStowLedgerTables (LedgerState BlockD)
 > instance LedgerTablesAreTrivial (LedgerState BlockD) where

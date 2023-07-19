@@ -187,7 +187,6 @@ type instance Value (LedgerState ByronBlock) = Void
 
 instance HasLedgerTables (LedgerState ByronBlock)
 instance HasLedgerTables (Ticked1 (LedgerState ByronBlock))
-instance HasTickedLedgerTables (LedgerState ByronBlock)
 instance CanSerializeLedgerTables (LedgerState ByronBlock)
 instance CanStowLedgerTables (LedgerState ByronBlock)
 instance LedgerTablesAreTrivial (LedgerState ByronBlock) where

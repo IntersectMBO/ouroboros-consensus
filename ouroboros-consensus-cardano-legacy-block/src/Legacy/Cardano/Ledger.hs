@@ -12,8 +12,6 @@
 module Legacy.Cardano.Ledger () where
 
 import           Control.Monad.Except
-import           Data.Proxy
-import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Strict hiding (shape, tl)
 import           Data.Void (Void)
 import           GHC.Stack (HasCallStack)
@@ -23,7 +21,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 
@@ -144,31 +141,6 @@ instance CanHardFork (LegacyCardanoEras c)
 
 type instance Key   (LedgerState (HardForkBlock (LegacyCardanoEras c))) = Void
 type instance Value (LedgerState (HardForkBlock (LegacyCardanoEras c))) = Void
-
-instance HasLedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c))) where
-instance HasLedgerTables (Ticked1 (LedgerState (HardForkBlock (LegacyCardanoEras c)))) where
-instance HasTickedLedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c))) where
-
-instance LedgerTablesAreTrivial (LedgerState (HardForkBlock (LegacyCardanoEras c))) where
-  convertMapKind (HardForkLedgerState x) = HardForkLedgerState $
-      hcmap
-        (Proxy @(Compose LedgerTablesAreTrivial LedgerState))
-        (Flip . convertMapKind . unFlip) x
-
-instance All (Compose LedgerTablesAreTrivial (ComposeWithTicked1 LedgerState)) (LegacyCardanoEras c)
-      => LedgerTablesAreTrivial (Ticked1 (LedgerState (HardForkBlock (LegacyCardanoEras c)))) where
-  convertMapKind (TickedHardForkLedgerState x st) =
-      TickedHardForkLedgerState x $
-        hcmap
-          (Proxy @(Compose LedgerTablesAreTrivial (ComposeWithTicked1 LedgerState)))
-          ( FlipTickedLedgerState
-          . unComposeWithTicked1
-          . convertMapKind
-          . ComposeWithTicked1
-          . getFlipTickedLedgerState
-          )
-          st
-
 instance CanSerializeLedgerTables (LedgerState (HardForkBlock (LegacyCardanoEras c)))
 
 {-------------------------------------------------------------------------------

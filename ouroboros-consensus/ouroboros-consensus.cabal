@@ -347,7 +347,7 @@ library
     , containers                   >=0.5      && <0.7
     , contra-tracer
     , deepseq
-    , diff-containers              >=1.0
+    , diff-containers              >=1.1
     , filelock
     , fingertree-rm                >=1.0
     , fs-api
@@ -567,7 +567,7 @@ test-suite consensus-test
     , containers
     , contra-tracer
     , deepseq
-    , diff-containers                                                     >=1.0
+    , diff-containers                                                     >=1.1
     , fingertree-rm                                                       >=1.0
     , fs-api
     , fs-sim
@@ -672,7 +672,7 @@ test-suite storage-test
     , constraints
     , containers
     , contra-tracer
-    , diff-containers           >=1.0
+    , diff-containers           >=1.1
     , directory
     , fs-api
     , fs-sim                    >=0.2
@@ -727,7 +727,7 @@ benchmark mempool-bench
     , containers
     , contra-tracer
     , deepseq
-    , diff-containers      >=1.0
+    , diff-containers      >=1.1
     , directory
     , fs-api
     , mtl
@@ -755,7 +755,7 @@ benchmark backingstore-bench
     , consensus-testlib
     , containers
     , deepseq
-    , diff-containers      >=1.0
+    , diff-containers      >=1.1
     , directory
     , fs-api
     , io-classes
