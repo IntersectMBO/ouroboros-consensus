@@ -489,7 +489,7 @@ chainSyncClient mkPipelineDecision0 tracer cfg
         }
 
     -- | One of the points we sent intersected our chain. This intersection
-    -- point will become the new tip of the candidate chain.
+    -- point will become the new tip of the candidate fragment.
     intersectFound :: Point blk  -- ^ Intersection
                    -> Their (Tip blk)
                    -> Stateful m blk
