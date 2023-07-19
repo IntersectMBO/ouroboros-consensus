@@ -13,6 +13,28 @@ in
 
   cabal = tool "cabal" "latest" { };
 
+  cabal-multi-repl = (final.haskell-nix.cabalProject {
+    # cabal master commit containing https://github.com/haskell/cabal/pull/8726
+    src = final.fetchFromGitHub {
+      owner = "haskell";
+      repo = "cabal";
+      rev = "249374d16b328736a01a4c7e84fa42fbad7422e7";
+      hash = "sha256-KQm3NwQAvsii+6o7MRRL4emCEBUT77foywTBHfq1pxg=";
+    };
+    index-state = tool-index-state;
+    inherit (final.hsPkgs.args) compiler-nix-name;
+    cabalProject = ''
+      packages: Cabal-syntax Cabal cabal-install-solver cabal-install
+    '';
+    configureArgs = "--disable-benchmarks --disable-tests";
+    modules = [{
+      packages.cabal-install.components.exes.cabal.postInstall = ''
+        mv $out/bin/cabal $out/bin/cabal-multi-repl
+        wrapProgram $out/bin/cabal-multi-repl --add-flags --enable-multi-repl
+      '';
+    }];
+  }).cabal-install.components.exes.cabal;
+
   stylish-haskell = tool "stylish-haskell" "0.14.4.0" { };
 
   cabal-fmt = tool "cabal-fmt" "0.1.6" { };
