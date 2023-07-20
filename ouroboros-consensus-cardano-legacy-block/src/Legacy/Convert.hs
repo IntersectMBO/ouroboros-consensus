@@ -47,9 +47,15 @@ module Legacy.Convert (
     -- * Ledger error
   , convertLedgerError
     -- * Ledger result
+  , convertExtLedgerResult
   , convertLedgerResult
     -- * Ledger config
+  , convertExtLedgerConfig
   , convertLedgerConfig
+    -- * Consensus config
+  , convertConsensusConfig
+    -- * TopLevelConfig
+  , convertTopLevelConfig
   ) where
 
 import           Data.Coerce
@@ -63,6 +69,7 @@ import           Legacy.Cardano
 import           Legacy.LegacyBlock
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Cardano.Block
+import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger
@@ -349,6 +356,25 @@ convertLedgerResult le = LedgerResult {
                 , lrResult
                 } = le
 
+convertExtLedgerResult ::
+     LedgerResult
+      (ExtLedgerState (LegacyCardanoBlock StandardCrypto))
+      (ExtLedgerState (LegacyCardanoBlock StandardCrypto) DiffMK)
+  -> LedgerResult
+      (ExtLedgerState (CardanoBlock StandardCrypto))
+      (ExtLedgerState (CardanoBlock StandardCrypto) EmptyMK)
+convertExtLedgerResult le = LedgerResult {
+      lrEvents = map ( OneEraLedgerEvent
+                     . hcoerce
+                     . getOneEraLedgerEvent
+                     ) lrEvents
+    , lrResult = convertExtLedgerState' $ convertMapKind lrResult
+    }
+ where
+   LedgerResult { lrEvents
+                , lrResult
+                } = le
+
 {-------------------------------------------------------------------------------
   Ledger config
 -------------------------------------------------------------------------------}
@@ -374,4 +400,85 @@ convertLedgerConfig cfg = HardForkLedgerConfig {
     HardForkLedgerConfig {
         hardForkLedgerConfigShape
       , hardForkLedgerConfigPerEra
+      } = cfg
+
+convertExtLedgerConfig ::
+     ExtLedgerCfg (CardanoBlock StandardCrypto)
+  -> ExtLedgerCfg (LegacyCardanoBlock StandardCrypto)
+convertExtLedgerConfig =
+      ExtLedgerCfg
+    . convertTopLevelConfig
+    . getExtLedgerCfg
+
+{-------------------------------------------------------------------------------
+  Consensus config
+-------------------------------------------------------------------------------}
+
+convertConsensusConfig ::
+     ConsensusConfig (BlockProtocol (CardanoBlock StandardCrypto))
+  -> ConsensusConfig (BlockProtocol (LegacyCardanoBlock StandardCrypto))
+convertConsensusConfig cfg = HardForkConsensusConfig {
+      hardForkConsensusConfigK = hardForkConsensusConfigK
+    , hardForkConsensusConfigShape =
+          Shape
+        . Exactly
+        . hcoerce
+        . getExactly
+        . getShape
+        $ hardForkConsensusConfigShape
+    , hardForkConsensusConfigPerEra =
+          PerEraConsensusConfig
+        . hcoerce
+        . getPerEraConsensusConfig
+        $ hardForkConsensusConfigPerEra
+    }
+  where
+    HardForkConsensusConfig {
+        hardForkConsensusConfigK
+      , hardForkConsensusConfigShape
+      , hardForkConsensusConfigPerEra
+      } = cfg
+
+{-------------------------------------------------------------------------------
+  Top Level config
+-------------------------------------------------------------------------------}
+
+convertTopLevelConfig ::
+     TopLevelConfig (CardanoBlock StandardCrypto)
+  -> TopLevelConfig (LegacyCardanoBlock StandardCrypto)
+convertTopLevelConfig cfg = TopLevelConfig {
+      topLevelConfigProtocol = convertConsensusConfig topLevelConfigProtocol
+    , topLevelConfigLedger = convertLedgerConfig topLevelConfigLedger
+    , topLevelConfigBlock =
+          LegacyBlockConfig
+        . HardForkBlockConfig
+        . PerEraBlockConfig
+        . hcoerce
+        . getPerEraBlockConfig
+        . hardForkBlockConfigPerEra
+        $ topLevelConfigBlock
+    , topLevelConfigCodec =
+          LegacyCodecConfig
+        . HardForkCodecConfig
+        . PerEraCodecConfig
+        . hcoerce
+        . getPerEraCodecConfig
+        . hardForkCodecConfigPerEra
+        $ topLevelConfigCodec
+    , topLevelConfigStorage =
+          LegacyStorageConfig
+        . HardForkStorageConfig
+        . PerEraStorageConfig
+        . hcoerce
+        . getPerEraStorageConfig
+        . hardForkStorageConfigPerEra
+        $ topLevelConfigStorage
+    }
+  where
+    TopLevelConfig {
+        topLevelConfigProtocol
+      , topLevelConfigLedger
+      , topLevelConfigBlock
+      , topLevelConfigCodec
+      , topLevelConfigStorage
       } = cfg
