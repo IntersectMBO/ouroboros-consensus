@@ -171,7 +171,7 @@ bracketChainSyncClient tracer ChainDbView { getIsInvalidBlock } varCandidates
 -- We must keep the candidate fragment synchronised with the corresponding
 -- upstream chain. The upstream node's chain might roll forward or
 -- backwards, and they will inform us about this. When we get these
--- messages, we will replicate these actions on our fragment.
+-- messages, we will replicate these actions on the candidate fragment.
 --
 -- INVARIANT:
 --
