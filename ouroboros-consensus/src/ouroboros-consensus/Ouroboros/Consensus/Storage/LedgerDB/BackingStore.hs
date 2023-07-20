@@ -193,7 +193,7 @@ data BackingStoreTrace =
   | BSCreatedValueHandle
   | BSWriting                !SlotNo
   | BSWritten                !(WithOrigin SlotNo) !SlotNo
-  deriving Eq
+  deriving (Eq, Show)
 
 data BackingStoreValueHandleTrace =
     BSVHClosing
@@ -205,36 +205,7 @@ data BackingStoreValueHandleTrace =
   | BSVHRead
   | BSVHStatting
   | BSVHStatted
-  deriving Eq
-
-instance Show BackingStoreTrace where
-  show BSOpening = "Opening backing store"
-  show (BSOpened s) = "Opened backing store" <> maybe mempty ((" at path: " <>) . show) s
-  show (BSInitialisingFromCopy p) = "Initialising from copy at " <> show p
-  show (BSInitialisedFromCopy p) = "Initialised from copy at " <> show p
-  show (BSInitialisingFromValues s) = "Initialising from values at slot " <> show s
-  show (BSInitialisedFromValues s) = "Initialised from values at slot " <> show s
-  show BSClosing = "Closing"
-  show BSAlreadyClosed = "Attempting to close an already closed backing store"
-  show BSClosed = "Closed"
-  show (BSCopying p) = "Copying into path " <> show p
-  show (BSCopied p) = "Copied into path " <> show p
-  show BSCreatingValueHandle = "Creating value handle"
-  show (BSValueHandleTrace i t) = "Value handle " <> maybe mempty show i <> ": " <> show t
-  show BSCreatedValueHandle = "Created value handle"
-  show (BSWriting s2) = "Writing to backing store, advancing the last written slot to " <> show s2
-  show (BSWritten s1 s2) = "Wrote to backing store, advancing the last written slot from " <> show s1 <> " to " <> show s2
-
-instance Show BackingStoreValueHandleTrace where
-  show BSVHClosing       = "Closing"
-  show BSVHAlreadyClosed = "Attempting to close and already closed value handle"
-  show BSVHClosed        = "Closed"
-  show BSVHRangeReading  = "Range reading"
-  show BSVHRangeRead     = "Range read"
-  show BSVHReading       = "Reading"
-  show BSVHRead          = "Read"
-  show BSVHStatting      = "Statting"
-  show BSVHStatted       = "Stat"
+  deriving (Eq, Show)
 
 {-------------------------------------------------------------------------------
   Statistics
