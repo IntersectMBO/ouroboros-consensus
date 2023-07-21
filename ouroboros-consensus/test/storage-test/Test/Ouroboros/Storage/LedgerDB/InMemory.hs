@@ -172,7 +172,7 @@ prop_pastLedger setup@ChainSetup{..} =
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
     afterPrefix :: AnchorlessDbChangelog (LedgerState TestBlock)
-    afterPrefix = pushMany' (csBlockConfig setup) prefix trivialKeySetsReader csGenSnaps
+    afterPrefix = applyMany' (csBlockConfig setup) prefix trivialKeySetsReader csGenSnaps
 
     -- See 'prop_snapshotsMaxRollback'
     withinReach :: Bool
@@ -239,7 +239,7 @@ prop_pastAfterSwitch setup@SwitchSetup{..} =
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
     afterPrefix :: AnchorlessDbChangelog (LedgerState TestBlock)
-    afterPrefix = pushMany' (csBlockConfig ssChainSetup) prefix trivialKeySetsReader (csGenSnaps ssChainSetup)
+    afterPrefix = applyMany' (csBlockConfig ssChainSetup) prefix trivialKeySetsReader (csGenSnaps ssChainSetup)
 
     -- See 'prop_snapshotsMaxRollback'
     withinReach :: Bool
@@ -331,7 +331,7 @@ mkTestSetup csSecParam csNumBlocks csPrefixLen =
     csGenSnaps = anchorlessChangelog $ empty (convertMapKind testInitLedger)
     csChain    = take (fromIntegral csNumBlocks) $
                    iterate successorBlock (firstBlock 0)
-    csPushed   = pushMany' (csBlockConfig' csSecParam) csChain trivialKeySetsReader csGenSnaps
+    csPushed   = applyMany' (csBlockConfig' csSecParam) csChain trivialKeySetsReader csGenSnaps
 
 mkRollbackSetup :: ChainSetup -> Word64 -> Word64 -> Word64 -> SwitchSetup
 mkRollbackSetup ssChainSetup ssNumRollback ssNumNew ssPrefixLen =

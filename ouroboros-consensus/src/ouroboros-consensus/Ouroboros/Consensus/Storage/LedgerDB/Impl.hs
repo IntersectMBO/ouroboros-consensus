@@ -464,7 +464,7 @@ replayStartingWith tracer cfg policy backingStore stream initDb = do
          -> (DbChangelog' blk, Word64)
          -> m (DbChangelog' blk, Word64)
     push blk (!db, !replayed) = do
-        !db' <- onChangelogM (DbChangelog.push cfg (ReapplyVal blk) (readKeySets backingStore)) db
+        !db' <- onChangelogM (DbChangelog.applyThenPush cfg (ReapplyVal blk) (readKeySets backingStore)) db
 
         -- It's OK to flush without a lock here, since the `LedgerDB` has not
         -- finishined initializing: only this thread has access to the backing

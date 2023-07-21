@@ -32,18 +32,18 @@ module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update (
   , defaultResolveBlocks
     -- * Updates
   , DiffsToFlush (..)
+  , applyMany
+  , applyThenPush
   , defaultResolveWithErrors
   , extend
   , prune
-  , push
-  , pushMany
   , rollbackN
   , splitForFlushing
   , switch
   , volatileStatesBimap
     -- * Pure API
-  , push'
-  , pushMany'
+  , applyMany'
+  , applyThenPush'
   , switch'
     -- * Trace
   , PushGoal (..)
@@ -240,6 +240,10 @@ volatileStatesBimap f g =
 
 -- | Prune ledger states until at we have at most @k@ in the DbChangelog,
 -- excluding the one stored at the anchor.
+--
+-- >       0     | [ L0, L1, L2, L3, L4 ] | [ D1, D2, D3, D4 ]
+-- > >> prune (SecurityParam 3)
+-- >       0     | [         L2, L3, L4 ] | [ D1, D2, D3, D4 ]
 prune :: GetTip l => SecurityParam -> AnchorlessDbChangelog l -> AnchorlessDbChangelog l
 prune (SecurityParam k) dblog =
     dblog { adcStates = vol' }
@@ -253,16 +257,22 @@ prune (SecurityParam k) dblog =
       then adcStates
       else snd $ AS.splitAt (nvol - fromEnum k) adcStates
 
- -- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
- -- 'DbChangelog' and thus a space leak. Alternatively, we could disable the
- -- @-fstrictness@ optimisation (enabled by default for -O1). See #2532.
+-- NOTE: we must inline 'prune' otherwise we get unexplained thunks in
+-- 'DbChangelog' and thus a space leak. Alternatively, we could disable the
+-- @-fstrictness@ optimisation (enabled by default for -O1). See #2532.
+-- NOTE (@js): this INLINE was inherited from before UTxO-HD, so maybe it is not
+-- needed anymore.
 {-# INLINE prune #-}
 
 {-------------------------------------------------------------------------------
   Internal updates
 -------------------------------------------------------------------------------}
 
--- | Push an updated ledger state
+-- | Push an updated ledger state into the DbChangelog.
+--
+-- Note that it is not a responsibility of the DbChangelog checking whether the
+-- ledger state fits at the end of the chain, it will blindly accept any ledger
+-- state.
 pushLedgerState ::
      (IsLedger l, HasLedgerTables l)
   => SecurityParam
@@ -272,6 +282,11 @@ pushLedgerState ::
 pushLedgerState secParam =
     prune secParam .: extend
 
+-- | Extending the DbChangelog with a ledger state.
+--
+-- >       2     | [ L2, L3, L4, L5 ]     | [ D3, D4, D5 ]
+-- >>> extend L6 (D6)
+-- >       2     | [ L2, L3, L4, L5, L6 ] | [ D3, D4, D5, D6 ]
 extend :: (GetTip l, HasLedgerTables l)
        => l DiffMK
        -> AnchorlessDbChangelog l
@@ -284,7 +299,7 @@ extend newState dblog =
     }
   where
     slot = case getTipSlot l' of
-      Origin -> error "impossible! extendDbChangelog"
+      Origin -> error "impossible! extending a DbChangelog with a state at Origin"
       At s   -> s
 
     ext ::
@@ -303,13 +318,15 @@ extend newState dblog =
       , adcDiffs
       , adcStates
       } = dblog
+
 {-------------------------------------------------------------------------------
   Internal: rolling back
 -------------------------------------------------------------------------------}
 
--- | Rollback
+-- | Rollback @n@ ledger states.
 --
--- Returns 'Nothing' if maximum rollback is exceeded.
+-- Returns 'Nothing' if maximum rollback (usually @k@, but can be less on
+-- startup or under corruption) is exceeded.
 rollbackN ::
      (GetTip l, HasLedgerTables l)
   => Word64
@@ -349,30 +366,31 @@ data ExceededRollback = ExceededRollback {
     , rollbackRequested :: Word64
     }
 
-push :: (ApplyBlock l blk, Monad m, c)
-     => LedgerDbCfg l
-     -> Ap m l blk c
-     -> KeySetsReader m l
-     ->    AnchorlessDbChangelog l
-     -> m (AnchorlessDbChangelog l)
-push cfg ap ksReader db =
+-- | If applying a block on top of the ledger state at the tip is succesful,
+-- store the resulting ledger state.
+applyThenPush :: (ApplyBlock l blk, Monad m, c)
+              => LedgerDbCfg l
+              -> Ap m l blk c
+              -> KeySetsReader m l
+              ->    AnchorlessDbChangelog l
+              -> m (AnchorlessDbChangelog l)
+applyThenPush cfg ap ksReader db =
     (\current' -> pushLedgerState (ledgerDbCfgSecParam cfg) current' db) <$>
       applyBlock (ledgerDbCfg cfg) ap ksReader db
 
--- | Push a bunch of blocks (oldest first)
-pushMany :: (ApplyBlock l blk, Monad m, c)
-         => (Pushing blk -> m ())
-         -> LedgerDbCfg l
-         -> [Ap m l blk c]
-         -> KeySetsReader m l
-         -> AnchorlessDbChangelog l
-         -> m (AnchorlessDbChangelog l)
-pushMany trace cfg aps ksReader = repeatedlyM pushAndTrace aps
+-- | Apply a bunch of blocks (oldest first)
+applyMany :: (ApplyBlock l blk, Monad m, c)
+          => (Pushing blk -> m ())
+          -> LedgerDbCfg l
+          -> [Ap m l blk c]
+          -> KeySetsReader m l
+          -> AnchorlessDbChangelog l
+          -> m (AnchorlessDbChangelog l)
+applyMany trace cfg aps ksReader = repeatedlyM pushAndTrace aps
   where
     pushAndTrace ap db = do
-      let pushing = Pushing . toRealPoint $ ap
-      trace pushing
-      push cfg ap ksReader db
+      trace $ Pushing . toRealPoint $ ap
+      applyThenPush cfg ap ksReader db
 
 -- | Switch to a fork
 switch :: (ApplyBlock l blk, Monad m, c)
@@ -396,7 +414,7 @@ switch cfg numRollbacks trace newBlocks ksReader db =
         (firstBlock:_) -> do
           let start   = PushStart . toRealPoint $ firstBlock
               goal    = PushGoal  . toRealPoint . last $ newBlocks
-          Right <$> pushMany
+          Right <$> applyMany
                       (trace . StartedPushingBlockToTheLedgerDb start goal)
                       cfg
                       newBlocks
@@ -416,6 +434,12 @@ data DiffsToFlush l = DiffsToFlush {
 
 -- | "Flush" the 'DbChangelog' by splitting it into the diffs that should be
 -- flushed and the new 'DbChangelog'.
+--
+-- >       1     | [ L3, L4, L5, L6 ] | [ D2, D3, D4, D5, D6 ]
+-- >>> splitForFlushing
+-- > ( (2, [ D2, D3 ])
+-- > , (3, [ L3, L4, L5, L6 ], [ D4, D5, D6 ])
+-- > )
 splitForFlushing ::
      forall l.
      (GetTip l, HasLedgerTables l)
@@ -513,22 +537,22 @@ data UpdateLedgerDbTraceEvent blk =
 pureBlock :: blk -> Ap m l blk ()
 pureBlock = ReapplyVal
 
-push' :: ApplyBlock l blk
-      => LedgerDbCfg l
-      -> blk
-      -> KeySetsReader Identity l
-      -> AnchorlessDbChangelog l
-      -> AnchorlessDbChangelog l
-push' cfg b bk = runIdentity . push cfg (pureBlock b) bk
+applyThenPush' :: ApplyBlock l blk
+               => LedgerDbCfg l
+               -> blk
+               -> KeySetsReader Identity l
+               -> AnchorlessDbChangelog l
+               -> AnchorlessDbChangelog l
+applyThenPush' cfg b bk = runIdentity . applyThenPush cfg (pureBlock b) bk
 
-pushMany' :: ApplyBlock l blk
-          => LedgerDbCfg l
-          -> [blk]
-          -> KeySetsReader Identity l
-          -> AnchorlessDbChangelog l
-          -> AnchorlessDbChangelog l
-pushMany' cfg bs bk =
-  runIdentity . pushMany (const $ pure ()) cfg (map pureBlock bs) bk
+applyMany' :: ApplyBlock l blk
+           => LedgerDbCfg l
+           -> [blk]
+           -> KeySetsReader Identity l
+           -> AnchorlessDbChangelog l
+           -> AnchorlessDbChangelog l
+applyMany' cfg bs bk =
+  runIdentity . applyMany (const $ pure ()) cfg (map pureBlock bs) bk
 
 switch' :: ApplyBlock l blk
         => LedgerDbCfg l

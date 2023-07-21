@@ -362,7 +362,7 @@ storeLedgerStateAt slotNo aenv = do
 
     process :: DbChangelog' blk -> blk -> IO (NextStep, DbChangelog' blk)
     process ldb blk = do
-      ldb' <- onChangelogM (DbChangelog.push (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
+      ldb' <- onChangelogM (DbChangelog.applyThenPush (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
       ldb'' <-
         if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
         then do
@@ -482,7 +482,7 @@ traceLedgerProcessing
       -> blk
       -> IO (DbChangelog' blk)
     process oldLedger blk = do
-      ldb' <- onChangelogM (DbChangelog.push (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) oldLedger
+      ldb' <- onChangelogM (DbChangelog.applyThenPush (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) oldLedger
       let traces        =
             HasAnalysis.emitTraces $
               HasAnalysis.WithLedgerState blk (ledgerState (DbChangelog.current $ anchorlessChangelog oldLedger)) (ledgerState (DbChangelog.current $ anchorlessChangelog ldb'))
@@ -801,7 +801,7 @@ reproMempoolForge numBlks env = do
           -- since it currently matches the call in the forging thread, which is
           -- the primary intention of this Analysis. Maybe GHC's CSE is already
           -- doing this sharing optimization?
-          ldb' <- onChangelogM (DbChangelog.push (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
+          ldb' <- onChangelogM (DbChangelog.applyThenPush (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
           ldb'' <-
             if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
             then do

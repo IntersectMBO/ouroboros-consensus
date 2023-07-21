@@ -70,30 +70,28 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 -- We illustrate its contents below, where @k = 3@ (for a state @Li@, the
 -- corresponding set of differences is @Di@):
 --
--- > stateAnchor | diskAnchor | states                     | tableDiffs
--- > --------------------------------------------------------------------------
--- >      0      |      0     | [ L0 ]                     | [ ]
--- >      0      |      0     | [ L0, L1 ]                 | [ D1 ]
--- >      0      |      0     | [ L0, L1, L2 ]             | [ D1, D2 ]
--- >      0      |      0     | [ L0, L1, L2, L3 ]         | [ D1, D2, D3 ]
--- >      1      |      0     | [ L0, L1, L2, L3, L4 ]     | [ D1, D2, D3, D4 ]
--- >      2      |      0     | [ L0, L1, L2, L3, L4, L5 ] | [ D1, D2, D3, D4, D5 ]    (*)
--- >      2      |      2     | [ L2, L3, L4, L5 ]         | [ D3, D4, D5 ]   -- flush (**)
--- >      3      |      2     | [ L2, L3, L4, L5, L6 ]     | [ D3, D4, D5, D6 ]
+-- >  lastFlushed | states                         | tableDiffs
+-- > -------------------------------------------------------------
+-- >       0      | [ L0 ]                         | [ ]
+-- >       0      | [ L0, L1 ]                     | [ D1 ]
+-- >       0      | [ L0, L1, L2 ]                 | [ D1, D2 ]
+-- >       0      | [ L0, L1, L2, L3 ]             | [ D1, D2, D3 ]
+-- >       0      | [     L1, L2, L3, L4 ]         | [ D1, D2, D3, D4 ]
+-- >       0      | [         L2, L3, L4, L5 ]     | [ D1, D2, D3, D4, D5 ]    (*)
+-- >       2      | [         L2, L3, L4, L5 ]     | [         D3, D4, D5 ]   -- flush (**)
+-- >       2      | [             L3, L4, L5, L6 ] | [         D3, D4, D5, D6 ]
 --
--- The disk anchor moves when we flush data to disk, and the state anchor points
--- always to the state that represents the tip of the logical immutable
--- database. Notice that @seqNo (last states) - stateAnchor@ is usually @k@
--- except when rollbacks or data corruption take place and will be less than @k@
--- when we just loaded a snapshot. We cannot roll back more than @k@ blocks.
--- This means that after a rollback of @k@ blocks at (*), the changelog will
--- look something like this:
+-- The disk anchor moves when we flush data to disk. Notice that @length states@
+-- is usually @k@ except when rollbacks or data corruption take place and will
+-- be less than @k@ when we just loaded a snapshot. We cannot roll back more
+-- than @k@ blocks. This means that after a rollback of @k@ blocks at (*), the
+-- changelog will look something like this:
 --
--- >      2      |      0     | [ L0, L1, L2 ]             | [ D1, D2 ]
+-- >       0      | [         L2 ]                 | [ D1, D2 ]
 --
 -- And a rollback of @k@ blocks at (**) will look something like this:
 --
--- >      2      |      0     | [ L2 ]                     | [ ]
+-- >       2      | [         L2 ]                 | [ ]
 --
 -- Notice how the states list always contains the in-memory state of the anchor,
 -- but the table differences might not contain the differences for that anchor

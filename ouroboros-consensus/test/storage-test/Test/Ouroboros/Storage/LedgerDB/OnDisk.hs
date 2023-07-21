@@ -1032,7 +1032,7 @@ runDB standalone@DB{..} cmd =
           fmap (first annLedgerErr') $
             DbChangelog.defaultThrowLedgerErrors $
                onChangelogM (
-                DbChangelog.push
+                DbChangelog.applyThenPush
                 dbLedgerDbCfg
                 (DbChangelog.ApplyVal b)
                 (Trans.lift . reader)) db
