@@ -21,12 +21,9 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
 import qualified Cardano.Ledger.Shelley.PParams as SL
 import           Control.Monad
-import           Data.List (sortBy)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
-import           Data.Ord (comparing)
-import           Data.Tuple (swap)
 import           Data.Void
 import           Data.Word (Word64)
 import           Lens.Micro ((^.))
@@ -37,7 +34,6 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
-import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Condense
 
 data ProtocolUpdate era = ProtocolUpdate {
@@ -121,14 +117,13 @@ protocolUpdates genesis st = [
             , proposalReachedQuorum = length votes >= fromIntegral quorum
             }
         }
-    | (proposal, votes) <- proposalsInv
+    | (proposal, votes) <- Map.toList $ invertMap proposals
     ]
   where
-    proposalsInv :: [(Core.PParamsUpdate era, [SL.KeyHash 'SL.Genesis (EraCrypto era)])]
-    proposalsInv =
-          groupSplit id
-        . sortBy (comparing fst)
-        $ map swap (Map.toList proposals)
+    invertMap :: Ord b => Map a b -> Map b [a]
+    invertMap = Map.fromListWith (<>) . fmap swizzle . Map.toList
+      where
+        swizzle (a, b) = (b, [a])
 
     -- Updated proposed within the proposal window
     proposals :: Map (SL.KeyHash 'SL.Genesis (EraCrypto era)) (Core.PParamsUpdate era)
