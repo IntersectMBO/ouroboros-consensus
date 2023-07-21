@@ -155,23 +155,23 @@ bracketChainSyncClient tracer ChainDbView { getIsInvalidBlock } varCandidates
 
 -- Our task: after connecting to an upstream node, try to maintain an
 -- up-to-date header-only fragment representing their chain. We maintain
--- such candidate chains in a map with upstream nodes as keys.
+-- such candidate fragments in a map with upstream nodes as keys.
 --
--- The block fetch logic will use these candidate chains to download
--- blocks from, prioritising certain candidate chains over others using
+-- The block fetch logic will use these candidate fragments to download
+-- blocks from, prioritising certain candidate fragments over others using
 -- the consensus protocol. Whenever such a block has been downloaded and
 -- added to the local 'ChainDB', the 'ChainDB' will perform chain
 -- selection.
 --
--- We also validate the headers of a candidate chain by advancing the
+-- We also validate the headers of a candidate fragment by advancing the
 -- 'ChainDepState' with the headers, which returns an error when validation
 -- failed. Thus, in addition to the chain fragment of each candidate, we also
--- store a 'ChainDepState' corresponding to the head of the candidate chain.
+-- store a 'ChainDepState' corresponding to the head of the candidate fragment.
 --
--- We must keep the candidate chain synchronised with the corresponding
+-- We must keep the candidate fragment synchronised with the corresponding
 -- upstream chain. The upstream node's chain might roll forward or
 -- backwards, and they will inform us about this. When we get these
--- messages, we will replicate these actions on our candidate chain.
+-- messages, we will replicate these actions on the candidate fragment.
 --
 -- INVARIANT:
 --
@@ -489,7 +489,7 @@ chainSyncClient mkPipelineDecision0 tracer cfg
         }
 
     -- | One of the points we sent intersected our chain. This intersection
-    -- point will become the new tip of the candidate chain.
+    -- point will become the new tip of the candidate fragment.
     intersectFound :: Point blk  -- ^ Intersection
                    -> Their (Tip blk)
                    -> Stateful m blk
@@ -522,8 +522,8 @@ chainSyncClient mkPipelineDecision0 tracer cfg
         (theirFrag, theirHeaderStateHistory) <- do
           case attemptRollback intersection (ourFrag, ourHeaderStateHistory) of
             Just (c, d) -> return (c, d)
-            -- The @intersection@ is not on the candidate chain, even though
-            -- we sent only points from the candidate chain to find an
+            -- The @intersection@ is not on our fragment, even though
+            -- we sent only points from our fragment to find an
             -- intersection with. The node must have sent us an invalid
             -- intersection point.
             Nothing -> disconnect $
@@ -564,7 +564,7 @@ chainSyncClient mkPipelineDecision0 tracer cfg
 
         | Just (intersection, trimmedCandidateFrag) <- cross ourFrag' theirFrag
           -- Our current chain changed, but it still intersects with candidate
-          -- fragment, so update the 'ourFrag' field and trim to the
+          -- fragment, so update the 'ourFrag' field and trim the
           -- candidate fragment to the same anchor point.
           --
           -- Note that this is the only place we need to trim. Headers on
@@ -748,7 +748,7 @@ chainSyncClient mkPipelineDecision0 tracer cfg
               -- current chain. We have to wait until our chain and the
               -- intersection have advanced far enough. This will wait on
               -- changes to the current chain via the call to
-              -- 'intersectsWithCurrentChain' befoer it.
+              -- 'intersectsWithCurrentChain' before it.
               Left OutsideForecastRange{} ->
                 retry
               Right ledgerView ->
@@ -862,11 +862,11 @@ chainSyncClient mkPipelineDecision0 tracer cfg
                 theirTip
 
           Just (theirFrag', theirHeaderStateHistory') -> do
-            -- We just rolled back to @intersection@, either our most recent
-            -- intersection was after or at @intersection@, in which case
-            -- @intersection@ becomes the new most recent intersection.
+            -- We just rolled back to @rollBackPoint@, either our most recent
+            -- intersection was after or at @rollBackPoint@, in which case
+            -- @rollBackPoint@ becomes the new most recent intersection.
             --
-            -- But if the most recent intersection was /before/ @intersection@,
+            -- But if the most recent intersection was /before/ @rollBackPoint@,
             -- then the most recent intersection doesn't change.
             let mostRecentIntersection'
                   | AF.withinFragmentBounds (castPoint rollBackPoint) ourFrag
