@@ -1,9 +1,9 @@
 # [Ouroboros Consensus](https://input-output-hk.github.io/ouroboros-consensus/)
 
-[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.7.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-0.7.0.0/)
-[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.6.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-diffusion-0.6.0.0/)
-[![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.5.0.2-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-protocol-0.5.0.2/)
-[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.6.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-cardano-0.6.0.0/)
+[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.9.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-0.9.0.0/)
+[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.7.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-diffusion-0.7.0.0/)
+[![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.5.0.4-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-protocol-0.5.0.4/)
+[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.7.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-cardano-0.7.0.0/)
 
 [![docs](https://img.shields.io/badge/Documentation-yellow)](https://input-output-hk.github.io/ouroboros-consensus/)
 
@@ -43,7 +43,7 @@ targets](https://github.com/haskell/cabal/issues/4070):
 for f in $(find ouroboros-consensus* -type f -name "*.cabal"); do
     printf "Components of package %s:\n" $f;
     cat $f | grep -E "^(library|test-suite|executable|benchmark)" \
-      | sed 's/library /🤫📦 /g' \
+      | sed 's/library /⬇️📦 /g' \
       | sed 's/test-suite /🧪   /g' \
       | sed 's/benchmark /🏁   /g' \
       | sed 's/executable /⚙️    /g' \
