@@ -168,7 +168,38 @@ epochInfoPrecomputedTransitionInfo shape transition st =
   Extending
 -------------------------------------------------------------------------------}
 
--- | Extend the telescope until the specified slot is within the era at the tip
+-- | Extend the telescope until the specified slot is within the era at the tip.
+--
+-- Note that transitioning to a later era might create new values in the ledger
+-- tables, therefore the result of this function is a @DiffMK@.
+--
+-- If we are crossing no era boundaries, this whole function is a no-op that
+-- only creates an empty @DiffMK@, because the @Telescope.extend@ function will
+-- do nothing.
+--
+-- If we are crossing one era boundary, the ledger tables might be populated
+-- with whatever @translateLedgerStateWith@ returns.
+--
+-- If we are crossing multiple era boundaries, the diffs generated when crossing
+-- an era boundary will be prepended to the ones produced by later era
+-- boundaries and, in order to all match the resulting era, they will be
+-- translated to later eras.
+--
+-- This means in particular that if we extend from @era1@ to @era3@ going
+-- through @era2@, we will:
+--
+-- 1. translate the ledger state from @era1@ to @era2@, which produces a @era2@
+--    ledger state together with a some set of differences.
+--
+-- 2. keep the @era2@ diffs aside, and translate the @era2@ ledger state without
+--    ledger tables, which produces a @era3@ ledger state together with a set of
+--    @era3@ differences.
+--
+-- 3. Translate the @era2@ diffs to @era3@ differences, and prepend them to the
+--    ones created in the step 2.
+--
+-- 4. Attach the diffs resulting from step 3 to the @era3@ ledger state from
+--    step 2, and return it.
 extendToSlot :: forall xs.
                 (CanHardFork xs)
              => HardForkLedgerConfig xs
@@ -236,25 +267,25 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
             }
         , Current {
               currentStart = currentEnd
-            , currentState = Flip
-                             -- We need to bring back the diffs provided by
-                             -- previous translations. Note that if there is
-                             -- only one translation or if the previous
-                             -- translations don't add any new tables this will
-                             -- just be a no-op. See the haddock for
-                             -- 'translateLedgerTablesWith' for more
-                             -- information).
-                             . prependDiffs ( translateLedgerTablesWith f
-                                            . projectLedgerTables
-                                            . unFlip
-                                            . currentState
-                                            $ cur
-                                            )
-                             . translateLedgerStateWith f (History.boundEpoch currentEnd)
-                             . forgetLedgerTables
-                             . unFlip
-                             . currentState
-                             $ cur
+            , currentState =
+                  Flip
+                  -- We need to bring back the diffs provided by previous
+                  -- translations. Note that if there is only one translation or
+                  -- if the previous translations don't add any new tables this
+                  -- will just be a no-op. See the haddock for
+                  -- 'translateLedgerTablesWith' and 'extendToSlot' for more
+                  -- information.
+                . prependDiffs ( translateLedgerTablesWith f
+                               . projectLedgerTables
+                               . unFlip
+                               . currentState
+                               $ cur
+                               )
+                . translateLedgerStateWith f (History.boundEpoch currentEnd)
+                . forgetLedgerTables
+                . unFlip
+                . currentState
+                $ cur
             }
         )
 
