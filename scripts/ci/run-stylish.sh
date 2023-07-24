@@ -7,12 +7,11 @@ stylish-haskell --defaults | diff - ./.stylish-haskell.yaml | grep -E "^>.*[[:al
 printf "\nFormatting haskell files...\n"
 
 export LC_ALL=C.UTF-8
-fd -p $(pwd)/ouroboros-consensus \
-    -e hs \
-    -E Setup.hs \
-    -E ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \
-    -X stylish-haskell \
-    -c .stylish-haskell.yaml -i
+fd --full-path "$(pwd)/(ouroboros-consensus|scripts)" \
+    --extension hs \
+    --exclude Setup.hs \
+    --exclude ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \
+    --exec-batch stylish-haskell -c .stylish-haskell.yaml -i
 
 
 # We don't want these deprecation warnings to be removed accidentally
