@@ -372,6 +372,7 @@ library cardano-testlib
     Test.Consensus.Cardano.Examples
     Test.Consensus.Cardano.Generators
     Test.Consensus.Cardano.MockCrypto
+    Test.Consensus.Cardano.ProtocolInfo
     Test.ThreadNet.Infra.ShelleyBasedHardFork
     Test.ThreadNet.Infra.TwoEras
     Test.ThreadNet.TxGen.Allegra
@@ -387,6 +388,7 @@ library cardano-testlib
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
     , cardano-ledger-byron
+    , cardano-ledger-conway
     , cardano-ledger-conway-test                                                        ^>=1.2.0.1
     , cardano-ledger-core:{cardano-ledger-core, testlib}
     , cardano-ledger-shelley                                                            ^>=1.4.0
@@ -412,6 +414,8 @@ test-suite cardano-test
   other-modules:
     Test.Consensus.Cardano.ByronCompatibility
     Test.Consensus.Cardano.Golden
+    Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
+    Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
     Test.Consensus.Cardano.Serialisation
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
@@ -420,12 +424,12 @@ test-suite cardano-test
 
   build-depends:
     , base
+    , base16-bytestring
     , byron-testlib
     , bytestring
     , cardano-crypto-class
     , cardano-ledger-alonzo
     , cardano-ledger-byron
-    , cardano-ledger-conway
     , cardano-ledger-core
     , cardano-ledger-shelley
     , cardano-protocol-tpraos
@@ -433,18 +437,23 @@ test-suite cardano-test
     , cardano-testlib
     , cborg
     , containers
+    , contra-tracer
     , filepath
     , microlens
-    , ouroboros-consensus-cardano
+    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, cardano-testlib}
     , ouroboros-consensus-diffusion:diffusion-testlib
     , ouroboros-consensus-protocol
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib, mempool-test-utils}
     , ouroboros-network-api
+    , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
+    , pretty-simple
     , QuickCheck
     , shelley-testlib
     , sop-core
     , tasty
+    , tasty-hunit
     , tasty-quickcheck
+    , typed-protocols
 
 library cardano-tools
   import:          common-lib

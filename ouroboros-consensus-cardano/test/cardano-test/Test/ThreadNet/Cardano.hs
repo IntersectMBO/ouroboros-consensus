@@ -14,10 +14,8 @@ import           Cardano.Chain.ProtocolConstants (kEpochSlots)
 import           Cardano.Chain.Slotting (unEpochSlots)
 import qualified Cardano.Chain.Update as CC.Update
 import qualified Cardano.Ledger.BaseTypes as SL
-import qualified Cardano.Ledger.Conway.Genesis as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
-import qualified Cardano.Ledger.Shelley.Translation as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import           Control.Exception (assert)
@@ -41,8 +39,6 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
                      (isHardForkNodeToNodeEnabled)
 import           Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
-import qualified Ouroboros.Consensus.Mempool as Mempool
-import qualified Ouroboros.Consensus.Mempool as TxLimits
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
@@ -50,15 +46,14 @@ import           Ouroboros.Consensus.Protocol.PBFT
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
-import           Ouroboros.Consensus.Shelley.Node.Praos
-                     (ProtocolParamsBabbage (..), ProtocolParamsConway (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron)
+import           Test.Consensus.Cardano.ProtocolInfo (HardForkSpec (..),
+                     mkTestProtocolInfo)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.ThreadNet.General
-import qualified Test.ThreadNet.Infra.Alonzo as Alonzo
 import qualified Test.ThreadNet.Infra.Byron as Byron
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import           Test.ThreadNet.Infra.TwoEras
@@ -262,11 +257,6 @@ prop_simple_cardano_convergence TestSetup
                   genesisShelley
                   setupInitialNonce
                   (coreNodes !! fromIntegral nid)
-                  ProtocolTransitionParamsShelleyBased {
-                      transitionTranslationContext = SL.toFromByronTranslationContext genesisShelley
-                    , transitionTrigger            =
-                        TriggerHardForkAtVersion $ SL.getVersion shelleyMajorVersion
-                    }
             , mkRekeyM = Nothing
             }
 
@@ -460,13 +450,11 @@ mkProtocolCardanoAndHardForkTxs
   -> ShelleyGenesis c
   -> SL.Nonce
   -> Shelley.CoreNode c
-     -- HardForks
-  -> ProtocolTransitionParamsShelleyBased (ShelleyEra c)
   -> TestNodeInitialization m (CardanoBlock c)
 mkProtocolCardanoAndHardForkTxs
     pbftParams coreNodeId genesisByron generatedSecretsByron propPV
     genesisShelley initialNonce coreNodeShelley
-    protocolParamsByronShelley =
+  =
     TestNodeInitialization
       { tniCrucialTxs   = crucialTxs
       , tniProtocolInfo = protocolInfo
@@ -490,148 +478,44 @@ mkProtocolCardanoAndHardForkTxs
 
     protocolInfo :: ProtocolInfo (CardanoBlock c)
     blockForging :: m [BlockForging m (CardanoBlock c)]
-    (protocolInfo, blockForging) = protocolInfoCardano
-              paramsByron
-              paramsShelleyBased
-              paramsShelley
-              paramsAllegra
-              paramsMary
-              paramsAlonzo
-              paramsBabbage
-              paramsConway
-              transitionShelley
-              transitionAllegra
-              transitionMary
-              transitionAlonzo
-              transitionBabbage
-              transitionConway
-
-    paramsByron :: ProtocolParamsByron
-    paramsByron =
-        ProtocolParamsByron {
-            byronGenesis                = genesisByron
-            -- Trivialize the PBFT signature window so that the forks induced by
-            -- the network partition are as deep as possible.
-          , byronPbftSignatureThreshold = Just $ PBftSignatureThreshold 1
-          , byronProtocolVersion        = propPV
-          , byronSoftwareVersion        = softVerByron
-          , byronLeaderCredentials      = Just leaderCredentialsByron
-          , byronMaxTxCapacityOverrides = TxLimits.mkOverrides TxLimits.noOverridesMeasure
-          }
-
-    paramsShelleyBased :: ProtocolParamsShelleyBased (ShelleyEra c)
-    paramsShelleyBased =
-        ProtocolParamsShelleyBased {
-            shelleyBasedGenesis           = genesisShelley
-          , shelleyBasedInitialNonce      = initialNonce
-          , shelleyBasedLeaderCredentials = [leaderCredentialsShelley]
-          }
-
-    paramsShelley :: ProtocolParamsShelley c
-    paramsShelley =
-        ProtocolParamsShelley {
-            shelleyProtVer                = SL.ProtVer shelleyMajorVersion 0
-          , shelleyMaxTxCapacityOverrides = TxLimits.mkOverrides TxLimits.noOverridesMeasure
-          }
-
-    paramsAllegra :: ProtocolParamsAllegra c
-    paramsAllegra =
-        ProtocolParamsAllegra {
-            allegraProtVer                = SL.ProtVer allegraMajorVersion 0
-          , allegraMaxTxCapacityOverrides = TxLimits.mkOverrides TxLimits.noOverridesMeasure
-          }
-
-    paramsMary :: ProtocolParamsMary c
-    paramsMary =
-        ProtocolParamsMary {
-            maryProtVer                   = SL.ProtVer maryMajorVersion    0
-          , maryMaxTxCapacityOverrides    = TxLimits.mkOverrides TxLimits.noOverridesMeasure
-          }
-
-    paramsAlonzo :: ProtocolParamsAlonzo c
-    paramsAlonzo =
-        ProtocolParamsAlonzo {
-            alonzoProtVer                 = SL.ProtVer alonzoMajorVersion  0
-          , alonzoMaxTxCapacityOverrides  = TxLimits.mkOverrides TxLimits.noOverridesMeasure
-          }
-
-    paramsBabbage :: ProtocolParamsBabbage c
-    paramsBabbage =
-        ProtocolParamsBabbage {
-            babbageProtVer                = SL.ProtVer babbageMajorVersion  0
-          , babbageMaxTxCapacityOverrides  = TxLimits.mkOverrides TxLimits.noOverridesMeasure
-          }
-
-    paramsConway :: ProtocolParamsConway c
-    paramsConway =
-      ProtocolParamsConway {
-            conwayProtVer                 = SL.ProtVer conwayMajorVersion  0
-          , conwayMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-
-    transitionShelley :: ProtocolTransitionParamsShelleyBased (ShelleyEra c)
-    transitionShelley = protocolParamsByronShelley
-
-    transitionAllegra :: ProtocolTransitionParamsShelleyBased (AllegraEra c)
-    transitionAllegra =
-        ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext = ()
-          , transitionTrigger            =
-              TriggerHardForkAtVersion $ SL.getVersion allegraMajorVersion
-          }
-
-    transitionMary :: ProtocolTransitionParamsShelleyBased (MaryEra c)
-    transitionMary =
-        ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext = ()
-          , transitionTrigger            =
-              TriggerHardForkAtVersion $ SL.getVersion maryMajorVersion
-          }
-
-    transitionAlonzo :: ProtocolTransitionParamsShelleyBased (AlonzoEra c)
-    transitionAlonzo =
-        ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext = Alonzo.degenerateAlonzoGenesis
-          , transitionTrigger            =
-              TriggerHardForkAtVersion $ SL.getVersion alonzoMajorVersion
-          }
-
-    transitionBabbage :: ProtocolTransitionParamsShelleyBased (BabbageEra c)
-    transitionBabbage =
-        ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext = ()
-          , transitionTrigger            =
-              TriggerHardForkAtVersion $ SL.getVersion babbageMajorVersion
-          }
-
-    transitionConway :: ProtocolTransitionParamsShelleyBased (ConwayEra c)
-    transitionConway =
-      ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext =
-              -- Note that this is effectively a no-op, which is fine for
-              -- testing, at least for now.
-              SL.ConwayGenesis $ SL.GenDelegs $ sgGenDelegs genesisShelley
-          , transitionTrigger            =
-              TriggerHardForkAtVersion $ SL.getVersion conwayMajorVersion
-          }
-
-    -- Byron
-
-    leaderCredentialsByron :: ByronLeaderCredentials
-    leaderCredentialsByron =
-        Byron.mkLeaderCredentials
-          genesisByron
-          generatedSecretsByron
-          coreNodeId
-
-    -- this sets a vestigial header field which is not actually used for anything
-    softVerByron :: CC.Update.SoftwareVersion
-    softVerByron = Byron.theProposedSoftwareVersion
-
-    -- Shelley
-
-    leaderCredentialsShelley :: ShelleyLeaderCredentials c
-    leaderCredentialsShelley = Shelley.mkLeaderCredentials coreNodeShelley
+    (protocolInfo, blockForging) =
+      mkTestProtocolInfo
+        (coreNodeId, coreNodeShelley)
+        genesisShelley
+        propPV
+        initialNonce
+        genesisByron
+        generatedSecretsByron
+        (Just $ PBftSignatureThreshold 1) -- Trivialize the PBFT signature
+                                          -- window so that the forks induced by
+                                          -- the network partition are as deep
+                                          -- as possible.
+        HardForkSpec {
+            shelleyHardForkSpec =
+              ( SL.ProtVer shelleyMajorVersion 0
+              , TriggerHardForkAtVersion $ SL.getVersion shelleyMajorVersion
+              )
+          , allegraHardForkSpec =
+              ( SL.ProtVer allegraMajorVersion 0
+              , TriggerHardForkAtVersion $ SL.getVersion allegraMajorVersion
+              )
+          , maryHardForkSpec =
+              ( SL.ProtVer maryMajorVersion    0
+              , TriggerHardForkAtVersion $ SL.getVersion maryMajorVersion
+              )
+          , alonzoHardForkSpec =
+              ( SL.ProtVer alonzoMajorVersion  0
+              , TriggerHardForkAtVersion $ SL.getVersion alonzoMajorVersion
+              )
+          , babbageHardForkSpec =
+              ( SL.ProtVer babbageMajorVersion  0
+              , TriggerHardForkAtVersion $ SL.getVersion babbageMajorVersion
+              )
+          , conwayHardForkSpec =
+              ( SL.ProtVer conwayMajorVersion  0
+              , TriggerHardForkAtVersion $ SL.getVersion conwayMajorVersion
+              )
+        }
 
 {-------------------------------------------------------------------------------
   Constants

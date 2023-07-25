@@ -14,7 +14,6 @@ module Bench.Consensus.Mempool.TestBlock (
     -- * Initial parameters
   , initialLedgerState
   , sampleLedgerConfig
-  , sampleMempoolAndModelParams
     -- * Transactions
   , Token (Token)
   , Tx (Tx)
@@ -22,7 +21,6 @@ module Bench.Consensus.Mempool.TestBlock (
   , txSize
   ) where
 
-import           Bench.Consensus.MempoolWithMockedLedgerItf
 import qualified Cardano.Slotting.Time as Time
 import           Codec.Serialise (Serialise)
 import           Control.DeepSeq (NFData)
@@ -76,12 +74,6 @@ initialLedgerState = TestLedger {
 sampleLedgerConfig :: Ledger.LedgerConfig TestBlock
 sampleLedgerConfig =
   HardFork.defaultEraParams (Consensus.SecurityParam 10) (Time.slotLengthFromSec 2)
-
-sampleMempoolAndModelParams :: InitialMempoolAndModelParams TestBlock
-sampleMempoolAndModelParams = MempoolAndModelParams {
-      immpInitialState = initialLedgerState
-    , immpLedgerConfig = sampleLedgerConfig
-    }
 
 {-------------------------------------------------------------------------------
   Payload semantics

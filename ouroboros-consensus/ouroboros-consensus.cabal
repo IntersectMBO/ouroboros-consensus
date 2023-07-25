@@ -454,6 +454,18 @@ library mock-block
     , serialise
     , time
 
+library mempool-test-utils
+  import:          common-lib
+  visibility:      public
+  hs-source-dirs:  src/mempool-test-utils
+  exposed-modules: Test.Consensus.Mempool.Mocked
+  build-depends:
+    , base
+    , contra-tracer
+    , deepseq
+    , ouroboros-consensus
+    , strict-stm
+
 library tutorials
   import:         common-lib
 
@@ -632,7 +644,6 @@ benchmark mempool-bench
   other-modules:
     Bench.Consensus.Mempool
     Bench.Consensus.Mempool.TestBlock
-    Bench.Consensus.MempoolWithMockedLedgerItf
 
   build-depends:
     , aeson
@@ -644,10 +655,10 @@ benchmark mempool-bench
     , containers
     , contra-tracer
     , deepseq
+    , mempool-test-utils
     , nothunks
     , ouroboros-consensus
     , serialise
-    , strict-stm
     , tasty
     , tasty-bench
     , tasty-hunit
