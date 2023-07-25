@@ -70,16 +70,16 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 -- We illustrate its contents below, where @k = 3@ (for a state @Li@, the
 -- corresponding set of differences is @Di@):
 --
--- >  lastFlushed | states                         | tableDiffs
+-- >  lastFlushed | states                           | tableDiffs
 -- > -------------------------------------------------------------
--- >       0      | [ L0 ]                         | [ ]
--- >       0      | [ L0, L1 ]                     | [ D1 ]
--- >       0      | [ L0, L1, L2 ]                 | [ D1, D2 ]
--- >       0      | [ L0, L1, L2, L3 ]             | [ D1, D2, D3 ]
--- >       0      | [     L1, L2, L3, L4 ]         | [ D1, D2, D3, D4 ]
--- >       0      | [         L2, L3, L4, L5 ]     | [ D1, D2, D3, D4, D5 ]    (*)
--- >       2      | [         L2, L3, L4, L5 ]     | [         D3, D4, D5 ]   -- flush (**)
--- >       2      | [             L3, L4, L5, L6 ] | [         D3, D4, D5, D6 ]
+-- >       0      | L0 :> [ ]                        | [ ]
+-- >       0      | L0 :> [ L1 ]                     | [ D1 ]
+-- >       0      | L0 :> [ L1, L2 ]                 | [ D1, D2 ]
+-- >       0      | L0 :> [ L1, L2, L3 ]             | [ D1, D2, D3 ]
+-- >       0      | L1 :> [     L2, L3, L4 ]         | [ D1, D2, D3, D4 ]
+-- >       0      | L2 :> [         L3, L4, L5 ]     | [ D1, D2, D3, D4, D5 ]    (*)
+-- >       2      | L2 :> [         L3, L4, L5 ]     | [         D3, D4, D5 ]   -- flush (**)
+-- >       2      | L3 :> [             L4, L5, L6 ] | [         D3, D4, D5, D6 ]
 --
 -- The disk anchor moves when we flush data to disk. Notice that @length states@
 -- is usually @k@ except when rollbacks or data corruption take place and will
@@ -87,11 +87,11 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 -- than @k@ blocks. This means that after a rollback of @k@ blocks at (*), the
 -- changelog will look something like this:
 --
--- >       0      | [         L2 ]                 | [ D1, D2 ]
+-- >       0      | L2 :> [ ]                        | [ D1, D2 ]
 --
 -- And a rollback of @k@ blocks at (**) will look something like this:
 --
--- >       2      | [         L2 ]                 | [ ]
+-- >       2      | L2 :> [ ]                        | [ ]
 --
 -- Notice how the states list always contains the in-memory state of the anchor,
 -- but the table differences might not contain the differences for that anchor

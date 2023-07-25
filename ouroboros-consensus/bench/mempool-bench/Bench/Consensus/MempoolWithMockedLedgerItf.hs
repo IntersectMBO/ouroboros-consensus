@@ -84,7 +84,7 @@ openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
 
     -- Set up an empty changelog and populate it by applying blocks
     let ldb0 = empty $ Ledger.forgetLedgerTables backingState
-    ldb <- onChangelogM (applyMany
+    ldb <- onChangelogM (applyThenPushMany
               (const $ pure ())
               ldbcfg
               (fmap ReapplyVal blks)
