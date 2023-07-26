@@ -85,6 +85,10 @@ main = sh do
       unless skipGit do
         createGitCommit packageName next
 
+        -- note that this tags each package release with the commit that released
+        -- that package, not the commit with all of the packages released
+        createGitTag packageName next
+
 -- | Pairs of packages with a list of their dependencies. We use the
 --   dependencies to calculate which version changes should require a version
 --   bump in a package's dependencies as well.
@@ -245,6 +249,12 @@ createGitCommit package next = do
         "release " <> packageNameWithVersion package next
   liftIO $ putStrLn $ "Creating git commit: " <> show commitString
   procs "git" ["commit", "-am", commitString] mempty
+
+createGitTag :: FilePath -> Version -> Shell ()
+createGitTag package next = do
+  let tagName = packageNameWithVersion package next
+  liftIO $ putStrLn $ "Creating git tag: " <> show tagName
+  procs "git" ["tag", packageNameWithVersion]
 
 packageNameWithVersion :: FilePath -> Version -> Text
 packageNameWithVersion package v = Text.pack $
