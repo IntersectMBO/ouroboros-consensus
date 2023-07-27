@@ -2,9 +2,10 @@
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE TypeApplications  #-}
 {-# LANGUAGE InstanceSigs      #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
-module Test.Util.Orphans.NoThunks () where
 
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module Test.Util.Orphans.NoThunks () where
 
 import           Control.Concurrent.Class.MonadMVar
 import           Control.Monad.IOSim
