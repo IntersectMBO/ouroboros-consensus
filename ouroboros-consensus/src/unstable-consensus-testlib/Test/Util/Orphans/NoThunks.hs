@@ -1,8 +1,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE TypeApplications  #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 {-# LANGUAGE InstanceSigs      #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 module Test.Util.Orphans.NoThunks () where
 
 
