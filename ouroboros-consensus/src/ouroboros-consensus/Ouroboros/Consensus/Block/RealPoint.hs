@@ -87,7 +87,7 @@ blockRealPoint blk = RealPoint s h
 #if __GLASGOW_HASKELL__ >= 906
 headerRealPoint :: (HasHeader blk, HasHeader (Header blk)) => Header blk -> RealPoint blk
 #else
--- GHC 9.6 considiers these constraints insufficient.
+-- GHC 9.6 considers these constraints insufficient.
 headerRealPoint :: HasHeader (Header blk) => Header blk -> RealPoint blk
 #endif
 headerRealPoint hdr = RealPoint s h

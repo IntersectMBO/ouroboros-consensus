@@ -42,7 +42,6 @@ let
         (mkHaskellJobsFor (hsPkgsForGhc "ghc8107"))
         [ "checks" "devShell" ];
 
-      # ensure we can already build with 9.6, but do not yet run tests to reduce CI load
       haskell96 = builtins.removeAttrs
         (mkHaskellJobsFor (hsPkgsForGhc "ghc962"))
         [ "checks" ];

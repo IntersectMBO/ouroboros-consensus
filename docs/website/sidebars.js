@@ -23,6 +23,7 @@ const sidebars = {
       label: 'About Ouroboros',
       items: [
         'about-ouroboros/index',
+        'about-ouroboros/utxo-hd',
         'about-ouroboros/References'
       ]
     }
@@ -45,6 +46,13 @@ const sidebars = {
         'for-developers/ReleaseProcess',
         'for-developers/SanityChecks',
         'for-developers/QueryVersioning',
+        { type: 'category',
+          label: 'UTxO HD',
+          items: [
+            'for-developers/utxo-hd/Overview',
+            'for-developers/utxo-hd/future-ledger-hd',
+          ]
+        },
       ]
     },
   ]
