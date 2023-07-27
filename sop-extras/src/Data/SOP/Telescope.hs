@@ -50,11 +50,9 @@ module Data.SOP.Telescope (
   , scanl
   ) where
 
+import           Data.Coerce (coerce)
 import           Data.Functor.Product
 import           Data.Kind
-import           Data.Proxy
-import           Data.SOP.BasicFunctors
-import           Data.SOP.Constraint
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (InPairs (..), Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
@@ -132,6 +130,17 @@ sequence = go
     go :: Telescope g (m :.: f) xs' -> m (Telescope g f xs')
     go (TZ (Comp fx)) = TZ <$> fx
     go (TS gx t)      = TS gx <$> go t
+
+instance (forall x y. LiftedCoercible g g x y)
+      => HTrans (Telescope g) (Telescope g) where
+  htrans p transf = \case
+      TZ fx   -> TZ $ transf fx
+      TS gx t -> TS (coerce gx) $ htrans p transf t
+  hcoerce = \case
+      TZ fx   -> TZ $ coerce fx
+      TS gx t -> TS (coerce gx) $ hcoerce t
+
+type instance Same (Telescope g) = Telescope g
 
 {-------------------------------------------------------------------------------
   Bifunctor analogues of class methods
