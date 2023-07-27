@@ -78,6 +78,7 @@ library
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Node
+    Ouroboros.Consensus.Cardano.Tables
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras
@@ -133,6 +134,7 @@ library
     , containers                    >=0.5      && <0.7
     , cryptonite                    >=0.25     && <0.31
     , deepseq
+    , diff-containers               >=1.1
     , formatting                    >=6.3      && <7.2
     , measures
     , microlens
@@ -209,6 +211,7 @@ library unstable-byron-testlib
     , cardano-ledger-binary:{cardano-ledger-binary, testlib}
     , cardano-ledger-byron
     , cardano-ledger-byron-test
+    , cardano-slotting
     , containers
     , hedgehog-quickcheck
     , mtl
@@ -227,6 +230,7 @@ test-suite byron-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.Byron.Golden
+    Test.Consensus.Byron.LedgerTables
     Test.Consensus.Byron.Serialisation
     Test.ThreadNet.Byron
     Test.ThreadNet.DualByron
@@ -309,6 +313,7 @@ test-suite shelley-test
   other-modules:
     Test.Consensus.Shelley.Coherence
     Test.Consensus.Shelley.Golden
+    Test.Consensus.Shelley.LedgerTables
     Test.Consensus.Shelley.Serialisation
     Test.ThreadNet.Shelley
 
@@ -318,6 +323,8 @@ test-suite shelley-test
     , cardano-crypto-class
     , cardano-ledger-alonzo
     , cardano-ledger-alonzo-test
+    , cardano-ledger-babbage-test
+    , cardano-ledger-babbage:testlib
     , cardano-ledger-core
     , cardano-ledger-shelley
     , cardano-protocol-tpraos
@@ -391,6 +398,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
     Test.Consensus.Cardano.Serialisation
+    Test.Consensus.Cardano.Translation
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
     Test.ThreadNet.MaryAlonzo
@@ -401,17 +409,20 @@ test-suite cardano-test
     , base16-bytestring
     , bytestring
     , cardano-crypto-class
+    , cardano-data
     , cardano-ledger-alonzo
     , cardano-ledger-alonzo-test
     , cardano-ledger-api
     , cardano-ledger-byron
     , cardano-ledger-core
     , cardano-ledger-shelley
+    , cardano-ledger-shelley-test
     , cardano-protocol-tpraos
     , cardano-slotting
     , cborg
     , containers
     , contra-tracer
+    , diff-containers                                               >=1.1
     , filepath
     , microlens
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-testlib}
