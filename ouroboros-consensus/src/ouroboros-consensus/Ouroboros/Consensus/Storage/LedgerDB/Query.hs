@@ -1,88 +1,142 @@
-{-# LANGUAGE ConstraintKinds          #-}
-{-# LANGUAGE DeriveAnyClass           #-}
-{-# LANGUAGE DeriveGeneric            #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE FlexibleInstances        #-}
-{-# LANGUAGE FunctionalDependencies   #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE MultiParamTypeClasses    #-}
-{-# LANGUAGE NamedFieldPuns           #-}
-{-# LANGUAGE QuantifiedConstraints    #-}
-{-# LANGUAGE RankNTypes               #-}
-{-# LANGUAGE RecordWildCards          #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE StandaloneDeriving       #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications         #-}
-{-# LANGUAGE TypeFamilies             #-}
-{-# LANGUAGE TypeOperators            #-}
-{-# LANGUAGE UndecidableInstances     #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
+-- | Queries on the ledger db
 
 module Ouroboros.Consensus.Storage.LedgerDB.Query (
-    ledgerDbAnchor
-  , ledgerDbCurrent
-  , ledgerDbIsSaturated
-  , ledgerDbMaxRollback
-  , ledgerDbPast
-  , ledgerDbSnapshots
-  , ledgerDbTip
+    acquireLDBReadView
+  , getCurrent
+  , getLedgerTablesAtFor
+  , getPrevApplied
+  , getStatistics
   ) where
 
-import           Data.Foldable (find)
-import           Data.Word
+import           Control.Concurrent.Class.MonadSTM.Strict
+import           Data.Monoid (Sum (..))
+import           Data.Set
+import           Data.SOP (K (K))
+import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config
-import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
-import qualified Ouroboros.Network.AnchoredSeq as AS
+import           Ouroboros.Consensus.Ledger.Basics
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
+import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView (..),
+                     LedgerDBView')
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
+                     (DiskPolicy (onDiskQueryBatchSize))
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
+import           Ouroboros.Consensus.Storage.LedgerDB.Lock
+import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
+import           Ouroboros.Consensus.Storage.LedgerDB.Types
+import           Ouroboros.Consensus.Util
+import           Ouroboros.Consensus.Util.IOLike (IOLike)
 
--- | The ledger state at the tip of the chain
-ledgerDbCurrent :: GetTip l => LedgerDB l -> l
-ledgerDbCurrent = either unCheckpoint unCheckpoint . AS.head . ledgerDbCheckpoints
+getPrevApplied :: IOLike m => LedgerDBState m blk -> STM m (Set (RealPoint blk))
+getPrevApplied = readTVar . varPrevApplied
 
--- | Information about the state of the ledger at the anchor
-ledgerDbAnchor :: LedgerDB l -> l
-ledgerDbAnchor = unCheckpoint . AS.anchor . ledgerDbCheckpoints
+getCurrent :: IOLike m => LedgerDBState m blk -> STM m (DbChangelog' blk)
+getCurrent = readTVar . ldbChangelog
 
--- | All snapshots currently stored by the ledger DB (new to old)
---
--- This also includes the snapshot at the anchor. For each snapshot we also
--- return the distance from the tip.
-ledgerDbSnapshots :: LedgerDB l -> [(Word64, l)]
-ledgerDbSnapshots LedgerDB{..} =
-    zip
-      [0..]
-      (map unCheckpoint (AS.toNewestFirst ledgerDbCheckpoints)
-        <> [unCheckpoint (AS.anchor ledgerDbCheckpoints)])
-
--- | How many blocks can we currently roll back?
-ledgerDbMaxRollback :: GetTip l => LedgerDB l -> Word64
-ledgerDbMaxRollback LedgerDB{..} = fromIntegral (AS.length ledgerDbCheckpoints)
-
--- | Reference to the block at the tip of the chain
-ledgerDbTip :: GetTip l => LedgerDB l -> Point l
-ledgerDbTip = castPoint . getTip . ledgerDbCurrent
-
--- | Have we seen at least @k@ blocks?
-ledgerDbIsSaturated :: GetTip l => SecurityParam -> LedgerDB l -> Bool
-ledgerDbIsSaturated (SecurityParam k) db =
-    ledgerDbMaxRollback db >= k
-
--- | Get a past ledger state
---
---  \( O(\log(\min(i,n-i)) \)
---
--- When no ledger state (or anchor) has the given 'Point', 'Nothing' is
--- returned.
-ledgerDbPast ::
-     (HasHeader blk, IsLedger l, HeaderHash l ~ HeaderHash blk)
+-- | Read and forward the values up to the given point on the chain.
+getLedgerTablesAtFor ::
+  ( IOLike m
+  , LedgerSupportsProtocol blk
+  , HeaderHash blk ~ HeaderHash l
+  , IsLedger l
+  , StandardHash l
+  , HasLedgerTables l
+  )
   => Point blk
-  -> LedgerDB l
-  -> Maybe l
-ledgerDbPast pt db
-    | pt == castPoint (getTip (ledgerDbAnchor db))
-    = Just $ ledgerDbAnchor db
-    | otherwise
-    = fmap unCheckpoint $
-        find ((== pt) . castPoint . getTip . unCheckpoint) $
-          AS.lookupByMeasure (pointSlot pt) (ledgerDbCheckpoints db)
+  -> LedgerTables l KeysMK
+  -> StrictTVar m (DbChangelog l)
+  -> LedgerBackingStore m l
+  -> m (Either
+        (PointNotFound blk)
+        (LedgerTables l ValuesMK))
+getLedgerTablesAtFor pt keys dbvar bstore = do
+  lgrDb <- anchorlessChangelog <$> readTVarIO dbvar
+  case rollback pt lgrDb of
+    Nothing -> pure $ Left $ PointNotFound pt
+    Just l  -> do
+      eValues <-
+        getLedgerTablesFor l keys (readKeySets bstore)
+      case eValues of
+        Right v -> pure $ Right v
+        Left _  -> getLedgerTablesAtFor pt keys dbvar bstore
+
+-- | Given a point (or Left () for the tip), acquire both a value handle and a
+-- db changelog at the requested point. Holds a read lock while doing so.
+acquireLDBReadView ::
+     forall a b m blk.
+     (IOLike m, LedgerSupportsProtocol blk, HasCallStack)
+  => StaticEither b () (Point blk)
+  -> StrictTVar m (DbChangelog' blk)
+  -> LedgerDBLock m
+  -> LedgerBackingStore' m blk
+  -> DiskPolicy
+  -> STM m a
+     -- ^ STM operation that we want to run in the same atomic block as the
+     -- acquisition of the LedgerDB
+  -> m ( a
+       , StaticEither b
+           (LedgerDBView' m blk)
+           (Either
+            (Point blk)
+            (LedgerDBView' m blk))
+       )
+acquireLDBReadView p dbvar lock bs policy stmAct =
+  withReadLock lock $ do
+    (a, ldb') <- atomically $ do
+      (,) <$> stmAct <*> (anchorlessChangelog <$> readTVar dbvar)
+    (a,) <$> case p of
+      StaticLeft () -> StaticLeft <$> acquire ldb'
+      StaticRight actualPoint -> StaticRight <$>
+        case rollback actualPoint ldb' of
+          Nothing    -> pure $ Left $ castPoint $ getTip $ anchor ldb'
+          Just ldb'' -> Right <$> acquire ldb''
+ where
+   acquire ::
+        AnchorlessDbChangelog' blk
+     -> m (LedgerDBView' m blk)
+   acquire l = do
+     vh <- bsValueHandle bs
+     if bsvhAtSlot vh == adcLastFlushedSlot l
+       then pure $ LedgerDBView vh l (onDiskQueryBatchSize policy)
+       else error ("Critical error: Value handles are created at "
+                   <> show (bsvhAtSlot vh)
+                   <> " while the db changelog is at "
+                   <> show (adcLastFlushedSlot l)
+                   <> ". There is either a race condition or a logic bug"
+                  )
+
+-- | Obtain statistics for a combination of backing store value handle and
+-- changelog.
+getStatistics ::
+     (Monad m, IsLedger l, HasLedgerTables l)
+  => LedgerDBView m l
+  -> m Statistics
+getStatistics (LedgerDBView lbsvh dblog _) = do
+    Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat lbsvh
+    if seqNo /= seqNo' then
+      error $ show (seqNo, seqNo')
+    else
+      pure $ Statistics {
+          sequenceNumber = getTipSlot $ K dblog
+        , numEntries     = n + nInserts - nDeletes
+        }
+  where
+    diffs = adcDiffs  dblog
+    seqNo = adcLastFlushedSlot dblog
+
+    nInserts = getSum
+            $ ltcollapse
+            $ ltmap (K2 . numInserts . getSeqDiffMK)
+              diffs
+    nDeletes = getSum
+            $ ltcollapse
+            $ ltmap (K2 . numDeletes . getSeqDiffMK)
+              diffs
