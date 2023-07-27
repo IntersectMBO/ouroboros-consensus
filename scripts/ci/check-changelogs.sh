@@ -87,4 +87,5 @@ function check {
 check ouroboros-consensus
 check ouroboros-consensus-protocol
 check ouroboros-consensus-cardano
+check ouroboros-consensus-cardano-legacy-block
 check ouroboros-consensus-diffusion
