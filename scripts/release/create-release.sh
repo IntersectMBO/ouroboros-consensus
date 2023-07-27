@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+echo "DEPRECATED!!! USE create-release.hs INSTEAD!!!"
+
 # Updates the version for ouroboros-consensus packages depending on the entries
 # in the changelog directory
 
