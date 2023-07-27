@@ -1,112 +1,83 @@
 module Ouroboros.Consensus.Storage.LedgerDB (
-    -- * LedgerDB
-    Checkpoint (..)
-  , LedgerDB (..)
-  , LedgerDB'
-  , LedgerDbCfg (..)
-  , configLedgerDb
-    -- * Initialization
-  , InitLog (..)
-  , ReplayStart (..)
-  , initLedgerDB
-    -- * Trace
-  , ReplayGoal (..)
-  , TraceReplayEvent (..)
-  , decorateReplayTracerWithGoal
-  , decorateReplayTracerWithStart
-    -- * Querying
-  , ledgerDbAnchor
-  , ledgerDbCurrent
-  , ledgerDbIsSaturated
-  , ledgerDbMaxRollback
-  , ledgerDbPast
-  , ledgerDbSnapshots
-  , ledgerDbTip
-    -- * Updates
-    -- ** Construct
-  , ledgerDbWithAnchor
-    -- ** Applying blocks
-  , AnnLedgerError (..)
-  , AnnLedgerError'
-  , Ap (..)
-  , ExceededRollback (..)
-  , ThrowsLedgerError (..)
-  , defaultThrowLedgerErrors
-    -- ** Block resolution
-  , ResolveBlock
-  , ResolvesBlocks (..)
-  , defaultResolveBlocks
-    -- ** Operations
-  , defaultResolveWithErrors
-  , ledgerDbBimap
-  , ledgerDbPrune
-  , ledgerDbPush
-  , ledgerDbSwitch
-    -- ** Pure API
-  , ledgerDbPush'
-  , ledgerDbPushMany'
-  , ledgerDbSwitch'
-    -- ** Trace
-  , PushGoal (..)
-  , PushStart (..)
-  , Pushing (..)
-  , UpdateLedgerDbTraceEvent (..)
-    -- * Streaming
-  , NextBlock (..)
-  , StreamAPI (..)
-  , streamAll
-    -- * Snapshots
+    BackingStore (..)
+  , BackingStorePath (..)
+  , BackingStoreTrace (..)
+  , BackingStoreValueHandle (..)
+  , DbChangelog (..)
+  , DbChangelog'
   , DiskSnapshot (..)
-    -- ** Read from disk
+  , InitFrom (..)
+  , KeySetsReader
+  , LedgerBackingStore
+  , LedgerBackingStore'
+  , LedgerBackingStoreValueHandle
+  , LedgerBackingStoreValueHandle'
+  , LedgerDB (..)
+  , LedgerDBHandle (..)
+  , LedgerDBState (..)
+  , LedgerDBStateEnv (..)
+  , LedgerDbSerialiseConstraints
+  , PointNotFound (..)
+  , RangeQuery (..)
+  , RewoundTableKeySets (..)
   , SnapshotFailure (..)
-  , diskSnapshotIsTemporary
-  , listSnapshots
-  , readSnapshot
-    -- ** Write to disk
-  , takeSnapshot
-  , trimSnapshots
-  , writeSnapshot
-    -- ** Low-level API (primarily exposed for testing)
+  , TraceBackingStoreInitEvent (..)
+  , TraceLedgerDBEvent (..)
+  , TraceSnapshotEvent (..)
+  , UnforwardedReadSets (..)
+  , bsRead
+  , castBackingStoreValueHandle
   , decodeSnapshotBackwardsCompatible
   , deleteSnapshot
+  , diskSnapshotIsTemporary
+  , empty
   , encodeSnapshot
-  , snapshotToFileName
-  , snapshotToPath
-    -- ** Trace
-  , TraceSnapshotEvent (..)
-    -- * Disk policy
-  , DiskPolicy (..)
-  , SnapshotInterval (..)
-  , TimeSinceLast (..)
-  , defaultDiskPolicy
+  , forwardTableKeySets
+  , forwardTableKeySets'
+  , getLedgerTablesFor
+  , getState
+  , getState1
+  , getState2
+  , getStateSTM
+  , getStateSTM1
+  , listSnapshots
+  , readKeySets
+  , readKeySetsWith
+  , readSnapshot
+  , rewindTableKeySets
+  , snapshotToStatePath
+  , snapshotToTablesPath
+  , trivialKeySetsReader
+  , withBsValueHandle
+  , withKeysReadSets
+  , writeSnapshot
   ) where
 
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (DiskPolicy (..), SnapshotInterval (..),
-                     TimeSinceLast (..), defaultDiskPolicy)
-import           Ouroboros.Consensus.Storage.LedgerDB.Init (InitLog (..),
-                     ReplayGoal (..), ReplayStart (..), TraceReplayEvent (..),
-                     decorateReplayTracerWithGoal,
-                     decorateReplayTracerWithStart, initLedgerDB)
-import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB (Checkpoint (..),
-                     LedgerDB (..), LedgerDB', LedgerDbCfg (..), configLedgerDb)
-import           Ouroboros.Consensus.Storage.LedgerDB.Query (ledgerDbAnchor,
-                     ledgerDbCurrent, ledgerDbIsSaturated, ledgerDbMaxRollback,
-                     ledgerDbPast, ledgerDbSnapshots, ledgerDbTip)
+import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDB (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+                     (BackingStore (..), BackingStorePath (..),
+                     BackingStoreValueHandle (..), InitFrom (..),
+                     LedgerBackingStore, LedgerBackingStore',
+                     LedgerBackingStoreValueHandle,
+                     LedgerBackingStoreValueHandle', RangeQuery (..), bsRead,
+                     castBackingStoreValueHandle, withBsValueHandle)
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+                     (DbChangelog (..), DbChangelog', empty)
+import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
+                     (KeySetsReader, PointNotFound (..),
+                     RewoundTableKeySets (..), UnforwardedReadSets (..),
+                     forwardTableKeySets, forwardTableKeySets',
+                     getLedgerTablesFor, readKeySets, readKeySetsWith,
+                     rewindTableKeySets, trivialKeySetsReader, withKeysReadSets)
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-                     (DiskSnapshot (..), SnapshotFailure (..),
-                     TraceSnapshotEvent (..), decodeSnapshotBackwardsCompatible,
-                     deleteSnapshot, diskSnapshotIsTemporary, encodeSnapshot,
-                     listSnapshots, readSnapshot, snapshotToFileName,
-                     snapshotToPath, takeSnapshot, trimSnapshots, writeSnapshot)
-import           Ouroboros.Consensus.Storage.LedgerDB.Stream (NextBlock (..),
-                     StreamAPI (..), streamAll)
-import           Ouroboros.Consensus.Storage.LedgerDB.Update
-                     (AnnLedgerError (..), AnnLedgerError', Ap (..),
-                     ExceededRollback (..), PushGoal (..), PushStart (..),
-                     Pushing (..), ResolveBlock, ResolvesBlocks (..),
-                     ThrowsLedgerError (..), UpdateLedgerDbTraceEvent (..),
-                     defaultResolveBlocks, defaultResolveWithErrors,
-                     defaultThrowLedgerErrors, ledgerDbBimap, ledgerDbPrune,
-                     ledgerDbPush, ledgerDbPush', ledgerDbPushMany',
-                     ledgerDbSwitch, ledgerDbSwitch', ledgerDbWithAnchor)
+                     (DiskSnapshot (..), LedgerDbSerialiseConstraints,
+                     SnapshotFailure (..), TraceSnapshotEvent (..),
+                     decodeSnapshotBackwardsCompatible, deleteSnapshot,
+                     diskSnapshotIsTemporary, encodeSnapshot, listSnapshots,
+                     readSnapshot, snapshotToStatePath, snapshotToTablesPath,
+                     writeSnapshot)
+import           Ouroboros.Consensus.Storage.LedgerDB.Types
+                     (BackingStoreTrace (..), LedgerDBHandle (..),
+                     LedgerDBState (..), LedgerDBStateEnv (..),
+                     TraceBackingStoreInitEvent (..), TraceLedgerDBEvent (..),
+                     getState, getState1, getState2, getStateSTM, getStateSTM1)
