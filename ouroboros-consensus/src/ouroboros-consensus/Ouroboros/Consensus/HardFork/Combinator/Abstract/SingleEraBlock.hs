@@ -29,7 +29,6 @@ import           Data.SOP.Match
 import           Data.SOP.Strict
 import qualified Data.Text as Text
 import           Data.Void
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.HardFork.Combinator.Info
@@ -65,6 +64,7 @@ class ( LedgerSupportsProtocol blk
       , ConfigSupportsNode blk
       , NodeInitStorage blk
       , BlockSupportsMetrics blk
+      , CanStowLedgerTables (LedgerState blk)
         -- Instances required to support testing
       , Eq   (GenTx blk)
       , Eq   (Validated (GenTx blk))
@@ -74,9 +74,6 @@ class ( LedgerSupportsProtocol blk
       , Show (CannotForge blk)
       , Show (ForgeStateInfo blk)
       , Show (ForgeStateUpdateError blk)
-      , Show (LedgerState blk)
-      , Eq (LedgerState blk)
-      , NoThunks (LedgerState blk)
       ) => SingleEraBlock blk where
 
   -- | Era transition
@@ -90,7 +87,7 @@ class ( LedgerSupportsProtocol blk
   singleEraTransition :: PartialLedgerConfig blk
                       -> EraParams -- ^ Current era parameters
                       -> Bound     -- ^ Start of this era
-                      -> LedgerState blk
+                      -> LedgerState blk mk
                       -> Maybe EpochNo
 
   -- | Era information (for use in error messages)
@@ -103,7 +100,7 @@ singleEraTransition' :: SingleEraBlock blk
                      => WrapPartialLedgerConfig blk
                      -> EraParams
                      -> Bound
-                     -> LedgerState blk -> Maybe EpochNo
+                     -> LedgerState blk mk -> Maybe EpochNo
 singleEraTransition' = singleEraTransition . unwrapPartialLedgerConfig
 
 {-------------------------------------------------------------------------------
