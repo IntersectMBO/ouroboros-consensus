@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RecordWildCards       #-}
@@ -60,7 +61,6 @@ import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Serialised, decodePoint, decodeTip,
                      encodePoint, encodeTip)
 import           Ouroboros.Network.BlockFetch
@@ -98,7 +98,7 @@ data Handlers m peer blk = Handlers {
         :: LocalTxSubmissionServer (GenTx blk) (ApplyTxErr blk) m ()
 
     , hStateQueryServer
-        :: LocalStateQueryServer blk (Point blk) (Query blk) m ()
+       :: LocalStateQueryServer blk (Point blk) (Query blk) m ()
 
     , hTxMonitorServer
         :: LocalTxMonitorServer (GenTxId blk) (GenTx blk) SlotNo m ()
@@ -128,9 +128,9 @@ mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
       , hStateQueryServer =
           localStateQueryServer
             (ExtLedgerCfg cfg)
-            (ChainDB.getTipPoint getChainDB)
-            (ChainDB.getPastLedger getChainDB)
-            (castPoint . AF.anchorPoint <$> ChainDB.getCurrentChain getChainDB)
+            (  fmap (fmap mkDiskLedgerView)
+             . ChainDB.getLedgerDBViewAtPoint getChainDB
+            )
 
       , hTxMonitorServer =
           localTxMonitorServer
