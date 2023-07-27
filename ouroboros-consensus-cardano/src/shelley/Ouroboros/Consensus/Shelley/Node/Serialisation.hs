@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
@@ -19,6 +20,7 @@ import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
+import           Ouroboros.Consensus.Ledger.Tables (EmptyMK)
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Praos (PraosState)
@@ -52,9 +54,9 @@ instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (Hea
 instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (Lazy.ByteString -> Header (ShelleyBlock proto era)) where
   decodeDisk _ = decodeShelleyHeader
 
-instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era)) where
+instance ShelleyCompatible proto era => EncodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK) where
   encodeDisk _ = encodeShelleyLedgerState
-instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era)) where
+instance ShelleyCompatible proto era => DecodeDisk (ShelleyBlock proto era) (LedgerState (ShelleyBlock proto era) EmptyMK) where
   decodeDisk _ = decodeShelleyLedgerState
 
 -- | @'ChainDepState' ('BlockProtocol' ('ShelleyBlock' era))@
