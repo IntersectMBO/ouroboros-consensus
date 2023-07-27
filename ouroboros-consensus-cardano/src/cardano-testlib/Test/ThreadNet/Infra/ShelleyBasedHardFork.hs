@@ -2,9 +2,11 @@
 {-# LANGUAGE DataKinds            #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE NamedFieldPuns       #-}
 {-# LANGUAGE PatternSynonyms      #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -23,14 +25,23 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
     -- * Node
   , ShelleyBasedHardForkConstraints
   , protocolInfoShelleyBasedHardFork
+    -- * Data families
+  , LedgerTables (..)
   ) where
 
+import           Cardano.Binary (fromCBOR, toCBOR)
+import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
+import           Data.SOP.Functors (Flip (..))
+import           Data.SOP.Index
+import qualified Data.SOP.Index as SOP
 import qualified Data.SOP.InPairs as InPairs
-import           Data.SOP.Strict
+import           Data.SOP.Strict (NP (..), NS (..), type (-.->), unComp,
+                     (:.:) (..))
+import qualified Data.SOP.Strict as SOP
 import qualified Data.SOP.Tails as Tails
 import           Data.Void (Void)
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
@@ -43,11 +54,12 @@ import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
-import qualified Ouroboros.Consensus.HardFork.Combinator.State.Types as HFC
+import           Ouroboros.Consensus.HardFork.Combinator.State.Types as HFC
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
+import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool (TxLimits)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node
@@ -56,6 +68,8 @@ import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node
+import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
+import           Ouroboros.Consensus.Shelley.ShelleyHFC (ShelleyTxOut (..))
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -127,8 +141,10 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
 
   , SL.TranslateEra       era2 SL.NewEpochState
   , SL.TranslateEra       era2 WrapTx
+  , SL.TranslateEra       era2 TxOutWrapper
 
   , SL.TranslationError   era2 SL.NewEpochState ~ Void
+  , SL.TranslationError   era2 TxOutWrapper     ~ Void
 
   , SL.AdditionalGenesisConfig era1 ~ ()
   , SL.AdditionalGenesisConfig era2 ~ SL.TranslationContext era2
@@ -154,17 +170,30 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       translateLedgerState ::
            InPairs.RequiringBoth
              WrapLedgerConfig
-             (HFC.Translate LedgerState)
+             TranslateLedgerState
              (ShelleyBlock proto1 era1)
              (ShelleyBlock proto2 era2)
       translateLedgerState =
           InPairs.RequireBoth
-        $ \_cfg1 cfg2 -> HFC.Translate
-        $ \_epochNo ->
-              unComp
-            . SL.translateEra'
-                (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
-            . Comp
+        $ \_cfg1 cfg2 ->
+          HFC.TranslateLedgerState {
+            translateLedgerStateWith =  \_epochNo ->
+                noNewTickingDiffs
+              . unFlip
+              . unComp
+              . SL.translateEra'
+                  (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
+              . Comp
+              . Flip
+          , translateLedgerTablesWith =
+                LedgerTables
+              . fmap
+                ( unTxOutWrapper
+                . SL.translateEra' (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
+                . TxOutWrapper
+                )
+              . getLedgerTables
+        }
 
       forecastAcrossShelleyWrapper ::
            InPairs.RequiringBoth
@@ -216,6 +245,74 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
+
+{-------------------------------------------------------------------------------
+  Ledger tables
+-------------------------------------------------------------------------------}
+
+type LedgerStateShelley proto1 era1 proto2 era2 =
+     LedgerState (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
+
+
+type instance Key   (LedgerStateShelley proto1 era1 proto2 era2) = SL.TxIn (EraCrypto era1)
+type instance Value (LedgerStateShelley proto1 era1 proto2 era2) = ShelleyTxOut '[era1, era2]
+
+instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+      => CanSerializeLedgerTables (LedgerStateShelley proto1 era1 proto2 era2) where
+    codecLedgerTables =
+      LedgerTables (CodecMK
+                     (Core.toEraCBOR @era1)
+                     toCBOR
+                     (Core.fromEraCBOR @era2)
+                     fromCBOR)
+
+instance
+     ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+  => LedgerTablesCanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
+  hardForkInjectLedgerTables =
+         shelley SOP.IZ
+      :* shelley (SOP.IS SOP.IZ)
+      :* Nil
+    where
+      shelley ::
+           forall era proto. ( EraCrypto era ~ ProtoCrypto proto2
+                             , Eq (Core.TxOut era)
+                             )
+        => SOP.Index '[ era1, era2 ] era
+        -> InjectLedgerTables
+             (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
+             (ShelleyBlock proto era)
+      shelley idx =
+          InjectLedgerTables
+          { applyInjectLedgerTables =
+                LedgerTables
+              . mapMK (ShelleyTxOut . SOP.injectNS idx . TxOutWrapper)
+              . getLedgerTables
+          , applyDistribLedgerTables =
+                LedgerTables
+              . mapMK ( unTxOutWrapper
+                      . SOP.apFn (projectNP idx translations)
+                      . SOP.K
+                      . unShelleyTxOut
+                      )
+              . getLedgerTables
+          }
+
+translations ::
+      NP
+        (SOP.K (NS TxOutWrapper '[era1, era2]) -.-> TxOutWrapper )
+        '[ era1, era2 ]
+translations =
+         SOP.fn (\case
+             SOP.K (Z txo) -> txo
+             _             -> e
+         )
+      :* SOP.fn (\case
+             SOP.K (Z _)     -> e
+             SOP.K (S (Z txo)) -> txo
+         )
+      :* Nil
+  where e = error "bad ShelleyBasedHardForkBlock txout translation"
 
 {-------------------------------------------------------------------------------
   Protocol info
