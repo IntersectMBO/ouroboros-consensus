@@ -239,7 +239,13 @@ the shell. From time to time, this `index-state` should be updated manually.
 
 ## Updating the dependencies bounds
 
-Sometimes, when creating pull requests to [CHaP][chap], it is desirable to loose/tighten certain dependencies bounds via a revision. If you do so for a Consensus package, please first open a PR to Consensus mirroring the change in CHaP; but do not increment the version number of the Consensus package.
+Sometimes, when creating pull requests to [CHaP][chap], it is desirable to loose/tighten certain dependencies bounds via a revision.
+
+ - If you do so for a Consensus package, please first open a PR to Consensus mirroring the change in CHaP; but do not increment the version number of the Consensus package.
+
+ - If your revision is about allowing a new version of package, please update the version bound in a way that keeps the previously allowed versions, unless this is undesirable due to eg a bug in an earlier version.
+
+   For example, if we have `cardano-ledger-core ^>= 1.1` and you want to also allow `1.2`, use `^>= 1.1 || ^>= 1.2`.
 
 ### Use of `source-repository-package`s
 
