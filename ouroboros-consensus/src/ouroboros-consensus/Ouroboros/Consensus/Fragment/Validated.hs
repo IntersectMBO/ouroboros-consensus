@@ -1,9 +1,6 @@
-{-# LANGUAGE DeriveFunctor       #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE PatternSynonyms     #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
@@ -21,9 +18,12 @@ module Ouroboros.Consensus.Fragment.Validated (
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+                     (AnchorlessDbChangelog, adcStates)
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import qualified Ouroboros.Network.AnchoredSeq as AS
 
 -- | Validated chain fragment along with the ledger state after validation
 --
@@ -34,16 +34,15 @@ data ValidatedFragment b l = UnsafeValidatedFragment {
       -- | Chain fragment
       validatedFragment :: !(AnchoredFragment b)
 
-      -- | Ledger after after validation
-    , validatedLedger   :: !l
+      -- | Ledger db after validation
+    , validatedLedger   :: !(AnchorlessDbChangelog l)
     }
-  deriving (Functor)
 
 {-# COMPLETE ValidatedFragment #-}
 
 pattern ValidatedFragment ::
      (GetTip l, HasHeader b, HeaderHash b ~ HeaderHash l, HasCallStack)
-  => AnchoredFragment b -> l -> ValidatedFragment b l
+  => AnchoredFragment b -> AnchorlessDbChangelog l -> ValidatedFragment b l
 pattern ValidatedFragment f l <- UnsafeValidatedFragment f l
   where
     ValidatedFragment f l = new f l
@@ -68,7 +67,7 @@ invariant (ValidatedFragment fragment ledger)
     = Right ()
   where
    ledgerTip, headPoint :: Point b
-   ledgerTip = castPoint $ getTip ledger
+   ledgerTip = castPoint $ getTip $ AS.headAnchor $ adcStates ledger
    headPoint = castPoint $ AF.headPoint fragment
 
 -- | Constructor for 'ValidatedFragment' that checks the invariant
@@ -76,11 +75,10 @@ new ::
      forall l b.
      (GetTip l, HasHeader b, HeaderHash b ~ HeaderHash l, HasCallStack)
   => AnchoredFragment b
-  -> l
+  -> AnchorlessDbChangelog l
   -> ValidatedFragment b l
 new fragment ledger =
-    assertWithMsg (invariant validated) $
-      validated
+    assertWithMsg (invariant validated) validated
   where
     validated :: ValidatedFragment b l
     validated = UnsafeValidatedFragment {
