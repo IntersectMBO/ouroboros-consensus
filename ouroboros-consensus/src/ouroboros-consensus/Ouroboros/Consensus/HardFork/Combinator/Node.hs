@@ -16,6 +16,8 @@ import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Forging ()
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger
+                     (HardForkHasLedgerTables)
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams ()
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection ()
 import           Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
@@ -56,6 +58,8 @@ getSameConfigValue getValue blockConfig = getSameValue values
 
 instance ( CanHardFork xs
            -- Instances that must be defined for specific values of @b@:
+         , LedgerTablesCanHardFork xs
+         , HardForkHasLedgerTables xs
          , SupportedNetworkProtocolVersion (HardForkBlock xs)
          , SerialiseHFC xs
          ) => RunNode (HardForkBlock xs)

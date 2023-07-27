@@ -32,13 +32,12 @@ import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.InjectTxs
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger (Ticked (..))
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger
 import           Ouroboros.Consensus.HardFork.Combinator.Mempool
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.TypeFamilyWrappers
-import           Ouroboros.Consensus.Util ((.:))
 
 -- | If we cannot forge, it's because the current era could not forge
 type HardForkCannotForge xs = OneEraCannotForge xs
@@ -282,12 +281,12 @@ hardForkCheckCanForge blockForging
 -- This follows from the postcondition of 'check' and the fact that the ticked
 -- 'ChainDepState' and ticked 'LedgerState' are from the same era.
 hardForkForgeBlock ::
-     forall m xs empty. (CanHardFork xs, Monad m)
+     forall m xs mk empty. (CanHardFork xs, Monad m)
   => OptNP empty (BlockForging m) xs
   -> TopLevelConfig (HardForkBlock xs)
   -> BlockNo
   -> SlotNo
-  -> TickedLedgerState (HardForkBlock xs)
+  -> TickedLedgerState (HardForkBlock xs) mk
   -> [Validated (GenTx (HardForkBlock xs))]
   -> HardForkIsLeader xs
   -> m (HardForkBlock xs)
@@ -354,7 +353,7 @@ hardForkForgeBlock blockForging
       -> Product
            (Product
               WrapIsLeader
-              (Ticked :.: LedgerState))
+              (FlipTickedLedgerState mk))
            ([] :.: WrapValidatedGenTx)
            blk
       -> m blk
@@ -362,7 +361,7 @@ hardForkForgeBlock blockForging
                   cfg'
                   (Comp mBlockForging')
                   (Pair
-                    (Pair (WrapIsLeader isLeader') (Comp ledgerState'))
+                    (Pair (WrapIsLeader isLeader') (FlipTickedLedgerState ledgerState'))
                     (Comp txs')) =
         forgeBlock
           (fromMaybe

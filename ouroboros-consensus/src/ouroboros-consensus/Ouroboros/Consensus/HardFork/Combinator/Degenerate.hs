@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
 {-# LANGUAGE PatternSynonyms      #-}
+{-# LANGUAGE PolyKinds            #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeOperators        #-}
@@ -31,6 +32,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Degenerate (
   , TxId (DegenGenTxId)
   ) where
 
+import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
@@ -168,11 +170,11 @@ pattern DegenBlockConfig x <- (project -> x)
 
 pattern DegenLedgerState ::
      NoHardForks b
-  => LedgerState b
-  -> LedgerState (HardForkBlock '[b])
-pattern DegenLedgerState x <- (project -> x)
+  => LedgerState b mk
+  -> LedgerState (HardForkBlock '[b]) mk
+pattern DegenLedgerState x <- (unFlip . project . Flip -> x)
   where
-    DegenLedgerState x = inject x
+    DegenLedgerState x = unFlip $ inject $ Flip x
 
 {-------------------------------------------------------------------------------
   Dealing with the config
