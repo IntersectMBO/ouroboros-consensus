@@ -45,6 +45,21 @@ common common-test
   import:      common-lib
   ghc-options: -threaded -rtsopts
 
+common common-bench
+  default-language: Haskell2010
+  ghc-options:
+    -Wall -Wcompat -Wincomplete-uni-patterns
+    -Wincomplete-record-updates -Wpartial-fields -Widentities
+    -Wredundant-constraints -Wmissing-export-lists -Wunused-packages
+    -Wno-unticked-promoted-constructors -rtsopts -with-rtsopts=-A32m
+    -threaded
+
+  -- We use this option to avoid skewed results due to changes in cache-line
+  -- alignment. See
+  -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline
+  if impl(ghc >=8.6)
+    ghc-options: -fproc-alignment=64
+
 library
   import:           common-lib
   hs-source-dirs:   src/ouroboros-consensus
@@ -146,6 +161,11 @@ library
     Ouroboros.Consensus.Ledger.SupportsMempool
     Ouroboros.Consensus.Ledger.SupportsPeerSelection
     Ouroboros.Consensus.Ledger.SupportsProtocol
+    Ouroboros.Consensus.Ledger.Tables
+    Ouroboros.Consensus.Ledger.Tables.Combinators
+    Ouroboros.Consensus.Ledger.Tables.Common
+    Ouroboros.Consensus.Ledger.Tables.DiffSeq
+    Ouroboros.Consensus.Ledger.Tables.Utils
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API
     Ouroboros.Consensus.Mempool.Capacity
@@ -186,7 +206,6 @@ library
     Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
     Ouroboros.Consensus.Storage.ChainDB.Impl.Follower
     Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator
-    Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
     Ouroboros.Consensus.Storage.ChainDB.Impl.Paths
     Ouroboros.Consensus.Storage.ChainDB.Impl.Query
     Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -205,16 +224,30 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Parser
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.State
+    Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
     Ouroboros.Consensus.Storage.LedgerDB
-    Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-    Ouroboros.Consensus.Storage.LedgerDB.Init
-    Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
+    Ouroboros.Consensus.Storage.LedgerDB.API
+    Ouroboros.Consensus.Storage.LedgerDB.Args
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Bridge
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Status
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Trivial
+    Ouroboros.Consensus.Storage.LedgerDB.Config
+    Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+    Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
+    Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
+    Ouroboros.Consensus.Storage.LedgerDB.Impl
+    Ouroboros.Consensus.Storage.LedgerDB.Lock
     Ouroboros.Consensus.Storage.LedgerDB.Query
+    Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
     Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-    Ouroboros.Consensus.Storage.LedgerDB.Stream
+    Ouroboros.Consensus.Storage.LedgerDB.Types
     Ouroboros.Consensus.Storage.LedgerDB.Update
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
@@ -251,7 +284,6 @@ library
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.TentativeState
     Ouroboros.Consensus.Util.Time
-    Ouroboros.Consensus.Util.TraceSize
     Ouroboros.Consensus.Util.Versioned
 
   other-extensions:
@@ -297,6 +329,8 @@ library
     , bytestring                   >=0.10     && <0.12
     , cardano-binary
     , cardano-crypto-class
+    , cardano-lmdb                 >=0.3.0.0
+    , cardano-lmdb-simple          >=0.6.1.0
     , cardano-prelude
     , cardano-slotting
     , cardano-strict-containers
@@ -304,11 +338,14 @@ library
     , containers                   >=0.5      && <0.7
     , contra-tracer
     , deepseq
+    , diff-containers              >=1.1
     , filelock
+    , fingertree-rm                >=1.0
     , fs-api
     , hashable
     , io-classes                   ^>=1.1
     , measures
+    , monoid-subclasses
     , mtl
     , nothunks                     >=0.1.2    && <0.2
     , ouroboros-network-api        ^>=0.5
@@ -334,6 +371,7 @@ library consensus-testlib
   hs-source-dirs:  src/consensus-testlib
   visibility:      public
   exposed-modules:
+    Test.LedgerTables
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
@@ -343,6 +381,7 @@ library consensus-testlib
     Test.Util.HardFork.Future
     Test.Util.HardFork.OracularClock
     Test.Util.InvertedMap
+    Test.Util.LedgerStateOnlyTables
     Test.Util.LogicalClock
     Test.Util.MockChain
     Test.Util.Orphans.Arbitrary
@@ -374,6 +413,7 @@ library consensus-testlib
     , base16-bytestring
     , binary
     , bytestring
+    , cardano-binary
     , cardano-crypto-class
     , cardano-ledger-binary:{cardano-ledger-binary, testlib}
     , cardano-prelude
@@ -452,6 +492,7 @@ library mock-block
     , ouroboros-network-api
     , ouroboros-network-mock
     , serialise
+    , text
     , time
 
 library tutorials
@@ -489,9 +530,12 @@ test-suite consensus-test
     Test.Consensus.HardFork.History
     Test.Consensus.HardFork.Infra
     Test.Consensus.HardFork.Summary
+    Test.Consensus.Ledger.Tables.DiffSeq
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock
+    Test.Consensus.Mempool.StateMachine
+    Test.Consensus.Mempool.Util
     Test.Consensus.MiniProtocol.BlockFetch.Client
     Test.Consensus.MiniProtocol.ChainSync.Client
     Test.Consensus.MiniProtocol.LocalStateQuery.Server
@@ -505,19 +549,25 @@ test-suite consensus-test
     , base
     , cardano-binary
     , cardano-crypto-class
+    , cardano-ledger-binary
     , cardano-slotting
+    , cardano-strict-containers
     , cborg
     , consensus-testlib
     , containers
     , contra-tracer
     , deepseq
+    , diff-containers                                                     >=1.1
+    , fingertree-rm                                                       >=1.0
     , fs-api
+    , fs-sim
     , generics-sop
     , hashable
     , io-classes
     , io-sim
     , mock-block
     , mtl
+    , nonempty-containers
     , nothunks
     , ouroboros-consensus
     , ouroboros-network
@@ -525,14 +575,18 @@ test-suite consensus-test
     , ouroboros-network-mock
     , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
     , QuickCheck
+    , quickcheck-classes
+    , quickcheck-monoid-subclasses
     , quickcheck-state-machine
     , random
     , serialise
     , si-timers
+    , strict-stm
     , tasty
     , tasty-hunit
     , tasty-quickcheck
     , time
+    , transformers
     , tree-diff
     , typed-protocols
     , typed-protocols-examples
@@ -578,6 +632,11 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.Primary
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB
+    Test.Ouroboros.Storage.LedgerDB.BackingStore
+    Test.Ouroboros.Storage.LedgerDB.BackingStore.Lockstep
+    Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock
+    Test.Ouroboros.Storage.LedgerDB.BackingStore.Registry
+    Test.Ouroboros.Storage.LedgerDB.DbChangelog
     Test.Ouroboros.Storage.LedgerDB.DiskPolicy
     Test.Ouroboros.Storage.LedgerDB.InMemory
     Test.Ouroboros.Storage.LedgerDB.OnDisk
@@ -590,16 +649,21 @@ test-suite storage-test
     Test.Ouroboros.Storage.VolatileDB.StateMachine
 
   build-depends:
+    , async
     , base
     , bifunctors
     , binary
     , bytestring
+    , cardano-binary
     , cardano-crypto-class
     , cardano-slotting
     , cborg
     , consensus-testlib
+    , constraints
     , containers
     , contra-tracer
+    , diff-containers           >=1.1
+    , directory
     , fs-api
     , fs-sim                    >=0.2
     , generics-sop
@@ -607,18 +671,23 @@ test-suite storage-test
     , io-classes
     , io-sim
     , mtl
+    , nonempty-containers
     , nothunks
     , ouroboros-consensus
     , ouroboros-network-api
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-state-machine  ^>=0.7
+    , quickcheck-dynamic
+    , quickcheck-lockstep
+    , quickcheck-state-machine  >=0.7.2
     , random
     , serialise
+    , strict-mvar
     , tasty
     , tasty-hunit
     , tasty-quickcheck
+    , temporary
     , text
     , time
     , transformers
@@ -626,11 +695,14 @@ test-suite storage-test
     , vector
 
 benchmark mempool-bench
-  type:             exitcode-stdio-1.0
-  hs-source-dirs:   bench/mempool-bench
-  main-is:          Main.hs
+  import:         common-bench
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/mempool-bench
+  main-is:        Main.hs
   other-modules:
     Bench.Consensus.Mempool
+    Bench.Consensus.Mempool.Params
+    Bench.Consensus.Mempool.Scenario
     Bench.Consensus.Mempool.TestBlock
     Bench.Consensus.MempoolWithMockedLedgerItf
 
@@ -638,12 +710,17 @@ benchmark mempool-bench
     , aeson
     , base
     , bytestring
+    , cardano-binary
     , cardano-slotting
     , cassava
     , consensus-testlib
     , containers
     , contra-tracer
     , deepseq
+    , diff-containers      >=1.1
+    , directory
+    , fs-api
+    , mtl
     , nothunks
     , ouroboros-consensus
     , serialise
@@ -651,19 +728,31 @@ benchmark mempool-bench
     , tasty
     , tasty-bench
     , tasty-hunit
+    , temporary
     , text
     , transformers
     , tree-diff
 
-  default-language: Haskell2010
-  ghc-options:
-    -Wall -Wcompat -Wincomplete-uni-patterns
-    -Wincomplete-record-updates -Wpartial-fields -Widentities
-    -Wredundant-constraints -Wmissing-export-lists -Wunused-packages
-    -Wno-unticked-promoted-constructors -rtsopts -with-rtsopts=-A32m
-
-  -- We use this option to avoid skewed results due to changes in cache-line
-  -- alignment. See
-  -- https://github.com/Bodigrim/tasty-bench#comparison-against-baseline
-  if impl(ghc >=8.6)
-    ghc-options: -fproc-alignment=64
+benchmark backingstore-bench
+  import:         common-bench
+  type:           exitcode-stdio-1.0
+  hs-source-dirs: bench/backingstore-bench
+  main-is:        Main.hs
+  other-modules:  Bench.Commands
+  build-depends:
+    , base
+    , cardano-slotting
+    , consensus-testlib
+    , containers
+    , deepseq
+    , diff-containers      >=1.1
+    , directory
+    , fs-api
+    , io-classes
+    , mtl
+    , ouroboros-consensus
+    , QuickCheck
+    , tasty
+    , tasty-bench
+    , tasty-quickcheck
+    , temporary
