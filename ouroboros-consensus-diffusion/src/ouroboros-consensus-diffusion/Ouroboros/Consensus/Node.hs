@@ -2,8 +2,6 @@
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE KindSignatures      #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE MonadComprehensions #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE Rank2Types          #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -66,6 +64,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isNothing)
 import           Data.Typeable (Typeable)
+import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
 import           Ouroboros.Consensus.Config
@@ -73,6 +72,7 @@ import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
+import           Ouroboros.Consensus.Ledger.Basics (ValuesMK)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -92,8 +92,8 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo,
                      ValidationPolicy (..))
-import           Ouroboros.Consensus.Storage.LedgerDB (SnapshotInterval (..),
-                     defaultDiskPolicy)
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
 import           Ouroboros.Consensus.Storage.VolatileDB
                      (BlockValidationPolicy (..))
 import           Ouroboros.Consensus.Util.Args
@@ -182,6 +182,9 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
 
       -- | Network PeerSharing miniprotocol willingness flag
     , rnPeerSharing :: PeerSharing
+
+      -- | Whether to use the LMDB or the in-memory backend for UTxO-HD.
+    , rnBackingStoreSelector :: !(BackingStoreSelector m)
     }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -234,8 +237,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       --
       -- 'run' will not return before this does.
     , llrnRunDataDiffusion ::
-           ResourceRegistry m
-        -> Diffusion.Applications
+           Diffusion.Applications
              addrNTN NodeToNodeVersion   versionDataNTN
              addrNTC NodeToClientVersion versionDataNTC
              m NodeToNodeInitiatorResult
@@ -307,6 +309,7 @@ runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      , Hashable addrNTN -- the constraint comes from `initNodeKernel`
      , NetworkIO m
      , NetworkAddr addrNTN
+     , HasCallStack
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (addrNTN -> CBOR.Encoding)
@@ -406,7 +409,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                         nodeKernel
                                         peerMetrics
 
-          llrnRunDataDiffusion registry apps appsExtra
+          llrnRunDataDiffusion apps appsExtra
   where
     ProtocolInfo
       { pInfoConfig       = cfg
@@ -588,7 +591,7 @@ openChainDB
   => ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk
-  -> ExtLedgerState blk
+  -> ExtLedgerState blk ValuesMK
      -- ^ Initial ledger
   -> ChainDbArgs Defaults m blk
   -> (ChainDbArgs Identity m blk -> ChainDbArgs Identity m blk)
@@ -608,7 +611,7 @@ mkChainDbArgs
   => ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk
-  -> ExtLedgerState blk
+  -> ExtLedgerState blk ValuesMK
      -- ^ Initial ledger
   -> ChunkInfo
   -> ChainDbArgs Defaults m blk
@@ -785,7 +788,6 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
   , srnBfcMaxConcurrencyDeadline    :: Maybe Word
   , srnChainDbValidateOverride      :: Bool
     -- ^ If @True@, validate the ChainDB on init no matter what
-  , srnSnapshotInterval             :: SnapshotInterval
   , srnDatabasePath                 :: FilePath
     -- ^ Location of the DBs
   , srnDiffusionArguments           :: Diffusion.Arguments
@@ -805,6 +807,11 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
   , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
     -- ^ Determine whether to use the system default mempool capacity or explicitly set
     -- capacity of the mempool.
+
+    -- LedgerDB
+  , srnSnapshotInterval :: SnapshotInterval
+  , srnFlushFrequency   :: FlushFrequency
+  , srnQueryBatchSize   :: QueryBatchSize
   }
 
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
@@ -824,6 +831,7 @@ stdLowLevelRunNodeArgsIO ::
 stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
                                     , rnEnableP2P
                                     , rnPeerSharing
+                                    , rnBackingStoreSelector
                                     }
                          StdRunNodeArgs{..} = do
     llrnBfcSalt      <- stdBfcSaltIO
@@ -834,11 +842,11 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnCustomiseHardForkBlockchainTimeArgs = id
       , llrnKeepAliveRng
       , llrnChainDbArgsDefaults =
-          updateChainDbDefaults $ ChainDB.defaultArgs mkHasFS diskPolicy
+          updateChainDbDefaults $ ChainDB.defaultArgs mkHasFS diskPolicy rnBackingStoreSelector
       , llrnCustomiseChainDbArgs = id
       , llrnCustomiseNodeKernelArgs
       , llrnRunDataDiffusion =
-          \_reg apps extraApps ->
+          \apps extraApps ->
             stdRunDataDiffusion srnDiffusionTracers
                                 srnDiffusionTracersExtra
                                 srnDiffusionArguments
@@ -876,7 +884,10 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       let
         cfg = pInfoConfig rnProtocolInfo
         k   = configSecurityParam cfg
-      in defaultDiskPolicy k srnSnapshotInterval
+      in defaultDiskPolicy k
+           srnSnapshotInterval
+           srnFlushFrequency
+           srnQueryBatchSize
 
     mkHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS IO
     mkHasFS = stdMkChainDbHasFS srnDatabasePath
