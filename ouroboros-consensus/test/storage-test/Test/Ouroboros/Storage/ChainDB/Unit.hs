@@ -28,6 +28,7 @@ import           Ouroboros.Consensus.Block.RealPoint
                      (pointToWithOriginRealPoint)
 import           Ouroboros.Consensus.Config (TopLevelConfig,
                      configSecurityParam)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -38,6 +39,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import           Ouroboros.Consensus.Storage.Common (StreamFrom (..),
                      StreamTo (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init as LedgerDB
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (closeRegistry,
                      unsafeNewRegistry)
@@ -232,7 +234,7 @@ runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
   where
     chunkInfo      = ImmutableDB.simpleChunkInfo 100
     topLevelConfig = mkTestCfg chunkInfo
-    withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo testInitExtLedger
+    withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
 
 
 newtype TestFailure = TestFailure String deriving (Show)
@@ -329,8 +331,10 @@ withModelContext f = do
   pure a
 
 
-instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk)
-      => SupportsUnitTest (ModelM blk) where
+instance (Model.ModelSupportsBlock blk
+         , LedgerSupportsProtocol blk
+         , LedgerTablesAreTrivial (LedgerState blk)
+         ) => SupportsUnitTest (ModelM blk) where
 
   type FollowerId (ModelM blk) = Model.FollowerId
   type IteratorId (ModelM blk) = Model.IteratorId
@@ -396,7 +400,7 @@ withTestChainDbEnv
   :: (IOLike m, TestConstraints blk)
   => TopLevelConfig blk
   -> ImmutableDB.ChunkInfo
-  -> ExtLedgerState blk
+  -> ExtLedgerState blk ValuesMK
   -> (ChainDBEnv m blk -> m [TraceEvent blk] -> m a)
   -> m a
 withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
@@ -433,9 +437,9 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
             , mcdbInitLedger = extLedgerState
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDbs
+            , mcdbBackingStoreSelector = LedgerDB.InMemoryBackingStore
             }
       in args { cdbTracer = tracer }
-
 
 instance IOLike m => SupportsUnitTest (SystemM blk m) where
 
