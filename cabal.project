@@ -14,15 +14,16 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2023-07-05T16:19:35Z
+  , hackage.haskell.org 2023-07-26T23:47:54Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2023-07-05T12:27:25Z
+  , cardano-haskell-packages 2023-07-27T09:34:22Z
 
 packages:
-  ./ouroboros-consensus
-  ./ouroboros-consensus-cardano
-  ./ouroboros-consensus-protocol
-  ./ouroboros-consensus-diffusion
+  ouroboros-consensus
+  ouroboros-consensus-cardano
+  ouroboros-consensus-cardano-legacy-block
+  ouroboros-consensus-protocol
+  ouroboros-consensus-diffusion
 
 tests: True
 benchmarks: True
@@ -49,6 +50,9 @@ package ouroboros-consensus
   flags: +asserts
 
 package ouroboros-consensus-cardano
+  flags: +asserts
+
+package ouroboros-consensus-cardano-legacy-block
   flags: +asserts
 
 package ouroboros-consensus-diffusion
@@ -85,3 +89,21 @@ if impl(ghc >= 9.6)
   allow-newer:
     , *:base
     , *:ghc-prim
+
+-- TODO: remove when a new version of strict-mvar is released
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/io-sim
+  tag: ec202298c420378ef90b3fc0126c39e0f52290a3
+  --sha256: 1p6pn83kwp66x2m0cw9a27blfcpmw0lrra72qd0pi5bj3v1bcrl9
+  subdir:
+    strict-mvar
+
+-- ouroboros-network-protocols 0.5.2.0 with -fno-full-laziness
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/ouroboros-network
+  tag: 430354c350c3a804f000f6c76b59b3fb3c303ba7
+  --sha256: 0yz853ga95sl5bg67r4y4g17m94vbaam4qvzg8d6l54jyfhc0w6p
+  subdir:
+    ouroboros-network-protocols

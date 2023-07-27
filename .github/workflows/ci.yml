@@ -34,7 +34,7 @@ jobs:
     strategy:
        fail-fast: false
        matrix:
-         ghc: ["8.10.7", "9.2.7", "9.6.1"]
+         ghc: ["8.10.7", "9.2.8", "9.6.1"]
          cabal: ["3.10.1.0"]
          os: [ubuntu-latest]
     env:
@@ -60,7 +60,7 @@ jobs:
     - name: Install build environment
       run: |
         sudo apt-get update
-        sudo apt-get -y install libsodium-dev
+        sudo apt-get -y install libsodium-dev liblmdb-dev
 
     - name: Configure Cabal to use libsodium
       run: |
@@ -279,7 +279,7 @@ jobs:
       - name: Build website
         run: yarn build
 
-      - uses: actions/upload-pages-artifact@v1
+      - uses: actions/upload-pages-artifact@v2
         with:
           path: ./docs/website/build
 
