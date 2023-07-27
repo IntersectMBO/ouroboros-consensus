@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE QuantifiedConstraints      #-}
@@ -15,6 +16,7 @@
 
 module Ouroboros.Consensus.Util.EarlyExit (
     exitEarly
+  , exitEarlyWith
   , withEarlyExit
   , withEarlyExit_
     -- * Re-exports
@@ -44,7 +46,7 @@ import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.IOLike (IOLike (..), StrictSVar,
-                     StrictTVar)
+                     StrictTVar, castStrictSVar, castStrictTVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions
@@ -61,6 +63,18 @@ newtype WithEarlyExit m a = WithEarlyExit {
            , MonadPlus
            )
 
+instance NoThunks (StrictTVar m a)
+      => NoThunks (StrictTVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictTVar (WithEarlyExit m)"
+  wNoThunks ctxt tv = do
+      wNoThunks ctxt (castStrictTVar tv :: StrictTVar m a)
+
+instance NoThunks (StrictSVar m a)
+      => NoThunks (StrictSVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictSVar (WithEarlyExit m)"
+  wNoThunks ctxt tv = do
+      wNoThunks ctxt (castStrictSVar tv :: StrictSVar m a)
+
 -- | Internal only
 earlyExit :: m (Maybe a) -> WithEarlyExit m a
 earlyExit = WithEarlyExit . MaybeT
@@ -75,8 +89,11 @@ collapse :: Maybe () -> ()
 collapse Nothing   = ()
 collapse (Just ()) = ()
 
-exitEarly :: Applicative m => WithEarlyExit m a
-exitEarly = earlyExit $ pure Nothing
+exitEarly :: Monad m => WithEarlyExit m a
+exitEarly = exitEarlyWith (pure ())
+
+exitEarlyWith :: Monad m => m () -> WithEarlyExit m a
+exitEarlyWith act = earlyExit $ act >> pure Nothing
 
 instance (forall a'. NoThunks (m a'))
       => NoThunks (WithEarlyExit m a) where
@@ -214,7 +231,7 @@ instance MonadThread m => MonadThread (WithEarlyExit m) where
   myThreadId   = lift    myThreadId
   labelThread  = lift .: labelThread
 
-instance (MonadMask m, MonadAsync m, MonadCatch (STM m))
+instance (MonadCatch (STM m), MonadMask m, MonadAsync m)
       => MonadAsync (WithEarlyExit m) where
   type Async (WithEarlyExit m) = WithEarlyExit (Async m)
 
@@ -285,8 +302,5 @@ instance MonadEventlog m => MonadEventlog (WithEarlyExit m) where
   Finally, the consensus IOLike wrapper
 -------------------------------------------------------------------------------}
 
-instance ( IOLike m
-         , forall a. NoThunks (StrictTVar (WithEarlyExit m) a)
-         , forall a. NoThunks (StrictSVar (WithEarlyExit m) a)
-         ) => IOLike (WithEarlyExit m) where
+instance IOLike m => IOLike (WithEarlyExit m) where
   forgetSignKeyKES = lift . forgetSignKeyKES
