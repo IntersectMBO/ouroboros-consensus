@@ -1,10 +1,8 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE MultiWayIf          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 
 -- | Queries
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
@@ -15,6 +13,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getIsInvalidBlock
   , getIsValid
   , getLedgerDB
+  , getLedgerDBViewAtPoint
   , getMaxSlotNo
   , getTipBlock
   , getTipHeader
@@ -32,13 +31,15 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
                      ChainDbFailure (..), InvalidBlockReason)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util (eitherToMaybe)
+import           Ouroboros.Consensus.Util (StaticEither (..), eitherToMaybe,
+                     fromStaticLeft, fromStaticRight)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -73,10 +74,8 @@ getCurrentChain CDB{..} =
   where
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 
-getLedgerDB ::
-     IOLike m
-  => ChainDbEnv m blk -> STM m (LgrDB.LedgerDB' blk)
-getLedgerDB CDB{..} = LgrDB.getCurrent cdbLgrDB
+getLedgerDB :: ChainDbEnv m blk -> STM m (DbChangelog' blk)
+getLedgerDB CDB{..} = LedgerDB.getCurrent cdbLedgerDB
 
 getTipBlock
   :: forall m blk.
@@ -119,8 +118,8 @@ getTipHeader CDB{..} = do
 getTipPoint
   :: forall m blk. (IOLike m, HasHeader (Header blk))
   => ChainDbEnv m blk -> STM m (Point blk)
-getTipPoint CDB{..} =
-    (castPoint . AF.headPoint) <$> readTVar cdbChain
+getTipPoint CDB{..} = do
+    castPoint . AF.headPoint <$> readTVar cdbChain
 
 getBlockComponent ::
      forall m blk b. IOLike m
@@ -155,7 +154,7 @@ getIsValid ::
   => ChainDbEnv m blk
   -> STM m (RealPoint blk -> Maybe Bool)
 getIsValid CDB{..} = do
-    prevApplied <- LgrDB.getPrevApplied cdbLgrDB
+    prevApplied <- LedgerDB.getPrevApplied cdbLedgerDB
     invalid     <- forgetFingerprint <$> readTVar cdbInvalid
     return $ \pt@(RealPoint _ hash) ->
       -- Blocks from the future that were valid according to the ledger but
@@ -182,6 +181,21 @@ getMaxSlotNo CDB{..} = do
                      <$> readTVar cdbChain
     volatileDbMaxSlotNo    <- VolatileDB.getMaxSlotNo cdbVolatileDB
     return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo
+
+getLedgerDBViewAtPoint ::
+     IOLike m
+  => ChainDbEnv m blk
+  -> Maybe (Point blk)
+  -> m ( Either
+           (Point blk)
+           (LedgerDB.LedgerDBView' m blk)
+       )
+getLedgerDBViewAtPoint CDB{..} Nothing = do
+  ((), s) <- LedgerDB.acquireLDBReadView cdbLedgerDB (StaticLeft ()) (pure ())
+  pure $ Right $ fromStaticLeft s
+getLedgerDBViewAtPoint CDB{..} (Just p) = do
+  ((), s) <- LedgerDB.acquireLDBReadView cdbLedgerDB (StaticRight p) (pure ())
+  pure $ fromStaticRight s
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent
@@ -270,4 +284,4 @@ getAnyBlockComponent immutableDB volatileDB blockComponent p = do
 
 mustExist :: RealPoint blk -> Maybe b -> Either (ChainDbFailure blk) b
 mustExist p Nothing  = Left  $ ChainDbMissingBlock p
-mustExist _ (Just b) = Right $ b
+mustExist _ (Just b) = Right b

@@ -18,14 +18,17 @@ import           Data.Time.Clock (DiffTime, secondsToDiffTime)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB')
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceEvent (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicy (..))
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Args as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+                     (BackingStoreSelector (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
@@ -50,7 +53,7 @@ data ChainDbArgs f m blk = ChainDbArgs {
     -- ^ Should the parser for the VolatileDB fail when it encounters a
     -- corrupt/invalid block?
     , cdbMaxBlocksPerFile       :: VolatileDB.BlocksPerFile
-    , cdbDiskPolicy             :: LgrDB.DiskPolicy
+    , cdbDiskPolicy             :: DiskPolicy
 
       -- Integration
     , cdbTopLevelConfig         :: HKD f (TopLevelConfig blk)
@@ -59,13 +62,13 @@ data ChainDbArgs f m blk = ChainDbArgs {
     -- ^ Predicate to check for integrity of
     -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
     -- extracting them from both the VolatileDB and the ImmutableDB.
-    , cdbGenesis                :: HKD f (m (ExtLedgerState blk))
+    , cdbGenesis                :: HKD f (m (ExtLedgerState blk ValuesMK))
     , cdbCheckInFuture          :: HKD f (CheckInFuture m blk)
     , cdbImmutableDbCacheConfig :: ImmutableDB.CacheConfig
 
       -- Misc
     , cdbTracer                 :: Tracer m (TraceEvent blk)
-    , cdbTraceLedger            :: Tracer m (LedgerDB' blk)
+    , cdbTraceLedger            :: Tracer m (AnchorlessDbChangelog' blk)
     , cdbRegistry               :: HKD f (ResourceRegistry m)
     , cdbGcDelay                :: DiffTime
     , cdbGcInterval             :: DiffTime
@@ -74,6 +77,10 @@ data ChainDbArgs f m blk = ChainDbArgs {
       -- is the maximum number of blocks that could be kept in memory at the
       -- same time when the background thread processing the blocks can't keep
       -- up.
+
+      -- LedgerDB Backing Store
+    , cdbBackingStoreSelector   :: !(BackingStoreSelector m)
+      -- ^ Which implementation of the backing store to use
     }
 
 -- | Arguments specific to the ChainDB, not to the ImmutableDB, VolatileDB, or
@@ -137,11 +144,12 @@ defaultArgs ::
      Monad m
   => (RelativeMountPoint -> SomeHasFS m)
   -> DiskPolicy
+  -> BackingStoreSelector m
   -> ChainDbArgs Defaults m blk
-defaultArgs mkFS diskPolicy =
+defaultArgs mkFS diskPolicy bss =
   toChainDbArgs (ImmutableDB.defaultArgs immFS)
                 (VolatileDB.defaultArgs  volFS)
-                (LgrDB.defaultArgs       lgrFS diskPolicy)
+                (LedgerDB.defaultArgs    lgrFS diskPolicy bss)
                 defaultSpecificArgs
   where
     immFS, volFS, lgrFS :: SomeHasFS m
@@ -157,7 +165,7 @@ fromChainDbArgs ::
   => ChainDbArgs f m blk
   -> ( ImmutableDB.ImmutableDbArgs f m blk
      , VolatileDB.VolatileDbArgs   f m blk
-     , LgrDB.LgrDbArgs             f m blk
+     , LedgerDB.LedgerDBArgs       f m blk
      , ChainDbSpecificArgs         f m blk
      )
 fromChainDbArgs ChainDbArgs{..} = (
@@ -179,13 +187,14 @@ fromChainDbArgs ChainDbArgs{..} = (
         , volValidationPolicy = cdbVolatileDbValidation
         , volTracer           = contramap TraceVolatileDBEvent cdbTracer
         }
-    , LgrDB.LgrDbArgs {
-          lgrTopLevelConfig   = cdbTopLevelConfig
-        , lgrHasFS            = cdbHasFSLgrDB
-        , lgrDiskPolicy       = cdbDiskPolicy
-        , lgrGenesis          = cdbGenesis
-        , lgrTracer           = contramap TraceSnapshotEvent cdbTracer
-        , lgrTraceLedger      = cdbTraceLedger
+    , LedgerDB.LedgerDBArgs {
+          lgrTopLevelConfig       = cdbTopLevelConfig
+        , lgrHasFS                = cdbHasFSLgrDB
+        , lgrDiskPolicy           = cdbDiskPolicy
+        , lgrGenesis              = cdbGenesis
+        , lgrTracer               = contramap TraceLedgerDBEvent cdbTracer
+        , lgrTraceLedger          = cdbTraceLedger
+        , lgrBackingStoreSelector = cdbBackingStoreSelector
         }
     , ChainDbSpecificArgs {
           cdbsTracer          = cdbTracer
@@ -204,12 +213,12 @@ fromChainDbArgs ChainDbArgs{..} = (
 toChainDbArgs ::
      ImmutableDB.ImmutableDbArgs f m blk
   -> VolatileDB.VolatileDbArgs   f m blk
-  -> LgrDB.LgrDbArgs             f m blk
+  -> LedgerDB.LedgerDBArgs       f m blk
   -> ChainDbSpecificArgs         f m blk
   -> ChainDbArgs                 f m blk
 toChainDbArgs ImmutableDB.ImmutableDbArgs {..}
               VolatileDB.VolatileDbArgs {..}
-              LgrDB.LgrDbArgs {..}
+              LedgerDB.LedgerDBArgs {..}
               ChainDbSpecificArgs {..} = ChainDbArgs{
       -- HasFS instances
       cdbHasFSImmutableDB       = immHasFS
@@ -234,6 +243,8 @@ toChainDbArgs ImmutableDB.ImmutableDbArgs {..}
     , cdbGcDelay                = cdbsGcDelay
     , cdbGcInterval             = cdbsGcInterval
     , cdbBlocksToAddSize        = cdbsBlocksToAddSize
+      -- Backing store
+    , cdbBackingStoreSelector   = lgrBackingStoreSelector
     }
 
 {-------------------------------------------------------------------------------
