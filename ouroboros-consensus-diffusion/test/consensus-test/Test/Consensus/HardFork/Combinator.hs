@@ -16,6 +16,7 @@
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -23,11 +24,13 @@ module Test.Consensus.HardFork.Combinator (tests) where
 
 import qualified Data.Map.Strict as Map
 import           Data.SOP.Counting
+import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.OptNP (OptNP (..))
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
+import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
@@ -35,6 +38,7 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Condense ()
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger ()
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.History (EraParams (..))
@@ -224,7 +228,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         , pInfoInitLedger = ExtLedgerState {
               ledgerState = HardForkLedgerState $
                               initHardForkState
-                                initLedgerState
+                                (Flip initLedgerState)
             , headerState = genesisHeaderState $
                               initHardForkState
                                 (WrapChainDepState initChainDepState)
@@ -239,7 +243,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         $ OptNil
       ]
 
-    initLedgerState :: LedgerState BlockA
+    initLedgerState :: LedgerState BlockA ValuesMK
     initLedgerState = LgrA {
           lgrA_tip        = GenesisPoint
         , lgrA_transition = Nothing
@@ -357,6 +361,21 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
 instance TxGen TestBlock where
   testGenTxs _ _ _ _ _ _ = return []
 
+type instance Key   (LedgerState TestBlock) = Void
+type instance Value (LedgerState TestBlock) = Void
+
+instance CanSerializeLedgerTables (LedgerState TestBlock)
+
+instance LedgerTablesCanHardFork '[BlockA, BlockB] where
+  hardForkInjectLedgerTables =
+       (InjectLedgerTables { applyInjectLedgerTables  = castLedgerTables
+                           , applyDistribLedgerTables = castLedgerTables
+                           })
+    :* (InjectLedgerTables { applyInjectLedgerTables  = castLedgerTables
+                           , applyDistribLedgerTables = castLedgerTables
+                           })
+    :* Nil
+
 {-------------------------------------------------------------------------------
   Hard fork
 -------------------------------------------------------------------------------}
@@ -406,11 +425,17 @@ instance SerialiseHFC '[BlockA, BlockB]
 ledgerState_AtoB ::
      RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       TranslateLedgerState
        BlockA
        BlockB
-ledgerState_AtoB = InPairs.ignoringBoth $ Translate $ \_ LgrA{..} -> LgrB {
-      lgrB_tip = castPoint lgrA_tip
+ledgerState_AtoB =
+    InPairs.ignoringBoth
+  $ TranslateLedgerState {
+        translateLedgerStateWith = \_ LgrA{..} ->
+            LgrB {
+              lgrB_tip = castPoint lgrA_tip
+            }
+      , translateLedgerTablesWith = castLedgerTables
     }
 
 chainDepState_AtoB ::

@@ -66,8 +66,10 @@ import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -84,6 +86,11 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+                     (BackingStoreSelector (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
@@ -236,7 +243,7 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
 -- context.
 --
 data VertexStatus m blk
-  = VDown (Chain blk) (LedgerState blk)
+  = VDown (Chain blk) (LedgerState blk EmptyMK)
     -- ^ The vertex does not currently have a node instance; its previous
     -- instance stopped with this chain and ledger state (empty/initial before
     -- first instance)
@@ -340,7 +347,10 @@ runThreadNetwork systemTime ThreadNetworkArgs
             TestNodeInitialization{tniProtocolInfo} = nodeInitData
             ProtocolInfo{pInfoInitLedger} = tniProtocolInfo
             ExtLedgerState{ledgerState} = pInfoInitLedger
-        v <- uncheckedNewTVarM (VDown Genesis ledgerState)
+        v <-
+            uncheckedNewTVarM
+          $ VDown Genesis
+          $ forgetLedgerTables ledgerState
         pure (nid, v)
 
     -- fork the directed edges, which also allocates their status variables
@@ -540,6 +550,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
               ChainDB.getCurrentLedger chainDB
             finalChain <- ChainDB.toChain chainDB
 
+
             pure (again, finalChain, ledgerState)
             -- end of the node's withRegistry
 
@@ -592,36 +603,56 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> ResourceRegistry m
       -> (SlotNo -> STM m ())
       -> LedgerConfig blk
-      -> STM m (LedgerState blk)
+      -> STM m (Point blk)
+      -> m ( AnchorlessDbChangelog' blk
+           , LedgerBackingStoreValueHandle' m blk
+           , DiskLedgerView m (ExtLedgerState blk)
+           )
       -> Mempool m blk
       -> [GenTx blk]
          -- ^ valid transactions the node should immediately propagate
       -> m ()
-    forkCrucialTxs clock s0 registry unblockForge lcfg getLdgr mempool txs0 =
+    forkCrucialTxs clock s0 registry unblockForge lcfg getTipPoint mdlv mempool txs0 = do
       void $ forkLinkedThread registry "crucialTxs" $ do
-        let wouldBeValid slot st tx =
-                isRight $ Exc.runExcept $ applyTx lcfg DoNotIntervene slot tx st
+        let
+            wouldBeValid :: SlotNo
+                         -> (RangeQuery (LedgerTables (ExtLedgerState blk) KeysMK) -> m (LedgerTables (ExtLedgerState blk) ValuesMK))
+                         -> Ticked1 (LedgerState blk) DiffMK
+                         -> GenTx blk
+                         -> m Bool
+            wouldBeValid slot doRangeQuery st tx = do
+              (fullLedgerSt :: Ticked1 (LedgerState blk) ValuesMK) <- do
+                -- FIXME: we know that the range query implemetation will add at
+                -- most 1 to the number of requested keys, hence the
+                -- subtraction. When we revisit the range query implementation
+                -- we should remove this workaround.
+                fullUTxO <- doRangeQuery (RangeQuery Nothing (maxBound-1))
+                pure $! applyDiffs fullUTxO st
+              pure $ isRight $ Exc.runExcept $ applyTx lcfg DoNotIntervene slot tx fullLedgerSt
 
-            checkSt slot snap =
-                any (wouldBeValid slot (snapshotLedgerState snap)) txs0
 
-        let loop (slot, ledger, mempFp) = do
-              (snap1, snap2) <- atomically $ do
-                snap1 <- getSnapshotFor mempool $
-                  -- This node would include these crucial txs if it leads in
-                  -- this slot.
-                  ForgeInKnownSlot slot $ applyChainTick lcfg slot ledger
-                snap2 <- getSnapshotFor mempool $
-                  -- Other nodes might include these crucial txs when leading
-                  -- in the next slot.
-                  ForgeInKnownSlot (succ slot) $ applyChainTick lcfg (succ slot) ledger
-                -- This loop will repeat for the next slot, so we only need to
-                -- check for this one and the next.
-                pure (snap1, snap2)
+            checkSt slot doRangeQuery snap =
+                or <$> mapM (wouldBeValid slot doRangeQuery (snapshotState snap)) txs0
+
+        let loop (slot, mempFp) = do
+              (ldb, vh, dlv) <- mdlv
+              let ledger       = ledgerState $ dlvCurrent dlv
+                  doRangeQuery = dlvRangeRead dlv
+              -- This node would include these crucial txs if it leads in
+              -- this slot.
+              let ledger' = applyChainTick lcfg slot ledger
+              snap1 <- getSnapshotFor mempool slot ledger' (adcDiffs ldb) vh
+              -- Other nodes might include these crucial txs when leading
+              -- in the next slot.
+              let ledger'' = applyChainTick lcfg (succ slot) ledger
+              snap2 <- getSnapshotFor mempool (succ slot) ledger'' (adcDiffs ldb) vh
+
 
               -- Don't attempt to add them if we're sure they'll be invalid.
               -- That just risks blocking on a full mempool unnecessarily.
-              when (checkSt slot snap1 || checkSt (succ slot) snap2) $ do
+              b1 <- checkSt slot doRangeQuery snap1
+              b2 <- checkSt (succ slot) doRangeQuery snap2
+              when (b1 || b2) $ do
                 _ <- addTxs mempool txs0
                 pure ()
 
@@ -633,19 +664,19 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 slotChanged = do
                   let slot' = succ slot
                   _ <- OracularClock.blockUntilSlot clock slot'
-                  pure (slot', ledger, mempFp)
+                  pure (slot', mempFp)
 
                 -- a new tx (e.g. added by TxSubmission) might render a crucial
                 -- transaction valid
                 mempChanged = do
                   let getMemp = (map snd . snapshotTxs) <$> getSnapshot mempool
                   (mempFp', _) <- atomically $ blockUntilChanged id mempFp getMemp
-                  pure (slot, ledger, mempFp')
+                  pure (slot, mempFp')
 
                 -- a new ledger state might render a crucial transaction valid
                 ldgrChanged = do
-                  (ledger', _) <- atomically $ blockUntilChanged ledgerTipPoint (ledgerTipPoint ledger) getLdgr
-                  pure (slot, ledger', mempFp)
+                  _ <- atomically $ blockUntilChanged id (ledgerTipPoint ledger) getTipPoint
+                  pure (slot, mempFp)
 
               -- wake up when any of those change
               --
@@ -659,8 +690,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
               void $ syncWithLedger mempool
 
               loop fps'
-        ledger0 <- atomically $ getLdgr
-        loop (s0, ledger0, [])
+        loop (s0, [])
 
     -- | Produce transactions every time the slot changes and submit them to
     -- the mempool.
@@ -670,25 +700,33 @@ runThreadNetwork systemTime ThreadNetworkArgs
                    -> OracularClock m
                    -> TopLevelConfig blk
                    -> Seed
-                   -> STM m (ExtLedgerState blk)
+                   -> m (a, b, DiskLedgerView m (ExtLedgerState blk))
                       -- ^ How to get the current ledger state
                    -> Mempool m blk
                    -> m ()
-    forkTxProducer coreNodeId registry clock cfg nodeSeed getExtLedger mempool =
-      void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
-        ledger <- atomically $ ledgerState <$> getExtLedger
-        -- Combine the node's seed with the current slot number, to make sure
-        -- we generate different transactions in each slot.
-        let txs = runGen
-                (nodeSeed `combineWith` unSlotNo curSlotNo)
-                (testGenTxs coreNodeId numCoreNodes curSlotNo cfg txGenExtra ledger)
-
-        void $ addTxs mempool txs
+    forkTxProducer coreNodeId registry clock cfg nodeSeed mdlv mempool =
+        void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
+          (_, _, dlv) <- mdlv
+          let emptySt      = dlvCurrent dlv
+              doRangeQuery = dlvRangeRead dlv
+          fullLedgerSt <- fmap ledgerState $ do
+                -- FIXME: we know that the range query implemetation will add at
+                -- most 1 to the number of requested keys, hence the
+                -- subtraction. When we revisit the range query implementation
+                -- we should remove this workaround.
+                fullUTxO <- doRangeQuery (RangeQuery Nothing (maxBound-1))
+                pure $! withLedgerTables emptySt fullUTxO
+          -- Combine the node's seed with the current slot number, to make sure
+          -- we generate different transactions in each slot.
+          let txs = runGen
+                  (nodeSeed `combineWith` unSlotNo curSlotNo)
+                  (testGenTxs coreNodeId numCoreNodes curSlotNo cfg txGenExtra fullLedgerSt)
+          void $ addTxs mempool txs
 
     mkArgs :: OracularClock m
            -> ResourceRegistry m
            -> TopLevelConfig blk
-           -> ExtLedgerState blk
+           -> ExtLedgerState blk ValuesMK
            -> Tracer m (RealPoint blk, ExtValidationError blk)
               -- ^ invalid block tracer
            -> Tracer m (RealPoint blk, BlockNo)
@@ -712,6 +750,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
               , mcdbInitLedger     = initLedger
               , mcdbRegistry       = registry
               , mcdbNodeDBs        = nodeDBs
+              , mcdbBackingStoreSelector = InMemoryBackingStore
               }
         in args { cdbCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
                 , cdbCheckInFuture  = InFuture.reference (configLedger cfg)
@@ -817,7 +856,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
             -> TopLevelConfig blk
             -> BlockNo
             -> SlotNo
-            -> TickedLedgerState blk
+            -> TickedLedgerState blk mk
             -> [Validated (GenTx blk)]
             -> IsLeader (BlockProtocol blk)
             -> m blk
@@ -866,13 +905,14 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
                   -- fail if the EBB is invalid
                   -- if it is valid, we retick to the /same/ slot
-                  let apply = applyLedgerBlock (configLedger pInfoConfig)
-                  tickedLdgSt' <- case Exc.runExcept $ apply ebb tickedLdgSt of
+                  let apply  = applyLedgerBlock (configLedger pInfoConfig)
+                      tables = emptyLedgerTables   -- EBBs need no input tables
+                  tickedLdgSt' <- case Exc.runExcept $ apply ebb (tickedLdgSt `withLedgerTables` tables) of
                     Left e   -> Exn.throw $ JitEbbError @blk e
                     Right st -> pure $ applyChainTick
                                         (configLedger pInfoConfig)
                                         currentSlot
-                                        st
+                                        (forgetLedgerTables st)
 
                   -- forge the block usings the ledger state that includes
                   -- the EBB
@@ -1021,6 +1061,15 @@ runThreadNetwork systemTime ThreadNetworkArgs
                   -- tests about the peer sharing protocol itself.
                   (NTN.mkHandlers nodeKernelArgs nodeKernel (\_ -> return []))
 
+      -- Create a 'DiskLedgerView' to be used in 'forkTxProducer'. This function
+      -- needs the 'DiskLedgerView' to elaborate a complete UTxO set to generate
+      -- transactions.
+      let getValueHandle = do
+            eLDBView <- ChainDB.getLedgerDBViewAtPoint chainDB Nothing
+            case eLDBView of
+              Left e          -> error $ show e
+              Right l@(LedgerDBView { viewHandle, viewChangelog }) -> pure (viewChangelog, viewHandle, mkDiskLedgerView l)
+
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the
       -- @txs0@ argument, which in practice contains delegation certificates
@@ -1043,7 +1092,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
         registry
         unblockForge
         (configLedger pInfoConfig)
-        (ledgerState <$> ChainDB.getCurrentLedger chainDB)
+        (ledgerTipPoint . ledgerState <$> ChainDB.getCurrentLedger chainDB)
+        getValueHandle
         mempool
         txs0
 
@@ -1057,7 +1107,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
         (seed `combineWith` unCoreNodeId coreNodeId)
         -- Uses the same varRNG as the block producer, but we split the RNG
         -- each time, so this is fine.
-        (ChainDB.getCurrentLedger chainDB)
+        getValueHandle
         mempool
 
       return (nodeKernel, LimitedApp app)
@@ -1470,7 +1520,7 @@ data NodeOutput blk = NodeOutput
   { nodeOutputAdds         :: Map SlotNo (Set (RealPoint blk, BlockNo))
   , nodeOutputCannotForges :: Map SlotNo [CannotForge blk]
   , nodeOutputFinalChain   :: Chain blk
-  , nodeOutputFinalLedger  :: LedgerState blk
+  , nodeOutputFinalLedger  :: LedgerState blk EmptyMK
   , nodeOutputForges       :: Map SlotNo blk
   , nodeOutputHeaderAdds   :: Map SlotNo [(RealPoint blk, BlockNo)]
   , nodeOutputInvalids     :: Map (RealPoint blk) [ExtValidationError blk]
@@ -1491,7 +1541,7 @@ mkTestOutput ::
     => [( CoreNodeId
         , m (NodeInfo blk MockFS [])
         , Chain blk
-        , LedgerState blk
+        , LedgerState blk EmptyMK
         )]
     -> m (TestOutput blk)
 mkTestOutput vertexInfos = do
