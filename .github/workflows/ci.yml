@@ -42,6 +42,12 @@ jobs:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: ${{ matrix.cabal }}
 
+
+    - name: Install build environment
+      run: |
+        sudo apt-get update
+        sudo apt-get -y install libsodium-dev liblmdb-dev
+
     - name: Configure Cabal
       run: |
         cp .github/workflows/cabal.project.local .

@@ -21,6 +21,7 @@ index-state:
 packages:
   ouroboros-consensus
   ouroboros-consensus-cardano
+  ouroboros-consensus-cardano-legacy-block
   ouroboros-consensus-protocol
   ouroboros-consensus-diffusion
   sop-extras
@@ -31,3 +32,21 @@ tests: true
 benchmarks: true
 
 import: ./asserts.cabal
+
+-- TODO: remove when a new version of strict-mvar is released
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/io-sim
+  tag: ec202298c420378ef90b3fc0126c39e0f52290a3
+  --sha256: 1p6pn83kwp66x2m0cw9a27blfcpmw0lrra72qd0pi5bj3v1bcrl9
+  subdir:
+    strict-mvar
+
+-- ouroboros-network-protocols 0.5.2.0 with -fno-full-laziness
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/ouroboros-network
+  tag: 430354c350c3a804f000f6c76b59b3fb3c303ba7
+  --sha256: 0yz853ga95sl5bg67r4y4g17m94vbaam4qvzg8d6l54jyfhc0w6p
+  subdir:
+    ouroboros-network-protocols
