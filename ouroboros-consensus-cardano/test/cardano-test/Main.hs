@@ -6,6 +6,7 @@ import qualified Test.Consensus.Cardano.ByronCompatibility
 import qualified Test.Consensus.Cardano.Golden
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
 import qualified Test.Consensus.Cardano.Serialisation
+import qualified Test.Consensus.Cardano.Translation
 import           Test.Tasty
 import qualified Test.ThreadNet.AllegraMary
 import qualified Test.ThreadNet.Cardano
@@ -26,9 +27,12 @@ tests =
   [ Test.Consensus.Cardano.ByronCompatibility.tests
   , Test.Consensus.Cardano.Golden.tests
   , Test.Consensus.Cardano.Serialisation.tests
-  , Test.ThreadNet.AllegraMary.tests
-  , Test.ThreadNet.Cardano.tests
-  , Test.ThreadNet.MaryAlonzo.tests
-  , Test.ThreadNet.ShelleyAllegra.tests
+  , testGroup "ThreadNet" [
+      , Test.ThreadNet.AllegraMary.tests
+      , Test.ThreadNet.Cardano.tests
+      , Test.ThreadNet.MaryAlonzo.tests
+      , Test.ThreadNet.ShelleyAllegra.tests
+      ]
+  , Test.Consensus.Cardano.Translation.tests
   , Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server.tests
   ]
