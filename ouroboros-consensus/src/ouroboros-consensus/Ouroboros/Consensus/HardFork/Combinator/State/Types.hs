@@ -174,12 +174,12 @@ data TranslateLedgerTables x y = TranslateLedgerTables {
     -- | Translate a 'TxOut' across an era transition.
     --
     -- See 'translateLedgerTablesWith'.
-  , translateTxOutWith :: !(Value (LedgerState x) -> Value (LedgerState y))
+  , translateTxOutWith :: !(Value (LedgerState x) -> Maybe (Value (LedgerState y)))
   }
 
 newtype TranslateTxIn x y = TranslateTxIn (Key (LedgerState x) -> Key (LedgerState y))
 
-newtype TranslateTxOut x y = TranslateTxOut (Value (LedgerState x) -> Value (LedgerState y))
+newtype TranslateTxOut x y = TranslateTxOut (Value (LedgerState x) -> Maybe (Value (LedgerState y)))
 
 -- | Translate a 'LedgerTables' across an era transition.
 --
@@ -214,8 +214,8 @@ translateLedgerTablesWith f =
     . DiffMK
     . Diff.Diff
     . Map.mapKeys (translateTxInWith f)
-    . Map.map (fmap (translateTxOutWith f))
     . getDiff
+    . Diff.mapMaybeDiff (translateTxOutWith f)
     . getDiffMK
     . getLedgerTables
   where
