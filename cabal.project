@@ -70,3 +70,10 @@ allow-newer:
     cardano-ledger-core
   , cardano-ledger-alonzo
   , cardano-ledger-babbage
+
+  type: git
+  location: /home/javier/code/cardano/anti-diffs
+  tag: 8185e884f2a93b997579a1404183e2d4931f7098
+  --sha256: 14qqiqzf9nhqlalyb9xmzk1p1j768614zrca9y4z3qkncf2ybp5y
+  subdir:
+    diff-containers

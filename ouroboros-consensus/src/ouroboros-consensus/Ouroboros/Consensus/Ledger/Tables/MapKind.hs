@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind (
     -- * Classes
     CanMapKeysMK (..)
   , CanMapMK (..)
+  , CanMapMaybeMK (..)
   , EqMK
   , NoThunksMK
   , ShowMK
@@ -53,6 +54,10 @@ type CanMapMK :: MapKind -> Constraint
 class CanMapMK mk where
   mapMK :: (v -> v') -> mk k v -> mk k v'
 
+type CanMapMaybeMK :: MapKind -> Constraint
+class CanMapMaybeMK mk where
+  mapMaybeMK :: (v -> Maybe v') -> mk k v -> mk k v'
+
 type CanMapKeysMK :: MapKind -> Constraint
 class CanMapKeysMK mk where
   mapKeysMK :: Ord k' => (k -> k') -> mk k v -> mk k' v
@@ -87,6 +92,9 @@ instance ZeroableMK EmptyMK where
 
 instance CanMapMK EmptyMK where
   mapMK _ EmptyMK = EmptyMK
+
+instance CanMapMaybeMK EmptyMK where
+  mapMaybeMK _ EmptyMK = EmptyMK
 
 instance CanMapKeysMK EmptyMK where
   mapKeysMK _ EmptyMK = EmptyMK
@@ -123,7 +131,10 @@ instance ZeroableMK ValuesMK where
   emptyMK = ValuesMK mempty
 
 instance CanMapMK ValuesMK where
-  mapMK f (ValuesMK vs) = ValuesMK $ fmap f vs
+  mapMK f (ValuesMK vs) = ValuesMK $ Map.map f vs
+
+instance CanMapMaybeMK ValuesMK where
+  mapMaybeMK f (ValuesMK vs) = ValuesMK $ Map.mapMaybe f vs
 
 instance CanMapKeysMK ValuesMK where
   mapKeysMK f (ValuesMK vs) = ValuesMK $ Map.mapKeys f vs
@@ -148,6 +159,9 @@ instance CanMapKeysMK DiffMK where
 instance CanMapMK DiffMK where
   mapMK f (DiffMK d) = DiffMK $ fmap f d
 
+instance CanMapMaybeMK DiffMK where
+  mapMaybeMK f (DiffMK d) = DiffMK $ Diff.Internal.mapMaybeDiff f d
+
 {-------------------------------------------------------------------------------
   TrackingMK
 -------------------------------------------------------------------------------}
@@ -161,6 +175,10 @@ instance ZeroableMK TrackingMK where
 
 instance CanMapMK TrackingMK where
   mapMK f (TrackingMK vs d) = TrackingMK (fmap f vs) (fmap f d)
+
+instance CanMapMaybeMK TrackingMK where
+  mapMaybeMK f (TrackingMK vs d) =
+    TrackingMK (Map.mapMaybe f vs) (Diff.Internal.mapMaybeDiff f d)
 
 instance CanMapKeysMK TrackingMK where
   mapKeysMK f (TrackingMK vs d) =

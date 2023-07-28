@@ -338,14 +338,12 @@ instance ( ShelleyBasedEra era
          , ShelleyBasedEra (SL.PreviousEra era)
          , SL.TranslateEra era (ShelleyTip proto)
          , SL.TranslateEra era SL.NewEpochState
-         , SL.TranslateEra era TxOutWrapper
          , SL.TranslationError era SL.NewEpochState ~ Void
-         , SL.TranslationError era TxOutWrapper ~ Void
          , SL.TranslationContext era ~ SL.TranslationContextF era SL.NewEpochState
          , SL.TranslationContextF era SL.NewEpochState ~ SL.TranslationContextF era WrapTx
-         , SL.TranslationContextF era TxOutWrapper ~ ()
          , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
-         , CanMapMK mk
+         , CanMapMaybeMK mk
+         , CanTranslateTxOut era
          ) => SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto) where
   translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition tables))) = do
       tip'   <- mapM (SL.translateEra ctxt) tip
@@ -358,19 +356,14 @@ instance ( ShelleyBasedEra era
         }
 
 translateShelleyTables ::
-     ( SL.TranslateEra     era TxOutWrapper
-     , SL.TranslationError era TxOutWrapper ~ Void
-     , SL.TranslationContextF era TxOutWrapper ~ ()
-     , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
-     , CanMapMK mk
+     ( EraCrypto (SL.PreviousEra era) ~ EraCrypto era
+     , CanMapMaybeMK mk
+     , CanTranslateTxOut era
      )
   => LedgerTables (LedgerState (ShelleyBlock proto (SL.PreviousEra era))) mk
   -> LedgerTables (LedgerState (ShelleyBlock proto                 era))  mk
 translateShelleyTables (LedgerTables utxoTable) =
-      LedgerTables
-    $ mapMK
-        (unTxOutWrapper . SL.translateEra' () . TxOutWrapper)
-        utxoTable
+      LedgerTables $ mapMaybeMK translateTxOut utxoTable
 
 instance ( ShelleyBasedEra era
          , SL.TranslateEra era WrapTx
