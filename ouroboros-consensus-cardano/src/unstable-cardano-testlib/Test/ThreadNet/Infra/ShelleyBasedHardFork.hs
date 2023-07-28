@@ -136,14 +136,12 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
 
   , SL.TranslateEra       era2 SL.NewEpochState
   , SL.TranslateEra       era2 WrapTx
-  , SL.TranslateEra       era2 TxOutWrapper
+  , CanTranslateTxOut     era2
 
   , SL.TranslationError   era2 SL.NewEpochState ~ Void
-  , SL.TranslationError   era2 TxOutWrapper     ~ Void
 
   , SL.TranslationContextF era2 SL.NewEpochState ~ SL.TranslationContextF era2 WrapTx
   , SL.TranslationContext  era2                  ~ SL.TranslationContextF era2 WrapTx
-  , SL.TranslationContextF era2 TxOutWrapper     ~ ()
 
   , SL.AdditionalGenesisConfig era1 ~ ()
   , SL.AdditionalGenesisConfig era2 ~ SL.TranslationContext era2
@@ -193,7 +191,7 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
              (ShelleyBlock proto2 era2)
       translateLedgerTables = HFC.TranslateLedgerTables {
             translateTxInWith  = id
-          , translateTxOutWith = unTxOutWrapper . SL.translateEra' () . TxOutWrapper
+          , translateTxOutWith = translateTxOut
           }
 
       forecastAcrossShelleyWrapper ::

@@ -82,7 +82,7 @@ class ( Ord (Key l)
   -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
   -- uses them.
   withLedgerTables ::
-       (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
+       (CanMapMK mk, CanMapKeysMK mk, CanMapMaybeMK mk, ZeroableMK mk)
     => l any
     -> LedgerTables l mk
     -> l mk

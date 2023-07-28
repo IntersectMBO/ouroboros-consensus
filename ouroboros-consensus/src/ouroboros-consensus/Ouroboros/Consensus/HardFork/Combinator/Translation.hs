@@ -5,8 +5,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Translation (
     -- * Translate from one era to the next
     EraTranslation (..)
-  , Ouroboros.Consensus.HardFork.Combinator.Translation.translateTxIn
-  , Ouroboros.Consensus.HardFork.Combinator.Translation.translateTxOut
+  , ipTranslateTxOut
   , trivialEraTranslation
   ) where
 
@@ -31,17 +30,11 @@ data EraTranslation xs = EraTranslation {
   deriving NoThunks
        via OnlyCheckWhnfNamed "EraTranslation" (EraTranslation xs)
 
-translateTxIn ::
-     All Top xs
-  => EraTranslation xs
-  -> InPairs TranslateTxIn xs
-translateTxIn = InPairs.hmap (TranslateTxIn . translateTxInWith) . translateLedgerTables
-
-translateTxOut ::
+ipTranslateTxOut ::
      All Top xs
   => EraTranslation xs
   -> InPairs TranslateTxOut xs
-translateTxOut = InPairs.hmap (TranslateTxOut . translateTxOutWith) . translateLedgerTables
+ipTranslateTxOut = InPairs.hmap (TranslateTxOut . translateTxOutWith) . translateLedgerTables
 
 trivialEraTranslation :: EraTranslation '[blk]
 trivialEraTranslation = EraTranslation {
