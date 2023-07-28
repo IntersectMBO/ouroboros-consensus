@@ -30,8 +30,8 @@ module Ouroboros.Consensus.Shelley.Eras (
   , StandardMary
   , StandardShelley
     -- * Shelley-based era
+  , CanTranslateTxOut (..)
   , ShelleyBasedEra (..)
-  , TxOutWrapper (..)
   , WrapTx (..)
     -- * Type synonyms for convenience
   , EraCrypto
@@ -73,8 +73,7 @@ import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
 import qualified Data.Set as Set
 import           Data.Text (Text)
-import           Data.Void (Void)
-import           GHC.Generics (Generic)
+import           Data.Void (absurd)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
                      (WhetherToIntervene (..))
@@ -389,58 +388,32 @@ instance ShelleyBasedEra (ConwayEra c) => Core.TranslateEra (ConwayEra c) WrapTx
       . Conway.Tx . unwrapTx
 
 {-------------------------------------------------------------------------------
-  TxOut family wrapper
+  Translate tx out
 -------------------------------------------------------------------------------}
 
--- | Wrapper for partially applying the 'Core.TxOut' type family
---
--- For generality, Consensus uses that type family as eg the index of
--- 'Core.TranslateEra'. We thus need to partially apply it.
-newtype TxOutWrapper era = TxOutWrapper {unTxOutWrapper :: Core.TxOut era}
-  deriving (Generic)
-
-deriving instance Eq       (Core.TxOut era) => Eq       (TxOutWrapper era)
-deriving instance NoThunks (Core.TxOut era) => NoThunks (TxOutWrapper era)
-deriving instance Show     (Core.TxOut era) => Show     (TxOutWrapper era)
+class CanTranslateTxOut era where
+  translateTxOut :: Core.TxOut (PreviousEra era) -> Maybe (Core.TxOut era)
 
 instance ShelleyBasedEra (AllegraEra c)
-      => Core.TranslateEra (AllegraEra c) TxOutWrapper where
-  type TranslationError (AllegraEra c) TxOutWrapper = Void
-  type TranslationContextF (AllegraEra c) TxOutWrapper = ()
-  translateEra ctxt = fmap TxOutWrapper . Core.translateEra ctxt . unTxOutWrapper
+      => CanTranslateTxOut (AllegraEra c) where
+  translateTxOut =
+    either absurd Just . runExcept . Core.translateEra ()
 
 instance ShelleyBasedEra (MaryEra c)
-      => Core.TranslateEra (MaryEra c) TxOutWrapper where
-  type TranslationError (MaryEra c) TxOutWrapper = Void
-  type TranslationContextF (MaryEra c) TxOutWrapper = ()
-  translateEra ctxt = fmap TxOutWrapper . Core.translateEra ctxt . unTxOutWrapper
+      => CanTranslateTxOut (MaryEra c) where
+  translateTxOut =
+    either absurd Just . runExcept . Core.translateEra ()
 
 instance ShelleyBasedEra (AlonzoEra c)
-      => Core.TranslateEra (AlonzoEra c) TxOutWrapper where
-  type TranslationError (AlonzoEra c) TxOutWrapper = Void
-  type TranslationContextF (AlonzoEra c) TxOutWrapper = ()
-  translateEra _ctxt =
-        pure
-      . TxOutWrapper
-      . Alonzo.translateTxOut
-      . unTxOutWrapper
+      => CanTranslateTxOut (AlonzoEra c) where
+  translateTxOut =
+    Just . Alonzo.translateTxOut
 
 instance ShelleyBasedEra (BabbageEra c)
-      => Core.TranslateEra (BabbageEra c) TxOutWrapper where
-  type TranslationError (BabbageEra c) TxOutWrapper = Void
-  type TranslationContextF (BabbageEra c) TxOutWrapper = ()
-  translateEra _ctxt =
-        pure
-      . TxOutWrapper
-      . Babbage.translateTxOut
-      . unTxOutWrapper
+      => CanTranslateTxOut (BabbageEra c) where
+  translateTxOut =
+    Just . Babbage.translateTxOut
 
 instance ShelleyBasedEra (ConwayEra c)
-      => Core.TranslateEra (ConwayEra c) TxOutWrapper where
-  type TranslationError (ConwayEra c) TxOutWrapper = Void
-  type TranslationContextF (ConwayEra c) TxOutWrapper = ()
-  translateEra _ctxt =
-        pure
-      . TxOutWrapper
-      . Conway.translateTxOut
-      . unTxOutWrapper
+      => CanTranslateTxOut (ConwayEra c) where
+  translateTxOut = Conway.translateTxOut

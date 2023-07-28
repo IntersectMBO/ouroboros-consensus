@@ -58,7 +58,12 @@ import           Ouroboros.Consensus.Ledger.Tables
 -------------------------------------------------------------------------------}
 
 over ::
-     (HasLedgerTables l, CanMapMK mk', CanMapKeysMK mk', ZeroableMK mk')
+     ( HasLedgerTables l
+     , CanMapMK mk'
+     , CanMapKeysMK mk'
+     , CanMapMaybeMK mk'
+     , ZeroableMK mk'
+     )
   => l mk
   -> LedgerTables l mk'
   -> l mk'
