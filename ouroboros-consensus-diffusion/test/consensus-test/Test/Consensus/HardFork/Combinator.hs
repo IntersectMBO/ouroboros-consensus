@@ -381,9 +381,9 @@ instance HasCanonicalTxIn '[BlockA, BlockB] where
 
   distribCanonicalTxIn _ key = absurd $ getBlockABTxIn key
 
-  serializeCanonicalTxIn   = toCBOR
+  encodeCanonicalTxIn = toCBOR
 
-  deserializeCanonicalTxIn = fromCBOR
+  decodeCanonicalTxIn = fromCBOR
 
 {-------------------------------------------------------------------------------
   Hard fork

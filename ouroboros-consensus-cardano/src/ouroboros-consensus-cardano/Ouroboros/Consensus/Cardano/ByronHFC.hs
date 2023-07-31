@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE EmptyCase                  #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE TypeApplications           #-}
@@ -82,7 +83,10 @@ instance SerialiseHFC '[ByronBlock] where
   getHfcBinaryBlockInfo (DegenBlock b) =
       getBinaryBlockInfo b
 
--- | TODO: make a general instance for the unary HF block?
+{-------------------------------------------------------------------------------
+  Canonical TxIn
+-------------------------------------------------------------------------------}
+
 instance HasCanonicalTxIn '[ByronBlock] where
   newtype instance CanonicalTxIn '[ByronBlock] = ByronHFCTxIn {
       getByronHFCTxIn :: Void
@@ -90,10 +94,11 @@ instance HasCanonicalTxIn '[ByronBlock] where
     deriving stock (Show, Eq, Ord)
     deriving newtype (NoThunks, FromCBOR, ToCBOR)
 
-  injectCanonicalTxIn IZ key   = absurd key
-  injectCanonicalTxIn (IS _) _ = error "impossible!" -- TODO: impossible case
+  injectCanonicalTxIn IZ key      = absurd key
+  injectCanonicalTxIn (IS idx') _ = case idx' of {}
 
   distribCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
 
-  serializeCanonicalTxIn   = toCBOR
-  deserializeCanonicalTxIn = fromCBOR
+  encodeCanonicalTxIn = toCBOR
+
+  decodeCanonicalTxIn = fromCBOR
