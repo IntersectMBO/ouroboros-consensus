@@ -42,5 +42,6 @@ instance LegacyCardanoHardForkConstraints c
 
   distribCanonicalTxIn _ key = absurd $ getLegacyCardanoTxIn key
 
-  serializeCanonicalTxIn   = toCBOR
-  deserializeCanonicalTxIn = fromCBOR
+  encodeCanonicalTxIn = toCBOR
+
+  decodeCanonicalTxIn = fromCBOR

@@ -45,7 +45,8 @@ instance CardanoHardForkConstraints c
       IS (IS (IS (IS (IS IZ))))        -> CardanoTxIn shelleyTxIn
       IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
 
-  distribCanonicalTxIn IZ _                 = error "distribCanonicalTxIn: Byron has no TxIns"
+  distribCanonicalTxIn IZ _                 =
+      error "distribCanonicalTxIn: Byron has no TxIns"
   distribCanonicalTxIn (IS idx) cardanoTxIn = case idx of
       IZ                               -> getCardanoTxIn cardanoTxIn
       IS IZ                            -> getCardanoTxIn cardanoTxIn
@@ -55,5 +56,6 @@ instance CardanoHardForkConstraints c
       IS (IS (IS (IS (IS IZ))))        -> getCardanoTxIn cardanoTxIn
       IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
 
-  serializeCanonicalTxIn   = Core.toEraCBOR @(ShelleyEra c) . getCardanoTxIn
-  deserializeCanonicalTxIn = CardanoTxIn <$> Core.fromEraCBOR @(ShelleyEra c)
+  encodeCanonicalTxIn   = Core.toEraCBOR @(ShelleyEra c) . getCardanoTxIn
+
+  decodeCanonicalTxIn = CardanoTxIn <$> Core.fromEraCBOR @(ShelleyEra c)

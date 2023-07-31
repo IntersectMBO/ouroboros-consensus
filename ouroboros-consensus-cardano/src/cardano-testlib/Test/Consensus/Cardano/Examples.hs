@@ -44,8 +44,8 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
-import           Ouroboros.Consensus.Ledger.Tables (CanMapKeysMK, CanMapMK,
-                     EmptyMK, ValuesMK, castLedgerTables)
+import           Ouroboros.Consensus.Ledger.Tables (EmptyMK, ValuesMK,
+                     castLedgerTables)
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
@@ -148,29 +148,8 @@ instance Inject Examples where
 newtype WrapLedgerTables blk = WrapLedgerTables ( LedgerTables (ExtLedgerState blk) ValuesMK )
 
 instance Inject WrapLedgerTables where
-  inject = injectWrapLedgerTables
-
--- In the definition of 'inject' for 'WrapLedgerTables', if we want to add a
--- type declaration to the local definition 'injectLedgerTables' we need to add
--- a type declaration for 'inject' which requires enabling 'InstanceSigs' and
--- introduces a compiler warning about 'CanHardFork xs' being a redundant
--- constraint. By defining 'inject' in terms of 'injectWrapLedgerTables' we
--- avoid this problem.
-injectWrapLedgerTables ::
-     forall x xs. HasCanonicalTxIn xs
-  => Exactly xs History.Bound
-     -- ^ Start bound of each era
-  -> Index xs x
-  -> WrapLedgerTables x
-  -> WrapLedgerTables (HardForkBlock xs)
-injectWrapLedgerTables _startBounds idx (WrapLedgerTables lt) =
-    WrapLedgerTables $ castLedgerTables $ inj (castLedgerTables lt)
-  where
-    inj ::
-         (CanMapMK mk, CanMapKeysMK mk)
-      => LedgerTables (LedgerState                  x) mk
-      -> LedgerTables (LedgerState (HardForkBlock xs)) mk
-    inj = injectLedgerTables idx
+  inject _startBounds idx (WrapLedgerTables lt) =
+    WrapLedgerTables $ castLedgerTables $ injectLedgerTables idx (castLedgerTables lt)
 
 {-------------------------------------------------------------------------------
   Setup

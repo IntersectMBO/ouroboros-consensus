@@ -35,9 +35,10 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   , mkHardForkForecast
     -- * Ledger tables
   , HardForkHasLedgerTables
-  , HasCanonicalTxIn (..)
   , distribLedgerTables
   , injectLedgerTables
+    -- ** Re-export
+  , HasCanonicalTxIn (..)
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -71,6 +72,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger.CanonicalTxIn
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol ()
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
@@ -820,42 +822,6 @@ injectLedgerEvent index =
 type instance Key   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
 type instance Value (LedgerState (HardForkBlock xs)) = NS WrapTxOut xs
 
--- | Canonical TxIn
---
--- The Ledger and Consensus team discussed the fact that we need to be able to
--- reach the TxIn key for an entry from any era, regardless of the era in which
--- it was created, therefore we need to have a "canonical" serialization that
--- doesn't change between eras. For now we are requiring that a 'HardForkBlock'
--- has only one associated 'TxIn' type as a stop-gap, but Ledger will provide a
--- serialization function into something more efficient.
---
--- TODO: More data added to Tx can be added to TxOut
---
--- TODO: move to separate module
-type HasCanonicalTxIn :: [Type] -> Constraint
-class ( Show (CanonicalTxIn xs)
-      , Ord (CanonicalTxIn xs)
-      , NoThunks (CanonicalTxIn xs)
-      ) => HasCanonicalTxIn xs where
-  data family CanonicalTxIn xs
-
-  injectCanonicalTxIn ::
-       Index xs x
-    -> Key (LedgerState x)
-    -> CanonicalTxIn xs
-
-  -- TODO: should it be called @projectCanonicalTxIn@?
-  distribCanonicalTxIn ::
-       Index xs x
-    -> CanonicalTxIn xs
-    -> Key (LedgerState x)
-
-  -- TODO: rename to @encodeCanonicalTxIn@
-  serializeCanonicalTxIn :: CanonicalTxIn xs -> CBOR.Encoding
-
-  -- TODO: rename to @decodeCanonicalTxIn@
-  deserializeCanonicalTxIn :: forall s. CBOR.Decoder s (CanonicalTxIn xs)
-
 type HardForkHasLedgerTables :: [Type] -> Constraint
 type HardForkHasLedgerTables xs = (
     All (Compose HasLedgerTables LedgerState) xs
@@ -865,20 +831,20 @@ type HardForkHasLedgerTables xs = (
   , All (Compose NoThunks WrapTxOut) xs
   )
 
+-- | The Ledger and Consensus team discussed the fact that we need to be able
+-- to reach the TxIn key for an entry from any era, regardless of the era in
+-- which it was created, therefore we need to have a "canonical"
+-- serialization that doesn't change between eras. For now we are using
+-- @'toEraCBOR' \@('ShelleyEra' c)@ as a stop-gap, but Ledger will provide a
+-- serialization function into something more efficient.
 instance ( All (Compose CanSerializeLedgerTables LedgerState) xs
          , HasCanonicalTxIn xs
          ) => CanSerializeLedgerTables (LedgerState (HardForkBlock xs)) where
-    -- The Ledger and Consensus team discussed the fact that we need to be able
-    -- to reach the TxIn key for an entry from any era, regardless of the era in
-    -- which it was created, therefore we need to have a "canonical"
-    -- serialization that doesn't change between eras. For now we are using
-    -- @'toEraCBOR' \@('ShelleyEra' c)@ as a stop-gap, but Ledger will provide a
-    -- serialization function into something more efficient.
     codecLedgerTables = LedgerTables $
         CodecMK
-          serializeCanonicalTxIn
+          encodeCanonicalTxIn
           encodeTxOut
-          deserializeCanonicalTxIn
+          decodeCanonicalTxIn
           decodeTxOut
       where
         encodeTxOut :: NS WrapTxOut xs -> CBOR.Encoding
