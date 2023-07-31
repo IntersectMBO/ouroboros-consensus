@@ -1,8 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections    #-}
 
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-{-# HLINT ignore "Use camelCase" #-}
+{- HLINT ignore "Use camelCase" -}
 
 -- | Functions related to initial parameters for the mempool. See
 -- 'InitialMempoolAndModelParams'.

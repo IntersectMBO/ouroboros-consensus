@@ -11,8 +11,7 @@
 {-# LANGUAGE StandaloneDeriving         #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-{-# HLINT ignore "Use camelCase" #-}
+{- HLINT ignore "Use camelCase" -}
 
 module Test.Ouroboros.Storage.LedgerDB.BackingStore (
     labelledExamples
@@ -22,10 +21,12 @@ module Test.Ouroboros.Storage.LedgerDB.BackingStore (
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import           Cardano.Slotting.Slot
 import           Control.Concurrent.Class.MonadMVar.Strict
-import           Control.Monad.Class.MonadThrow
-import           Control.Monad.Except hiding (lift)
+import           Control.Monad (void)
+import           Control.Monad.Class.MonadThrow (Handler (..), catches)
+import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.IOSim
-import           Control.Monad.Reader
+import           Control.Monad.Reader (ReaderT, runReaderT)
+import           Control.Monad.Trans (lift)
 import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Diff.Strict.Internal as Diff
 import qualified Data.Map.Strict as Map

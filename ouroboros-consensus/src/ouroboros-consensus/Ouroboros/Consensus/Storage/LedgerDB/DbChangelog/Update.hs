@@ -53,8 +53,10 @@ module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update (
   ) where
 
 import           Cardano.Slotting.Slot
-import           Control.Monad.Except hiding (ap)
-import           Control.Monad.Reader hiding (ap)
+import           Control.Monad.Except (ExceptT, MonadError (..), runExcept,
+                     runExceptT)
+import           Control.Monad.Reader (ReaderT (..), runReaderT)
+import           Control.Monad.Trans (lift)
 import           Data.Bifunctor (bimap)
 import           Data.Functor.Identity
 import           Data.Kind (Constraint, Type)
