@@ -57,7 +57,6 @@ getSameConfigValue getValue blockConfig = getSameValue values
 -------------------------------------------------------------------------------}
 
 instance ( CanHardFork xs
-           -- Instances that must be defined for specific values of @b@:
          , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
          , SupportedNetworkProtocolVersion (HardForkBlock xs)
