@@ -353,15 +353,15 @@ instance ( TxGen (ShelleyBlock proto1 era1)
   testGenTxs = testGenTxsHfc
 
 {-------------------------------------------------------------------------------
-  TODO: temp
+  Canonical TxIn
 -------------------------------------------------------------------------------}
 
--- | TODO: make a general instance for the unary HF block?
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => HasCanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
-  newtype instance CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) = ShelleyHFCTxIn {
-      getShelleyHFCTxIn :: SL.TxIn (EraCrypto era1)
-    }
+  newtype instance CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
+    ShelleyHFCTxIn {
+        getShelleyHFCTxIn :: SL.TxIn (EraCrypto era1)
+      }
     deriving stock (Show, Eq, Ord)
     deriving newtype NoThunks
 
@@ -373,6 +373,6 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   distribCanonicalTxIn (IS IZ)        txIn = getShelleyHFCTxIn txIn
   distribCanonicalTxIn (IS (IS idx')) _    = case idx' of {}
 
-  serializeCanonicalTxIn = Core.toEraCBOR @era1 . getShelleyHFCTxIn
+  encodeCanonicalTxIn = Core.toEraCBOR @era1 . getShelleyHFCTxIn
 
-  deserializeCanonicalTxIn = ShelleyHFCTxIn <$> Core.fromEraCBOR @era1
+  decodeCanonicalTxIn = ShelleyHFCTxIn <$> Core.fromEraCBOR @era1

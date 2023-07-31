@@ -392,10 +392,9 @@ instance ( ShelleyBasedEra era
     <$> SL.translateValidated @era @WrapTx ctxt (SL.coerceValidated vtx)
 
 {-------------------------------------------------------------------------------
-  A wrapper helpful for UTxO HD
+  Canonical TxIn
 -------------------------------------------------------------------------------}
 
--- | TODO: make a general instance for the unary HF block?
 instance ShelleyBasedEra era
       => HasCanonicalTxIn '[ShelleyBlock proto era] where
   newtype instance CanonicalTxIn '[ShelleyBlock proto era] = ShelleyBlockHFCTxIn {
@@ -410,6 +409,6 @@ instance ShelleyBasedEra era
   distribCanonicalTxIn IZ txIn     = getShelleyBlockHFCTxIn txIn
   distribCanonicalTxIn (IS idx') _ = case idx' of {}
 
-  serializeCanonicalTxIn (ShelleyBlockHFCTxIn txIn) = SL.toEraCBOR @era txIn
+  encodeCanonicalTxIn (ShelleyBlockHFCTxIn txIn) = SL.toEraCBOR @era txIn
 
-  deserializeCanonicalTxIn = ShelleyBlockHFCTxIn <$> SL.fromEraCBOR @era
+  decodeCanonicalTxIn = ShelleyBlockHFCTxIn <$> SL.fromEraCBOR @era

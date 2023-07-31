@@ -362,7 +362,6 @@ getQueryKeySetsIfCurrent =
     . hcimap (Proxy @SingleEraBlock) (\i -> K . injectLedgerTables i . unFlip . unComp)
     . queryIfCurrent2NS (Comp . Flip . getQueryKeySets)
 
--- TODO: #4399 This whole logic can use an audit
 tableTraversingQueryIfCurrent ::
      forall result xs. (All SingleEraBlock xs)
   => QueryIfCurrent xs result
