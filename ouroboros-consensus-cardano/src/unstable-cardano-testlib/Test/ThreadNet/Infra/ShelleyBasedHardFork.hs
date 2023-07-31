@@ -145,6 +145,10 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
   , SL.TranslationError   era2 SL.NewEpochState ~ Void
   , SL.TranslationError   era2 TxOutWrapper     ~ Void
 
+  , SL.TranslationContextF era2 SL.NewEpochState ~ SL.TranslationContextF era2 WrapTx
+  , SL.TranslationContext  era2                  ~ SL.TranslationContextF era2 WrapTx
+  , SL.TranslationContextF era2 TxOutWrapper     ~ ()
+
   , SL.AdditionalGenesisConfig era1 ~ ()
   , SL.AdditionalGenesisConfig era2 ~ SL.TranslationContext era2
     -- At the moment, fix the protocols together
@@ -162,6 +166,7 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => CanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons translateLedgerState                PNil
+      , translateLedgerTables  = PCons translateLedgerTables               PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
       , crossEraForecast       = PCons forecastAcrossShelleyWrapper        PNil
       }
@@ -184,15 +189,16 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
                   (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
               . Comp
               . Flip
-          , translateLedgerTablesWith =
-                LedgerTables
-              . fmap
-                ( unTxOutWrapper
-                . SL.translateEra' (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
-                . TxOutWrapper
-                )
-              . getLedgerTables
         }
+
+      translateLedgerTables ::
+           TranslateLedgerTables
+             (ShelleyBlock proto1 era1)
+             (ShelleyBlock proto2 era2)
+      translateLedgerTables = HFC.TranslateLedgerTables {
+            translateTxInWith  = id
+          , translateTxOutWith = unTxOutWrapper . SL.translateEra' () . TxOutWrapper
+          }
 
       forecastAcrossShelleyWrapper ::
            InPairs.RequiringBoth
