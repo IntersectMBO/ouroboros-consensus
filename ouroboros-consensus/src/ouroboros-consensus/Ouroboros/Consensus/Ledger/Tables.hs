@@ -62,11 +62,11 @@ class ( Ord (Key l)
   -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
   -- uses them.
   projectLedgerTables ::
-       (CanMapMK mk, CanMapKeysMK mk, CanEmptyMK mk)
+       (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => l mk
     -> LedgerTables l mk
   default projectLedgerTables ::
-         (CanEmptyMK mk, LedgerTablesAreTrivial l)
+         (ZeroableMK mk, LedgerTablesAreTrivial l)
       => l mk
       -> LedgerTables l mk
   projectLedgerTables _ = trivialLedgerTables
@@ -82,7 +82,7 @@ class ( Ord (Key l)
   -- The constraints on @mk@ are necessary because the 'CardanoBlock' instance
   -- uses them.
   withLedgerTables ::
-       (CanMapMK mk, CanMapKeysMK mk, CanEmptyMK mk)
+       (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => l any
     -> LedgerTables l mk
     -> l mk
@@ -215,6 +215,6 @@ class (Key l ~ Void, Value l ~ Void) => LedgerTablesAreTrivial l where
   convertMapKind :: l mk -> l mk'
 
 trivialLedgerTables ::
-     (CanEmptyMK mk, LedgerTablesAreTrivial l)
+     (ZeroableMK mk, LedgerTablesAreTrivial l)
   => LedgerTables l mk
 trivialLedgerTables = LedgerTables emptyMK

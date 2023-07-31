@@ -14,7 +14,7 @@ import           Test.QuickCheck
 (==?) ::
   ( CanMapMK mk
   , CanMapKeysMK mk
-  , CanEmptyMK mk
+  , ZeroableMK mk
   , EqMK mk
   , ShowMK mk
   , HasLedgerTables (LedgerState blk)
