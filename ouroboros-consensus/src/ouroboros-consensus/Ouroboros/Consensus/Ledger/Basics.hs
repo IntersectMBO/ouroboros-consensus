@@ -1,11 +1,11 @@
+{-# LANGUAGE CPP                      #-}
 {-# LANGUAGE DataKinds                #-}
-{-# LANGUAGE DeriveFoldable           #-}
-{-# LANGUAGE DeriveFunctor            #-}
 {-# LANGUAGE DeriveTraversable        #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE QuantifiedConstraints    #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE TypeOperators            #-}
 
 -- | Definition is 'IsLedger'
 --

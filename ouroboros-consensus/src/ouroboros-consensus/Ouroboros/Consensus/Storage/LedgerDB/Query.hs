@@ -3,6 +3,7 @@
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE TypeOperators       #-}
 -- | Queries on the ledger db
 
 module Ouroboros.Consensus.Storage.LedgerDB.Query (

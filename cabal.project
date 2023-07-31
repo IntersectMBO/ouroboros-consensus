@@ -88,7 +88,7 @@ allow-newer:
   , cardano-ledger-babbage
   , lens
 
-if impl(ghc >= 9.6)
+if impl(ghc >= 9.4)
   allow-newer:
     , *:base
     , *:ghc-prim
@@ -138,3 +138,9 @@ source-repository-package
   location: https://github.com/jasagredo/quickcheck-lockstep
   tag: 883f2e54a495b6cca1c30cfafdcc70dc70ed6d0c
   --sha256: 1309cs7p2zggq9klhd72c76xyinvi8vf2n8jxpbmibx2qbl9xr0d
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/lmdb-simple
+  tag: cb5b7e547c9f410c878c72116c291b23f193be2c
+  --sha256: 0ljfwzf4v5nwyni7pkd6d4by47lf1mxpl86602d55s2rzkhlx4b9

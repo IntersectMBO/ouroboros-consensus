@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns             #-}
+{-# LANGUAGE CPP                      #-}
 {-# LANGUAGE ConstraintKinds          #-}
 {-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE FlexibleInstances        #-}
@@ -435,6 +436,12 @@ eitherToMaybe (Right x) = Just x
 data StaticEither :: Bool -> Type -> Type -> Type where
   StaticLeft  :: l -> StaticEither False l r
   StaticRight :: r -> StaticEither True  l r
+
+#if __GLASGOW_HASKELL__ >= 906
+instance Functor (StaticEither b l) where
+  fmap _ (StaticLeft l)  = StaticLeft l
+  fmap f (StaticRight r) = StaticRight (f r)
+#endif
 
 instance Bifunctor (StaticEither b) where
   first f (StaticLeft  l) = StaticLeft  (f l)
