@@ -85,12 +85,12 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
 -- iterator, find the last block whose slot or block number is less than or
 -- equal to the intended new chain tip.
 findNewTip :: forall m blk c.
-#if __GLASGOW_HASKELL__ >= 906
-              (HasHeader blk, HasHeader (Header blk), Monad m)
-#else
-              -- GHC 9.6 considiers these constraints insufficient.
-              (HasHeader (Header blk), Monad m)
+              ( HasHeader (Header blk)
+              , Monad m
+#if __GLASGOW_HASKELL__ >= 904
+              , HasHeader blk
 #endif
+              )
            => TruncateAfter
            -> Iterator m blk (Header blk, c)
            -> m (Maybe (Header blk, c))

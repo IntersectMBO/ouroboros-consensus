@@ -32,7 +32,8 @@ module Test.Util.QuickCheck (
   , collects
   ) where
 
-import           Control.Monad.Except
+import           Control.Monad.Except (Except, runExcept)
+import           Control.Monad.Trans (MonadTrans (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
