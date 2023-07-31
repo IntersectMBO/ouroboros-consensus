@@ -8,16 +8,16 @@
 {-# LANGUAGE StandaloneKindSignatures   #-}
 {-# LANGUAGE TypeFamilies               #-}
 
+-- | Classes for 'MapKind's and concrete 'MapKind's
 module Ouroboros.Consensus.Ledger.Tables.MapKind (
     -- * Classes
-    CanEmptyMK (..)
-  , CanMapKeysMK (..)
+    CanMapKeysMK (..)
   , CanMapMK (..)
   , EqMK
   , NoThunksMK
   , ShowMK
+  , ZeroableMK (..)
     -- * Concrete MapKinds
-  , Canonical (..)
   , CodecMK (..)
   , DiffMK (..)
   , EmptyMK (..)
@@ -45,8 +45,8 @@ import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
   Classes
 -------------------------------------------------------------------------------}
 
-type CanEmptyMK :: MapKind -> Constraint
-class CanEmptyMK mk where
+type ZeroableMK :: MapKind -> Constraint
+class ZeroableMK mk where
   emptyMK :: forall k v. (Ord k, Eq v) => mk k v
 
 type CanMapMK :: MapKind -> Constraint
@@ -82,7 +82,7 @@ data EmptyMK k v = EmptyMK
   deriving anyclass NoThunks
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
-instance CanEmptyMK EmptyMK where
+instance ZeroableMK EmptyMK where
   emptyMK = EmptyMK
 
 instance CanMapMK EmptyMK where
@@ -101,7 +101,7 @@ newtype KeysMK k v = KeysMK (Set k)
   deriving anyclass NoThunks
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
-instance CanEmptyMK KeysMK where
+instance ZeroableMK KeysMK where
   emptyMK = KeysMK mempty
 
 instance CanMapMK KeysMK where
@@ -119,7 +119,7 @@ newtype ValuesMK k v = ValuesMK { getValuesMK :: Map k v }
   deriving anyclass NoThunks
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
-instance CanEmptyMK ValuesMK where
+instance ZeroableMK ValuesMK where
   emptyMK = ValuesMK mempty
 
 instance CanMapMK ValuesMK where
@@ -129,7 +129,7 @@ instance CanMapKeysMK ValuesMK where
   mapKeysMK f (ValuesMK vs) = ValuesMK $ Map.mapKeys f vs
 
 {-------------------------------------------------------------------------------
-  EmptyMK
+  DiffMK
 -------------------------------------------------------------------------------}
 
 newtype DiffMK k v = DiffMK { getDiffMK :: Diff k v }
@@ -138,7 +138,7 @@ newtype DiffMK k v = DiffMK { getDiffMK :: Diff k v }
   deriving anyclass NoThunks
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
-instance CanEmptyMK DiffMK where
+instance ZeroableMK DiffMK where
   emptyMK = DiffMK mempty
 
 instance CanMapKeysMK DiffMK where
@@ -156,7 +156,7 @@ data TrackingMK k v = TrackingMK !(Map k v) !(Diff k v)
   deriving (Generic, Eq, Show, NoThunks)
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
-instance CanEmptyMK TrackingMK where
+instance ZeroableMK TrackingMK where
   emptyMK = TrackingMK mempty mempty
 
 instance CanMapMK TrackingMK where
@@ -169,19 +169,6 @@ instance CanMapKeysMK TrackingMK where
         (getDiffMK . mapKeysMK f . DiffMK $ d)
 
 {-------------------------------------------------------------------------------
-  Canonical
--------------------------------------------------------------------------------}
-
--- | The Canonical MapKind, which has no constructor, and therefore a
--- @LedgerState blk Canonical@ will have all the contents in memory. This is
--- just a phantom type used to sketch later development and shall not land on
--- the release version.
-data Canonical k v = Canonical
-  deriving stock (Generic, Eq, Show)
-  deriving anyclass NoThunks
-  deriving anyclass (ShowMK, EqMK, NoThunksMK)
-
-{-------------------------------------------------------------------------------
   SeqDiffMK
 -------------------------------------------------------------------------------}
 
@@ -190,7 +177,7 @@ newtype SeqDiffMK  k v = SeqDiffMK { getSeqDiffMK :: DiffSeq k v }
   deriving anyclass NoThunks
   deriving anyclass (ShowMK, EqMK, NoThunksMK)
 
-instance CanEmptyMK SeqDiffMK where
+instance ZeroableMK SeqDiffMK where
   emptyMK = SeqDiffMK empty
 
 {-------------------------------------------------------------------------------
