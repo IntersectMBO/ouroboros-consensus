@@ -454,7 +454,7 @@ checkNoThunksEvery
         pure toKeep
       else pure intermediateLedgerDB
 
-    checkNoThunks :: IsMapKind mk => BlockNo -> LedgerState blk mk -> IO ()
+    checkNoThunks :: NoThunksMK mk => BlockNo -> LedgerState blk mk -> IO ()
     checkNoThunks bn ls =
       noThunks ["--checkThunks"] ls >>= \case
         Nothing -> putStrLn $ show bn <> ": no thunks found."
