@@ -83,6 +83,9 @@ package text-short
   flags: +asserts
 
 allow-newer:
+    cardano-ledger-core
+  , cardano-ledger-alonzo
+  , cardano-ledger-babbage
   , lens
 
 if impl(ghc >= 9.6)
@@ -122,15 +125,16 @@ source-repository-package
     libs/cardano-ledger-core
     eras/shelley-ma/test-suite
 
--- TODO: remove once the cardano-ledger s-r-p is removed.
-allow-newer:
-    cardano-ledger-core
-  , cardano-ledger-alonzo
-  , cardano-ledger-babbage
-
+source-repository-package
   type: git
-  location: /home/javier/code/cardano/anti-diffs
+  location: https://github.com/input-output-hk/anti-diffs
   tag: 8185e884f2a93b997579a1404183e2d4931f7098
   --sha256: 14qqiqzf9nhqlalyb9xmzk1p1j768614zrca9y4z3qkncf2ybp5y
   subdir:
     diff-containers
+
+source-repository-package
+  type: git
+  location: https://github.com/jasagredo/quickcheck-lockstep
+  tag: 883f2e54a495b6cca1c30cfafdcc70dc70ed6d0c
+  --sha256: 1309cs7p2zggq9klhd72c76xyinvi8vf2n8jxpbmibx2qbl9xr0d
