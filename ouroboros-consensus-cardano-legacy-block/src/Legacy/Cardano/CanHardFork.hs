@@ -39,6 +39,7 @@ import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import           Data.SOP.Strict (hpure, unComp, (:.:) (..))
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
+import           Data.Void (absurd)
 import           Legacy.Byron.Ledger ()
 import           Legacy.Cardano.Block
 import           Legacy.LegacyBlock
@@ -86,6 +87,14 @@ instance LegacyCardanoHardForkConstraints c => CanHardFork (LegacyCardanoEras c)
         $ PCons translateLedgerStateMaryToAlonzoWrapper
         $ PCons translateLedgerStateAlonzoToBabbageWrapper
         $ PCons translateLedgerStateBabbageToConwayWrapper
+        $ PNil
+    , translateLedgerTables  =
+          PCons translateLegacyLedgerTables
+        $ PCons translateLegacyLedgerTables
+        $ PCons translateLegacyLedgerTables
+        $ PCons translateLegacyLedgerTables
+        $ PCons translateLegacyLedgerTables
+        $ PCons translateLegacyLedgerTables
         $ PNil
     , translateChainDepState =
           PCons translateChainDepStateByronToShelleyWrapper
@@ -212,7 +221,6 @@ translateLedgerStateByronToShelleyWrapper =
               ShelleyTransitionInfo{shelleyAfterVoting = 0}
           , shelleyLedgerTables = emptyLedgerTables
           }
-     , translateLedgerTablesWith = const emptyLedgerTables
       }
 
 translateChainDepStateByronToShelleyWrapper ::
@@ -357,8 +365,6 @@ translateLedgerStateShelleyToAllegraWrapper =
                                  $ stowedState
 
               in resultingState `withLedgerTables` emptyLedgerTables
-
-        , translateLedgerTablesWith = const emptyLedgerTables
         }
 
 translateTxShelleyToAllegraWrapper ::
@@ -415,7 +421,6 @@ translateLedgerStateAllegraToMaryWrapper =
               . Comp
               . Flip
               . getLegacyLedgerState
-        , translateLedgerTablesWith = const emptyLedgerTables
         }
 
 translateTxAllegraToMaryWrapper ::
@@ -472,7 +477,6 @@ translateLedgerStateMaryToAlonzoWrapper =
               . Comp
               . Flip
               . getLegacyLedgerState
-        , translateLedgerTablesWith = const emptyLedgerTables
         }
 
 getAlonzoTranslationContext ::
@@ -539,7 +543,6 @@ translateLedgerStateAlonzoToBabbageWrapper =
               . Flip
               . transPraosLS
               . getLegacyLedgerState
-        , translateLedgerTablesWith = const emptyLedgerTables
         }
   where
     transPraosLS ::
@@ -626,7 +629,6 @@ translateLedgerStateBabbageToConwayWrapper =
               . Comp
               . Flip
               . getLegacyLedgerState
-        , translateLedgerTablesWith = const emptyLedgerTables
         }
 
 getConwayTranslationContext ::
@@ -744,3 +746,16 @@ translateLedgerViewAcrossShelley' =
     RequireBoth $ \(WrapLedgerConfig cfgFrom)
                    (WrapLedgerConfig cfgTo) ->
       CrossEraForecaster $ forecastAcrossShelley' cfgFrom cfgTo
+
+{-------------------------------------------------------------------------------
+  Translate ledger tables across any era
+-------------------------------------------------------------------------------}
+
+translateLegacyLedgerTables ::
+     TranslateLedgerTables
+       (LegacyBlock x)
+       (LegacyBlock y)
+translateLegacyLedgerTables = TranslateLedgerTables {
+      translateTxInWith  = absurd
+    , translateTxOutWith = absurd
+    }

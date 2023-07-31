@@ -342,6 +342,9 @@ instance ( ShelleyBasedEra era
          , SL.TranslateEra era TxOutWrapper
          , SL.TranslationError era SL.NewEpochState ~ Void
          , SL.TranslationError era TxOutWrapper ~ Void
+         , SL.TranslationContext era ~ SL.TranslationContextF era SL.NewEpochState
+         , SL.TranslationContextF era SL.NewEpochState ~ SL.TranslationContextF era WrapTx
+         , SL.TranslationContextF era TxOutWrapper ~ ()
          , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
          , CanMapMK mk
          ) => SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto) where
@@ -352,26 +355,27 @@ instance ( ShelleyBasedEra era
           shelleyLedgerTip        = tip'
         , shelleyLedgerState      = state'
         , shelleyLedgerTransition = ShelleyTransitionInfo 0
-        , shelleyLedgerTables     = translateShelleyTables ctxt tables
+        , shelleyLedgerTables     = translateShelleyTables tables
         }
 
 translateShelleyTables ::
      ( SL.TranslateEra     era TxOutWrapper
      , SL.TranslationError era TxOutWrapper ~ Void
+     , SL.TranslationContextF era TxOutWrapper ~ ()
      , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
      , CanMapMK mk
      )
-  => SL.TranslationContext era
-  -> LedgerTables (LedgerState (ShelleyBlock proto (SL.PreviousEra era))) mk
+  => LedgerTables (LedgerState (ShelleyBlock proto (SL.PreviousEra era))) mk
   -> LedgerTables (LedgerState (ShelleyBlock proto                 era))  mk
-translateShelleyTables ctxt (LedgerTables utxoTable) =
+translateShelleyTables (LedgerTables utxoTable) =
       LedgerTables
     $ mapMK
-        (unTxOutWrapper . SL.translateEra' ctxt . TxOutWrapper)
+        (unTxOutWrapper . SL.translateEra' () . TxOutWrapper)
         utxoTable
 
 instance ( ShelleyBasedEra era
          , SL.TranslateEra era WrapTx
+         , SL.TranslationContext era ~ SL.TranslationContextF era WrapTx
          ) => SL.TranslateEra era (GenTx :.: ShelleyBlock proto) where
   type TranslationError era (GenTx :.: ShelleyBlock proto) = SL.TranslationError era WrapTx
   translateEra ctxt (Comp (ShelleyTx _txId tx)) =
@@ -380,6 +384,7 @@ instance ( ShelleyBasedEra era
 
 instance ( ShelleyBasedEra era
          , SL.TranslateEra era WrapTx
+         , SL.TranslationContext era ~ SL.TranslationContextF era WrapTx
          ) => SL.TranslateEra era (WrapValidatedGenTx :.: ShelleyBlock proto) where
   type TranslationError era (WrapValidatedGenTx :.: ShelleyBlock proto) = SL.TranslationError era WrapTx
   translateEra ctxt (Comp (WrapValidatedGenTx (ShelleyValidatedTx _txId vtx))) =
