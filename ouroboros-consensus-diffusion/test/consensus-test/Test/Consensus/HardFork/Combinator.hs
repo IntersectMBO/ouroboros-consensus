@@ -385,6 +385,7 @@ type TestBlock = HardForkBlock '[BlockA, BlockB]
 instance CanHardFork '[BlockA, BlockB] where
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons ledgerState_AtoB   PNil
+      , translateLedgerTables  = PCons ledgerTables_AtoB  PNil
       , translateChainDepState = PCons chainDepState_AtoB PNil
       , crossEraForecast       = PCons forecast_AtoB      PNil
       }
@@ -435,7 +436,12 @@ ledgerState_AtoB =
             LgrB {
               lgrB_tip = castPoint lgrA_tip
             }
-      , translateLedgerTablesWith = castLedgerTables
+    }
+
+ledgerTables_AtoB :: TranslateLedgerTables BlockA BlockB
+ledgerTables_AtoB =  TranslateLedgerTables {
+      translateTxInWith  = id
+    , translateTxOutWith = id
     }
 
 chainDepState_AtoB ::

@@ -212,10 +212,11 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
       HardForkState
     . unI
     . Telescope.extend
-        ( InPairs.hcmap proxySingle (\f -> Require $ \(K t)
+        ( InPairs.hczipWith proxySingle (\f f' -> Require $ \(K t)
                                         -> Extend  $ \cur
-                                        -> I $ howExtend f t cur)
-        $ translate
+                                        -> I $ howExtend f f' t cur)
+            translateLS
+            translateLT
         )
         (hczipWith
            proxySingle
@@ -258,11 +259,12 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
         return endBound
 
     howExtend :: (HasLedgerTables (LedgerState blk), HasLedgerTables (LedgerState blk'))
-              => TranslateLedgerState blk blk'
+              => TranslateLedgerState  blk blk'
+              -> TranslateLedgerTables blk blk'
               -> History.Bound
               -> Current (Flip LedgerState DiffMK) blk
               -> (K Past blk, Current (Flip LedgerState DiffMK) blk')
-    howExtend f currentEnd cur = (
+    howExtend f f' currentEnd cur = (
           K Past {
               pastStart    = currentStart cur
             , pastEnd      = currentEnd
@@ -277,7 +279,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                   -- will just be a no-op. See the haddock for
                   -- 'translateLedgerTablesWith' and 'extendToSlot' for more
                   -- information.
-                . prependDiffs ( translateLedgerTablesWith f
+                . prependDiffs ( translateLedgerTablesWith f'
                                . projectLedgerTables
                                . unFlip
                                . currentState
@@ -291,6 +293,9 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
             }
         )
 
-    translate :: InPairs TranslateLedgerState xs
-    translate = InPairs.requiringBoth cfgs $
+    translateLS :: InPairs TranslateLedgerState xs
+    translateLS = InPairs.requiringBoth cfgs $
                   translateLedgerState hardForkEraTranslation
+
+    translateLT :: InPairs TranslateLedgerTables xs
+    translateLT = translateLedgerTables hardForkEraTranslation
