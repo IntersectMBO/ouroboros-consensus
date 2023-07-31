@@ -1,10 +1,18 @@
-{-# LANGUAGE DataKinds         #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeApplications  #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC) where
 
+import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Data.Map.Strict as Map
+import           Data.SOP.Index (Index (..))
+import           Data.SOP.Strict
+import           Data.Void (Void, absurd)
+import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node ()
@@ -73,3 +81,19 @@ instance SerialiseHFC '[ByronBlock] where
         reconstructNestedCtxt (Proxy @(Header ByronBlock)) prefix blockSize
   getHfcBinaryBlockInfo (DegenBlock b) =
       getBinaryBlockInfo b
+
+-- | TODO: make a general instance for the unary HF block?
+instance HasCanonicalTxIn '[ByronBlock] where
+  newtype instance CanonicalTxIn '[ByronBlock] = ByronHFCTxIn {
+      getByronHFCTxIn :: Void
+    }
+    deriving stock (Show, Eq, Ord)
+    deriving newtype (NoThunks, FromCBOR, ToCBOR)
+
+  injectCanonicalTxIn IZ key   = absurd key
+  injectCanonicalTxIn (IS _) _ = error "impossible!" -- TODO: impossible case
+
+  distribCanonicalTxIn _ key = absurd $ getByronHFCTxIn key
+
+  serializeCanonicalTxIn   = toCBOR
+  deserializeCanonicalTxIn = fromCBOR

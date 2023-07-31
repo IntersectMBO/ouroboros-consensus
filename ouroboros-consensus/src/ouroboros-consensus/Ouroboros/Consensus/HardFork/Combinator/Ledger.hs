@@ -8,10 +8,13 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs               #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE StandaloneKindSignatures   #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
@@ -32,12 +35,19 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   , mkHardForkForecast
     -- * Ledger tables
   , HardForkHasLedgerTables
+  , HasCanonicalTxIn (..)
+  , distribLedgerTables
+  , injectLedgerTables
   ) where
 
+import qualified Codec.CBOR.Decoding as CBOR
+import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Monad (guard)
 import           Control.Monad.Except (throwError, withExcept)
 import           Data.Functor ((<&>))
 import           Data.Functor.Product
+import           Data.Kind (Type)
+import           Data.Monoid (First (..))
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -51,6 +61,7 @@ import           Data.SOP.Strict hiding (shape, tl)
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           Data.Void
+import           Data.Word (Word8)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
@@ -193,7 +204,7 @@ tickOne ei slot sopIdx partialCfg st =
 
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
-         , LedgerTablesCanHardFork xs
+         , HasCanonicalTxIn xs
          )
       => ApplyBlock (LedgerState (HardForkBlock xs)) (HardForkBlock xs) where
 
@@ -239,14 +250,14 @@ instance ( CanHardFork xs
 
   getBlockKeySets (HardForkBlock (OneEraBlock ns)) =
         hcollapse
-      $ hczipWith proxySingle f hardForkInjectLedgerTables ns
+      $ hcimap proxySingle f ns
     where
       f ::
            SingleEraBlock                                           x
-        => InjectLedgerTables xs                                    x
+        => Index                                       xs           x
         -> I                                                        x
         -> K (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) x
-      f inj (I blk) = K $ applyInjectLedgerTables inj $ getBlockKeySets blk
+      f idx (I blk) = K $ injectLedgerTables idx $ getBlockKeySets blk
 
 apply :: SingleEraBlock blk
       => Index xs                                           blk
@@ -281,9 +292,8 @@ reapply index (WrapLedgerConfig cfg) (Pair (I block) (FlipTickedLedgerState st))
 
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
-         , LedgerTablesCanHardFork xs
-         )
-      => UpdateLedger (HardForkBlock xs)
+         , HasCanonicalTxIn xs
+         ) => UpdateLedger (HardForkBlock xs)
 
 {-------------------------------------------------------------------------------
   HasHardForkHistory
@@ -354,9 +364,8 @@ instance CanHardFork xs => ValidateEnvelope (HardForkBlock xs) where
 
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
-         , LedgerTablesCanHardFork xs
-         )
-      => LedgerSupportsProtocol (HardForkBlock xs) where
+         , HasCanonicalTxIn xs
+         ) => LedgerSupportsProtocol (HardForkBlock xs) where
   protocolLedgerView HardForkLedgerConfig{..}
                      (TickedHardForkLedgerState transition ticked) =
       TickedHardForkLedgerView {
@@ -805,47 +814,117 @@ injectLedgerEvent index =
     . WrapLedgerEvent
 
 {-------------------------------------------------------------------------------
-  Ledger Tables for the unary HardForkBlock
-
-  In particular this is needed because we will instantiate the Shelley unary
-  HF Block, which will require to be able to serialize ledger tables in order to
-  comply with the required classes, therefore bringing in all these instances.
-
-  Instead of defining this on Shelley, it sounds reasonable to define it here
-  for the unary HF block.
--------------------------------------------------------------------------------}
-
-type instance Key   (LedgerState (HardForkBlock '[blk])) = Key   (LedgerState blk)
-type instance Value (LedgerState (HardForkBlock '[blk])) = Value (LedgerState blk)
-
-instance CanSerializeLedgerTables (LedgerState blk)
-      => CanSerializeLedgerTables (LedgerState (HardForkBlock '[blk])) where
-  codecLedgerTables = castLedgerTables $ codecLedgerTables @(LedgerState blk)
-
-instance LedgerTablesCanHardFork '[blk] where
-  hardForkInjectLedgerTables =
-       (InjectLedgerTables { applyInjectLedgerTables = castLedgerTables
-                           , applyDistribLedgerTables = castLedgerTables
-                           })
-    :* Nil
-
-{-------------------------------------------------------------------------------
   Ledger Tables for the Nary HardForkBlock
 -------------------------------------------------------------------------------}
 
+-- | Defaults to a 'CannonicalTxIn' type, but this will probably change in the
+-- future to @NS 'WrapTxIn' xs@. See 'HasCanonicalTxIn'.
+type instance Key   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
+type instance Value (LedgerState (HardForkBlock xs)) = NS WrapTxOut xs
+
+-- | Canonical TxIn
+--
+-- The Ledger and Consensus team discussed the fact that we need to be able to
+-- reach the TxIn key for an entry from any era, regardless of the era in which
+-- it was created, therefore we need to have a "canonical" serialization that
+-- doesn't change between eras. For now we are requiring that a 'HardForkBlock'
+-- has only one associated 'TxIn' type as a stop-gap, but Ledger will provide a
+-- serialization function into something more efficient.
+--
+-- TODO: More data added to Tx can be added to TxOut
+--
+-- TODO: move to separate module
+type HasCanonicalTxIn :: [Type] -> Constraint
+class ( Show (CanonicalTxIn xs)
+      , Ord (CanonicalTxIn xs)
+      , NoThunks (CanonicalTxIn xs)
+      ) => HasCanonicalTxIn xs where
+  data family CanonicalTxIn xs
+
+  injectCanonicalTxIn ::
+       Index xs x
+    -> Key (LedgerState x)
+    -> CanonicalTxIn xs
+
+  -- TODO: should it be called @projectCanonicalTxIn@?
+  distribCanonicalTxIn ::
+       Index xs x
+    -> CanonicalTxIn xs
+    -> Key (LedgerState x)
+
+  -- TODO: rename to @encodeCanonicalTxIn@
+  serializeCanonicalTxIn :: CanonicalTxIn xs -> CBOR.Encoding
+
+  -- TODO: rename to @decodeCanonicalTxIn@
+  deserializeCanonicalTxIn :: forall s. CBOR.Decoder s (CanonicalTxIn xs)
+
+type HardForkHasLedgerTables :: [Type] -> Constraint
 type HardForkHasLedgerTables xs = (
-    Ord (Key (LedgerState (HardForkBlock xs)))
-  , Show (Key (LedgerState (HardForkBlock xs)))
-  , Show (Value (LedgerState (HardForkBlock xs)))
-  , Eq (Value (LedgerState (HardForkBlock xs)))
-  , NoThunks (Key (LedgerState (HardForkBlock xs)))
-  , NoThunks (Value (LedgerState (HardForkBlock xs)))
-  , All (Compose HasLedgerTables LedgerState) xs
+    All (Compose HasLedgerTables LedgerState) xs
   , All (Compose HasTickedLedgerTables LedgerState) xs
+  , All (Compose Eq WrapTxOut) xs
+  , All (Compose Show WrapTxOut) xs
+  , All (Compose NoThunks WrapTxOut) xs
   )
 
+instance ( All (Compose CanSerializeLedgerTables LedgerState) xs
+         , HasCanonicalTxIn xs
+         ) => CanSerializeLedgerTables (LedgerState (HardForkBlock xs)) where
+    -- The Ledger and Consensus team discussed the fact that we need to be able
+    -- to reach the TxIn key for an entry from any era, regardless of the era in
+    -- which it was created, therefore we need to have a "canonical"
+    -- serialization that doesn't change between eras. For now we are using
+    -- @'toEraCBOR' \@('ShelleyEra' c)@ as a stop-gap, but Ledger will provide a
+    -- serialization function into something more efficient.
+    codecLedgerTables = LedgerTables $
+        CodecMK
+          serializeCanonicalTxIn
+          encodeTxOut
+          deserializeCanonicalTxIn
+          decodeTxOut
+      where
+        encodeTxOut :: NS WrapTxOut xs -> CBOR.Encoding
+        encodeTxOut =
+              hcollapse
+            . hcimap (Proxy @(Compose CanSerializeLedgerTables LedgerState)) each
+          where
+            each ::
+                 forall x. CanSerializeLedgerTables (LedgerState x)
+              => Index xs x
+              -> WrapTxOut x
+              -> K CBOR.Encoding x
+            each idx (WrapTxOut txout) = K $
+                   CBOR.encodeListLen 2
+                <> CBOR.encodeWord8 (toWord8 idx)
+                <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x)) txout
+
+        decodeTxOut :: forall s. CBOR.Decoder s (NS WrapTxOut xs)
+        decodeTxOut = do
+            CBOR.decodeListLenOf 2
+            tag <- CBOR.decodeWord8
+            case getFirst $ aDecoder tag of
+              Nothing -> error $ "decodeTxOut for HardForkBlock, unknown tag: " <> show tag
+              Just x  -> x
+          where
+            each ::
+                 forall x. CanSerializeLedgerTables (LedgerState x)
+              => Index xs x
+              -> forall s'. K (Word8 -> First (CBOR.Decoder s' (NS WrapTxOut xs))) x
+            each idx = K $ \w -> First $
+                if w /= toWord8 idx then Nothing else
+                Just
+                  $ injectNS idx . WrapTxOut <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x))
+
+            aDecoder = mconcat
+                    $ hcollapse
+                    $ hcmap
+                        (Proxy @(Compose CanSerializeLedgerTables LedgerState))
+                        each
+                        (indices @xs)
+
 instance ( HardForkHasLedgerTables xs
-         , LedgerTablesCanHardFork xs
+         , CanHardFork xs
+         , HasCanonicalTxIn xs
          ) => HasLedgerTables (LedgerState (HardForkBlock xs)) where
   projectLedgerTables ::
        forall mk. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
@@ -861,7 +940,7 @@ instance ( HardForkHasLedgerTables xs
         -> K (LedgerTables (LedgerState (HardForkBlock xs)) mk) x
       projectOne i l =
           K
-        $ applyInjectLedgerTables (projectNP i hardForkInjectLedgerTables)
+        $ injectLedgerTables i
         $ projectLedgerTables
         $ unFlip l
 
@@ -881,12 +960,11 @@ instance ( HardForkHasLedgerTables xs
       withLedgerTablesOne i l =
           Flip
         $ withLedgerTables (unFlip l)
-        $ applyDistribLedgerTables
-            (projectNP i hardForkInjectLedgerTables)
-            tables
+        $ distribLedgerTables i tables
 
 instance ( HardForkHasLedgerTables xs
-         , LedgerTablesCanHardFork xs
+         , CanHardFork xs
+         , HasCanonicalTxIn xs
          ) => HasLedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) where
   projectLedgerTables ::
        forall mk. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
@@ -906,7 +984,7 @@ instance ( HardForkHasLedgerTables xs
       projectOne i l =
           K
         $ castLedgerTables
-        $ applyInjectLedgerTables (projectNP i hardForkInjectLedgerTables)
+        $ injectLedgerTables i
         $ castLedgerTables
         $ projectLedgerTables
         $ getFlipTickedLedgerState l
@@ -933,9 +1011,7 @@ instance ( HardForkHasLedgerTables xs
           FlipTickedLedgerState
         $ withLedgerTables (getFlipTickedLedgerState l)
         $ castLedgerTables
-        $ applyDistribLedgerTables
-            (projectNP i hardForkInjectLedgerTables)
-            (castLedgerTables tables)
+        $ distribLedgerTables i (castLedgerTables tables)
 
 instance ( Key (LedgerState (HardForkBlock xs)) ~ Void
          , Value (LedgerState (HardForkBlock xs)) ~ Void
@@ -969,3 +1045,78 @@ instance All (Compose CanStowLedgerTables LedgerState) xs
         => Flip LedgerState EmptyMK x
         -> Flip LedgerState ValuesMK x
       unstowOne = Flip . unstowLedgerTables . unFlip
+
+injectLedgerTables ::
+     forall xs x mk. (
+          CanMapKeysMK mk
+        , CanMapMK mk
+        , HasCanonicalTxIn xs
+        )
+  => Index xs x
+  -> LedgerTables (LedgerState                x  ) mk
+  -> LedgerTables (LedgerState (HardForkBlock xs)) mk
+injectLedgerTables idx =
+    LedgerTables
+  . mapKeysMK injTxIn
+  . mapMK injTxOut
+  . getLedgerTables
+  where
+    injTxIn :: Key (LedgerState x) -> Key (LedgerState (HardForkBlock xs))
+    injTxIn  = injectCanonicalTxIn idx
+
+    injTxOut :: Value (LedgerState x) -> Value (LedgerState (HardForkBlock xs))
+    injTxOut = injectNS idx . WrapTxOut
+
+distribLedgerTables ::
+     forall xs x mk. (
+          CanMapKeysMK mk
+        , CanMapMK mk
+        , Ord (Key (LedgerState x))
+        , HasCanonicalTxIn xs
+        , CanHardFork xs
+        )
+  => Index xs x
+  -> LedgerTables (LedgerState (HardForkBlock xs)) mk
+  -> LedgerTables (LedgerState                x  ) mk
+distribLedgerTables idx =
+    LedgerTables
+  . mapKeysMK distrTxIn
+  . mapMK distrTxOut
+  . getLedgerTables
+  where
+    distrTxIn :: Key (LedgerState (HardForkBlock xs)) -> Key (LedgerState x)
+    distrTxIn = distribCanonicalTxIn idx
+
+    distrTxOut :: Value (LedgerState (HardForkBlock xs)) -> Value (LedgerState x)
+    distrTxOut =
+        unwrapTxOut
+      . apFn (projectNP idx $ composeTxOutTranslations $ translateTxOut hardForkEraTranslation)
+      . K
+
+composeTxOutTranslations ::
+     SListI xs
+  => InPairs TranslateTxOut xs
+  -> NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
+composeTxOutTranslations = \case
+    PNil ->
+      fn (unZ . unK) :* Nil
+    PCons (TranslateTxOut t) ts ->
+      fn ( eitherNS
+              id
+              (error "composeTranslations: anachrony")
+          . unK
+         )
+      :* hmap
+          (\innerf -> fn $
+              apFn innerf
+            . K
+            . eitherNS
+                (Z . WrapTxOut . t . unwrapTxOut)
+                id
+            . unK)
+          (composeTxOutTranslations ts)
+  where
+    eitherNS :: (f x -> c) -> (NS f xs -> c) -> NS f (x ': xs) -> c
+    eitherNS l r = \case
+      Z x -> l x
+      S x -> r x

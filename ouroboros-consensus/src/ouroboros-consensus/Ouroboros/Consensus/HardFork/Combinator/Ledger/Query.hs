@@ -48,7 +48,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
 import           Data.SOP.Functors (Flip (..))
-import           Data.SOP.Index (Index, hcimap, projectNP)
+import           Data.SOP.Index (Index (..), hcimap)
 import           Data.SOP.Match (Mismatch (..), matchNS, mustMatchNS)
 import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as T (Telescope (TS, TZ), tip)
@@ -62,7 +62,9 @@ import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger ()
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger
+                     (HardForkHasLedgerTables, HasCanonicalTxIn,
+                     injectLedgerTables)
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.State (Current (..),
                      HardForkState (..), Past (..), Situated (..))
@@ -117,9 +119,9 @@ data instance BlockQuery (HardForkBlock xs) :: Type -> Type where
     => QueryHardFork (x ': xs) result
     -> BlockQuery (HardForkBlock (x ': xs)) result
 
-instance ( HasLedgerTables (LedgerState (HardForkBlock xs))
-         , All SingleEraBlock xs
-         , LedgerTablesCanHardFork xs
+instance ( All SingleEraBlock xs
+         , HardForkHasLedgerTables xs
+         , HasCanonicalTxIn xs
          )
       => QueryLedger (HardForkBlock xs) where
   answerBlockQuery (ExtLedgerCfg cfg) query dlv =
@@ -161,72 +163,74 @@ distribDiskLedgerView ::
      forall xs m.
      ( Monad m
      , All SingleEraBlock xs
-     , LedgerTablesCanHardFork xs
+     , HasCanonicalTxIn xs
      )
   => DiskLedgerView m (ExtLedgerState (HardForkBlock xs))
   -> NS (DiskLedgerView m :.: ExtLedgerState) xs
 distribDiskLedgerView dlv =
-   hcimap (Proxy @Top) f $
+   hcimap (Proxy @SingleEraBlock) f $
      mustMatchNS
      "HeaderState"
      (distribHeaderState headerState)
      (State.tip (hardForkLedgerStatePerEra ledgerState))
- where
-   DiskLedgerView {
-        dlvCurrent   = ExtLedgerState ledgerState headerState
-      , dlvRead      = query
-      , dlvRangeRead = rangeQuery
-      , dlvClose
-      , dlvQueryBatchSize
-      } = dlv
-
-   f :: Index xs x
-     -> Product HeaderState (Flip LedgerState EmptyMK) x
-     -> (DiskLedgerView m :.: ExtLedgerState) x
-   f idx (Pair hst lst) = Comp $ DiskLedgerView {
-          dlvCurrent   = ExtLedgerState (unFlip lst) hst
-        , dlvRead      = query' idx
-        , dlvRangeRead = rangeQuery' idx
+  where
+    DiskLedgerView {
+          dlvCurrent   = ExtLedgerState ledgerState headerState
+        , dlvRead      = query
+        , dlvRangeRead = rangeQuery
         , dlvClose
         , dlvQueryBatchSize
-        }
+        } = dlv
 
-   query' :: forall x.
-        Index xs x
-     -> LedgerTables (ExtLedgerState x) KeysMK
-     -> m (LedgerTables (ExtLedgerState x) ValuesMK)
-   query' i = fmap (distribLedgerTables i) . query . injectLedgerTables i
+    f :: Index xs x
+      -> Product HeaderState (Flip LedgerState EmptyMK) x
+      -> (DiskLedgerView m :.: ExtLedgerState) x
+    f idx (Pair hst lst) = Comp $ DiskLedgerView {
+            dlvCurrent   = ExtLedgerState (unFlip lst) hst
+          , dlvRead      = query' idx
+          , dlvRangeRead = rangeQuery' idx
+          , dlvClose
+          , dlvQueryBatchSize
+          }
 
-   rangeQuery' :: forall x.
-        Index xs x
-     -> RangeQuery (LedgerTables (ExtLedgerState x) KeysMK)
-     -> m (LedgerTables (ExtLedgerState x) ValuesMK)
-   rangeQuery' i = fmap (distribLedgerTables i) . rangeQuery . injectRangeQuery i
+    query' ::
+         forall x.
+         Index xs x
+      -> LedgerTables (ExtLedgerState x) KeysMK
+      -> m (LedgerTables (ExtLedgerState x) ValuesMK)
+    query' i = fmap (distribLedgerTables i) . query . injectLedgerTables' i
 
-   injectLedgerTables :: forall x mk.
-        (CanMapMK mk, ZeroableMK mk)
-     => Index xs x
-     -> LedgerTables (ExtLedgerState x) mk
-     -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
-   injectLedgerTables i = castLedgerTables
-                        . applyInjectLedgerTables (projectNP i hardForkInjectLedgerTables)
-                        . castLedgerTables
+    rangeQuery' ::
+         forall x.
+         Index xs x
+      -> RangeQuery (LedgerTables (ExtLedgerState x) KeysMK)
+      -> m (LedgerTables (ExtLedgerState x) ValuesMK)
+    rangeQuery' i = fmap (distribLedgerTables i) . rangeQuery . injectRangeQuery i
 
-   injectRangeQuery :: forall x mk.
-        (CanMapMK mk, ZeroableMK mk)
-     => Index xs x
-     -> RangeQuery (LedgerTables (ExtLedgerState x) mk)
-     -> RangeQuery (LedgerTables (ExtLedgerState (HardForkBlock xs)) mk)
-   injectRangeQuery i (RangeQuery ks p) = RangeQuery (fmap (injectLedgerTables i) ks) p
+    injectLedgerTables' ::
+         forall x mk. (CanMapMK mk, CanMapKeysMK mk)
+      => Index xs x
+      -> LedgerTables (ExtLedgerState x) mk
+      -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
+    injectLedgerTables' i = castLedgerTables
+                          . injectLedgerTables i
+                          . castLedgerTables
 
-   distribLedgerTables :: forall x mk.
-        (CanMapMK mk, ZeroableMK mk)
-     => Index xs x
-     -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
-     -> LedgerTables (ExtLedgerState x) mk
-   distribLedgerTables i = castLedgerTables
-                         . applyDistribLedgerTables (projectNP i hardForkInjectLedgerTables)
-                         . castLedgerTables
+    injectRangeQuery ::
+         forall x mk. (CanMapMK mk, CanMapKeysMK mk)
+      => Index xs x
+      -> RangeQuery (LedgerTables (ExtLedgerState x) mk)
+      -> RangeQuery (LedgerTables (ExtLedgerState (HardForkBlock xs)) mk)
+    injectRangeQuery i (RangeQuery ks p) = RangeQuery (fmap (injectLedgerTables' i) ks) p
+
+    distribLedgerTables ::
+         forall x mk. (CanMapMK mk, CanMapKeysMK mk)
+      => Index xs x
+      -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
+      -> LedgerTables (ExtLedgerState x) mk
+    distribLedgerTables i = castLedgerTables
+                          . distribLedgerTables i
+                          . castLedgerTables
 
 -- | Precondition: the 'ledgerState' and 'headerState' should be from the same
 -- era. In practice, this is _always_ the case, unless the 'ExtLedgerState' was
@@ -350,26 +354,19 @@ interpretQueryIfCurrent = go
           MR (hardForkQueryInfo qry) (ledgerInfo $ dlvCurrent dlv)
 
 getQueryKeySetsIfCurrent ::
-     forall result xs. (All SingleEraBlock xs, LedgerTablesCanHardFork xs)
+     forall result xs. (All SingleEraBlock xs,  HasCanonicalTxIn xs)
   => QueryIfCurrent xs result
   -> LedgerTables (LedgerState (HardForkBlock xs)) KeysMK
-getQueryKeySetsIfCurrent = go hardForkInjectLedgerTables
-  where
-    go :: All SingleEraBlock xs' => NP (InjectLedgerTables xs) xs'
-       -> QueryIfCurrent xs' result
-       -> LedgerTables (LedgerState (HardForkBlock xs)) KeysMK
-    go (_ :* n) (QS query) = go n query
-    go (f :* _) (QZ query) = applyInjectLedgerTables f $ getQueryKeySets query
-    -- This case cannot happen because xs matches in both the query and the np
-    -- of injections, so there is no way we would reach the end of the np
-    -- without having matched before if we go unwrapping them at the same steps
-    go Nil _               = error "Mismatch in the number of eras!"
+getQueryKeySetsIfCurrent =
+      hcollapse
+    . hcimap (Proxy @SingleEraBlock) (\i -> K . injectLedgerTables i . unFlip . unComp)
+    . queryIfCurrent2NS (Comp . Flip . getQueryKeySets)
 
 -- TODO: #4399 This whole logic can use an audit
 tableTraversingQueryIfCurrent ::
-  forall result xs. (All SingleEraBlock xs) =>
-    QueryIfCurrent xs result
-    -> Maybe (TraversingQueryHandler (HardForkBlock xs) (Either (MismatchEraInfo xs) result))
+     forall result xs. (All SingleEraBlock xs)
+  => QueryIfCurrent xs result
+  -> Maybe (TraversingQueryHandler (HardForkBlock xs) (Either (MismatchEraInfo xs) result))
 tableTraversingQueryIfCurrent = go
   where
     go :: All SingleEraBlock xs'
