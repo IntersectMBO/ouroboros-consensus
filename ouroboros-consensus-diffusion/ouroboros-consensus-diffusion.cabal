@@ -212,6 +212,7 @@ test-suite consensus-test
     , base
     , binary
     , bytestring
+    , cardano-binary
     , cardano-slotting
     , containers
     , directory

@@ -95,8 +95,8 @@ type instance ApplyTxErr (HardForkBlock xs) = HardForkApplyTxErr xs
 
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
+         , HasCanonicalTxIn xs
          , NoThunks (Ticked1 (LedgerState (HardForkBlock xs)) TrackingMK)
-         , LedgerTablesCanHardFork xs
          ) => LedgerSupportsMempool (HardForkBlock xs) where
   applyTx   = applyHelper ModeApply
 
@@ -132,14 +132,14 @@ instance ( CanHardFork xs
 
   getTransactionKeySets (HardForkGenTx (OneEraGenTx ns)) =
         hcollapse
-      $ hczipWith proxySingle f hardForkInjectLedgerTables ns
+      $ hcimap proxySingle f ns
     where
       f ::
            SingleEraBlock                                           x
-        => InjectLedgerTables xs                                    x
+        => Index                                       xs           x
         -> GenTx                                                    x
         -> K (LedgerTables (LedgerState (HardForkBlock xs)) KeysMK) x
-      f inj tx = K $ applyInjectLedgerTables inj $ getTransactionKeySets tx
+      f idx tx = K $ injectLedgerTables idx $ getTransactionKeySets tx
 
 -- | A private type used only to clarify the parameterization of 'applyHelper'
 data ApplyHelperMode :: (Type -> Type) -> Type where

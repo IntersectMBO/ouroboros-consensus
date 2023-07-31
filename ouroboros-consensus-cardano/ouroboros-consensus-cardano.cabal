@@ -76,9 +76,9 @@ library
     Ouroboros.Consensus.Cardano.Block
     Ouroboros.Consensus.Cardano.ByronHFC
     Ouroboros.Consensus.Cardano.CanHardFork
+    Ouroboros.Consensus.Cardano.CanonicalTxIn
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Node
-    Ouroboros.Consensus.Cardano.Tables
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras
@@ -361,6 +361,7 @@ library unstable-cardano-testlib
 
   build-depends:
     , base
+    , byron-testlib
     , cardano-crypto-class
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
@@ -375,6 +376,7 @@ library unstable-cardano-testlib
     , containers
     , microlens
     , mtl
+    , nothunks
     , ouroboros-consensus-cardano
     , ouroboros-consensus-diffusion:{ouroboros-consensus-diffusion, unstable-diffusion-testlib}
     , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib}
