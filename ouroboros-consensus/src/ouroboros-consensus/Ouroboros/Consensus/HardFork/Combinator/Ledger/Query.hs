@@ -204,7 +204,7 @@ distribDiskLedgerView dlv =
    rangeQuery' i = fmap (distribLedgerTables i) . rangeQuery . injectRangeQuery i
 
    injectLedgerTables :: forall x mk.
-        (CanMapMK mk, CanEmptyMK mk)
+        (CanMapMK mk, ZeroableMK mk)
      => Index xs x
      -> LedgerTables (ExtLedgerState x) mk
      -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
@@ -213,14 +213,14 @@ distribDiskLedgerView dlv =
                         . castLedgerTables
 
    injectRangeQuery :: forall x mk.
-        (CanMapMK mk, CanEmptyMK mk)
+        (CanMapMK mk, ZeroableMK mk)
      => Index xs x
      -> RangeQuery (LedgerTables (ExtLedgerState x) mk)
      -> RangeQuery (LedgerTables (ExtLedgerState (HardForkBlock xs)) mk)
    injectRangeQuery i (RangeQuery ks p) = RangeQuery (fmap (injectLedgerTables i) ks) p
 
    distribLedgerTables :: forall x mk.
-        (CanMapMK mk, CanEmptyMK mk)
+        (CanMapMK mk, ZeroableMK mk)
      => Index xs x
      -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
      -> LedgerTables (ExtLedgerState x) mk

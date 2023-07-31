@@ -45,8 +45,8 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
-import           Ouroboros.Consensus.Ledger.Tables (CanEmptyMK, CanMapMK,
-                     EmptyMK, ValuesMK, castLedgerTables)
+import           Ouroboros.Consensus.Ledger.Tables (CanMapMK, EmptyMK, ValuesMK,
+                     ZeroableMK, castLedgerTables)
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
@@ -169,7 +169,7 @@ injectWrapLedgerTables _startBounds idx (WrapLedgerTables lt) =
     WrapLedgerTables $ castLedgerTables $ injectLedgerTables (castLedgerTables lt)
   where
     injectLedgerTables ::
-         (CanMapMK mk, CanEmptyMK mk)
+         (CanMapMK mk, ZeroableMK mk)
       => LedgerTables (LedgerState                  x) mk
       -> LedgerTables (LedgerState (HardForkBlock xs)) mk
     injectLedgerTables = applyInjectLedgerTables
