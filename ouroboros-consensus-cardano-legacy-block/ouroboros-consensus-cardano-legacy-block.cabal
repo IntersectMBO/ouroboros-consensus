@@ -2,10 +2,10 @@ cabal-version:   3.0
 name:            ouroboros-consensus-cardano-legacy-block
 version:         0.1.0.0
 synopsis:
-  Legacy blocks for the instantation of the Ouroboros consensus layer used by Cardano
+  Wrapper for the instantation of the Ouroboros consensus layer used by Cardano
 
 description:
-  Legacy blocks for the instantation of the Ouroboros consensus layer used by Cardano.
+  Wrapper for the instantation of the Ouroboros consensus layer used by Cardano.
 
 license:         Apache-2.0
 license-files:
@@ -72,7 +72,7 @@ library
     , cardano-slotting
     , constraints
     , containers                    >=0.5   && <0.7
-    , mtl                           >=2.2   && <2.3
+    , mtl                           >=2.2   && <2.4
     , nothunks
     , ouroboros-consensus
     , ouroboros-consensus-cardano
