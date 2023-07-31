@@ -343,7 +343,7 @@ instance ( ShelleyBasedEra era
          , SL.TranslationError era SL.NewEpochState ~ Void
          , SL.TranslationError era TxOutWrapper ~ Void
          , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
-         , IsMapKind mk
+         , CanMapMK mk
          ) => SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto) where
   translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition tables))) = do
       tip'   <- mapM (SL.translateEra ctxt) tip
@@ -359,9 +359,7 @@ translateShelleyTables ::
      ( SL.TranslateEra     era TxOutWrapper
      , SL.TranslationError era TxOutWrapper ~ Void
      , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
-     , Eq (SL.TxOut (SL.PreviousEra era))
-     , Eq (SL.TxOut era)
-     , IsMapKind mk
+     , CanMapMK mk
      )
   => SL.TranslationContext era
   -> LedgerTables (LedgerState (ShelleyBlock proto (SL.PreviousEra era))) mk

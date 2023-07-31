@@ -146,9 +146,9 @@ data LMDBMK k v = LMDBMK String !(LMDB.Database k v)
 
 getDb ::
      LMDB.Internal.IsMode mode
-  => NameMK k v
+  => K2 String k v
   -> LMDB.Transaction mode (LMDBMK k v)
-getDb (NameMK name) = LMDBMK name <$> LMDB.getDatabase (Just name)
+getDb (K2 name) = LMDBMK name <$> LMDB.getDatabase (Just name)
 
 -- | @'rangeRead' n db codec ksMay@ performs a range read of @count@ values from
 -- database @db@, starting from some key depending on @ksMay@.
@@ -436,7 +436,7 @@ newLMDBBackingStoreInitialiser dbTracer limits sfs initFrom = do
      -- Here we get the LMDB.Databases for the tables of the ledger state
      -- Must be read-write transaction because tables may need to be created
      dbBackingTables <- liftIO $ LMDB.readWriteTransaction dbEnv $
-       lttraverse getDb (ltpure $ NameMK "utxo")
+       lttraverse getDb (ltpure $ K2 "utxo")
 
      dbNextId <- IOLike.newTVarIO 0
 

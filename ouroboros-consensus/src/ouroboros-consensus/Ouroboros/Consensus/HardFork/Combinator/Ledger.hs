@@ -846,7 +846,7 @@ instance ( HardForkHasLedgerTables xs
          , LedgerTablesCanHardFork xs
          ) => HasLedgerTables (LedgerState (HardForkBlock xs)) where
   projectLedgerTables ::
-       forall mk. IsMapKind mk
+       forall mk. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => LedgerState               (HardForkBlock xs)  mk
     -> LedgerTables (LedgerState (HardForkBlock xs)) mk
   projectLedgerTables (HardForkLedgerState st) = hcollapse $
@@ -864,7 +864,7 @@ instance ( HardForkHasLedgerTables xs
         $ unFlip l
 
   withLedgerTables ::
-       forall mk any. IsMapKind mk
+       forall mk any. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => LedgerState               (HardForkBlock xs)  any
     -> LedgerTables (LedgerState (HardForkBlock xs)) mk
     -> LedgerState               (HardForkBlock xs)  mk
@@ -887,7 +887,7 @@ instance ( HardForkHasLedgerTables xs
          , LedgerTablesCanHardFork xs
          ) => HasLedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) where
   projectLedgerTables ::
-       forall mk. IsMapKind mk
+       forall mk. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => Ticked1 (LedgerState (HardForkBlock xs)) mk
     -> LedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) mk
   projectLedgerTables st = hcollapse $
@@ -910,7 +910,7 @@ instance ( HardForkHasLedgerTables xs
         $ getFlipTickedLedgerState l
 
   withLedgerTables ::
-       forall mk any. IsMapKind mk
+       forall mk any. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => Ticked1 (LedgerState (HardForkBlock xs)) any
     -> LedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) mk
     -> Ticked1 (LedgerState (HardForkBlock xs)) mk

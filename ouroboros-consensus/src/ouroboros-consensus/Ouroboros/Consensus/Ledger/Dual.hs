@@ -441,9 +441,9 @@ data instance LedgerState (DualBlock m a) mk = DualLedgerState {
 
 instance Bridge m a => UpdateLedger (DualBlock m a)
 
-deriving instance ( Bridge m a, IsMapKind mk
+deriving instance ( Bridge m a, ShowMK mk
                   ) => Show (LedgerState (DualBlock m a) mk)
-deriving instance ( Bridge m a, IsMapKind mk
+deriving instance ( Bridge m a, EqMK mk
                   ) => Eq (LedgerState (DualBlock m a) mk)
 
 {-------------------------------------------------------------------------------

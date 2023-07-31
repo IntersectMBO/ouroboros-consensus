@@ -12,7 +12,11 @@ import           Test.QuickCheck
 -- | We compare the Ledger Tables of the result because the comparison with the
 -- rest of the LedgerState takes considerably more time to run.
 (==?) ::
-  ( IsMapKind mk
+  ( CanMapMK mk
+  , CanMapKeysMK mk
+  , ZeroableMK mk
+  , EqMK mk
+  , ShowMK mk
   , HasLedgerTables (LedgerState blk)
   )
   => LedgerState blk mk
