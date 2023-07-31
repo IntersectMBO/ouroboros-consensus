@@ -81,11 +81,11 @@ newtype instance LedgerState (HardForkBlock xs) mk = HardForkLedgerState {
       hardForkLedgerStatePerEra :: HardForkState (Flip LedgerState mk) xs
     }
 
-deriving stock   instance (IsMapKind mk, CanHardFork xs)
+deriving stock   instance (ShowMK mk,     CanHardFork xs)
               => Show     (LedgerState (HardForkBlock xs) mk)
-deriving stock   instance (IsMapKind mk, CanHardFork xs)
+deriving stock   instance (EqMK mk,       CanHardFork xs)
               => Eq       (LedgerState (HardForkBlock xs) mk)
-deriving newtype instance (IsMapKind mk, CanHardFork xs)
+deriving newtype instance (NoThunksMK mk, CanHardFork xs)
               => NoThunks (LedgerState (HardForkBlock xs) mk)
 
 -- | How to inject each era's ledger tables into their shared ledger tables
@@ -93,11 +93,11 @@ class LedgerTablesCanHardFork xs where
   hardForkInjectLedgerTables :: NP (InjectLedgerTables xs) xs
 
 data InjectLedgerTables xs x = InjectLedgerTables {
-      applyInjectLedgerTables :: forall mk. IsMapKind mk =>
+      applyInjectLedgerTables :: forall mk. (CanMapMK mk, CanEmptyMK mk) =>
            LedgerTables (LedgerState                  x) mk
         -> LedgerTables (LedgerState (HardForkBlock xs)) mk
 
-      , applyDistribLedgerTables :: forall mk. IsMapKind mk =>
+      , applyDistribLedgerTables :: forall mk. (CanMapMK mk, CanEmptyMK mk) =>
            LedgerTables (LedgerState (HardForkBlock xs)) mk
         -> LedgerTables (LedgerState                  x) mk
     }

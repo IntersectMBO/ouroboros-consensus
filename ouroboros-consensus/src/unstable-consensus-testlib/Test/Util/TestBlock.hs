@@ -326,9 +326,9 @@ class ( Typeable ptype
       , Eq       ptype
       , NoThunks ptype
 
-      , forall mk. IsMapKind mk => Eq (PayloadDependentState ptype mk)
-      , forall mk. IsMapKind mk => NoThunks  (PayloadDependentState ptype mk)
-      , forall mk. IsMapKind mk => Show (PayloadDependentState ptype mk)
+      , forall mk. EqMK mk       => Eq (PayloadDependentState ptype mk)
+      , forall mk. NoThunksMK mk => NoThunks  (PayloadDependentState ptype mk)
+      , forall mk. ShowMK mk     => Show (PayloadDependentState ptype mk)
 
       , forall mk. Generic   (PayloadDependentState ptype mk)
       ,            Serialise (PayloadDependentState ptype EmptyMK)
@@ -512,17 +512,17 @@ data instance LedgerState (TestBlockWith ptype) mk =
       , payloadDependentState :: PayloadDependentState ptype mk
       }
 
-deriving stock instance (IsMapKind mk, PayloadSemantics ptype)
+deriving stock instance (ShowMK mk, PayloadSemantics ptype)
   => Show (LedgerState (TestBlockWith ptype) mk)
 
-deriving stock instance (IsMapKind mk, Eq (PayloadDependentState ptype mk))
+deriving stock instance Eq (PayloadDependentState ptype mk)
   => Eq (LedgerState (TestBlockWith ptype) mk)
 
 deriving stock instance Generic (LedgerState (TestBlockWith ptype) mk)
 
 deriving anyclass instance PayloadSemantics ptype =>
   Serialise (LedgerState (TestBlockWith ptype) EmptyMK)
-deriving anyclass instance (IsMapKind mk, NoThunks (PayloadDependentState ptype mk)) =>
+deriving anyclass instance NoThunks (PayloadDependentState ptype mk) =>
   NoThunks  (LedgerState (TestBlockWith ptype) mk)
 
 testInitLedgerWithState ::
@@ -535,7 +535,7 @@ newtype instance Ticked1 (LedgerState (TestBlockWith ptype)) mk = TickedTestLedg
     }
 
 deriving stock instance Generic (Ticked1 (LedgerState (TestBlockWith ptype)) mk)
-deriving anyclass instance (IsMapKind mk, NoThunks (PayloadDependentState ptype mk))
+deriving anyclass instance (NoThunksMK mk, NoThunks (PayloadDependentState ptype mk))
                         => NoThunks  (Ticked1 (LedgerState (TestBlockWith ptype)) mk)
 
 testInitExtLedgerWithState ::
