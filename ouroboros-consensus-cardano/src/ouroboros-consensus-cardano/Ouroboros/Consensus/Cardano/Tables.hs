@@ -123,12 +123,12 @@ shelleyTxOutTranslations ::
 shelleyTxOutTranslations =
   hmap
     (\f -> fn $ \(K (ShelleyTxOut x)) -> f `apFn` K x)
-    (composeTxOutTranslationPairs translateTxOut)
+    (composeTxOutTranslationPairs translateTxOut')
  where
-  translateTxOut :: InPairs
+  translateTxOut' :: InPairs
                       TranslateTxOutWrapper
                       (ShelleyBasedEras c)
-  translateTxOut =
+  translateTxOut' =
       PCons (TranslateTxOutWrapper $ SL.translateEra' ())
     $ PCons (TranslateTxOutWrapper $ SL.translateEra' ())
     $ PCons (TranslateTxOutWrapper Alonzo.translateTxOut)
