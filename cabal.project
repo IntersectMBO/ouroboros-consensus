@@ -107,3 +107,23 @@ source-repository-package
   --sha256: 0yz853ga95sl5bg67r4y4g17m94vbaam4qvzg8d6l54jyfhc0w6p
   subdir:
     ouroboros-network-protocols
+
+-- TODO: translation of TxIns and TxOuts does not use the translation
+-- context that is required by the ledger's TranslateEra class. This
+-- s-r-p allows translation TxIns and TxOuts to be translated without
+-- a translation context.
+source-repository-package
+  type:git
+  location: https://github.com/input-output-hk/cardano-ledger
+  tag: 1a533832099dae9b5b4d997bc5e442e1955519c2
+  --sha256: 1rhsrf0ghfd5hrqka4d4viygjwidm1rk0742d4wpsgl9442n1v7f
+  subdir:
+    eras/shelley/impl
+    libs/cardano-ledger-core
+    eras/shelley-ma/test-suite
+
+-- TODO: remove once the cardano-ledger s-r-p is removed.
+allow-newer:
+    cardano-ledger-core
+  , cardano-ledger-alonzo
+  , cardano-ledger-babbage

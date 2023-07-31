@@ -16,10 +16,10 @@ import           Data.SOP.Strict hiding (shape, tl)
 import           Data.Void (Void)
 import           GHC.Stack (HasCallStack)
 import           Legacy.Cardano.Block
+import           Legacy.Cardano.CanHardFork (LegacyCardanoHardForkConstraints)
 import           Legacy.LegacyBlock
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Tables.Utils
@@ -28,7 +28,7 @@ import           Ouroboros.Consensus.Ledger.Tables.Utils
   Ticking
 -------------------------------------------------------------------------------}
 
-instance CanHardFork (LegacyCardanoEras c)
+instance LegacyCardanoHardForkConstraints c
       => IsLedger (LedgerState (LegacyCardanoBlock c)) where
   type LedgerErr (LedgerState (LegacyCardanoBlock c)) =
          LedgerErr (LedgerState (HardForkBlock (LegacyCardanoEras c)))
@@ -64,7 +64,7 @@ instance CanHardFork (LegacyCardanoEras c)
   ApplyBlock
 -------------------------------------------------------------------------------}
 
-instance CanHardFork (LegacyCardanoEras c)
+instance LegacyCardanoHardForkConstraints c
       => ApplyBlock (LedgerState (LegacyCardanoBlock c)) (LegacyCardanoBlock c) where
   applyBlockLedgerResult ::
        HasCallStack
