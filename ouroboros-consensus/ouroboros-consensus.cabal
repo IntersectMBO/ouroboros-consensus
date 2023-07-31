@@ -149,6 +149,7 @@ library
     Ouroboros.Consensus.Ledger.Tables.Combinators
     Ouroboros.Consensus.Ledger.Tables.Common
     Ouroboros.Consensus.Ledger.Tables.DiffSeq
+    Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
     Ouroboros.Consensus.Mempool
     Ouroboros.Consensus.Mempool.API

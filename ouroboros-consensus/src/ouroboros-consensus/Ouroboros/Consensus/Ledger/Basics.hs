@@ -108,9 +108,9 @@ type family LedgerCfg l :: Type
 
 type IsLedger :: LedgerStateKind -> Constraint
 class ( -- Requirements on the ledger state itself
-        forall mk. IsMapKind mk => Eq       (l mk)
-      , forall mk. IsMapKind mk => NoThunks (l mk)
-      , forall mk. IsMapKind mk => Show     (l mk)
+        forall mk. EqMK mk       => Eq       (l mk)
+      , forall mk. NoThunksMK mk => NoThunks (l mk)
+      , forall mk. ShowMK mk     => Show     (l mk)
         -- Requirements on 'LedgerCfg'
       , NoThunks (LedgerCfg l)
         -- Requirements on 'LedgerErr'

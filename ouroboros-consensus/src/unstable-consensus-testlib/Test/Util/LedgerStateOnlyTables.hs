@@ -21,10 +21,10 @@ module Test.Util.LedgerStateOnlyTables (
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
-import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
-                     CanStowLedgerTables (..), HasLedgerTables (..),
-                     IsMapKind (..), Key, LedgerTables (..), MapKind, Value,
-                     ValuesMK)
+import           Ouroboros.Consensus.Ledger.Tables (CanEmptyMK (..),
+                     CanSerializeLedgerTables, CanStowLedgerTables (..),
+                     HasLedgerTables (..), Key, LedgerTables (..), MapKind,
+                     Value, ValuesMK)
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 
 {-------------------------------------------------------------------------------

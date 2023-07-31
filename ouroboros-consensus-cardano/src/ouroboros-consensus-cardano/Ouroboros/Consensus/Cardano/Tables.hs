@@ -92,7 +92,7 @@ instance CardanoHardForkConstraints c
         }
 
       shelley ::
-           forall era proto. (EraCrypto era ~ c, Eq (Core.TxOut era))
+           forall era proto. EraCrypto era ~ c
         => Index (ShelleyBasedEras c) era
         -> InjectLedgerTables (CardanoEras c) (ShelleyBlock proto era)
       shelley idx = InjectLedgerTables {

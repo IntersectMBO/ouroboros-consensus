@@ -215,11 +215,11 @@ data instance LedgerState (ShelleyBlock proto era) mk = ShelleyLedgerState {
     }
   deriving (Generic)
 
-deriving instance (ShelleyBasedEra era, IsMapKind mk)
+deriving instance (ShelleyBasedEra era, EqMK mk)
                => Eq       (LedgerState (ShelleyBlock proto era) mk)
-deriving instance (ShelleyBasedEra era, IsMapKind mk)
+deriving instance (ShelleyBasedEra era, NoThunksMK mk)
                => NoThunks (LedgerState (ShelleyBlock proto era) mk)
-deriving instance (ShelleyBasedEra era, IsMapKind mk)
+deriving instance (ShelleyBasedEra era, ShowMK mk)
                => Show     (LedgerState (ShelleyBlock proto era) mk)
 
 -- | Information required to determine the hard fork point from Shelley to the
