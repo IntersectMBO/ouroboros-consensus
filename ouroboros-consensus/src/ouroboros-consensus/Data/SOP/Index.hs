@@ -33,6 +33,7 @@ module Data.SOP.Index (
   , npWithIndices
   , nsFromIndex
   , nsToIndex
+  , toWord8
   ) where
 
 import           Data.Coerce
@@ -193,3 +194,8 @@ nsFromIndex n = go 0 sList
       | i == n    = Just $ Z $ K ()
       | otherwise = S <$> go (i + 1) sList
     go !_ SNil    = Nothing
+
+toWord8 :: Index xs x -> Word8
+toWord8 = \case
+      IZ      -> 0
+      IS idx' -> 1 + toWord8 idx'

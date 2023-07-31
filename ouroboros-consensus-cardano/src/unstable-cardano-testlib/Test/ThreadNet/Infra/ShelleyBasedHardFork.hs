@@ -1,16 +1,17 @@
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE NamedFieldPuns       #-}
-{-# LANGUAGE PatternSynonyms      #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
-
+{-# LANGUAGE ConstraintKinds            #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE EmptyCase                  #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE PatternSynonyms            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE UndecidableInstances       #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Test infrastructure to test hard-forking from one Shelley-based era to
@@ -29,21 +30,18 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
   , LedgerTables (..)
   ) where
 
-import           Cardano.Binary (fromCBOR, toCBOR)
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
 import           Data.SOP.Functors (Flip (..))
-import           Data.SOP.Index
-import qualified Data.SOP.Index as SOP
+import           Data.SOP.Index (Index (..))
 import qualified Data.SOP.InPairs as InPairs
-import           Data.SOP.Strict (NP (..), NS (..), type (-.->), unComp,
-                     (:.:) (..))
-import qualified Data.SOP.Strict as SOP
+import           Data.SOP.Strict (NP (..), NS (..), unComp, (:.:) (..))
 import qualified Data.SOP.Tails as Tails
 import           Data.Void (Void)
+import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano.CanHardFork
                      (ShelleyPartialLedgerConfig (..), forecastAcrossShelley,
@@ -67,8 +65,6 @@ import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node
-import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
-import           Ouroboros.Consensus.Shelley.ShelleyHFC (ShelleyTxOut (..))
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
@@ -252,72 +248,6 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
 
 {-------------------------------------------------------------------------------
-  Ledger tables
--------------------------------------------------------------------------------}
-
-type LedgerStateShelley proto1 era1 proto2 era2 =
-     LedgerState (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
-
-
-type instance Key   (LedgerStateShelley proto1 era1 proto2 era2) = SL.TxIn (EraCrypto era1)
-type instance Value (LedgerStateShelley proto1 era1 proto2 era2) = ShelleyTxOut '[era1, era2]
-
-instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
-      => CanSerializeLedgerTables (LedgerStateShelley proto1 era1 proto2 era2) where
-    codecLedgerTables =
-      LedgerTables (CodecMK
-                     (Core.toEraCBOR @era1)
-                     toCBOR
-                     (Core.fromEraCBOR @era2)
-                     fromCBOR)
-
-instance
-     ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
-  => LedgerTablesCanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
-  hardForkInjectLedgerTables =
-         shelley SOP.IZ
-      :* shelley (SOP.IS SOP.IZ)
-      :* Nil
-    where
-      shelley ::
-           forall era proto. EraCrypto era ~ ProtoCrypto proto2
-        => SOP.Index '[ era1, era2 ] era
-        -> InjectLedgerTables
-             (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
-             (ShelleyBlock proto era)
-      shelley idx =
-          InjectLedgerTables
-          { applyInjectLedgerTables =
-                LedgerTables
-              . mapMK (ShelleyTxOut . SOP.injectNS idx . TxOutWrapper)
-              . getLedgerTables
-          , applyDistribLedgerTables =
-                LedgerTables
-              . mapMK ( unTxOutWrapper
-                      . SOP.apFn (projectNP idx translations)
-                      . SOP.K
-                      . unShelleyTxOut
-                      )
-              . getLedgerTables
-          }
-
-translations ::
-      NP
-        (SOP.K (NS TxOutWrapper '[era1, era2]) -.-> TxOutWrapper )
-        '[ era1, era2 ]
-translations =
-         SOP.fn (\case
-             SOP.K (Z txo) -> txo
-             _             -> e
-         )
-      :* SOP.fn (\case
-             SOP.K (Z _)     -> e
-             SOP.K (S (Z txo)) -> txo
-         )
-      :* Nil
-  where e = error "bad ShelleyBasedHardForkBlock txout translation"
-
-{-------------------------------------------------------------------------------
   Protocol info
 -------------------------------------------------------------------------------}
 
@@ -425,3 +355,28 @@ instance ( TxGen (ShelleyBlock proto1 era1)
   type TxGenExtra (ShelleyBasedHardForkBlock proto1 era1 proto2 era2) =
     NP WrapTxGenExtra (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
   testGenTxs = testGenTxsHfc
+
+{-------------------------------------------------------------------------------
+  TODO: temp
+-------------------------------------------------------------------------------}
+
+-- | TODO: make a general instance for the unary HF block?
+instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+      => HasCanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
+  newtype instance CanonicalTxIn (ShelleyBasedHardForkEras proto1 era1 proto2 era2) = ShelleyHFCTxIn {
+      getShelleyHFCTxIn :: SL.TxIn (EraCrypto era1)
+    }
+    deriving stock (Show, Eq, Ord)
+    deriving newtype NoThunks
+
+  injectCanonicalTxIn IZ             txIn = ShelleyHFCTxIn txIn
+  injectCanonicalTxIn (IS IZ)        txIn = ShelleyHFCTxIn txIn
+  injectCanonicalTxIn (IS (IS idx')) _    = case idx' of {}
+
+  distribCanonicalTxIn IZ            txIn  = getShelleyHFCTxIn txIn
+  distribCanonicalTxIn (IS IZ)        txIn = getShelleyHFCTxIn txIn
+  distribCanonicalTxIn (IS (IS idx')) _    = case idx' of {}
+
+  serializeCanonicalTxIn = Core.toEraCBOR @era1 . getShelleyHFCTxIn
+
+  deserializeCanonicalTxIn = ShelleyHFCTxIn <$> Core.fromEraCBOR @era1
