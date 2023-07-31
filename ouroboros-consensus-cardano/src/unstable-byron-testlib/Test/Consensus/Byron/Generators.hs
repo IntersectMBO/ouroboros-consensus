@@ -300,7 +300,7 @@ genByronLedgerState = do
         Left _  -> pure Origin
         Right _ -> At <$> arbitrary
 
-instance IsMapKind mk => Arbitrary (LedgerTables (LedgerState ByronBlock) mk) where
+instance CanEmptyMK mk => Arbitrary (LedgerTables (LedgerState ByronBlock) mk) where
   arbitrary = pure emptyLedgerTables
 
 genByronLedgerConfig :: Gen Byron.Config

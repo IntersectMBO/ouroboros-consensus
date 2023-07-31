@@ -274,9 +274,7 @@ instance
       :* Nil
     where
       shelley ::
-           forall era proto. ( EraCrypto era ~ ProtoCrypto proto2
-                             , Eq (Core.TxOut era)
-                             )
+           forall era proto. EraCrypto era ~ ProtoCrypto proto2
         => SOP.Index '[ era1, era2 ] era
         -> InjectLedgerTables
              (ShelleyBasedHardForkEras proto1 era1 proto2 era2)

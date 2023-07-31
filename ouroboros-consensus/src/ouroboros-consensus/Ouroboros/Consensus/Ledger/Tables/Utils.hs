@@ -57,10 +57,17 @@ import           Ouroboros.Consensus.Ledger.Tables
   Projection and injection
 -------------------------------------------------------------------------------}
 
-over :: (HasLedgerTables l, IsMapKind mk') => l mk -> LedgerTables l mk' -> l mk'
+over ::
+     (HasLedgerTables l, CanMapMK mk', CanMapKeysMK mk', CanEmptyMK mk')
+  => l mk
+  -> LedgerTables l mk'
+  -> l mk'
 over = withLedgerTables
 
-ltprj :: (HasLedgerTables l, Castable l l', IsMapKind mk) => l mk -> LedgerTables l' mk
+ltprj ::
+     (HasLedgerTables l, Castable l l', CanMapMK mk, CanMapKeysMK mk, CanEmptyMK mk)
+  => l mk
+  -> LedgerTables l' mk
 ltprj = castLedgerTables . projectLedgerTables
 
 {-------------------------------------------------------------------------------
@@ -79,7 +86,7 @@ forgetLedgerTables :: HasLedgerTables l => l mk -> l EmptyMK
 forgetLedgerTables l = withLedgerTables l emptyLedgerTables
 
 -- | Empty values for every table
-emptyLedgerTables :: (IsMapKind mk, LedgerTableConstraints l) => LedgerTables l mk
+emptyLedgerTables :: (CanEmptyMK mk, LedgerTableConstraints l) => LedgerTables l mk
 emptyLedgerTables = ltpure emptyMK
 
 --
