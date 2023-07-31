@@ -50,6 +50,7 @@ library
     Legacy.Cardano
     Legacy.Cardano.Block
     Legacy.Cardano.CanHardFork
+    Legacy.Cardano.CanonicalTxIn
     Legacy.Cardano.Ledger
     Legacy.Convert
     Legacy.LegacyBlock
@@ -58,6 +59,7 @@ library
   build-depends:
     , base                          >=4.14  && <4.17
     , bytestring
+    , cardano-binary
     , cardano-crypto-class
     , cardano-ledger-allegra
     , cardano-ledger-alonzo
