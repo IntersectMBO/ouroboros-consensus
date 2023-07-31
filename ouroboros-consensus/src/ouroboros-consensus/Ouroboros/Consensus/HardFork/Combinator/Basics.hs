@@ -92,11 +92,11 @@ class LedgerTablesCanHardFork xs where
   hardForkInjectLedgerTables :: NP (InjectLedgerTables xs) xs
 
 data InjectLedgerTables xs x = InjectLedgerTables {
-      applyInjectLedgerTables :: forall mk. (CanMapMK mk, CanEmptyMK mk) =>
+      applyInjectLedgerTables :: forall mk. (CanMapMK mk, ZeroableMK mk) =>
            LedgerTables (LedgerState                  x) mk
         -> LedgerTables (LedgerState (HardForkBlock xs)) mk
 
-      , applyDistribLedgerTables :: forall mk. (CanMapMK mk, CanEmptyMK mk) =>
+      , applyDistribLedgerTables :: forall mk. (CanMapMK mk, ZeroableMK mk) =>
            LedgerTables (LedgerState (HardForkBlock xs)) mk
         -> LedgerTables (LedgerState                  x) mk
     }
