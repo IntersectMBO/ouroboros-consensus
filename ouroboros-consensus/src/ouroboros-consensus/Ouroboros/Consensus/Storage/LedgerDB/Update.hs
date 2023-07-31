@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeFamilies        #-}
-
+{-# LANGUAGE TypeOperators       #-}
 -- | Updating the LedgerDB
 module Ouroboros.Consensus.Storage.LedgerDB.Update (
     DiffsToFlush (..)

@@ -33,7 +33,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl (
 
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.Serialise (Serialise (decode))
-import           Control.Monad.Except
+import           Control.Monad (void, when)
+import           Control.Monad.Except (ExceptT, runExceptT)
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Functor.Identity
