@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2023-07-26T23:47:54Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2023-07-27T09:34:22Z
+  , cardano-haskell-packages 2023-08-01T12:27:43Z
 
 packages:
   ouroboros-consensus
@@ -82,65 +82,29 @@ package strict-stm
 package text-short
   flags: +asserts
 
-allow-newer:
-    cardano-ledger-core
-  , cardano-ledger-alonzo
-  , cardano-ledger-babbage
-  , lens
-
+-- remove when
+-- https://github.com/input-output-hk/cardano-haskell-packages/pull/421 is
+-- merged
 if impl(ghc >= 9.4)
   allow-newer:
-    , *:base
-    , *:ghc-prim
+    , cardano-crypto-test:base
+    , small-steps:base
+    , non-integral:base
+    , cardano-data:base
+    , cardano-crypto-wrapper:base
+    , vector-map:base
+    , set-algebra:ansi-wl-pprint
 
--- TODO: remove when a new version of strict-mvar is released
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/io-sim
-  tag: ec202298c420378ef90b3fc0126c39e0f52290a3
-  --sha256: 1p6pn83kwp66x2m0cw9a27blfcpmw0lrra72qd0pi5bj3v1bcrl9
-  subdir:
-    strict-mvar
-
--- ouroboros-network-protocols 0.5.2.0 with -fno-full-laziness
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/ouroboros-network
-  tag: 430354c350c3a804f000f6c76b59b3fb3c303ba7
-  --sha256: 0yz853ga95sl5bg67r4y4g17m94vbaam4qvzg8d6l54jyfhc0w6p
-  subdir:
-    ouroboros-network-protocols
-
--- TODO: translation of TxIns and TxOuts does not use the translation
--- context that is required by the ledger's TranslateEra class. This
--- s-r-p allows translation TxIns and TxOuts to be translated without
--- a translation context.
-source-repository-package
-  type:git
-  location: https://github.com/input-output-hk/cardano-ledger
-  tag: 1a533832099dae9b5b4d997bc5e442e1955519c2
-  --sha256: 1rhsrf0ghfd5hrqka4d4viygjwidm1rk0742d4wpsgl9442n1v7f
-  subdir:
-    eras/shelley/impl
-    libs/cardano-ledger-core
-    eras/shelley-ma/test-suite
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/anti-diffs
-  tag: 8185e884f2a93b997579a1404183e2d4931f7098
-  --sha256: 14qqiqzf9nhqlalyb9xmzk1p1j768614zrca9y4z3qkncf2ybp5y
-  subdir:
-    diff-containers
-
+-- compat with GHC 9.6
 source-repository-package
   type: git
   location: https://github.com/jasagredo/quickcheck-lockstep
   tag: 883f2e54a495b6cca1c30cfafdcc70dc70ed6d0c
   --sha256: 1309cs7p2zggq9klhd72c76xyinvi8vf2n8jxpbmibx2qbl9xr0d
 
+-- remove once it gets released into CHaP
 source-repository-package
   type: git
-  location: https://github.com/input-output-hk/lmdb-simple
-  tag: cb5b7e547c9f410c878c72116c291b23f193be2c
-  --sha256: 0ljfwzf4v5nwyni7pkd6d4by47lf1mxpl86602d55s2rzkhlx4b9
+  location: https://github.com/input-output-hk/int-cast
+  tag: a95a5eb8d3a4633a2230dd058b38b7ae82dd19a2
+  --sha256: 1jr74cnkzr8mw6ypqsasdnczrqv7bmhylrpqc3drxw5mblyvfm56

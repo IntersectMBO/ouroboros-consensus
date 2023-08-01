@@ -336,8 +336,6 @@ instance ( ShelleyBasedEra era
          , SL.TranslateEra era (ShelleyTip proto)
          , SL.TranslateEra era SL.NewEpochState
          , SL.TranslationError era SL.NewEpochState ~ Void
-         , SL.TranslationContext era ~ SL.TranslationContextF era SL.NewEpochState
-         , SL.TranslationContextF era SL.NewEpochState ~ SL.TranslationContextF era WrapTx
          , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
          , CanMapMaybeMK mk
          , CanTranslateTxOut era
@@ -364,7 +362,6 @@ translateShelleyTables (LedgerTables utxoTable) =
 
 instance ( ShelleyBasedEra era
          , SL.TranslateEra era WrapTx
-         , SL.TranslationContext era ~ SL.TranslationContextF era WrapTx
          ) => SL.TranslateEra era (GenTx :.: ShelleyBlock proto) where
   type TranslationError era (GenTx :.: ShelleyBlock proto) = SL.TranslationError era WrapTx
   translateEra ctxt (Comp (ShelleyTx _txId tx)) =
@@ -373,7 +370,6 @@ instance ( ShelleyBasedEra era
 
 instance ( ShelleyBasedEra era
          , SL.TranslateEra era WrapTx
-         , SL.TranslationContext era ~ SL.TranslationContextF era WrapTx
          ) => SL.TranslateEra era (WrapValidatedGenTx :.: ShelleyBlock proto) where
   type TranslationError era (WrapValidatedGenTx :.: ShelleyBlock proto) = SL.TranslationError era WrapTx
   translateEra ctxt (Comp (WrapValidatedGenTx (ShelleyValidatedTx _txId vtx))) =
