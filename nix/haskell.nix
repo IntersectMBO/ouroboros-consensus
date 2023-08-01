@@ -5,10 +5,10 @@ let
   inherit (final) haskell-nix;
 
   # from https://github.com/input-output-hk/haskell.nix/issues/298#issuecomment-767936405
-  forAllProjectPackages = cfg: ctx@{ lib, ... }: {
+  forAllProjectPackages = cfg: args@{ lib, ... }: {
     options.packages = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule ({ config, ... }: {
-        config = lib.mkIf config.package.isProject (cfg ctx);
+        config = lib.mkIf config.package.isProject (cfg args);
       }));
     };
   };
@@ -23,7 +23,10 @@ in
     modules = [
       (forAllProjectPackages ({ config, lib, ... }: {
         ghcOptions = [ "-Werror" ] ++
-          lib.optional (lib.hasPrefix "ghc96" config.compiler-nix-name) "-Wno-error=redundant-constraints";
+          lib.optional
+            # waiting for a new 9.6.x release to fix https://gitlab.haskell.org/ghc/ghc/-/issues/23323
+            (lib.hasPrefix "ghc96" config.compiler.nix-name)
+            "-Wno-error=redundant-constraints";
       }))
       {
         # Options related to tasty-golden:
