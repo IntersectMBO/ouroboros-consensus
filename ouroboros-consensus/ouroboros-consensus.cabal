@@ -343,7 +343,7 @@ library
     , diff-containers              >=1.1
     , filelock
     , fingertree-rm                >=1.0
-    , fs-api
+    , fs-api                       ^>=0.1
     , hashable
     , io-classes                   ^>=1.1
     , measures
@@ -427,8 +427,8 @@ library consensus-testlib
     , directory
     , file-embed
     , filepath
-    , fs-api
-    , fs-sim                                                  >=0.2
+    , fs-api                                                  ^>=0.1
+    , fs-sim                                                  ^>=0.2
     , generics-sop
     , io-sim
     , mtl
@@ -561,8 +561,8 @@ test-suite consensus-test
     , deepseq
     , diff-containers                                                     >=1.1
     , fingertree-rm                                                       >=1.0
-    , fs-api
-    , fs-sim
+    , fs-sim ^>=0.2
+    , fs-api                                                              ^>=0.1
     , generics-sop
     , hashable
     , io-classes
@@ -666,8 +666,8 @@ test-suite storage-test
     , contra-tracer
     , diff-containers           >=1.1
     , directory
-    , fs-api
-    , fs-sim                    >=0.2
+    , fs-api                    ^>=0.1
+    , fs-sim                    ^>=0.2
     , generics-sop
     , hashable
     , io-classes
