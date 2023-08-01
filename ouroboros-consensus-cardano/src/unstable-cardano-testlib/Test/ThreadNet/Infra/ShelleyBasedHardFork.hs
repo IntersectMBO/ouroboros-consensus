@@ -141,9 +141,6 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
 
   , SL.TranslationError   era2 SL.NewEpochState ~ Void
 
-  , SL.TranslationContextF era2 SL.NewEpochState ~ SL.TranslationContextF era2 WrapTx
-  , SL.TranslationContext  era2                  ~ SL.TranslationContextF era2 WrapTx
-
   , SL.AdditionalGenesisConfig era1 ~ ()
   , SL.AdditionalGenesisConfig era2 ~ SL.TranslationContext era2
     -- At the moment, fix the protocols together
