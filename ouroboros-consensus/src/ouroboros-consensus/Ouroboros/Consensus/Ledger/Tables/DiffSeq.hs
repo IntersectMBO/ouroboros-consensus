@@ -1,7 +1,7 @@
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DeriveTraversable          #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
@@ -88,8 +88,6 @@ module Ouroboros.Consensus.Ledger.Tables.DiffSeq (
   , splitAt
   , splitAtFromEnd
   , splitAtSlot
-    -- * Maps
-  , mapDiffSeq
   ) where
 
 import qualified Cardano.Slotting.Slot as Slot
@@ -369,16 +367,3 @@ splitAtFromEnd n dseq =
     else error $ "Can't split a seq of length " ++ show len ++ " from end at " ++ show n
   where
     len = length dseq
-
-{-------------------------------------------------------------------------------
-  Maps
--------------------------------------------------------------------------------}
-
-mapDiffSeq ::
-       ( SM k v
-       , SM k v'
-       )
-    => (v -> v')
-    -> DiffSeq k v
-    -> DiffSeq k v'
-mapDiffSeq f (UnsafeDiffSeq ft) = UnsafeDiffSeq $ fmap' (fmap f) ft
