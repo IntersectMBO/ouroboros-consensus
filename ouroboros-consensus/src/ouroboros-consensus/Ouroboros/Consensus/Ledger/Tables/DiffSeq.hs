@@ -193,6 +193,7 @@ newtype SlotNoLB = SlotNoLB {unSlotNoLB :: Slot.SlotNo}
   deriving Semigroup via Min Slot.SlotNo
   deriving Monoid via Min Slot.SlotNo
 
+-- TODO: once EBBs are removed, this can be a strict inequality.
 noSlotBoundsIntersect :: SlotNoUB -> SlotNoLB -> Bool
 noSlotBoundsIntersect (SlotNoUB sl1) (SlotNoLB sl2) = sl1 <= sl2
 
