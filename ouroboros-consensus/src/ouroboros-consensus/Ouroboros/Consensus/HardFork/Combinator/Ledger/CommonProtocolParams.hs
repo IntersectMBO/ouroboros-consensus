@@ -9,13 +9,13 @@ import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger
-                     (HardForkHasLedgerTables)
+                     (HardForkHasLedgerTables, HasCanonicalTxIn)
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
-         , LedgerTablesCanHardFork xs
+         , HasCanonicalTxIn xs
          ) => CommonProtocolParams (HardForkBlock xs) where
   maxHeaderSize = askCurrentLedger maxHeaderSize
   maxTxSize     = askCurrentLedger maxTxSize

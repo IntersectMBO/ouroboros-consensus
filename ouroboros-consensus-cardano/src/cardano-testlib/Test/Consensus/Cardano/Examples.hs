@@ -29,14 +29,14 @@ module Test.Consensus.Cardano.Examples (
 import           Data.Coerce (Coercible)
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Functors (Flip (..))
-import           Data.SOP.Index (Index (..), projectNP)
+import           Data.SOP.Index (Index (..))
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork ()
-import           Ouroboros.Consensus.Cardano.Tables ()
+import           Ouroboros.Consensus.Cardano.CanonicalTxIn ()
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
@@ -44,8 +44,8 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
-import           Ouroboros.Consensus.Ledger.Tables (CanMapMK, EmptyMK, ValuesMK,
-                     ZeroableMK, castLedgerTables)
+import           Ouroboros.Consensus.Ledger.Tables (EmptyMK, ValuesMK,
+                     castLedgerTables)
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
@@ -148,31 +148,8 @@ instance Inject Examples where
 newtype WrapLedgerTables blk = WrapLedgerTables ( LedgerTables (ExtLedgerState blk) ValuesMK )
 
 instance Inject WrapLedgerTables where
-  inject = injectWrapLedgerTables
-
--- In the definition of 'inject' for 'WrapLedgerTables', if we want to add a
--- type declaration to the local definition 'injectLedgerTables' we need to add
--- a type declaration for 'inject' which requires enabling 'InstanceSigs' and
--- introduces a compiler warning about 'CanHardFork xs' being a redundant
--- constraint. By defining 'inject' in terms of 'injectWrapLedgerTables' we
--- avoid this problem.
-injectWrapLedgerTables ::
-    forall x xs.
-    LedgerTablesCanHardFork xs
-   => Exactly xs History.Bound
-      -- ^ Start bound of each era
-   -> Index xs x
-   -> WrapLedgerTables x
-   -> WrapLedgerTables (HardForkBlock xs)
-injectWrapLedgerTables _startBounds idx (WrapLedgerTables lt) =
-    WrapLedgerTables $ castLedgerTables $ injectLedgerTables (castLedgerTables lt)
-  where
-    injectLedgerTables ::
-         (CanMapMK mk, ZeroableMK mk)
-      => LedgerTables (LedgerState                  x) mk
-      -> LedgerTables (LedgerState (HardForkBlock xs)) mk
-    injectLedgerTables = applyInjectLedgerTables
-                       $ projectNP idx hardForkInjectLedgerTables
+  inject _startBounds idx (WrapLedgerTables lt) =
+    WrapLedgerTables $ castLedgerTables $ injectLedgerTables idx (castLedgerTables lt)
 
 {-------------------------------------------------------------------------------
   Setup
