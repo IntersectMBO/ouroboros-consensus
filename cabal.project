@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2023-07-26T23:47:54Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2023-08-01T12:27:43Z
+  , cardano-haskell-packages 2023-08-02T11:20:00Z
 
 packages:
   ouroboros-consensus
@@ -28,72 +28,7 @@ packages:
 tests: True
 benchmarks: True
 
-package cardano-ledger-core
-  flags: +asserts
-
-package cardano-ledger-shelley
-  flags: +asserts
-
-package fs-api
-  flags: +asserts
-
-package fs-sim
-  flags: +asserts
-
-package io-classes
-  flags: +asserts
-
-package network-mux
-  flags: +asserts
-
-package ouroboros-consensus
-  flags: +asserts
-
-package ouroboros-consensus-cardano
-  flags: +asserts
-
-package ouroboros-consensus-cardano-legacy-block
-  flags: +asserts
-
-package ouroboros-consensus-diffusion
-  flags: +asserts
-
-package ouroboros-consensus-protocol
-  flags: +asserts
-
-package ouroboros-network
-  flags: +asserts
-
-package ouroboros-network-api
-  flags: +asserts
-
-package ouroboros-network-mock
-  flags: +asserts
-
-package ouroboros-network-protocols
-  flags: +asserts
-
-package si-timers
-  flags: +asserts
-
-package strict-stm
-  flags: +asserts
-
-package text-short
-  flags: +asserts
-
--- remove when
--- https://github.com/input-output-hk/cardano-haskell-packages/pull/421 is
--- merged
-if impl(ghc >= 9.4)
-  allow-newer:
-    , cardano-crypto-test:base
-    , small-steps:base
-    , non-integral:base
-    , cardano-data:base
-    , cardano-crypto-wrapper:base
-    , vector-map:base
-    , set-algebra:ansi-wl-pprint
+flags: +asserts
 
 -- compat with GHC 9.6
 source-repository-package
@@ -101,10 +36,3 @@ source-repository-package
   location: https://github.com/jasagredo/quickcheck-lockstep
   tag: 883f2e54a495b6cca1c30cfafdcc70dc70ed6d0c
   --sha256: 1309cs7p2zggq9klhd72c76xyinvi8vf2n8jxpbmibx2qbl9xr0d
-
--- remove once it gets released into CHaP
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/int-cast
-  tag: a95a5eb8d3a4633a2230dd058b38b7ae82dd19a2
-  --sha256: 1jr74cnkzr8mw6ypqsasdnczrqv7bmhylrpqc3drxw5mblyvfm56
