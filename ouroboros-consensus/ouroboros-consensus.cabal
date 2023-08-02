@@ -306,7 +306,7 @@ library
     , deepseq
     , filelock
     , fs-api                       ^>=0.1
-    , hashable
+    , hashable                     <1.4.3
     , io-classes                   ^>=1.1
     , measures
     , mtl
