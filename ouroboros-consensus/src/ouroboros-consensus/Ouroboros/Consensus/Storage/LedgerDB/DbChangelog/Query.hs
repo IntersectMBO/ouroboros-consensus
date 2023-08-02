@@ -1,5 +1,6 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeFamilies   #-}
+{-# LANGUAGE TypeOperators  #-}
 
 -- | Querying a DbChangelog
 module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query (

@@ -84,12 +84,12 @@ blockRealPoint blk = RealPoint s h
   where
     HeaderFields { headerFieldSlot = s, headerFieldHash = h } = getHeaderFields blk
 
-#if __GLASGOW_HASKELL__ >= 906
-headerRealPoint :: (HasHeader blk, HasHeader (Header blk)) => Header blk -> RealPoint blk
-#else
--- GHC 9.6 considers these constraints insufficient.
-headerRealPoint :: HasHeader (Header blk) => Header blk -> RealPoint blk
+headerRealPoint :: (
+    HasHeader (Header blk)
+#if __GLASGOW_HASKELL__ >= 904
+  , HasHeader blk
 #endif
+  )=> Header blk -> RealPoint blk
 headerRealPoint hdr = RealPoint s h
   where
     HeaderFields { headerFieldSlot = s, headerFieldHash = h } = getHeaderFields hdr

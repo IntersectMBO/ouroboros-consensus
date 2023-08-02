@@ -2,14 +2,12 @@
 package cardano-crypto-praos
   flags: -external-libsodium-vrf
 
-package ouroboros-consensus
+program-options:
   ghc-options: -Werror
 
-package ouroboros-consensus-cardano
-  ghc-options: -Werror
-
-package ouroboros-consensus-protocol
-  ghc-options: -Werror
-
-package ouroboros-consensus-diffusion
-  ghc-options: -Werror
+-- Regression in GHC 9.6.(1|2): spurious "Redundant constraint", where the constraint is inside a
+-- quantified constraint
+-- https://gitlab.haskell.org/ghc/ghc/-/issues/23323
+if impl(ghc >= 9.6)
+  program-options
+    ghc-options: -Wno-error=redundant-constraints

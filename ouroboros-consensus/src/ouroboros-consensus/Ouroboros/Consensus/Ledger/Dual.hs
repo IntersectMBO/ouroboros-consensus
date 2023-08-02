@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE ConstraintKinds            #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveGeneric              #-}
@@ -931,7 +932,17 @@ decodeDualLedgerState decodeMain = do
 type instance Key   (LedgerState (DualBlock m a)) = Key   (LedgerState m)
 type instance Value (LedgerState (DualBlock m a)) = Value (LedgerState m)
 
-instance Bridge m a => HasLedgerTables (LedgerState (DualBlock m a)) where
+instance (
+    Bridge m a
+#if __GLASGOW_HASKELL__ >= 906
+  , NoThunks (Value (LedgerState m))
+  , NoThunks (Key (LedgerState m))
+  , Show (Value (LedgerState m))
+  , Show (Key (LedgerState m))
+  , Eq (Value (LedgerState m))
+  , Ord (Key (LedgerState m))
+#endif
+  ) => HasLedgerTables (LedgerState (DualBlock m a)) where
   projectLedgerTables DualLedgerState{..} =
       castLedgerTables
         (projectLedgerTables dualLedgerStateMain)
@@ -944,8 +955,17 @@ instance Bridge m a => HasLedgerTables (LedgerState (DualBlock m a)) where
         , dualLedgerStateBridge = dualLedgerStateBridge
         }
 
-instance Bridge m a
-      => HasLedgerTables (Ticked1 (LedgerState (DualBlock m a))) where
+instance (
+    Bridge m a
+#if __GLASGOW_HASKELL__ >= 906
+  , NoThunks (Value (LedgerState m))
+  , NoThunks (Key (LedgerState m))
+  , Show (Value (LedgerState m))
+  , Show (Key (LedgerState m))
+  , Eq (Value (LedgerState m))
+  , Ord (Key (LedgerState m))
+#endif
+  )=> HasLedgerTables (Ticked1 (LedgerState (DualBlock m a))) where
   projectLedgerTables TickedDualLedgerState{..} =
       castLedgerTables
         (projectLedgerTables tickedDualLedgerStateMain)

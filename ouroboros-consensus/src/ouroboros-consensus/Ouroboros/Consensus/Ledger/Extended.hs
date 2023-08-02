@@ -81,7 +81,15 @@ instance (NoThunksMK mk, LedgerSupportsProtocol blk)
   showTypeOf _ = show $ typeRep (Proxy @(ExtLedgerState blk))
 
 type instance HeaderHash (ExtLedgerState blk) = HeaderHash (LedgerState blk)
-instance StandardHash (LedgerState blk) => StandardHash (ExtLedgerState blk)
+instance (
+    NoThunks (HeaderHash blk)
+  , Typeable (HeaderHash blk)
+  , Show (HeaderHash blk)
+  , Ord (HeaderHash blk)
+#if __GLASGOW_HASKELL__ >= 906
+  , Eq (HeaderHash blk)
+#endif
+  ) => StandardHash (ExtLedgerState blk)
 
 instance IsLedger (LedgerState blk) => GetTip (ExtLedgerState blk) where
   getTip = castPoint . getTip . ledgerState
@@ -227,8 +235,17 @@ decodeExtLedgerState decodeLedgerState
 type instance Key   (ExtLedgerState blk) = Key   (LedgerState blk)
 type instance Value (ExtLedgerState blk) = Value (LedgerState blk)
 
-instance HasLedgerTables (LedgerState blk)
-      => HasLedgerTables (ExtLedgerState blk) where
+instance (
+    HasLedgerTables (LedgerState blk)
+#if __GLASGOW_HASKELL__ >= 906
+  , NoThunks (Value (LedgerState blk))
+  , NoThunks (Key (LedgerState blk))
+  , Show (Value (LedgerState blk))
+  , Show (Key (LedgerState blk))
+  , Eq (Value (LedgerState blk))
+  , Ord (Key (LedgerState blk))
+#endif
+  ) => HasLedgerTables (ExtLedgerState blk) where
   projectLedgerTables (ExtLedgerState lstate _) =
       castLedgerTables (projectLedgerTables lstate)
   withLedgerTables (ExtLedgerState lstate hstate) tables =
@@ -249,8 +266,17 @@ instance LedgerTablesAreTrivial (Ticked1 (LedgerState blk))
   convertMapKind (TickedExtLedgerState x y z) =
       TickedExtLedgerState (convertMapKind x) y z
 
-instance HasLedgerTables (Ticked1 (LedgerState blk))
-      => HasLedgerTables (Ticked1 (ExtLedgerState blk)) where
+instance (
+    HasLedgerTables (Ticked1 (LedgerState blk))
+#if __GLASGOW_HASKELL__ >= 906
+  , NoThunks (Value (LedgerState blk))
+  , NoThunks (Key (LedgerState blk))
+  , Show (Value (LedgerState blk))
+  , Show (Key (LedgerState blk))
+  , Eq (Value (LedgerState blk))
+  , Ord (Key (LedgerState blk))
+#endif
+  ) => HasLedgerTables (Ticked1 (ExtLedgerState blk)) where
   projectLedgerTables (TickedExtLedgerState lstate _view _hstate) =
       castLedgerTables (projectLedgerTables lstate)
   withLedgerTables

@@ -27,8 +27,9 @@ import           Bench.Consensus.Mempool.Params (InitialMempoolAndModelParams,
 import           Bench.Consensus.Mempool.TestBlock (GenTx (TestBlockGenTx),
                      TestBlock, Token, Tx (..), mkTx)
 import           Control.Exception (assert)
+import           Control.Monad (replicateM)
 import           Control.Monad.State.Strict (MonadState, State, StateT (StateT),
-                     execState, gets, modify, replicateM)
+                     execState, gets, modify)
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables (ValuesMK)

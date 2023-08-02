@@ -15,7 +15,7 @@ fd -p $(pwd)/ouroboros-consensus \
     -c .stylish-haskell.yaml -i
 
 
-# We don't want these deprecation warnings to be removed accidentally
+# these can go once we deprecate older versions of GHC
 grep "#if __GLASGOW_HASKELL__ < 900
 import           Data.Foldable (asum)
-#endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs                           >/dev/null 2>&1
+#endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs >/dev/null 2>&1
