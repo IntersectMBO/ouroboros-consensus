@@ -44,6 +44,7 @@ const sidebars = {
         'for-developers/GitProcess',
         'for-developers/ReleaseProcess',
         'for-developers/SanityChecks',
+        'for-developers/QueryVersioning',
       ]
     },
   ]
