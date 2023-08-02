@@ -522,7 +522,7 @@ library cardano-tools
     , contra-tracer
     , directory
     , filepath
-    , fs-api
+    , fs-api                         ^>=0.1
     , microlens
     , mtl
     , network
