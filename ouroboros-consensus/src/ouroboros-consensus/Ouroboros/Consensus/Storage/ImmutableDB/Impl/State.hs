@@ -48,7 +48,6 @@ import           Ouroboros.Consensus.Util (SomePair (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API
-import           System.FS.API.Types
 
 {------------------------------------------------------------------------------
   Main types

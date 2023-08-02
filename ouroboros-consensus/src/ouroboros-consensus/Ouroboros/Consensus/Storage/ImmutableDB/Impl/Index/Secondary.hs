@@ -45,8 +45,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
                      (fsPathSecondaryIndexFile, runGet, runGetWithUnconsumed)
 import           Ouroboros.Consensus.Util.IOLike
-import           System.FS.API
-import           System.FS.API.Types
+import           System.FS.API.Lazy
 import           System.FS.CRC
 
 {------------------------------------------------------------------------------

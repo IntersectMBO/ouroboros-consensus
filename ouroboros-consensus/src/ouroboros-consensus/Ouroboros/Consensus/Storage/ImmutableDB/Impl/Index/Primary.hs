@@ -71,9 +71,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
                      (fsPathPrimaryIndexFile, runGet)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           System.FS.API
-import           System.FS.API.Types (AbsOffset (..), AllowExisting (..),
-                     OpenMode (..), SeekMode (..))
+import           System.FS.API.Lazy hiding (allowExisting)
 
 {------------------------------------------------------------------------------
   SecondaryOffset

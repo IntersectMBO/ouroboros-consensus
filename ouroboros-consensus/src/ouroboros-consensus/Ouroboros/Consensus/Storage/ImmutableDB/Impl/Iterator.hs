@@ -47,8 +47,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceKey,
                      ResourceRegistry, allocate, release, unsafeRelease)
 import           Ouroboros.Network.SizeInBytes
-import           System.FS.API
-import           System.FS.API.Types
+import           System.FS.API.Lazy
 import           System.FS.CRC
 
 {------------------------------------------------------------------------------

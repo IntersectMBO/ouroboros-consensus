@@ -305,7 +305,7 @@ library
     , contra-tracer
     , deepseq
     , filelock
-    , fs-api                       ^>=0.1
+    , fs-api                       ^>=0.2
     , hashable                     <1.4.3
     , io-classes                   ^>=1.1
     , measures
@@ -385,7 +385,7 @@ library consensus-testlib
     , directory
     , file-embed
     , filepath
-    , fs-api                                                  ^>=0.1
+    , fs-api                                                  ^>=0.2
     , fs-sim                                                  ^>=0.2
     , generics-sop
     , io-sim
@@ -523,7 +523,7 @@ test-suite consensus-test
     , containers
     , contra-tracer
     , deepseq
-    , fs-api                                                              ^>=0.1
+    , fs-api                                                              ^>=0.2
     , generics-sop
     , hashable
     , io-classes
@@ -612,7 +612,7 @@ test-suite storage-test
     , consensus-testlib
     , containers
     , contra-tracer
-    , fs-api                    ^>=0.1
+    , fs-api                    ^>=0.2
     , fs-sim                    ^>=0.2
     , generics-sop
     , hashable

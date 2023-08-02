@@ -129,8 +129,7 @@ import           Ouroboros.Consensus.Util (SomePair (..))
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           System.FS.API
-import           System.FS.API.Types hiding (allowExisting)
+import           System.FS.API.Lazy hiding (allowExisting)
 import           System.FS.CRC
 
 {------------------------------------------------------------------------------

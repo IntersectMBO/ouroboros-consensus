@@ -22,8 +22,7 @@ import           Data.Text (Text)
 import           Data.Word
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Magic (NetworkMagic (..))
-import           System.FS.API
-import           System.FS.API.Types
+import           System.FS.API.Lazy
 import           Text.Read (readMaybe)
 
 {-------------------------------------------------------------------------------

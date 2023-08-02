@@ -56,7 +56,6 @@ import qualified Streaming as S
 import qualified Streaming.Prelude as S
 import           Streaming.Prelude (Of (..), Stream)
 import           System.FS.API
-import           System.FS.API.Types
 
 {-------------------------------------------------------------------------------
   Incremental parsing in I/O

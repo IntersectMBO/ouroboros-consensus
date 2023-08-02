@@ -146,8 +146,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as RAWLock
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (MaxSlotNo (..))
-import           System.FS.API
-import           System.FS.API.Types
+import           System.FS.API.Lazy
 
 {------------------------------------------------------------------------------
   Opening the database
