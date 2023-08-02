@@ -39,10 +39,3 @@ source-repository-package
   location: https://github.com/jasagredo/quickcheck-lockstep
   tag: 883f2e54a495b6cca1c30cfafdcc70dc70ed6d0c
   --sha256: 1309cs7p2zggq9klhd72c76xyinvi8vf2n8jxpbmibx2qbl9xr0d
-
--- remove once it gets released into CHaP
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/int-cast
-  tag: a95a5eb8d3a4633a2230dd058b38b7ae82dd19a2
-  --sha256: 1jr74cnkzr8mw6ypqsasdnczrqv7bmhylrpqc3drxw5mblyvfm56
