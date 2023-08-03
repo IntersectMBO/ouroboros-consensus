@@ -52,7 +52,6 @@ import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Streaming (Of (..))
 import qualified Streaming.Prelude as S
 import           System.FS.API
-import           System.FS.API.Types
 
 -- | Bundle of arguments used most validation functions.
 --

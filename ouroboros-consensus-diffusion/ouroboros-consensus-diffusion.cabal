@@ -107,7 +107,7 @@ library
     , contra-tracer
     , deepseq
     , filepath
-    , fs-api                       ^>=0.1
+    , fs-api                       ^>=0.2
     , hashable                     <1.4.3
     , io-classes                   ^>=1.1
     , mtl
@@ -247,7 +247,7 @@ test-suite consensus-test
     , containers
     , diffusion-testlib
     , directory
-    , fs-api                                                        ^>=0.1
+    , fs-api                                                        ^>=0.2
     , fs-sim                                                        ^>=0.2
     , io-sim
     , mtl

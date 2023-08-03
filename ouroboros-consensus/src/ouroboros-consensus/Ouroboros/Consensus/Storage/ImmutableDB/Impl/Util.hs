@@ -41,7 +41,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
-import           System.FS.API.Types
 import           System.FS.CRC
 import           Text.Read (readMaybe)
 

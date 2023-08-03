@@ -68,7 +68,6 @@ import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Prelude hiding (elem)
 import           System.FS.API
-import           System.FS.API.Types
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
 import           System.Random (getStdRandom, randomR)

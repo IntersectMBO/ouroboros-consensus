@@ -56,8 +56,7 @@ import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
                      decodeWithOrigin, readIncremental)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Versioned
-import           System.FS.API
-import           System.FS.API.Types
+import           System.FS.API.Lazy
 import           Text.Read (readMaybe)
 
 {-------------------------------------------------------------------------------

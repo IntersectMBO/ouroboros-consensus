@@ -60,7 +60,6 @@ import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
                      allocateTemp, modifyWithTempRegistry)
 import           Ouroboros.Network.Block (MaxSlotNo (..))
 import           System.FS.API
-import           System.FS.API.Types
 
 {------------------------------------------------------------------------------
   State types

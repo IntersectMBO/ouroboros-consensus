@@ -56,8 +56,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (MaxSlotNo)
 import           Prelude hiding (elem)
-import           System.FS.API (SomeHasFS (..), hPutAll, withFile)
-import           System.FS.API.Types
+import           System.FS.API.Lazy
 import           System.FS.Sim.Error
 import qualified System.FS.Sim.MockFS as Mock
 import           System.Random (getStdRandom, randomR)
