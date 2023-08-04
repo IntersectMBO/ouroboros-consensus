@@ -64,7 +64,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger
                      (HardForkHasLedgerTables, HasCanonicalTxIn,
-                     injectLedgerTables)
+                     distribLedgerTables, injectLedgerTables)
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.State (Current (..),
                      HardForkState (..), Past (..), Situated (..))
@@ -122,6 +122,7 @@ data instance BlockQuery (HardForkBlock xs) :: Type -> Type where
 instance ( All SingleEraBlock xs
          , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
+         , CanHardFork xs
          )
       => QueryLedger (HardForkBlock xs) where
   answerBlockQuery (ExtLedgerCfg cfg) query dlv =
@@ -162,8 +163,8 @@ instance ( All SingleEraBlock xs
 distribDiskLedgerView ::
      forall xs m.
      ( Monad m
-     , All SingleEraBlock xs
      , HasCanonicalTxIn xs
+     , CanHardFork xs
      )
   => DiskLedgerView m (ExtLedgerState (HardForkBlock xs))
   -> NS (DiskLedgerView m :.: ExtLedgerState) xs
@@ -182,7 +183,8 @@ distribDiskLedgerView dlv =
         , dlvQueryBatchSize
         } = dlv
 
-    f :: Index xs x
+    f :: Ord (Key (LedgerState x))
+      => Index xs x
       -> Product HeaderState (Flip LedgerState EmptyMK) x
       -> (DiskLedgerView m :.: ExtLedgerState) x
     f idx (Pair hst lst) = Comp $ DiskLedgerView {
@@ -194,18 +196,18 @@ distribDiskLedgerView dlv =
           }
 
     query' ::
-         forall x.
-         Index xs x
+         forall x. Ord (Key (LedgerState x))
+      => Index xs x
       -> LedgerTables (ExtLedgerState x) KeysMK
       -> m (LedgerTables (ExtLedgerState x) ValuesMK)
-    query' i = fmap (distribLedgerTables i) . query . injectLedgerTables' i
+    query' i = fmap (distribLedgerTables' i) . query . injectLedgerTables' i
 
     rangeQuery' ::
-         forall x.
-         Index xs x
+         forall x. Ord (Key (LedgerState x))
+      => Index xs x
       -> RangeQuery (LedgerTables (ExtLedgerState x) KeysMK)
       -> m (LedgerTables (ExtLedgerState x) ValuesMK)
-    rangeQuery' i = fmap (distribLedgerTables i) . rangeQuery . injectRangeQuery i
+    rangeQuery' i = fmap (distribLedgerTables' i) . rangeQuery . injectRangeQuery i
 
     injectLedgerTables' ::
          forall x mk. (CanMapMK mk, CanMapKeysMK mk)
@@ -223,14 +225,14 @@ distribDiskLedgerView dlv =
       -> RangeQuery (LedgerTables (ExtLedgerState (HardForkBlock xs)) mk)
     injectRangeQuery i (RangeQuery ks p) = RangeQuery (fmap (injectLedgerTables' i) ks) p
 
-    distribLedgerTables ::
-         forall x mk. (CanMapMK mk, CanMapKeysMK mk)
+    distribLedgerTables' ::
+         forall x mk. (Ord (Key (LedgerState x)), CanMapMaybeMK mk, CanMapKeysMK mk)
       => Index xs x
       -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
       -> LedgerTables (ExtLedgerState x) mk
-    distribLedgerTables i = castLedgerTables
-                          . distribLedgerTables i
-                          . castLedgerTables
+    distribLedgerTables' i = castLedgerTables
+                           . distribLedgerTables i
+                           . castLedgerTables
 
 -- | Precondition: the 'ledgerState' and 'headerState' should be from the same
 -- era. In practice, this is _always_ the case, unless the 'ExtLedgerState' was
