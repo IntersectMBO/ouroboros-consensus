@@ -424,7 +424,11 @@ addBlock cfg blk m = Model {
       immutableChainHashes `isPrefixOf`
       map blockHash (Chain.toOldestFirst fork)
 
-    consideredCandidates = filter (extendsImmutableChain . fst) candidates
+    -- Considered candidates are candidates that extend the immutable part of
+    -- the chain. Furthermore, the current selected chain is not considered as a
+    -- candidate.
+    consideredCandidates = filter ((/= CPS.chainState (cps m)) . fst)
+                         $ filter (extendsImmutableChain . fst) candidates
 
     newChain  :: Chain blk
     newLedger :: ExtLedgerState blk
