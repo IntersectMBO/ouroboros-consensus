@@ -98,14 +98,14 @@ followerSwitchesToNewChain
 followerSwitchesToNewChain =
   let fork i = TestBody i True
   in do
-    b1 <- addBlock $ firstBlock 0 $ fork 0     -- b1 on top of G
+    b1 <- addBlock $ firstBlock 0     $ fork 0 -- b1 on top of G
     b2 <- addBlock $ mkNextBlock b1 1 $ fork 0 -- b2 on top of b1
     f <- newFollower
     followerForward f [blockPoint b2] >>= \case
       Right (Just pt) -> assertEqual (blockPoint b2) pt "Expected to be at b2"
       _               -> failWith "Expecting a success"
-    b3 <- addBlock $ mkNextBlock b1 2 $ fork 1  -- b3 on top of b1
-    void $ addBlock $ mkNextBlock b3 3 $ fork 1 -- b4 on top of b3
+    b3 <- addBlock $ mkNextBlock b1 2 $ fork 1 -- b3 on top of b1
+    b4 <- addBlock $ mkNextBlock b3 3 $ fork 1 -- b4 on top of b3
     followerInstruction f >>= \case
       Right (Just (RollBack actual))
         -- Expect to rollback to the intersection point between [b1, b2] and
@@ -115,6 +115,10 @@ followerSwitchesToNewChain =
     followerInstruction f >>= \case
       Right (Just (AddBlock actual))
         -> assertEqual b3 (extractBlock actual) "Instructed to add wrong block"
+      _ -> failWith "Expecting instruction to add a block"
+    followerInstruction f >>= \case
+      Right (Just (AddBlock actual))
+        -> assertEqual b4 (extractBlock actual) "Instructed to add wrong block"
       _ -> failWith "Expecting instruction to add a block"
 
 
