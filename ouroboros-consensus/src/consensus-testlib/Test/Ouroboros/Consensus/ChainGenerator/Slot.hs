@@ -108,7 +108,7 @@ data Pol = Inverted | NotInverted
 
 -- | Data for 'Pol'
 class POL (pol :: Pol) where
-    -- | Make on active slot
+    -- | Make an active slot
     mkActive :: proxy pol -> S
     -- | Test whether @pol@ maps the given bit to one
     test :: proxy pol -> S -> Bool
