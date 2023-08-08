@@ -97,7 +97,14 @@ infixl 6 .+, .-
 
 -----
 
--- | Indexed by what you're counting from, what you're counting, and which of them you're counting.
+-- | A type-indexed Int to represent counts of elements in containers
+--
+-- * @base@ is the type-level name of the container in which we are counting (e.g. @Win (Lbl HonestLbl) skolem1@)
+-- * @elem@ is the type-level name of the elements in the container (e.g. 'ActiveSlotE')
+-- * @which@ is the type-level name of some property that identifies the
+--   particular elements that we are counting (e.g. 'Pred', 'Total', or 'Other')
+--
+-- TODO: rename @base@ to @container@
 newtype Count (base :: Type) (elem :: kelem) (which :: kwhich) = Count Int
   deriving (QC.Arbitrary, Eq, Ord, Read, Show)
 
@@ -120,10 +127,11 @@ forgetElem (Count x) = Some.forgotten $ Count x
 
 -----
 
--- | How many preceding elements
+-- | Type-level name for counting elements with and index smaller
+-- than a given value
 data Preds
 
--- | How many elements in 'Total'
+-- | Type-level name for counting all elements in a container
 data Total
 
 type Index base elem = Count base elem Preds
@@ -152,14 +160,35 @@ data Lbl lbl = Lbl   -- no explicit kind var so that type applications don't
                      -- declare k as /inferred/ instead of /specified/
 instance (lbl TypeEq.~~ s) => IsLabel s (Lbl lbl) where fromLabel = Lbl
 
--- | A named window within some containing sequence
+-- | A type-level name for a window within some containing sequence
+--
+-- * @lbl@ is a name component that can be used in multiple names
+-- * @skolem@ is a component to differentiate between names which use the
+--   same @lbl@
+--
+-- TODO: rename Win to WinLabel
 data Win (lbl :: klbl) (skolem :: Type)
 
--- | The correspondence between a window and its containing sequence
+-- | Values of this type describe a window in a sequence of elements.
+--
+-- A window is an infix of the sequence, and it is described with an
+-- offset and a length or size (the amount of elements in the window).
+--
+-- * @elem@ is a type-level of the elements in the containing sequence (e.g. 'ActiveSlotE')
+-- * @outer@ is a type-level name identifying the containing sequence (e.g. @Win (Lbl HonestLbl) skolem1@)
+-- * @inner@ is a type-level name for the window that the value describes (e.g. @Win (Lbl EhcgLbl) skolem2@)
+--
+-- Note that nothing is said about the containing sequence other
+-- than its type name.
+--
+-- TODO: rename Contains to Window
 data Contains (elem :: kelem) (outer :: Type) (inner :: Type) =
     UnsafeContains
-        !(Index outer elem)   -- ^ first slot's offset in containing sequence
-        !(Size  inner elem)   -- ^ size of window (INVARIANT: does not reach past end of containing sequence)
+        !(Index outer elem)   -- ^ index of the start of the window as
+                              -- an offset in the containing sequence.
+        !(Size  inner elem)   -- ^ size of the window
+                              -- INVARIANT: does not reach past the end of the containing
+                              -- sequence (whatever that end is)
   deriving (Eq, Read, Show)
 
 pattern Contains :: Index outer elem -> Size inner elem -> Contains elem outer inner
@@ -170,9 +199,12 @@ pattern Contains x y <- UnsafeContains x y
 forgetWindow :: Contains elem outer inner -> Some.Forgotten (Index outer elem, Index outer elem)
 forgetWindow win = Some.forgotten (windowStart win, windowLast win)
 
+-- | Converts and index of a window into an index in the containing sequence.
 frWin :: Contains elem outer inner -> Index inner elem -> Index outer elem
 frWin (Contains (Count i) _n) (Count j) = Count (i .+ j)
 
+-- | Converts a count of elements in a window to a count of elements in the
+-- containing sequence.
 frWinVar :: Contains elem outer inner -> Var inner x -> Var outer x
 frWinVar _ (Count x) = Count x
 
@@ -283,7 +315,11 @@ unsafeThawV (Vector v) = MVector <$> V.unsafeThaw v
 createV :: MV.Unbox a => (forall s. ST s (MVector base elem s a)) -> Vector base elem a
 createV m = Vector $ V.create (getMVector <$> m)
 
--- | Same indices as 'Index' and 'Size'
+-- | A type-indexed vector carrying values of a container
+--
+-- * @base@ is a type-level name identifying the container (e.g. @Win (Lbl HonestLbl) skolem1@)
+-- * @elem@ is a type-level of the elements in the container (e.g. 'ActiveSlotE')
+--
 newtype MVector base elem s a = MVector (MV.MVector s a)
 
 getMVector :: MVector base elem s a -> MV.MVector s a
@@ -316,7 +352,8 @@ readV (Vector v) (Count i) = v V.! i
 
 -----
 
--- | A count of things that satisfy some predicate other than 'Preds' and 'Total'
+-- | A type-level name for counting elements without a specific property
+-- described at the type-level.
 data Other
 
 deriving instance (which TypeEq.~~ Other) => Enum (Count base elem which)
