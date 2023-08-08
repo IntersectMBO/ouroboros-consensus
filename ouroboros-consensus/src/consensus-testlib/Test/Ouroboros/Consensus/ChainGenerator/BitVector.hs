@@ -102,12 +102,16 @@ countActivesInMV pol mv =
 
 -----
 
--- | A requirement of @numerator@-many active slots per @denominator@-many slots
+-- | A density of active slots in a given window
+--
+-- @pol@ is the polarity to use for the active slots
+--
+-- TODO: rename to SomeDensity
 data SomeDensityWindow pol =
   forall slidingWindow.
     SomeDensityWindow
-        !(C.Var  slidingWindow (PreImage pol ActiveSlotE))
-        !(C.Size slidingWindow SlotE)
+        !(C.Var  slidingWindow (PreImage pol ActiveSlotE)) -- ^ Numerator: The active slots
+        !(C.Size slidingWindow SlotE)                      -- ^ Denominator: The total amount of slots
 
 instance Eq (SomeDensityWindow pol) where
     SomeDensityWindow l1 l2 == SomeDensityWindow r1 r2 =

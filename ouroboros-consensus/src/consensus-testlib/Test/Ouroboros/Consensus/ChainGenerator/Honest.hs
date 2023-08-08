@@ -54,13 +54,24 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 data HonestRecipe = HonestRecipe !Kcp !Scg !Delta !Len
   deriving (Eq, Read, Show)
 
+-- | A specification of which density to give to a window in a containing
+-- sequence of slots
+--
+-- * @base@ the type-level name of the containing sequence
+-- * @hon@ the type-level name of the window in which the density must be
+--   ensured (e.g. @Win (Lbl \@HonestLbl)@)
+--
+-- TODO: Rename to CheckedHonestSchemaSpec
 data CheckedHonestRecipe base hon = UnsafeCheckedHonestRecipe {
+    -- | Desired density
     chrEhcgDensity :: !(BV.SomeDensityWindow S.NotInverted)
-  ,
+  , -- | Window in the @base@ containing sequence where the density should be
+    -- ensured
     chrWin         :: !(C.Contains SlotE base hon)
   }
   deriving (Eq, Read, Show)
 
+-- TODO: Rename to SomeCheckedHonestSpec
 data SomeCheckedHonestRecipe =
     forall base hon.
     SomeCheckedHonestRecipe
