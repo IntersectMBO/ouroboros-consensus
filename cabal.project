@@ -36,6 +36,6 @@ import: ./asserts.cabal
 -- compat with GHC 9.6
 source-repository-package
   type: git
-  location: https://github.com/jasagredo/quickcheck-lockstep
-  tag: 883f2e54a495b6cca1c30cfafdcc70dc70ed6d0c
-  --sha256: 1309cs7p2zggq9klhd72c76xyinvi8vf2n8jxpbmibx2qbl9xr0d
+  location: https://github.com/well-typed/quickcheck-lockstep
+  tag: 1cb529ac1d130c1d1bfd4e85aa7ff50d49d1afd1
+  --sha256: 0r9031q5gvzqvhqzsh53v5886s0r0hm3n5vyb1sjx73c39vj5i2d
