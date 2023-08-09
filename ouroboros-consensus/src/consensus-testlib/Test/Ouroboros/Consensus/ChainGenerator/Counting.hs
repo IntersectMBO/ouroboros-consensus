@@ -353,7 +353,6 @@ readV (Vector v) (Count i) = v V.! i
 -----
 
 -- | A type-level name for counting elements without a specific property
--- described at the type-level.
 data Other
 
 deriving instance (which TypeEq.~~ Other) => Enum (Count base elem which)
