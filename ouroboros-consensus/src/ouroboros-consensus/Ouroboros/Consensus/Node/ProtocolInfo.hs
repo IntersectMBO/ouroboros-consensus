@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE TypeFamilies               #-}
 
 module Ouroboros.Consensus.Node.ProtocolInfo (
@@ -8,8 +7,11 @@ module Ouroboros.Consensus.Node.ProtocolInfo (
   , ProtocolClientInfo (..)
   , ProtocolInfo (..)
   , enumCoreNodes
+    -- * Protocol parameters
+  , ProtocolParams
   ) where
 
+import           Data.Kind (Type)
 import           Data.Word
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
@@ -43,3 +45,9 @@ data ProtocolInfo b = ProtocolInfo {
 data ProtocolClientInfo b = ProtocolClientInfo {
        pClientInfoCodecConfig :: CodecConfig b
      }
+
+{-------------------------------------------------------------------------------
+  Protocol parameters
+-------------------------------------------------------------------------------}
+
+data family ProtocolParams blk :: Type

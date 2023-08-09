@@ -8,18 +8,19 @@
 
 module Ouroboros.Consensus.Byron.Node (
     PBftSignatureThreshold (..)
-  , ProtocolParamsByron (..)
   , blockForgingByron
   , byronBlockForging
-  , defaultPBftSignatureThreshold
-  , mkByronConfig
-  , protocolClientInfoByron
-  , protocolInfoByron
     -- * Secrets
   , ByronLeaderCredentials (..)
   , ByronLeaderCredentialsError
   , mkByronLeaderCredentials
   , mkPBftCanBeLeader
+    -- * ProtocolInfo
+  , ProtocolParams (..)
+  , defaultPBftSignatureThreshold
+  , mkByronConfig
+  , protocolClientInfoByron
+  , protocolInfoByron
   ) where
 
 import qualified Cardano.Chain.Delegation as Delegation
@@ -151,7 +152,7 @@ mkPBftCanBeLeader (ByronLeaderCredentials sk cert nid _) = PBftCanBeLeader {
     }
 
 blockForgingByron :: Monad m
-                  => ProtocolParamsByron
+                  => ProtocolParams ByronBlock
                   -> [BlockForging m ByronBlock]
 blockForgingByron ProtocolParamsByron { byronLeaderCredentials      = mLeaderCreds
                                       , byronMaxTxCapacityOverrides = maxTxCapacityOverrides
@@ -169,7 +170,7 @@ defaultPBftSignatureThreshold :: PBftSignatureThreshold
 defaultPBftSignatureThreshold = PBftSignatureThreshold 0.22
 
 -- | Parameters needed to run Byron
-data ProtocolParamsByron = ProtocolParamsByron {
+data instance ProtocolParams ByronBlock = ProtocolParamsByron {
       byronGenesis                :: Genesis.Config
     , byronPbftSignatureThreshold :: Maybe PBftSignatureThreshold
     , byronProtocolVersion        :: Update.ProtocolVersion
@@ -178,7 +179,7 @@ data ProtocolParamsByron = ProtocolParamsByron {
     , byronMaxTxCapacityOverrides :: Mempool.TxOverrides ByronBlock
     }
 
-protocolInfoByron :: ProtocolParamsByron
+protocolInfoByron :: ProtocolParams ByronBlock
                   -> ProtocolInfo ByronBlock
 protocolInfoByron ProtocolParamsByron {
                       byronGenesis                = genesisConfig

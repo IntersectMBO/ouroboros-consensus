@@ -1,18 +1,21 @@
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
 module Ouroboros.Consensus.Shelley.Node.Praos (
-    ProtocolParamsBabbage (..)
-  , ProtocolParamsConway (..)
-  , praosBlockForging
+    -- * BlockForging
+    praosBlockForging
   , praosSharedBlockForging
+    -- * ProtocolInfo
+  , ProtocolParams (..)
   ) where
 
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -21,6 +24,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (configConsensus)
 import qualified Ouroboros.Consensus.Mempool as Mempool
+import           Ouroboros.Consensus.Node.ProtocolInfo
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
                      praosCheckCanForge)
@@ -30,9 +34,8 @@ import           Ouroboros.Consensus.Shelley.Eras (BabbageEra, ConwayEra,
                      EraCrypto, ShelleyBasedEra (shelleyBasedEraName))
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible, forgeShelleyBlock)
-import           Ouroboros.Consensus.Shelley.Node
-                     (ShelleyLeaderCredentials (..))
-import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto)
+import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
+                     ShelleyLeaderCredentials (..))
 import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 
@@ -114,14 +117,12 @@ praosSharedBlockForging
   ProtocolInfo
 -------------------------------------------------------------------------------}
 
--- | Parameters needed to run Babbage
-data ProtocolParamsBabbage c = ProtocolParamsBabbage {
+data instance ProtocolParams (ShelleyBlock (Praos c) (BabbageEra c)) = ProtocolParamsBabbage {
     babbageProtVer                :: SL.ProtVer
   , babbageMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (Praos c) (BabbageEra c))
   }
 
--- | Parameters needed to run Conway
-data ProtocolParamsConway c = ProtocolParamsConway {
+data instance ProtocolParams (ShelleyBlock (Praos c) (ConwayEra c)) = ProtocolParamsConway {
     conwayProtVer                :: SL.ProtVer
   , conwayMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (Praos c) (ConwayEra c))
   }

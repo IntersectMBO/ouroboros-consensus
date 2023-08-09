@@ -59,7 +59,7 @@ mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
     blockForging :: [BlockForging m ByronBlock]
     blockForging = blockForgingByron protocolParams
 
-    protocolParams :: ProtocolParamsByron
+    protocolParams :: ProtocolParams ByronBlock
     protocolParams = ProtocolParamsByron {
             byronGenesis                = genesisConfig
           , byronPbftSignatureThreshold = Just $ pbftSignatureThreshold

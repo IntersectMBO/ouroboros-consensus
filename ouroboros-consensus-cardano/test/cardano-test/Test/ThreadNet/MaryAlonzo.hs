@@ -35,8 +35,7 @@ import           Lens.Micro
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Cardano.Condense ()
 import           Ouroboros.Consensus.Cardano.Node
-                     (ProtocolTransitionParamsShelleyBased (..),
-                     TriggerHardFork (..))
+                     (ProtocolTransitionParams (..), TriggerHardFork (..))
 import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
                      (isHardForkNodeToNodeEnabled)
@@ -253,10 +252,10 @@ prop_simple_allegraAlonzo_convergence TestSetup
                         [Shelley.mkLeaderCredentials
                           (coreNodes !! fromIntegral nid)]
                     }
-                protocolTransitionParamsShelleyBased =
-                  ProtocolTransitionParamsShelleyBased {
-                      transitionTranslationContext = alonzoGenesis
-                    , transitionTrigger            =
+                protocolTransitionParamsIntraShelley =
+                  ProtocolTransitionParamsIntraShelley {
+                      transitionIntraShelleyTranslationContext = alonzoGenesis
+                    , transitionIntraShelleyTrigger            =
                         TriggerHardForkAtVersion $ SL.getVersion majorVersion2
                     }
                 (protocolInfo, blockForging) =
@@ -265,7 +264,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
                     (SL.ProtVer majorVersion1 0)
                     (SL.ProtVer majorVersion2 0)
                     ()
-                    protocolTransitionParamsShelleyBased
+                    protocolTransitionParamsIntraShelley
             in
             TestNodeInitialization {
                 tniCrucialTxs   =

@@ -24,6 +24,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras (
   , PerEraCodecConfig (..)
   , PerEraConsensusConfig (..)
   , PerEraLedgerConfig (..)
+  , PerEraProtocolParams (..)
   , PerEraStorageConfig (..)
     -- * Values for /some/ eras
   , SomeErasCanBeLeader (..)
@@ -80,6 +81,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.Lifting
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (allEqual)
 import           Ouroboros.Consensus.Util.Assert
@@ -94,6 +96,8 @@ newtype PerEraCodecConfig     xs = PerEraCodecConfig     { getPerEraCodecConfig 
 newtype PerEraConsensusConfig xs = PerEraConsensusConfig { getPerEraConsensusConfig :: NP WrapPartialConsensusConfig xs }
 newtype PerEraLedgerConfig    xs = PerEraLedgerConfig    { getPerEraLedgerConfig    :: NP WrapPartialLedgerConfig    xs }
 newtype PerEraStorageConfig   xs = PerEraStorageConfig   { getPerEraStorageConfig   :: NP StorageConfig              xs }
+
+newtype PerEraProtocolParams  xs = PerEraProtocolParams  { getPerEraProtocolParams  :: NP ProtocolParams             xs }
 
 {-------------------------------------------------------------------------------
   Values for /some/ eras
