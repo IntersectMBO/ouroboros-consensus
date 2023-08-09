@@ -34,6 +34,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), encodeListLen,
                      enforceSize)
 import qualified Cardano.Ledger.Api.State.Query as SL (queryConstitutionHash)
+import qualified Cardano.Ledger.BaseTypes as LC
 import           Cardano.Ledger.CertState (lookupDepositDState)
 import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
@@ -56,7 +57,6 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.DeepSeq (NFData)
-import           Data.ByteString (ByteString)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -224,7 +224,9 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     -> BlockQuery (ShelleyBlock proto era)
                   (Map (StakeCredential (EraCrypto era)) Coin)
 
-  GetConstitutionHash :: BlockQuery (ShelleyBlock proto era) (Maybe (SafeHash (EraCrypto era) ByteString))
+  GetConstitutionHash
+    :: BlockQuery (ShelleyBlock proto era)
+                  (Maybe (SafeHash (EraCrypto era) LC.AnchorData))
 
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
@@ -582,7 +584,7 @@ getProposedPPUpdates ::
      ShelleyBasedEra era
   => SL.NewEpochState era -> SL.ProposedPPUpdates era
 getProposedPPUpdates = fromMaybe SL.emptyPPPUpdates
-                     . LC.getProposedPPUpdates . SL.utxosGovernance
+                     . LC.getProposedPPUpdates . SL.utxosGovState
                      . SL.lsUTxOState . SL.esLState . SL.nesEs
 
 -- Get the current 'EpochState.' This is mainly for debugging.

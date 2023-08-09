@@ -53,6 +53,7 @@ import           Cardano.Ledger.Binary.Plain (FromCBOR (..), ToCBOR (..),
 import           Cardano.Ledger.Core (Era, ppMaxBHSizeL, ppMaxTxSizeL)
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.Shelley.Governance as SL
 import           Cardano.Slotting.EpochInfo
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as CBOR
@@ -479,8 +480,8 @@ instance ShelleyCompatible proto era => ValidateEnvelope (ShelleyBlock proto era
   Auxiliary
 -------------------------------------------------------------------------------}
 
-getPParams :: SL.NewEpochState era -> Core.PParams era
-getPParams = SL.esPp . SL.nesEs
+getPParams :: SL.EraGov era => SL.NewEpochState era -> Core.PParams era
+getPParams = view SL.curPParamsGovStateL . SL.utxosGovState . SL.lsUTxOState . SL.esLState . SL.nesEs
 
 {-------------------------------------------------------------------------------
   Serialisation

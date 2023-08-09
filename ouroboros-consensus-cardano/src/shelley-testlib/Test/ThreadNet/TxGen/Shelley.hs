@@ -104,7 +104,7 @@ genTx _cfg slotNo TickedShelleyLedgerState { tickedShelleyLedgerState } genEnv =
     ledgerEnv = SL.LedgerEnv {
         ledgerSlotNo   = slotNo
       , ledgerIx       = minBound
-      , ledgerPp       = SL.esPp epochState
+      , ledgerPp       = getPParams tickedShelleyLedgerState
       , ledgerAccount  = SL.esAccountState epochState
       }
 

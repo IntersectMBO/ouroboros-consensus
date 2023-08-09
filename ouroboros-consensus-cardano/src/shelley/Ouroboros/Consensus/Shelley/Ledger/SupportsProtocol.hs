@@ -8,6 +8,7 @@
 {-# LANGUAGE MultiWayIf               #-}
 {-# LANGUAGE NamedFieldPuns           #-}
 {-# LANGUAGE OverloadedStrings        #-}
+{-# LANGUAGE RankNTypes               #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
@@ -21,13 +22,12 @@
 -- instance for 'ShelleyBlock'.
 module Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol () where
 
-import           Cardano.Ledger.Core (ppMaxBBSizeL, ppMaxBHSizeL,
-                     ppProtocolVersionL)
+import qualified Cardano.Ledger.Core as LedgerCore
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.Monad.Except (MonadError (throwError))
 import           Data.Coerce (coerce)
-import           Lens.Micro ((^.))
+import qualified Lens.Micro
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History.Util
@@ -99,13 +99,19 @@ instance
   LedgerSupportsProtocol (ShelleyBlock (Praos crypto) era)
   where
   protocolLedgerView _cfg st =
-    let SL.NewEpochState {nesPd, nesEs} = tickedShelleyLedgerState st
+    let nes = tickedShelleyLedgerState st
+
+        SL.NewEpochState {nesPd} = nes
+
+        pparam :: forall a. Lens.Micro.Lens' (LedgerCore.PParams era) a -> a
+        pparam lens = getPParams nes Lens.Micro.^. lens
+
      in Praos.TickedPraosLedgerView $
           Praos.LedgerView
-            { Praos.lvPoolDistr = nesPd,
-              Praos.lvMaxBodySize = SL.esPp nesEs ^. ppMaxBBSizeL,
-              Praos.lvMaxHeaderSize = SL.esPp nesEs ^. ppMaxBHSizeL,
-              Praos.lvProtocolVersion = SL.esPp nesEs ^. ppProtocolVersionL
+            { Praos.lvPoolDistr       = nesPd,
+              Praos.lvMaxBodySize     = pparam LedgerCore.ppMaxBBSizeL,
+              Praos.lvMaxHeaderSize   = pparam LedgerCore.ppMaxBHSizeL,
+              Praos.lvProtocolVersion = pparam LedgerCore.ppProtocolVersionL
             }
 
   -- | Currently the Shelley+ ledger is hard-coded to produce a TPraos ledger

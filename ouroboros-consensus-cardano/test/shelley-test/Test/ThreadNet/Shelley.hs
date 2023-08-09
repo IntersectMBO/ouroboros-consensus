@@ -331,7 +331,7 @@ prop_simple_real_tpraos_convergence TestSetup
 
               -- The actual final value of @d@
               actual :: SL.UnitInterval
-              actual = SL.esPp (SL.nesEs ls) ^. SL.ppDG
+              actual = Shelley.getPParams ls ^. SL.ppDG
 
               -- The expected final value of @d@
               --
