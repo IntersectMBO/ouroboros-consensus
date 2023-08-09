@@ -378,7 +378,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- randomly initialize the bitstring
     mv <- C.replicateMV sz $ case mbAsc of
         Nothing  -> pure $ S.mkActive S.notInverted
-        Just asc -> S.genAsc asc `R.applySTGen` g
+        Just asc -> S.genS asc `R.applySTGen` g
 
     -- ensure the adversarial leader schedule is not empty
     do  void $ BV.fillInWindow

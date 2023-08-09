@@ -307,7 +307,7 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- randomly initialize the bitstring
     mv <- C.replicateMV sz $ case mbAsc of
         Nothing  -> pure $ S.mkActive S.inverted
-        Just asc -> S.genAsc asc `R.applySTGen` g
+        Just asc -> S.genS asc `R.applySTGen` g
 
     -- ensure at least one slot is filled
     --

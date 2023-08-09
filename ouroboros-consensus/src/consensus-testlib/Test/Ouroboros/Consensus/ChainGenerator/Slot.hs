@@ -15,7 +15,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Slot (
     -- * Slot
   , S
   , Test.Ouroboros.Consensus.ChainGenerator.Slot.showS
-  , genAsc
+  , genS
     -- * Reuse
   , POL (mkActive, test)
   , Pol (Inverted, NotInverted)
@@ -74,8 +74,8 @@ instance V.Unbox S
 
 -----
 
-genAsc :: R.RandomGen g => Asc -> g -> (S, g)
-genAsc asc g =
+genS :: R.RandomGen g => Asc -> g -> (S, g)
+genS asc g =
     bool `seq` (S bool, g')
   where
     (q, g') = R.random g   -- note 0 <= q <= 1
