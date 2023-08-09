@@ -106,17 +106,22 @@ inverted = Proxy
 notInverted :: Proxy NotInverted
 notInverted = Proxy
 
--- | Many functions in this library are parameterized over a type of kind @Pol@
+-- | The polarity of a type
 --
--- If the type is 'Inverted', then the function will treat all 'S' values as if they were first complemented.
+-- This is used to toggle how functions in this library interact with vectors
+-- of 'S' values.
 --
--- The 'PreImage' family does the corresponding parameterization of 'ActiveSlotE' and 'EmptySlotE' at the type level.
+-- If the polarity is 'Inverted', then the function will treat all 'S' values as
+-- if they were first complemented.
+--
+-- The 'PreImage' type family does the corresponding parameterization of
+-- 'ActiveSlotE' and 'EmptySlotE' at the type level.
 --
 -- NOTE: No 'S' value is ever actually complemented because of 'Inverted', but
--- the functions parameterized by 'POL' will treat them as if they were.
+-- the functions parameterized by 'pol' will treat them as if they were.
 data Pol = Inverted | NotInverted
 
--- | Data for 'Pol'
+-- | Overloaded slot operations for the two polarities
 class POL (pol :: Pol) where
     -- | Make an active slot
     mkActive :: proxy pol -> S
