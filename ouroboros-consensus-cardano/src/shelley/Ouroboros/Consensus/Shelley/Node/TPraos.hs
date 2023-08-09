@@ -394,7 +394,7 @@ registerGenesisStaking staking nes = nes {
           SL.psStakePoolParams = ListMap.toMap sgsPools
         }
 
-    pp = SL.esPp epochState
+    pp = getPParams nes
 
     -- The new stake distribution is made on the basis of a snapshot taken
     -- during the previous epoch. We create a "fake" snapshot in order to
@@ -481,7 +481,7 @@ registerInitialFunds initialFunds nes = nes {
               -- the full UTxO as "toAdd" rather than a delta, we simply
               -- reinitialise the full incremental stake.
               SL.utxosStakeDistr =
-                  SL.updateStakeDistribution (SL.esPp epochState) mempty utxoToDel utxo'
+                  SL.updateStakeDistribution (getPParams nes) mempty utxoToDel utxo'
             }
         }
 

@@ -130,7 +130,7 @@ protocolUpdates genesis st = [
     SL.ProposedPPUpdates proposals =
           fromMaybe SL.emptyPPPUpdates
         . Core.getProposedPPUpdates
-        . SL.utxosGovernance
+        . SL.utxosGovState
         . SL.lsUTxOState
         . SL.esLState
         . SL.nesEs

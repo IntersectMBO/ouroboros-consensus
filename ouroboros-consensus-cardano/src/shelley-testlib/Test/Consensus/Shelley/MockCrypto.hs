@@ -72,5 +72,5 @@ type CanMock proto era =
   , Arbitrary (PredicateFailure (SL.ShelleyUTXOW era))
   , Arbitrary (Core.TxWits era)
   , Arbitrary (StashedAVVMAddresses era)
-  , Arbitrary (Core.GovernanceState era)
+  , Arbitrary (Core.GovState era)
   )

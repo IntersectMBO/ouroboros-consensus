@@ -118,7 +118,7 @@ type StandardConway = ConwayEra StandardCrypto
 -- replaced with an appropriate API - see
 -- https://github.com/input-output-hk/ouroboros-network/issues/2890
 class ( Core.EraSegWits era
-      , Core.EraGovernance era
+      , Core.EraGov era
       , SL.ApplyTx era
       , SL.ApplyBlock era
       , SL.CanStartFromGenesis era
