@@ -34,7 +34,7 @@ import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.BlockchainTime (SlotLength)
 import           Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials,
-                     ProtocolParamsByron (..), byronGenesis,
+                     ProtocolParams (..), byronGenesis,
                      byronMaxTxCapacityOverrides, byronPbftSignatureThreshold,
                      byronSoftwareVersion)
 import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
@@ -50,9 +50,7 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..),
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.PBFT (PBftParams,
                      PBftSignatureThreshold (..))
-import           Ouroboros.Consensus.Shelley.Node (ProtocolParamsAllegra (..),
-                     ProtocolParamsAlonzo (..), ProtocolParamsMary (..),
-                     ProtocolParamsShelley (..),
+import           Ouroboros.Consensus.Shelley.Node (ProtocolParams (..),
                      ProtocolParamsShelleyBased (..), ShelleyGenesis,
                      ShelleyLeaderCredentials, allegraMaxTxCapacityOverrides,
                      allegraProtVer, alonzoMaxTxCapacityOverrides,
@@ -60,8 +58,6 @@ import           Ouroboros.Consensus.Shelley.Node (ProtocolParamsAllegra (..),
                      sgGenDelegs, shelleyBasedGenesis, shelleyBasedInitialNonce,
                      shelleyBasedLeaderCredentials,
                      shelleyMaxTxCapacityOverrides, shelleyProtVer)
-import           Ouroboros.Consensus.Shelley.Node.Praos
-                     (ProtocolParamsBabbage (..), ProtocolParamsConway (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Test.ThreadNet.Infra.Alonzo as Alonzo
 import qualified Test.ThreadNet.Infra.Byron as Byron

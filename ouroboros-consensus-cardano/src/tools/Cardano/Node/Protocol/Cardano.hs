@@ -36,7 +36,6 @@ import qualified Ouroboros.Consensus.Cardano.CanHardFork as Consensus
 import           Ouroboros.Consensus.Cardano.Condense ()
 import           Ouroboros.Consensus.HardFork.Combinator.Condense ()
 import qualified Ouroboros.Consensus.Mempool as Mempool
-import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 
 
 ------------------------------------------------------------------------------
@@ -211,23 +210,23 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
           alonzoMaxTxCapacityOverrides =
             Mempool.mkOverrides Mempool.noOverridesMeasure
         }
-        Praos.ProtocolParamsBabbage {
+        Consensus.ProtocolParamsBabbage {
           -- This is /not/ the Babbage protocol version. It is the protocol
           -- version that this node will declare that it understands, when it
           -- is in the Babbage era.
-          Praos.babbageProtVer = ProtVer (natVersion @7) 0,
-          Praos.babbageMaxTxCapacityOverrides =
+          Consensus.babbageProtVer = ProtVer (natVersion @7) 0,
+          Consensus.babbageMaxTxCapacityOverrides =
             Mempool.mkOverrides Mempool.noOverridesMeasure
         }
-        Praos.ProtocolParamsConway {
+        Consensus.ProtocolParamsConway {
           -- This is /not/ the Conway protocol version. It is the protocol
           -- version that this node will declare that it understands, when it
           -- is in the Conway era.
-          Praos.conwayProtVer =
+          Consensus.conwayProtVer =
             if npcTestEnableDevelopmentHardForkEras
             then ProtVer (natVersion @9) 0  -- Advertise we can support Conway
             else ProtVer (natVersion @8) 0, -- Otherwise we only advertise we know about Babbage
-          Praos.conwayMaxTxCapacityOverrides =
+          Consensus.conwayMaxTxCapacityOverrides =
             Mempool.mkOverrides Mempool.noOverridesMeasure
         }
         -- 'ProtocolTransitionParamsShelleyBased' specifies the parameters

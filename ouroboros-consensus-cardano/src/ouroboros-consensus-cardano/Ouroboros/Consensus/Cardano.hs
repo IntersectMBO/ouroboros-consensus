@@ -8,11 +8,7 @@ module Ouroboros.Consensus.Cardano (
   , ProtocolCardano
   , ProtocolShelley
     -- * Abstract over the various protocols
-  , ProtocolParamsAllegra (..)
-  , ProtocolParamsAlonzo (..)
-  , ProtocolParamsByron (..)
-  , ProtocolParamsMary (..)
-  , ProtocolParamsShelley (..)
+  , ProtocolParams (..)
   , ProtocolTransitionParamsShelleyBased (..)
   , module X
   ) where

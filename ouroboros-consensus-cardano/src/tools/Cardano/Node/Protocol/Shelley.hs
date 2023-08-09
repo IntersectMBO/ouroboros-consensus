@@ -48,9 +48,8 @@ import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..),
-                     ProtocolParamsShelley (..),
-                     ProtocolParamsShelleyBased (..), ShelleyGenesis (..),
-                     ShelleyLeaderCredentials (..))
+                     ProtocolParams (..), ProtocolParamsShelleyBased (..),
+                     ShelleyGenesis (..), ShelleyLeaderCredentials (..))
 import           Prelude (String, id)
 
 

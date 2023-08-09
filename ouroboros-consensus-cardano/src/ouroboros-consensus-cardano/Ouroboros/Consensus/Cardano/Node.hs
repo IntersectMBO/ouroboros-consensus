@@ -19,8 +19,7 @@
 module Ouroboros.Consensus.Cardano.Node (
     CardanoHardForkConstraints
   , MaxMajorProtVer (..)
-  , ProtocolParamsAllegra (..)
-  , ProtocolParamsMary (..)
+  , ProtocolParams (..)
   , ProtocolTransitionParamsShelleyBased (..)
   , TriggerHardFork (..)
   , protocolClientInfoCardano
@@ -102,8 +101,6 @@ import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
                      shelleyBlockIssuerVKey)
-import           Ouroboros.Consensus.Shelley.Node.Praos
-                     (ProtocolParamsBabbage (..), ProtocolParamsConway (..))
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import           Ouroboros.Consensus.Storage.Serialisation
@@ -570,14 +567,14 @@ data ProtocolTransitionParamsShelleyBased era = ProtocolTransitionParamsShelleyB
 -- for mainnet (check against @'SL.gNetworkId' 'shelleyBasedGenesis'@).
 protocolInfoCardano ::
      forall c m. (IOLike m, CardanoHardForkConstraints c)
-  => ProtocolParamsByron
+  => ProtocolParams ByronBlock
   -> ProtocolParamsShelleyBased (ShelleyEra c)
-  -> ProtocolParamsShelley c
-  -> ProtocolParamsAllegra c
-  -> ProtocolParamsMary    c
-  -> ProtocolParamsAlonzo  c
-  -> ProtocolParamsBabbage c
-  -> ProtocolParamsConway  c
+  -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
+  -> ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c))
+  -> ProtocolParams (ShelleyBlock (TPraos c) (MaryEra c))
+  -> ProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra c))
+  -> ProtocolParams (ShelleyBlock (Praos c)  (BabbageEra c))
+  -> ProtocolParams (ShelleyBlock (Praos c) (ConwayEra c))
   -> ProtocolTransitionParamsShelleyBased (ShelleyEra c)
   -> ProtocolTransitionParamsShelleyBased (AllegraEra c)
   -> ProtocolTransitionParamsShelleyBased (MaryEra c)

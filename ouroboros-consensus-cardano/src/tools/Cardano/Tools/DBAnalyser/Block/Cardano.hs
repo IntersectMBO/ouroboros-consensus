@@ -68,7 +68,6 @@ import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import           Ouroboros.Consensus.Shelley.Node.Praos
 import           System.Directory (makeAbsolute)
 import           System.FilePath (takeDirectory, (</>))
 
