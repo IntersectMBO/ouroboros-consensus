@@ -29,11 +29,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Some (
   , runReadPrec
     -- * 'Eq'
   , Forgotten
-  , eqArg
-  , eqCtor
-  , eqCtorProxy
   , forgotten
-  , runEq
   ) where
 
 import           Data.Kind (Constraint, Type)
@@ -110,22 +106,3 @@ newtype Forgotten a = Forgotten a
 
 forgotten :: a -> Forgotten a
 forgotten = Forgotten
-
-newtype EqBuilder a b = EqBuilder Bool
-
--- | The context is satisfied by any type @a@ that is manifestly apart from @->@
-runEq :: NoFun "runEq" a (AbsError "runEq" a) => EqBuilder a a -> Bool
-runEq (EqBuilder x) = x
-
-eqCtor :: a -> b -> EqBuilder a b
-eqCtor a b =
-    eqCtorProxy (toProxy a) (toProxy b)
-  where
-    toProxy :: x -> Proxy x
-    toProxy = const Proxy
-
-eqCtorProxy :: proxy a -> proxy b -> EqBuilder a b
-eqCtorProxy _a _b = EqBuilder True
-
-eqArg :: Eq x => EqBuilder (a -> a') (b -> b') -> (a -> x, a, b -> x, b) -> EqBuilder a' b'
-EqBuilder acc `eqArg` (f, a, g, b) = EqBuilder $ acc && f a == g b
