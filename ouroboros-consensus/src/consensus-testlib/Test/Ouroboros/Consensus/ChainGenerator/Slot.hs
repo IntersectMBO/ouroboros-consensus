@@ -87,8 +87,18 @@ showS (S bool) = showChar $ if bool then '1' else '0'
 
 -----
 
--- | The different kinds of element counted in this library
-data E = ActiveSlotE | EmptySlotE | SlotE
+-- | Type-level names for the different kinds of slots counted in this library
+--
+-- The data constructors of this type are used in promoted form with
+-- @-XDataKinds@.
+--
+data E =
+     -- ^ Active slots are those where at least one must be created
+     ActiveSlotE
+     -- ^ Empty slots are those where no block shall be created
+   | EmptySlotE
+     -- ^ SlotE denotes slots that can be either active or empty
+   | SlotE
 
 inverted :: Proxy Inverted
 inverted = Proxy
