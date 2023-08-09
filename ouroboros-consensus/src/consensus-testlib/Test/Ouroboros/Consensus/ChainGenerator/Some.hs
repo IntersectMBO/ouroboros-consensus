@@ -6,9 +6,9 @@
 
 {-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
--- | Utilities that make it easier to declare types that merely existential
--- quantify some type arguments, and actually for any other type that is not
--- amenable to @deriving@
+-- | Utilities that avoid repetition when declaring instances for types
+-- that are not amenable to @deriving@, and in particular, types with
+-- existential quantification.
 --
 -- For existentials that only quantify one type variable, this module's
 -- functionality is mostly superseded by the @some@ Hackage package. However,
