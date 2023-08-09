@@ -264,7 +264,7 @@ would solve the problem with just two toggles.
 
 -- | A 'ChainSchedule' that satisfies 'checkHonestChain'
 --
--- The distribution this function samples from is not simple to describe. It
+-- The distribution this function samples from
 -- begins by drawing a sample of length 'Len' from the Bernoulli process
 -- induced by the active slot coefficient 'Asc'. (IE 'Len' many i.i.d. samples
 -- from @Uniform(f)@). Then it slides an @s-d@ window along that leader
