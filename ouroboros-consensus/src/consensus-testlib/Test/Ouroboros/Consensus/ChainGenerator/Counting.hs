@@ -233,11 +233,8 @@ data SomeWindow (lbl :: klbl) (outer :: Type) (elem :: kelem) =
         !(Contains elem outer (Win lbl skolem))
 
 instance Eq (SomeWindow lbl outer elem) where
-    SomeWindow l1 l2 == SomeWindow r1 r2 =
-        Some.runEq
-      $ Some.eqCtor SomeWindow SomeWindow
-          `Some.eqArg` (const (), l1, const (), r1)
-          `Some.eqArg` (forgetWindow, l2, forgetWindow, r2)
+    SomeWindow _l1 l2 == SomeWindow _r1 r2 =
+      forgetWindow l2 == forgetWindow r2
 
 instance Show (SomeWindow lbl outer elem) where
     showsPrec p (SomeWindow prx win) =

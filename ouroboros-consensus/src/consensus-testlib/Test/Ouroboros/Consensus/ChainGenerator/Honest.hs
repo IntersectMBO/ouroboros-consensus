@@ -572,10 +572,9 @@ data EhcgViolation hon =
 
 instance Eq (EhcgViolation hon) where
     EhcgViolation l1 l2 == EhcgViolation r1 r2 =
-        Some.runEq
-      $ Some.eqCtor EhcgViolation EhcgViolation
-            `Some.eqArg` (C.forgetBase, l1, C.forgetBase, r1)
-            `Some.eqArg` (C.forgetWindow, l2, C.forgetWindow, r2)
+      C.forgetBase l1 == C.forgetBase r1
+      &&
+      C.forgetWindow l2 == C.forgetWindow r2
 
 instance Show (EhcgViolation hon) where
     showsPrec p (EhcgViolation x y) =

@@ -115,10 +115,7 @@ data SomeDensityWindow pol =
 
 instance Eq (SomeDensityWindow pol) where
     SomeDensityWindow l1 l2 == SomeDensityWindow r1 r2 =
-        Some.runEq
-      $ Some.eqCtor (SomeDensityWindow @pol) (SomeDensityWindow @pol)
-            `Some.eqArg` (C.forgetBase, l1, C.forgetBase, r1)
-            `Some.eqArg` (C.forgetBase, l2, C.forgetBase, r2)
+      C.forgetBase l1 == C.forgetBase r1 && C.forgetBase l2 == C.forgetBase r2
 
 instance Show (SomeDensityWindow pol) where
     showsPrec p (SomeDensityWindow numer denom) =
