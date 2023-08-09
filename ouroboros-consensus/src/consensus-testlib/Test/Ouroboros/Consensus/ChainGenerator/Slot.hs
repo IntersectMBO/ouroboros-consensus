@@ -113,6 +113,10 @@ class POL (pol :: Pol) where
     -- | Test whether @pol@ maps the given bit to one
     test :: proxy pol -> S -> Bool
 
+-- Both 'complementActive' and 'complementEmpty' are offered for simplicity
+-- instead of a generalized function that works in both cases (it would need
+-- another proxy parameter for the element type).
+
 -- | Every slot is either active or empty
 complementActive ::
      proxy pol
