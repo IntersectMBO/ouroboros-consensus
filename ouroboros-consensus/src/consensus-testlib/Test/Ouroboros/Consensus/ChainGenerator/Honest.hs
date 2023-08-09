@@ -10,22 +10,22 @@
 
 module Test.Ouroboros.Consensus.ChainGenerator.Honest (
     -- * Generating
-    ChainSchedule (ChainSchedule)
+    ChainSchema (ChainSchema)
   , CheckedHonestRecipe (UnsafeCheckedHonestRecipe, chrEhcgDensity, chrWin)
   , HonestLbl
   , HonestRecipe (HonestRecipe)
-  , NoSuchHonestChainSchedule (BadDeltaScg, BadKcp, BadLen)
+  , NoSuchHonestChainSchema (BadDeltaScg, BadKcp, BadLen)
   , SomeCheckedHonestRecipe (SomeCheckedHonestRecipe)
-  , SomeHonestChainSchedule (SomeHonestChainSchedule)
+  , SomeHonestChainSchema (SomeHonestChainSchema)
   , checkHonestRecipe
-  , countChainSchedule
+  , countChainSchema
   , uniformTheHonestChain
     -- * Testing
   , EhcgLbl
   , EhcgViolation (EhcgViolation, ehcgvPopCount, ehcgvWindow)
   , HonestChainViolation (BadCount, BadEhcgWindow, BadLength)
   , checkHonestChain
-  , prettyChainSchedule
+  , prettyChainSchema
   , prettyWindow
   , transitionMatrix
   ) where
@@ -95,7 +95,7 @@ instance Read SomeCheckedHonestRecipe where
             <*> Some.readArg
             <*> Some.readArg
 
-data NoSuchHonestChainSchedule =
+data NoSuchHonestChainSchema =
     -- | 'Scg' must be greater than 'Delta'
     BadDeltaScg
   |
@@ -106,7 +106,7 @@ data NoSuchHonestChainSchedule =
     BadLen
   deriving (Eq, Read, Show)
 
-checkHonestRecipe :: HonestRecipe -> Exn.Except NoSuchHonestChainSchedule SomeCheckedHonestRecipe
+checkHonestRecipe :: HonestRecipe -> Exn.Except NoSuchHonestChainSchema SomeCheckedHonestRecipe
 checkHonestRecipe recipe = do
     when (s <= d) $ Exn.throwError BadDeltaScg
 
@@ -134,17 +134,17 @@ checkHonestRecipe recipe = do
 -- from the previous active slot.
 --
 -- INVARIANT: at least one active slot
-data ChainSchedule base inner =
-    ChainSchedule
+data ChainSchema base inner =
+    ChainSchema
         !(C.Contains SlotE base inner)
         !(C.Vector inner SlotE S)
   deriving (Eq, Read, Show)
 
-countChainSchedule :: ChainSchedule base inner -> C.Size inner ActiveSlotE
-countChainSchedule sched =
+countChainSchema :: ChainSchema base inner -> C.Size inner ActiveSlotE
+countChainSchema sched =
     BV.countActivesInV S.notInverted v
   where
-    ChainSchedule _slots v = sched
+    ChainSchema _slots v = sched
 
 prettyWindow :: C.Contains SlotE base inner -> String -> String
 prettyWindow win s =
@@ -156,40 +156,40 @@ prettyWindow win s =
 
     theOpenBracket = 1
 
-prettyChainSchedule ::
+prettyChainSchema ::
   forall base inner.
-     ChainSchedule base inner
+     ChainSchema base inner
   -> String
   -> [String]
-prettyChainSchedule sched s =
+prettyChainSchema sched s =
     map (replicate (C.getCount shift) ' ' <>)
   $ [ prettyWindow slots s
     , V.foldMap (Endo . S.showS) (C.getVector v) `appEndo` ""
     ]
   where
-    ChainSchedule slots v = sched
+    ChainSchema slots v = sched
 
     shift = C.windowStart slots
 
-data SomeHonestChainSchedule =
+data SomeHonestChainSchema =
      forall base hon.
-     SomeHonestChainSchedule
+     SomeHonestChainSchema
          !(Proxy base)
          !(Proxy hon)
-         !(ChainSchedule base hon)
+         !(ChainSchema base hon)
 
-instance Show SomeHonestChainSchedule where
-    showsPrec p (SomeHonestChainSchedule base hon sched) =
+instance Show SomeHonestChainSchema where
+    showsPrec p (SomeHonestChainSchema base hon sched) =
         Some.runShowsPrec p
-      $ Some.showCtor SomeHonestChainSchedule "SomeHonestChainSchedule"
+      $ Some.showCtor SomeHonestChainSchema "SomeHonestChainSchema"
             `Some.showArg` base
             `Some.showArg` hon
             `Some.showArg` sched
 
-instance Read SomeHonestChainSchedule where
+instance Read SomeHonestChainSchema where
     readPrec =
         Some.runReadPrec
-      $ Some.readCtor SomeHonestChainSchedule "SomeHonestChainSchedule"
+      $ Some.readCtor SomeHonestChainSchema "SomeHonestChainSchema"
             <*> Some.readArg
             <*> Some.readArg
             <*> Some.readArg
@@ -262,7 +262,7 @@ would solve the problem with just two toggles.
 
 -}
 
--- | A 'ChainSchedule' that satisfies 'checkHonestChain'
+-- | A 'ChainSchema' that satisfies 'checkHonestChain'
 --
 -- The distribution this function samples from
 -- begins by drawing a sample of length 'Len' from the Bernoulli process
@@ -295,7 +295,7 @@ uniformTheHonestChain ::
   => Maybe Asc   -- ^ 'Nothing' means @0@, which induces a periodic chain
   -> CheckedHonestRecipe base hon
   -> g
-  -> ChainSchedule base hon
+  -> ChainSchema base hon
 {-# INLINABLE uniformTheHonestChain #-}
 uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
     BV.SomeDensityWindow (C.Count (toEnum -> numerator)) (C.Count (toEnum -> denominator)) <- pure chrEhcgDensity
@@ -399,7 +399,7 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
 
     sz  = C.windowSize slots :: C.Size hon SlotE   -- ie 'Len'
 
-    wrap v = ChainSchedule slots v
+    wrap v = ChainSchema slots v
 
 -----
 
@@ -621,12 +621,12 @@ data EhcgLbl
 checkHonestChain ::
   forall base hon.
      HonestRecipe
-  -> ChainSchedule base hon
+  -> ChainSchema base hon
   -> Exn.Except (HonestChainViolation hon) ()
 checkHonestChain recipe sched = do
     when (C.getCount sz /= l) $ Exn.throwError $ BadLength sz
 
-    do  let pc = countChainSchedule sched
+    do  let pc = countChainSchema sched
         when (C.toVar pc <= 0) $ Exn.throwError BadCount
 
     -- every slot is the first slot of a unique EHCG window
@@ -652,6 +652,6 @@ checkHonestChain recipe sched = do
     -- the general EHCG window contains @'Scg' - 'Delta'@ slots
     ehcgWidth = s - d :: Int
 
-    ChainSchedule hon v = sched
+    ChainSchema hon v = sched
 
     sz  = C.windowSize hon

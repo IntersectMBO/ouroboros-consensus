@@ -103,7 +103,7 @@ prop_honestChain testHonest testSeed = runIdentity $ do
 
     let sched = H.uniformTheHonestChain (Just testAsc) recipe' testSeed
 
-    QC.counterexample (unlines' $ H.prettyChainSchedule sched "H") <$> do
+    QC.counterexample (unlines' $ H.prettyChainSchema sched "H") <$> do
         pure $ case Exn.runExcept $ H.checkHonestChain testRecipe sched of
             Right () -> QC.property ()
             Left e   -> case e of

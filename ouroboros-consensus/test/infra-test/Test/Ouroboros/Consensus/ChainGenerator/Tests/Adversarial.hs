@@ -85,13 +85,13 @@ data TestAdversarial base hon = TestAdversarial {
   }
   deriving (Read, Show)
 
-genArPrefix :: H.ChainSchedule base hon -> QC.Gen (C.Var hon ActiveSlotE)
+genArPrefix :: H.ChainSchema base hon -> QC.Gen (C.Var hon ActiveSlotE)
 genArPrefix schedH =
     if C.toVar numChoices < 2 then pure (C.Count 0) {- can always pick genesis -} else do
         g <- QC.arbitrary
         pure $ C.toVar $ R.runSTGen_ (g :: QCGen) $ C.uniformIndex numChoices
   where
-    H.ChainSchedule _slots v = schedH
+    H.ChainSchema _slots v = schedH
 
     numChoices = pc C.- 1   -- can't pick the last active slot
 
@@ -167,7 +167,7 @@ prop_adversarialChain someTestAdversarial testSeedA = runIdentity $ do
 
         schedA = A.uniformAdversarialChain (Just testAscA) recipeA' testSeedA
 
-    let H.ChainSchedule winA _vA = schedA
+    let H.ChainSchema winA _vA = schedA
 
     C.SomeWindow Proxy stabWin <- do
         let A.AdversarialRecipe { A.arParams = (_kcp, scg, _delta) } = testRecipeA
@@ -197,21 +197,21 @@ prop_adversarialChain someTestAdversarial testSeedA = runIdentity $ do
 data AdvStabLbl
 
 -- | Calculate the interval in which the adversary can not yet have accelerated
-calculateStability :: Scg -> H.ChainSchedule base adv -> C.SomeWindow AdvStabLbl adv SlotE
+calculateStability :: Scg -> H.ChainSchema base adv -> C.SomeWindow AdvStabLbl adv SlotE
 calculateStability (Scg s) schedA =
     C.withWindow (C.windowSize winA) (C.Lbl @AdvStabLbl) (C.Count 0) (C.Count $ firstActive + theBlockItself + s)
   where
-    H.ChainSchedule winA vA = schedA
+    H.ChainSchema winA vA = schedA
 
     C.Count firstActive = case BV.findIthEmptyInV S.inverted vA (C.Count 0) of
             BV.JustFound x  -> x
-            BV.NothingFound -> error $ "impossible! " <> H.unlines' (H.prettyChainSchedule schedA "A")
+            BV.NothingFound -> error $ "impossible! " <> H.unlines' (H.prettyChainSchema schedA "A")
     theBlockItself = 1
 
 -- | A nice rendering for failures of 'prop_adversarialChain'
 advCounterexample ::
-     A.ChainSchedule base hon
-  -> A.ChainSchedule base adv
+     A.ChainSchema base hon
+  -> A.ChainSchema base adv
   -> C.Contains 'SlotE base adv
   -> C.Contains 'SlotE adv stab
   -> A.RaceViolation hon adv
@@ -225,8 +225,8 @@ advCounterexample schedH schedA winA stabWin rv =
           } ->
             H.unlines' $ []
              <> [H.prettyWindow rHon "rHon"]
-             <> reverse (H.prettyChainSchedule schedH "H")
-             <> H.prettyChainSchedule schedA "A"
+             <> reverse (H.prettyChainSchema schedH "H")
+             <> H.prettyChainSchema schedA "A"
              <> [H.prettyWindow (C.joinWin winA rAdv) "rAdv'"]
              <> [H.prettyWindow (C.joinWin winA stabWin) "stabWin'"]
 
@@ -351,7 +351,7 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
                       -- If there's no slot after the first race, then the
                       -- increment of delta cannot make a difference.
                       | AdversarialMutateDelta <- mut
-                      , let H.ChainSchedule _winH vH = arHonest
+                      , let H.ChainSchema _winH vH = arHonest
                         -- slot of the k+1 honest active in adv
                       , let Kcp k   = kcp
                       , let Scg s   = scg
@@ -421,8 +421,8 @@ prop_adversarialChainMutation (SomeTestAdversarialMutation Proxy Proxy testAdver
                     pretty = case calculateStability scg schedA of
                         C.SomeWindow Proxy win ->
                             [H.prettyWindow (C.joinWin carWin win) "no accel"]
-                         <> [show (H.countChainSchedule schedA)]
-                writeIORef catch (testSeedA,  H.prettyChainSchedule schedA "A" <> pretty)
+                         <> [show (H.countChainSchema schedA)]
+                writeIORef catch (testSeedA,  H.prettyChainSchema schedA "A" <> pretty)
                 go catch counter recipeA' testSeedAsSeed'
             Left e   -> case e of
                 A.BadAnchor{} -> error $ "impossible! " <> show e
@@ -452,13 +452,13 @@ advMutCounterexample testAdversarialMut mutatedRecipe schedA' seedA =
 
     A.AdversarialRecipe { A.arHonest, A.arPrefix } = recipeA
 
-    H.ChainSchedule winH vH = arHonest
+    H.ChainSchema winH vH = arHonest
 
     A.AdversarialRecipe { A.arParams = (kcp', _scg', _delta') } = mutatedRecipe
 
-    schedH' = H.prettyChainSchedule arHonest "H"
+    schedH' = H.prettyChainSchema arHonest "H"
 
-    ch = H.countChainSchedule arHonest
+    ch = H.countChainSchema arHonest
 
     next iter =
             ((,) False <$> RI.next vH iter)

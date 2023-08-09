@@ -12,14 +12,14 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
     -- * Generating
     AdversarialRecipe (AdversarialRecipe, arHonest, arParams, arPrefix)
   , CheckedAdversarialRecipe (UnsafeCheckedAdversarialRecipe, carHonest, carParams, carWin)
-  , NoSuchAdversarialChainSchedule (NoSuchAdversarialBlock, NoSuchCompetitor, NoSuchIntersection)
+  , NoSuchAdversarialChainSchema (NoSuchAdversarialBlock, NoSuchCompetitor, NoSuchIntersection)
   , SomeCheckedAdversarialRecipe (SomeCheckedAdversarialRecipe)
   , checkAdversarialRecipe
   , uniformAdversarialChain
     -- * Testing
   , AdversarialViolation (BadAnchor, BadCount, BadRace)
   , AnchorViolation (HonestActiveMustAnchorAdversarial)
-  , ChainSchedule (ChainSchedule)
+  , ChainSchema (ChainSchema)
   , RaceViolation (AdversaryWonRace, rvAdv, rvHon)
   , checkAdversarialChain
   ) where
@@ -32,7 +32,7 @@ import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import           Test.Ouroboros.Consensus.ChainGenerator.Honest
-                     (ChainSchedule (ChainSchedule))
+                     (ChainSchema (ChainSchema))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
                      Delta (Delta), Kcp (Kcp), Scg (Scg))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.RaceIterator as RI
@@ -101,7 +101,7 @@ data AdversarialViolation hon adv =
 checkAdversarialChain ::
   forall base hon adv.
      AdversarialRecipe base hon
-  -> ChainSchedule base adv
+  -> ChainSchema base adv
   -> Exn.Except (AdversarialViolation hon adv) ()
 checkAdversarialChain recipe adv = do
     checkStart
@@ -109,14 +109,14 @@ checkAdversarialChain recipe adv = do
     checkRaces
   where
     AdversarialRecipe {
-        arHonest = ChainSchedule winH vH
+        arHonest = ChainSchema winH vH
       ,
         arParams = (Kcp k, Scg s, Delta d)
       ,
         arPrefix
       } = recipe
 
-    ChainSchedule winA vA = adv
+    ChainSchema winA vA = adv
 
     checkStart = do
         let startA       = C.windowStart winA :: C.Index base SlotE
@@ -216,7 +216,7 @@ checkAdversarialChain recipe adv = do
 data AdversarialRecipe base hon =
     AdversarialRecipe {
         -- | The honest chain to branch off of
-        arHonest :: !(ChainSchedule base hon)
+        arHonest :: !(ChainSchema base hon)
       ,
         -- | protocol parameters
         arParams :: (Kcp, Scg, Delta)
@@ -252,7 +252,7 @@ instance Read (SomeCheckedAdversarialRecipe base hon) where
 -- | Image of 'checkAdversarialRecipe' when it accepts the recipe
 data CheckedAdversarialRecipe base hon adv =
     UnsafeCheckedAdversarialRecipe {
-        carHonest :: !(ChainSchedule base hon)
+        carHonest :: !(ChainSchema base hon)
       ,
         carParams :: (Kcp, Scg, Delta)
       ,
@@ -265,7 +265,7 @@ data CheckedAdversarialRecipe base hon adv =
   deriving (Eq, Read, Show)
 
 -- | Image of 'checkAdversarialRecipe' when it rejects the recipe
-data NoSuchAdversarialChainSchedule =
+data NoSuchAdversarialChainSchema =
     -- | There is no slot the adversary can lead
     --
     -- Two possible reasons, where @X@ is the slot of 'arPrefix' and Y is the youngest slot of 'arHonest'.
@@ -304,7 +304,7 @@ checkAdversarialRecipe ::
   forall base hon.
      AdversarialRecipe base hon
   -> Exn.Except
-         NoSuchAdversarialChainSchedule
+         NoSuchAdversarialChainSchema
          (SomeCheckedAdversarialRecipe base hon)
 checkAdversarialRecipe recipe = do
     when (0 == k) $ Exn.throwError NoSuchAdversarialBlock
@@ -344,7 +344,7 @@ checkAdversarialRecipe recipe = do
 
     (Kcp k, _scg, _delta) = arParams
 
-    ChainSchedule winH vH = arHonest
+    ChainSchema winH vH = arHonest
 
 -----
 
@@ -352,7 +352,7 @@ data RaceAssumptionLbl
 data UntouchableLbl
 data TouchableLbl
 
--- | Generate an adversarial 'ChainSchedule' that satifies 'checkExtendedRaceAssumption'
+-- | Generate an adversarial 'ChainSchema' that satifies 'checkExtendedRaceAssumption'
 --
 -- The distribution this function samples from is not simple to describe. It
 -- begins by drawing a sample of length 'adv' from the Bernoulli process
@@ -368,7 +368,7 @@ uniformAdversarialChain ::
   => Maybe Asc   -- ^ 'Nothing' means @1@
   -> CheckedAdversarialRecipe base hon adv
   -> g
-  -> ChainSchedule base adv
+  -> ChainSchema base adv
 {-# INLINABLE uniformAdversarialChain #-}
 uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     g <- R.newSTGenM g0
@@ -410,13 +410,13 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         carWin
       } = recipe
 
-    wrap v = ChainSchedule (C.joinWin winH carWin) v
+    wrap v = ChainSchema (C.joinWin winH carWin) v
 
     Kcp   k = kcp
     Scg   s = scg
     Delta d = delta
 
-    ChainSchedule winH vH = carHonest
+    ChainSchema winH vH = carHonest
 
     vA = C.sliceV carWin vH
 
