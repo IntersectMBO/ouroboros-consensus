@@ -129,7 +129,6 @@ data Model blk = Model {
     , currentLedger    :: ExtLedgerState blk
     , initLedger       :: ExtLedgerState blk
     , iterators        :: Map IteratorId [blk]
-    , valid            :: ValidBlocks blk
     , invalid          :: InvalidBlocks blk
     , currentSlot      :: SlotNo
     , maxClockSkew     :: Word64
@@ -305,20 +304,28 @@ immutableSlotNo :: HasHeader blk
 immutableSlotNo k = Chain.headSlot . immutableChain k
 
 getIsValid :: forall blk. LedgerSupportsProtocol blk
-           => Model blk
+           => TopLevelConfig blk
+           -> Model blk
            -> (RealPoint blk -> Maybe Bool)
-getIsValid m = \(RealPoint _ hash) -> if
-    | Map.member hash (volatileDbBlocks m) &&
-      Set.member hash (valid m)               -> Just True
-    | Map.member hash (volatileDbBlocks m) &&
-      Map.member hash (invalid m)             -> Just False
-    | otherwise                               -> Nothing
+getIsValid cfg m = \pt@(RealPoint _ hash) -> if
+    | Set.member pt validPoints   -> Just True
+    | Map.member hash (invalid m) -> Just False
+    | otherwise                   -> Nothing
+  where
+    validPoints :: Set (RealPoint blk)
+    validPoints =
+          foldMap (Set.fromList . map blockRealPoint . Chain.toOldestFirst . fst)
+        . snd
+        . validChains cfg m
+        . blocks
+        $ m
 
 isValid :: forall blk. LedgerSupportsProtocol blk
-        => RealPoint blk
+        => TopLevelConfig blk
+        -> RealPoint blk
         -> Model blk
         -> Maybe Bool
-isValid = flip getIsValid
+isValid = flip . getIsValid
 
 getLedgerDB ::
      LedgerSupportsProtocol blk
@@ -355,7 +362,6 @@ empty initLedger maxClockSkew = Model {
     , initLedger       = initLedger
     , iterators        = Map.empty
     , invalid          = Map.empty
-    , valid            = Set.empty
     , currentSlot      = 0
     , maxClockSkew     = maxClockSkew
     , isOpen           = True
@@ -368,7 +374,7 @@ advanceCurSlot
   -> Model blk -> Model blk
 advanceCurSlot curSlot m = m { currentSlot = curSlot `max` currentSlot m }
 
-addBlock :: forall blk. (Eq blk, LedgerSupportsProtocol blk)
+addBlock :: forall blk. LedgerSupportsProtocol blk
          => TopLevelConfig blk
          -> blk
          -> Model blk -> Model blk
@@ -380,7 +386,6 @@ addBlock cfg blk m = Model {
     , initLedger       = initLedger m
     , iterators        = iterators  m
     , invalid          = invalid'
-    , valid            = valid'
     , currentSlot      = currentSlot  m
     , maxClockSkew     = maxClockSkew m
     , isOpen           = True
@@ -424,9 +429,6 @@ addBlock cfg blk m = Model {
       immutableChainHashes `isPrefixOf`
       map blockHash (Chain.toOldestFirst fork)
 
-    consideredCandidates = filter (extendsImmutableChain . fst)
-      $ candidates
-
     newChain  :: Chain blk
     newLedger :: ExtLedgerState blk
     (newChain, newLedger) =
@@ -435,25 +437,10 @@ addBlock cfg blk m = Model {
           (Proxy @(BlockProtocol blk))
           (selectView (configBlock cfg) . getHeader)
           (currentChain m)
-      $ consideredCandidates
+      . filter (extendsImmutableChain . fst)
+      $ candidates
 
-    -- Sometimes blocks are added not in order and therefore we cannot just look
-    -- at the last added block and push it to the set of known valid blocks. The
-    -- easiest (and considering the lengths of the generated chains) way is to
-    -- just push all the valid blocks in the chain into the set.
-    --
-    -- Also, the chain selection algorithm in the SUT will test chains one by
-    -- one until it finds the one that should be selected, so prefixes of chains
-    -- will be tested for validity and blocks in those prefixes might be
-    -- included in the set of known valid blocks. Therefore, as we know which
-    -- chain was selected, and on every chain we know the valid blocks, we will
-    -- fold over the candidates up to (and including) the selected one.
-    valid' = foldl
-               (Chain.foldChain (\s b -> Set.insert (blockHash b) s))
-               (valid m)
-               (takeWhile (not . Chain.isPrefixOf newChain) (map fst consideredCandidates) ++ [newChain])
-
-addBlocks :: (Eq blk, LedgerSupportsProtocol blk)
+addBlocks :: LedgerSupportsProtocol blk
           => TopLevelConfig blk
           -> [blk]
           -> Model blk -> Model blk
@@ -461,7 +448,7 @@ addBlocks cfg = repeatedly (addBlock cfg)
 
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
 addBlockPromise
-  :: forall m blk. (Eq blk, LedgerSupportsProtocol blk, MonadSTM m)
+  :: forall m blk. (LedgerSupportsProtocol blk, MonadSTM m)
   => TopLevelConfig blk
   -> blk
   -> Model blk
@@ -631,7 +618,6 @@ class ( HasHeader blk
 -------------------------------------------------------------------------------}
 
 type InvalidBlocks blk = Map (HeaderHash blk) (InvalidBlockReason blk, SlotNo)
-type ValidBlocks blk = Set (HeaderHash blk)
 
 -- | Result of 'validate', also used internally.
 data ValidatedChain blk =

@@ -329,7 +329,7 @@ withModelContext f = do
   pure a
 
 
-instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, Eq blk)
+instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk)
       => SupportsUnitTest (ModelM blk) where
 
   type FollowerId (ModelM blk) = Model.FollowerId
