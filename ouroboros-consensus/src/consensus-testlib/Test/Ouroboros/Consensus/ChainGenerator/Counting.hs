@@ -266,10 +266,11 @@ withWindow (Count n) _lbl (Count i) (Count m) =
   where
     i' = max 0 i
 
-    pre = i' .- i
-    suc = max 0 $ i .+ m .- n
+    -- we compute the elements that fall outside the containing sequence
+    precedingElements = i' .- i
+    trailingElements = max 0 $ i .+ m .- n
 
-    m' = max 0 $ m .- pre .- suc
+    m' = max 0 $ m .- precedingElements .- trailingElements
 
 withWindowBetween :: Size outer elem -> Lbl lbl -> Index outer elem -> Index outer elem -> SomeWindow lbl outer elem
 withWindowBetween n lbl (Count i) (Count j) = withWindow n lbl (Count i) (Count $ j .- i .+ 1)
