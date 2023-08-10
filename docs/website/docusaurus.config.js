@@ -65,9 +65,6 @@ const config = {
     ({
       // Replace with your project's social card
       image: 'img/docusaurus-social-card.jpg',
-      prism: {
-        additionalLanguages: ['haskell'],
-      },
       navbar: {
         title: 'Ouroboros Consensus',
         logo: {
@@ -146,6 +143,7 @@ const config = {
       prism: {
         theme: lightCodeTheme,
         darkTheme: darkCodeTheme,
+        additionalLanguages: ['haskell'],
       },
     }),
 };
