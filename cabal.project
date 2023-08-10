@@ -78,9 +78,6 @@ package strict-stm
 package text-short
   flags: +asserts
 
-allow-newer:
-  , lens
-
 if impl(ghc >= 9.6)
   allow-newer:
     , *:base
