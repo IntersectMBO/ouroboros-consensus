@@ -230,89 +230,89 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
             Consensus.conwayMaxTxCapacityOverrides =
               Mempool.mkOverrides Mempool.noOverridesMeasure
           }
+          -- 'ProtocolTransitionParams' specifies the parameters needed to
+          -- transition between two eras. The comments below also apply for the
+          -- Shelley -> Allegra and Allegra -> Mary hard forks.
+          --
+          -- Byron to Shelley hard fork parameters
+          Consensus.ProtocolTransitionParamsByronToShelley {
+            transitionByronToShelleyTranslationContext = toFromByronTranslationContext shelleyGenesis,
+            transitionByronToShelleyTrigger =
+              -- What will trigger the Byron -> Shelley hard fork?
+              case npcTestShelleyHardForkAtEpoch of
+
+                -- This specifies the major protocol version number update that will
+                -- trigger us moving to the Shelley protocol.
+                --
+                -- Version 0 is Byron with Ouroboros classic
+                -- Version 1 is Byron with Ouroboros Permissive BFT
+                -- Version 2 is Shelley
+                -- Version 3 is Allegra
+                -- Version 4 is Mary
+                -- Version 5 is Alonzo
+                -- Version 6 is Alonzo (intra era hardfork)
+                -- Version 7 is Babbage
+                -- Version 8 is Babbage (intra era hardfork)
+                -- Version 9 is Conway
+                --
+                -- But we also provide an override to allow for simpler test setups
+                -- such as triggering at the 0 -> 1 transition .
+                --
+                Nothing -> Consensus.TriggerHardForkAtVersion
+                              (maybe 2 fromIntegral npcTestShelleyHardForkAtVersion)
+
+                -- Alternatively, for testing we can transition at a specific epoch.
+                --
+                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+          }
+          -- Shelley to Allegra hard fork parameters
+          Consensus.ProtocolTransitionParamsIntraShelley {
+            transitionIntraShelleyTranslationContext = (),
+            transitionIntraShelleyTrigger =
+              case npcTestAllegraHardForkAtEpoch of
+                Nothing -> Consensus.TriggerHardForkAtVersion
+                              (maybe 3 fromIntegral npcTestAllegraHardForkAtVersion)
+                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+          }
+          -- Allegra to Mary hard fork parameters
+          Consensus.ProtocolTransitionParamsIntraShelley {
+            transitionIntraShelleyTranslationContext = (),
+            transitionIntraShelleyTrigger =
+              case npcTestMaryHardForkAtEpoch of
+                Nothing -> Consensus.TriggerHardForkAtVersion
+                              (maybe 4 fromIntegral npcTestMaryHardForkAtVersion)
+                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+          }
+          -- Mary to Alonzo hard fork parameters
+          Consensus.ProtocolTransitionParamsIntraShelley {
+            transitionIntraShelleyTranslationContext = alonzoGenesis,
+            transitionIntraShelleyTrigger =
+              case npcTestAlonzoHardForkAtEpoch of
+                Nothing -> Consensus.TriggerHardForkAtVersion
+                              (maybe 5 fromIntegral npcTestAlonzoHardForkAtVersion)
+                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+          }
+          -- Alonzo to Babbage hard fork parameters
+          Consensus.ProtocolTransitionParamsIntraShelley {
+            transitionIntraShelleyTranslationContext = (),
+            transitionIntraShelleyTrigger =
+              case npcTestBabbageHardForkAtEpoch of
+                  Nothing -> Consensus.TriggerHardForkAtVersion
+                              (maybe 7 fromIntegral npcTestBabbageHardForkAtVersion)
+                  Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+
+          }
+          -- Babbage to Conway hard fork parameters
+          Consensus.ProtocolTransitionParamsIntraShelley {
+            transitionIntraShelleyTranslationContext = conwayGenesis,
+            transitionIntraShelleyTrigger =
+              case npcTestConwayHardForkAtEpoch of
+                  Nothing -> Consensus.TriggerHardForkAtVersion
+                              (maybe 9 fromIntegral npcTestConwayHardForkAtVersion)
+                  Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+
+          }
         )
-        -- 'ProtocolTransitionParamsShelleyBased' specifies the parameters
-        -- needed to transition between two eras. The comments below also apply
-        -- for the Shelley -> Allegra and Allegra -> Mary hard forks.
-        --
-        -- Byron to Shelley hard fork parameters
-        Consensus.ProtocolTransitionParamsShelleyBased {
-          transitionTranslationContext = toFromByronTranslationContext shelleyGenesis,
-          transitionTrigger =
-            -- What will trigger the Byron -> Shelley hard fork?
-            case npcTestShelleyHardForkAtEpoch of
-
-               -- This specifies the major protocol version number update that will
-               -- trigger us moving to the Shelley protocol.
-               --
-               -- Version 0 is Byron with Ouroboros classic
-               -- Version 1 is Byron with Ouroboros Permissive BFT
-               -- Version 2 is Shelley
-               -- Version 3 is Allegra
-               -- Version 4 is Mary
-               -- Version 5 is Alonzo
-               -- Version 6 is Alonzo (intra era hardfork)
-               -- Version 7 is Babbage
-               -- Version 8 is Babbage (intra era hardfork)
-               -- Version 9 is Conway
-               --
-               -- But we also provide an override to allow for simpler test setups
-               -- such as triggering at the 0 -> 1 transition .
-               --
-               Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 2 fromIntegral npcTestShelleyHardForkAtVersion)
-
-               -- Alternatively, for testing we can transition at a specific epoch.
-               --
-               Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-        }
-        -- Shelley to Allegra hard fork parameters
-        Consensus.ProtocolTransitionParamsShelleyBased {
-          transitionTranslationContext = (),
-          transitionTrigger =
-            case npcTestAllegraHardForkAtEpoch of
-               Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 3 fromIntegral npcTestAllegraHardForkAtVersion)
-               Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-        }
-        -- Allegra to Mary hard fork parameters
-        Consensus.ProtocolTransitionParamsShelleyBased {
-          transitionTranslationContext = (),
-          transitionTrigger =
-            case npcTestMaryHardForkAtEpoch of
-               Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 4 fromIntegral npcTestMaryHardForkAtVersion)
-               Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-        }
-        -- Mary to Alonzo hard fork parameters
-        Consensus.ProtocolTransitionParamsShelleyBased {
-          transitionTranslationContext = alonzoGenesis,
-          transitionTrigger =
-            case npcTestAlonzoHardForkAtEpoch of
-               Nothing -> Consensus.TriggerHardForkAtVersion
-                            (maybe 5 fromIntegral npcTestAlonzoHardForkAtVersion)
-               Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-        }
-        -- Alonzo to Babbage hard fork parameters
-        Consensus.ProtocolTransitionParamsShelleyBased {
-          transitionTranslationContext = (),
-          transitionTrigger =
-             case npcTestBabbageHardForkAtEpoch of
-                Nothing -> Consensus.TriggerHardForkAtVersion
-                             (maybe 7 fromIntegral npcTestBabbageHardForkAtVersion)
-                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-
-        }
-        -- Babbage to Conway hard fork parameters
-        Consensus.ProtocolTransitionParamsShelleyBased {
-          transitionTranslationContext = conwayGenesis,
-          transitionTrigger =
-             case npcTestConwayHardForkAtEpoch of
-                Nothing -> Consensus.TriggerHardForkAtVersion
-                             (maybe 9 fromIntegral npcTestConwayHardForkAtVersion)
-                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-
-        }
 
 ------------------------------------------------------------------------------
 -- Errors

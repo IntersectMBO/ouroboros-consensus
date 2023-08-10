@@ -38,8 +38,7 @@ import           Ouroboros.Consensus.Cardano.CanHardFork
                      (ShelleyPartialLedgerConfig (..), forecastAcrossShelley,
                      translateChainDepStateAcrossShelley)
 import           Ouroboros.Consensus.Cardano.Node
-                     (ProtocolTransitionParamsShelleyBased (..),
-                     TriggerHardFork (..))
+                     (ProtocolTransitionParams (..), TriggerHardFork (..))
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
@@ -228,7 +227,7 @@ protocolInfoShelleyBasedHardFork ::
   -> SL.ProtVer
   -> SL.ProtVer
   -> SL.TranslationContext era1
-  -> ProtocolTransitionParamsShelleyBased era2
+  -> ProtocolTransitionParams (ShelleyBlock proto1 era1) (ShelleyBlock proto2 era2)
   -> ( ProtocolInfo      (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
      , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
      )
@@ -274,9 +273,9 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
     eraParams1 :: History.EraParams
     eraParams1 = shelleyEraParams genesis
 
-    ProtocolTransitionParamsShelleyBased {
-        transitionTranslationContext = transCtxt2
-      , transitionTrigger
+    ProtocolTransitionParamsIntraShelley {
+        transitionIntraShelleyTranslationContext = transCtxt2
+      , transitionIntraShelleyTrigger
       } = protocolTransitionParams
 
     toPartialLedgerConfig1 ::
@@ -284,7 +283,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
       -> PartialLedgerConfig (ShelleyBlock proto1 era1)
     toPartialLedgerConfig1 cfg = ShelleyPartialLedgerConfig {
           shelleyLedgerConfig    = cfg
-        , shelleyTriggerHardFork = transitionTrigger
+        , shelleyTriggerHardFork = transitionIntraShelleyTrigger
         }
 
     -- Era 2

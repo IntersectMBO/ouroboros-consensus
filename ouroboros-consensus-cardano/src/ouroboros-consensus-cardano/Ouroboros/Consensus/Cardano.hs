@@ -9,7 +9,7 @@ module Ouroboros.Consensus.Cardano (
   , ProtocolShelley
     -- * Abstract over the various protocols
   , ProtocolParams (..)
-  , ProtocolTransitionParamsShelleyBased (..)
+  , ProtocolTransitionParams (..)
   , module X
   ) where
 

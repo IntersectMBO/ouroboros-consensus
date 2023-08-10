@@ -337,13 +337,13 @@ mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlon
             conwayProtVer                  = ProtVer (SL.natVersion @9) 0
           , conwayMaxTxCapacityOverrides   = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
+        (unByronToShelleyTransitionArguments shelleyTransition)
+        (unIntraShelleyTransitionArguments   allegraTransition)
+        (unIntraShelleyTransitionArguments   maryTransition)
+        (unIntraShelleyTransitionArguments   alonzoTransition)
+        (unIntraShelleyTransitionArguments   babbageTransition)
+        (unIntraShelleyTransitionArguments   conwayTransition)
       )
-      (unShelleyTransitionArguments shelleyTransition)
-      (unShelleyTransitionArguments allegraTransition)
-      (unShelleyTransitionArguments maryTransition)
-      (unShelleyTransitionArguments alonzoTransition)
-      (unShelleyTransitionArguments babbageTransition)
-      (unShelleyTransitionArguments conwayTransition)
   where
     ( shelleyTransition :*
       allegraTransition :*
@@ -354,11 +354,19 @@ mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlon
       Nil
       ) = hardForkTriggers
 
-    unShelleyTransitionArguments ::
+    unByronToShelleyTransitionArguments ::
          ShelleyTransitionArguments (ShelleyBlock proto era)
-      -> ProtocolTransitionParamsShelleyBased era
-    unShelleyTransitionArguments (ShelleyTransitionArguments ctxt trigger) =
-      ProtocolTransitionParamsShelleyBased
+      -> ProtocolTransitionParams ByronBlock (ShelleyBlock proto era)
+    unByronToShelleyTransitionArguments (ShelleyTransitionArguments ctxt trigger) =
+      ProtocolTransitionParamsByronToShelley
+      (ctxt (genesisShelley, genesisAlonzo, genesisConway))
+      trigger
+
+    unIntraShelleyTransitionArguments ::
+         ShelleyTransitionArguments (ShelleyBlock proto era)
+      -> ProtocolTransitionParams (ShelleyBlock proto' era') (ShelleyBlock proto era)
+    unIntraShelleyTransitionArguments (ShelleyTransitionArguments ctxt trigger) =
+      ProtocolTransitionParamsIntraShelley
       (ctxt (genesisShelley, genesisAlonzo, genesisConway))
       trigger
 

@@ -39,11 +39,9 @@ import           Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials,
                      byronSoftwareVersion)
 import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
 import           Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints,
-                     ProtocolParams (..),
-                     ProtocolTransitionParamsShelleyBased (..),
+                     ProtocolParams (..), ProtocolTransitionParams (..),
                      TriggerHardFork (TriggerHardForkAtEpoch, TriggerHardForkNever),
-                     protocolInfoCardano, transitionTranslationContext,
-                     transitionTrigger)
+                     protocolInfoCardano)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..),
@@ -310,34 +308,34 @@ mkTestProtocolInfo
               conwayProtVer                 = hfSpecProtVer Conway hardForkSpec
             , conwayMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
             }
+          ProtocolTransitionParamsByronToShelley {
+            transitionByronToShelleyTranslationContext = SL.toFromByronTranslationContext shelleyGenesis
+          , transitionByronToShelleyTrigger            = hfSpecTransitionTrigger Shelley hardForkSpec
+          }
+          ProtocolTransitionParamsIntraShelley {
+              transitionIntraShelleyTranslationContext = ()
+            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Allegra hardForkSpec
+            }
+          ProtocolTransitionParamsIntraShelley {
+              transitionIntraShelleyTranslationContext = ()
+            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Mary hardForkSpec
+            }
+          ProtocolTransitionParamsIntraShelley {
+              transitionIntraShelleyTranslationContext = Alonzo.degenerateAlonzoGenesis
+            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Alonzo hardForkSpec
+            }
+          ProtocolTransitionParamsIntraShelley {
+              transitionIntraShelleyTranslationContext = ()
+            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Babbage hardForkSpec
+            }
+          ProtocolTransitionParamsIntraShelley {
+              transitionIntraShelleyTranslationContext =
+                -- Note that this is effectively a no-op, which is fine for
+                -- testing, at least for now.
+                SL.ConwayGenesis $ SL.GenDelegs $ sgGenDelegs shelleyGenesis
+            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Conway hardForkSpec
+            }
         )
-        ProtocolTransitionParamsShelleyBased {
-          transitionTranslationContext = SL.toFromByronTranslationContext shelleyGenesis
-        , transitionTrigger            = hfSpecTransitionTrigger Shelley hardForkSpec
-        }
-        ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext = ()
-          , transitionTrigger            = hfSpecTransitionTrigger Allegra hardForkSpec
-          }
-        ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext = ()
-          , transitionTrigger            = hfSpecTransitionTrigger Mary hardForkSpec
-          }
-        ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext = Alonzo.degenerateAlonzoGenesis
-          , transitionTrigger            = hfSpecTransitionTrigger Alonzo hardForkSpec
-          }
-        ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext = ()
-          , transitionTrigger            = hfSpecTransitionTrigger Babbage hardForkSpec
-          }
-        ProtocolTransitionParamsShelleyBased {
-            transitionTranslationContext =
-              -- Note that this is effectively a no-op, which is fine for
-              -- testing, at least for now.
-              SL.ConwayGenesis $ SL.GenDelegs $ sgGenDelegs shelleyGenesis
-          , transitionTrigger            = hfSpecTransitionTrigger Conway hardForkSpec
-          }
 
   where
     leaderCredentialsByron :: ByronLeaderCredentials
