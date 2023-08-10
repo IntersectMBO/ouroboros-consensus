@@ -264,7 +264,7 @@ withWindow :: Size outer elem -> Lbl lbl -> Index outer elem -> Size x elem -> S
 withWindow (Count n) _lbl (Count i) (Count m) =
     SomeWindow Proxy $ UnsafeContains (Count i') (Count m')
   where
-    i' = max 0 i
+    i' = min n (max 0 i)
 
     -- we compute the elements that fall outside the containing sequence
     precedingElements = i' .- i
