@@ -250,13 +250,16 @@ instance Read (SomeWindow lbl outer elem) where
           <*> Some.readArg
           <*> Some.readArg
 
--- | Create a fresh 'Window' within a given 'Size' that starts with the given
--- 'Index' and contains however many of the given smaller 'Size' of elements
--- exist within the larger 'Size'
+-- | @withWindow outerSz lbl offset innerSz@ is a window of length @innerSz@
+-- with name @lbl@ starting at @offset@ in a sequence with length @outerSz@.
 --
--- NOTE: the requested window size is truncated if necessary to ensure it fits in the containing sequence
+-- If the window doesn't fit in the containing sequence, it is clipped so the
+-- resulting (possibly empty) window is contained.
 --
--- NOTE: if the the requested index is negative, it's instead taken to be 0
+-- Note that the window can spill either on the right if @i + innerSz > outerSz@,
+-- or it can spill on the left if @i < 0@, or it can spill on both sides
+-- simultaneously.
+--
 withWindow :: Size outer elem -> Lbl lbl -> Index outer elem -> Size x elem -> SomeWindow lbl outer elem
 withWindow (Count n) _lbl (Count i) (Count m) =
     SomeWindow Proxy $ UnsafeContains (Count i') (Count m')
