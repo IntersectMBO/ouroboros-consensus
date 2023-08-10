@@ -39,6 +39,7 @@ import           Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials,
                      byronSoftwareVersion)
 import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
 import           Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints,
+                     ProtocolParams (..),
                      ProtocolTransitionParamsShelleyBased (..),
                      TriggerHardFork (TriggerHardForkAtEpoch, TriggerHardForkNever),
                      protocolInfoCardano, transitionTranslationContext,
@@ -50,14 +51,9 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..),
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.PBFT (PBftParams,
                      PBftSignatureThreshold (..))
-import           Ouroboros.Consensus.Shelley.Node (ProtocolParams (..),
-                     ProtocolParamsShelleyBased (..), ShelleyGenesis,
-                     ShelleyLeaderCredentials, allegraMaxTxCapacityOverrides,
-                     allegraProtVer, alonzoMaxTxCapacityOverrides,
-                     alonzoProtVer, maryMaxTxCapacityOverrides, maryProtVer,
-                     sgGenDelegs, shelleyBasedGenesis, shelleyBasedInitialNonce,
-                     shelleyBasedLeaderCredentials,
-                     shelleyMaxTxCapacityOverrides, shelleyProtVer)
+import           Ouroboros.Consensus.Shelley.Node
+                     (ProtocolParamsShelleyBased (..), ShelleyGenesis,
+                     ShelleyLeaderCredentials, sgGenDelegs)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Test.ThreadNet.Infra.Alonzo as Alonzo
 import qualified Test.ThreadNet.Infra.Byron as Byron
@@ -276,43 +272,45 @@ mkTestProtocolInfo
     hardForkSpec
   =
     protocolInfoCardano
-        ProtocolParamsByron {
-            byronGenesis                = genesisByron
-          , byronPbftSignatureThreshold = aByronPbftSignatureThreshold
-          , byronProtocolVersion        = aByronProtocolVersion
-          , byronSoftwareVersion        = softVerByron
-          , byronLeaderCredentials      = Just leaderCredentialsByron
-          , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-        ProtocolParamsShelleyBased {
-            shelleyBasedGenesis           = shelleyGenesis
-          , shelleyBasedInitialNonce      = initialNonce
-          , shelleyBasedLeaderCredentials = [leaderCredentialsShelley]
-          }
-        ProtocolParamsShelley {
-            shelleyProtVer                = hfSpecProtVer Shelley hardForkSpec
-          , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-        ProtocolParamsAllegra {
-            allegraProtVer                = hfSpecProtVer Allegra hardForkSpec
-          , allegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-        ProtocolParamsMary {
-            maryProtVer                   = hfSpecProtVer Mary hardForkSpec
-          , maryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-        ProtocolParamsAlonzo {
-            alonzoProtVer                 = hfSpecProtVer Alonzo hardForkSpec
-          , alonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-        ProtocolParamsBabbage {
-            babbageProtVer                = hfSpecProtVer Babbage hardForkSpec
-          , babbageMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-        ProtocolParamsConway {
-            conwayProtVer                 = hfSpecProtVer Conway hardForkSpec
-          , conwayMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
+        (CardanoProtocolParams
+          ProtocolParamsByron {
+              byronGenesis                = genesisByron
+            , byronPbftSignatureThreshold = aByronPbftSignatureThreshold
+            , byronProtocolVersion        = aByronProtocolVersion
+            , byronSoftwareVersion        = softVerByron
+            , byronLeaderCredentials      = Just leaderCredentialsByron
+            , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+            }
+          ProtocolParamsShelleyBased {
+              shelleyBasedGenesis           = shelleyGenesis
+            , shelleyBasedInitialNonce      = initialNonce
+            , shelleyBasedLeaderCredentials = [leaderCredentialsShelley]
+            }
+          ProtocolParamsShelley {
+              shelleyProtVer                = hfSpecProtVer Shelley hardForkSpec
+            , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+            }
+          ProtocolParamsAllegra {
+              allegraProtVer                = hfSpecProtVer Allegra hardForkSpec
+            , allegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+            }
+          ProtocolParamsMary {
+              maryProtVer                   = hfSpecProtVer Mary hardForkSpec
+            , maryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
+            }
+          ProtocolParamsAlonzo {
+              alonzoProtVer                 = hfSpecProtVer Alonzo hardForkSpec
+            , alonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+            }
+          ProtocolParamsBabbage {
+              babbageProtVer                = hfSpecProtVer Babbage hardForkSpec
+            , babbageMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+            }
+          ProtocolParamsConway {
+              conwayProtVer                 = hfSpecProtVer Conway hardForkSpec
+            , conwayMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+            }
+        )
         ProtocolTransitionParamsShelleyBased {
           transitionTranslationContext = SL.toFromByronTranslationContext shelleyGenesis
         , transitionTrigger            = hfSpecTransitionTrigger Shelley hardForkSpec

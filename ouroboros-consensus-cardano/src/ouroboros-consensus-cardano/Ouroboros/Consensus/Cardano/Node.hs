@@ -18,8 +18,9 @@
                 -Wno-overlapping-patterns #-}
 module Ouroboros.Consensus.Cardano.Node (
     CardanoHardForkConstraints
+  , CardanoProtocolParams
   , MaxMajorProtVer (..)
-  , ProtocolParams (..)
+  , ProtocolParams (.., CardanoProtocolParams)
   , ProtocolTransitionParamsShelleyBased (..)
   , TriggerHardFork (..)
   , protocolClientInfoCardano
@@ -80,6 +81,8 @@ import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.Cardano.ShelleyBased
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
+import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
+                     (PerEraProtocolParams (..))
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Nary
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.History as History
@@ -557,6 +560,54 @@ data ProtocolTransitionParamsShelleyBased era = ProtocolTransitionParamsShelleyB
     , transitionTrigger            :: TriggerHardFork
     }
 
+-- | Parameters needed to run Cardano.
+--
+-- TODO(jdral): could we get rid of 'shelleyBasedProtocolParams' somehow by
+-- including it in the 'ProtocolParams' of one or multiple eras?
+data instance ProtocolParams (CardanoBlock c) = ProtocolParamsCardano {
+    cardanoProtocolParamsPerEra :: PerEraProtocolParams (CardanoEras c)
+  , shelleyBasedProtocolParams  :: ProtocolParamsShelleyBased (ShelleyEra c)
+  }
+
+-- TODO(jdral): move to Cardano.Block
+type CardanoProtocolParams c = ProtocolParams (CardanoBlock c)
+
+-- TODO(jdral): move to Cardano.Block
+pattern CardanoProtocolParams ::
+     ProtocolParams ByronBlock
+  -> ProtocolParamsShelleyBased (ShelleyEra c)
+  -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
+  -> ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c))
+  -> ProtocolParams (ShelleyBlock (TPraos c) (MaryEra c))
+  -> ProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra c))
+  -> ProtocolParams (ShelleyBlock (Praos c)  (BabbageEra c))
+  -> ProtocolParams (ShelleyBlock (Praos c)  (ConwayEra c))
+  -> CardanoProtocolParams c
+pattern CardanoProtocolParams
+      paramsByron
+      paramsShelleyBased
+      paramsShelley
+      paramsAllegra
+      paramsMary
+      paramsAlonzo
+      paramsBabbage
+      paramsConway =
+    ProtocolParamsCardano {
+        cardanoProtocolParamsPerEra = PerEraProtocolParams
+          (  paramsByron
+          :* paramsShelley
+          :* paramsAllegra
+          :* paramsMary
+          :* paramsAlonzo
+          :* paramsBabbage
+          :* paramsConway
+          :* Nil
+          )
+      , shelleyBasedProtocolParams = paramsShelleyBased
+      }
+
+{-# COMPLETE CardanoProtocolParams #-}
+
 -- | Create a 'ProtocolInfo' for 'CardanoBlock'
 --
 -- NOTE: the initial staking and funds in the 'ShelleyGenesis' are ignored,
@@ -567,14 +618,7 @@ data ProtocolTransitionParamsShelleyBased era = ProtocolTransitionParamsShelleyB
 -- for mainnet (check against @'SL.gNetworkId' 'shelleyBasedGenesis'@).
 protocolInfoCardano ::
      forall c m. (IOLike m, CardanoHardForkConstraints c)
-  => ProtocolParams ByronBlock
-  -> ProtocolParamsShelleyBased (ShelleyEra c)
-  -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> ProtocolParams (ShelleyBlock (TPraos c) (MaryEra c))
-  -> ProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra c))
-  -> ProtocolParams (ShelleyBlock (Praos c)  (BabbageEra c))
-  -> ProtocolParams (ShelleyBlock (Praos c) (ConwayEra c))
+  => CardanoProtocolParams c
   -> ProtocolTransitionParamsShelleyBased (ShelleyEra c)
   -> ProtocolTransitionParamsShelleyBased (AllegraEra c)
   -> ProtocolTransitionParamsShelleyBased (MaryEra c)
@@ -584,40 +628,7 @@ protocolInfoCardano ::
   -> ( ProtocolInfo      (CardanoBlock c)
      , m [BlockForging m (CardanoBlock c)]
      )
-protocolInfoCardano protocolParamsByron@ProtocolParamsByron {
-                        byronGenesis                = genesisByron
-                      , byronLeaderCredentials      = mCredsByron
-                      , byronMaxTxCapacityOverrides = maxTxCapacityOverridesByron
-                      }
-                    ProtocolParamsShelleyBased {
-                        shelleyBasedGenesis           = genesisShelley
-                      , shelleyBasedInitialNonce      = initialNonceShelley
-                      , shelleyBasedLeaderCredentials = credssShelleyBased
-                      }
-                    ProtocolParamsShelley {
-                        shelleyProtVer                = protVerShelley
-                      , shelleyMaxTxCapacityOverrides = maxTxCapacityOverridesShelley
-                      }
-                    ProtocolParamsAllegra {
-                        allegraProtVer                = protVerAllegra
-                      , allegraMaxTxCapacityOverrides = maxTxCapacityOverridesAllegra
-                      }
-                    ProtocolParamsMary {
-                        maryProtVer                = protVerMary
-                      , maryMaxTxCapacityOverrides = maxTxCapacityOverridesMary
-                      }
-                    ProtocolParamsAlonzo {
-                        alonzoProtVer                = protVerAlonzo
-                      , alonzoMaxTxCapacityOverrides = maxTxCapacityOverridesAlonzo
-                      }
-                    ProtocolParamsBabbage {
-                        babbageProtVer                = protVerBabbage
-                      , babbageMaxTxCapacityOverrides = maxTxCapacityOverridesBabbage
-                      }
-                    ProtocolParamsConway {
-                        conwayProtVer                = protVerConway
-                      , conwayMaxTxCapacityOverrides = maxTxCapacityOverridesConway
-                      }
+protocolInfoCardano paramsCardano
                     ProtocolTransitionParamsShelleyBased {
                         transitionTranslationContext = transCtxtShelley
                       , transitionTrigger            = triggerHardForkShelley
@@ -654,8 +665,55 @@ protocolInfoCardano protocolParamsByron@ProtocolParamsByron {
     , blockForging
     )
   where
+    CardanoProtocolParams
+      paramsByron
+      paramsShelleyBased
+      paramsShelley
+      paramsAllegra
+      paramsMary
+      paramsAlonzo
+      paramsBabbage
+      paramsConway = paramsCardano
+
+    ProtocolParamsByron {
+          byronGenesis                = genesisByron
+        , byronLeaderCredentials      = mCredsByron
+        , byronMaxTxCapacityOverrides = maxTxCapacityOverridesByron
+        } = paramsByron
+    ProtocolParamsShelleyBased {
+          shelleyBasedGenesis           = genesisShelley
+        , shelleyBasedInitialNonce      = initialNonceShelley
+        , shelleyBasedLeaderCredentials = credssShelleyBased
+        } = paramsShelleyBased
+    ProtocolParamsShelley {
+          shelleyProtVer                = protVerShelley
+        , shelleyMaxTxCapacityOverrides = maxTxCapacityOverridesShelley
+        } = paramsShelley
+    ProtocolParamsAllegra {
+          allegraProtVer                = protVerAllegra
+        , allegraMaxTxCapacityOverrides = maxTxCapacityOverridesAllegra
+        } = paramsAllegra
+    ProtocolParamsMary {
+          maryProtVer                = protVerMary
+        , maryMaxTxCapacityOverrides = maxTxCapacityOverridesMary
+        } = paramsMary
+    ProtocolParamsAlonzo {
+          alonzoProtVer                = protVerAlonzo
+        , alonzoMaxTxCapacityOverrides = maxTxCapacityOverridesAlonzo
+        } = paramsAlonzo
+    ProtocolParamsBabbage {
+          babbageProtVer                = protVerBabbage
+        , babbageMaxTxCapacityOverrides = maxTxCapacityOverridesBabbage
+        } = paramsBabbage
+    ProtocolParamsConway {
+          conwayProtVer                = protVerConway
+        , conwayMaxTxCapacityOverrides = maxTxCapacityOverridesConway
+        } = paramsConway
+
     -- The major protocol version of the last era is the maximum major protocol
     -- version we support.
+    --
+    -- TODO: use index of CardanoProtocolParams NP
     maxMajorProtVer :: MaxMajorProtVer
     maxMajorProtVer =
           MaxMajorProtVer
@@ -684,7 +742,7 @@ protocolInfoCardano protocolParamsByron@ProtocolParamsByron {
           , topLevelConfigBlock    = blockConfigByron
           }
       , pInfoInitLedger = initExtLedgerStateByron
-      } = protocolInfoByron protocolParamsByron
+      } = protocolInfoByron paramsByron
 
     partialConsensusConfigByron :: PartialConsensusConfig (BlockProtocol ByronBlock)
     partialConsensusConfigByron = consensusConfigByron

@@ -296,46 +296,48 @@ mkCardanoProtocolInfo ::
   -> ProtocolInfo (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlonzo genesisConway initialNonce hardForkTriggers =
     fst $ protocolInfoCardano @_ @IO
-      ProtocolParamsByron {
-          byronGenesis                = genesisByron
-        , byronPbftSignatureThreshold = signatureThreshold
-        , byronProtocolVersion        = Byron.Update.ProtocolVersion 1 2 0
-        , byronSoftwareVersion        = Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
-        , byronLeaderCredentials      = Nothing
-        , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsShelleyBased {
-          shelleyBasedGenesis           = genesisShelley
-        , shelleyBasedInitialNonce      = initialNonce
-        , shelleyBasedLeaderCredentials = []
-        }
-      ProtocolParamsShelley {
-          -- Note that this is /not/ the Shelley protocol version, see
-          -- https://github.com/input-output-hk/cardano-node/blob/daeae61a005776ee7b7514ce47de3933074234a8/cardano-node/src/Cardano/Node/Protocol/Cardano.hs#L167-L170
-          -- and the succeeding comments.
-          shelleyProtVer                = ProtVer (SL.natVersion @3) 0
-        , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsAllegra {
-          allegraProtVer                = ProtVer (SL.natVersion @4) 0
-        , allegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsMary {
-          maryProtVer                   = ProtVer (SL.natVersion @5) 0
-        , maryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsAlonzo {
-          alonzoProtVer                 = ProtVer (SL.natVersion @7) 0
-        , alonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsBabbage {
-          babbageProtVer                 = ProtVer (SL.natVersion @9) 0
-        , babbageMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsConway {
-          conwayProtVer                  = ProtVer (SL.natVersion @9) 0
-        , conwayMaxTxCapacityOverrides   = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
+      (CardanoProtocolParams
+        ProtocolParamsByron {
+            byronGenesis                = genesisByron
+          , byronPbftSignatureThreshold = signatureThreshold
+          , byronProtocolVersion        = Byron.Update.ProtocolVersion 1 2 0
+          , byronSoftwareVersion        = Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
+          , byronLeaderCredentials      = Nothing
+          , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsShelleyBased {
+            shelleyBasedGenesis           = genesisShelley
+          , shelleyBasedInitialNonce      = initialNonce
+          , shelleyBasedLeaderCredentials = []
+          }
+        ProtocolParamsShelley {
+            -- Note that this is /not/ the Shelley protocol version, see
+            -- https://github.com/input-output-hk/cardano-node/blob/daeae61a005776ee7b7514ce47de3933074234a8/cardano-node/src/Cardano/Node/Protocol/Cardano.hs#L167-L170
+            -- and the succeeding comments.
+            shelleyProtVer                = ProtVer (SL.natVersion @3) 0
+          , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsAllegra {
+            allegraProtVer                = ProtVer (SL.natVersion @4) 0
+          , allegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsMary {
+            maryProtVer                   = ProtVer (SL.natVersion @5) 0
+          , maryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsAlonzo {
+            alonzoProtVer                 = ProtVer (SL.natVersion @7) 0
+          , alonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsBabbage {
+            babbageProtVer                 = ProtVer (SL.natVersion @9) 0
+          , babbageMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsConway {
+            conwayProtVer                  = ProtVer (SL.natVersion @9) 0
+          , conwayMaxTxCapacityOverrides   = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+      )
       (unShelleyTransitionArguments shelleyTransition)
       (unShelleyTransitionArguments allegraTransition)
       (unShelleyTransitionArguments maryTransition)

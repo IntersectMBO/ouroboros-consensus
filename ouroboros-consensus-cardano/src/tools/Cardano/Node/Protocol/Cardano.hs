@@ -139,96 +139,98 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
     -- It could and should all be automated and these config entries eliminated.
     return $!
       SomeConsensusProtocol CardanoBlockType $ ProtocolInfoArgsCardano
-        Consensus.ProtocolParamsByron {
-          byronGenesis = byronGenesis,
-          byronPbftSignatureThreshold =
-            PBftSignatureThreshold <$> npcByronPbftSignatureThresh,
+        (CardanoProtocolParams
+          Consensus.ProtocolParamsByron {
+            byronGenesis = byronGenesis,
+            byronPbftSignatureThreshold =
+              PBftSignatureThreshold <$> npcByronPbftSignatureThresh,
 
-          -- This is /not/ the Byron protocol version. It is the protocol
-          -- version that this node will use in blocks it creates. It is used
-          -- in the Byron update mechanism to signal that this block-producing
-          -- node is ready to move to the new protocol. For example, when the
-          -- protocol version (according to the ledger state) is 0, this setting
-          -- should be 1 when we are ready to move. Similarly when the current
-          -- protocol version is 1, this should be 2 to indicate we are ready
-          -- to move into the Shelley era.
-          byronProtocolVersion =
-            Byron.ProtocolVersion
-              npcByronSupportedProtocolVersionMajor
-              npcByronSupportedProtocolVersionMinor
-              npcByronSupportedProtocolVersionAlt,
-          byronSoftwareVersion =
-            Byron.SoftwareVersion
-              npcByronApplicationName
-              npcByronApplicationVersion,
-          byronLeaderCredentials =
-            byronLeaderCredentials,
-          byronMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-        Consensus.ProtocolParamsShelleyBased {
-          shelleyBasedGenesis           = shelleyGenesis,
-          shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
-                                            shelleyGenesisHash,
-          shelleyBasedLeaderCredentials = shelleyLeaderCredentials
-        }
-        Consensus.ProtocolParamsShelley {
-          -- This is /not/ the Shelley protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Shelley era. That is, it is the version of protocol
-          -- /after/ Shelley, i.e. Allegra.
-          shelleyProtVer =
-            ProtVer (natVersion @3) 0,
-          shelleyMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-        Consensus.ProtocolParamsAllegra {
-          -- This is /not/ the Allegra protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Allegra era. That is, it is the version of protocol
-          -- /after/ Allegra, i.e. Mary.
-          allegraProtVer =
-            ProtVer (natVersion @4) 0,
-          allegraMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-        Consensus.ProtocolParamsMary {
-          -- This is /not/ the Mary protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Mary era. That is, it is the version of protocol
-          -- /after/ Mary, i.e. Alonzo.
-          maryProtVer = ProtVer (natVersion @5) 0,
-          maryMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-        Consensus.ProtocolParamsAlonzo {
-          -- This is /not/ the Alonzo protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Alonzo era. That is, it is the version of protocol
-          -- /after/ Alonzo, i.e. Babbage.
-          alonzoProtVer = ProtVer (natVersion @6) 0,
-          alonzoMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-        Consensus.ProtocolParamsBabbage {
-          -- This is /not/ the Babbage protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Babbage era.
-          Consensus.babbageProtVer = ProtVer (natVersion @7) 0,
-          Consensus.babbageMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-        Consensus.ProtocolParamsConway {
-          -- This is /not/ the Conway protocol version. It is the protocol
-          -- version that this node will declare that it understands, when it
-          -- is in the Conway era.
-          Consensus.conwayProtVer =
-            if npcTestEnableDevelopmentHardForkEras
-            then ProtVer (natVersion @9) 0  -- Advertise we can support Conway
-            else ProtVer (natVersion @8) 0, -- Otherwise we only advertise we know about Babbage
-          Consensus.conwayMaxTxCapacityOverrides =
-            Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
+            -- This is /not/ the Byron protocol version. It is the protocol
+            -- version that this node will use in blocks it creates. It is used
+            -- in the Byron update mechanism to signal that this block-producing
+            -- node is ready to move to the new protocol. For example, when the
+            -- protocol version (according to the ledger state) is 0, this setting
+            -- should be 1 when we are ready to move. Similarly when the current
+            -- protocol version is 1, this should be 2 to indicate we are ready
+            -- to move into the Shelley era.
+            byronProtocolVersion =
+              Byron.ProtocolVersion
+                npcByronSupportedProtocolVersionMajor
+                npcByronSupportedProtocolVersionMinor
+                npcByronSupportedProtocolVersionAlt,
+            byronSoftwareVersion =
+              Byron.SoftwareVersion
+                npcByronApplicationName
+                npcByronApplicationVersion,
+            byronLeaderCredentials =
+              byronLeaderCredentials,
+            byronMaxTxCapacityOverrides =
+              Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+          Consensus.ProtocolParamsShelleyBased {
+            shelleyBasedGenesis           = shelleyGenesis,
+            shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
+                                              shelleyGenesisHash,
+            shelleyBasedLeaderCredentials = shelleyLeaderCredentials
+          }
+          Consensus.ProtocolParamsShelley {
+            -- This is /not/ the Shelley protocol version. It is the protocol
+            -- version that this node will declare that it understands, when it
+            -- is in the Shelley era. That is, it is the version of protocol
+            -- /after/ Shelley, i.e. Allegra.
+            shelleyProtVer =
+              ProtVer (natVersion @3) 0,
+            shelleyMaxTxCapacityOverrides =
+              Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+          Consensus.ProtocolParamsAllegra {
+            -- This is /not/ the Allegra protocol version. It is the protocol
+            -- version that this node will declare that it understands, when it
+            -- is in the Allegra era. That is, it is the version of protocol
+            -- /after/ Allegra, i.e. Mary.
+            allegraProtVer =
+              ProtVer (natVersion @4) 0,
+            allegraMaxTxCapacityOverrides =
+              Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+          Consensus.ProtocolParamsMary {
+            -- This is /not/ the Mary protocol version. It is the protocol
+            -- version that this node will declare that it understands, when it
+            -- is in the Mary era. That is, it is the version of protocol
+            -- /after/ Mary, i.e. Alonzo.
+            maryProtVer = ProtVer (natVersion @5) 0,
+            maryMaxTxCapacityOverrides =
+              Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+          Consensus.ProtocolParamsAlonzo {
+            -- This is /not/ the Alonzo protocol version. It is the protocol
+            -- version that this node will declare that it understands, when it
+            -- is in the Alonzo era. That is, it is the version of protocol
+            -- /after/ Alonzo, i.e. Babbage.
+            alonzoProtVer = ProtVer (natVersion @6) 0,
+            alonzoMaxTxCapacityOverrides =
+              Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+          Consensus.ProtocolParamsBabbage {
+            -- This is /not/ the Babbage protocol version. It is the protocol
+            -- version that this node will declare that it understands, when it
+            -- is in the Babbage era.
+            Consensus.babbageProtVer = ProtVer (natVersion @7) 0,
+            Consensus.babbageMaxTxCapacityOverrides =
+              Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+          Consensus.ProtocolParamsConway {
+            -- This is /not/ the Conway protocol version. It is the protocol
+            -- version that this node will declare that it understands, when it
+            -- is in the Conway era.
+            Consensus.conwayProtVer =
+              if npcTestEnableDevelopmentHardForkEras
+              then ProtVer (natVersion @9) 0  -- Advertise we can support Conway
+              else ProtVer (natVersion @8) 0, -- Otherwise we only advertise we know about Babbage
+            Consensus.conwayMaxTxCapacityOverrides =
+              Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        )
         -- 'ProtocolTransitionParamsShelleyBased' specifies the parameters
         -- needed to transition between two eras. The comments below also apply
         -- for the Shelley -> Allegra and Allegra -> Mary hard forks.

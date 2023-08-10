@@ -31,7 +31,6 @@ import qualified Ouroboros.Consensus.Ledger.SupportsProtocol as Consensus
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolClientInfo (..),
                      ProtocolInfo (..))
 import           Ouroboros.Consensus.Node.Run (RunNode)
-import qualified Ouroboros.Consensus.Protocol.Praos as Consensus
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import qualified Ouroboros.Consensus.Protocol.TPraos as Consensus
 import qualified Ouroboros.Consensus.Shelley.Eras as Consensus (ShelleyEra)
@@ -68,14 +67,7 @@ instance IOLike m => Protocol m ByronBlockHFC where
 instance (CardanoHardForkConstraints StandardCrypto, IOLike m) => Protocol m (CardanoBlock StandardCrypto) where
   data ProtocolInfoArgs m (CardanoBlock StandardCrypto) =
          ProtocolInfoArgsCardano
-          (ProtocolParams Consensus.ByronBlock)
-          (ProtocolParamsShelleyBased StandardShelley)
-          (ProtocolParams (Consensus.ShelleyBlock (Consensus.TPraos StandardCrypto) (ShelleyEra StandardCrypto)))
-          (ProtocolParams (Consensus.ShelleyBlock (Consensus.TPraos StandardCrypto) (AllegraEra StandardCrypto)))
-          (ProtocolParams (Consensus.ShelleyBlock (Consensus.TPraos StandardCrypto) (MaryEra StandardCrypto)))
-          (ProtocolParams (Consensus.ShelleyBlock (Consensus.TPraos StandardCrypto) (AlonzoEra StandardCrypto)))
-          (ProtocolParams (Consensus.ShelleyBlock (Consensus.Praos StandardCrypto)  (BabbageEra StandardCrypto)))
-          (ProtocolParams (Consensus.ShelleyBlock (Consensus.Praos StandardCrypto) (ConwayEra StandardCrypto)))
+          (CardanoProtocolParams StandardCrypto)
           (ProtocolTransitionParamsShelleyBased StandardShelley)
           (ProtocolTransitionParamsShelleyBased StandardAllegra)
           (ProtocolTransitionParamsShelleyBased StandardMary)
@@ -84,14 +76,7 @@ instance (CardanoHardForkConstraints StandardCrypto, IOLike m) => Protocol m (Ca
           (ProtocolTransitionParamsShelleyBased StandardConway)
 
   protocolInfo (ProtocolInfoArgsCardano
-               paramsByron
-               paramsShelleyBased
-               paramsShelley
-               paramsAllegra
-               paramsMary
-               paramsAlonzo
-               paramsBabbage
-               paramsConway
+               paramsCardano
                paramsByronShelley
                paramsShelleyAllegra
                paramsAllegraMary
@@ -99,14 +84,7 @@ instance (CardanoHardForkConstraints StandardCrypto, IOLike m) => Protocol m (Ca
                paramsAlonzoBabbage
                paramsAlonzoConway) =
     protocolInfoCardano
-      paramsByron
-      paramsShelleyBased
-      paramsShelley
-      paramsAllegra
-      paramsMary
-      paramsAlonzo
-      paramsBabbage
-      paramsConway
+      paramsCardano
       paramsByronShelley
       paramsShelleyAllegra
       paramsAllegraMary
