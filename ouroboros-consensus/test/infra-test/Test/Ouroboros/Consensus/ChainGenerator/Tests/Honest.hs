@@ -137,9 +137,6 @@ unlines' (x:xs) = x <> "\n" <> unlines' xs
 
 -- | A mutation that minimally increases the threshold density of an 'H.HonestRecipe''s SCG constraint
 data HonestMutation =
-    -- | Increasing 'Delta' by one decreases the SCG denominator
-    HonestMutateDelta
-  |
     -- | Increasing 'Kcp' by one increases the SCG numerator
     HonestMutateKcp
   |
@@ -161,7 +158,6 @@ mutateHonest recipe mut =
     H.HonestRecipe (Kcp k) (Scg s) (Delta d) len = recipe
 
     (k', s', d') = case mut of
-        HonestMutateDelta -> (k,     s,     d + 1)
         HonestMutateKcp   -> (k + 1, s,     d    )
         HonestMutateScg   -> (k,     s - 1, d    )
 
@@ -176,7 +172,7 @@ instance QC.Arbitrary TestHonestMutation where
             Left e  -> error $ "impossible! " <> show (testRecipe, e)
             Right x -> pure x
 
-        mut <- QC.elements [HonestMutateDelta, HonestMutateKcp, HonestMutateScg]
+        mut <- QC.elements [HonestMutateKcp, HonestMutateScg]
 
         pure $ case Exn.runExcept $ H.checkHonestRecipe $ mutateHonest testRecipe mut of
             Left{}  -> Nothing
