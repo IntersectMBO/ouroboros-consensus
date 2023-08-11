@@ -46,8 +46,8 @@ common common-test
   ghc-options: -threaded -rtsopts
 
 library
-  import:           common-lib
-  hs-source-dirs:   src/ouroboros-consensus
+  import:          common-lib
+  hs-source-dirs:  src/ouroboros-consensus
   exposed-modules:
     Data.SOP.Counting
     Data.SOP.Functors
@@ -254,41 +254,6 @@ library
     Ouroboros.Consensus.Util.TraceSize
     Ouroboros.Consensus.Util.Versioned
 
-  other-extensions:
-    BangPatterns
-    ConstraintKinds
-    DataKinds
-    DeriveAnyClass
-    DeriveFunctor
-    DeriveGeneric
-    EmptyDataDecls
-    FlexibleContexts
-    FlexibleInstances
-    FunctionalDependencies
-    GADTs
-    GeneralizedNewtypeDeriving
-    KindSignatures
-    LambdaCase
-    MultiParamTypeClasses
-    NamedFieldPuns
-    OverloadedStrings
-    PackageImports
-    PolyKinds
-    RankNTypes
-    RecordWildCards
-    ScopedTypeVariables
-    StandaloneDeriving
-    TemplateHaskell
-    TupleSections
-    TypeApplications
-    TypeFamilies
-    TypeFamilyDependencies
-    TypeInType
-    TypeOperators
-    UndecidableInstances
-    UndecidableSuperClasses
-    ViewPatterns
-
   build-depends:
     , base                         >=4.14     && <4.19
     , base16-bytestring
@@ -332,7 +297,10 @@ library
 library consensus-testlib
   import:          common-lib
   hs-source-dirs:  src/consensus-testlib
-  visibility:      public
+
+  if flag(expose-sublibs)
+    visibility: public
+
   exposed-modules:
     Test.Util.BoolProps
     Test.Util.ChainDB
@@ -411,7 +379,10 @@ library consensus-testlib
 
 library mock-block
   import:          common-lib
-  visibility:      public
+
+  if flag(expose-sublibs)
+    visibility: public
+
   hs-source-dirs:  src/mock-block
   exposed-modules:
     Ouroboros.Consensus.Mock.Ledger
@@ -456,7 +427,10 @@ library mock-block
 
 library mempool-test-utils
   import:          common-lib
-  visibility:      public
+
+  if flag(expose-sublibs)
+    visibility: public
+
   hs-source-dirs:  src/mempool-test-utils
   exposed-modules: Test.Consensus.Mempool.Mocked
   build-depends:
@@ -470,9 +444,6 @@ library tutorials
   import:         common-lib
 
   if flag(expose-sublibs)
-    visibility: private
-
-  else
     visibility: public
 
   hs-source-dirs: src/tutorials

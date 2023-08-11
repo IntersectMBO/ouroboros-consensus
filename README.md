@@ -26,7 +26,7 @@ flowchart TD
 The packages contain many test-suites that complicate the dependency graph as
 they create new depencency arcs.
 
-This repository also provides two executables:
+This repository also provides four executables:
 
 - `ouroboros-consensus-cardano/app/db-analyser.hs`: for analyzing ChainDBs as
   the ones created by the node. This helps identifying performance hotspots and
@@ -34,6 +34,12 @@ This repository also provides two executables:
 
 - `ouroboros-consensus-cardano/app/db-synthesizer.hs`: for quickly generating
   chains to be used in benchmarking.
+
+- `ouroboros-consensus-cardano/app/db-truncater.hs`: for truncating an immutable
+  DB.
+
+- `ouroboros-consensus-cardano/app/immdb-server.hs`: for serving a immutable DB
+  stored locally.
 
 To list all the available Cabal components, one can use the following script
 because unfortunately, `cabal` doesn't have a command to list the [available
@@ -112,7 +118,7 @@ To use CHaP, follow their Readme, but in short:
 
 2. Run `cabal update` to pull in the latest index.
 3. Specify which version of the index you want for both Hackage and CHaP. Note
-   that it has to be higher or equal to the highest timestamp of the release
+   that it has to be higher or equal to the highest timestamp of the released
    versions of the packages that you want to use as dependencies:
 
    ```
@@ -127,6 +133,17 @@ your `build-depends` list on your cabal files.
 If you use Nix, see the [CHaP
 website](https://input-output-hk.github.io/cardano-haskell-packages/) on how to
 configure CHaP for haskell.nix.
+
+Sublibraries are private by default, so if you make direct use of any of the
+sublibraries declared in this repository, you shall enable the `+expose-sublibs`
+flag on the relevant dependency, either passing the flag `--constraint
+"ouroboros-consensus +expose-sublibs"` to cabal or adding the following snippet
+to your `cabal.project`:
+
+```
+package ouroboros-consensus
+  flags: +expose-sublibs
+```
 
 ## How to contribute to the project
 

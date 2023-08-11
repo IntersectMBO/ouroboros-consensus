@@ -2,8 +2,6 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedStrings  #-}
 
--- TODO: remove once we find out why GHC is reporting 'Redundant constraint: Show (LedgerSupportsMempool.ApplyTxErr blk)' in 'should_process_and_return'
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 -- | Test that we can submit transactions to the mempool using the local
 -- submission server, in different Cardano eras.
 --
@@ -121,7 +119,6 @@ processTxs tracer mockedMempool txs =
 _should_process_and_return ::
      ( Show (Ledger.GenTx blk)
      , Eq   (Ledger.ApplyTxErr blk)
-     , Show (Ledger.ApplyTxErr blk)
      , Show (SubmitResult (LedgerSupportsMempool.ApplyTxErr blk))
      )
   => MockedMempool IO blk -> [(Ledger.GenTx blk, SubmitResult (LedgerSupportsMempool.ApplyTxErr blk))] -> IO ()

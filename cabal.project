@@ -19,28 +19,47 @@ index-state:
   , cardano-haskell-packages 2023-08-02T14:18:01Z
 
 packages:
-  ./ouroboros-consensus
-  ./ouroboros-consensus-cardano
-  ./ouroboros-consensus-protocol
-  ./ouroboros-consensus-diffusion
+  ouroboros-consensus
+  ouroboros-consensus-cardano
+  ouroboros-consensus-protocol
+  ouroboros-consensus-diffusion
 
-tests: True
-benchmarks: True
+-- We want to always build the test-suites and benchmarks
+tests: true
+benchmarks: true
+
+--
+-- Expose sublibs
+--
+
+package ouroboros-consensus
+  flags: +expose-sublibs
+
+package ouroboros-consensus-protocol
+  flags: +expose-sublibs
+
+package ouroboros-consensus-diffusion
+  flags: +expose-sublibs
+
+--
+-- Enable assertions
+--
 
 package cardano-ledger-core
+  flags: +asserts
+
+package cardano-ledger-mary
   flags: +asserts
 
 package cardano-ledger-shelley
   flags: +asserts
 
-package fs-api
-  flags: +asserts
-
-package fs-sim
-  flags: +asserts
-
 package io-classes
   flags: +asserts
+
+-- https://github.com/input-output-hk/io-sim/issues/94
+-- package io-sim
+--   flags: +asserts
 
 package network-mux
   flags: +asserts
@@ -48,13 +67,13 @@ package network-mux
 package ouroboros-consensus
   flags: +asserts
 
+package ouroboros-consensus-protocols
+  flags: +asserts
+
 package ouroboros-consensus-cardano
   flags: +asserts
 
 package ouroboros-consensus-diffusion
-  flags: +asserts
-
-package ouroboros-consensus-protocol
   flags: +asserts
 
 package ouroboros-network
@@ -77,8 +96,3 @@ package strict-stm
 
 package text-short
   flags: +asserts
-
-if impl(ghc >= 9.6)
-  allow-newer:
-    , *:base
-    , *:ghc-prim
