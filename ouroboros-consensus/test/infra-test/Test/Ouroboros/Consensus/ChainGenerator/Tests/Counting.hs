@@ -25,7 +25,9 @@ prop_withWindow (QC.NonNegative n) i m =
           $ QC.conjoin [
                 if i < 0
                 then QC.counterexample "neg i" $ i' QC.=== 0
-                else QC.counterexample "nonneg i" $ i' QC.=== i
+                else if i > n
+                     then QC.counterexample "too large i" $ i' QC.=== n
+                     else QC.counterexample "nonneg i" $ i' QC.=== i
               , if m < 0
                 then QC.counterexample "neg m" $ m' QC.=== 0
                 else QC.counterexample "nonneg m" $ min (n - 1) i' + m' <= n
