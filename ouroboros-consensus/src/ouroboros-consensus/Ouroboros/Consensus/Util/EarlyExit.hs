@@ -8,11 +8,6 @@
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
--- Regression in GHC 9.6.1: spurious "Redundant constraint", where the constraint is inside a
--- quantified constraint
--- https://gitlab.haskell.org/ghc/ghc/-/issues/23323
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-
 module Ouroboros.Consensus.Util.EarlyExit (
     exitEarly
   , withEarlyExit

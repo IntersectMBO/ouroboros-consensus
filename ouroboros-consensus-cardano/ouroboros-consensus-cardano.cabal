@@ -158,9 +158,6 @@ library byronspec
   import:          common-lib
 
   if flag(expose-sublibs)
-    visibility: private
-
-  else
     visibility: public
 
   hs-source-dirs:  src/byronspec
@@ -197,9 +194,6 @@ library byron-testlib
   import:          common-lib
 
   if flag(expose-sublibs)
-    visibility: private
-
-  else
     visibility: public
 
   hs-source-dirs:  src/byron-testlib
@@ -279,9 +273,6 @@ library shelley-testlib
   import:          common-lib
 
   if flag(expose-sublibs)
-    visibility: private
-
-  else
     visibility: public
 
   hs-source-dirs:  src/shelley-testlib
@@ -362,9 +353,6 @@ library cardano-testlib
   import:          common-lib
 
   if flag(expose-sublibs)
-    visibility: private
-
-  else
     visibility: public
 
   hs-source-dirs:  src/cardano-testlib
@@ -458,7 +446,10 @@ test-suite cardano-test
 library cardano-tools
   import:          common-lib
   hs-source-dirs:  src/tools
-  visibility:      public
+
+  if flag(expose-sublibs)
+    visibility: public
+
   exposed-modules:
     Cardano.Api.Any
     Cardano.Api.Protocol.Types
