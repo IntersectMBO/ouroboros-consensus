@@ -14,20 +14,6 @@ on:
       - main
 
 jobs:
-  check-cabal-files:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Install Haskell
-      uses: input-output-hk/setup-haskell@v1
-      id: setup-haskell
-      with:
-        cabal-version: "3.10.1.0"
-
-    - uses: actions/checkout@v3
-
-    - name: Cabal check
-      run: ./scripts/ci/check-cabal-files.sh
-
   build-test-bench-haddocks:
     name: Build and test
     runs-on: ${{ matrix.os }}
@@ -39,44 +25,36 @@ jobs:
          os: [ubuntu-latest]
     env:
       # Modify this value to "invalidate" the Cabal cache.
-      CABAL_CACHE_VERSION: "2023-06-05"
-      # Modify this value to "invalidate" the secp cache.
-      SECP_CACHE_VERSION: "2023-04-27"
-      # current ref from: 27.02.2022
-      SECP256K1_REF: ac83be33d0956faf6b7f61a60ab524ef7d6a473a
+      CABAL_CACHE_VERSION: "2023-08-08"
 
     steps:
     - uses: actions/checkout@v3
 
+    - name: Install base libraries
+      uses: input-output-hk/actions/base@latest
+      with:
+        use-sodium-vrf: false
+
     - name: Install Haskell
-      uses: input-output-hk/setup-haskell@v1
+      uses: input-output-hk/actions/haskell@latest
       id: setup-haskell
       with:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: ${{ matrix.cabal }}
 
-    - uses: actions/checkout@v3
-
-    - name: Install build environment
-      run: |
-        sudo apt-get update
-        sudo apt-get -y install libsodium-dev liblmdb-dev
-
-    - name: Configure Cabal to use libsodium
+    - name: Configure Cabal
       run: |
         cp .github/workflows/cabal.project.local .
 
-    - name: "LINUX: Install build environment (for secp256k1)"
-      run: sudo apt-get -y install autoconf automake libtool
-
-    - name: Install secp256k1
-      uses: input-output-hk/setup-secp256k1@v1
-      with:
-        git-ref: ${{ env.SECP256K1_REF }}
-        cache-version: ${{ env.SECP_CACHE_VERSION }}
-
     - name: Update Cabal (Hackage and CHaP)
-      run: cabal clean; cabal update
+      run: |
+        cabal clean
+        cabal update
+
+    - name: Install lmdb
+      run: |
+        sudo apt-get update
+        sudo apt-get -y install liblmdb-dev
 
     - name: Generate dist-newstyle/cache/plan.json
       run: cabal build all --dry-run --minimize-conflict-set
@@ -94,7 +72,7 @@ jobs:
       run: |
         cabal build all --dry-run
         cat dist-newstyle/cache/plan.json \
-        | jq -L .github/workflows/jq-install-plan \
+        | jq .["install-plan"][].id \
         | sort \
         | uniq > dependencies.txt
 
@@ -192,7 +170,6 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.os=='ubuntu-latest'
         && matrix.ghc=='8.10.7'
       run: |
         cabal build --dry-run --enable-tests all
@@ -203,39 +180,12 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.os=='ubuntu-latest'
         && matrix.ghc=='8.10.7'
       uses: actions/upload-artifact@v3
       with:
         name: haddocks
         path: haddocks.tgz
         retention-days: 1
-
-    # NB: build the haddocks at the end to avoid unecessary recompilations.
-    # We build the haddocks only for one GHC version.
-    - name: Build Haddock documentation
-      if: |
-        github.event_name == 'push'
-        && github.ref == 'refs/heads/main'
-        && matrix.os=='ubuntu-latest'
-        && matrix.ghc=='8.10.7'
-      run: |
-        cabal build --dry-run --enable-tests all
-        ./scripts/docs/haddocks.sh
-        tar vzcf haddocks.tgz ./docs/website/static/haddocks
-
-    - name: Upload haddocks as an artifact
-      if: |
-        github.event_name == 'push'
-        && github.ref == 'refs/heads/main'
-        && matrix.os=='ubuntu-latest'
-        && matrix.ghc=='8.10.7'
-      uses: actions/upload-artifact@v3
-      with:
-        name: haddocks
-        path: haddocks.tgz
-        retention-days: 1
-
 
   deploy-documentation:
     name: Deploy documentation to GitHub Pages
