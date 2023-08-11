@@ -69,16 +69,28 @@ jobs:
         | sort \
         | uniq > dependencies.txt
 
+    # This is used for caching the cabal store.
+    - name: Store month number as environment variable
+      run:  echo "MONTHNUM=$(/usr/bin/date -u '+%m')" >> $GITHUB_ENV
+
     # Restore the cabal store cache. See `save-cabal-store`.
-    - uses: actions/cache/restore@v3
+    #
+    # When we restore a previous cache and store a new key, we store both files
+    # that were already in the cache, and new files that were created. To
+    # prevent the cache from growing to quickly, we reset the cache each month.
+    #
+    # NOTE: it's vital that all restore-keys include the month number.
+    # Otherwise, we could restore a cache from a previous month, which makes
+    # caches grow unboundedly.
+    - name: "Restore cache for cabal-store"
+      uses: actions/cache/restore@v3
       id: restore-cabal-store
-      name: "Restore cache for cabal-store"
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('dependencies.txt') }}
+        key: cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
         restore-keys: |
-          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('dependencies.txt') }}
-          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}
+          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
+          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-
 
     # NOTE: We skip caching of the dist-newstyle folder for now, since we're
     # often getting the following cabal warning, which leads to compilation
@@ -112,9 +124,9 @@ jobs:
     # rebuilt if any of the later steps fail and the job has to be re-run.
     #
     # See https://github.com/actions/cache/tree/v3/save#always-save-cache.
-    - uses: actions/cache/save@v3
+    - name: "Save cache for cabal-store"
+      uses: actions/cache/save@v3
       id: save-cabal-store
-      name: "Save cache for cabal-store"
       if: steps.build-dependencies.outcome == 'success'
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
