@@ -42,7 +42,6 @@ jobs:
         ghc-version: ${{ matrix.ghc }}
         cabal-version: ${{ matrix.cabal }}
 
-
     - name: Install build environment
       run: |
         sudo apt-get update
