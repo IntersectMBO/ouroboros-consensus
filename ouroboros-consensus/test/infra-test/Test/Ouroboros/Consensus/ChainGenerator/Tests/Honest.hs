@@ -109,11 +109,11 @@ prop_honestChain testHonest testSeed = runIdentity $ do
             Left e   -> case e of
                 H.BadCount{}      -> QC.counterexample (show e) False
                 H.BadLength{}     -> QC.counterexample (show e) False
-                H.BadEhcgWindow v ->
+                H.BadScgWindow v ->
                     let str = case v of
-                            H.EhcgViolation {
-                                H.ehcgvWindow = win
-                              } -> H.prettyWindow win "EHCGV"
+                            H.ScgViolation {
+                                H.scgvWindow = win
+                              } -> H.prettyWindow win "SCGV"
                     in
                         id
                       $ QC.counterexample str
@@ -135,15 +135,15 @@ unlines' (x:xs) = x <> "\n" <> unlines' xs
 
 -----
 
--- | A mutation that minimally increases the threshold density of an 'H.HonestRecipe''s EHCG constraint
+-- | A mutation that minimally increases the threshold density of an 'H.HonestRecipe''s SCG constraint
 data HonestMutation =
-    -- | Increasing 'Delta' by one decreases the EHCG denominator
+    -- | Increasing 'Delta' by one decreases the SCG denominator
     HonestMutateDelta
   |
-    -- | Increasing 'Kcp' by one increases the EHCG numerator
+    -- | Increasing 'Kcp' by one increases the SCG numerator
     HonestMutateKcp
   |
-    -- | Decreasing 'Scg' by one decreases the EHCG denominator
+    -- | Decreasing 'Scg' by one decreases the SCG denominator
     HonestMutateScg
   deriving (Eq, Read, Show)
 
@@ -210,7 +210,7 @@ prop_honestChainMutation testHonestMut testSeedsSeed0 = QC.ioProperty $ do
             Right () -> go recipe' testSeedsSeed'
             Left e   -> case e of
                 H.BadCount{}      -> error $ "impossible! " <> show e
-                H.BadEhcgWindow{} -> True
+                H.BadScgWindow{} -> True
                 H.BadLength{}     -> error $ "impossible! " <> show e
 
 -----

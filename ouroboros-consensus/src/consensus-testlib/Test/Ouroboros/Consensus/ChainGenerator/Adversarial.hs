@@ -82,8 +82,8 @@ data AdversarialViolation hon adv =
 -- after the @k+1@st block.
 --
 -- Definition of the /Length of Competing Chains/. We assume every adversarial
--- chain contains at most @k@ blocks in the Praos Race Window starting at the
--- next slot after the intersection.
+-- chain contains at most @k@ blocks in the Praos Race Window anchored at the
+-- the intersection.
 --
 -- Definition of the /Adversarial Chains in Stability Windows/.
 -- Every adversarial chain has at most @k@ blocks in every Praos Race Window of

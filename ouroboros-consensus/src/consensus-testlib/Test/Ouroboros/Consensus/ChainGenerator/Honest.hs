@@ -11,7 +11,7 @@
 module Test.Ouroboros.Consensus.ChainGenerator.Honest (
     -- * Generating
     ChainSchema (ChainSchema)
-  , CheckedHonestRecipe (UnsafeCheckedHonestRecipe, chrEhcgDensity, chrWin)
+  , CheckedHonestRecipe (UnsafeCheckedHonestRecipe, chrScgDensity, chrWin)
   , HonestLbl
   , HonestRecipe (HonestRecipe)
   , NoSuchHonestChainSchema (BadDeltaScg, BadKcp, BadLen)
@@ -21,9 +21,9 @@ module Test.Ouroboros.Consensus.ChainGenerator.Honest (
   , countChainSchema
   , uniformTheHonestChain
     -- * Testing
-  , EhcgLbl
-  , EhcgViolation (EhcgViolation, ehcgvPopCount, ehcgvWindow)
-  , HonestChainViolation (BadCount, BadEhcgWindow, BadLength)
+  , ScgLbl
+  , ScgViolation (ScgViolation, scgvPopCount, scgvWindow)
+  , HonestChainViolation (BadCount, BadScgWindow, BadLength)
   , checkHonestChain
   , prettyChainSchema
   , prettyWindow
@@ -64,7 +64,7 @@ data HonestRecipe = HonestRecipe !Kcp !Scg !Delta !Len
 -- TODO: Rename to CheckedHonestSchemaSpec
 data CheckedHonestRecipe base hon = UnsafeCheckedHonestRecipe {
     -- | Desired density
-    chrEhcgDensity :: !(BV.SomeDensityWindow S.NotInverted)
+    chrScgDensity :: !(BV.SomeDensityWindow S.NotInverted)
   , -- | Window in the @base@ containing sequence where the density should be
     -- ensured
     chrWin         :: !(C.Contains SlotE base hon)
@@ -118,9 +118,9 @@ checkHonestRecipe recipe = do
         C.SomeWindow Proxy slots <- pure topWindow
 
         pure $ SomeCheckedHonestRecipe base Proxy UnsafeCheckedHonestRecipe {
-            chrEhcgDensity = BV.SomeDensityWindow (C.Count (k + 1)) (C.Count (s - d))
+            chrScgDensity = BV.SomeDensityWindow (C.Count (k + 1)) (C.Count s)
           ,
-            chrWin         = slots
+            chrWin        = slots
           }
   where
     HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l) = recipe
@@ -298,7 +298,7 @@ uniformTheHonestChain ::
   -> ChainSchema base hon
 {-# INLINABLE uniformTheHonestChain #-}
 uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
-    BV.SomeDensityWindow (C.Count (toEnum -> numerator)) (C.Count (toEnum -> denominator)) <- pure chrEhcgDensity
+    BV.SomeDensityWindow (C.Count (toEnum -> numerator)) (C.Count (toEnum -> denominator)) <- pure chrScgDensity
     let _ = numerator   :: C.Var hon ActiveSlotE
         _ = denominator :: C.Var hon SlotE
 
@@ -320,16 +320,16 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- different distribution than the later windows.
     rtot <- do
         density' <- case mbAsc of
-            Nothing  -> pure chrEhcgDensity
+            Nothing  -> pure chrScgDensity
             Just asc -> do
-                pc <- genFirstWindowPopCount asc chrEhcgDensity `R.applySTGen` g
+                pc <- genFirstWindowPopCount asc chrScgDensity `R.applySTGen` g
                 pure $ BV.SomeDensityWindow (C.Count pc) (C.toSize denominator)
 
         -- TODO clear the window first?
 
         -- NB @withWindow@ truncates if it would reach past @slots@
-        C.SomeWindow Proxy ehcg <- pure $ C.withWindow sz (C.Lbl @EhcgLbl) (C.Count 0) (C.toSize denominator)
-        tot <- C.frWinVar ehcg <$> BV.fillInWindow S.notInverted density' g (C.sliceMV ehcg mv)
+        C.SomeWindow Proxy scg <- pure $ C.withWindow sz (C.Lbl @ScgLbl) (C.Count 0) (C.toSize denominator)
+        tot <- C.frWinVar scg <$> BV.fillInWindow S.notInverted density' g (C.sliceMV scg mv)
 
         firstSlot <- BV.testMV S.notInverted mv (C.Count 0)
         newSTRef $ (if firstSlot then subtract 1 else id) $ (tot :: C.Var hon ActiveSlotE)
@@ -373,26 +373,26 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
     --       sampled from @mbAsc@.
     C.forRange_ (C.windowSize remainingFullWindows) $ \(C.frWin remainingFullWindows -> islot) -> do
         -- NB will not be truncated
-        C.SomeWindow Proxy ehcgSlots <- pure $ C.withWindow sz (C.Lbl @EhcgLbl) islot (C.toSize denominator)
+        C.SomeWindow Proxy scgSlots <- pure $ C.withWindow sz (C.Lbl @ScgLbl) islot (C.toSize denominator)
 
         tot <- do
             tot <- readSTRef rtot
-            end <- BV.testMV S.notInverted mv (C.windowLast ehcgSlots)
+            end <- BV.testMV S.notInverted mv (C.windowLast scgSlots)
             pure $ (if end then (+1) else id) $ tot
 
         let sparse = tot == numerator - 1   -- see LOOP INVARIANT
 
         tot' <- if not sparse then pure tot else do
-            BV.setMV S.notInverted mv (C.windowLast ehcgSlots)
+            BV.setMV S.notInverted mv (C.windowLast scgSlots)
             pure numerator
 
-        start <- BV.testMV S.notInverted mv (C.windowStart ehcgSlots)
+        start <- BV.testMV S.notInverted mv (C.windowStart scgSlots)
         writeSTRef rtot $! (if start then subtract 1 else id) $ tot'
 
     pure mv
   where
     UnsafeCheckedHonestRecipe {
-        chrEhcgDensity
+        chrScgDensity
       ,
         chrWin         = slots
       }  = recipe
@@ -463,7 +463,7 @@ genFirstWindowPopCount asc densityWindow g =
 -}
 
 -- | Transition matrix of an Markov Chain where each state is the (idealized?)
--- number of active slots in an EHCG window
+-- number of active slots in a stability window
 --
 -- The indices @i@ and @j@ are @n@ less than state they represent; in other
 -- words, they count the /extra/ active slots, not just the active slots.
@@ -560,33 +560,33 @@ Algebraically simplified.
 
 -----
 
-data EhcgViolation hon =
+data ScgViolation hon =
     forall skolem.
-    EhcgViolation {
-        -- | How many active slots 'ehcgvWindow' has
-        ehcgvPopCount :: !(C.Size (C.Win EhcgLbl skolem) ActiveSlotE)
+    ScgViolation {
+        -- | How many active slots 'scgvWindow' has
+        scgvPopCount :: !(C.Size (C.Win ScgLbl skolem) ActiveSlotE)
       ,
         -- | The ChainGrowth window that doesn't have enough active slots
-        ehcgvWindow   :: !(C.Contains SlotE hon (C.Win EhcgLbl skolem))
+        scgvWindow   :: !(C.Contains SlotE hon (C.Win ScgLbl skolem))
       }
 
-instance Eq (EhcgViolation hon) where
-    EhcgViolation l1 l2 == EhcgViolation r1 r2 =
+instance Eq (ScgViolation hon) where
+    ScgViolation l1 l2 == ScgViolation r1 r2 =
       C.forgetBase l1 == C.forgetBase r1
       &&
       C.forgetWindow l2 == C.forgetWindow r2
 
-instance Show (EhcgViolation hon) where
-    showsPrec p (EhcgViolation x y) =
+instance Show (ScgViolation hon) where
+    showsPrec p (ScgViolation x y) =
         Some.runShowsPrec p
-      $ Some.showCtor EhcgViolation "EhcgViolation"
+      $ Some.showCtor ScgViolation "ScgViolation"
             `Some.showArg` x
             `Some.showArg` y
 
-instance Read (EhcgViolation hon) where
+instance Read (ScgViolation hon) where
     readPrec =
         Some.runReadPrec
-      $ Some.readCtor EhcgViolation "EhcgViolation"
+      $ Some.readCtor ScgViolation "ScgViolation"
             <*> Some.readArg
             <*> Some.readArg
 
@@ -594,15 +594,15 @@ data HonestChainViolation hon =
     -- | The chain must have at least one active slot
     BadCount
   |
-    BadEhcgWindow !(EhcgViolation hon)
+    BadScgWindow !(ScgViolation hon)
   |
     BadLength !(C.Size hon SlotE)
   deriving (Eq, Read, Show)
 
--- | An Enriched Honest Chain Growth window
-data EhcgLbl
+-- | A stability window
+data ScgLbl
 
--- | Check the Praos Enriched Chain Growth property
+-- | Check the Praos Chain Growth assumption
 --
 -- Definition of /window/ and /anchored window/. A window is a contiguous
 -- sequence of slots. A window anchored at a block starts with the slot
@@ -610,10 +610,6 @@ data EhcgLbl
 --
 -- Definition of /Praos Chain Growth Assumption/. We assume the honest chain
 -- contains at least @k@ blocks in every window that contains @s@ slots.
---
--- Definition of /Praos Enriched Chain Growth Assumption/. We assume the honest
--- chain contains at least @k+1@ blocks in every window that contains @s - Δ@
--- slots.
 --
 -- Definition of /Stability Window/. The @s@ parameter from the Praos Chain
 -- Growth property. (At the time of writing, this is @2k@ during Byron and
@@ -629,28 +625,25 @@ checkHonestChain recipe sched = do
     do  let pc = countChainSchema sched
         when (C.toVar pc <= 0) $ Exn.throwError BadCount
 
-    -- every slot is the first slot of a unique EHCG window
+    -- every slot is the first slot of a unique stability window
     C.forRange_ sz $ \i -> do
-        C.SomeWindow Proxy ehcg <- pure $ C.withWindow sz (C.Lbl @EhcgLbl) i (C.Count ehcgWidth)
+        C.SomeWindow Proxy scg <- pure $ C.withWindow sz (C.Lbl @ScgLbl) i (C.Count s)
 
-        let pc = BV.countActivesInV S.notInverted (C.sliceV ehcg v)
+        let pc = BV.countActivesInV S.notInverted (C.sliceV scg v)
 
-        -- generously assume that the slots of this EHCG window that extend past 'Len' are active
-        let benefitOfTheDoubt = ehcgWidth - C.getCount (C.windowSize ehcg)
+        -- generously assume that the slots of this stability window that extend past 'Len' are active
+        let benefitOfTheDoubt = s - C.getCount (C.windowSize scg)
 
-        -- check the density in the EHCG window
+        -- check the density in the stability window
         when (C.getCount pc + benefitOfTheDoubt <= k) $ do
-            Exn.throwError $ BadEhcgWindow $ EhcgViolation {
-                ehcgvPopCount = pc
+            Exn.throwError $ BadScgWindow $ ScgViolation {
+                scgvPopCount = pc
               ,
-                ehcgvWindow   = ehcg
+                scgvWindow   = scg
               }
 
   where
-    HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l) = recipe
-
-    -- the general EHCG window contains @'Scg' - 'Delta'@ slots
-    ehcgWidth = s - d :: Int
+    HonestRecipe (Kcp k) (Scg s) (Delta _d) (Len l) = recipe
 
     ChainSchema hon v = sched
 

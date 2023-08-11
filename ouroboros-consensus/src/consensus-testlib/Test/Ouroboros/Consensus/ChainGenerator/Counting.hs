@@ -176,7 +176,7 @@ data Win (lbl :: klbl) (skolem :: Type)
 --
 -- * @elem@ is a type-level of the elements in the containing sequence (e.g. 'ActiveSlotE')
 -- * @outer@ is a type-level name identifying the containing sequence (e.g. @Win (Lbl HonestLbl) skolem1@)
--- * @inner@ is a type-level name for the window that the value describes (e.g. @Win (Lbl EhcgLbl) skolem2@)
+-- * @inner@ is a type-level name for the window that the value describes (e.g. @Win (Lbl ScgLbl) skolem2@)
 --
 -- Note that nothing is said about the containing sequence other
 -- than its type name.
