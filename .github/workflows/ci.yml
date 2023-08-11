@@ -92,27 +92,22 @@ jobs:
           cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
           cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-
 
-    # NOTE: We skip caching of the dist-newstyle folder for now, since we're
-    # often getting the following cabal warning, which leads to compilation
-    # failures: "Warning: This package indirectly depends on multiple versions
-    # of the same package. This is very likely to cause a compile failure.".
+    # This is used for caching the `dist-newstyle` directory.
+    - name: Store week number as environment variable
+      run: echo "WEEKNUM=$(/usr/bin/date -u '+%W')" >> $GITHUB_ENV
+
+    # Cache the `dist-newstyle` folder.
     #
-    # # This is used for caching the `dist-newstyle` directory.
-    # - name: Store week number as environment variable
-    #   run: echo "WEEKNUM=$(/usr/bin/date -u '+%W')" >> $GITHUB_ENV
-    #
-    # # When we restore a previous cache and store a new key, we also store files
-    # # that were part of the last restoration but were not actually used. To
-    # # prevent the cache from growing too quickly we only store a new cache every
-    # # week.
-    # - uses: actions/cache@v3
-    #   name: "Cache `dist-newstyle`"
-    #   with:
-    #     path: |
-    #       dist-newstyle
-    #       !dist-newstyle/**/.git
-    #     key: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}
-    #     restore-keys: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}
+    # See 'restore-cabal-store' for why we use the week number in the primary
+    # key and restore keys.
+    - name: "Cache dist-newstyle"
+      uses: actions/cache@v3
+      with:
+        path: dist-newstyle
+        key: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}-${{ hashFiles('dependencies.txt') }}
+        restore-keys: |
+          cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}-${{ hashFiles('dependencies.txt') }}
+          cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}-
 
     - name: Build dependencies
       id: build-dependencies
