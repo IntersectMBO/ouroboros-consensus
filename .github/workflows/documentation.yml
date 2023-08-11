@@ -1,0 +1,38 @@
+name: Documentation
+
+# Limit concurrent runs of this workflow within a single PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+
+jobs:
+  # https://docusaurus.io/docs/deployment#triggering-deployment-with-github-actions
+  #
+  # We test the website build on pull requests, without building any static
+  # assets (pdfs, haddocks), and without deploying the website to github-pages.
+  # The build should still succeed regardless, and serves as a check before we
+  # deploy the documentation website on the default branch.
+  test-deploy-documentation:
+    name: Test documentation deployment
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./docs/website
+    strategy:
+       fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+          cache: yarn
+          cache-dependency-path: './docs/website/yarn.lock'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: Test build website
+        run: yarn build
