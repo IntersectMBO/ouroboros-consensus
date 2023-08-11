@@ -129,6 +129,7 @@ data Model blk = Model {
     , currentLedger    :: ExtLedgerState blk
     , initLedger       :: ExtLedgerState blk
     , iterators        :: Map IteratorId [blk]
+    , valid            :: Set (HeaderHash blk)
     , invalid          :: InvalidBlocks blk
     , currentSlot      :: SlotNo
     , maxClockSkew     :: Word64
@@ -304,28 +305,23 @@ immutableSlotNo :: HasHeader blk
 immutableSlotNo k = Chain.headSlot . immutableChain k
 
 getIsValid :: forall blk. LedgerSupportsProtocol blk
-           => TopLevelConfig blk
-           -> Model blk
+           => Model blk
            -> (RealPoint blk -> Maybe Bool)
-getIsValid cfg m = \pt@(RealPoint _ hash) -> if
-    | Set.member pt validPoints   -> Just True
+getIsValid m = \(RealPoint _ hash) -> if
+    -- Note that we are not checking whether the block is in the VolatileDB.
+    -- This is justified as we already assume that the model knows more about
+    -- valid blocks (see 'IsValidResult') and garbage collection of invalid
+    -- blocks differs between the model and the SUT (see the "Invalid blocks"
+    -- note in @./StateMachine.hs@).
+    | Set.member hash (valid m)   -> Just True
     | Map.member hash (invalid m) -> Just False
     | otherwise                   -> Nothing
-  where
-    validPoints :: Set (RealPoint blk)
-    validPoints =
-          foldMap (Set.fromList . map blockRealPoint . Chain.toOldestFirst . fst)
-        . snd
-        . validChains cfg m
-        . blocks
-        $ m
 
 isValid :: forall blk. LedgerSupportsProtocol blk
-        => TopLevelConfig blk
-        -> RealPoint blk
+        => RealPoint blk
         -> Model blk
         -> Maybe Bool
-isValid = flip . getIsValid
+isValid = flip getIsValid
 
 getLedgerDB ::
      LedgerSupportsProtocol blk
@@ -361,6 +357,7 @@ empty initLedger maxClockSkew = Model {
     , currentLedger    = initLedger
     , initLedger       = initLedger
     , iterators        = Map.empty
+    , valid            = Set.empty
     , invalid          = Map.empty
     , currentSlot      = 0
     , maxClockSkew     = maxClockSkew
@@ -385,6 +382,7 @@ addBlock cfg blk m = Model {
     , currentLedger    = newLedger
     , initLedger       = initLedger m
     , iterators        = iterators  m
+    , valid            = valid'
     , invalid          = invalid'
     , currentSlot      = currentSlot  m
     , maxClockSkew     = maxClockSkew m
@@ -429,6 +427,10 @@ addBlock cfg blk m = Model {
       immutableChainHashes `isPrefixOf`
       map blockHash (Chain.toOldestFirst fork)
 
+    -- Note that this includes the currently selected chain, but that does not
+    -- influence chain selection via 'selectChain'.
+    consideredCandidates = filter (extendsImmutableChain . fst) candidates
+
     newChain  :: Chain blk
     newLedger :: ExtLedgerState blk
     (newChain, newLedger) =
@@ -437,8 +439,16 @@ addBlock cfg blk m = Model {
           (Proxy @(BlockProtocol blk))
           (selectView (configBlock cfg) . getHeader)
           (currentChain m)
-      . filter (extendsImmutableChain . fst)
-      $ candidates
+      $ consideredCandidates
+
+    -- We update the set of valid blocks with all valid blocks on all candidate
+    -- chains that are considered by the modeled chain selection. This ensures
+    -- that the model always knows about more valid blocks than the system under
+    -- test. See 'IsValidResult' for more context.
+    valid' =
+        valid m <> foldMap
+          (Set.fromList . map blockHash . Chain.toOldestFirst . fst)
+          consideredCandidates
 
 addBlocks :: LedgerSupportsProtocol blk
           => TopLevelConfig blk
