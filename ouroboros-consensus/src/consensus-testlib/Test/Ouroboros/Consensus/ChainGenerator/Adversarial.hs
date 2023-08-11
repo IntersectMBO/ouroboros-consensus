@@ -51,7 +51,7 @@ data AnchorViolation =
     WrongNumberOfHonestPredecessors
   deriving (Eq, Read, Show)
 
--- | A violation of the Extended Praos Race Assumption
+-- | A violation of Adversarial Chains in Stability Windows
 --
 -- INVARIANT: @'C.windowLast' 'rvAdv' < 'C.windowLast' 'rvHon' + 'Delta'@
 --
@@ -73,29 +73,29 @@ data AdversarialViolation hon adv =
     BadRace !(RaceViolation hon adv)
   deriving (Eq, Read, Show)
 
--- | Check the chain matches the given 'AdversarialRecipe', especially the Extended Praos Race Assumption
+-- | Check the chain matches the given 'AdversarialRecipe', especially that it
+-- satisfies Adversarial Chains in Stability Windows and Length of Competing
+-- Chains.
 --
--- Definition of a /Praos Race Window/. Such a window includes exactly 'Delta'
--- slots after the @k+1@st honest block in the window.
+-- Definition of a /Praos Race Window/ of a chain. It is an interval of slots
+-- that contains at least @k+1@ blocks of the chain and exactly 'Delta' slots
+-- after the @k+1@st block.
 --
--- Definition of the /Praos Race Assumption/. We assume every adversarial chain
--- contains at most @k@ blocks in the Praos Race Window anchored at the
--- intersection.
+-- Definition of the /Length of Competing Chains/. We assume every adversarial
+-- chain contains at most @k@ blocks in the Praos Race Window starting at the
+-- next slot after the intersection.
 --
--- Definition of the /Extended Praos Race Assumption/. Beyond the Praos Race
--- Assumption, we assume that every adversarial chain also has at most @k@
--- blocks in every subsequent Praos Race Window that ends within 'Delta' of the
--- Stability Window anchored at the first adverarial block. (Crucially, these
--- are the Praos Race Windows in which the the adversary could not yet have
+-- Definition of the /Adversarial Chains in Stability Windows/.
+-- Every adversarial chain has at most @k@ blocks in every Praos Race Window of
+-- the honest chain and ending within 'Delta' blocks of the Stability Window
+-- starting at the slot of the first adversarial block. (Crucially, these
+-- are the Praos Race Windows in which the adversary could not yet have
 -- drastically accelerated its rate of election.)
---
--- Remark. The Praos Enriched Honest Chain Growth Assumption ensures the
--- adversary cannot accelerate until after it has lost the first race.
 --
 -- Definition of the /Genesis Implication Conjecture/. We conjecture that
 -- assuming that the Genesis window length is no greater than the Stability
--- Window and that every possible adversarial chain satisfies the Extended Praos
--- Race Assumption implies the honest chain strictly wins every possible density
+-- Window and that every possible adversarial chain satisfies Adversarial Chains
+-- in Stability Windows, then the honest chain strictly wins every possible density
 -- comparison from the Ouroboros Genesis paper. The key intuition is that a less
 -- dense chain would have to lose at least one race within the Genesis window.
 checkAdversarialChain ::
@@ -277,7 +277,7 @@ data NoSuchAdversarialChainSchema =
     -- Suppose k=0 and slot x and slot y are two honest active slots with only
     -- honest empty slots between them.
     --
-    -- The Praos Race Assumption prohibits the adversary from leading in the interval (x,y].
+    -- Length of Competing Chains prohibits the adversary from leading in the interval (x,y].
     --
     -- In fact, by induction, the adversary can never lead: suppose the same y
     -- and a slot z are two honest active slots with only honest empty slots
