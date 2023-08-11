@@ -272,12 +272,18 @@ withWindow (Count n) _lbl (Count i) (Count m) =
 
     m' = max 0 $ m .- precedingElements .- trailingElements
 
+-- | @withWindowBetween outerSz lbl i j@ is the window between indices @i@
+-- and @j@ with name @lbl@ in a containing sequence of length @outerSz@.
 withWindowBetween :: Size outer elem -> Lbl lbl -> Index outer elem -> Index outer elem -> SomeWindow lbl outer elem
 withWindowBetween n lbl (Count i) (Count j) = withWindow n lbl (Count i) (Count $ j .- i .+ 1)
 
+-- | @withSuffixWindow outerSz lbl i@ is the window between indices @i@ and the
+-- end of the containing sequence of length @outerSz@ with name @lbl@.
 withSuffixWindow :: Size outer elem -> Lbl lbl -> Index outer elem -> SomeWindow lbl outer elem
 withSuffixWindow n lbl i = withWindow n lbl i (Count $ getCount n .- getCount i)
 
+-- | @withTopWindow lbl sz k@ passes to @k@ a window of size @sz@ with name
+-- @lbl@ at offset @0@ of some containing sequence with a unique name @base@.
 withTopWindow ::
      Lbl lbl
   -> Int
