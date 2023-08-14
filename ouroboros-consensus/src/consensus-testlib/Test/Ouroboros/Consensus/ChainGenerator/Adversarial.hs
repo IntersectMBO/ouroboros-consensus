@@ -51,7 +51,7 @@ data AnchorViolation =
     WrongNumberOfHonestPredecessors
   deriving (Eq, Read, Show)
 
--- | A violation of Adversarial Chains in Stability Windows
+-- | A violation of Races in Stability Windows Assumption
 --
 -- INVARIANT: @'C.windowLast' 'rvAdv' < 'C.windowLast' 'rvHon' + 'Delta'@
 --
@@ -76,28 +76,28 @@ data AdversarialViolation hon adv =
 -- | Check the chain matches the given 'AdversarialRecipe'.
 --
 -- * It must intersect the honest chain at an active slot
--- * It must satisfy Adversarial Chains in Stability Windows
--- * It must satisfy  Length of Competing Chains
+-- * It must satisfy the Races in Stability Windows Assumption
+-- * It must satisfy the Length of Competing Chains Assumption
 --
 -- Definition of a /Praos Race Window/ of a chain. It is an interval of slots
 -- that contains at least @k+1@ blocks of the chain and exactly 'Delta' slots
 -- after the @k+1@st block.
 --
--- Definition of the /Length of Competing Chains/. We assume every adversarial
+-- Definition of the /Length of Competing Chains Assumption/. We assume every adversarial
 -- chain contains at most @k@ blocks in the Praos Race Window anchored at the
 -- the intersection.
 --
--- Definition of the /Adversarial Chains in Stability Windows/.
+-- Definition of the /Races in Stability Windows Assumption/.
 -- Every adversarial chain has at most @k@ blocks in every Praos Race Window of
--- the honest chain and ending within 'Delta' blocks of the Stability Window
+-- the honest chain ending within 'Delta' slots of the Stability Window
 -- starting at the slot of the first adversarial block. (Crucially, these
 -- are the Praos Race Windows in which the adversary could not yet have
 -- drastically accelerated its rate of election.)
 --
 -- Definition of the /Genesis Implication Conjecture/. We conjecture that
 -- assuming that the Genesis window length is no greater than the Stability
--- Window and that every possible adversarial chain satisfies Adversarial Chains
--- in Stability Windows, then the honest chain strictly wins every possible density
+-- Window and that every possible adversarial chain satisfies the Races
+-- in Stability Windows Assumption, then the honest chain strictly wins every possible density
 -- comparison from the Ouroboros Genesis paper. The key intuition is that a less
 -- dense chain would have to lose at least one race within the Genesis window.
 checkAdversarialChain ::
