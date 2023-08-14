@@ -73,9 +73,11 @@ data AdversarialViolation hon adv =
     BadRace !(RaceViolation hon adv)
   deriving (Eq, Read, Show)
 
--- | Check the chain matches the given 'AdversarialRecipe', especially that it
--- satisfies Adversarial Chains in Stability Windows and Length of Competing
--- Chains.
+-- | Check the chain matches the given 'AdversarialRecipe'.
+--
+-- * It must intersect the honest chain at an active slot
+-- * It must satisfy Adversarial Chains in Stability Windows
+-- * It must satisfy  Length of Competing Chains
 --
 -- Definition of a /Praos Race Window/ of a chain. It is an interval of slots
 -- that contains at least @k+1@ blocks of the chain and exactly 'Delta' slots
@@ -221,9 +223,11 @@ data AdversarialRecipe base hon =
         -- | protocol parameters
         arParams :: (Kcp, Scg, Delta)
       ,
-        -- | The number of (real) honest active slots as of the intersection
+        -- | Where to branch off of 'arHonest'
         --
-        -- @0@ means the genesis block and @i > 0@ means @i - 1 :: C.Index hon ActiveSlotE@
+        -- It is the amount of blocks shared by the honest and the adversarial
+        -- chain. In other words, the 0-based index of their intersection
+        -- in blocks, such that @0@ identifies the genesis block.
         arPrefix :: !(C.Var hon ActiveSlotE)
       }
   deriving (Eq, Read, Show)
