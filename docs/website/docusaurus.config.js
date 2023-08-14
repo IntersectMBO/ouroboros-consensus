@@ -4,6 +4,10 @@
 const lightCodeTheme = require('prism-react-renderer/themes/github');
 const darkCodeTheme = require('prism-react-renderer/themes/dracula');
 
+// Required to render mathematical equations using KaTeX (https://docusaurus.io/docs/markdown-features/math-equations).
+const math = require('remark-math');
+const katex = require('rehype-katex');
+
 // generic edition URL that will be used by all parts of the documentation
 const editUrl = 'https://github.com/input-output-hk/ouroboros-consensus/tree/main/docs/';
 
@@ -52,12 +56,26 @@ const config = {
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
           editUrl,
+          // Add KaTeX support.
+          remarkPlugins: [math],
+          rehypePlugins: [katex],
         },
         theme: {
           customCss: require.resolve('./src/css/custom.css'),
         },
       }),
     ],
+  ],
+
+  // Add KaTeX support.
+  stylesheets: [
+    {
+      href: 'https://cdn.jsdelivr.net/npm/katex@0.13.24/dist/katex.min.css',
+      type: 'text/css',
+      integrity:
+        'sha384-odtC+0UGzzFL/6PNoE8rX/SPcQDXBJ+uRepguP4QkPCm2LBxH3FA3y+fKSiJ+AmM',
+      crossorigin: 'anonymous',
+    },
   ],
 
   themeConfig:
