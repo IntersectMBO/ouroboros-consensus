@@ -23,6 +23,7 @@ module Test.Consensus.Cardano.Examples (
   ) where
 
 import           Data.Coerce (Coercible)
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Index (Index (..))
 import           Data.SOP.Strict

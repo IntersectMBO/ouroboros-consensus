@@ -32,10 +32,12 @@ module Ouroboros.Consensus.HardFork.Combinator.State (
 import           Control.Monad (guard)
 import           Data.Functor.Product
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
 import           Data.SOP.InPairs (InPairs, Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
-import           Data.SOP.Strict hiding (shape)
+import           Data.SOP.Strict
 import           Data.SOP.Telescope (Extend (..), ScanNext (..), Telescope)
 import qualified Data.SOP.Telescope as Telescope
 import           Ouroboros.Consensus.Block

@@ -24,6 +24,8 @@ import qualified Codec.CBOR.Encoding as Enc
 import qualified Codec.Serialise as Serialise
 import           Control.Exception (throw)
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.NonEmpty (ProofNonEmpty (..), checkIsNonEmpty,
                      isNonEmpty)
 import           Data.SOP.Strict

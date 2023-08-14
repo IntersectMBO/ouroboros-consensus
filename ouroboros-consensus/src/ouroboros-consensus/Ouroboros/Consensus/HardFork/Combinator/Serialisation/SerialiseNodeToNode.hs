@@ -19,6 +19,7 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.Serialise as Serialise
 import           Control.Exception (throw)
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
 import           Data.SOP.NonEmpty (ProofNonEmpty (..), isNonEmpty)
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block

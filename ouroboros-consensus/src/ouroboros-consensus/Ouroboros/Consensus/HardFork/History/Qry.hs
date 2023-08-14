@@ -48,8 +48,8 @@ import           Data.Fixed (divMod')
 import           Data.Foldable (toList)
 import           Data.Functor.Identity
 import           Data.Kind (Type)
-import           Data.SOP.Counting (NonEmpty (..))
-import           Data.SOP.Strict (SListI)
+import           Data.SOP.NonEmpty (NonEmpty (..))
+import           Data.SOP.Sing (SListI)
 import           Data.Time hiding (UTCTime)
 import           Data.Word
 import           GHC.Generics (Generic)

@@ -1,12 +1,13 @@
-{-# LANGUAGE ConstraintKinds     #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE PolyKinds           #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE PolyKinds                #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeOperators            #-}
 
 -- | Intended for qualified import
 --
@@ -34,7 +35,10 @@ module Data.SOP.InPairs (
   ) where
 
 import           Data.Kind (Type)
+import           Data.Proxy
+import           Data.SOP.Constraint
 import           Data.SOP.NonEmpty
+import           Data.SOP.Sing
 import           Data.SOP.Strict hiding (hcmap, hcpure, hmap, hpure)
 
 {-------------------------------------------------------------------------------
@@ -42,7 +46,8 @@ import           Data.SOP.Strict hiding (hcmap, hcpure, hmap, hpure)
 -------------------------------------------------------------------------------}
 
 -- | We have an @f x y@ for each pair @(x, y)@ of successive list elements
-data InPairs (f :: k -> k -> Type) (xs :: [k]) where
+type InPairs :: (k -> k -> Type) -> [k] -> Type
+data InPairs f xs where
   PNil  :: InPairs f '[x]
   PCons :: f x y -> InPairs f (y ': zs) -> InPairs f (x ': y ': zs)
 
@@ -94,16 +99,16 @@ hcpure _ f =
   RequiringBoth
 -------------------------------------------------------------------------------}
 
-data Requiring h f x y = Require {
+newtype Requiring h f x y = Require {
       provide :: h x -> f x y
     }
 
-data RequiringBoth h f x y = RequireBoth {
+newtype RequiringBoth h f x y = RequireBoth {
       provideBoth :: h x -> h y -> f x y
     }
 
 ignoring :: f x y -> Requiring h f x y
-ignoring fxy = Require $ \_ -> fxy
+ignoring fxy = Require $ const fxy
 
 ignoringBoth :: f x y -> RequiringBoth h f x y
 ignoringBoth fxy = RequireBoth $ \_ _ -> fxy

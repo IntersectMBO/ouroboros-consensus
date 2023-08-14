@@ -4,6 +4,8 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage () where
 
+import           Data.Proxy
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Index
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract

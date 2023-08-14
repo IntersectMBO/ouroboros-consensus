@@ -2,7 +2,6 @@
 {-# LANGUAGE EmptyCase           #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -27,12 +26,15 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Infra (
   ) where
 
 import           Data.Functor.Product
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (InPairs, Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Match (Mismatch)
 import qualified Data.SOP.Match as Match
-import           Data.SOP.Strict hiding (shape)
+import           Data.SOP.NonEmpty
+import           Data.SOP.Strict
 import           Data.SOP.Telescope (Extend (..), Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           Ouroboros.Consensus.Block

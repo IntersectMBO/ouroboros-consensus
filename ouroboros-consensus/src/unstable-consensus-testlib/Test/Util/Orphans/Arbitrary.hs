@@ -23,9 +23,12 @@ module Test.Util.Orphans.Arbitrary (
   ) where
 
 import           Data.Coerce (coerce)
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Dict (Dict (..), all_NP, mapAll)
 import           Data.SOP.NonEmpty (IsNonEmpty, ProofNonEmpty (..),
                      checkIsNonEmpty, isNonEmpty)
+import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Data.Time
 import           Data.Word (Word64)

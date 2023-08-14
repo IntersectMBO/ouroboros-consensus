@@ -34,12 +34,14 @@ import           Control.Monad.Except (throwError, withExcept)
 import           Data.Functor ((<&>))
 import           Data.Functor.Product
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
 import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
 import qualified Data.SOP.Match as Match
-import           Data.SOP.Strict hiding (shape)
+import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           GHC.Generics (Generic)

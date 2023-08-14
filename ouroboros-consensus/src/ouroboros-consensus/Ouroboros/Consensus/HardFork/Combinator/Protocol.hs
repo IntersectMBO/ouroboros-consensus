@@ -30,6 +30,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol (
 
 import           Control.Monad.Except
 import           Data.Functor.Product
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs

@@ -29,6 +29,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Mempool (
 import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.Kind (Type)
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Functors (Product2 (..))
 import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs)

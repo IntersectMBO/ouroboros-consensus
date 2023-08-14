@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds        #-}
-{-# LANGUAGE ExplicitForAll   #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs            #-}
 {-# LANGUAGE TypeOperators    #-}
@@ -9,6 +8,7 @@ module Data.SOP.Lenses (
   , lenses_NP
   ) where
 
+import           Data.SOP.Sing
 import           Data.SOP.Strict
 
 -- | Simple lens to access an element of an n-ary product.
@@ -18,7 +18,7 @@ data Lens f xs a = Lens {
     }
 
 -- | Generate all lenses to access the element of an n-ary product.
-lenses_NP :: forall f xs. SListI xs => NP (Lens f xs) xs
+lenses_NP :: SListI xs => NP (Lens f xs) xs
 lenses_NP = go sList
   where
     go :: SList xs' -> NP (Lens f xs') xs'

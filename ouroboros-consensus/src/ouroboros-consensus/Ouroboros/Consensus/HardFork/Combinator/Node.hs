@@ -8,6 +8,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Node () where
 
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Strict
 import           GHC.Stack
 import           Ouroboros.Consensus.Config.SupportsNode

@@ -27,6 +27,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (maybeToList)
 import qualified Data.Sequence.Strict as StrictSeq
 import qualified Data.Set as Set
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Strict
 import           Data.SOP.Telescope as Tele
 import           Lens.Micro

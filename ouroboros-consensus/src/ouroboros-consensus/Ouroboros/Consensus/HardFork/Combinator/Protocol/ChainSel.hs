@@ -18,6 +18,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel (
   ) where
 
 import           Data.Kind (Type)
+import           Data.SOP.Constraint
 import           Data.SOP.Strict
 import           Data.SOP.Tails (Tails (..))
 import           GHC.Generics (Generic)

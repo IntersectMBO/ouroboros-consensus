@@ -1,12 +1,13 @@
-{-# LANGUAGE ConstraintKinds     #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE PolyKinds           #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE PolyKinds                #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeOperators            #-}
 
 -- | Intended for qualified import
 --
@@ -26,6 +27,9 @@ module Data.SOP.Tails (
   ) where
 
 import           Data.Kind (Type)
+import           Data.Proxy
+import           Data.SOP.Constraint
+import           Data.SOP.Sing
 import           Data.SOP.Strict hiding (hcmap, hcpure, hmap, hpure)
 import qualified Data.SOP.Strict as SOP
 
@@ -34,7 +38,8 @@ import qualified Data.SOP.Strict as SOP
 -------------------------------------------------------------------------------}
 
 -- | For every tail @(x ': xs)@ of the list, an @f x y@ for every @y@ in @xs@
-data Tails (f :: k -> k -> Type) (xs :: [k]) where
+type Tails :: (k -> k -> Type) -> [k] -> Type
+data Tails f xs where
   TNil  :: Tails f '[]
   TCons :: NP (f x) xs -> Tails f xs -> Tails f (x ': xs)
 

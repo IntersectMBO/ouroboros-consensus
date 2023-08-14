@@ -15,6 +15,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView (
   , Ticked (..)
   ) where
 
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Dict
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract

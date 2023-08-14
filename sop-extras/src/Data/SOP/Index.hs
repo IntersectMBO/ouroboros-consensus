@@ -1,14 +1,14 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE ConstraintKinds     #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeOperators       #-}
--- |
+{-# LANGUAGE BangPatterns             #-}
+{-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE LambdaCase               #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeOperators            #-}
 
 module Data.SOP.Index (
     -- * Indexing SOP types
@@ -34,10 +34,16 @@ module Data.SOP.Index (
   ) where
 
 import           Data.Coerce
+import           Data.Kind (Type)
+import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Dict
+import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Data.Word
 
+type Index :: [Type] -> Type -> Type
 data Index xs x where
   IZ ::               Index (x ': xs) x
   IS :: Index xs x -> Index (y ': xs) x
@@ -63,7 +69,7 @@ injectNS' ::
 injectNS' _ idx = coerce . injectNS @f idx . coerce
 
 projectNP :: Index xs x -> NP f xs -> f x
-projectNP IZ        (x :* _) = x
+projectNP IZ       (x :* _ ) = x
 projectNP (IS idx) (_ :* xs) = projectNP idx xs
 
 {-------------------------------------------------------------------------------
@@ -166,8 +172,7 @@ hizipWith4 = hcizipWith4 (Proxy @Top)
 
 -- | We only allow up to 23 (so counting from 0, 24 elements in @xs@), because
 -- CBOR stores a 'Word8' in the range 0-23 as a single byte equal to the value
--- of the 'Word8'. We rely on this in 'reconstructNestedCtxt' and other
--- places.
+-- of the 'Word8'.
 npWithIndices :: SListI xs => NP (K Word8) xs
 npWithIndices = go 0 sList
   where

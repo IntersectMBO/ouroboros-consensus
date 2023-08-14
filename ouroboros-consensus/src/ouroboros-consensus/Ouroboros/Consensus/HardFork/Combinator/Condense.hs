@@ -16,6 +16,9 @@
 module Ouroboros.Consensus.HardFork.Combinator.Condense (CondenseConstraints) where
 
 import           Data.Coerce
+import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.Ledger.SupportsMempool

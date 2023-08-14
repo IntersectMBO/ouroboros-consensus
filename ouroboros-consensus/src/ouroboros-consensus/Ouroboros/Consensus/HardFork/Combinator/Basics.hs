@@ -39,6 +39,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Basics (
 
 import           Cardano.Slotting.EpochInfo
 import           Data.Kind (Type)
+import           Data.SOP.Constraint
 import           Data.SOP.Strict
 import           Data.Typeable
 import           GHC.Generics (Generic)

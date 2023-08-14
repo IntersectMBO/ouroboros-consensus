@@ -55,7 +55,6 @@ import           Data.Bifunctor (first)
 import qualified Data.ListMap as ListMap
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.SOP.Strict
 import qualified Data.Text as Text
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block

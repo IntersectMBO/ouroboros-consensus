@@ -5,7 +5,6 @@
 module Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC) where
 
 import qualified Data.Map.Strict as Map
-import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node ()
