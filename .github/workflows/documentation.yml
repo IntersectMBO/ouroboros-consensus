@@ -7,6 +7,7 @@ concurrency:
 
 on:
   pull_request:
+  merge_group:
 
 jobs:
   # https://docusaurus.io/docs/deployment#triggering-deployment-with-github-actions
