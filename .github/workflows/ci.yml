@@ -102,6 +102,7 @@ jobs:
     # key and restore keys.
     - name: "Cache dist-newstyle"
       uses: actions/cache@v3
+      if: matrix.ghc!='8.10.7'
       with:
         path: dist-newstyle
         key: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}-${{ hashFiles('dependencies.txt') }}
