@@ -57,7 +57,16 @@ findIthEmptyInV ::
 findIthEmptyInV pol v i =
     runST $ C.unsafeThawV v >>= \mv -> findIthEmptyInMV pol mv i
 
--- | Find the ith empty slot in a window
+-- | Find the (i+1)st empty slot in a window
+--
+-- * @findIthEmptyInMV notInverted v 0@ yields the first empty slot
+-- * @findIthEmptyInMV notInverted v 1@ yields the second empty slot
+-- * @findIthEmptyInMV notInverted v k@ yields the @k+1@st empty slot
+--
+-- > findIthEmptyInMV notInverted 01101 0 == JustFound 0
+-- > findIthEmptyInMV notInverted 01101 1 == JustFound 3
+-- > findIthEmptyInMV notInverted 01101 2 == NothingFound
+--
 findIthEmptyInMV ::
   forall proxy pol base s.
      POL   pol
