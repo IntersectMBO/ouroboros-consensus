@@ -68,6 +68,10 @@
         };
         inherit hydraJobs;
         legacyPackages = pkgs;
+        packages = {
+          inherit (pkgs.hsPkgsNoAsserts.hsPkgs.ouroboros-consensus-cardano.components.exes)
+            db-analyser;
+        };
       }
     );
 }

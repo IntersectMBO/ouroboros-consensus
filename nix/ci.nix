@@ -32,6 +32,7 @@ let
   jobs = lib.filterAttrsRecursive (n: v: n != "recurseForDerivations") ({
     native = {
       haskell = mkHaskellJobsFor pkgs.hsPkgs;
+      haskellNoAsserts = (mkHaskellJobsFor pkgs.hsPkgsNoAsserts).exes;
     } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
       formatting = import ./formatting.nix pkgs;
       inherit (pkgs) consensus-pdfs;
