@@ -51,7 +51,7 @@ data AnchorViolation =
     WrongNumberOfHonestPredecessors
   deriving (Eq, Read, Show)
 
--- | A violation of Races in Stability Windows Assumption
+-- | A violation of Races Before Acceleration Assumption
 --
 -- INVARIANT: @'C.windowLast' 'rvAdv' < 'C.windowLast' 'rvHon' + 'Delta'@
 --
@@ -76,8 +76,8 @@ data AdversarialViolation hon adv =
 -- | Check the chain matches the given 'AdversarialRecipe'.
 --
 -- * It must intersect the honest chain at an active slot
--- * It must satisfy the Races in Stability Windows Assumption
--- * It must satisfy the Length of Competing Chains Assumption
+-- * It must satisfy the Races Before Acceleration Assumption
+--   (which implies the Length of Competing Chains Assumption)
 --
 -- Definition of a /Praos Race Window/ of a chain. It is an interval of slots
 -- that contains at least @k+1@ blocks of the chain and exactly 'Delta' slots
@@ -87,12 +87,16 @@ data AdversarialViolation hon adv =
 -- chain contains at most @k@ blocks in the Praos Race Window anchored at the
 -- the intersection.
 --
--- Definition of the /Races in Stability Windows Assumption/.
+-- Definition of /Acceleration Lower Bound of an Adversarial Chain/. It is
+-- the lowest slot at which an adversary could speed up its elections on a
+-- given adversarial chain. It is defined as the last slot of the Stability
+-- Window anchored at the slot of the first adversarial block or the slot
+-- after the k+1st honest block after the intersection (whichever happens later).
+--
+-- Definition of the /Races Before Acceleration Assumption/.
 -- Every adversarial chain has at most @k@ blocks in every Praos Race Window of
--- the honest chain ending within 'Delta' slots of the Stability Window
--- starting at the slot of the first adversarial block. (Crucially, these
--- are the Praos Race Windows in which the adversary could not yet have
--- drastically accelerated its rate of election.)
+-- the honest chain ending no later than 'Delta-1' slots after the acceleration
+-- lower bound.
 --
 -- Definition of the /Genesis Implication Conjecture/. We conjecture that
 -- assuming that the Genesis window length is no greater than the Stability
