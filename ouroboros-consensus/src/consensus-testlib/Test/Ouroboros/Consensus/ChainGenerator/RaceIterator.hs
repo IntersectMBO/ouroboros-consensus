@@ -55,6 +55,12 @@ init (Kcp k) v = do
                 (C.Count 0)
                 kPlus1st
 
+-- | @initConservative@ is like @init@, but assumes that any Race window
+-- spilling the vector length has all the excedent slots active.
+--
+-- This function is only safe to call when we know that 'init' would return
+-- @Nothing@.
+--
 initConservative :: Scg -> Delta -> C.Contains SlotE outer inner -> Race inner
 initConservative (Scg s) (Delta d) win =
     UnsafeRace
@@ -110,6 +116,12 @@ next v (UnsafeRace (C.SomeWindow Proxy raceWin)) = do
   where
     sz = C.lengthV v
 
+-- | @nextConservative@ is like @next@, but assumes that any Race window
+-- spilling the vector length has all the excedent slots active.
+--
+-- This function is only safe to call when we know that 'next' would return
+-- @Nothing@.
+--
 nextConservative ::
   forall base.
      Scg
