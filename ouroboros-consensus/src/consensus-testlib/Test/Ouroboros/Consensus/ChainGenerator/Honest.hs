@@ -292,7 +292,11 @@ would solve the problem with just two toggles.
 uniformTheHonestChain ::
   forall base hon g.
      R.RandomGen g
-  => Maybe Asc   -- ^ 'Nothing' means @0@, which induces a periodic chain
+  => Maybe Asc   -- ^ When @Nothing@, the generated schema has a minimal amount
+                 -- of active slots. Deactivating any of them would violate
+                 -- safety properties. The generated schema shows a periodic
+                 -- structure, but this is more an artifact of the implementation
+                 -- than a feature.
   -> CheckedHonestRecipe base hon
   -> g
   -> ChainSchema base hon
