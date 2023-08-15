@@ -39,6 +39,8 @@ pattern Race x <- UnsafeRace x
 
 -----
 
+-- | Yields the race window starting at position 0 of the given
+-- vector if the @k+1@ active slot exists.
 init :: Kcp -> C.Vector base SlotE S -> Maybe (Race base)
 init (Kcp k) v = do
     -- find the @k+1@st active slot in the given race window
@@ -64,6 +66,8 @@ initConservative (Scg s) (Delta d) win =
 
 data RaceStepLbl
 
+-- | @next v r@ yields the race window anchored at the first
+-- active slot of @r@ if there is an active slot after @r@.
 next ::
   forall base.
      C.Vector base SlotE S
