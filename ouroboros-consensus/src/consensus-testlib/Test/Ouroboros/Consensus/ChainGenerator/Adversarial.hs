@@ -124,9 +124,10 @@ checkAdversarialChain recipe adv = do
         let startA       = C.windowStart winA :: C.Index base SlotE
             intersection = startA C.- 1       :: C.Index base SlotE
 
+        -- The intersection must be at an active slot in the honest chain.
         case C.toWin winH intersection of
             Nothing -> do
-              -- genesis block is the only permissible anchor outside of @hon@
+              -- the genesis block is the only permissible anchor outside of @hon@
               when (startA   /= C.Count 0) $ Exn.throwError $ BadAnchor HonestActiveMustAnchorAdversarial
               when (arPrefix /= C.Count 0) $ Exn.throwError $ BadAnchor WrongNumberOfHonestPredecessors
 
@@ -140,6 +141,8 @@ checkAdversarialChain recipe adv = do
                     pure $ C.withWindowBetween (C.windowSize winH) (C.Lbl @"foo") (C.Count 0) i
                 let pc = BV.countActivesInV S.notInverted (C.sliceV precedingSlots vH)
 
+                -- arPrefix must correctly count the active slots in the part of
+                -- the chain upto the intersection
                 when (C.frWinVar precedingSlots (C.toVar pc) /= arPrefix) $ do
                     Exn.throwError $ BadAnchor WrongNumberOfHonestPredecessors
 
