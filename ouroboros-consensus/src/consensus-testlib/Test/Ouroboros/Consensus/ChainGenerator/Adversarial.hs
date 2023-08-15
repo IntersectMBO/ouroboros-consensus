@@ -89,9 +89,9 @@ data AdversarialViolation hon adv =
 --
 -- Definition of /Acceleration Lower Bound of an Adversarial Chain/. It is
 -- the lowest slot at which an adversary could speed up its elections on a
--- given adversarial chain. It is defined as the last slot of the Stability
--- Window anchored at the slot of the first adversarial block or the slot
--- after the k+1st honest block after the intersection (whichever happens later).
+-- given adversarial chain. It is defined as the 'Scg' slot after the first
+-- adversarial block or the slot after the k+1st honest block after the
+-- intersection (whichever happens later).
 --
 -- Definition of the /Races Before Acceleration Assumption/.
 -- Every adversarial chain has at most @k@ blocks in every Praos Race Window of
