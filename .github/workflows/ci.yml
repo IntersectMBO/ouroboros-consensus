@@ -102,6 +102,7 @@ jobs:
     # key and restore keys.
     - name: "Cache dist-newstyle"
       uses: actions/cache@v3
+      if: matrix.ghc!='8.10.7'
       with:
         path: dist-newstyle
         key: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}-${{ hashFiles('dependencies.txt') }}
@@ -122,7 +123,7 @@ jobs:
     - name: "Save cache for cabal-store"
       uses: actions/cache/save@v3
       id: save-cabal-store
-      if: steps.build-dependencies.outcome == 'success'
+      if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-store.outputs.cache-hit != 'true'
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
         key:  ${{ steps.restore-cabal-store.outputs.cache-primary-key }}

@@ -370,4 +370,3 @@ instance All (Compose NoThunks f) xs
                      noThunks ("fst" : ctxt) x
                    , noThunks ("snd" : ctxt) xs
                    ]
-
