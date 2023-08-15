@@ -259,11 +259,16 @@ instance Read (SomeCheckedAdversarialRecipe base hon) where
 -- | Image of 'checkAdversarialRecipe' when it accepts the recipe
 data CheckedAdversarialRecipe base hon adv =
     UnsafeCheckedAdversarialRecipe {
+        -- | The honest chain to branch off of
         carHonest :: !(ChainSchema base hon)
       ,
+        -- | protocol parameters
         carParams :: (Kcp, Scg, Delta)
       ,
-        -- | INVARIANT: there is at least one active honest slot in @adv@
+        -- | The window starting at the first slot after the intersection
+        -- and ending at the last slot of 'carHonest'.
+        --
+        -- INVARIANT: there is at least one active honest slot in @adv@
         --
         -- In other words, the adversarial leader schedule does not /extend/ the
         -- chain represented by 'carHonest', it competes with it.
