@@ -13,6 +13,22 @@ module Test.Ouroboros.Consensus.ChainGenerator.RaceIterator (
   , nextConservative
   ) where
 
+{- | These functions iteratively produce all race windows in a slot vector.
+
+The first window is produced by 'init', which unconditionally starts the window at the first slot.
+This window can then be passed to 'next', which starts the new window after the first active slot.
+
+@
+---X--X--X--X
+^ start of window 1 from 'init'
+    ^ start of window 2 from 'next'
+       ^ start of window 3 from 'next'
+@
+
+Valid windows must have @k+1@ active slots.
+If the vector doesn't have sufficient slots to meet this condition, 'init' and 'next' return 'Nothing' and we fall back
+to 'initConservative' and 'nextConservative', which pad the window with only active slots.
+-}
 import           Control.Monad (when)
 import           Data.Proxy (Proxy (Proxy))
 import           Prelude hiding (init)
@@ -56,7 +72,7 @@ init (Kcp k) v = do
                 kPlus1st
 
 -- | @initConservative@ is like @init@, but assumes that any Race window
--- spilling the vector length has all the excedent slots active.
+-- spilling the vector length spans the full stability window (minus delta) and has all the exceeding slots active.
 --
 -- This function is only safe to call when we know that 'init' would return
 -- @Nothing@.
