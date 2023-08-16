@@ -133,7 +133,7 @@ next v (UnsafeRace (C.SomeWindow Proxy raceWin)) = do
     sz = C.lengthV v
 
 -- | @nextConservative@ is like @next@, but assumes that any Race window
--- spilling the vector length has all the excedent slots active.
+-- spilling the vector length has all the exceeding slots active.
 --
 -- This function is only safe to call when we know that 'next' would return
 -- @Nothing@.
