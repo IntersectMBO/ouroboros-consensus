@@ -295,8 +295,7 @@ uniformTheHonestChain ::
   => Maybe Asc   -- ^ When @Nothing@, the generated schema has a minimal amount
                  -- of active slots. Deactivating any of them would violate
                  -- safety properties. The generated schema shows a periodic
-                 -- structure, but this is more an artifact of the implementation
-                 -- than a feature.
+                 -- structure which is determined by the first stability window.
   -> CheckedHonestRecipe base hon
   -> g
   -> ChainSchema base hon
