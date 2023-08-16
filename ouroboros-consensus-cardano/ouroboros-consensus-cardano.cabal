@@ -280,7 +280,6 @@ library shelley-testlib
     Test.Consensus.Shelley.Examples
     Test.Consensus.Shelley.Generators
     Test.Consensus.Shelley.MockCrypto
-    Test.ThreadNet.Infra.Alonzo
     Test.ThreadNet.Infra.Shelley
     Test.ThreadNet.TxGen.Shelley
 
@@ -376,7 +375,6 @@ library cardano-testlib
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
     , cardano-ledger-byron
-    , cardano-ledger-conway
     , cardano-ledger-conway-test                                                        ^>=1.2.0.1
     , cardano-ledger-core:{cardano-ledger-core, testlib}
     , cardano-ledger-shelley                                                            ^>=1.5
@@ -417,6 +415,7 @@ test-suite cardano-test
     , bytestring
     , cardano-crypto-class
     , cardano-ledger-alonzo
+    , cardano-ledger-alonzo-test
     , cardano-ledger-byron
     , cardano-ledger-core
     , cardano-ledger-shelley

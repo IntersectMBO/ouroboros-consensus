@@ -48,12 +48,12 @@ import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
                      (ProtocolParamsShelleyBased (..), ShelleyGenesis (..))
+import qualified Test.Cardano.Ledger.Alonzo.Examples.Consensus as SL
 import           Test.Consensus.Shelley.MockCrypto (MockCrypto)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.ThreadNet.General
-import qualified Test.ThreadNet.Infra.Alonzo as Alonzo
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import           Test.ThreadNet.Infra.ShelleyBasedHardFork
 import           Test.ThreadNet.Infra.TwoEras
@@ -311,7 +311,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
           coreNodes
 
     alonzoGenesis :: AlonzoGenesis
-    alonzoGenesis = Alonzo.degenerateAlonzoGenesis
+    alonzoGenesis = SL.exampleAlonzoGenesis
 
     -- the Shelley ledger is designed to use a fixed epoch size, so this test
     -- does not randomize it

@@ -24,8 +24,6 @@ module Test.Consensus.Cardano.ProtocolInfo (
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import qualified Cardano.Ledger.BaseTypes as SL
-import qualified Cardano.Ledger.Conway.Genesis as SL
-import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Translation as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Cardano.Slotting.Time as Time
@@ -51,9 +49,10 @@ import           Ouroboros.Consensus.Protocol.PBFT (PBftParams,
                      PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node
                      (ProtocolParamsShelleyBased (..), ShelleyGenesis,
-                     ShelleyLeaderCredentials, sgGenDelegs)
+                     ShelleyLeaderCredentials)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
-import qualified Test.ThreadNet.Infra.Alonzo as Alonzo
+import qualified Test.Cardano.Ledger.Alonzo.Examples.Consensus as SL
+import qualified Test.Cardano.Ledger.Conway.Examples.Consensus as SL
 import qualified Test.ThreadNet.Infra.Byron as Byron
 import qualified Test.ThreadNet.Infra.Shelley as Shelley
 import           Test.ThreadNet.Util.Seed (Seed (Seed), runGen)
@@ -321,7 +320,9 @@ mkTestProtocolInfo
             , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Mary hardForkSpec
             }
           ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext = Alonzo.degenerateAlonzoGenesis
+              transitionIntraShelleyTranslationContext =
+                -- tests using this ProtocolInfo do not even reach Allegra
+                SL.exampleAlonzoGenesis
             , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Alonzo hardForkSpec
             }
           ProtocolTransitionParamsIntraShelley {
@@ -330,9 +331,8 @@ mkTestProtocolInfo
             }
           ProtocolTransitionParamsIntraShelley {
               transitionIntraShelleyTranslationContext =
-                -- Note that this is effectively a no-op, which is fine for
-                -- testing, at least for now.
-                SL.ConwayGenesis $ SL.GenDelegs $ sgGenDelegs shelleyGenesis
+                -- tests using this ProtocolInfo do not even reach Allegra
+                SL.exampleConwayGenesis
             , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Conway hardForkSpec
             }
         )
