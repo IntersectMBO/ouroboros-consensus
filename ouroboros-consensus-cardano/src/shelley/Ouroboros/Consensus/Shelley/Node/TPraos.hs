@@ -7,7 +7,6 @@
 {-# LANGUAGE NamedFieldPuns          #-}
 {-# LANGUAGE OverloadedStrings       #-}
 {-# LANGUAGE PolyKinds               #-}
-{-# LANGUAGE RecordWildCards         #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
 {-# LANGUAGE TypeApplications        #-}
 {-# LANGUAGE TypeFamilies            #-}
@@ -19,10 +18,7 @@
 
 module Ouroboros.Consensus.Shelley.Node.TPraos (
     MaxMajorProtVer (..)
-  , ProtocolParamsAllegra (..)
-  , ProtocolParamsAlonzo (..)
-  , ProtocolParamsMary (..)
-  , ProtocolParamsShelley (..)
+  , ProtocolParams (..)
   , ProtocolParamsShelleyBased (..)
   , SL.Nonce (..)
   , SL.ProtVer (..)
@@ -190,25 +186,25 @@ validateGenesis = first errsToString . SL.validateGenesis
           ("Invalid genesis config:" : map SL.describeValidationErr errs)
 
 -- | Parameters needed to run Shelley
-data ProtocolParamsShelley c = ProtocolParamsShelley {
+data instance ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c)) = ProtocolParamsShelley {
       shelleyProtVer                :: SL.ProtVer
     , shelleyMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock(TPraos c) (ShelleyEra c) )
     }
 
 -- | Parameters needed to run Allegra
-data ProtocolParamsAllegra c = ProtocolParamsAllegra {
+data instance ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c)) = ProtocolParamsAllegra {
       allegraProtVer                :: SL.ProtVer
     , allegraMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (AllegraEra c) )
     }
 
 -- | Parameters needed to run Mary
-data ProtocolParamsMary c = ProtocolParamsMary {
+data instance ProtocolParams (ShelleyBlock (TPraos c) (MaryEra c)) = ProtocolParamsMary {
       maryProtVer                :: SL.ProtVer
     , maryMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (MaryEra c) )
     }
 
 -- | Parameters needed to run Alonzo
-data ProtocolParamsAlonzo c = ProtocolParamsAlonzo {
+data instance ProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra c)) = ProtocolParamsAlonzo {
       alonzoProtVer                :: SL.ProtVer
     , alonzoMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (AlonzoEra c) )
     }
@@ -221,8 +217,8 @@ protocolInfoShelley ::
       , TxLimits (ShelleyBlock (TPraos c) (ShelleyEra c))
       )
   => ProtocolParamsShelleyBased (ShelleyEra c)
-  -> ProtocolParamsShelley c
-  -> ( ProtocolInfo (ShelleyBlock (TPraos c)(ShelleyEra c) )
+  -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
+  -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c) )
      , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
      )
 protocolInfoShelley protocolParamsShelleyBased

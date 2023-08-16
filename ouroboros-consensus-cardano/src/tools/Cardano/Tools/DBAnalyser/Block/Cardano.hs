@@ -68,7 +68,6 @@ import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
-import           Ouroboros.Consensus.Shelley.Node.Praos
 import           System.Directory (makeAbsolute)
 import           System.FilePath (takeDirectory, (</>))
 
@@ -297,52 +296,54 @@ mkCardanoProtocolInfo ::
   -> ProtocolInfo (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlonzo genesisConway initialNonce hardForkTriggers =
     fst $ protocolInfoCardano @_ @IO
-      ProtocolParamsByron {
-          byronGenesis                = genesisByron
-        , byronPbftSignatureThreshold = signatureThreshold
-        , byronProtocolVersion        = Byron.Update.ProtocolVersion 1 2 0
-        , byronSoftwareVersion        = Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
-        , byronLeaderCredentials      = Nothing
-        , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsShelleyBased {
-          shelleyBasedGenesis           = genesisShelley
-        , shelleyBasedInitialNonce      = initialNonce
-        , shelleyBasedLeaderCredentials = []
-        }
-      ProtocolParamsShelley {
-          -- Note that this is /not/ the Shelley protocol version, see
-          -- https://github.com/input-output-hk/cardano-node/blob/daeae61a005776ee7b7514ce47de3933074234a8/cardano-node/src/Cardano/Node/Protocol/Cardano.hs#L167-L170
-          -- and the succeeding comments.
-          shelleyProtVer                = ProtVer (SL.natVersion @3) 0
-        , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsAllegra {
-          allegraProtVer                = ProtVer (SL.natVersion @4) 0
-        , allegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsMary {
-          maryProtVer                   = ProtVer (SL.natVersion @5) 0
-        , maryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsAlonzo {
-          alonzoProtVer                 = ProtVer (SL.natVersion @7) 0
-        , alonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsBabbage {
-          babbageProtVer                 = ProtVer (SL.natVersion @9) 0
-        , babbageMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      ProtocolParamsConway {
-          conwayProtVer                  = ProtVer (SL.natVersion @9) 0
-        , conwayMaxTxCapacityOverrides   = Mempool.mkOverrides Mempool.noOverridesMeasure
-        }
-      (unShelleyTransitionArguments shelleyTransition)
-      (unShelleyTransitionArguments allegraTransition)
-      (unShelleyTransitionArguments maryTransition)
-      (unShelleyTransitionArguments alonzoTransition)
-      (unShelleyTransitionArguments babbageTransition)
-      (unShelleyTransitionArguments conwayTransition)
+      (CardanoProtocolParams
+        ProtocolParamsByron {
+            byronGenesis                = genesisByron
+          , byronPbftSignatureThreshold = signatureThreshold
+          , byronProtocolVersion        = Byron.Update.ProtocolVersion 1 2 0
+          , byronSoftwareVersion        = Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
+          , byronLeaderCredentials      = Nothing
+          , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsShelleyBased {
+            shelleyBasedGenesis           = genesisShelley
+          , shelleyBasedInitialNonce      = initialNonce
+          , shelleyBasedLeaderCredentials = []
+          }
+        ProtocolParamsShelley {
+            -- Note that this is /not/ the Shelley protocol version, see
+            -- https://github.com/input-output-hk/cardano-node/blob/daeae61a005776ee7b7514ce47de3933074234a8/cardano-node/src/Cardano/Node/Protocol/Cardano.hs#L167-L170
+            -- and the succeeding comments.
+            shelleyProtVer                = ProtVer (SL.natVersion @3) 0
+          , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsAllegra {
+            allegraProtVer                = ProtVer (SL.natVersion @4) 0
+          , allegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsMary {
+            maryProtVer                   = ProtVer (SL.natVersion @5) 0
+          , maryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsAlonzo {
+            alonzoProtVer                 = ProtVer (SL.natVersion @7) 0
+          , alonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsBabbage {
+            babbageProtVer                 = ProtVer (SL.natVersion @9) 0
+          , babbageMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        ProtocolParamsConway {
+            conwayProtVer                  = ProtVer (SL.natVersion @9) 0
+          , conwayMaxTxCapacityOverrides   = Mempool.mkOverrides Mempool.noOverridesMeasure
+          }
+        (unByronToShelleyTransitionArguments shelleyTransition)
+        (unIntraShelleyTransitionArguments   allegraTransition)
+        (unIntraShelleyTransitionArguments   maryTransition)
+        (unIntraShelleyTransitionArguments   alonzoTransition)
+        (unIntraShelleyTransitionArguments   babbageTransition)
+        (unIntraShelleyTransitionArguments   conwayTransition)
+      )
   where
     ( shelleyTransition :*
       allegraTransition :*
@@ -353,11 +354,19 @@ mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlon
       Nil
       ) = hardForkTriggers
 
-    unShelleyTransitionArguments ::
+    unByronToShelleyTransitionArguments ::
          ShelleyTransitionArguments (ShelleyBlock proto era)
-      -> ProtocolTransitionParamsShelleyBased era
-    unShelleyTransitionArguments (ShelleyTransitionArguments ctxt trigger) =
-      ProtocolTransitionParamsShelleyBased
+      -> ProtocolTransitionParams ByronBlock (ShelleyBlock proto era)
+    unByronToShelleyTransitionArguments (ShelleyTransitionArguments ctxt trigger) =
+      ProtocolTransitionParamsByronToShelley
+      (ctxt (genesisShelley, genesisAlonzo, genesisConway))
+      trigger
+
+    unIntraShelleyTransitionArguments ::
+         ShelleyTransitionArguments (ShelleyBlock proto era)
+      -> ProtocolTransitionParams (ShelleyBlock proto' era') (ShelleyBlock proto era)
+    unIntraShelleyTransitionArguments (ShelleyTransitionArguments ctxt trigger) =
+      ProtocolTransitionParamsIntraShelley
       (ctxt (genesisShelley, genesisAlonzo, genesisConway))
       trigger
 
