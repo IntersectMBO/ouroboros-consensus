@@ -90,13 +90,12 @@ data AdversarialViolation hon adv =
 -- Definition of /Acceleration Lower Bound of an Adversarial Chain/. It is
 -- the lowest slot at which an adversary could speed up its elections on a
 -- given adversarial chain. It is defined as the 'Scg' slot after the first
--- adversarial block or the slot after the k+1st honest block after the
+-- adversarial block or the 'Delta' slot after the k+1st honest block after the
 -- intersection (whichever happens later).
 --
 -- Definition of the /Races Before Acceleration Assumption/.
 -- Every adversarial chain has at most @k@ blocks in every Praos Race Window of
--- the honest chain ending no later than 'Delta-1' slots after the acceleration
--- lower bound.
+-- the honest chain ending before the acceleration lower bound.
 --
 -- Definition of the /Genesis Implication Conjecture/. We conjecture that
 -- assuming that the Genesis window length is no greater than the Stability
