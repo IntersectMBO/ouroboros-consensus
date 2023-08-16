@@ -12,8 +12,6 @@ let
       }));
     };
   };
-in
-{
   hsPkgs = haskell-nix.cabalProject {
     src = ./..;
     compiler-nix-name = "ghc928";
@@ -38,5 +36,18 @@ in
             }) [ "byron" "shelley" "cardano" ]);
       }
     ];
+  };
+in
+{
+  inherit hsPkgs;
+  hsPkgsNoAsserts = hsPkgs.appendModule {
+    src = lib.mkForce (final.symlinkJoin {
+      name = "consensus-src-no-asserts";
+      paths = [ ./.. ];
+      postBuild = ''
+        rm $out/asserts.cabal
+        touch $out/asserts.cabal
+      '';
+    });
   };
 }
