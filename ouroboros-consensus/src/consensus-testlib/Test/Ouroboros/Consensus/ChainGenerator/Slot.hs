@@ -93,7 +93,7 @@ showS (S bool) = showChar $ if bool then '1' else '0'
 -- @-XDataKinds@.
 --
 data E =
-     -- | Active slots are those where at least one must be created
+     -- | Active slots are those where at least one block must be created
      ActiveSlotE
      -- | Empty slots are those where no block shall be created
    | EmptySlotE
