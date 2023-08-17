@@ -1,3 +1,4 @@
+{-# LANGUAGE ConstraintKinds     #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE KindSignatures      #-}
@@ -54,6 +55,7 @@ module Ouroboros.Consensus.Node (
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
+import           Control.DeepSeq (NFData)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, contramap, traceWith)
@@ -277,6 +279,22 @@ run :: forall blk p2p.
 run args stdArgs = stdLowLevelRunNodeArgsIO args stdArgs >>= runWith args encodeRemoteAddress decodeRemoteAddress
 
 
+-- | Extra constraints used by `ouroboros-network`.
+--
+type NetworkIO m = (
+        MonadTime m,
+        MonadTimer m,
+        MonadLabelledSTM m
+      )
+
+-- | Extra constraints used by `ouroboros-network`.
+type NetworkAddr addr = (
+      Ord addr,
+      Typeable addr,
+      NoThunks addr,
+      NFData addr
+    )
+
 -- | Start a node.
 --
 -- This opens the 'ChainDB', sets up the 'NodeKernel' and initialises the
@@ -285,8 +303,10 @@ run args stdArgs = stdLowLevelRunNodeArgsIO args stdArgs >>= runWith args encode
 -- This function runs forever unless an exception is thrown.
 runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      ( RunNode blk
-     , IOLike m, MonadTime m, MonadTimer m
-     , Hashable addrNTN, Ord addrNTN, Typeable addrNTN
+     , IOLike m
+     , Hashable addrNTN -- the constraint comes from `initNodeKernel`
+     , NetworkIO m
+     , NetworkAddr addrNTN
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (addrNTN -> CBOR.Encoding)

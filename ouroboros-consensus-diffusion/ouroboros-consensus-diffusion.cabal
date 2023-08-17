@@ -74,7 +74,7 @@ library
     , filepath
     , fs-api                       ^>=0.2
     , hashable
-    , io-classes                   ^>=1.1
+    , io-classes                   ^>=1.2
     , mtl
     , ouroboros-consensus          ^>=0.10
     , ouroboros-network            ^>=0.9.1
@@ -83,7 +83,7 @@ library
     , ouroboros-network-protocols  ^>=0.5.2
     , random
     , serialise                    ^>=0.2
-    , si-timers                    ^>=1.1
+    , si-timers                    ^>=1.2
     , text                         ^>=2.0
     , time
     , transformers
