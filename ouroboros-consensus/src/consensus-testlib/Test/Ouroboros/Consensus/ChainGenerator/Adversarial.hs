@@ -413,7 +413,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         iterH =
             maybe (RI.initConservative scg delta carWin) id
           $ RI.init kcp vA
-    unfillRaces (C.Count 0) UnknownYS iterH g mv
+    unfillRaces iterH (C.Count 0) UnknownYS iterH g mv
 
     pure mv
   where
@@ -436,7 +436,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     vA = C.sliceV carWin vH
 
     -- ensure the adversary loses this 'RI.Race' and each subsequent race that ends before it can accelerate
-    unfillRaces !scope !mbYS !iter !g !mv = when (withinYS delta mbYS iter) $ do
+    unfillRaces firstRWin !scope !mbYS !iter !g !mv = when (withinYS delta mbYS iter) $ do
         C.SomeWindow Proxy rwin <- pure $ let RI.Race x = iter in x
 
         C.SomeWindow (Proxy :: Proxy skolem) win <-
@@ -513,15 +513,20 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                                 (C.windowStart rwin)
                                 (C.windowStart rwin' C.- 1)
                         mbFound <- BV.findIthEmptyInMV S.inverted (C.sliceMV settledSlots mv) (C.Count 0)
-                        pure $! case mbFound of
-                            BV.NothingFound -> UnknownYS
-                            BV.JustFound x  ->
+                        case mbFound of
+                            BV.NothingFound -> pure UnknownYS
+                            BV.JustFound x  -> do
+                                C.SomeWindow Proxy firstRW <- pure $
+                                  let RI.Race w = firstRWin in w
                                 -- x is the first settled adversarial slot, so
                                 -- the adversary can accelerate its growth as
                                 -- of x+s+1 (If s were 0, it could accelerate
                                 -- in the very next slot, thus the plus 1.)
-                                KnownYS $! C.fromWindow settledSlots x C.+ s C.+ 1
-                unfillRaces (C.windowLast win C.+ 1) mbYS' iter' g mv
+                                pure $! KnownYS $!
+                                  max
+                                    (C.windowLast firstRW C.+ d C.+ 1)
+                                    (C.fromWindow settledSlots x C.+ s C.+ 1)
+                unfillRaces firstRWin (C.windowLast win C.+ 1) mbYS' iter' g mv
 
 -- | The youngest stable slot
 --
