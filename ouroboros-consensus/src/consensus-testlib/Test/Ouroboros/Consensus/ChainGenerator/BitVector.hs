@@ -145,7 +145,7 @@ instance Read (SomeDensityWindow pol) where
 -- @k@ slots polarizely active.
 --
 -- The vector in question is @take s $ mv ++ repeat (mkActive pol)@.
--- Precondition: @size mv <= s@
+-- Precondition: @lengthMV mv <= s@
 fillInWindow ::
   forall proxy pol base g s.
      (POL pol, R.StatefulGen g (ST s))
