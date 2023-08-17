@@ -17,7 +17,6 @@ import           Cardano.Crypto.DSIGN.Mock (MockDSIGN)
 import           Cardano.Crypto.Hash (Hash)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.Serialise (Serialise (..))
-import           Control.Monad.Class.MonadTime.SI (Time (..))
 import           Control.Tracer (Tracer)
 import           Data.Bimap (Bimap)
 import qualified Data.Bimap as Bimap
@@ -103,8 +102,6 @@ instance ( NoThunks p
 deriving via OnlyCheckWhnfNamed "Decoder" (Decoder s a) instance NoThunks (Decoder s a)
 
 deriving via OnlyCheckWhnfNamed "Tracer" (Tracer m ev) instance NoThunks (Tracer m ev)
-
-deriving newtype instance NoThunks Time
 
 instance NoThunks a => NoThunks (K a b) where
   showTypeOf _ = showTypeOf (Proxy @a)
