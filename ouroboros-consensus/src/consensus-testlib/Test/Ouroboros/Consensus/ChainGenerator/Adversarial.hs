@@ -436,7 +436,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     vA = C.sliceV carWin vH
 
     -- ensure the adversary loses this 'RI.Race' and each subsequent race that ends before it can accelerate
-    unfillRaces !scope !mbYS !iter !g !mv = when (withinYS mbYS iter) $ do
+    unfillRaces !scope !mbYS !iter !g !mv = when (withinYS delta mbYS iter) $ do
         C.SomeWindow Proxy rwin <- pure $ let RI.Race x = iter in x
 
         C.SomeWindow (Proxy :: Proxy skolem) win <-
@@ -530,7 +530,7 @@ data MaybeYS base = UnknownYS | KnownYS !(C.Index base SlotE)
   deriving (Eq, Read, Show)
 
 -- | Does the Race Window end in a stable slot?
-withinYS :: MaybeYS base -> RI.Race base -> Bool
-withinYS !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
-    KnownYS ys -> C.windowLast win <= ys
+withinYS :: Delta -> MaybeYS base -> RI.Race base -> Bool
+withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
+    KnownYS ys -> C.windowLast win C.+ d <= ys
     UnknownYS  -> True   -- Honest Chain Growth ensures every Race Window is at most @'Scg' - 'Delta'@ slots wide
