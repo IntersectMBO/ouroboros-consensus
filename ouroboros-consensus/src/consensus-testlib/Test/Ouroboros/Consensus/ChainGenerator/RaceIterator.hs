@@ -38,7 +38,7 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta),
                      Kcp (Kcp), Scg (Scg))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
-import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE), S)
+import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE, ActiveSlotE), S)
 
 -----
 
@@ -89,6 +89,22 @@ initConservative (Scg s) (Delta d) win =
 
 data RaceStepLbl
 
+-- | Find the nth active slot /in/ the given race window and return the slot number in the context of the entire chain.
+--
+-- Race windows are anchored in an active slot, and so could start with an empty or active slot.
+nthActiveSlotIndex ::
+  forall base adv.
+     C.Index adv ActiveSlotE
+  -> C.Vector base SlotE S
+  -> C.Contains SlotE base adv
+  -> Maybe (C.Index base SlotE)
+nthActiveSlotIndex n v raceWin =
+  -- the given race window has at least k+1 blocks in it and 0<=k, so this pattern can't fail
+  case BV.findIthActiveInV (C.sliceV raceWin v) n of
+      BV.NothingFound   -> Nothing   -- would be impossible if we never called next after *Conservative
+        -- TODO by invariant during construction of the honest chain?
+      BV.JustFound slot -> pure $! C.frWin raceWin slot
+
 -- | @next v r@ yields the race window anchored at the first
 -- active slot of @r@ if there is an active slot after @r@.
 next ::
@@ -97,16 +113,7 @@ next ::
   -> Race base
   -> Maybe (Race base)
 next v (UnsafeRace (C.SomeWindow Proxy raceWin)) = do
-    -- find the first active slot /in/ the given race window
-    --
-    -- Race windows are anchored in an active slot, and so could start with an empty or active slot.
-    next0 <- do
-        -- the given race window has at least k+1 blocks in it and 0<=k, so this pattern can't fail
-        case BV.findIthEmptyInV S.inverted (C.sliceV raceWin v) (C.Count 0) of
-            BV.NothingFound   -> Nothing   -- would be impossible if we never called next after *Conservative
-            BV.JustFound slot -> pure $! C.frWin raceWin slot
-
-    let _ = next0 :: C.Index base SlotE
+    next0 <- nthActiveSlotIndex (C.Count 0) v raceWin
 
     -- find the first active slot /after/ the given race window
     --
@@ -119,11 +126,7 @@ next v (UnsafeRace (C.SomeWindow Proxy raceWin)) = do
                 (C.Lbl @RaceStepLbl)
                 (C.windowLast raceWin)
                 (C.lastIndex sz)
-        case BV.findIthEmptyInV S.inverted (C.sliceV searchWin v) (C.Count 1) of
-            BV.NothingFound   -> Nothing
-            BV.JustFound slot -> pure $ C.frWin searchWin slot
-
-    let _ = nextK :: C.Index base SlotE
+        nthActiveSlotIndex (C.Count 1) v searchWin
 
     pure $! UnsafeRace $ C.withWindowBetween
         sz
@@ -147,14 +150,7 @@ nextConservative ::
   -> Race base
   -> Maybe (Race base)
 nextConservative (Scg s) (Delta d) v (UnsafeRace (C.SomeWindow Proxy raceWin)) = do
-    -- find the first active slot /in/ the given race window
-    --
-    -- Race windows are anchored in an active slot, and so could start with an empty or active slot.
-    next0 <- do
-        -- the given race window has at least k+1 blocks in it and 0<=k, so this pattern can't fail
-        case BV.findIthEmptyInV S.inverted (C.sliceV raceWin v) (C.Count 0) of
-            BV.NothingFound   -> Nothing
-            BV.JustFound slot -> pure $! C.frWin raceWin slot
+    next0 <- nthActiveSlotIndex (C.Count 0) v raceWin
 
     -- do not return a Race Window that starts after 'Len'
     when (next0 == C.lastIndex sz) Nothing

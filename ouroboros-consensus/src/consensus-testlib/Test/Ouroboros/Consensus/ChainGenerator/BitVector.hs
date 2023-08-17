@@ -17,6 +17,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.BitVector (
     MaybeFound (JustFound, NothingFound)
   , findIthEmptyInMV
   , findIthEmptyInV
+  , findIthActiveInV
     -- * Counting
   , countActivesInMV
   , countActivesInV
@@ -83,6 +84,13 @@ findIthEmptyInMV pol mv i =
           | S.test pol w -> go (j + 1) toSkip
           | 0 == toSkip  -> pure $ JustFound (C.Count j)
           | otherwise    -> go (j + 1) (toSkip - 1)
+
+findIthActiveInV ::
+     C.Vector base SlotE S
+  -> C.Index base ActiveSlotE
+  -> MaybeFound base
+findIthActiveInV =
+    findIthEmptyInV S.inverted
 
 -----
 
