@@ -192,7 +192,7 @@ checkAdversarialChain recipe adv = do
         if
 
           -- any Race Window that ends /after/ the adversary can accelerate is unconstrained
-          | C.fromWindow winA youngestStableA < C.windowLast raceWinH' -> pure ()
+          | C.fromWindow winA youngestStableA < C.windowLast raceWinH' C.+ d -> pure ()
 
           -- advance the adversarial Race Window if its start is <= the honest Race Window's start
           | C.windowStart raceWinA' <= C.windowStart raceWinH' ->
