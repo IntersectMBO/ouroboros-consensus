@@ -19,7 +19,7 @@ The first window is produced by 'init', which unconditionally starts the window 
 This window can then be passed to 'next', which starts the new window after the first active slot.
 
 @
----X--X--X--X
+---X--X--X--X-- ...
 ^ start of window 1 from 'init'
     ^ start of window 2 from 'next'
        ^ start of window 3 from 'next'
@@ -27,7 +27,8 @@ This window can then be passed to 'next', which starts the new window after the 
 
 Valid windows must have @k+1@ active slots.
 If the vector doesn't have sufficient slots to meet this condition, 'init' and 'next' return 'Nothing' and we fall back
-to 'initConservative' and 'nextConservative', which pad the window with only active slots.
+to 'initConservative' and 'nextConservative', which create a window of size @scg - delta@ unconditionally, which is
+later filled in with active slots to have maximum density within the chain growth limit.
 -}
 import           Control.Monad (when)
 import           Data.Proxy (Proxy (Proxy))
