@@ -27,8 +27,8 @@ This window can then be passed to 'next', which starts the new window after the 
 
 Valid windows must have @k+1@ active slots.
 If the vector doesn't have sufficient slots to meet this condition, 'init' and 'next' return 'Nothing' and we fall back
-to 'initConservative' and 'nextConservative', which create a window of size @scg - delta@ unconditionally, which is
-later filled in with active slots to have maximum density within the chain growth limit.
+to 'initConservative' and 'nextConservative', which create a window of size @scg - delta@ unconditionally, in order to
+constrain adversarial active slots there to satisfy the Length of Competing Chains Assumption.
 -}
 import           Control.Monad (when)
 import           Data.Proxy (Proxy (Proxy))
