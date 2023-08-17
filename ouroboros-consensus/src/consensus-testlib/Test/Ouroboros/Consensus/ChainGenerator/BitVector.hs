@@ -140,6 +140,12 @@ instance Read (SomeDensityWindow pol) where
             <*> Some.readArg
             <*> Some.readArg
 
+-- | @fillInWindow pol (SomeDensityWindow k s) g mv@ mutates
+-- @mv@ to ensure that a vector with prefix @mv@ has at least
+-- @k@ slots polarizely active.
+--
+-- The vector in question is @take s $ mv ++ repeat (mkActive pol)@.
+-- Precondition: size mv <= s
 fillInWindow ::
   forall proxy pol base g s.
      (POL pol, R.StatefulGen g (ST s))
