@@ -532,5 +532,5 @@ data MaybeYS base = UnknownYS | KnownYS !(C.Index base SlotE)
 -- | Does the Race Window end in a stable slot?
 withinYS :: Delta -> MaybeYS base -> RI.Race base -> Bool
 withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
-    KnownYS ys -> C.windowLast win C.+ d <= ys
+    KnownYS ys -> C.windowLast win C.+ d < ys
     UnknownYS  -> True   -- Honest Chain Growth ensures every Race Window is at most @'Scg' - 'Delta'@ slots wide
