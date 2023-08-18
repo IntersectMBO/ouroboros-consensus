@@ -4,15 +4,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.RaceIterator (
-    Race (Race, UnsafeRace)
-  , RaceLbl
-  , init
-  , initConservative
-  , next
-  , nextConservative
-  ) where
-
 {- | These functions iteratively produce all race windows in a slot vector.
 
 The first window is produced by 'init', which unconditionally starts the window at the first slot.
@@ -30,6 +21,15 @@ If the vector doesn't have sufficient slots to meet this condition, 'init' and '
 to 'initConservative' and 'nextConservative', which create a window of size @scg - delta@ unconditionally, in order to
 constrain adversarial active slots there to satisfy the Length of Competing Chains Assumption.
 -}
+module Test.Ouroboros.Consensus.ChainGenerator.RaceIterator (
+    Race (Race, UnsafeRace)
+  , RaceLbl
+  , init
+  , initConservative
+  , next
+  , nextConservative
+  ) where
+
 import           Control.Monad (when)
 import           Data.Proxy (Proxy (Proxy))
 import           Prelude hiding (init)
