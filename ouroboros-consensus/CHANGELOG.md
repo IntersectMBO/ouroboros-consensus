@@ -2,6 +2,26 @@
 
 # Changelog entries
 
+<a id='changelog-0.10.0.0'></a>
+## 0.10.0.0 — 2023-08-18
+
+### Patch
+
+- Update `fs-api` dependency to `^>=0.2`
+
+### Non-Breaking
+
+- Add new `mempool-test-utils` public library containing utilities for opening a
+  mocked mempool.
+
+- Add `ProtocolParams` data family to `Ouroboros.Consensus.Node.ProtocolInfo`.
+- Add `PerEraProtocolParams` newtype to
+  `Ouroboros.Consensus.HardFork.Combinator.AcrossEras`.
+
+### Breaking
+
+- Remove `groupOn` and `groupSplit` from `Ouroboros.Consensus.Util`.
+
 <a id='changelog-0.9.0.0'></a>
 ## 0.9.0.0 — 2023-07-06
 

@@ -2,6 +2,17 @@
 
 # Changelog entries
 
+<a id='changelog-0.7.1.0'></a>
+## 0.7.1.0 — 2023-08-18
+
+### Patch
+
+- Update `fs-api` dependency to `^>=0.2`
+
+### Non-Breaking
+
+- Update to `ouroboros-network-framework` 0.7.0.0
+
 <a id='changelog-0.7.0.0'></a>
 ## 0.7.0.0 — 2023-07-06
 
