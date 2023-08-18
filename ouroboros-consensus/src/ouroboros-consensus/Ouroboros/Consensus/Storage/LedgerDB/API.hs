@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP            #-}
 {-# LANGUAGE DataKinds      #-}
 {-# LANGUAGE DerivingVia    #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -72,17 +73,24 @@ data LedgerDB m blk = LedgerDB {
          forall a b.
          StaticEither b () (Point blk)
       -> STM m a
+#if __GLASGOW_HASKELL__ >= 902
          -- ^ STM operation that we want to run in the same atomic block as the
          -- acquisition of the LedgerDB
+#endif
       -> m (a, View m b blk)
     -- | Apply a list of blocks on top of the given DbChangelog.
   , validate              ::
          LedgerBackingStoreValueHandle' m blk
       -> AnchorlessDbChangelog' blk
+#if __GLASGOW_HASKELL__ >= 902
          -- ^ This is used as the starting point for validation, not the one
          -- in the 'LgrDB'.
+#endif
       -> BlockCache blk
-      -> Word64  -- ^ How many blocks to roll back
+      -> Word64
+#if __GLASGOW_HASKELL__ >= 902
+         -- ^ How many blocks to roll back
+#endif
       -> (UpdateLedgerDbTraceEvent blk -> m ())
       -> [Header blk]
       -> m (ValidateResult blk)
@@ -98,9 +106,13 @@ data LedgerDB m blk = LedgerDB {
     -- which this LedgerDB was opened), take a snapshot and delete stale ones.
   , tryTakeSnapshot       ::
          Maybe (Time, Time)
+#if __GLASGOW_HASKELL__ >= 902
          -- ^ If a snapshot has been taken already, the time at which it was
          -- taken and the current time.
+#endif
       -> Word64
+#if __GLASGOW_HASKELL__ >= 902
          -- ^ How many blocks have been processed since the last snapshot.
+#endif
       -> m SnapCounters
   } deriving NoThunks via OnlyCheckWhnfNamed "LedgerDB" (LedgerDB m blk)
