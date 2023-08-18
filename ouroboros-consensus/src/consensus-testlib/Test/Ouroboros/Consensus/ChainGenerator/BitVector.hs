@@ -48,6 +48,11 @@ data MaybeFound base =
       {-# UNPACK #-} !(C.Index base SlotE)
   deriving (Eq, Read, Show)
 
+fromJustFound :: String -> MaybeFound base -> C.Index base SlotE
+fromJustFound loc = \case
+  JustFound i -> i
+  NothingFound -> error ("fromJustFound: " ++ loc)
+
 -- | Trivial wrapper around 'findIthEmptyInMV'
 findIthEmptyInV ::
      POL   pol
@@ -187,7 +192,7 @@ fillInWindow pol (SomeDensityWindow k s) g mv = do
 
         whichEmptyToFlip <- C.uniformIndex currentEmpties g
 
-        JustFound slot <- findIthEmptyInMV pol mv whichEmptyToFlip
+        slot <- fromJustFound "fillInWindow" <$> findIthEmptyInMV pol mv whichEmptyToFlip
 
         setMV pol mv slot
 
