@@ -2,6 +2,54 @@
 
 # Changelog entries
 
+<a id='changelog-0.8.0.0'></a>
+## 0.8.0.0 — 2023-08-18
+
+### Patch
+
+- Update `fs-api` dependency to `^>=0.2`
+
+### Non-Breaking
+
+- Add new `ProtocolInfo` module to `cardano-testlib`, containing utilities for
+  creating Cardano `ProtocolInfo`s for testing purposes.
+
+- Expose the latest Conway ledger queries.
+    - `GetCommitteeState`
+    - `GetConstitution`
+    - `GetDRepStakeDistr setOfDReps`
+    - `GetDRepState setOfDRepCredentials`
+    - `GetGovState`
+
+- Add a `ProtocolTransitionParams` data family, and provide instances for
+  transitions from Byron to Shelley and Shelley-based eras to Shelley-based
+  eras.
+- Add a data instance of `ProtocolParams` for the Cardano block.
+- Provide a `CardanoProtocolParams` type synonym and associated pattern synonym
+  (with record syntax).
+- Export all `ProtocolParams` and `ProtocolTransitionParams` instances from
+  `Ouroboros.Consensus.Cardano` and `Ouroboros.Consensus.Cardano.Node`.
+
+### Breaking
+
+- Update ledger dependencies to pull in the latest Conway changes.
+    - `cardano-ledger-conway` from `^>=1.6` to `^>=1.7`
+    - `cardano-ledger-alonzo` from `^>=1.3` to `^>=1.4`
+    - `cardano-ledger-api` from `^>=1.3` to `^>=1.4`
+    - `cardano-ledger-core` from `^>=1.4` to `^>=1.5`
+    - `cardano-ledger-shelley` from `^>=1.4.1` to `^>=1.5`
+- Remove the `degenerateAlonzoGenesis` declaration.
+- Delete the (as of yet unreleased) `GetConstitutionHash`.
+    - Use `anchorDataHash . constitutionAnchor <$> GetConstitution` instead.
+
+- Refactor `ProtocolParamsByron` to a data instance of `ProtocolParams`.
+- Refactor protocol parameters for Shelley eras (e.g, `ProtocolParamsAlonzo` and `ProtocolParamsBabbage`) to data instances of `ProtocolParams`.
+- Export all Shelley `ProtocolParams` data instances from `Ouroboros.Consensus.Shelley.Node`.
+- Remove the `ProtocolTransitionParamsShelleyBased` datatype in favour of
+  `ProtocolTransitionParams`.
+- Make `protocolInfoCardano` require a `CardanoProtocolParams` type as its only
+  argument, instead of a long list of arguments.
+
 <a id='changelog-0.7.0.0'></a>
 ## 0.7.0.0 — 2023-07-06
 
