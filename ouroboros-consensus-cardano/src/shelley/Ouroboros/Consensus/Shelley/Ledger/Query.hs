@@ -33,15 +33,15 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), encodeListLen,
                      enforceSize)
-import qualified Cardano.Ledger.Api.State.Query as SL (queryConstitutionHash)
+import qualified Cardano.Ledger.Api.State.Query as SL
 import           Cardano.Ledger.CertState (lookupDepositDState)
+import qualified Cardano.Ledger.CertState as SL
 import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
 import           Cardano.Ledger.Credential (StakeCredential)
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.EpochBoundary as SL
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
-import           Cardano.Ledger.SafeHash (SafeHash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
 import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts)
@@ -56,7 +56,6 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (decode, encode)
 import           Control.DeepSeq (NFData)
-import           Data.ByteString (ByteString)
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -224,7 +223,35 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     -> BlockQuery (ShelleyBlock proto era)
                   (Map (StakeCredential (EraCrypto era)) Coin)
 
-  GetConstitutionHash :: BlockQuery (ShelleyBlock proto era) (Maybe (SafeHash (EraCrypto era) ByteString))
+  GetConstitution
+    :: BlockQuery (ShelleyBlock proto era) (Maybe (LC.Constitution era))
+
+  GetGovState
+    :: BlockQuery (ShelleyBlock proto era) (LC.GovState era)
+
+  -- | The argument specifies the credential of each 'DRep' whose state should
+  -- be returned. When it's empty, the state of every 'DRep' is returned.
+  GetDRepState
+    :: Set (SL.Credential 'DRepRole (EraCrypto era))
+    -> BlockQuery (ShelleyBlock proto era)
+                  (Map
+                       (SL.Credential 'DRepRole (EraCrypto era))
+                       (SL.DRepState (EraCrypto era))
+                  )
+
+  -- | Query the 'DRep' stake distribution. Note that this can be an expensive
+  -- query because there is a chance that the latest snapshot's distribution
+  -- has not yet been fully computed.
+  --
+  -- The argument specifies whose stake should be returned. When it's empty,
+  -- the stake of every 'DRep's is returned.
+  GetDRepStakeDistr
+    :: Set (LC.DRep (EraCrypto era))
+    -> BlockQuery (ShelleyBlock proto era) (Map (LC.DRep (EraCrypto era)) Coin)
+
+  -- | Query committee members
+  GetCommitteeState
+    :: BlockQuery (ShelleyBlock proto era) (SL.CommitteeState era)
 
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
@@ -364,8 +391,16 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto) => QueryLedge
                   Nothing      -> acc
                   Just deposit -> Map.insert cred deposit acc
           in Set.foldl' lookupInsert Map.empty stakeCreds
-        GetConstitutionHash ->
-          SL.queryConstitutionHash st
+        GetConstitution ->
+          SL.queryConstitution st
+        GetGovState ->
+          SL.queryGovState st
+        GetDRepState drepCreds ->
+          SL.queryDRepState st drepCreds
+        GetDRepStakeDistr dreps ->
+          SL.queryDRepStakeDistr st dreps
+        GetCommitteeState ->
+          SL.queryCommitteeState st
     where
       lcfg    = configLedger $ getExtLedgerCfg cfg
       globals = shelleyLedgerGlobals lcfg
@@ -501,8 +536,16 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
     = Nothing
   sameDepIndex (GetStakeDelegDeposits _) _
     = Nothing
-  sameDepIndex GetConstitutionHash GetConstitutionHash = Just Refl
-  sameDepIndex GetConstitutionHash _ = Nothing
+  sameDepIndex GetConstitution GetConstitution = Just Refl
+  sameDepIndex GetConstitution _ = Nothing
+  sameDepIndex GetGovState GetGovState = Just Refl
+  sameDepIndex GetGovState _ = Nothing
+  sameDepIndex GetDRepState{} GetDRepState{} = Just Refl
+  sameDepIndex GetDRepState{} _ = Nothing
+  sameDepIndex GetDRepStakeDistr{} GetDRepStakeDistr{} = Just Refl
+  sameDepIndex GetDRepStakeDistr{} _ = Nothing
+  sameDepIndex GetCommitteeState GetCommitteeState = Just Refl
+  sameDepIndex GetCommitteeState _ = Nothing
 
 deriving instance Eq   (BlockQuery (ShelleyBlock proto era) result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) result)
@@ -532,7 +575,11 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetStakeSnapshots {}                       -> show
       GetPoolDistr {}                            -> show
       GetStakeDelegDeposits {}                   -> show
-      GetConstitutionHash                        -> show
+      GetConstitution                            -> show
+      GetGovState                                -> show
+      GetDRepState {}                            -> show
+      GetDRepStakeDistr {}                       -> show
+      GetCommitteeState                          -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
 querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
@@ -560,7 +607,11 @@ querySupportedVersion = \case
     GetStakeSnapshots {}                       -> (>= v6)
     GetPoolDistr {}                            -> (>= v6)
     GetStakeDelegDeposits {}                   -> (>= v7)
-    GetConstitutionHash                        -> (>= v8)
+    GetConstitution                            -> (>= v8)
+    GetGovState                                -> (>= v8)
+    GetDRepState {}                            -> (>= v8)
+    GetDRepStakeDistr {}                       -> (>= v8)
+    GetCommitteeState                          -> (>= v8)
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
   where
@@ -582,7 +633,7 @@ getProposedPPUpdates ::
      ShelleyBasedEra era
   => SL.NewEpochState era -> SL.ProposedPPUpdates era
 getProposedPPUpdates = fromMaybe SL.emptyPPPUpdates
-                     . LC.getProposedPPUpdates . SL.utxosGovernance
+                     . LC.getProposedPPUpdates . SL.utxosGovState
                      . SL.lsUTxOState . SL.esLState . SL.nesEs
 
 -- Get the current 'EpochState.' This is mainly for debugging.
@@ -660,8 +711,16 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 21 <> toCBOR poolids
     GetStakeDelegDeposits stakeCreds ->
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 22 <> toCBOR stakeCreds
-    GetConstitutionHash ->
+    GetConstitution ->
       CBOR.encodeListLen 1 <> CBOR.encodeWord8 23
+    GetGovState ->
+      CBOR.encodeListLen 1 <> CBOR.encodeWord8 24
+    GetDRepState drepCreds ->
+      CBOR.encodeListLen 2 <> CBOR.encodeWord8 25 <> toCBOR drepCreds
+    GetDRepStakeDistr dreps ->
+      CBOR.encodeListLen 2 <> CBOR.encodeWord8 26 <> LC.toEraCBOR @era dreps
+    GetCommitteeState ->
+      CBOR.encodeListLen 1 <> CBOR.encodeWord8 27
 
 decodeShelleyQuery ::
      forall era proto. ShelleyBasedEra era
@@ -693,7 +752,11 @@ decodeShelleyQuery = do
       (2, 20) -> SomeSecond . GetStakeSnapshots <$> fromCBOR
       (2, 21) -> SomeSecond . GetPoolDistr <$> fromCBOR
       (2, 22) -> SomeSecond . GetStakeDelegDeposits <$> fromCBOR
-      (1, 23) -> return $ SomeSecond GetConstitutionHash
+      (1, 23) -> return $ SomeSecond GetConstitution
+      (1, 24) -> return $ SomeSecond GetGovState
+      (2, 25) -> SomeSecond . GetDRepState <$> fromCBOR
+      (2, 26) -> SomeSecond . GetDRepStakeDistr <$> LC.fromEraCBOR @era
+      (1, 27) -> return $ SomeSecond GetCommitteeState
       _       -> fail $
         "decodeShelleyQuery: invalid (len, tag): (" <>
         show len <> ", " <> show tag <> ")"
@@ -726,7 +789,11 @@ encodeShelleyResult v query = case query of
     GetStakeSnapshots {}                       -> toCBOR
     GetPoolDistr {}                            -> LC.toEraCBOR @era
     GetStakeDelegDeposits {}                   -> LC.toEraCBOR @era
-    GetConstitutionHash                        -> toCBOR
+    GetConstitution                            -> toCBOR
+    GetGovState                                -> toCBOR
+    GetDRepState {}                            -> LC.toEraCBOR @era
+    GetDRepStakeDistr {}                       -> LC.toEraCBOR @era
+    GetCommitteeState                          -> toCBOR
 
 decodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
@@ -757,7 +824,11 @@ decodeShelleyResult v query = case query of
     GetStakeSnapshots {}                       -> fromCBOR
     GetPoolDistr {}                            -> LC.fromEraCBOR @era
     GetStakeDelegDeposits {}                   -> LC.fromEraCBOR @era
-    GetConstitutionHash                        -> fromCBOR
+    GetConstitution                            -> fromCBOR
+    GetGovState                                -> fromCBOR
+    GetDRepState {}                            -> LC.fromEraCBOR @era
+    GetDRepStakeDistr {}                       -> LC.fromEraCBOR @era
+    GetCommitteeState                          -> fromCBOR
 
 currentPParamsEnDecoding ::
      forall era s.
