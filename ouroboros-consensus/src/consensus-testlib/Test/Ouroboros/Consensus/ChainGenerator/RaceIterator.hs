@@ -37,7 +37,6 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta),
                      Kcp (Kcp), Scg (Scg))
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE, ActiveSlotE), S)
 
 -----
@@ -56,12 +55,28 @@ pattern Race x <- UnsafeRace x
 
 -----
 
+-- | Find the nth active slot /in/ the given race window and return the slot number in the context of the entire chain.
+--
+-- Race windows are anchored in an active slot, and so could start with an empty or active slot.
+nthActiveSlotIndex ::
+  forall base adv.
+     C.Index adv ActiveSlotE
+  -> C.Vector base SlotE S
+  -> C.Contains SlotE base adv
+  -> Maybe (C.Index base SlotE)
+nthActiveSlotIndex n v raceWin =
+  -- the given race window has at least k+1 blocks in it and 0<=k, so this pattern can't fail
+  -- TODO by invariant during construction of the honest chain?
+  case BV.findIthActiveInV (C.sliceV raceWin v) n of
+      BV.NothingFound   -> Nothing   -- would be impossible if we never called next after *Conservative
+      BV.JustFound slot -> pure $! C.frWin raceWin slot
+
 -- | Yields the race window starting at position 0 of the given
 -- vector if the @k+1@ active slot exists.
 init :: Kcp -> C.Vector base SlotE S -> Maybe (Race base)
-init (Kcp k) v = do
+init (Kcp k) v =
     -- find the @k+1@st active slot in the given race window
-    case BV.findIthEmptyInV S.inverted v (C.Count k) of
+    case BV.findIthActiveInV v (C.Count k) of
         BV.NothingFound       -> Nothing
         BV.JustFound kPlus1st ->
             Just
@@ -88,22 +103,6 @@ initConservative (Scg s) (Delta d) win =
         (C.Count (s - d))
 
 data RaceStepLbl
-
--- | Find the nth active slot /in/ the given race window and return the slot number in the context of the entire chain.
---
--- Race windows are anchored in an active slot, and so could start with an empty or active slot.
-nthActiveSlotIndex ::
-  forall base adv.
-     C.Index adv ActiveSlotE
-  -> C.Vector base SlotE S
-  -> C.Contains SlotE base adv
-  -> Maybe (C.Index base SlotE)
-nthActiveSlotIndex n v raceWin =
-  -- the given race window has at least k+1 blocks in it and 0<=k, so this pattern can't fail
-  case BV.findIthActiveInV (C.sliceV raceWin v) n of
-      BV.NothingFound   -> Nothing   -- would be impossible if we never called next after *Conservative
-        -- TODO by invariant during construction of the honest chain?
-      BV.JustFound slot -> pure $! C.frWin raceWin slot
 
 -- | @next v r@ yields the race window anchored at the first
 -- active slot of @r@ if there is an active slot after @r@.

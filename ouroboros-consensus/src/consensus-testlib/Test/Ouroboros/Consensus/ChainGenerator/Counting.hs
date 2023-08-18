@@ -172,9 +172,9 @@ data Win (lbl :: klbl) (skolem :: Type)
 -- | Values of this type describe a window in a sequence of elements.
 --
 -- A window is an infix of the sequence, and it is described with an
--- offset and a length or size (the amount of elements in the window).
+-- offset and a length or size (the number of elements in the window).
 --
--- * @elem@ is a type-level of the elements in the containing sequence (e.g. 'ActiveSlotE')
+-- * @elem@ is a type-level name of the elements in the containing sequence (e.g. 'ActiveSlotE')
 -- * @outer@ is a type-level name identifying the containing sequence (e.g. @Win (Lbl HonestLbl) skolem1@)
 -- * @inner@ is a type-level name for the window that the value describes (e.g. @Win (Lbl ScgLbl) skolem2@)
 --
@@ -199,7 +199,7 @@ pattern Contains x y <- UnsafeContains x y
 forgetWindow :: Contains elem outer inner -> Some.Forgotten (Index outer elem, Index outer elem)
 forgetWindow win = Some.forgotten (windowStart win, windowLast win)
 
--- | Converts and index of a window into an index in the containing sequence.
+-- | Converts an index of a window into an index in the containing sequence.
 frWin :: Contains elem outer inner -> Index inner elem -> Index outer elem
 frWin (Contains (Count i) _n) (Count j) = Count (i .+ j)
 
