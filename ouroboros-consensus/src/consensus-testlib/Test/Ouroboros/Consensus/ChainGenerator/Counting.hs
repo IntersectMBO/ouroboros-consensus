@@ -34,10 +34,10 @@ module Test.Ouroboros.Consensus.ChainGenerator.Counting (
   , SomeWindow (SomeWindow)
   , Win
   , forgetWindow
-  , frWin
-  , frWinVar
+  , fromWindow
+  , fromWindowVar
   , joinWin
-  , toWin
+  , toWindow
   , windowLast
   , windowSize
   , windowStart
@@ -200,31 +200,31 @@ forgetWindow :: Contains elem outer inner -> Some.Forgotten (Index outer elem, I
 forgetWindow win = Some.forgotten (windowStart win, windowLast win)
 
 -- | Converts an index of a window into an index in the containing sequence.
-frWin :: Contains elem outer inner -> Index inner elem -> Index outer elem
-frWin (Contains (Count i) _n) (Count j) = Count (i .+ j)
+fromWindow :: Contains elem outer inner -> Index inner elem -> Index outer elem
+fromWindow (Contains (Count i) _n) (Count j) = Count (i .+ j)
 
 -- | Converts a count of elements in a window to a count of elements in the
 -- containing sequence.
-frWinVar :: Contains elem outer inner -> Var inner x -> Var outer x
-frWinVar _ (Count x) = Count x
+fromWindowVar :: Contains elem outer inner -> Var inner x -> Var outer x
+fromWindowVar _ (Count x) = Count x
 
-toWin :: Contains elem outer inner -> Index outer elem -> Maybe (Index inner elem)
-{-# INLINE toWin #-}
-toWin (Contains (Count i) (Count n)) (Count j) = if i <= j && j < i .+ n then Just (Count (j .- i)) else Nothing
+toWindow :: Contains elem outer inner -> Index outer elem -> Maybe (Index inner elem)
+{-# INLINE toWindow #-}
+toWindow (Contains (Count i) (Count n)) (Count j) = if i <= j && j < i .+ n then Just (Count (j .- i)) else Nothing
 
 windowSize :: Contains elem outer inner -> Size inner elem
 windowSize (Contains _i (Count n)) = Count n
 
 windowStart :: Contains elem outer inner -> Index outer elem
-windowStart win = frWin win (Count 0)
+windowStart win = fromWindow win (Count 0)
 
 windowLast :: Contains elem outer inner -> Index outer elem
-windowLast win = frWin win $ lastIndex $ windowSize win
+windowLast win = fromWindow win $ lastIndex $ windowSize win
 
 -- | 'Contains' is a 'Data.Semigroupoid.Semigroupoid'
 joinWin :: Contains elem outer mid -> Contains elem mid inner -> Contains elem outer inner
 {-# INLINE joinWin #-}
-joinWin win win2 = UnsafeContains (frWin win $ windowStart win2) (windowSize win2)
+joinWin win win2 = UnsafeContains (fromWindow win $ windowStart win2) (windowSize win2)
 
 data SomeWindow (lbl :: klbl) (outer :: Type) (elem :: kelem) =
     forall (skolem :: Type).
@@ -313,7 +313,7 @@ sliceV :: MV.Unbox a => Contains elem outer inner -> Vector outer elem a -> Vect
 sliceV win (Vector v) =
     Vector $ V.slice i n v
   where
-    Count i = frWin win (Count 0)
+    Count i = fromWindow win (Count 0)
     Count n = windowSize win
 
 unsafeThawV :: MV.Unbox a => Vector base elem a -> ST s (MVector base elem s a)
@@ -340,7 +340,7 @@ sliceMV :: MV.Unbox a => Contains elem outer inner -> MVector outer elem s a -> 
 sliceMV win (MVector mv) =
     MVector $ MV.slice i n mv
   where
-    Count i = frWin win (Count 0)
+    Count i = fromWindow win (Count 0)
     Count n = windowSize win
 
 replicateMV :: MV.Unbox a => Size base elem -> ST s a -> ST s (MVector base elem s a)

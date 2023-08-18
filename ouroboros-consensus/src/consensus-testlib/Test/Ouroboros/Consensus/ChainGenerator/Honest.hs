@@ -332,7 +332,7 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
 
         -- NB @withWindow@ truncates if it would reach past @slots@
         C.SomeWindow Proxy scg <- pure $ C.withWindow sz (C.Lbl @ScgLbl) (C.Count 0) (C.toSize denominator)
-        tot <- C.frWinVar scg <$> BV.fillInWindow S.notInverted density' g (C.sliceMV scg mv)
+        tot <- C.fromWindowVar scg <$> BV.fillInWindow S.notInverted density' g (C.sliceMV scg mv)
 
         firstSlot <- BV.testMV S.notInverted mv (C.Count 0)
         newSTRef $ (if firstSlot then subtract 1 else id) $ (tot :: C.Var hon ActiveSlotE)
@@ -374,7 +374,7 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
     --       @numerator@, and then each slot not in the first window is either
     --       forced to @1@ by its preceding @denominator - 1@ samples or is
     --       sampled from @mbAsc@.
-    C.forRange_ (C.windowSize remainingFullWindows) $ \(C.frWin remainingFullWindows -> islot) -> do
+    C.forRange_ (C.windowSize remainingFullWindows) $ \(C.fromWindow remainingFullWindows -> islot) -> do
         -- NB will not be truncated
         C.SomeWindow Proxy scgSlots <- pure $ C.withWindow sz (C.Lbl @ScgLbl) islot (C.toSize denominator)
 

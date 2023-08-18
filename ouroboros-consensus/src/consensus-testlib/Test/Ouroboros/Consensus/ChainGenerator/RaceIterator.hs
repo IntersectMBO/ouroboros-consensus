@@ -69,7 +69,7 @@ nthActiveSlotIndex n v raceWin =
   -- TODO by invariant during construction of the honest chain?
   case BV.findIthActiveInV (C.sliceV raceWin v) n of
       BV.NothingFound   -> Nothing   -- would be impossible if we never called next after *Conservative
-      BV.JustFound slot -> pure $! C.frWin raceWin slot
+      BV.JustFound slot -> pure $! C.fromWindow raceWin slot
 
 -- | Yields the race window starting at position 0 of the given
 -- vector if the @k+1@ active slot exists.

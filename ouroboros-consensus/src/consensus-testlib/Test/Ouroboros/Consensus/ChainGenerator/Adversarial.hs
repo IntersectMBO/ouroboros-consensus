@@ -128,7 +128,7 @@ checkAdversarialChain recipe adv = do
             intersection = startA C.- 1       :: C.Index base SlotE
 
         -- The intersection must be at an active slot in the honest chain.
-        case C.toWin winH intersection of
+        case C.toWindow winH intersection of
             Nothing -> do
               -- the genesis block is the only permissible anchor outside of @hon@
               when (startA   /= C.Count 0) $ Exn.throwError $ BadAnchor HonestActiveMustAnchorAdversarial
@@ -146,7 +146,7 @@ checkAdversarialChain recipe adv = do
 
                 -- arPrefix must correctly count the active slots in the part of
                 -- the chain upto the intersection
-                when (C.frWinVar precedingSlots (C.toVar pc) /= arPrefix) $ do
+                when (C.fromWindowVar precedingSlots (C.toVar pc) /= arPrefix) $ do
                     Exn.throwError $ BadAnchor WrongNumberOfHonestPredecessors
 
     checkCount = do
@@ -192,7 +192,7 @@ checkAdversarialChain recipe adv = do
         if
 
           -- any Race Window that ends /after/ the adversary can accelerate is unconstrained
-          | C.frWin winA youngestStableA < C.windowLast raceWinH' -> pure ()
+          | C.fromWindow winA youngestStableA < C.windowLast raceWinH' -> pure ()
 
           -- advance the adversarial Race Window if its start is <= the honest Race Window's start
           | C.windowStart raceWinA' <= C.windowStart raceWinH' ->
@@ -464,7 +464,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                         (C.Lbl @UntouchableLbl)
                         (C.windowStart rwin)
                         (scope C.- 1)   -- window will be empty if scope is 0
-                C.frWinVar untouch <$> BV.countActivesInMV S.inverted (C.sliceMV untouch mv)
+                C.fromWindowVar untouch <$> BV.countActivesInMV S.inverted (C.sliceMV untouch mv)
 
             C.SomeWindow (Proxy :: Proxy skolem2) touch <-   -- touchable slots
                 pure
@@ -520,7 +520,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                                 -- the adversary can accelerate its growth as
                                 -- of x+s+1 (If s were 0, it could accelerate
                                 -- in the very next slot, thus the plus 1.)
-                                KnownYS $! C.frWin settledSlots x C.+ s C.+ 1
+                                KnownYS $! C.fromWindow settledSlots x C.+ s C.+ 1
                 unfillRaces (C.windowLast win C.+ 1) mbYS' iter' g mv
 
 -- | The youngest stable slot
