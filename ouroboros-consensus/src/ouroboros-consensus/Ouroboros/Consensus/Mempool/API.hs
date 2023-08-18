@@ -1,7 +1,9 @@
+{-# LANGUAGE CPP                  #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE UndecidableInstances #-}
+
 
 -- | Exposes the @'Mempool'@ datatype which captures the public API of the
 -- Mempool. Also exposes all the types used to interact with said API.
@@ -196,9 +198,14 @@ data Mempool m blk = Mempool {
       --
       -- This does not update the state of the mempool.
     , getSnapshotFor ::
-           SlotNo    -- ^ The current slot in which we want the snapshot
+           SlotNo
+#if __GLASGOW_HASKELL__ >= 902
+           -- ^ The current slot in which we want the snapshot
+#endif
         -> TickedLedgerState blk DiffMK
-                     -- ^ The ledger state ticked to the given slot number
+#if __GLASGOW_HASKELL__ >= 902
+           -- ^ The ledger state ticked to the given slot number
+#endif
         -> LedgerTables (ExtLedgerState blk) SeqDiffMK
         -> LedgerBackingStoreValueHandle' m blk
         -> m (MempoolSnapshot blk)
