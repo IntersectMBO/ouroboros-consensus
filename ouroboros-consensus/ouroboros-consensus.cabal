@@ -24,11 +24,6 @@ flag asserts
   manual:      False
   default:     False
 
-flag expose-sublibs
-  description: Expose all private sublibraries
-  manual:      True
-  default:     False
-
 common common-lib
   default-language: Haskell2010
   ghc-options:
@@ -296,11 +291,9 @@ library
 
 library consensus-testlib
   import:          common-lib
+  visibility:      public
+
   hs-source-dirs:  src/consensus-testlib
-
-  if flag(expose-sublibs)
-    visibility: public
-
   exposed-modules:
     Test.Util.BoolProps
     Test.Util.ChainDB
@@ -379,9 +372,7 @@ library consensus-testlib
 
 library mock-block
   import:          common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
+  visibility:      public
 
   hs-source-dirs:  src/mock-block
   exposed-modules:
@@ -427,9 +418,7 @@ library mock-block
 
 library mempool-test-utils
   import:          common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
+  visibility:      public
 
   hs-source-dirs:  src/mempool-test-utils
   exposed-modules: Test.Consensus.Mempool.Mocked
@@ -442,9 +431,7 @@ library mempool-test-utils
 
 library tutorials
   import:         common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
+  visibility:     public
 
   hs-source-dirs: src/tutorials
   other-modules:

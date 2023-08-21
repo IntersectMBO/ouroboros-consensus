@@ -134,16 +134,12 @@ If you use Nix, see the [CHaP
 website](https://input-output-hk.github.io/cardano-haskell-packages/) on how to
 configure CHaP for haskell.nix.
 
-Sublibraries are private by default, so if you make direct use of any of the
-sublibraries declared in this repository, you shall enable the `+expose-sublibs`
-flag on the relevant dependency, either passing the flag `--constraint
-"ouroboros-consensus +expose-sublibs"` to cabal or adding the following snippet
-to your `cabal.project`:
-
-```
-package ouroboros-consensus
-  flags: +expose-sublibs
-```
+The Consensus sublibraries---which are used for our internal testing---are
+visible and buildable by default only because the appropriate Cabal and/or Nix
+infrastructure to guard them behind an explicit opt-in is currently immature
+and fragile. **WARNING** breaking changes to the these libraries are **not**
+reflected in the package versions. Use at your own risk, and please reach out
+to us if this policy of ours is an excessive burden on your use case.
 
 ## How to contribute to the project
 
