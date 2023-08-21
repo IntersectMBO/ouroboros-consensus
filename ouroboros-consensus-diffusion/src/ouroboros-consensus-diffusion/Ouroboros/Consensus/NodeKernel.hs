@@ -68,6 +68,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
+import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -451,15 +452,29 @@ forkBlockForging IS{..} blockForging =
             trace $ TraceDidntAdoptBlock currentSlot newBlock
           Just reason -> do
             trace $ TraceForgedInvalidBlock currentSlot newBlock reason
-            -- We just produced a block that is invalid according to the
-            -- ledger in the ChainDB, while the mempool said it is valid.
-            -- There is an inconsistency between the two!
+            -- We just produced a block that is invalid. This can happen for
+            -- different reasons. In particular, the ledger rules might reject
+            -- some transactions (which would indicate a bug between the ChainDB
+            -- and the Mempool, as the latter accepted the transactions as valid
+            -- whereas the former doesn't), the header might be invalid (which
+            -- could point to a misconfiguration of the node itself) or the
+            -- block might exceed the clock skew (which could indicate problems
+            -- with the system clock).
             --
-            -- Remove all the transactions in that block, otherwise we'll
-            -- run the risk of forging the same invalid block again. This
-            -- means that we'll throw away some good transactions in the
-            -- process.
-            lift $ removeTxs mempool $ NE.fromList (map (txId . txForgetValidated) txs)
+            -- Only when the block is invalid because of the transactions, we
+            -- will remove all the transactions in that block from the mempool
+            -- as a defensive programming measure. Otherwise we'd run the risk
+            -- of forging the same invalid block again. This means that we'll
+            -- throw away some good transactions in the process.
+            case reason of
+              ChainDB.InFutureExceedsClockSkew {} -> pure ()
+              ChainDB.ValidationError err ->
+                case err of
+                  ExtValidationErrorHeader{} -> pure ()
+                  ExtValidationErrorLedger{} ->
+                    whenJust
+                      (NE.nonEmpty (map (txId . txForgetValidated) txs))
+                      (lift . removeTxs mempool)
             exitEarly
 
               -- We successfully produced /and/ adopted a block
