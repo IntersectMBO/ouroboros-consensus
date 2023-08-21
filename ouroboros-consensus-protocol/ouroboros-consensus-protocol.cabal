@@ -71,7 +71,6 @@ library
 library unstable-protocol-testlib
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-protocol-testlib
   exposed-modules: Test.Consensus.Protocol.Serialisation.Generators
   build-depends:

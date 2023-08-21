@@ -92,7 +92,6 @@ library
 library unstable-diffusion-testlib
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-diffusion-testlib
   exposed-modules:
     Test.ThreadNet.General
@@ -116,8 +115,8 @@ library unstable-diffusion-testlib
     , containers
     , contra-tracer
     , fgl
-    , fs-sim                                                        ^>=0.2
-    , graphviz                                                      >=2999.20.1.0
+    , fs-sim                                                                 ^>=0.2
+    , graphviz                                                               >=2999.20.1.0
     , io-classes
     , io-sim
     , mtl
@@ -129,7 +128,7 @@ library unstable-diffusion-testlib
     , ouroboros-network-mock
     , ouroboros-network-protocols
     , QuickCheck
-    , quiet                                                         >=0.2         && <0.3
+    , quiet                                                                  >=0.2         && <0.3
     , random
     , si-timers
     , text
@@ -138,7 +137,6 @@ library unstable-diffusion-testlib
 library unstable-mock-testlib
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-mock-testlib
   exposed-modules:
     Test.Consensus.Ledger.Mock.Generators
@@ -213,8 +211,8 @@ test-suite consensus-test
     , cardano-slotting
     , containers
     , directory
-    , fs-api                                                        ^>=0.2
-    , fs-sim                                                        ^>=0.2
+    , fs-api                                                                 ^>=0.2
+    , fs-sim                                                                 ^>=0.2
     , io-sim
     , mtl
     , nothunks

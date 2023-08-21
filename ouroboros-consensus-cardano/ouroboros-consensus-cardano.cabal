@@ -152,7 +152,6 @@ library
 library unstable-byronspec
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-byronspec
   exposed-modules:
     Ouroboros.Consensus.ByronSpec.Ledger
@@ -186,7 +185,6 @@ library unstable-byronspec
 library unstable-byron-testlib
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-byron-testlib
   exposed-modules:
     Ouroboros.Consensus.ByronDual.Ledger
@@ -263,7 +261,6 @@ test-suite byron-test
 library unstable-shelley-testlib
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-shelley-testlib
   exposed-modules:
     Test.Consensus.Shelley.Examples
@@ -282,7 +279,7 @@ library unstable-shelley-testlib
     , cardano-ledger-alonzo-test
     , cardano-ledger-babbage
     , cardano-ledger-babbage-test
-    , cardano-ledger-conway-test                                                     >=1.2.0.1
+    , cardano-ledger-conway-test                                                              >=1.2.0.1
     , cardano-ledger-core:{cardano-ledger-core, testlib}
     , cardano-ledger-mary
     , cardano-ledger-shelley-ma-test
@@ -300,7 +297,7 @@ library unstable-shelley-testlib
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-api
     , QuickCheck
-    , quiet                                                                          >=0.2     && <0.3
+    , quiet                                                                                   >=0.2     && <0.3
     , small-steps
 
 test-suite shelley-test
@@ -340,7 +337,6 @@ test-suite shelley-test
 library unstable-cardano-testlib
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-cardano-testlib
   exposed-modules:
     Test.Consensus.Cardano.Examples
@@ -361,9 +357,9 @@ library unstable-cardano-testlib
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
     , cardano-ledger-byron
-    , cardano-ledger-conway-test                                                        ^>=1.2.0.1
+    , cardano-ledger-conway-test                                                                 ^>=1.2.0.1
     , cardano-ledger-core:{cardano-ledger-core, testlib}
-    , cardano-ledger-shelley                                                            ^>=1.5
+    , cardano-ledger-shelley                                                                     ^>=1.5
     , cardano-protocol-tpraos
     , cardano-slotting
     , cardano-strict-containers
@@ -432,7 +428,6 @@ test-suite cardano-test
 library unstable-cardano-tools
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-cardano-tools
   exposed-modules:
     Cardano.Api.Any
@@ -578,7 +573,7 @@ test-suite tools-test
   main-is:        Main.hs
   build-depends:
     , base
+    , ouroboros-consensus:unstable-consensus-testlib
     , tasty
     , tasty-hunit
-    , ouroboros-consensus:unstable-consensus-testlib
     , unstable-cardano-tools

@@ -292,7 +292,6 @@ library
 library unstable-consensus-testlib
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-consensus-testlib
   exposed-modules:
     Test.Util.BoolProps
@@ -373,7 +372,6 @@ library unstable-consensus-testlib
 library unstable-mock-block
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-mock-block
   exposed-modules:
     Ouroboros.Consensus.Mock.Ledger
@@ -419,7 +417,6 @@ library unstable-mock-block
 library unstable-mempool-test-utils
   import:          common-lib
   visibility:      public
-
   hs-source-dirs:  src/unstable-mempool-test-utils
   exposed-modules: Test.Consensus.Mempool.Mocked
   build-depends:
@@ -432,7 +429,6 @@ library unstable-mempool-test-utils
 library unstable-tutorials
   import:         common-lib
   visibility:     public
-
   hs-source-dirs: src/unstable-tutorials
   other-modules:
     Ouroboros.Consensus.Tutorial.Simple
@@ -569,8 +565,8 @@ test-suite storage-test
     , cborg
     , containers
     , contra-tracer
-    , fs-api                    ^>=0.2
-    , fs-sim                    ^>=0.2
+    , fs-api                      ^>=0.2
+    , fs-sim                      ^>=0.2
     , generics-sop
     , hashable
     , io-classes
@@ -582,7 +578,7 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-state-machine  ^>=0.7
+    , quickcheck-state-machine    ^>=0.7
     , random
     , serialise
     , tasty
@@ -592,8 +588,8 @@ test-suite storage-test
     , time
     , transformers
     , tree-diff
-    , vector
     , unstable-consensus-testlib
+    , vector
 
 benchmark mempool-bench
   type:             exitcode-stdio-1.0
