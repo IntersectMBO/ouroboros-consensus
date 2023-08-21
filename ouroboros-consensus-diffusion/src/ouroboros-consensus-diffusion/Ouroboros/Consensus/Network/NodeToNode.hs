@@ -133,6 +133,7 @@ data Handlers m addr blk = Handlers {
         -> ControlMessageSTM m
         -> HeaderMetricsTracer m
         -> StrictTVar m (AnchoredFragment (Header blk))
+        -> (Their (Tip blk) -> STM m ())
         -> ChainSyncClientPipelined (Header blk) (Point blk) (Tip blk) m ChainSyncClientResult
         -- TODO: we should consider either bundling these context parameters
         -- into a record, or extending the protocol handler representation
@@ -560,8 +561,9 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
             (defaultChainDbView (getChainDB kernel))
             (getNodeCandidates kernel)
+            (getChainSyncHandles kernel)
             them
-            version $ \varCandidate -> do
+            version $ \varCandidate setTheirTip -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
                 runPipelinedPeerWithLimits
@@ -574,6 +576,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
                   $ hChainSyncClient them version controlMessageSTM
                       (TraceLabelPeer them `contramap` reportHeader)
                       varCandidate
+                      setTheirTip
               return (ChainSyncInitiatorResult r, trailing)
 
     aChainSyncServer
