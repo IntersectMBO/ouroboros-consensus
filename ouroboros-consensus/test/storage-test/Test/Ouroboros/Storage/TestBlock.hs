@@ -628,6 +628,7 @@ instance ValidateEnvelope TestBlock where
 instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView   _ _  = TickedTrivial
   ledgerViewForecastAt _    = trivialForecast
+  computeGenesisWindow _ _ = GenesisWindow 42 -- TODO
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]

@@ -120,8 +120,10 @@ instance ( SimpleCrypto c
          ) => LedgerSupportsProtocol (SimplePBftBlock c PBftMockCrypto) where
   protocolLedgerView   cfg _  = pretendTicked $ simpleMockLedgerConfig cfg
   ledgerViewForecastAt cfg st = constantForecastOf
+
                                  (pretendTicked $ simpleMockLedgerConfig cfg)
                                  (getTipSlot st)
+  computeGenesisWindow _ _ = GenesisWindow 42 -- TODO
 
 pretendTicked :: PBftLedgerView PBftMockCrypto
               -> Ticked (PBftLedgerView PBftMockCrypto)

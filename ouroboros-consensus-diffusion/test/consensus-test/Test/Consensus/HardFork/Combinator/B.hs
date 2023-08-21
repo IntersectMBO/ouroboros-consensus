@@ -203,6 +203,7 @@ instance BlockSupportsProtocol BlockB where
 instance LedgerSupportsProtocol BlockB where
   protocolLedgerView   _ _ = TickedTrivial
   ledgerViewForecastAt _   = trivialForecast
+  computeGenesisWindow _ _ = GenesisWindow 42 -- TODO
 
 instance HasPartialConsensusConfig ProtocolB
 

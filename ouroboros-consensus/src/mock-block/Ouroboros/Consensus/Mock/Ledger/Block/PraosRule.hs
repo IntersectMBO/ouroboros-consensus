@@ -97,7 +97,7 @@ instance
   ) => LedgerSupportsProtocol (SimplePraosRuleBlock c) where
   protocolLedgerView   _ _ = TickedTrivial
   ledgerViewForecastAt _   = trivialForecast
-
+  computeGenesisWindow _ _ = GenesisWindow 42 -- TODO
 {-------------------------------------------------------------------------------
   We don't need crypto for this protocol
 -------------------------------------------------------------------------------}

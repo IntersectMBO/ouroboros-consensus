@@ -527,6 +527,7 @@ instance (PayloadSemantics ptype) => ValidateEnvelope (TestBlockWith ptype) wher
 instance (PayloadSemantics ptype) => LedgerSupportsProtocol (TestBlockWith ptype) where
   protocolLedgerView   _ _  = TickedTrivial
   ledgerViewForecastAt _    = trivialForecast
+  computeGenesisWindow _ _ = GenesisWindow 20 -- TODO
 
 singleNodeTestConfigWith ::
      CodecConfig (TestBlockWith ptype)

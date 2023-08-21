@@ -120,6 +120,7 @@ instance ( SimpleCrypto c
   ledgerViewForecastAt _ st = constantForecastOf
                                  TickedTrivial
                                  (getTipSlot st)
+  computeGenesisWindow _ _ = GenesisWindow 42 -- TODO
 
 {-------------------------------------------------------------------------------
   Forging

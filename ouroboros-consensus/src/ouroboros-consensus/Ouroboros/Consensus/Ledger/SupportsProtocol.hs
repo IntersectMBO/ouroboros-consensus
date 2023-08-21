@@ -1,9 +1,14 @@
+{-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..)) where
+module Ouroboros.Consensus.Ledger.SupportsProtocol (
+    GenesisWindow (..)
+  , LedgerSupportsProtocol (..)
+  ) where
 
 import           Control.Monad.Except
+import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
@@ -64,6 +69,21 @@ class ( BlockSupportsProtocol blk
     => LedgerConfig blk
     -> LedgerState blk
     -> Forecast (LedgerView (BlockProtocol blk))
+
+  -- | Get the Genesis window corresponding to a ledger state at an intersection.
+  --
+  -- High-level requirement: \"The\" honest chain must be denser (i.e. have more
+  -- blocks) in the returned window of slots than any other possible chain
+  -- intersecting it at the given point.
+  computeGenesisWindow ::
+       LedgerConfig blk
+    -> LedgerState blk
+    -> GenesisWindow
+    -- TODO: is this the right place, should Genesis window functionality be
+    -- optional, use better types etc.
+
+newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
+  deriving stock (Show, Eq, Ord)
 
 -- | Relation between 'ledgerViewForecastAt' and 'applyChainTick'
 _lemma_ledgerViewForecastAt_applyChainTick
