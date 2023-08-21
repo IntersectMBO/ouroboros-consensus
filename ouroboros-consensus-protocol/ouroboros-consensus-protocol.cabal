@@ -68,11 +68,11 @@ library
     , serialise
     , text
 
-library protocol-testlib
+library unstable-protocol-testlib
   import:          common-lib
   visibility:      public
 
-  hs-source-dirs:  src/protocol-testlib
+  hs-source-dirs:  src/unstable-protocol-testlib
   exposed-modules: Test.Consensus.Protocol.Serialisation.Generators
   build-depends:
     , base

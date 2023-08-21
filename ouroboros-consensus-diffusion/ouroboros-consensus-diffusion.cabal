@@ -89,11 +89,11 @@ library
     , transformers
     , typed-protocols
 
-library diffusion-testlib
+library unstable-diffusion-testlib
   import:          common-lib
   visibility:      public
 
-  hs-source-dirs:  src/diffusion-testlib
+  hs-source-dirs:  src/unstable-diffusion-testlib
   exposed-modules:
     Test.ThreadNet.General
     Test.ThreadNet.Network
@@ -122,7 +122,7 @@ library diffusion-testlib
     , io-sim
     , mtl
     , ouroboros-consensus-diffusion
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network
     , ouroboros-network-api
     , ouroboros-network-framework
@@ -135,11 +135,11 @@ library diffusion-testlib
     , text
     , typed-protocols
 
-library mock-testlib
+library unstable-mock-testlib
   import:          common-lib
   visibility:      public
 
-  hs-source-dirs:  src/mock-testlib
+  hs-source-dirs:  src/unstable-mock-testlib
   exposed-modules:
     Test.Consensus.Ledger.Mock.Generators
     Test.ThreadNet.TxGen.Mock
@@ -151,10 +151,10 @@ library mock-testlib
     , bytestring
     , cardano-crypto-class
     , containers
-    , diffusion-testlib
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib, mock-block}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block}
     , QuickCheck
     , serialise
+    , unstable-diffusion-testlib
 
 test-suite infra-test
   import:         common-test
@@ -164,10 +164,10 @@ test-suite infra-test
   other-modules:  Test.ThreadNet.Util.Tests
   build-depends:
     , base
-    , diffusion-testlib
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , tasty
     , tasty-quickcheck
+    , unstable-diffusion-testlib
 
 test-suite mock-test
   import:         common-test
@@ -186,14 +186,14 @@ test-suite mock-test
     , bytestring
     , cborg
     , containers
-    , diffusion-testlib
-    , mock-testlib
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib, mock-block}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block}
     , ouroboros-network-mock
     , QuickCheck
     , serialise
     , tasty
     , tasty-quickcheck
+    , unstable-diffusion-testlib
+    , unstable-mock-testlib
 
 test-suite consensus-test
   import:         common-test
@@ -212,7 +212,6 @@ test-suite consensus-test
     , bytestring
     , cardano-slotting
     , containers
-    , diffusion-testlib
     , directory
     , fs-api                                                        ^>=0.2
     , fs-sim                                                        ^>=0.2
@@ -220,7 +219,7 @@ test-suite consensus-test
     , mtl
     , nothunks
     , ouroboros-consensus-diffusion
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-api
     , ouroboros-network-mock
     , QuickCheck
@@ -232,3 +231,4 @@ test-suite consensus-test
     , tasty-quickcheck
     , temporary
     , time
+    , unstable-diffusion-testlib

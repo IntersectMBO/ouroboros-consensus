@@ -138,8 +138,9 @@ The Consensus sublibraries---which are used for our internal testing---are
 visible and buildable by default only because the appropriate Cabal and/or Nix
 infrastructure to guard them behind an explicit opt-in is currently immature
 and fragile. **WARNING** breaking changes to the these libraries are **not**
-reflected in the package versions. Use at your own risk, and please reach out
-to us if this policy of ours is an excessive burden on your use case.
+reflected in the package versions. That is why they all have the `unstable-`
+prefix in their name; use at your own risk, and please reach out to us if this
+policy of ours is an excessive burden on your use case.
 
 ## How to contribute to the project
 
