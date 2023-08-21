@@ -24,11 +24,6 @@ flag asserts
   manual:      False
   default:     False
 
-flag expose-sublibs
-  description: Expose all private sublibraries
-  manual:      True
-  default:     False
-
 common common-lib
   default-language: Haskell2010
   ghc-options:
@@ -73,13 +68,10 @@ library
     , serialise
     , text
 
-library protocol-testlib
+library unstable-protocol-testlib
   import:          common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
-
-  hs-source-dirs:  src/protocol-testlib
+  visibility:      public
+  hs-source-dirs:  src/unstable-protocol-testlib
   exposed-modules: Test.Consensus.Protocol.Serialisation.Generators
   build-depends:
     , base

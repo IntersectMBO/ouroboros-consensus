@@ -30,11 +30,6 @@ flag asserts
   manual:      False
   default:     False
 
-flag expose-sublibs
-  description: Expose all private sublibraries
-  manual:      True
-  default:     False
-
 common common-lib
   default-language: Haskell2010
   ghc-options:
@@ -154,13 +149,10 @@ library
     , these                         ^>=1.2
     , vector-map
 
-library byronspec
+library unstable-byronspec
   import:          common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
-
-  hs-source-dirs:  src/byronspec
+  visibility:      public
+  hs-source-dirs:  src/unstable-byronspec
   exposed-modules:
     Ouroboros.Consensus.ByronSpec.Ledger
     Ouroboros.Consensus.ByronSpec.Ledger.Accessors
@@ -190,13 +182,10 @@ library byronspec
     , small-steps
     , transformers
 
-library byron-testlib
+library unstable-byron-testlib
   import:          common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
-
-  hs-source-dirs:  src/byron-testlib
+  visibility:      public
+  hs-source-dirs:  src/unstable-byron-testlib
   exposed-modules:
     Ouroboros.Consensus.ByronDual.Ledger
     Ouroboros.Consensus.ByronDual.Node
@@ -212,7 +201,6 @@ library byron-testlib
   build-depends:
     , base
     , byron-spec-ledger
-    , byronspec
     , bytestring
     , cardano-crypto-class
     , cardano-crypto-test
@@ -224,11 +212,12 @@ library byron-testlib
     , hedgehog-quickcheck
     , mtl
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-diffusion:diffusion-testlib
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus-diffusion:unstable-diffusion-testlib
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-api
     , QuickCheck
     , serialise
+    , unstable-byronspec
 
 test-suite byron-test
   import:         common-test
@@ -246,8 +235,6 @@ test-suite byron-test
     , binary-search
     , byron-spec-chain
     , byron-spec-ledger
-    , byron-testlib
-    , byronspec
     , bytestring
     , cardano-crypto-class
     , cardano-crypto-wrapper
@@ -260,22 +247,21 @@ test-suite byron-test
     , hedgehog-quickcheck
     , mtl
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-diffusion:diffusion-testlib
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus-diffusion:unstable-diffusion-testlib
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-mock
     , QuickCheck
     , small-steps
     , small-steps-test
     , tasty
     , tasty-quickcheck
+    , unstable-byron-testlib
+    , unstable-byronspec
 
-library shelley-testlib
+library unstable-shelley-testlib
   import:          common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
-
-  hs-source-dirs:  src/shelley-testlib
+  visibility:      public
+  hs-source-dirs:  src/unstable-shelley-testlib
   exposed-modules:
     Test.Consensus.Shelley.Examples
     Test.Consensus.Shelley.Generators
@@ -293,7 +279,7 @@ library shelley-testlib
     , cardano-ledger-alonzo-test
     , cardano-ledger-babbage
     , cardano-ledger-babbage-test
-    , cardano-ledger-conway-test                                                     >=1.2.0.1
+    , cardano-ledger-conway-test                                                              >=1.2.0.1
     , cardano-ledger-core:{cardano-ledger-core, testlib}
     , cardano-ledger-mary
     , cardano-ledger-shelley-ma-test
@@ -306,12 +292,12 @@ library shelley-testlib
     , microlens
     , mtl
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-diffusion:diffusion-testlib
-    , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, protocol-testlib}
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus-diffusion:unstable-diffusion-testlib
+    , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-api
     , QuickCheck
-    , quiet                                                                          >=0.2     && <0.3
+    , quiet                                                                                   >=0.2     && <0.3
     , small-steps
 
 test-suite shelley-test
@@ -340,21 +326,18 @@ test-suite shelley-test
     , filepath
     , microlens
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-diffusion:diffusion-testlib
+    , ouroboros-consensus-diffusion:unstable-diffusion-testlib
     , ouroboros-consensus-protocol
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , QuickCheck
-    , shelley-testlib
     , tasty
     , tasty-quickcheck
+    , unstable-shelley-testlib
 
-library cardano-testlib
+library unstable-cardano-testlib
   import:          common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
-
-  hs-source-dirs:  src/cardano-testlib
+  visibility:      public
+  hs-source-dirs:  src/unstable-cardano-testlib
   exposed-modules:
     Test.Consensus.Cardano.Examples
     Test.Consensus.Cardano.Generators
@@ -370,14 +353,13 @@ library cardano-testlib
 
   build-depends:
     , base
-    , byron-testlib
     , cardano-crypto-class
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
     , cardano-ledger-byron
-    , cardano-ledger-conway-test                                                        ^>=1.2.0.1
+    , cardano-ledger-conway-test                                                                 ^>=1.2.0.1
     , cardano-ledger-core:{cardano-ledger-core, testlib}
-    , cardano-ledger-shelley                                                            ^>=1.5
+    , cardano-ledger-shelley                                                                     ^>=1.5
     , cardano-protocol-tpraos
     , cardano-slotting
     , cardano-strict-containers
@@ -385,12 +367,13 @@ library cardano-testlib
     , microlens
     , mtl
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-diffusion:{ouroboros-consensus-diffusion, diffusion-testlib}
-    , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, protocol-testlib}
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus-diffusion:{ouroboros-consensus-diffusion, unstable-diffusion-testlib}
+    , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, unstable-protocol-testlib}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-api
     , QuickCheck
-    , shelley-testlib
+    , unstable-byron-testlib
+    , unstable-shelley-testlib
 
 test-suite cardano-test
   import:         common-test
@@ -411,7 +394,6 @@ test-suite cardano-test
   build-depends:
     , base
     , base16-bytestring
-    , byron-testlib
     , bytestring
     , cardano-crypto-class
     , cardano-ledger-alonzo
@@ -421,34 +403,32 @@ test-suite cardano-test
     , cardano-ledger-shelley
     , cardano-protocol-tpraos
     , cardano-slotting
-    , cardano-testlib
     , cborg
     , containers
     , contra-tracer
     , filepath
     , microlens
-    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, cardano-testlib}
-    , ouroboros-consensus-diffusion:diffusion-testlib
+    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-testlib}
+    , ouroboros-consensus-diffusion:unstable-diffusion-testlib
     , ouroboros-consensus-protocol
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib, mempool-test-utils}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mempool-test-utils}
     , ouroboros-network-api
     , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
     , pretty-simple
     , QuickCheck
-    , shelley-testlib
     , sop-core
     , tasty
     , tasty-hunit
     , tasty-quickcheck
     , typed-protocols
+    , unstable-byron-testlib
+    , unstable-cardano-testlib
+    , unstable-shelley-testlib
 
-library cardano-tools
+library unstable-cardano-tools
   import:          common-lib
-  hs-source-dirs:  src/tools
-
-  if flag(expose-sublibs)
-    visibility: public
-
+  visibility:      public
+  hs-source-dirs:  src/unstable-cardano-tools
   exposed-modules:
     Cardano.Api.Any
     Cardano.Api.Protocol.Types
@@ -541,7 +521,7 @@ executable db-analyser
     , cardano-crypto-wrapper
     , optparse-applicative
     , ouroboros-consensus
-    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, cardano-tools}
+    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
 
   other-modules:  DBAnalyser.Parsers
 
@@ -552,9 +532,9 @@ executable db-synthesizer
   build-depends:
     , base
     , cardano-crypto-class
-    , cardano-tools
     , optparse-applicative
     , ouroboros-consensus
+    , unstable-cardano-tools
 
   other-modules:  DBSynthesizer.Parsers
 
@@ -568,7 +548,7 @@ executable db-truncater
     , cardano-crypto-wrapper
     , optparse-applicative
     , ouroboros-consensus
-    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, cardano-tools}
+    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
 
   other-modules:
     DBAnalyser.Parsers
@@ -584,7 +564,7 @@ executable immdb-server
     , network
     , optparse-applicative
     , ouroboros-consensus
-    , ouroboros-consensus-cardano:cardano-tools
+    , ouroboros-consensus-cardano:unstable-cardano-tools
 
 test-suite tools-test
   import:         common-test
@@ -593,7 +573,7 @@ test-suite tools-test
   main-is:        Main.hs
   build-depends:
     , base
-    , cardano-tools
-    , ouroboros-consensus:consensus-testlib
+    , ouroboros-consensus:unstable-consensus-testlib
     , tasty
     , tasty-hunit
+    , unstable-cardano-tools

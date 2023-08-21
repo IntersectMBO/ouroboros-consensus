@@ -24,11 +24,6 @@ flag asserts
   manual:      False
   default:     False
 
-flag expose-sublibs
-  description: Expose all private sublibraries
-  manual:      True
-  default:     False
-
 common common-lib
   default-language: Haskell2010
   ghc-options:
@@ -294,13 +289,10 @@ library
     , typed-protocols
     , vector                       >=0.12     && <0.13
 
-library consensus-testlib
+library unstable-consensus-testlib
   import:          common-lib
-  hs-source-dirs:  src/consensus-testlib
-
-  if flag(expose-sublibs)
-    visibility: public
-
+  visibility:      public
+  hs-source-dirs:  src/unstable-consensus-testlib
   exposed-modules:
     Test.Util.BoolProps
     Test.Util.ChainDB
@@ -377,13 +369,10 @@ library consensus-testlib
     , tree-diff
     , utf8-string
 
-library mock-block
+library unstable-mock-block
   import:          common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
-
-  hs-source-dirs:  src/mock-block
+  visibility:      public
+  hs-source-dirs:  src/unstable-mock-block
   exposed-modules:
     Ouroboros.Consensus.Mock.Ledger
     Ouroboros.Consensus.Mock.Ledger.Address
@@ -425,13 +414,10 @@ library mock-block
     , serialise
     , time
 
-library mempool-test-utils
+library unstable-mempool-test-utils
   import:          common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
-
-  hs-source-dirs:  src/mempool-test-utils
+  visibility:      public
+  hs-source-dirs:  src/unstable-mempool-test-utils
   exposed-modules: Test.Consensus.Mempool.Mocked
   build-depends:
     , base
@@ -440,13 +426,10 @@ library mempool-test-utils
     , ouroboros-consensus
     , strict-stm
 
-library tutorials
+library unstable-tutorials
   import:         common-lib
-
-  if flag(expose-sublibs)
-    visibility: public
-
-  hs-source-dirs: src/tutorials
+  visibility:     public
+  hs-source-dirs: src/unstable-tutorials
   other-modules:
     Ouroboros.Consensus.Tutorial.Simple
     Ouroboros.Consensus.Tutorial.WithEpoch
@@ -490,7 +473,6 @@ test-suite consensus-test
     , cardano-crypto-class
     , cardano-slotting
     , cborg
-    , consensus-testlib
     , containers
     , contra-tracer
     , deepseq
@@ -499,7 +481,6 @@ test-suite consensus-test
     , hashable
     , io-classes
     , io-sim
-    , mock-block
     , mtl
     , nothunks
     , ouroboros-consensus
@@ -519,6 +500,8 @@ test-suite consensus-test
     , tree-diff
     , typed-protocols
     , typed-protocols-examples
+    , unstable-consensus-testlib
+    , unstable-mock-block
 
 test-suite infra-test
   import:         common-test
@@ -533,7 +516,7 @@ test-suite infra-test
 
   build-depends:
     , base
-    , ouroboros-consensus:{ouroboros-consensus, consensus-testlib}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , QuickCheck
     , tasty
     , tasty-quickcheck
@@ -580,11 +563,10 @@ test-suite storage-test
     , cardano-crypto-class
     , cardano-slotting
     , cborg
-    , consensus-testlib
     , containers
     , contra-tracer
-    , fs-api                    ^>=0.2
-    , fs-sim                    ^>=0.2
+    , fs-api                      ^>=0.2
+    , fs-sim                      ^>=0.2
     , generics-sop
     , hashable
     , io-classes
@@ -596,7 +578,7 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-state-machine  ^>=0.7
+    , quickcheck-state-machine    ^>=0.7
     , random
     , serialise
     , tasty
@@ -606,6 +588,7 @@ test-suite storage-test
     , time
     , transformers
     , tree-diff
+    , unstable-consensus-testlib
     , vector
 
 benchmark mempool-bench
@@ -622,11 +605,9 @@ benchmark mempool-bench
     , bytestring
     , cardano-slotting
     , cassava
-    , consensus-testlib
     , containers
     , contra-tracer
     , deepseq
-    , mempool-test-utils
     , nothunks
     , ouroboros-consensus
     , serialise
@@ -636,6 +617,8 @@ benchmark mempool-bench
     , text
     , transformers
     , tree-diff
+    , unstable-consensus-testlib
+    , unstable-mempool-test-utils
 
   default-language: Haskell2010
   ghc-options:

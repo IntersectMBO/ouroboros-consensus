@@ -28,17 +28,4 @@ packages:
 tests: true
 benchmarks: true
 
---
--- Expose sublibs
---
-
-package ouroboros-consensus
-  flags: +expose-sublibs
-
-package ouroboros-consensus-protocol
-  flags: +expose-sublibs
-
-package ouroboros-consensus-diffusion
-  flags: +expose-sublibs
-
 import: ./asserts.cabal
