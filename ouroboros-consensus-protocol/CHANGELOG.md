@@ -2,6 +2,15 @@
 
 # Changelog entries
 
+<a id='changelog-0.5.0.6'></a>
+## 0.5.0.6 — 2023-08-21
+
+### Patch
+
+- Removed the `expose-sublibs` cabal flag, since Cabal/Nix handled it poorly.
+- Instead, added a `unstable-` prefix to the name of each sublibrary, to
+  strongly indicate that we ignore them when evolving the package's version.
+
 <a id='changelog-0.5.0.5></a>
 ## 0.5.0.5 — 2023-08-18
 
