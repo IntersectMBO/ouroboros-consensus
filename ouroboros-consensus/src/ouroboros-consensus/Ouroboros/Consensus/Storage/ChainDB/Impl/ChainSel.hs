@@ -8,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Operations involving chain selection: the initial chain selection and
@@ -34,7 +35,7 @@ import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isJust)
+import           Data.Maybe (fromJust, isJust)
 import           Data.Maybe.Strict (StrictMaybe (..), isSNothing,
                      strictMaybeToMaybe)
 import           Data.Set (Set)
@@ -163,8 +164,11 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
     constructChains i succsOf = flip evalStateT Map.empty $
         mapM constructChain suffixesAfterI
       where
+        -- TODO ok to avoid selecting blocks more than k past the imm tip during
+        -- initial chain selection? (also, we currently don't use cdbLoELimit
+        -- here, but it could be passed in)
         suffixesAfterI :: [NonEmpty (HeaderHash blk)]
-        suffixesAfterI = Paths.maximalCandidates succsOf k (AF.anchorToPoint i)   -- TODO ok to avoid selecting blocks more than k past the imm tip?
+        suffixesAfterI = Paths.maximalCandidates succsOf k (AF.anchorToPoint i)
 
         constructChain ::
              NonEmpty (HeaderHash blk)
@@ -456,9 +460,9 @@ chainSelectionForBlock
   -> InvalidBlockPunishment m
   -> m (Point blk)
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
-    (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeDiff)
+    (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeFrag)
       <- atomically $ do
-          (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB, loeAnchor) <-
+          (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB, loeFrag) <-
                 (,,,,,,)
             <$> (forgetFingerprint <$> readTVar cdbInvalid)
             <*> VolatileDB.filterByPredecessor  cdbVolatileDB
@@ -466,20 +470,24 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
             <*> Query.getCurrentChain           cdb
             <*> Query.getTipPoint               cdb
             <*> LgrDB.getCurrent                cdbLgrDB
-            <*> (error "TODO stub" :: STM m (AnchoredFragment (Header blk)))
+            <*> readTVar                        cdbLoEFrag
 
           -- Let these two functions ignore invalid blocks
           let lookupBlockInfo' = ignoreInvalid    cdb invalid lookupBlockInfo
               succsOf'         = ignoreInvalidSuc cdb invalid succsOf
 
-          -- Applying the @loeDiff@ would switch from @curChain@ to @loeAnchor@
-          loeDiff <- case AF.intersect curChain loeAnchor of
-              Nothing                 -> retry   -- TODO safe?
-              Just (_p1, _p2, s1, s2) -> pure Diff.ChainDiff { getRollback = toEnum (AF.length s1), getSuffix = s2 }
+              loeFrag' = case AF.intersect curChain loeFrag of
+                -- TODO same as 'cross' from ChainSync client
+                Just (curChainPre, _, _, loeSuf) -> fromJust $ curChainPre `AF.join` loeSuf
+                -- TODO think through all possible scenarios when this could
+                -- occur, and potentially consider this case fatal instead of
+                -- falling back to the immutable tip.
+                Nothing                          -> AF.Empty (AF.anchor curChain)
 
-          -- TODO what if k < Diff.getRollback loeDiff?
+          -- TODO what if loeFrag' is very long after the intersection with
+          -- curChain, e.g. more than cdbLoELimit?
 
-          pure (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeDiff)
+          pure (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeFrag')
 
     let curChainAndLedger :: ChainAndLedger blk
         curChainAndLedger =
@@ -516,16 +524,24 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
 
       -- The block @b@ fits onto the end of our current chain
       | pointHash tipPoint == headerPrevHash hdr
-      , Just loeRollback' <- mkLoeRollback' loeDiff $ Diff.extend $ AF.fromOldestFirst (AF.headAnchor curChain) [hdr] -> do   -- TODO need to promptly reprocess this block if the LoE advances?
+        -- TODO could be optimized if necessary/easy enough
+      , let newBlockFrag = curChain AF.:> hdr
+        -- TODO need to promptly reprocess this block if the LoE advances?
+      , Just maxExtra <- computeLoEMaxExtra cdbLoELimit loeFrag newBlockFrag -> do
         -- ### Add to current chain
         traceWith addBlockTracer (TryAddToCurrentChain p)
-        addToCurrentChain succsOf' curChainAndLedger loeRollback'
+        addToCurrentChain succsOf' curChainAndLedger maxExtra
 
       | Just diff <- Paths.isReachable lookupBlockInfo' curChain p
-      , Just loeRollback' <- mkLoeRollback' loeDiff diff -> do   -- TODO need to promptly reprocess this block if the LoE advances?
+        -- TODO could be optimized if necessary/easy enough
+      , let curChain' =
+              AF.mapAnchoredFragment (castHeaderFields . getHeaderFields) curChain
+      , Just newBlockFrag <- Diff.apply curChain' diff
+        -- TODO need to promptly reprocess this block if the LoE advances?
+      , Just maxExtra <- computeLoEMaxExtra cdbLoELimit loeFrag newBlockFrag -> do
         -- ### Switch to a fork
         traceWith addBlockTracer (TrySwitchToAFork p diff)
-        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger loeRollback' diff
+        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger maxExtra diff
 
       | otherwise -> do
         -- ### Store but don't change the current chain
@@ -571,19 +587,17 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
 
     -- | PRECONDITION: the header @hdr@ (and block @b@) fit onto the end of
     -- the current chain.
-    --
-    -- PRECONDITION: @loeRollback' <= k@
     addToCurrentChain ::
          HasCallStack
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
       -> Word64
-         -- ^ The 'Diff.getRollback' of the 'ChainDiff' from @b@ to the LoE anchor
+         -- ^ How many extra blocks to select after @b@ at most.
       -> m (Point blk)
-    addToCurrentChain succsOf curChainAndLedger loeRollback' = do
+    addToCurrentChain succsOf curChainAndLedger maxExtra = do
         -- Extensions of @B@ that do not exceed the LoE
-        let suffixesAfterB = Paths.maximalCandidates succsOf (k - loeRollback') (realPointToPoint p)
+        let suffixesAfterB = Paths.maximalCandidates succsOf maxExtra (realPointToPoint p)
 
         -- Fragments that are anchored at @curHead@, i.e. suffixes of the
         -- current chain.
@@ -642,8 +656,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     -- We try to extend this path by looking for forks that start with the
     -- given block, then we do chain selection and /possibly/ try to switch to
     -- a new fork.
-    --
-    -- PRECONDITION: @loeRollback' <= k@
     switchToAFork ::
          HasCallStack
       => (ChainHash blk -> Set (HeaderHash blk))
@@ -651,11 +663,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
       -> ChainAndLedger blk
          -- ^ The current chain (anchored at @i@) and ledger
       -> Word64
-         -- ^ The 'Diff.getRollback' of the 'ChainDiff' from @b@ to the LoE anchor
+         -- ^ How many extra blocks to select after @b@ at most.
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
       -> m (Point blk)
-    switchToAFork succsOf lookupBlockInfo curChainAndLedger loeRollback' diff = do
+    switchToAFork succsOf lookupBlockInfo curChainAndLedger maxExtra diff = do
         -- We use a cache to avoid reading the headers from disk multiple
         -- times in case they're part of multiple forks that go through @b@.
         let initCache = Map.singleton (headerHash hdr) hdr
@@ -680,7 +692,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
             -- for those candidates.
           . NE.filter (not . Diff.rollbackExceedsSuffix)
             -- 1. Extend the diff with candidates fitting on @B@ and not exceeding the LoE
-          . Paths.extendWithSuccessors succsOf lookupBlockInfo (k - loeRollback')
+          . Paths.extendWithSuccessors succsOf lookupBlockInfo maxExtra
           $ diff
 
         case NE.nonEmpty chainDiffs of
@@ -700,34 +712,26 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         curChain    = VF.validatedFragment curChainAndLedger
         curTip      = castPoint $ AF.headPoint curChain
 
-    -- | The 'Diff.getRollback' of the hypothetical 'ChainDiff' that switches
-    -- from the new block @b@ to the LoE anchor
-    --
-    -- POSTCONDITION: Returns 'Nothing' instead of a number greater than k
-    mkLoeRollback' ::
+    -- | How many extra blocks to select at most after the block @b@ that is
+    -- currently being processed, according to the LoE. If not even @b@ is
+    -- allowed to be selected, return 'Nothing'.
+    computeLoEMaxExtra ::
          (HasHeader x, HeaderHash x ~ HeaderHash blk)
-      => ChainDiff (Header blk)
-         -- ^ The diff from @curChain@ to @loeAnchor@
-      -> ChainDiff x
-         -- ^ The diff from @curChain@ to @b@
+      => Word64
+         -- ^ How many blocks can be selected beyond the LoE.
+      -> AnchoredFragment (Header blk)
+         -- ^ The fragment with the LoE as its tip, with the same anchor as
+         -- @curChain@.
+      -> AnchoredFragment x
+         -- ^ The fragment with the new block @b@ as its tip, with the same
+         -- anchor as @curChain@.
       -> Maybe Word64
-    mkLoeRollback' loeDiff diff = (\x -> if k < x then Nothing else Just x) $ case Diff.getRollback diff `compare` Diff.getRollback loeDiff of
-      -- the switch doesn't change the intersection with the LoE anchor
-      LT ->
-          (Diff.getRollback loeDiff - Diff.getRollback diff)
-        + (toEnum $ AF.length $ Diff.getSuffix diff)
-
-      -- the switch EITHER doesn't change the intersection with the LoE anchor OR ELSE makes it younger
-      EQ -> toEnum $ case AF.intersect (Diff.getSuffix loeDiff) (Diff.getSuffix diff) of
-        Nothing                  -> AF.length $ Diff.getSuffix diff
-        Just (_p1, _p2, _s1, s2) -> AF.length s2
-
-      -- the switch makes the intersection with the LoE anchor older
-      --
-      -- Note that @diff@ cannot roll forward /along/ the LoE anchor
-      -- because in that case @'Diff.getRollback' diff@ is not minimal;
-      -- only the 'EQ' case needs to consider that scenario.
-      GT -> toEnum $ AF.length $ Diff.getSuffix diff
+    computeLoEMaxExtra loeLimit loeFrag newBlockFrag
+      | budgetAlreadyUsed > loeLimit = Nothing
+      | otherwise                    = Just $ loeLimit - budgetAlreadyUsed
+      where
+        -- How many blocks did we already select beyond the LoE, including @b@.
+        budgetAlreadyUsed = Diff.getRollback $ Diff.diff newBlockFrag loeFrag
 
     -- | Create a 'NewTipInfo' corresponding to the tip of the given ledger.
     mkNewTipInfo :: LedgerDB' blk -> NewTipInfo blk

@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
 
 import           Control.Tracer (Tracer, contramap, nullTracer)
 import           Data.Time.Clock (DiffTime, secondsToDiffTime)
+import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
@@ -74,6 +75,11 @@ data ChainDbArgs f m blk = ChainDbArgs {
       -- is the maximum number of blocks that could be kept in memory at the
       -- same time when the background thread processing the blocks can't keep
       -- up.
+    , cdbLoELimit               :: HKD f Word64
+      -- ^ How many blocks can be selected beyond the LoE. The non-degenerate
+      -- value for this is @k@, the security parameter.
+      --
+      -- TODO: use Bool-like type here instead (for either @k@ or @∞@).
     }
 
 -- | Arguments specific to the ChainDB, not to the ImmutableDB, VolatileDB, or
@@ -93,6 +99,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
       -- 'cdbsGcInterval'.
     , cdbsRegistry        :: HKD f (ResourceRegistry m)
     , cdbsTracer          :: Tracer m (TraceEvent blk)
+    , cdbsLoELimit        :: HKD f Word64
     }
 
 -- | Default arguments
@@ -125,6 +132,7 @@ defaultSpecificArgs = ChainDbSpecificArgs {
     , cdbsGcInterval      = secondsToDiffTime 10
     , cdbsRegistry        = NoDefault
     , cdbsTracer          = nullTracer
+    , cdbsLoELimit        = NoDefault
     }
 
 -- | Default arguments
@@ -194,6 +202,7 @@ fromChainDbArgs ChainDbArgs{..} = (
         , cdbsGcInterval      = cdbGcInterval
         , cdbsCheckInFuture   = cdbCheckInFuture
         , cdbsBlocksToAddSize = cdbBlocksToAddSize
+        , cdbsLoELimit        = cdbLoELimit
         }
     )
 
@@ -234,6 +243,7 @@ toChainDbArgs ImmutableDB.ImmutableDbArgs {..}
     , cdbGcDelay                = cdbsGcDelay
     , cdbGcInterval             = cdbsGcInterval
     , cdbBlocksToAddSize        = cdbsBlocksToAddSize
+    , cdbLoELimit               = cdbsLoELimit
     }
 
 {-------------------------------------------------------------------------------

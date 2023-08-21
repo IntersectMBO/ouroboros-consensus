@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -30,10 +31,8 @@ import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..),
                      validateGenesis)
-import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (defaultArgs,
-                     getTipPoint)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (cdbTracer,
-                     withDB)
+import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.LedgerDB (SnapshotInterval (..),
                      defaultDiskPolicy)
 import           Ouroboros.Consensus.Util.IOLike (atomically)
@@ -119,7 +118,7 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
             k           = configSecurityParam pInfoConfig
             diskPolicy  = defaultDiskPolicy k DefaultSnapshotInterval
-            dbArgs      = Node.mkChainDbArgs
+            dbArgs      = disarmLoE $ Node.mkChainDbArgs
                 registry InFuture.dontCheck pInfoConfig pInfoInitLedger chunkInfo $
                     ChainDB.defaultArgs (Node.stdMkChainDbHasFS confDbDir) diskPolicy
 
@@ -154,6 +153,8 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
         }
       , blockForging
       ) = protocolInfo runP
+
+    disarmLoE cfg = cfg { ChainDB.cdbLoELimit = maxBound }
 
 preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()
 preOpenChainDB mode db =

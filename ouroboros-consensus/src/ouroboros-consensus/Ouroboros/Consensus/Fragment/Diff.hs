@@ -89,8 +89,8 @@ extend = ChainDiff 0
 -- PRECONDITION: the candidate fragment must intersect with the current chain
 -- fragment.
 diff
-  :: (HasHeader b, HasCallStack)
-  => AnchoredFragment b  -- ^ Current chain
+  :: (HasHeader b, HasHeader b', HeaderHash b ~ HeaderHash b', HasCallStack)
+  => AnchoredFragment b'  -- ^ Current chain
   -> AnchoredFragment b  -- ^ Candidate chain
   -> ChainDiff b
 diff curChain candChain =

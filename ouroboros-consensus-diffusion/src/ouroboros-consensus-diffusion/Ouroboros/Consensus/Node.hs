@@ -606,6 +606,7 @@ mkChainDbArgs
     , ChainDB.cdbCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
     , ChainDB.cdbGenesis        = return initLedger
     , ChainDB.cdbCheckInFuture  = inFuture
+    , ChainDB.cdbLoELimit       = maxRollbacks (configSecurityParam cfg)
 
     , ChainDB.cdbRegistry       = registry
     }

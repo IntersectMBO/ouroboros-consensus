@@ -66,7 +66,7 @@ maximalCandidates ::
      forall blk.
      (ChainHash blk -> Set (HeaderHash blk))
      -- ^ @filterByPredecessor@
-  -> Word64
+  -> Word64 -- ^ Max length of any candidate
   -> Point blk -- ^ @B@
   -> [NonEmpty (HeaderHash blk)]
      -- ^ Each element in the list is a list of hashes from which we can
@@ -74,7 +74,8 @@ maximalCandidates ::
 maximalCandidates succsOf = \lenLimit b -> mapMaybe NE.nonEmpty $ go lenLimit (pointHash b)
   where
     go :: Word64 -> ChainHash blk -> [[HeaderHash blk]]
-    go !lenLimit mbHash = if 0 == lenLimit then [[]] else case Set.toList $ succsOf mbHash of
+    go 0        _      = [[]]
+    go lenLimit mbHash = case Set.toList $ succsOf mbHash of
       []    -> [[]]
       succs -> [ next : candidate
                | next <- succs
@@ -95,7 +96,7 @@ extendWithSuccessors ::
      forall blk. HasHeader blk
   => (ChainHash blk -> Set (HeaderHash blk))
   -> LookupBlockInfo blk
-  -> Word64
+  -> Word64 -- ^ Max extra length for any suffix
   -> ChainDiff (HeaderFields blk)
   -> NonEmpty (ChainDiff (HeaderFields blk))
 extendWithSuccessors succsOf lookupBlockInfo lenLimit diff =
