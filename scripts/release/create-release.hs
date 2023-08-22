@@ -252,7 +252,7 @@ createGitCommit package next = do
 
 createGitTag :: FilePath -> Version -> Shell ()
 createGitTag package next = do
-  let tagName = packageNameWithVersion package next
+  let tagName = "release-" <> packageNameWithVersion package next
   liftIO $ putStrLn $ "Creating git tag: " <> show tagName
   procs "git" ["tag", packageNameWithVersion]
 
