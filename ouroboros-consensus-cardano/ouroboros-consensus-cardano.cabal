@@ -616,7 +616,7 @@ executable beacon
     , vector-algorithms
 
   -- Chart does not compile on 9.6 right now: https://github.com/timbod7/haskell-chart/issues/248
-  if (os(windows) || impl(ghc >=9.6))
+  if True
     buildable: False
 
 test-suite tools-test
