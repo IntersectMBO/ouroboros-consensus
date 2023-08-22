@@ -25,25 +25,25 @@ fi
 tags=()
 
 if [[ ! $(git tag -l "release-consensus-$consensus_last_version") ]]; then
-    t="release-consensus-$consensus_last_version"
+    t="release-ouroboros-consensus-$consensus_last_version"
     git tag $t HEAD
     tags+=($t)
 fi
 
 if [[ ! $(git tag -l "release-protocol-$protocol_last_version") ]]; then
-    t="release-protocol-$protocol_last_version"
+    t="release-ouroboros-consensus-protocol-$protocol_last_version"
     git tag $t HEAD
     tags+=($t)
 fi
 
 if [[ ! $(git tag -l "release-cardano-$cardano_last_version") ]]; then
-    t="release-cardano-$cardano_last_version"
+    t="release-ouroboros-consensus-cardano-$cardano_last_version"
     git tag $t HEAD
     tags+=($t)
 fi
 
 if [[ ! $(git tag -l "release-diffusion-$diffusion_last_version") ]]; then
-    t="release-diffusion-$diffusion_last_version"
+    t="release-ouroboros-consensus-diffusion-$diffusion_last_version"
     git tag $t HEAD
     tags+=($t)
 fi
