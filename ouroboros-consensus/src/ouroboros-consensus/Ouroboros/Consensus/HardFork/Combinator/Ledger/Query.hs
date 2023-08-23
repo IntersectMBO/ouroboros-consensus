@@ -224,7 +224,7 @@ distribDiskLedgerView dlv =
     injectRangeQuery i (RangeQuery ks p) = RangeQuery (fmap (injectLedgerTables' i) ks) p
 
     distribLedgerTables' ::
-         forall x mk. (Ord (Key (LedgerState x)), CanMapMaybeMK mk, CanMapKeysMK mk)
+         forall x mk. (Ord (Key (LedgerState x)), CanMapMK mk, CanMapKeysMK mk)
       => Index xs x
       -> LedgerTables (ExtLedgerState (HardForkBlock xs)) mk
       -> LedgerTables (ExtLedgerState x) mk

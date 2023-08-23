@@ -16,14 +16,11 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   , Translate (..)
   , TranslateLedgerState (..)
   , TranslateLedgerTables (..)
-  , TranslateTxIn (..)
   , TranslateTxOut (..)
   , translateLedgerTablesWith
   ) where
 
 import           Control.Monad.Except
-import qualified Data.Map.Diff.Strict.Internal as Diff
-import qualified Data.Map.Strict as Map
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope)
 import qualified Data.SOP.Telescope as Telescope
@@ -124,6 +121,8 @@ newtype TranslateLedgerState x y = TranslateLedgerState {
       -> LedgerState y DiffMK
   }
 
+newtype TranslateTxOut x y = TranslateTxOut (Value (LedgerState x) -> Value (LedgerState y))
+
 -- | Transate a 'LedgerTables' across an era transition.
 data TranslateLedgerTables x y = TranslateLedgerTables {
     -- | Translate a 'TxIn' across an era transition.
@@ -134,12 +133,8 @@ data TranslateLedgerTables x y = TranslateLedgerTables {
     -- | Translate a 'TxOut' across an era transition.
     --
     -- See 'translateLedgerTablesWith'.
-  , translateTxOutWith :: !(Value (LedgerState x) -> Maybe (Value (LedgerState y)))
+  , translateTxOutWith :: !(Value (LedgerState x) -> Value (LedgerState y))
   }
-
-newtype TranslateTxIn x y = TranslateTxIn (Key (LedgerState x) -> Key (LedgerState y))
-
-newtype TranslateTxOut x y = TranslateTxOut (Value (LedgerState x) -> Maybe (Value (LedgerState y)))
 
 -- | Translate a 'LedgerTables' across an era transition.
 --
@@ -171,15 +166,9 @@ translateLedgerTablesWith ::
   -> LedgerTables (LedgerState y) DiffMK
 translateLedgerTablesWith f =
       LedgerTables
-    . DiffMK
-    . Diff.Diff
-    . Map.mapKeys (translateTxInWith f)
-    . getDiff
-    . Diff.mapMaybeDiff (translateTxOutWith f)
-    . getDiffMK
+    . mapKeysMK (translateTxInWith f)
+    . mapMK (translateTxOutWith f)
     . getLedgerTables
-  where
-    getDiff (Diff.Diff m) = m
 
 -- | Knowledge in a particular era of the transition to the next era
 data TransitionInfo =
