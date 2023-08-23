@@ -464,8 +464,11 @@ library unstable-mempool-test-utils
     , base
     , contra-tracer
     , deepseq
+    , directory
+    , fs-api
     , ouroboros-consensus
     , strict-stm
+    , temporary
 
 library unstable-tutorials
   import:         common-lib
@@ -628,14 +631,13 @@ test-suite storage-test
     , cardano-crypto-class
     , cardano-slotting
     , cborg
-    , consensus-testlib
     , constraints
     , containers
     , contra-tracer
-    , diff-containers           >=1.1
+    , diff-containers             >=1.1
     , directory
-    , fs-api                    ^>=0.2
-    , fs-sim                    ^>=0.2
+    , fs-api                      ^>=0.2
+    , fs-sim                      ^>=0.2
     , generics-sop
     , hashable
     , io-classes
@@ -650,7 +652,7 @@ test-suite storage-test
     , QuickCheck
     , quickcheck-dynamic
     , quickcheck-lockstep
-    , quickcheck-state-machine  ^>=0.7
+    , quickcheck-state-machine    ^>=0.7
     , random
     , serialise
     , strict-mvar
@@ -672,7 +674,7 @@ benchmark mempool-bench
   main-is:        Main.hs
   other-modules:
     Bench.Consensus.Mempool
-    Bench.Consensus.Mempool.Params
+    Bench.Consensus.Mempool.Defaults
     Bench.Consensus.Mempool.Scenario
     Bench.Consensus.Mempool.TestBlock
 
@@ -686,9 +688,7 @@ benchmark mempool-bench
     , containers
     , contra-tracer
     , deepseq
-    , diff-containers      >=1.1
-    , directory
-    , fs-api
+    , diff-containers              >=1.1
     , mtl
     , nothunks
     , ouroboros-consensus
@@ -696,7 +696,6 @@ benchmark mempool-bench
     , tasty
     , tasty-bench
     , tasty-hunit
-    , temporary
     , text
     , transformers
     , tree-diff
@@ -712,10 +711,9 @@ benchmark backingstore-bench
   build-depends:
     , base
     , cardano-slotting
-    , consensus-testlib
     , containers
     , deepseq
-    , diff-containers      >=1.1
+    , diff-containers             >=1.1
     , directory
     , fs-api
     , io-classes
@@ -726,3 +724,4 @@ benchmark backingstore-bench
     , tasty-bench
     , tasty-quickcheck
     , temporary
+    , unstable-consensus-testlib

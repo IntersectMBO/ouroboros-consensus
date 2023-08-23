@@ -16,6 +16,7 @@ import           Network.TypedProtocol.Proofs (connect)
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Config (topLevelConfigLedger)
 import qualified Ouroboros.Consensus.Config as Consensus
+import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Combinator (getHardForkState,
                      hardForkLedgerStatePerEra)
 import           Ouroboros.Consensus.Ledger.Extended (ledgerState)
@@ -26,6 +27,9 @@ import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent,
                      localTxSubmissionServer)
 import           Ouroboros.Consensus.Node.ProtocolInfo
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+                     (BackingStoreSelector (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.Config
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Client
                      (SubmitResult, localTxSubmissionClientPeer)
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Examples
@@ -74,11 +78,15 @@ tests =
             capcityBytesOverride = Mempool.mkCapacityBytesOverride 100_000
             -- Use 'show >$< stdoutTracer' for debugging.
             tracer               = nullTracer
-            mempoolParams        = Mocked.MempoolAndModelParams {
-                Mocked.immpInitialState =
+            mempoolParams        = Mocked.InitialMempoolAndModelParams {
+                Mocked.immpChangelogBlocks = []
+              , Mocked.immpBackingStoreSelector = InMemoryBackingStore
+              , Mocked.immpBackingState =
                   ledgerState $ pInfoInitLedger pInfo
-              , Mocked.immpLedgerConfig =
-                  topLevelConfigLedger $ pInfoConfig pInfo
+              , Mocked.immpLedgerConfig = LedgerDbCfg {
+                    ledgerDbCfgSecParam = SecurityParam 10
+                  , ledgerDbCfg = topLevelConfigLedger $ pInfoConfig pInfo
+                  }
               }
 
           mempool <- Mocked.openMockedMempool

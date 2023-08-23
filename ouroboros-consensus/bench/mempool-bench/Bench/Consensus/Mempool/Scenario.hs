@@ -22,8 +22,8 @@ module Bench.Consensus.Mempool.Scenario (
   ) where
 
 import           Bench.Consensus.Mempool (MempoolCmd (..))
-import           Bench.Consensus.Mempool.Params (InitialMempoolAndModelParams,
-                     ledgerStateFromTokens, mkParams, testBlocksFromTxs)
+import           Bench.Consensus.Mempool.Defaults (ledgerStateFromTokens,
+                     testBlocksFromTxs)
 import           Bench.Consensus.Mempool.TestBlock (GenTx (TestBlockGenTx),
                      TestBlock, Token, Tx (..), mkTx)
 import           Control.Exception (assert)
@@ -36,6 +36,8 @@ import           Ouroboros.Consensus.Ledger.Tables (ValuesMK)
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
                      (BackingStoreSelector (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.Config (LedgerDbCfg (..))
+import           Test.Consensus.Mempool.Mocked
+                     (InitialMempoolAndModelParams (..))
 
 {-------------------------------------------------------------------------------
   Scenario
@@ -66,7 +68,7 @@ fromScenario ::
   -> Scenario
   -> (InitialMempoolAndModelParams m TestBlock, [MempoolCmd TestBlock])
 fromScenario ldbCfg bss sc =
-  (mkParams
+  (InitialMempoolAndModelParams
     (scBackingState sc)
     (scChangelogBlocks sc)
     ldbCfg

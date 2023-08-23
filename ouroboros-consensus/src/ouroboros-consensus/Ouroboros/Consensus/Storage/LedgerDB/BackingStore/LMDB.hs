@@ -57,7 +57,6 @@ import           Ouroboros.Consensus.Util (foldlM')
 import           Ouroboros.Consensus.Util.IOLike (Exception (..), IOLike,
                      MonadCatch (..), MonadThrow (..), bracket)
 import qualified System.FS.API as FS
-import qualified System.FS.API.Types as FS
 
 {-------------------------------------------------------------------------------
  Backing Store interface

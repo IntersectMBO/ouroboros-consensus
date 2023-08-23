@@ -44,7 +44,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as LMDB
                      (DbErr (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..), handle)
 import           System.FS.API hiding (Handle)
-import           System.FS.API.Types hiding (Handle)
 import qualified Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock as Mock
 import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock (Err (..),
                      Mock (..), ValueHandle (..), runMockState)

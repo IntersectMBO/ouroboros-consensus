@@ -44,7 +44,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as LMDB
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..))
 import qualified System.Directory as Dir
 import           System.FS.API hiding (Handle)
-import           System.FS.API.Types hiding (Handle)
 import           System.FS.IO (ioHasFS)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
