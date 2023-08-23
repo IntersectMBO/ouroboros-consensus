@@ -29,6 +29,7 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Serialisation
                      (SerialiseNodeToClient (decodeNodeToClient))
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
+import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger
                      (CodecConfig (ShelleyCodecConfig))
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()

@@ -359,7 +359,6 @@ library unstable-cardano-testlib
 
   build-depends:
     , base
-    , byron-testlib
     , cardano-crypto-class
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
@@ -408,7 +407,10 @@ test-suite cardano-test
     , cardano-data
     , cardano-ledger-alonzo
     , cardano-ledger-alonzo-test
+    , cardano-ledger-babbage-test
+    , cardano-ledger-binary
     , cardano-ledger-byron
+    , cardano-ledger-conway-test
     , cardano-ledger-core
     , cardano-ledger-shelley
     , cardano-ledger-shelley-test
@@ -417,7 +419,7 @@ test-suite cardano-test
     , cborg
     , containers
     , contra-tracer
-    , diff-containers                                               >=1.1
+    , diff-containers                                                                                     >=1.1
     , filepath
     , microlens
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-testlib}

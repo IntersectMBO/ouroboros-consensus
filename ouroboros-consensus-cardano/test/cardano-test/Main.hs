@@ -28,7 +28,7 @@ tests =
   , Test.Consensus.Cardano.Golden.tests
   , Test.Consensus.Cardano.Serialisation.tests
   , testGroup "ThreadNet" [
-      , Test.ThreadNet.AllegraMary.tests
+        Test.ThreadNet.AllegraMary.tests
       , Test.ThreadNet.Cardano.tests
       , Test.ThreadNet.MaryAlonzo.tests
       , Test.ThreadNet.ShelleyAllegra.tests
