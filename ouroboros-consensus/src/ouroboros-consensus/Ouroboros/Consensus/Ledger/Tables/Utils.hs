@@ -61,7 +61,6 @@ over ::
      ( HasLedgerTables l
      , CanMapMK mk'
      , CanMapKeysMK mk'
-     , CanMapMaybeMK mk'
      , ZeroableMK mk'
      )
   => l mk

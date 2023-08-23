@@ -39,8 +39,8 @@ import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Allegra.Translation
                      (shelleyToAllegraAVVMsToDelete)
+import qualified Cardano.Ledger.Core as SL
 import           Cardano.Ledger.Crypto (ADDRHASH, Crypto, DSIGN, HASH)
-import qualified Cardano.Ledger.Era as SL
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
 import           Cardano.Ledger.Keys (DSignable, Hash)
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -303,11 +303,11 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         $ PNil
     , translateLedgerTables  =
           PCons translateLedgerTablesByronToShelleyWrapper
-        $ PCons translateLedgerTablesShelleyToAllegraWrapper
-        $ PCons translateLedgerTablesAllegraToMaryWrapper
-        $ PCons translateLedgerTablesMaryToAlonzoWrapper
-        $ PCons translateLedgerTablesAlonzoToBabbageWrapper
-        $ PCons translateLedgerTablesBabbageToConwayWrapper
+        $ PCons translateLedgerTablesAcrossShelley
+        $ PCons translateLedgerTablesAcrossShelley
+        $ PCons translateLedgerTablesAcrossShelley
+        $ PCons translateLedgerTablesAcrossShelley
+        $ PCons translateLedgerTablesAcrossShelley
         $ PNil
     , translateChainDepState =
           PCons translateChainDepStateByronToShelleyWrapper
@@ -581,7 +581,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   avvmsAsDeletions = LedgerTables
                                    . DiffMK
                                    . Diff.Internal.fromMapDeletes
-                                   . Map.mapMaybe translateTxOut
+                                   . Map.map SL.upgradeTxOut
                                    $ avvms
 
                   -- This 'stowLedgerTables' + 'withLedgerTables' injects the
@@ -596,21 +596,11 @@ translateLedgerStateShelleyToAllegraWrapper =
 
                   resultingState = unFlip . unComp
                                  . SL.translateEra' ()
-                                 . Comp   . Flip
+                                 . Comp . Flip
                                  $ stowedState
 
               in resultingState `withLedgerTables` avvmsAsDeletions
         }
-
-translateLedgerTablesShelleyToAllegraWrapper ::
-     (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
-  => TranslateLedgerTables
-      (ShelleyBlock (TPraos c) (ShelleyEra c))
-       (ShelleyBlock (TPraos c) (AllegraEra c))
-translateLedgerTablesShelleyToAllegraWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
-    , translateTxOutWith = translateTxOut
-    }
 
 translateTxShelleyToAllegraWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -651,16 +641,6 @@ translateLedgerStateAllegraToMaryWrapper =
               . Flip
         }
 
-translateLedgerTablesAllegraToMaryWrapper ::
-     (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
-  => TranslateLedgerTables
-       (ShelleyBlock (TPraos c) (AllegraEra c))
-       (ShelleyBlock (TPraos c) (MaryEra c))
-translateLedgerTablesAllegraToMaryWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
-    , translateTxOutWith = translateTxOut
-    }
-
 translateTxAllegraToMaryWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => InjectTx
@@ -699,16 +679,6 @@ translateLedgerStateMaryToAlonzoWrapper =
               . Comp
               . Flip
         }
-
-translateLedgerTablesMaryToAlonzoWrapper ::
-     (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
-  => TranslateLedgerTables
-       (ShelleyBlock (TPraos c) (MaryEra c))
-       (ShelleyBlock (TPraos c) (AlonzoEra c))
-translateLedgerTablesMaryToAlonzoWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
-    , translateTxOutWith = translateTxOut
-    }
 
 getAlonzoTranslationContext ::
      WrapLedgerConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
@@ -769,16 +739,6 @@ translateLedgerStateAlonzoToBabbageWrapper =
         , shelleyLedgerTransition = st
         , shelleyLedgerTables     = coerce tb
         }
-
-translateLedgerTablesAlonzoToBabbageWrapper ::
-     Praos.PraosCrypto c
-  => TranslateLedgerTables
-       (ShelleyBlock (TPraos c) (AlonzoEra c))
-       (ShelleyBlock (Praos c) (BabbageEra c))
-translateLedgerTablesAlonzoToBabbageWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
-    , translateTxOutWith = translateTxOut
-    }
 
 translateTxAlonzoToBabbageWrapper ::
      (Praos.PraosCrypto c)
@@ -889,16 +849,6 @@ translateLedgerStateBabbageToConwayWrapper =
             \(LedgerTables diffMK)  ->
              LedgerTables $ fmap Conway.translateTxOut diffMK
         }
-
-translateLedgerTablesBabbageToConwayWrapper ::
-     Praos.PraosCrypto c
-  => TranslateLedgerTables
-       (ShelleyBlock (Praos c) (BabbageEra c))
-       (ShelleyBlock (Praos c) (ConwayEra c))
-translateLedgerTablesBabbageToConwayWrapper = TranslateLedgerTables {
-      translateTxInWith  = id
-    , translateTxOutWith = translateTxOut
-    }
 
 getConwayTranslationContext ::
      WrapLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))

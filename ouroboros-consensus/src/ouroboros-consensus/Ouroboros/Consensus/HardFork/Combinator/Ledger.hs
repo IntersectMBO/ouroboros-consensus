@@ -911,7 +911,7 @@ instance ( HardForkHasLedgerTables xs
         $ unFlip l
 
   withLedgerTables ::
-       forall mk any. (CanMapMK mk, CanMapKeysMK mk, CanMapMaybeMK mk, ZeroableMK mk)
+       forall mk any. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => LedgerState               (HardForkBlock xs)  any
     -> LedgerTables (LedgerState (HardForkBlock xs)) mk
     -> LedgerState               (HardForkBlock xs)  mk
@@ -956,7 +956,7 @@ instance ( HardForkHasLedgerTables xs
         $ getFlipTickedLedgerState l
 
   withLedgerTables ::
-       forall mk any. (CanMapMK mk, CanMapKeysMK mk, CanMapMaybeMK mk, ZeroableMK mk)
+       forall mk any. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
     => Ticked1 (LedgerState (HardForkBlock xs)) any
     -> LedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) mk
     -> Ticked1 (LedgerState (HardForkBlock xs)) mk
@@ -1036,9 +1036,9 @@ injectLedgerTables idx =
 distribLedgerTables ::
      forall xs x mk. (
           CanMapKeysMK mk
+        , CanMapMK mk
         , Ord (Key (LedgerState x))
         , HasCanonicalTxIn xs
-        , CanMapMaybeMK mk
         , CanHardFork xs
         )
   => Index xs x
@@ -1047,41 +1047,42 @@ distribLedgerTables ::
 distribLedgerTables idx =
     LedgerTables
   . mapKeysMK distrTxIn
-  . mapMaybeMK distrTxOut
+  . mapMK distrTxOut
   . getLedgerTables
   where
     distrTxIn :: Key (LedgerState (HardForkBlock xs)) -> Key (LedgerState x)
     distrTxIn = distribCanonicalTxIn idx
 
-    distrTxOut :: Value (LedgerState (HardForkBlock xs)) -> Maybe (Value (LedgerState x))
+    distrTxOut :: Value (LedgerState (HardForkBlock xs)) -> Value (LedgerState x)
     distrTxOut =
-        fmap unwrapTxOut
-      . unComp
-      . apFn (projectNP idx $ composeTxOutTranslations $ ipTranslateTxOut hardForkEraTranslation)
+        unwrapTxOut
+      . apFn ( projectNP idx
+             . composeTxOutTranslations
+             . ipTranslateTxOut
+             $ hardForkEraTranslation
+             )
       . K
 
 composeTxOutTranslations ::
      SListI xs
   => InPairs TranslateTxOut xs
-  -> NP (K (NS WrapTxOut xs) -.-> Maybe :.: WrapTxOut) xs
+  -> NP (K (NS WrapTxOut xs) -.-> WrapTxOut) xs
 composeTxOutTranslations = \case
     PNil ->
-      fn (Comp. Just . unZ . unK) :* Nil
+      fn (unZ . unK) :* Nil
     PCons (TranslateTxOut t) ts ->
-      fn ( Comp
-         . Just
-         . eitherNS
+      fn ( eitherNS
               id
               (error "composeTranslations: anachrony")
          . unK
          )
       :* hmap
           (\innerf -> fn $
-              Comp
-            . (>>= (unComp . apFn innerf . K))
+              apFn innerf
+            . K
             . eitherNS
-                (fmap (Z . WrapTxOut) . t . unwrapTxOut)
-                Just
+                (Z . WrapTxOut . t . unwrapTxOut)
+                id
             . unK)
           (composeTxOutTranslations ts)
   where

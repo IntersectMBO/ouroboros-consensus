@@ -30,7 +30,6 @@ module Ouroboros.Consensus.Shelley.Eras (
   , StandardMary
   , StandardShelley
     -- * Shelley-based era
-  , CanTranslateTxOut (..)
   , ShelleyBasedEra (..)
   , WrapTx (..)
     -- * Type synonyms for convenience
@@ -74,7 +73,6 @@ import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
 import qualified Data.Set as Set
 import           Data.Text (Text)
-import           Data.Void (absurd)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
                      (WhetherToIntervene (..))
@@ -387,34 +385,3 @@ instance ShelleyBasedEra (ConwayEra c) => Core.TranslateEra (ConwayEra c) WrapTx
         fmap (WrapTx . Conway.unTx)
       . Core.translateEra @(ConwayEra c) ctxt
       . Conway.Tx . unwrapTx
-
-{-------------------------------------------------------------------------------
-  Translate tx out
--------------------------------------------------------------------------------}
-
-class CanTranslateTxOut era where
-  translateTxOut :: Core.TxOut (PreviousEra era) -> Maybe (Core.TxOut era)
-
-instance ShelleyBasedEra (AllegraEra c)
-      => CanTranslateTxOut (AllegraEra c) where
-  translateTxOut =
-    either absurd Just . runExcept . Core.translateEra ()
-
-instance ShelleyBasedEra (MaryEra c)
-      => CanTranslateTxOut (MaryEra c) where
-  translateTxOut =
-    either absurd Just . runExcept . Core.translateEra ()
-
-instance ShelleyBasedEra (AlonzoEra c)
-      => CanTranslateTxOut (AlonzoEra c) where
-  translateTxOut =
-    Just . Alonzo.translateTxOut
-
-instance ShelleyBasedEra (BabbageEra c)
-      => CanTranslateTxOut (BabbageEra c) where
-  translateTxOut =
-    Just . Babbage.translateTxOut
-
-instance ShelleyBasedEra (ConwayEra c)
-      => CanTranslateTxOut (ConwayEra c) where
-  translateTxOut = Conway.translateTxOut
