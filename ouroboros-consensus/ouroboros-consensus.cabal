@@ -525,7 +525,7 @@ test-suite consensus-test
     , diff-containers                                                     >=1.1
     , fingertree-rm                                                       >=1.0
     , fs-api                                                              ^>=0.2
-    , fs-sim
+    , fs-sim                                                              ^>=0.2
     , generics-sop
     , hashable
     , io-classes
