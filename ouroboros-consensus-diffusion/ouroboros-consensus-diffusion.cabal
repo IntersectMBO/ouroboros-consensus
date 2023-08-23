@@ -74,16 +74,16 @@ library
     , filepath
     , fs-api                       ^>=0.2
     , hashable
-    , io-classes                   ^>=1.1
+    , io-classes                   ^>=1.2
     , mtl
     , ouroboros-consensus          ^>=0.10
-    , ouroboros-network            >=0.7    && <0.8  || ^>=0.8
-    , ouroboros-network-api        ^>=0.5
-    , ouroboros-network-framework  ^>=0.7
-    , ouroboros-network-protocols  ^>=0.5
+    , ouroboros-network            ^>=0.9.1
+    , ouroboros-network-api        ^>=0.5.1
+    , ouroboros-network-framework  ^>=0.9
+    , ouroboros-network-protocols  ^>=0.5.2
     , random
     , serialise                    ^>=0.2
-    , si-timers                    ^>=1.1
+    , si-timers                    ^>=1.2
     , text                         ^>=2.0
     , time
     , transformers

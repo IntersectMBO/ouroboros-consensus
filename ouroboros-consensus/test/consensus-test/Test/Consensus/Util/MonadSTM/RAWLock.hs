@@ -162,7 +162,7 @@ tabulateBlockeds tr =
     isBlocked _                   = Nothing
 
     count :: (SimEventType -> Maybe x) -> SimTrace a -> Int
-    count p = length . selectTraceEvents p
+    count p = length . selectTraceEvents (const p)
 
     classifyBand :: Int -> String
     classifyBand n
