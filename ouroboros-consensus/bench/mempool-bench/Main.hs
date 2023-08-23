@@ -6,7 +6,7 @@
 module Main (main) where
 
 import           Bench.Consensus.Mempool
-import           Bench.Consensus.Mempool.Params
+import           Bench.Consensus.Mempool.Defaults
 import           Bench.Consensus.Mempool.Scenario
 import           Bench.Consensus.Mempool.TestBlock (TestBlock)
 import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
@@ -112,7 +112,7 @@ main = do
                             void $ act mempool txs
                             -- TODO: consider adding a 'reset' command to the mempool to make sure its state is not tainted.
                             maybe (pure ()) (Mocked.removeTxs mempool) $ NE.nonEmpty $ getCmdsTxIds txs
-                      bgroup (showBackingStoreSelector (immpBackingStoreSelector params)
+                      bgroup (showBackingStoreSelector (Mocked.immpBackingStoreSelector params)
                                <> ": "
                                <> show n <> " transactions") [
                           bench "benchmark" $ nfIO $ withAcquiredMempool $ \mempool txs -> do
@@ -181,11 +181,11 @@ main = do
 -------------------------------------------------------------------------------}
 
 openMempoolWithCapacityFor ::
-     InitialMempoolAndModelParams IO TestBlock
+     Mocked.InitialMempoolAndModelParams IO TestBlock
   -> [MempoolCmd TestBlock]
-  -> IO (MempoolWithMockedLedgerItf IO TestBlock)
+  -> IO (MockedMempool IO TestBlock)
 openMempoolWithCapacityFor params cmds =
-    openMempoolWithMockedLedgerItf capacityRequiredByCmds
+    Mocked.openMockedMempool capacityRequiredByCmds
                                    Tracer.nullTracer
                                    TestBlock.txSize
                                    params

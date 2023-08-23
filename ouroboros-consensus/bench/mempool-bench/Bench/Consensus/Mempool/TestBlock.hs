@@ -11,13 +11,13 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Bench.Consensus.Mempool.TestBlock (
     -- * Test block
-    TestBlock
-    -- * Initial parameters
-  , initialLedgerState
-  , sampleLedgerConfig
+    LedgerState (..)
+  , TestBlock
     -- * Payload semantics
   , Ledger.GenTx (TestBlockGenTx, unGenTx)
   , PayloadDependentState (TestPLDS)
+  , firstBlockWithPayload
+  , successorBlockWithPayload
     -- * Transactions
   , Token (Token)
   , Tx (Tx, consumed, produced)
@@ -28,7 +28,6 @@ module Bench.Consensus.Mempool.TestBlock (
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
-import qualified Cardano.Slotting.Time as Time
 import           Codec.Serialise (Serialise (..))
 import           Control.DeepSeq (NFData)
 import           Control.Monad.Trans.Except (except)
@@ -45,16 +44,12 @@ import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
                      CanStowLedgerTables, DiffMK (..), EmptyMK, EqMK,
-                     HasLedgerTables, Key, KeysMK (..), LedgerTables (..),
-                     NoThunksMK, ShowMK, Value, ValuesMK (..))
+                     HasLedgerTables, Key, KeysMK (..), NoThunksMK, ShowMK,
+                     Value, ValuesMK (..))
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
                      (rawAttachAndApplyDiffs)
 import qualified Ouroboros.Consensus.Mempool as Mempool
-import           Test.Util.TestBlock (LedgerState (TestLedger),
-                     PayloadSemantics (PayloadDependentError, PayloadDependentState, applyPayload, getPayloadKeySets),
-                     TestBlockWith, Ticked1 (TickedTestLedger),
-                     applyDirectlyToPayloadDependentState,
-                     payloadDependentState)
+import           Test.Util.TestBlock hiding (TestBlock)
 
 {-------------------------------------------------------------------------------
   MempoolTestBlock
@@ -88,10 +83,6 @@ mkTx cons prod = Tx {
 -- | Create a 'Tx' that consumes and produces exactly one 'Token'.
 mkSimpleTx :: Token -> Token -> Tx
 mkSimpleTx x y = mkTx [x] [y]
-
-sampleLedgerConfig :: Ledger.LedgerConfig TestBlock
-sampleLedgerConfig =
-  HardFork.defaultEraParams (Consensus.SecurityParam 10) (Time.slotLengthFromSec 2)
 
 -- | Create a 'Tx' that consumes nothing, and produces only the given 'Token'.
 mkSimpleGenesisTx :: Token -> Tx

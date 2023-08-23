@@ -78,7 +78,7 @@ import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Block (Point (Point))
 import           System.FS.API
-import           System.FS.API.Types (mkFsPath)
+
 {-------------------------------------------------------------------------------
   Initialize the DB
 -------------------------------------------------------------------------------}

@@ -5,15 +5,14 @@
 module Test.Consensus.Mempool.Mocked (
     InitialMempoolAndModelParams (..)
     -- * Mempool with a mocked LedgerDB interface
-  , MempoolWithMockedLedgerItf (getMempool)
-  , openMempoolWithMockedLedgerItf
+  , MockedMempool (getMempool)
+  , openMockedMempool
     -- * Mempool API functions
   , addTx
   , getTxs
   , removeTxs
   ) where
 
-import           Bench.Consensus.Mempool.Params
 import           Control.Concurrent.Class.MonadSTM.Strict
                      (MonadSTM (atomically), newTVarIO)
 import           Control.DeepSeq (NFData (rnf))
@@ -43,7 +42,7 @@ import           System.FS.API.Types (MountPoint (MountPoint))
 import           System.FS.IO (ioHasFS)
 import           System.IO.Temp (createTempDirectory)
 
-data MempoolWithMockedLedgerItf m blk = MempoolWithMockedLedgerItf {
+data MockedMempool m blk = MockedMempool {
       getLedgerInterface    :: !(Mempool.LedgerInterface m blk)
     , getLedgerDB           :: !(DbChangelog (LedgerState blk))
     , getLedgerBackingStore :: !(LedgerBackingStore m (LedgerState blk))
@@ -61,19 +60,19 @@ instance NFData (MockedMempool m blk) where
   -- benchmarks, maybe this definition is enough.
   rnf MockedMempool {} = ()
 
-openMempoolWithMockedLedgerItf ::
+openMockedMempool ::
      ( Ledger.LedgerSupportsMempool blk
      , Ledger.HasTxId (Ledger.GenTx blk)
-     , Ledger.CanSerializeLedgerTables (LedgerState blk)
      , Ledger.LedgerSupportsProtocol blk
+     , Ledger.CanSerializeLedgerTables (LedgerState blk)
      )
   => Mempool.MempoolCapacityBytesOverride
   -> Tracer IO (Mempool.TraceEventMempool blk)
   -> (Ledger.GenTx blk -> Mempool.TxSizeInBytes)
   -> InitialMempoolAndModelParams IO blk
     -- ^ Initial ledger state for the mocked Ledger DB interface.
-  -> IO (MempoolWithMockedLedgerItf IO blk)
-openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
+  -> IO (MockedMempool IO blk)
+openMockedMempool capacityOverride tracer txSizeImpl params = do
     -- Set up a backing store with initial values
     sysTmpDir <- getTemporaryDirectory
     tmpDir <- createTempDirectory sysTmpDir "mempool-bench"
@@ -106,14 +105,14 @@ openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
                    capacityOverride
                    tracer
                    txSizeImpl
-    pure MempoolWithMockedLedgerItf {
+    pure MockedMempool {
         getLedgerInterface    = ledgerItf
       , getLedgerDB           = ldb
       , getLedgerBackingStore = lbs
       , getMempool            = mempool
     }
   where
-    MempoolAndModelParams {
+    InitialMempoolAndModelParams {
         immpBackingState         = backingState
       , immpLedgerConfig         = ldbcfg
       , immpBackingStoreSelector = bss
@@ -130,7 +129,7 @@ addTx ::
 addTx = Mempool.addTx . getMempool
 
 removeTxs ::
-     MempoolWithMockedLedgerItf m blk
+     MockedMempool m blk
   -> NE.NonEmpty (Ledger.GenTxId blk)
   -> m ()
 removeTxs = Mempool.removeTxs . getMempool
@@ -143,3 +142,55 @@ getTxs mockedMempool = do
                                             $ Mempool.getSnapshot
                                             $ getMempool mockedMempool
     pure $ fmap (Ledger.txForgetValidated . fst) snapshotTxs
+
+{-------------------------------------------------------------------------------
+  Types
+-------------------------------------------------------------------------------}
+
+-- | Initial parameters for the mempool.
+--
+-- === Parameters for the ledger interface
+--
+-- One goal of the mempool parameters is to provide enough information to set up
+-- an interface to the ledger database. Setting up a ledger interface requires
+-- two main parts of the ledger database: a backing store, and a changelog.
+--
+-- Which backing store implementation we use is determined by
+-- 'immpBackingStoreSelector'. The backing store will be initialised using
+-- values from 'immpBackingState'. The changelog keeps track of differences on
+-- values that are induced by applying blocks. Each diff in the changelog
+-- corresponds to a block. As such, the changelog will be populated by applying
+-- blocks from 'immpChangelogBlocks' in sequence to 'immpBackingState'.
+--
+-- INVARIANT: applying the blocks in 'immpChangelogBlocks' in sequence to
+-- 'immpBackingState' should not fail.
+--
+-- ==== Effect on performance
+--
+-- How we populate the ledger database with values and differences could affect
+-- the performance of mempool operations. To be precise, each time we need a
+-- partial ledger state to apply transactions to, we /rewind-read-forward/.
+--
+-- * Rewind: Rewind keys by determining which slot the tip of the backing store
+--   points to.
+-- * Read: Read values from the backing store for the rewound keys.
+-- * Forward: Forward the read values through the changelog.
+--
+-- How expensive these steps are depends on how we populate the backing store
+-- and changelog. We are not sure if we can estimate the cost of mempool
+-- operations on these parameters only, but in general, we suspect that:
+--
+-- * Reading values succesfully from the backing store incurs extra costs (e.g.,
+--   deserialisation and I/O costs), compared to when a value is not found in
+--   the backing store.
+-- * Forwarding becomes more expensive as the following increase: (i) the number
+--   of blocks, and (ii) the size of the diffs induced by blocks.
+--
+data InitialMempoolAndModelParams m blk = InitialMempoolAndModelParams {
+      -- | The values that will be used to initialise a backing store.
+      immpBackingState         :: !(LedgerState blk Ledger.ValuesMK)
+      -- | Blocks that will be used to populate a changelog.
+    , immpChangelogBlocks      :: ![blk]
+    , immpLedgerConfig         :: !(LedgerDbCfg (LedgerState blk))
+    , immpBackingStoreSelector :: !(BackingStoreSelector m)
+    }

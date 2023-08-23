@@ -96,6 +96,7 @@ import           Ouroboros.Network.Point (Block (Block))
 import           Prelude hiding (elem)
 import qualified System.Directory as Dir
 import           System.FS.API
+import qualified System.FS.IO as FSIO
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
 import qualified System.IO.Temp as Temp
