@@ -31,7 +31,8 @@ import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
                      StrictTVar, newTVarIO, readTVar, throwSTM, writeTVar)
 import           System.FS.API
                      (HasFS (createDirectory, doesDirectoryExist, doesFileExist, mkFsErrorPath),
-                     SomeHasFS (SomeHasFS), hGetAll, hPutAll, withFile)
+                     SomeHasFS (SomeHasFS), withFile)
+import           System.FS.API.Lazy (hGetAll, hPutAll)
 import           System.FS.API.Types (AllowExisting (MustBeNew), FsErrorPath,
                      FsPath (fsPathToList), OpenMode (ReadMode, WriteMode),
                      fsPathFromList)

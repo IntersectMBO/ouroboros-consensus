@@ -40,7 +40,6 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Util.IOLike
 import qualified System.FS.API as FS
-import qualified System.FS.API.Types as FS
 
 {-------------------------------------------------------------------------------
   Backing store interface
