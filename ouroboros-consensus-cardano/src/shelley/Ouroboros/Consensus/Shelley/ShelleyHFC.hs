@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   , crossEraForecastAcrossShelley
   , forecastAcrossShelley
   , translateChainDepStateAcrossShelley
+  , translateLedgerTablesAcrossShelley
   ) where
 
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
@@ -58,6 +59,7 @@ import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol, ledgerViewForecastAt)
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.TPraos hiding (PraosCrypto)
@@ -319,6 +321,18 @@ crossEraForecastAcrossShelley =
                    (WrapLedgerConfig cfgTo) ->
       CrossEraForecaster $ forecastAcrossShelley cfgFrom cfgTo
 
+translateLedgerTablesAcrossShelley ::
+  ( SL.EraTxOut eraTo
+  , SL.EraTxOut eraFrom
+  , SL.PreviousEra eraTo ~ eraFrom
+  , Key (LedgerState (ShelleyBlock protoFrom eraFrom)) ~ Key (LedgerState (ShelleyBlock protoTo eraTo))
+  )
+  => TranslateLedgerTables (ShelleyBlock protoFrom eraFrom) (ShelleyBlock protoTo eraTo)
+translateLedgerTablesAcrossShelley = TranslateLedgerTables {
+    translateTxInWith  = id
+  , translateTxOutWith = SL.upgradeTxOut
+  }
+
 {-------------------------------------------------------------------------------
   Translation from one Shelley-based era to another Shelley-based era
 -------------------------------------------------------------------------------}
@@ -337,28 +351,16 @@ instance ( ShelleyBasedEra era
          , SL.TranslateEra era SL.NewEpochState
          , SL.TranslationError era SL.NewEpochState ~ Void
          , EraCrypto (SL.PreviousEra era) ~ EraCrypto era
-         , CanMapMaybeMK mk
-         , CanTranslateTxOut era
-         ) => SL.TranslateEra era (Flip LedgerState mk :.: ShelleyBlock proto) where
-  translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition tables))) = do
+         ) => SL.TranslateEra era (Flip LedgerState EmptyMK :.: ShelleyBlock proto) where
+  translateEra ctxt (Comp (Flip (ShelleyLedgerState tip state _transition _tables))) = do
       tip'   <- mapM (SL.translateEra ctxt) tip
       state' <- SL.translateEra ctxt state
       return $ Comp $ Flip $ ShelleyLedgerState {
           shelleyLedgerTip        = tip'
         , shelleyLedgerState      = state'
         , shelleyLedgerTransition = ShelleyTransitionInfo 0
-        , shelleyLedgerTables     = translateShelleyTables tables
+        , shelleyLedgerTables     = emptyLedgerTables
         }
-
-translateShelleyTables ::
-     ( EraCrypto (SL.PreviousEra era) ~ EraCrypto era
-     , CanMapMaybeMK mk
-     , CanTranslateTxOut era
-     )
-  => LedgerTables (LedgerState (ShelleyBlock proto (SL.PreviousEra era))) mk
-  -> LedgerTables (LedgerState (ShelleyBlock proto                 era))  mk
-translateShelleyTables (LedgerTables utxoTable) =
-      LedgerTables $ mapMaybeMK translateTxOut utxoTable
 
 instance ( ShelleyBasedEra era
          , SL.TranslateEra era WrapTx
