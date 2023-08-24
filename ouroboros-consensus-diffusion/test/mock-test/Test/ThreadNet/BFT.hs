@@ -28,7 +28,6 @@ import           Test.ThreadNet.Util.SimpleBlock
 import           Test.Util.HardFork.Future (singleEraFuture)
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Roundtrip
-import           Test.Util.Serialisation.SomeResult ()
 
 data TestSetup = TestSetup
   { setupK            :: SecurityParam

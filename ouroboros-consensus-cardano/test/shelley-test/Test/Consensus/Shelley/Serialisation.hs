@@ -30,13 +30,10 @@ import           Test.Util.Serialisation.Roundtrip
 tests :: TestTree
 tests = testGroup "Shelley"
     [ roundtrip_all testCodecCfg dictNestedHdr
-
       -- Test for real crypto too
     , testProperty "hashSize real crypto"       $ prop_hashSize pReal
     , testProperty "ConvertRawHash real crypto" $ roundtrip_ConvertRawHash pReal
-
     , testProperty "BinaryBlockInfo sanity check" prop_shelleyBinaryBlockInfo
-
     , testGroup "Integrity"
         [ testProperty "generate non-corrupt blocks"  prop_blockIntegrity
         , testProperty "generate non-corrupt headers" prop_headerIntegrity

@@ -1,4 +1,5 @@
 {-# LANGUAGE EmptyCase           #-}
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
@@ -19,16 +20,18 @@ import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util (Dict (..))
 import           Ouroboros.Network.Block (Serialised (..))
+import qualified Test.Consensus.Cardano.Examples as Cardano.Examples
 import           Test.Consensus.Cardano.Generators (epochSlots)
 import           Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron)
 import           Test.Tasty
-import           Test.Tasty.QuickCheck
+import           Test.Tasty.QuickCheck (Property, testProperty, (===))
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Roundtrip
 
 tests :: TestTree
 tests = testGroup "Cardano"
-    [ roundtrip_all testCodecCfg dictNestedHdr
+    [ testGroup "Examples roundtrip" $ examplesRoundtrip Cardano.Examples.codecConfig Cardano.Examples.examples
+    , roundtrip_all testCodecCfg dictNestedHdr
     , testProperty "BinaryBlockInfo sanity check" prop_CardanoBinaryBlockInfo
     ]
 

@@ -351,6 +351,7 @@ library unstable-consensus-testlib
     , ouroboros-consensus
     , ouroboros-network-api
     , ouroboros-network-mock
+    , pretty-simple
     , QuickCheck
     , quickcheck-state-machine
     , quiet
@@ -360,9 +361,11 @@ library unstable-consensus-testlib
     , sop-extras
     , strict-sop-core
     , tasty
+    , tasty-expected-failure
     , tasty-golden
     , tasty-quickcheck
     , template-haskell
+    , text
     , time
     , tree-diff
     , utf8-string
