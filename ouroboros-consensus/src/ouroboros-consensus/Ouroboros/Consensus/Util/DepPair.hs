@@ -24,7 +24,7 @@ module Ouroboros.Consensus.Util.DepPair (
 
 import           Data.Kind (Type)
 import           Data.Proxy
-import           Data.SOP.Strict (I (..))
+import           Data.SOP.BasicFunctors (I (..))
 import           Data.Type.Equality ((:~:) (..))
 
 {-------------------------------------------------------------------------------

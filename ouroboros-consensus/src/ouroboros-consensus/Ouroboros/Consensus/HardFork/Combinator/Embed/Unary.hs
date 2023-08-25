@@ -37,6 +37,7 @@ import           Data.Bifunctor (first)
 import           Data.Coerce
 import           Data.Kind (Type)
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope

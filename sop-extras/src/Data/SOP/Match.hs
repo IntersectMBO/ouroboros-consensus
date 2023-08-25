@@ -1,17 +1,18 @@
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE EmptyCase            #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE PolyKinds            #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE DerivingStrategies       #-}
+{-# LANGUAGE EmptyCase                #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE LambdaCase               #-}
+{-# LANGUAGE PolyKinds                #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE StandaloneDeriving       #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE TypeOperators            #-}
+{-# LANGUAGE UndecidableInstances     #-}
 
 -- | Intended for qualified import
 --
@@ -19,7 +20,7 @@
 -- > import qualified Data.SOP.Match as Match
 module Data.SOP.Match (
     Mismatch (..)
-  , flip
+  , flipMatch
   , matchNS
   , matchTelescope
     -- * Utilities
@@ -39,6 +40,8 @@ module Data.SOP.Match (
 import           Data.Bifunctor
 import           Data.Functor.Product
 import           Data.Kind (Type)
+import           Data.Proxy
+import           Data.SOP.Constraint
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
@@ -52,7 +55,8 @@ import           Prelude hiding (flip)
 -------------------------------------------------------------------------------}
 
 -- | We have a mismatch in the index between two NS
-data Mismatch :: (k -> Type) -> (k -> Type) -> [k] -> Type where
+type Mismatch :: (k -> Type) -> (k -> Type) -> [k] -> Type
+data Mismatch f g xs where
   -- | The left is at the current @x@ and the right is somewhere in the later
   -- @xs@
   ML :: f x -> NS g xs -> Mismatch f g (x ': xs)
@@ -62,8 +66,8 @@ data Mismatch :: (k -> Type) -> (k -> Type) -> [k] -> Type where
   -- | There is a mismatch later on in the @xs@
   MS :: Mismatch f g xs -> Mismatch f g (x ': xs)
 
-flip :: Mismatch f g xs -> Mismatch g f xs
-flip = go
+flipMatch :: Mismatch f g xs -> Mismatch g f xs
+flipMatch = go
   where
     go :: Mismatch f g xs -> Mismatch g f xs
     go (ML fx gy) = MR gy fx

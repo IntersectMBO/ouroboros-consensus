@@ -33,6 +33,7 @@ import           Control.Monad.Except
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
+import           Data.SOP.Constraint
 import           Data.SOP.Strict
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Util (repeatedly)

@@ -24,8 +24,10 @@ module Test.Consensus.Cardano.Generators (module Test.Consensus.Byron.Generators
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe)
 import           Data.Proxy
-import           Data.SOP.Counting
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Index
+import           Data.SOP.NonEmpty
+import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger

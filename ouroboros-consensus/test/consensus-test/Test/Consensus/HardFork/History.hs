@@ -38,10 +38,11 @@ import           Data.Function (on)
 import           Data.Functor.Identity
 import qualified Data.List as L
 import           Data.Maybe (catMaybes, fromMaybe)
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.NonEmpty
-import           Data.SOP.Strict hiding (shape, shift)
+import           Data.SOP.Sing hiding (shape)
 import           Data.SOP.Telescope (Telescope (..))
 import           Data.Time
 import           Data.Word

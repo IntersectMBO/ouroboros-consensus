@@ -7,7 +7,7 @@ stylish-haskell --defaults | diff - ./.stylish-haskell.yaml | grep -E "^>.*[[:al
 printf "\nFormatting haskell files...\n"
 
 export LC_ALL=C.UTF-8
-fd --full-path "$(pwd)/(ouroboros-consensus|scripts)" \
+fd --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-core)" \
     --extension hs \
     --exclude Setup.hs \
     --exclude ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \

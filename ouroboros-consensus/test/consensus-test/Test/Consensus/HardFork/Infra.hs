@@ -27,8 +27,10 @@ module Test.Consensus.HardFork.Infra (
 
 import           Data.Kind (Type)
 import           Data.Maybe (fromMaybe)
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
 import           Data.SOP.NonEmpty
+import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Data.Word
 import           Ouroboros.Consensus.Block

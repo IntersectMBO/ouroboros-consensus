@@ -13,6 +13,8 @@ module Test.ThreadNet.TxGen (
   ) where
 
 import           Data.Kind (Type)
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Index
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block

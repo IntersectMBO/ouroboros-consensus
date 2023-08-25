@@ -21,9 +21,12 @@ module Ouroboros.Consensus.HardFork.Combinator.Lifting (
 
 import           Data.List (intercalate)
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Dict
 import           Data.SOP.Match (Mismatch)
 import           Data.SOP.OptNP (OptNP (..))
+import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope)
 import           Data.Typeable

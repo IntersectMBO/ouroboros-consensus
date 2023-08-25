@@ -1,19 +1,21 @@
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE EmptyCase            #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE PolyKinds            #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE LambdaCase               #-}
+{-# LANGUAGE PolyKinds                #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE StandaloneDeriving       #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE TypeOperators            #-}
+{-# LANGUAGE UndecidableInstances     #-}
 
--- | Intended for qualified import
+-- | See 'Telescope'
+--
+-- Intended for qualified import
 --
 -- > import           Data.SOP.Telescope (Telescope(..))
 -- > import qualified Data.SOP.Telescope as Telescope
@@ -50,6 +52,9 @@ module Data.SOP.Telescope (
 
 import           Data.Functor.Product
 import           Data.Kind
+import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (InPairs (..), Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
@@ -68,14 +73,6 @@ import           Prelude hiding (scanl, sequence, zipWith)
 --
 -- A telescope is an extension of an 'NS', where every time we "go right" in the
 -- sum we have an additional value.
---
--- Blockchain intuition: think of @g@ as representing some kind of past state,
--- and @f@ some kind of current state. Then depending on how many hard fork
--- transitions we have had, we might either have, say
---
--- > TZ currentByronState
--- > TS pastByronState $ TZ currentShelleyState
--- > TS pastByronState $ TS pastShelleyState $ TZ currentGoguenState
 --
 -- The 'Telescope' API mostly follows @sop-core@ conventions, supporting
 -- functor ('hmap', 'hcmap'), applicative ('hap', 'hpure'), foldable
@@ -96,7 +93,8 @@ import           Prelude hiding (scanl, sequence, zipWith)
 -- In addition to the standard SOP operators, the new operators that make
 -- a 'Telescope' a telescope are 'extend', 'retract' and 'align'; see their
 -- documentation for details.
-data Telescope (g :: k -> Type) (f :: k -> Type) (xs :: [k]) where
+type Telescope :: (k -> Type) -> (k -> Type) -> [k] -> Type
+data Telescope g f xs where
   TZ :: !(f x) ->                        Telescope g f (x ': xs)
   TS :: !(g x) -> !(Telescope g f xs) -> Telescope g f (x ': xs)
 
@@ -295,12 +293,6 @@ newtype Extend m g f x y = Extend { extendWith :: f x -> m (g x, f y) }
 -- | Extend the telescope
 --
 -- We will not attempt to extend the telescope past its final segment.
---
--- Blockchain intuition: suppose we have a telescope containing the ledger
--- state. The "how to extend" argument would take, say, the final Byron
--- state to the initial Shelley state; and "where to extend from" argument
--- would indicate when we want to extend: when the current slot number has
--- gone past the end of the Byron era.
 extend :: forall m h g f xs. Monad m
        => InPairs (Requiring h (Extend m g f)) xs -- ^ How to extend
        -> NP (f -.-> Maybe :.: h) xs              -- ^ Where to extend /from/
@@ -325,14 +317,6 @@ extend = go
 newtype Retract m g f x y = Retract { retractWith :: g x -> f y -> m (f x) }
 
 -- | Retract a telescope
---
--- Blockchain intuition: suppose we have a telescope containing the consensus
--- state. When we rewind the consensus state, we might cross a hard fork
--- transition point. So we first /retract/ the telescope /to/ the era containing
--- the slot number that we want to rewind to, and only then call
--- 'rewindChainDepState' on that era. Of course, retraction may fail (we
--- might not /have/ past consensus state to rewind to anymore); this failure
--- would require a choice for a particular monad @m@.
 retract :: forall m h g f xs. Monad m
         => Tails (Requiring h (Retract m g f)) xs  -- ^ How to retract
         -> NP (g -.-> Maybe :.: h) xs              -- ^ Where to retract /to/
@@ -367,15 +351,6 @@ retractAux hx gx r fz = Comp $ K <$> retractWith (provide r hx) gx fz
 --
 -- Aligning is a combination of extension and retraction, extending or
 -- retracting the telescope as required to match up with the other telescope.
---
--- Blockchain intuition: suppose we have one telescope containing the
--- already-ticked ledger state, and another telescope containing the consensus
--- state. Since the ledger state has already been ticked, it might have been
--- advanced to the next era. If this happens, we should then align the
--- consensus state with the ledger state, moving /it/ also to the next era,
--- before we can do the consensus header validation check. Note that in this
--- particular example, the ledger state will always be ahead of the consensus
--- state, never behind; 'alignExtend' can be used in this case.
 align :: forall m g' g f' f f'' xs. Monad m
       => InPairs (Requiring g' (Extend  m g f)) xs  -- ^ How to extend
       -> Tails   (Requiring f' (Retract m g f)) xs  -- ^ How to retract
@@ -454,7 +429,7 @@ alignExtendNS es atTip ns = npToSListI atTip $
 -- | Internal auxiliary to 'extendIf' and 'retractIf'
 fromBool :: K Bool x -> (Maybe :.: K ()) x
 fromBool (K True)  = Comp $ Just $ K ()
-fromBool (K False) = Comp $ Nothing
+fromBool (K False) = Comp Nothing
 
 {-------------------------------------------------------------------------------
   Additional API

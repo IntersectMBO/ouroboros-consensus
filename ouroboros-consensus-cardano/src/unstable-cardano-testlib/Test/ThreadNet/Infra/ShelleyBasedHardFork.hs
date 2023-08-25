@@ -29,6 +29,7 @@ import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
+import           Data.SOP.BasicFunctors
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails

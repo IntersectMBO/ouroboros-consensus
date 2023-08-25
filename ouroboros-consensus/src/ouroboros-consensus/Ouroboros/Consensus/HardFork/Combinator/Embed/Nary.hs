@@ -21,6 +21,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
 
 import           Data.Bifunctor (first)
 import           Data.Coerce (Coercible, coerce)
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Dict (Dict (..))
 import           Data.SOP.Index

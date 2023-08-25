@@ -42,6 +42,8 @@ import           Data.Bifunctor
 import           Data.Functor.Product
 import           Data.Kind (Type)
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
 import           Data.SOP.Match (Mismatch (..), mustMatchNS)
 import           Data.SOP.Strict

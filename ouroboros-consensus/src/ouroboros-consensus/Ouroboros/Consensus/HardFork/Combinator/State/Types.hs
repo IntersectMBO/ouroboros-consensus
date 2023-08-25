@@ -17,6 +17,8 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   ) where
 
 import           Control.Monad.Except
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope)
 import qualified Data.SOP.Telescope as Telescope
@@ -35,6 +37,44 @@ import           Prelude
 -- | Generic hard fork state
 --
 -- This is used both for the consensus state and the ledger state.
+--
+-- By using a telescope with @f ~ LedgerState@, we will keep track of 'Past'
+-- information for eras before the current one:
+--
+-- > TZ currentByronState
+-- > TZ pastByronState $ TZ currentShelleyState
+-- > TZ pastByronState $ TS pastShelleyState $ TZ currentAllegraState
+-- > ...
+--
+-- These are some intuitions on how the Telescope operations behave for this
+-- type:
+--
+-- = @extend@
+--
+-- Suppose we have a telescope containing the ledger state. The "how to extend"
+-- argument would take, say, the final Byron state to the initial Shelley state;
+-- and "where to extend from" argument would indicate when we want to extend:
+-- when the current slot number has gone past the end of the Byron era.
+--
+-- = @retract@
+--
+-- Suppose we have a telescope containing the consensus state. When we rewind
+-- the consensus state, we might cross a hard fork transition point. So we first
+-- /retract/ the telescope /to/ the era containing the slot number that we want
+-- to rewind to, and only then call 'rewindChainDepState' on that era. Of course,
+-- retraction may fail (we might not /have/ past consensus state to rewind to
+-- anymore); this failure would require a choice for a particular monad @m@.
+--
+-- = @align@
+--
+-- Suppose we have one telescope containing the already-ticked ledger state, and
+-- another telescope containing the consensus state. Since the ledger state has
+-- already been ticked, it might have been advanced to the next era. If this
+-- happens, we should then align the consensus state with the ledger state,
+-- moving /it/ also to the next era, before we can do the consensus header
+-- validation check. Note that in this particular example, the ledger state will
+-- always be ahead of the consensus state, never behind; 'alignExtend' can be
+-- used in this case.
 newtype HardForkState f xs = HardForkState {
       getHardForkState :: Telescope (K Past) (Current f) xs
     }

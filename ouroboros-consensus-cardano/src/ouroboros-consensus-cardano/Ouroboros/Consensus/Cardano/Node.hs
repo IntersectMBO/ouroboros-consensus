@@ -72,11 +72,13 @@ import           Data.Functor.These (These1 (..))
 import           Data.Kind (Type)
 import qualified Data.ListMap as ListMap
 import qualified Data.Map.Strict as Map
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
 import           Data.SOP.Index (Index (..))
+import           Data.SOP.NonEmpty
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
-import           Data.SOP.Strict hiding (shape, shift)
+import           Data.SOP.Strict
 import           Data.Word (Word16, Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)

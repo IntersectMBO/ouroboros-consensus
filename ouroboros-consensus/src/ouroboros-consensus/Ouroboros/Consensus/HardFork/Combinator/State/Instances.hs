@@ -25,7 +25,10 @@ import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Codec.Serialise
-import           Data.SOP.Strict hiding (shape)
+import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
+import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock

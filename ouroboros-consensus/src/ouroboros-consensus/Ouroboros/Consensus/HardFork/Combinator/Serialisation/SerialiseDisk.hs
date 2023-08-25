@@ -8,6 +8,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseDisk () wh
 
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Data.ByteString.Lazy as Lazy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Dict
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block

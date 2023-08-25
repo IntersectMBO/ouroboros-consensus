@@ -12,7 +12,7 @@
 
 module Ouroboros.Consensus.Cardano.ShelleyBased (overShelleyBasedLedgerState) where
 
-import           Data.SOP.Strict hiding (All2)
+import           Data.SOP.Strict
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.HardFork.Combinator
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos

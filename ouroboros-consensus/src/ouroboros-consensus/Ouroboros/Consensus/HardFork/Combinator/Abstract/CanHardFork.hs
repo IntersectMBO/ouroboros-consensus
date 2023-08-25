@@ -6,11 +6,11 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork (CanHardFork (..)) where
 
+import           Data.SOP.Constraint
 import           Data.SOP.Functors (Product2)
 import           Data.SOP.InPairs (InPairs, RequiringBoth)
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.NonEmpty
-import           Data.SOP.Strict
 import           Data.SOP.Tails (Tails)
 import qualified Data.SOP.Tails as Tails
 import           Data.Typeable

@@ -44,17 +44,6 @@ library
   import:          common-lib
   hs-source-dirs:  src/ouroboros-consensus
   exposed-modules:
-    Data.SOP.Counting
-    Data.SOP.Functors
-    Data.SOP.Index
-    Data.SOP.InPairs
-    Data.SOP.Lenses
-    Data.SOP.Match
-    Data.SOP.NonEmpty
-    Data.SOP.OptNP
-    Data.SOP.Strict
-    Data.SOP.Tails
-    Data.SOP.Telescope
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract
     Ouroboros.Consensus.Block.EBB
@@ -260,7 +249,7 @@ library
     , cardano-prelude
     , cardano-slotting
     , cardano-strict-containers
-    , cborg                        >=0.2.2    && <0.3
+    , cborg                        ^>=0.2.2
     , containers                   >=0.5      && <0.7
     , contra-tracer
     , deepseq
@@ -270,25 +259,27 @@ library
     , io-classes                   ^>=1.2
     , measures
     , mtl
-    , nothunks                     >=0.1.2    && <0.2
+    , nothunks                     ^>=0.1.2
     , ouroboros-network-api        ^>=0.5.1
     , ouroboros-network-mock       ^>=0.1.0.1
     , ouroboros-network-protocols  ^>=0.5
-    , psqueues                     >=0.2.3    && <0.3
-    , quiet                        >=0.2      && <0.3
+    , psqueues                     ^>=0.2.3
+    , quiet                        ^>=0.2
     , semialign                    >=1.1
-    , serialise                    >=0.2      && <0.3
+    , serialise                    ^>=0.2
     , si-timers                    ^>=1.2
-    , sop-core                     >=0.5      && <0.6
+    , sop-core                     ^>=0.5
+    , sop-extras                   ^>=0.1
     , streaming
     , strict-checked-vars          ^>=0.1.0.3
+    , strict-sop-core              ^>=0.1
     , strict-stm                   ^>=1.2
     , text                         ^>=2.0
     , these                        ^>=1.2
     , time
     , transformers
     , typed-protocols
-    , vector                       >=0.12     && <0.13
+    , vector                       ^>=0.12
 
 library unstable-consensus-testlib
   import:          common-lib
@@ -362,6 +353,8 @@ library unstable-consensus-testlib
     , random
     , serialise
     , sop-core
+    , sop-extras
+    , strict-sop-core
     , tasty
     , tasty-golden
     , tasty-quickcheck
@@ -494,6 +487,9 @@ test-suite consensus-test
     , random
     , serialise
     , si-timers
+    , sop-core
+    , sop-extras
+    , strict-sop-core
     , tasty
     , tasty-hunit
     , tasty-quickcheck

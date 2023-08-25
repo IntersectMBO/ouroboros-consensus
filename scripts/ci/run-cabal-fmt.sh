@@ -2,4 +2,4 @@
 
 set -euo pipefail
 
-fd -p $(pwd)/ouroboros-consensus -e cabal -x cabal-fmt -i
+fd --full-path "$(pwd)/(ouroboros-consensus|sop-extras|strict-sop-core)" -e cabal -x cabal-fmt -i

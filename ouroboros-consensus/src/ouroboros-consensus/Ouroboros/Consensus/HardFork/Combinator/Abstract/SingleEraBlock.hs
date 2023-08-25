@@ -24,6 +24,8 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (
 import           Codec.Serialise
 import           Data.Either (isRight)
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Index
 import           Data.SOP.Match
 import           Data.SOP.Strict

@@ -128,10 +128,10 @@ library
     , cardano-ledger-mary
     , cardano-ledger-shelley        ^>=1.5
     , cardano-prelude
-    , cardano-protocol-tpraos       >=1.0.1    && <1.1
+    , cardano-protocol-tpraos       ^>=1.0.1
     , cardano-slotting
     , cardano-strict-containers
-    , cborg                         >=0.2.2    && <0.3
+    , cborg                         ^>=0.2.2
     , containers                    >=0.5      && <0.7
     , cryptonite                    >=0.25     && <0.31
     , deepseq
@@ -143,8 +143,11 @@ library
     , ouroboros-consensus           ^>=0.10
     , ouroboros-consensus-protocol  ^>=0.5.0.1
     , ouroboros-network-api         ^>=0.5.1
-    , serialise                     >=0.2      && <0.3
+    , serialise                     ^>=0.2
     , small-steps
+    , sop-core                      ^>=0.5
+    , sop-extras                    ^>=0.1
+    , strict-sop-core               ^>=0.1
     , text                          ^>=2.0
     , these                         ^>=1.2
     , vector-map
@@ -178,7 +181,7 @@ library unstable-byronspec
     , mtl
     , nothunks
     , ouroboros-consensus        ^>=0.10
-    , serialise                  >=0.2   && <0.3
+    , serialise                  ^>=0.2
     , small-steps
     , transformers
 
@@ -297,7 +300,7 @@ library unstable-shelley-testlib
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-api
     , QuickCheck
-    , quiet                                                                                   >=0.2     && <0.3
+    , quiet                                                                                   ^>=0.2
     , small-steps
 
 test-suite shelley-test
@@ -372,6 +375,9 @@ library unstable-cardano-testlib
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-api
     , QuickCheck
+    , sop-core
+    , sop-extras
+    , strict-sop-core
     , unstable-byron-testlib
     , unstable-shelley-testlib
 
@@ -417,6 +423,8 @@ test-suite cardano-test
     , pretty-simple
     , QuickCheck
     , sop-core
+    , sop-extras
+    , strict-sop-core
     , tasty
     , tasty-hunit
     , tasty-quickcheck
@@ -468,9 +476,9 @@ library unstable-cardano-tools
 
   build-depends:
     , aeson
-    , base                           >=4.14  && <4.19
+    , base                           >=4.14   && <4.19
     , base16-bytestring              >=1.0
-    , bytestring                     >=0.10  && <0.12
+    , bytestring                     >=0.10   && <0.12
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
@@ -484,11 +492,11 @@ library unstable-cardano-tools
     , cardano-ledger-mary
     , cardano-ledger-shelley
     , cardano-prelude
-    , cardano-protocol-tpraos        >=1.0.1 && <1.1
+    , cardano-protocol-tpraos        >=1.0.1  && <1.1
     , cardano-slotting
     , cardano-strict-containers
-    , cborg                          >=0.2.2 && <0.3
-    , containers                     >=0.5   && <0.7
+    , cborg                          ^>=0.2.2
+    , containers                     >=0.5    && <0.7
     , contra-tracer
     , directory
     , filepath
@@ -505,7 +513,10 @@ library unstable-cardano-tools
     , ouroboros-network-api
     , ouroboros-network-framework
     , ouroboros-network-protocols
-    , serialise                      >=0.2   && <0.3
+    , serialise                      ^>=0.2
+    , sop-core
+    , sop-extras
+    , strict-sop-core
     , text
     , text-builder
     , transformers

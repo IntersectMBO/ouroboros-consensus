@@ -26,7 +26,7 @@ import           Data.SOP.Counting
 import           Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.OptNP (OptNP (..))
-import           Data.SOP.Strict hiding (shape)
+import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import           Data.Word
 import           GHC.Generics (Generic)

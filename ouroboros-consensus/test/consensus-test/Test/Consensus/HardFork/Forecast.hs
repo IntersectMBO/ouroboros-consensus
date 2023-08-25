@@ -25,10 +25,12 @@ import           Data.List (intercalate)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, listToMaybe)
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.NonEmpty
+import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope (..))
 import           Data.Word
@@ -635,7 +637,7 @@ instance Arbitrary (Some TestSetup) where
   arbitrary = chooseEras $ \ixs -> do
       ProofNonEmpty{} <- return $ isNonEmpty ixs
       summary   <- getSummary <$> genSummary ixs
-      lookahead <- genMaxLookahead (eraIndices ixs) (nonEmptyWeaken summary)
+      lookahead <- genMaxLookahead (eraIndices ixs) (atMostFromNonEmpty summary)
       eras      <- sequence $
                       genTestEra <$> summary
                                  <*> exactlyWeakenNonEmpty lookahead
