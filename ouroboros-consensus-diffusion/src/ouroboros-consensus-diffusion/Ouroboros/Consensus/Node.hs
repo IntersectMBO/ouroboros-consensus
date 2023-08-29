@@ -804,6 +804,7 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
     -- versions to the latest " official " release (as chosen by Network and
     -- Consensus Team, with input from Node Team)
   , srnTraceChainDB                 :: Tracer m (ChainDB.TraceEvent blk)
+  , srnTraceBackingStore            :: Tracer m BackingStoreTraceByBackend
   , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
     -- ^ Determine whether to use the system default mempool capacity or explicitly set
     -- capacity of the mempool.
@@ -899,7 +900,9 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
          ChainDbArgs Defaults IO blk
       -> ChainDbArgs Defaults IO blk
     updateChainDbDefaults =
-        (\x -> x { ChainDB.cdbTracer = srnTraceChainDB }) .
+        (\x -> x { ChainDB.cdbTracer = srnTraceChainDB
+                 , ChainDB.cdbBsTracer = srnTraceBackingStore
+                 }) .
         (if not srnChainDbValidateOverride then id else \x -> x
           { ChainDB.cdbImmutableDbValidation = ValidateAllChunks
           , ChainDB.cdbVolatileDbValidation  = ValidateAll

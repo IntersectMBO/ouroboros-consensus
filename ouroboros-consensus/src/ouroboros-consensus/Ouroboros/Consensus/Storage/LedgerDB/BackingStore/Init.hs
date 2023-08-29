@@ -5,6 +5,7 @@
 module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init (
     BackingStoreInitializer
   , BackingStoreSelector (..)
+  , BackingStoreTraceByBackend (..)
   , newBackingStore
   , newBackingStoreInitialiser
   , restoreBackingStore
@@ -21,12 +22,10 @@ import qualified Data.Set as Set
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Tables
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore hiding
-                     (BackingStoreTrace)
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as LMDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import           Ouroboros.Consensus.Storage.LedgerDB.Types
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
 
@@ -58,6 +57,10 @@ newBackingStore ::
 newBackingStore bsi someHasFS tables =
     bsi someHasFS (InitFromValues Origin tables)
 
+data BackingStoreTraceByBackend = LMDBTrace BackingStoreTrace
+                                | InMemoryTrace BackingStoreTrace
+  deriving (Show)
+
 newBackingStoreInitialiser ::
      ( IOLike m
      , NoThunks (LedgerTables l ValuesMK)
@@ -65,7 +68,7 @@ newBackingStoreInitialiser ::
      , CanSerializeLedgerTables l
      , HasCallStack
      )
-  => Tracer m BackingStoreTrace
+  => Tracer m BackingStoreTraceByBackend
   -> BackingStoreSelector m
   -> BackingStoreInitializer m l
 newBackingStoreInitialiser trcr bss =

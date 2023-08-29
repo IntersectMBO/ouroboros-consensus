@@ -18,7 +18,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.Types (
   , getStateSTM
   , getStateSTM1
     -- * Trace
-  , BackingStoreTrace (..)
   , TraceBackingStoreInitEvent (..)
   , TraceLedgerDBEvent (..)
   ) where
@@ -29,7 +28,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore hiding
                      (BackingStoreTrace)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB
                      (LMDBLimits)
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
@@ -146,7 +144,6 @@ data LedgerDBStateEnv m blk
 
 data TraceLedgerDBEvent blk =
     LedgerDBSnapshotEvent (TraceSnapshotEvent blk)
-  | BackingStoreEvent BackingStoreTrace
   | BackingStoreInitEvent TraceBackingStoreInitEvent
   deriving (Show, Eq, Generic)
 
@@ -155,9 +152,3 @@ data TraceBackingStoreInitEvent =
     BackingStoreInitialisedLMDB LMDBLimits
   | BackingStoreInitialisedInMemory
   deriving (Show, Eq)
-
--- | A tracing datatype that is the sum of the traces of the backing store
--- implementations
-data BackingStoreTrace = LMDBTrace BS.BackingStoreTrace
-                       | InMemoryTrace BS.BackingStoreTrace
-                       deriving (Eq, Show)
