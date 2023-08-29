@@ -1,7 +1,6 @@
 module Ouroboros.Consensus.Storage.LedgerDB (
     BackingStore (..)
   , BackingStorePath (..)
-  , BackingStoreTrace (..)
   , BackingStoreValueHandle (..)
   , DbChangelog (..)
   , DbChangelog'
@@ -77,7 +76,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
                      readSnapshot, snapshotToStatePath, snapshotToTablesPath,
                      writeSnapshot)
 import           Ouroboros.Consensus.Storage.LedgerDB.Types
-                     (BackingStoreTrace (..), LedgerDBHandle (..),
-                     LedgerDBState (..), LedgerDBStateEnv (..),
-                     TraceBackingStoreInitEvent (..), TraceLedgerDBEvent (..),
-                     getState, getState1, getState2, getStateSTM, getStateSTM1)
+                     (LedgerDBHandle (..), LedgerDBState (..),
+                     LedgerDBStateEnv (..), TraceBackingStoreInitEvent (..),
+                     TraceLedgerDBEvent (..), getState, getState1, getState2,
+                     getStateSTM, getStateSTM1)

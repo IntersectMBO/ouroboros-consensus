@@ -24,6 +24,7 @@ data LedgerDBArgs f m blk = LedgerDBArgs {
     , lgrTopLevelConfig       :: HKD f (TopLevelConfig blk)
     , lgrTraceLedger          :: Tracer m (AnchorlessDbChangelog' blk)
     , lgrTracer               :: Tracer m (TraceLedgerDBEvent blk)
+    , lgrBsTracer             :: Tracer m BackingStoreTraceByBackend
     , lgrBackingStoreSelector :: !(BackingStoreSelector m)
     }
 
@@ -41,6 +42,7 @@ defaultArgs lgrHasFS diskPolicy bss = LedgerDBArgs {
     , lgrTopLevelConfig       = NoDefault
     , lgrTraceLedger          = nullTracer
     , lgrTracer               = nullTracer
+    , lgrBsTracer             = nullTracer
     , lgrBackingStoreSelector = bss
     }
 
