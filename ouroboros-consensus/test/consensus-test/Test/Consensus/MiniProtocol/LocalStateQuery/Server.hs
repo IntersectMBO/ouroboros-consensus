@@ -263,6 +263,7 @@ initLedgerDB k chain = do
       , LedgerDB.lgrGenesis              = return testInitExtLedger
       , LedgerDB.lgrTracer               = nullTracer
       , LedgerDB.lgrTraceLedger          = nullTracer
+      , LedgerDB.lgrBsTracer             = nullTracer
       , LedgerDB.lgrBackingStoreSelector = LedgerDB.InMemoryBackingStore
       }
 

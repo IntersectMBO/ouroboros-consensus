@@ -22,7 +22,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl (
   , newBackingStoreInitialiser
   , restoreBackingStore
     -- * Trace
-  , BackingStoreTrace (..)
+  , BackingStoreTraceByBackend (..)
   , ReplayGoal (..)
   , TraceBackingStoreInitEvent (..)
   , TraceLedgerDBEvent (..)
@@ -119,6 +119,7 @@ openDB :: forall m blk.
           )
        => LedgerDBArgs Identity m blk
        -- ^ Stateless initializaton arguments
+       -> Tracer m BackingStoreTraceByBackend
        -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
        -- ^ Used to trace the progress while replaying blocks against the
        -- ledger.
@@ -135,9 +136,9 @@ openDB :: forall m blk.
        -- The block may be in the immutable DB or in the volatile DB; the ledger
        -- DB does not know where the boundary is at any given point.
        -> m (LedgerDB m blk, Word64)
-openDB args@LedgerDBArgs { lgrHasFS = SomeHasFS fs } replayTracer immutableDB getBlock = do
+openDB args@LedgerDBArgs { lgrHasFS = SomeHasFS fs } bsTracer replayTracer immutableDB getBlock = do
     createDirectoryIfMissing fs True (mkFsPath [])
-    (db, replayCounter, lgrBackingStore) <- initFromDisk args replayTracer (lgrDiskPolicy args) immutableDB
+    (db, replayCounter, lgrBackingStore) <- initFromDisk args bsTracer replayTracer (lgrDiskPolicy args) immutableDB
     -- When initializing the ledger DB from disk we:
     --
     -- - Look for the newest valid snapshot, say 'Lbs', which corresponds to the
@@ -250,16 +251,19 @@ initFromDisk
      , HasCallStack
      )
   => LedgerDBArgs Identity m blk
+  -> Tracer m BackingStoreTraceByBackend
   -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
   -> DiskPolicy
   -> ImmutableDB m blk
   -> m (DbChangelog' blk, Word64, LedgerBackingStore' m blk)
 initFromDisk args
+             bsTracer
              replayTracer
              policy
              immutableDB = do
     (_initLog, db, replayCounter, backingStore) <-
       initialize
+        bsTracer
         replayTracer
         lgrTracer
         lgrHasFS
@@ -317,7 +321,8 @@ initialize ::
        , CanSerializeLedgerTables (LedgerState blk)
        , HasCallStack
        )
-  => Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
+  => Tracer m BackingStoreTraceByBackend
+  -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
   -> Tracer m (TraceLedgerDBEvent blk)
   -> SomeHasFS m
   -> (forall s. Decoder s (ExtLedgerState blk EmptyMK))
@@ -328,7 +333,8 @@ initialize ::
   -> StreamAPI m blk blk
   -> BackingStoreSelector m
   -> m (InitLog blk, DbChangelog' blk, Word64, LedgerBackingStore' m blk)
-initialize replayTracer
+initialize bsTracer
+           replayTracer
            tracer
            hasFS
            decLedger
@@ -344,7 +350,7 @@ initialize replayTracer
          (HasLedgerTables l, NoThunks (LedgerTables l ValuesMK)
          , CanSerializeLedgerTables l)
       => BackingStoreInitializer m l
-    lbsi = newBackingStoreInitialiser (BackingStoreEvent >$< tracer) bss
+    lbsi = newBackingStoreInitialiser bsTracer bss
 
     bsiTrace :: TraceBackingStoreInitEvent
     bsiTrace = case bss of

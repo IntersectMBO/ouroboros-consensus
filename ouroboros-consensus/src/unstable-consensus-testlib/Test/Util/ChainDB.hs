@@ -110,6 +110,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
   -- Cache at most 2 chunks and expire each chunk after 60 seconds of being unused.
   , cdbTracer                 = nullTracer
   , cdbTraceLedger            = nullTracer
+  , cdbBsTracer               = nullTracer
   , cdbRegistry               = mcdbRegistry
   , cdbGcDelay                = 1
   , cdbGcInterval             = 1
