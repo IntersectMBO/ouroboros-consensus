@@ -26,7 +26,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.Args as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
-                     (BackingStoreSelector (..))
+                     (BackingStoreSelector (..), BackingStoreTraceByBackend)
 import           Ouroboros.Consensus.Storage.LedgerDB.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -69,6 +69,7 @@ data ChainDbArgs f m blk = ChainDbArgs {
       -- Misc
     , cdbTracer                 :: Tracer m (TraceEvent blk)
     , cdbTraceLedger            :: Tracer m (AnchorlessDbChangelog' blk)
+    , cdbBsTracer               :: Tracer m BackingStoreTraceByBackend
     , cdbRegistry               :: HKD f (ResourceRegistry m)
     , cdbGcDelay                :: DiffTime
     , cdbGcInterval             :: DiffTime
@@ -193,6 +194,7 @@ fromChainDbArgs ChainDbArgs{..} = (
         , lgrDiskPolicy           = cdbDiskPolicy
         , lgrGenesis              = cdbGenesis
         , lgrTracer               = contramap TraceLedgerDBEvent cdbTracer
+        , lgrBsTracer             = cdbBsTracer
         , lgrTraceLedger          = cdbTraceLedger
         , lgrBackingStoreSelector = cdbBackingStoreSelector
         }
@@ -239,6 +241,7 @@ toChainDbArgs ImmutableDB.ImmutableDbArgs {..}
       -- Misc
     , cdbTracer                 = cdbsTracer
     , cdbTraceLedger            = lgrTraceLedger
+    , cdbBsTracer               = lgrBsTracer
     , cdbRegistry               = cdbsRegistry
     , cdbGcDelay                = cdbsGcDelay
     , cdbGcInterval             = cdbsGcInterval

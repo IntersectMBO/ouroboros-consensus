@@ -53,7 +53,6 @@ import qualified Control.Tracer as Trace
 import           Data.Bifunctor
 import           Data.Foldable (toList)
 import           Data.Functor.Classes
-import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as L
 import           Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Diff.Strict.Internal as DS
@@ -909,7 +908,7 @@ initStandaloneDB dbEnv@DbEnv{..} dbRegistry dbSecParam = do
     dbChlog  <- uncheckedNewTVarM initDB
     dbLock   <- mkLedgerDBLock
     let bsi = newBackingStoreInitialiser
-                (BackingStoreEvent >$< dbTracer)
+                nullTracer
                 dbBackingStoreSelector
     dbBackingStore <- uncheckedNewTVarM
                       =<< bsi
@@ -1081,6 +1080,7 @@ runDB standalone@DB{..} cmd =
         HD.bsClose old_db
         (initLog, db, _replayed, backingStore) <-
           initialize
+            nullTracer
             nullTracer
             (dbTracer dbEnv)
             hasFS

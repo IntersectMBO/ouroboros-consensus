@@ -137,6 +137,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
               (TraceLedgerReplayEvent >$< tracer)
       traceWith tracer $ TraceOpenEvent StartedOpeningLgrDB
       (lgrDB, replayed) <- LedgerDB.openDB argsLgrDb
+                            (Args.cdbBsTracer args)
                             lgrReplayTracer
                             immutableDB
                             (Query.getAnyKnownBlock immutableDB volatileDB)
