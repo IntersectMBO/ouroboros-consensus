@@ -182,19 +182,18 @@ This is the essence of the eponymous anti-cache: the disk is used as an
 anti-cache to evict in-memory data, rather than using memory as a cache for disk
 data.
 
-% TODO: find the image and restore it here
-% %\begin{figure}[h]
-% \begin{center}
-% \includegraphics{hstore-anticaching-fig1.pdf}
-% \begin{quote}
-% Diagram by \citet[Figure 1]{anti-caching} illustrating the difference in
-% database architecture: ``In (a), the disk is the primary storage for the
-% database and data is brought into main memory as it is needed. With the
-% anti-caching model in (b), memory is the primary storage and cold data is
-% evicted to disk.''
-% \end{quote}
-% \end{center}
-% %\end{figure}
+%\begin{figure}[h]
+\begin{center}
+\includegraphics[scale=0.25]{img/hstore-anticaching-fig1.png}
+\begin{quote}
+Diagram by \citet[Figure 1]{anti-caching} illustrating the difference in
+database architecture: ``In (a), the disk is the primary storage for the
+database and data is brought into main memory as it is needed. With the
+anti-caching model in (b), memory is the primary storage and cold data is
+evicted to disk.''
+\end{quote}
+\end{center}
+%\end{figure}
 
 One of the ideas we borrow is that the logical value of the database is
 determined by the in-memory data, with large parts of the data residing on-disk.
