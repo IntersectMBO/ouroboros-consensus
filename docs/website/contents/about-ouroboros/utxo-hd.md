@@ -26,3 +26,8 @@ time, and how the memory usage evolves.
 ![replay times](/img/utxo-hd/utxo-hd-replay-01-19-23.png)
 
 ![sync times](/img/utxo-hd/utxo-hd-sync-01-19-23.png)
+
+## References
+
+* [Storing the Cardano ledger state on disk: analysis and design options (An IOHK technical report)](/pdfs/utxo-db.pdf)
+* [Storing the Cardano ledger state on disk: API design concepts (An IOHK technical report)](/pdfs/utxo-db-api.pdf)
