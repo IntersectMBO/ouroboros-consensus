@@ -49,7 +49,7 @@ This document is intended to explore and communicate -- to a technical audience
 -- design concepts for how to store the bulk of the Cardano ledger state on
 disk, within the context of the existing designs of the Cardano consensus and
 ledger layers. We will try to illustrate the ideas with prose, algebra,
-diagrams, and models, but not Haskell prototype code.
+diagrams, and models.
 
 The reader is assumed to be familiar with the initial report on this topic,
 covering analysis and design options \citep{utxo-db}.
@@ -86,11 +86,11 @@ The consensus layer also relies on the use of in-memory,
 persistent\footnote{That is persistent in the sense of purely functional data
 structures, not persistent as in kept on disk} data structures. It keeps the
 ledger states for the last $k$ blocks of the chain in memory. The consensus
-layer also evaluates speculative ledger states along candidate chains that may
+layer also evaluates speculative ledger states along candidate chains, which may
 be adopted or discarded. Overall, there is not just a single logical ledger
 state in use at once -- there are many related ones. There are enormous
 opportunities for sharing between these related ledger states and the use of
-persistent data structures takes full advantage such that the cost is little
+persistent data structures takes full advantage, such that the cost is little
 more than the cost of a single ledger state. The incremental cost is
 proportional to the \emph{differences} between the states.
 
@@ -178,9 +178,9 @@ The anti-caching architecture reverses the usual notion that a database's value
 is represented on disk while some data is cached in memory for efficiency.
 Instead, the perspective is that the logical value of the database is
 represented in memory while much of the data is evicted from memory to disk.
-This is the essence of the eponymous anti-cache: rather than using memory as a
-cache for disk data, the disk is used as an anti-cache to evict in-memory data
-to.
+This is the essence of the eponymous anti-cache: the disk is used as an
+anti-cache to evict in-memory data, rather than using memory as a cache for disk
+data.
 
 % TODO: find the image and restore it here
 % %\begin{figure}[h]
@@ -367,9 +367,9 @@ The observation that we have made about the Cardano ledger state is that while
 its structure is relatively complex, with many nested parts, most of it is
 relatively small. Only a few parts of the ledger state are really large, and
 those parts are all finite mappings. Thus, we believe this approach will be
-sufficient to ensure that the amount of required memory remains within the
-amount of available memory. The requirements for scale and resource use are
-given in the previous document \citep[Section 3]{utxo-db}.
+sufficient to ensure the memory needed remains within the memory available. The
+requirements for scale and resource use are given in the previous document
+\citep[Section 3]{utxo-db}.
 
 Furthermore, all the large finite mappings in the ledger state have relatively
 simple key and value types that can be represented as short byte strings. This
