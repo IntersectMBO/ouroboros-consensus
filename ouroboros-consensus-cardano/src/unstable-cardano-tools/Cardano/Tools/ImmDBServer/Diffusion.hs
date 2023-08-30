@@ -21,7 +21,6 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run (SerialiseNodeToNodeConstraints)
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.ErrorPolicy (nullErrorPolicies)
@@ -72,7 +71,6 @@ serve sockAddr application = withIOManager \iocp -> do
 run ::
      forall blk.
      ( GetPrevHash blk
-     , ShowProxy blk
      , SupportedNetworkProtocolVersion blk
      , SerialiseNodeToNodeConstraints blk
      , ImmutableDB.ImmutableDbSerialiseConstraints blk

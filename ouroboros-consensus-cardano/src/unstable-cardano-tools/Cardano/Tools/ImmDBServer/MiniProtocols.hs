@@ -38,7 +38,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.Common
 import           Ouroboros.Consensus.Storage.ImmutableDB.API (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB.API as ImmutableDB
-import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (ChainUpdate (..), Tip (..))
@@ -62,7 +61,6 @@ immDBServer ::
      forall m blk addr.
      ( IOLike m
      , HasHeader blk
-     , ShowProxy blk
      , SerialiseNodeToNodeConstraints blk
      , SupportedNetworkProtocolVersion blk
      )

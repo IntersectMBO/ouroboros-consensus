@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -237,7 +238,7 @@ data ChainSyncOutcome = ChainSyncOutcome {
 -- Note that updates that are scheduled before the time at which we start
 -- syncing help generate different chains to start syncing from.
 runChainSync
-    :: forall m. IOLike m
+    :: forall m. (IOLike m, MonadTraceSTM m)
     => SecurityParam
     -> ClientUpdates
     -> ServerUpdates
@@ -294,9 +295,12 @@ runChainSync securityParam (ClientUpdates clientUpdates)
           }
 
         client :: StrictTVar m (AnchoredFragment (Header TestBlock))
-               -> Consensus ChainSyncClientPipelined
-                    TestBlock
+               -> ChainSyncClientPipelined
+                    (Header TestBlock)
+                    (Point  TestBlock)
+                    (Tip    TestBlock)
                     m
+                    ChainSyncClientResult
         client = chainSyncClient
                    (pipelineDecisionLowHighMark 10 20)
                    chainSyncTracer
@@ -371,8 +375,8 @@ runChainSync securityParam (ClientUpdates clientUpdates)
            maxBound $ \varCandidate -> do
              atomically $ modifyTVar varFinalCandidates $
                Map.insert serverId varCandidate
-             result <-
-               runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
+             (result, _) <-
+               runPeer protocolTracer codecChainSyncId clientChannel $
                  chainSyncClientPeerPipelined $ client varCandidate
              atomically $ writeTVar varClientResult (Just (Right result))
              return ()

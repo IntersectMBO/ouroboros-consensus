@@ -33,7 +33,6 @@ import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
 import           Network.TypedProtocol.Channel (createConnectedChannels)
 import           Network.TypedProtocol.Codec (AnyMessage (..))
-import           Network.TypedProtocol.Core (PeerRole (..))
 import qualified Network.TypedProtocol.Driver.Simple as Driver
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -60,6 +59,8 @@ import           Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion,
                      isPipeliningEnabled)
+import           Ouroboros.Network.Protocol.BlockFetch.Client
+                     (blockFetchClientPeerPipelined)
 import           Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
 import           Ouroboros.Network.Protocol.BlockFetch.Server
                      (BlockFetchBlockSender (SendMsgNoBlocks, SendMsgStartBatch),
@@ -119,7 +120,7 @@ data BlockFetchClientOutcome = BlockFetchClientOutcome {
 
 runBlockFetchTest ::
      forall m.
-     (IOLike m, MonadTime m)
+     (IOLike m, MonadTime m, MonadTraceSTM m)
   => BlockFetchClientTestSetup
   -> m BlockFetchClientOutcome
 runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
@@ -151,7 +152,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
 
     let runBlockFetchClient peerId =
           bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId \clientCtx -> do
-            let bfClient = blockFetchClient
+            let bfClient = blockFetchClientPeerPipelined $ blockFetchClient
                     ntnVersion
                     (readTVar varControlMessage)
                     nullTracer
@@ -161,9 +162,9 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                   where
                     getCurrentChain = atomically $ (Map.! peerId) <$> getCandidates
 
-                blockFetchTracer :: Tracer m (PeerRole, Driver.TraceSendRecv (BlockFetch TestBlock (Point TestBlock)))
+                blockFetchTracer :: Tracer m (Driver.Role, Driver.TraceSendRecv (BlockFetch TestBlock (Point TestBlock)))
                 blockFetchTracer = Tracer \case
-                    (AsClient, ev) -> do
+                    (Driver.Client, ev) -> do
                       atomically case ev of
                         Driver.TraceRecvMsg (AnyMessage (MsgBlock _)) ->
                            modifyTVar varFetchedBlocks $ Map.adjust (+ 1) peerId
@@ -171,7 +172,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                       traceWith tracer $
                         show peerId <> ": BlockFetchClient: " <> show ev
                     _ -> pure ()
-            fst <$> Driver.runConnectedPeersPipelined
+            fst <$> Driver.runConnectedPeers
               createConnectedChannels
               blockFetchTracer
               codecBlockFetchId

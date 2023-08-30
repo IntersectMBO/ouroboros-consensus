@@ -41,6 +41,7 @@ import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Void (Void)
 import           Network.TypedProtocol.Codec
+import qualified Network.TypedProtocol.Stateful.Codec as Stateful
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
@@ -56,7 +57,6 @@ import           Ouroboros.Consensus.Node.Serialisation
 import qualified Ouroboros.Consensus.Node.Tracers as Node
 import           Ouroboros.Consensus.NodeKernel
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -67,6 +67,7 @@ import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.Channel
 import           Ouroboros.Network.Context
 import           Ouroboros.Network.Driver
+import qualified Ouroboros.Network.Driver.Stateful as Stateful
 import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToClient hiding
                      (NodeToClientVersion (..))
@@ -77,6 +78,7 @@ import           Ouroboros.Network.Protocol.ChainSync.Type
 import           Ouroboros.Network.Protocol.LocalStateQuery.Codec
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
+import qualified Ouroboros.Network.Protocol.LocalStateQuery.Type as LocalStateQuery
 import           Ouroboros.Network.Protocol.LocalTxMonitor.Codec
 import           Ouroboros.Network.Protocol.LocalTxMonitor.Server
 import           Ouroboros.Network.Protocol.LocalTxMonitor.Type
@@ -143,10 +145,11 @@ mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
 
 -- | Node-to-client protocol codecs needed to run 'Handlers'.
 data Codecs' blk serialisedBlk e m bCS bTX bSQ bTM = Codecs {
-      cChainSyncCodec    :: Codec (ChainSync serialisedBlk (Point blk) (Tip blk))   e m bCS
-    , cTxSubmissionCodec :: Codec (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))  e m bTX
-    , cStateQueryCodec   :: Codec (LocalStateQuery blk (Point blk) (Query blk))     e m bSQ
-    , cTxMonitorCodec    :: Codec (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo) e m bTM
+      cChainSyncCodec    :: Codec   (ChainSync serialisedBlk (Point blk) (Tip blk))   e m bCS
+    , cTxSubmissionCodec :: Codec   (LocalTxSubmission (GenTx blk) (ApplyTxErr blk))  e m bTX
+    , cStateQueryCodec   :: Stateful.Codec
+                                    (LocalStateQuery blk (Point blk) (Query blk))     e LocalStateQuery.State m bSQ
+    , cTxMonitorCodec    :: Codec   (LocalTxMonitor (GenTxId blk) (GenTx blk) SlotNo) e m bTM
     }
 
 type Codecs blk e m bCS bTX bSQ bTM =
@@ -382,12 +385,6 @@ mkApps
   :: forall m addrNTN addrNTC blk e bCS bTX bSQ bTM.
      ( IOLike m
      , Exception e
-     , ShowProxy blk
-     , ShowProxy (ApplyTxErr blk)
-     , ShowProxy (BlockQuery blk)
-     , ShowProxy (GenTx blk)
-     , ShowProxy (GenTxId blk)
-     , ShowQuery (BlockQuery blk)
      )
   => NodeKernel m addrNTN addrNTC blk
   -> Tracers m addrNTC blk e
@@ -432,10 +429,11 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
       -> m ((), Maybe bSQ)
     aStateQueryServer them channel = do
       labelThisThread "LocalStateQueryServer"
-      runPeer
+      Stateful.runPeer
         (contramap (TraceLabelPeer them) tStateQueryTracer)
         cStateQueryCodec
         channel
+        StateIdle
         (localStateQueryServerPeer hStateQueryServer)
 
     aTxMonitorServer

@@ -501,6 +501,7 @@ test-suite consensus-test
     , tree-diff
     , typed-protocols
     , typed-protocols-examples
+    , typed-protocols-stateful
     , unstable-consensus-testlib
     , unstable-mock-block
 

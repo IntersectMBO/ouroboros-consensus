@@ -150,6 +150,20 @@ instance MonadSTM m => MonadSTM (WithEarlyExit m) where
   newTMVarIO      = lift . newTMVarIO
   newEmptyTMVarIO = lift   newEmptyTMVarIO
 
+instance MonadLabelledSTM m => MonadLabelledSTM (WithEarlyExit m) where
+  labelTVar    = lift .: labelTVar
+  labelTMVar   = lift .: labelTMVar
+  labelTQueue  = lift .: labelTQueue
+  labelTBQueue = lift .: labelTBQueue
+  labelTArray  = lift .: labelTArray
+  labelTSem    = lift .: labelTSem
+  labelTChan   = lift .: labelTChan
+
+  labelTVarIO    = lift .: labelTVarIO
+  labelTMVarIO   = lift .: labelTMVarIO
+  labelTQueueIO  = lift .: labelTQueueIO
+  labelTBQueueIO = lift .: labelTBQueueIO
+
 instance (MonadMVar m, MonadMask m, MonadEvaluate m)
       => MonadMVar (WithEarlyExit m) where
   type MVar (WithEarlyExit m) = MVar m

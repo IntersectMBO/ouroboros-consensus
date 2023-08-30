@@ -73,8 +73,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
                      decodeTip, encodePoint, encodeTip)
 import           Ouroboros.Network.BlockFetch
-import           Ouroboros.Network.BlockFetch.Client (BlockFetchClient,
-                     blockFetchClient)
+import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
 import           Ouroboros.Network.Channel
 import           Ouroboros.Network.Context
 import           Ouroboros.Network.DeltaQ
@@ -91,6 +90,7 @@ import qualified Ouroboros.Network.PeerSelection.PeerSharing as PSTypes
 import           Ouroboros.Network.PeerSharing (PeerSharingController,
                      bracketPeerSharingClient, peerSharingClient,
                      peerSharingServer)
+import           Ouroboros.Network.Protocol.BlockFetch.Client
 import           Ouroboros.Network.Protocol.BlockFetch.Codec
 import           Ouroboros.Network.Protocol.BlockFetch.Server (BlockFetchServer,
                      blockFetchServerPeer)
@@ -147,12 +147,12 @@ data Handlers m addr blk = Handlers {
         -> ChainDB.Follower m blk (ChainDB.WithPoint blk (SerialisedHeader blk))
         -> ChainSyncServer (SerialisedHeader blk) (Point blk) (Tip blk) m ()
 
-    -- TODO block fetch client does not have GADT view of the handlers.
     , hBlockFetchClient
         :: NodeToNodeVersion
         -> ControlMessageSTM m
         -> FetchedMetricsTracer m
-        -> BlockFetchClient (Header blk) blk m ()
+        -> FetchClientContext (Header blk) blk m
+        -> BlockFetchClientPipelined blk (Point blk) m ()
 
     , hBlockFetchServer
         :: ConnectionId addr
@@ -569,7 +569,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
             version $ \varCandidate -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
-                runPipelinedPeerWithLimits
+                runPeerWithLimits
                   (contramap (TraceLabelPeer them) tChainSyncTracer)
                   (cChainSyncCodec (mkCodecs version))
                   blChainSync
@@ -621,12 +621,13 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
       labelThisThread "BlockFetchClient"
       bracketFetchClient (getFetchClientRegistry kernel) version
                          isPipeliningEnabled them $ \clientCtx -> do
-        ((), trailing) <- runPipelinedPeerWithLimits
+        ((), trailing) <- runPeerWithLimits
           (contramap (TraceLabelPeer them) tBlockFetchTracer)
           (cBlockFetchCodec (mkCodecs version))
           blBlockFetch
           timeLimitsBlockFetch
           channel
+          $ blockFetchClientPeerPipelined
           $ hBlockFetchClient version controlMessageSTM
                               (TraceLabelPeer them `contramap` reportFetch) clientCtx
         return (NoInitiatorResult, trailing)
@@ -675,7 +676,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
       -> m ((), Maybe bTX)
     aTxSubmission2Server version ResponderContext { rcConnectionId = them } channel = do
       labelThisThread "TxSubmissionServer"
-      runPipelinedPeerWithLimits
+      runPeerWithLimits
         (contramap (TraceLabelPeer them) tTxSubmission2Tracer)
         (cTxSubmission2Codec (mkCodecs version))
         blTxSubmission2

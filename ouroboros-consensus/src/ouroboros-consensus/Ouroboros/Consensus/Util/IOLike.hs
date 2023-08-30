@@ -66,6 +66,7 @@ class ( MonadAsync              m
       , MonadMVar               m
       , MonadEventlog           m
       , MonadFork               m
+      , MonadLabelledSTM        m
       , MonadST                 m
       , MonadDelay              m
       , MonadThread             m

@@ -108,7 +108,7 @@ processTxs ::
   -> IO [(GenTx blk, SubmitResult (LedgerSupportsMempool.ApplyTxErr blk))]
 processTxs tracer mockedMempool txs =
     (\(a, _, _) -> a) <$>
-      connect (localTxSubmissionClientPeer client) (localTxSubmissionServerPeer mServer)
+      connect [] [] (localTxSubmissionClientPeer client) (localTxSubmissionServerPeer mServer)
   where
     mServer = pure $ localTxSubmissionServer tracer
                                              (Mocked.getMempool mockedMempool)
