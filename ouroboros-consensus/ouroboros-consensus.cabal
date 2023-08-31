@@ -286,6 +286,14 @@ library unstable-consensus-testlib
   visibility:      public
   hs-source-dirs:  src/unstable-consensus-testlib
   exposed-modules:
+    Test.Ouroboros.Consensus.ChainGenerator.Adversarial
+    Test.Ouroboros.Consensus.ChainGenerator.BitVector
+    Test.Ouroboros.Consensus.ChainGenerator.Counting
+    Test.Ouroboros.Consensus.ChainGenerator.Honest
+    Test.Ouroboros.Consensus.ChainGenerator.Params
+    Test.Ouroboros.Consensus.ChainGenerator.RaceIterator
+    Test.Ouroboros.Consensus.ChainGenerator.Slot
+    Test.Ouroboros.Consensus.ChainGenerator.Some
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
@@ -362,6 +370,7 @@ library unstable-consensus-testlib
     , time
     , tree-diff
     , utf8-string
+    , vector
 
 library unstable-mock-block
   import:          common-lib
@@ -507,16 +516,24 @@ test-suite infra-test
   main-is:        Main.hs
   other-modules:
     Ouroboros.Consensus.Util.Tests
+    Test.Ouroboros.Consensus.ChainGenerator.Tests
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
     Test.Util.ChainUpdates.Tests
     Test.Util.Schedule.Tests
     Test.Util.Split.Tests
 
   build-depends:
     , base
+    , mtl
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , QuickCheck
+    , random
     , tasty
     , tasty-quickcheck
+    , vector
 
 test-suite storage-test
   import:         common-test
