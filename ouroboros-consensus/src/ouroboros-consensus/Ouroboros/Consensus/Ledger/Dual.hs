@@ -1,26 +1,24 @@
-{-# LANGUAGE CPP                        #-}
-{-# LANGUAGE ConstraintKinds            #-}
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE DerivingVia                #-}
-{-# LANGUAGE EmptyCase                  #-}
-{-# LANGUAGE EmptyDataDeriving          #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE MultiParamTypeClasses      #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE UndecidableInstances       #-}
-{-# LANGUAGE UndecidableSuperClasses    #-}
+{-# LANGUAGE CPP                     #-}
+{-# LANGUAGE ConstraintKinds         #-}
+{-# LANGUAGE DataKinds               #-}
+{-# LANGUAGE DeriveGeneric           #-}
+{-# LANGUAGE DerivingVia             #-}
+{-# LANGUAGE EmptyCase               #-}
+{-# LANGUAGE EmptyDataDeriving       #-}
+{-# LANGUAGE FlexibleContexts        #-}
+{-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE GADTs                   #-}
+{-# LANGUAGE LambdaCase              #-}
+{-# LANGUAGE MultiParamTypeClasses   #-}
+{-# LANGUAGE NamedFieldPuns          #-}
+{-# LANGUAGE OverloadedStrings       #-}
+{-# LANGUAGE RecordWildCards         #-}
+{-# LANGUAGE ScopedTypeVariables     #-}
+{-# LANGUAGE StandaloneDeriving      #-}
+{-# LANGUAGE TypeApplications        #-}
+{-# LANGUAGE TypeFamilies            #-}
+{-# LANGUAGE UndecidableInstances    #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Ouroboros.Consensus.Ledger.Dual (
     Bridge (..)
@@ -507,22 +505,22 @@ instance Bridge m a => HasHardForkHistory (DualBlock m a) where
   Querying the ledger
 -------------------------------------------------------------------------------}
 
-data instance BlockQuery (DualBlock m a) result
+data instance BlockQuery (DualBlock m a) footprint result
   deriving (Show)
 
 instance (Typeable m, Typeable a)
     => ShowProxy (BlockQuery (DualBlock m a)) where
 
 -- | Not used in the tests: no constructors
-instance Bridge m a => QueryLedger (DualBlock m a) where
-  answerBlockQuery _ = \case {}
-  getQueryKeySets = \case {}
-  tableTraversingQuery = \case {}
+instance Bridge m a => BlockSupportsLedgerQuery (DualBlock m a) where
+  answerPureBlockQuery _ = \case {}
+  answerBlockQueryLookup _ = \case {}
+  answerBlockQueryTraverse _ = \case {}
 
-instance SameDepIndex (BlockQuery (DualBlock m a)) where
-  sameDepIndex = \case {}
+instance SameDepIndex2 (BlockQuery (DualBlock m a)) where
+  sameDepIndex2 = \case {}
 
-instance ShowQuery (BlockQuery (DualBlock m a)) where
+instance ShowQuery (BlockQuery (DualBlock m a) footprint) where
   showResult = \case {}
 
 -- | Forward to the main ledger
@@ -587,14 +585,14 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
               , vDualGenTxAux    = auxVtx
               , vDualGenTxBridge = dualGenTxBridge
               }
-      return $ flip (,) vtx $ TickedDualLedgerState {
+      return (TickedDualLedgerState {
           tickedDualLedgerStateMain    = main'
         , tickedDualLedgerStateAux     = forgetTrackingDiffs aux'
         , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
         , tickedDualLedgerStateBridge  = updateBridgeWithTx
                                            vtx
                                            tickedDualLedgerStateBridge
-        }
+        }, vtx)
 
 
   reapplyTx DualLedgerConfig{..}

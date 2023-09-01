@@ -90,6 +90,7 @@ import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.Cardano.CanonicalTxIn ()
+import           Ouroboros.Consensus.Cardano.QueryHF ()
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
