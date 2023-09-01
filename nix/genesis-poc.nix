@@ -78,7 +78,7 @@
   '';
 
   nonGenesis = script "non-genesis" ''
-  $state/start-syncing.sh ${local.genesis-poc}/bin/cardano-node
+  $state/start-syncing.sh ${local.baseline}/bin/cardano-node
   '';
 
   ui = script "ui" ''
@@ -141,7 +141,6 @@
 
   run = script "run" ''
   ${bootstrap}
-  rm -rf $state/db-syncing
   if [[ -n ''${TMUX-} ]]
   then
     log 'Using active tmux session'
