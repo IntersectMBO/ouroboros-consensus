@@ -1,27 +1,24 @@
 {-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryServer) where
 
 
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query (DiskLedgerView (..), Query,
-                     QueryLedger)
+                     BlockSupportsLedgerQuery)
 import qualified Ouroboros.Consensus.Ledger.Query as Query
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
-                     (AcquireFailure (..))
 
 localStateQueryServer ::
      forall m blk.
      ( IOLike m
-     , QueryLedger blk
+     , BlockSupportsLedgerQuery blk
      , Query.ConfigSupportsNode blk
      , LedgerSupportsProtocol blk
      )

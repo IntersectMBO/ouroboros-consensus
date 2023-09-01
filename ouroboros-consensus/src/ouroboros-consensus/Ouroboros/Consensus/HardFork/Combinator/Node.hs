@@ -19,6 +19,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Ledger
                      (HardForkHasLedgerTables, HasCanonicalTxIn)
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams ()
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection ()
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import           Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import           Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
@@ -58,6 +59,7 @@ getSameConfigValue getValue blockConfig = getSameValue values
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
+         , BlockSupportsHFLedgerQuery xs
          , SupportedNetworkProtocolVersion (HardForkBlock xs)
          , SerialiseHFC xs
          ) => RunNode (HardForkBlock xs)

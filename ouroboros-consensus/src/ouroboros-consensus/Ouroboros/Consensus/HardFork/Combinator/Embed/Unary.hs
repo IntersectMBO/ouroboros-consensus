@@ -1,17 +1,18 @@
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DerivingVia           #-}
-{-# LANGUAGE EmptyCase             #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE InstanceSigs          #-}
-{-# LANGUAGE KindSignatures        #-}
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes            #-}
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE DerivingVia              #-}
+{-# LANGUAGE EmptyCase                #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE FlexibleInstances        #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE InstanceSigs             #-}
+{-# LANGUAGE KindSignatures           #-}
+{-# LANGUAGE QuantifiedConstraints    #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE RecordWildCards          #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeOperators            #-}
 
 -- | Witness isomorphism between @b@ and @HardForkBlock '[b]@
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Unary (
@@ -61,6 +62,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -609,10 +611,10 @@ instance Isomorphic SerialisedHeader where
 -- | Project 'BlockQuery'
 --
 -- Not an instance of 'Isomorphic' because the types change.
-projQuery :: BlockQuery (HardForkBlock '[b]) result
+projQuery :: BlockQuery (HardForkBlock '[b]) fp result
           -> (forall result'.
                   (result :~: HardForkQueryResult '[b] result')
-               -> BlockQuery b result'
+               -> BlockQuery b fp result'
                -> a)
           -> a
 projQuery qry k =
@@ -622,24 +624,25 @@ projQuery qry k =
       (\Refl prfNonEmpty _ _ -> case prfNonEmpty of {})
       (\Refl prfNonEmpty _   -> case prfNonEmpty of {})
   where
-    aux :: QueryIfCurrent '[b] result -> BlockQuery b result
+    aux :: QueryIfCurrent '[b] fp result -> BlockQuery b fp result
     aux (QZ q) = q
     aux (QS q) = case q of {}
 
-projQuery' :: BlockQuery (HardForkBlock '[b]) result
-           -> ProjHardForkQuery b result
+projQuery' :: BlockQuery (HardForkBlock '[b]) fp result
+           -> ProjHardForkQuery fp b result
 projQuery' qry = projQuery qry $ \Refl -> ProjHardForkQuery
 
-data ProjHardForkQuery b :: Type -> Type where
+type ProjHardForkQuery :: QueryFootprint -> Type -> Type -> Type
+data ProjHardForkQuery fp b res where
   ProjHardForkQuery ::
-       BlockQuery b result'
-    -> ProjHardForkQuery b (HardForkQueryResult '[b] result')
+       BlockQuery b fp result'
+    -> ProjHardForkQuery fp b (HardForkQueryResult '[b] result')
 
 -- | Inject 'BlockQuery'
 --
 -- Not an instance of 'Isomorphic' because the types change.
-injQuery :: BlockQuery b result
-         -> BlockQuery (HardForkBlock '[b]) (HardForkQueryResult '[b] result)
+injQuery :: forall fp b result. BlockQuery b fp result
+         -> BlockQuery (HardForkBlock '[b]) fp (HardForkQueryResult '[b] result)
 injQuery = QueryIfCurrent . QZ
 
 projQueryResult :: HardForkQueryResult '[b] result -> result

@@ -97,6 +97,7 @@ import qualified Data.Set as Set
 import           Data.Void
 import           Data.Word (Word64)
 import           GHC.Stack
+import           Ouroboros.Network.Protocol.LocalStateQuery.Codec (Some (..))
 import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 
 {-------------------------------------------------------------------------------
@@ -109,9 +110,6 @@ data Dict :: Constraint -> Type where
 class Empty a
 instance Empty a
 
-data Some (f :: k -> Type) where
-    Some :: f a -> Some f
-
 -- | Pair of functors instantiated to the /same/ existential
 data SomePair (f :: k -> Type) (g :: k -> Type) where
     SomePair :: f a -> g a -> SomePair f g
@@ -120,7 +118,8 @@ data SomePair (f :: k -> Type) (g :: k -> Type) where
 --
 -- @SomeSecond f a@ is isomorphic to @Some (f a)@, but is more convenient in
 -- partial applications.
-data SomeSecond (f :: Type -> Type -> Type) a where
+type SomeSecond :: (k1 -> k2 -> Type) -> k1 -> Type
+data SomeSecond f a where
   SomeSecond :: !(f a b) -> SomeSecond f a
 
 mustBeRight :: Either Void a -> a
