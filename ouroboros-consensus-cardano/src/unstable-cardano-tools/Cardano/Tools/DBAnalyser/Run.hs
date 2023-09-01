@@ -30,6 +30,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB (SnapshotInterval (..),
 import           Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..))
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.IO
@@ -52,7 +53,7 @@ analyse ::
   -> IO (Maybe AnalysisResult)
 analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbose} args =
     withRegistry $ \registry -> do
-      lock           <- newSVar ()
+      lock           <- newMVar ()
       chainDBTracer  <- mkTracer lock verbose
       analysisTracer <- mkTracer lock True
       ProtocolInfo { pInfoInitLedger = genesisLedger, pInfoConfig = cfg } <-
@@ -128,7 +129,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
         hPutStrLn stderr $ concat ["[", show diff, "] ", show ev]
         hFlush stderr
       where
-        withLock = bracket_ (takeSVar lock) (putSVar lock ())
+        withLock = bracket_ (takeMVar lock) (putMVar lock ())
 
     immValidationPolicy = case (analysis, validation) of
       (_, Just ValidateAllBlocks)      -> ImmutableDB.ValidateAllChunks

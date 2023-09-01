@@ -55,6 +55,7 @@ import           Control.Monad.Class.MonadTimer.SI
 import           Data.Functor (void)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
+import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar)
 import           Ouroboros.Consensus.Util.Orphans ()
 
 {-------------------------------------------------------------------------------
@@ -78,6 +79,7 @@ class ( MonadAsync              m
       , forall a. NoThunks (m a)
       , forall a. NoThunks a => NoThunks (StrictTVar m a)
       , forall a. NoThunks a => NoThunks (StrictSVar m a)
+      , forall a. NoThunks a => NoThunks (StrictMVar m a)
       ) => IOLike m where
   -- | Securely forget a KES signing key.
   --

@@ -217,7 +217,7 @@ open args = do
 reopen :: ImmutableDBEnv -> ValidationPolicy -> IO ()
 reopen ImmutableDBEnv { varDB, args } valPol = do
     immutableDbState <- open args { immValidationPolicy = valPol }
-    void $ swapSVar varDB immutableDbState
+    void $ atomically $ swapTVar varDB immutableDbState
 
 -- | Run the command against the given database.
 run ::
@@ -234,7 +234,7 @@ run env@ImmutableDBEnv {
           , immHasFS = SomeHasFS hasFS
           }
       } cmd =
-    readSVar varDB >>= \ImmutableDBState { db, internal } -> case cmd of
+    readTVarIO varDB >>= \ImmutableDBState { db, internal } -> case cmd of
       GetTip               -> ImmTip          <$> atomically (getTip            db)
       GetBlockComponent pt -> ErAllComponents <$>             getBlockComponent db allComponents pt
       AppendBlock blk      -> Unit            <$>             appendBlock       db blk
@@ -800,15 +800,15 @@ data ImmutableDBEnv = ImmutableDBEnv {
       -- During truncation we might need to delete a file that is still opened
       -- by an iterator. As this is not allowed by the MockFS implementation, we
       -- first close all open iterators in these cases.
-    , varDB     :: StrictSVar IO ImmutableDBState
+    , varDB     :: StrictTVar IO ImmutableDBState
     , args      :: ImmutableDbArgs Identity IO TestBlock
     }
 
 getImmutableDB :: ImmutableDBEnv -> IO (ImmutableDB IO TestBlock)
-getImmutableDB = fmap db . readSVar . varDB
+getImmutableDB = fmap db . readTVarIO . varDB
 
 getInternal :: ImmutableDBEnv -> IO (ImmutableDB.Internal IO TestBlock)
-getInternal = fmap internal . readSVar . varDB
+getInternal = fmap internal . readTVarIO . varDB
 
 semantics ::
      ImmutableDBEnv
@@ -1209,11 +1209,11 @@ test cacheConfig chunkInfo cmds = do
             }
 
       (hist, model, res, trace) <- bracket
-        (open args >>= newSVar)
+        (open args >>= newTVarIO)
         -- Note: we might be closing a different ImmutableDB than the one we
         -- opened, as we can reopen it the ImmutableDB, swapping the
-        -- ImmutableDB in the SVar.
-        (\varDB -> readSVar varDB >>= closeDB . db)
+        -- ImmutableDB in the TVar.
+        (\varDB -> readTVarIO varDB >>= closeDB . db)
         $ \varDB -> do
           let env = ImmutableDBEnv
                 { varErrors

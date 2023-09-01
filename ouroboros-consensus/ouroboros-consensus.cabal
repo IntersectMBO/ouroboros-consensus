@@ -341,6 +341,7 @@ library unstable-consensus-testlib
     , fs-api                                                  ^>=0.2
     , fs-sim                                                  ^>=0.2
     , generics-sop
+    , io-classes
     , io-sim
     , mtl
     , nothunks
@@ -490,7 +491,9 @@ test-suite consensus-test
     , si-timers
     , sop-core
     , sop-extras
+    , strict-mvar
     , strict-sop-core
+    , strict-stm
     , tasty
     , tasty-hunit
     , tasty-quickcheck

@@ -410,7 +410,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
       nodeDbs <- emptyNodeDBs
       (tracer, getTrace) <- recordingTracerTVar
       let args = chainDbArgs threadRegistry nodeDbs tracer
-      varDB <- open args >>= newSVar
+      varDB <- open args >>= newTVarIO
       let env = ChainDBEnv
             { varDB
             , registry = iteratorRegistry
@@ -422,7 +422,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
       pure (env, getTrace)
 
     closeChainDbEnv (env, _) = do
-      readSVar (varDB env) >>= close
+      readTVarIO (varDB env) >>= close
       closeRegistry (registry env)
       closeRegistry (cdbRegistry $ args env)
 
@@ -446,20 +446,20 @@ instance IOLike m => SupportsUnitTest (SystemM blk m) where
   addBlock blk = do
     env <- ask
     SystemM $ lift $ lift $ do
-      api <- chainDB <$> readSVar (varDB env)
+      api <- chainDB <$> readTVarIO (varDB env)
       void $ API.addBlock api API.noPunishment blk
       pure blk
 
   persistBlks shouldGarbageCollect = do
     env <- ask
     SystemM $ lift $ lift $ do
-      internal <- internal <$> readSVar (varDB env)
+      internal <- internal <$> readTVarIO (varDB env)
       SM.persistBlks shouldGarbageCollect internal
 
   newFollower = do
     env <- ask
     SystemM $ lift $ lift $ do
-      api <- chainDB <$> readSVar (varDB env)
+      api <- chainDB <$> readTVarIO (varDB env)
       API.newFollower api (registry env) API.SelectedChain allComponents
 
   followerInstruction = SystemM . lift . lift . fmap Right
@@ -471,7 +471,7 @@ instance IOLike m => SupportsUnitTest (SystemM blk m) where
   stream from to = do
     env <- ask
     SystemM $ lift $ lift $ fmap Right $ do
-      api <- chainDB <$> readSVar (varDB env)
+      api <- chainDB <$> readTVarIO (varDB env)
       API.stream api (registry env) allComponents from to
 
   iteratorNext iterator = SystemM $ lift $ lift (API.iteratorNext iterator)

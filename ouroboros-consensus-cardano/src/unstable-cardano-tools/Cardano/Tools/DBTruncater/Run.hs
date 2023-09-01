@@ -24,6 +24,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import           Ouroboros.Consensus.Util.ResourceRegistry (runWithTempRegistry,
                      withRegistry)
 import           Prelude hiding (truncate)
@@ -109,15 +110,15 @@ findNewTip target iter =
         IteratorResult item -> do
           if acceptable item then go (Just item) else pure acc
 
-mkLock :: MonadSTM m => m (StrictSVar m ())
-mkLock = newSVar ()
+mkLock :: MonadMVar m => m (StrictMVar m ())
+mkLock = newMVar ()
 
-mkTracer :: Show a => StrictSVar IO () -> Bool -> IO (Tracer IO a)
+mkTracer :: Show a => StrictMVar IO () -> Bool -> IO (Tracer IO a)
 mkTracer _ False = pure mempty
 mkTracer lock True = do
   startTime <- getMonotonicTime
   pure $ Tracer $ \ev -> do
-    bracket_ (takeSVar lock) (putSVar lock ()) $ do
+    bracket_ (takeMVar lock) (putMVar lock ()) $ do
       traceTime <- getMonotonicTime
       let diff = diffTime traceTime startTime
       hPutStrLn stderr $ concat ["[", show diff, "] ", show ev]
