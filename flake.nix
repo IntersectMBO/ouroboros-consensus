@@ -31,6 +31,8 @@
       url = "github:edolstra/flake-compat";
       flake = false;
     };
+    cardano-node.url =
+      "github:input-output-hk/cardano-node/8063de9354de737788e038a56946c74d5227b05d";
   };
   outputs = inputs:
     let
@@ -54,6 +56,21 @@
             (import ./nix/tools.nix inputs)
             (import ./nix/haskell.nix inputs)
             (import ./nix/pdfs.nix)
+            (_: _: {
+              long-range-attack = {
+                inherit (inputs.cardano-node.packages.${system}) cardano-cli;
+                baseline = inputs.cardano-node.packages.${system}.cardano-node;
+                genesis-poc = (inputs.cardano-node.project.${system}.appendModule {
+                  cabalProjectLocal = ''
+                    packages:
+                      ${./.}/ouroboros-consensus
+                      ${./.}/ouroboros-consensus-diffusion
+                      ${./.}/ouroboros-consensus-protocol
+                      ${./.}/ouroboros-consensus-cardano
+                  '';
+                }).hsPkgs.cardano-node.components.exes.cardano-node;
+              };
+            })
           ];
         };
         hydraJobs = import ./nix/ci.nix pkgs;

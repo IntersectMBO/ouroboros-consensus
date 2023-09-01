@@ -30,6 +30,7 @@ let
     pkgs.hsPkgs.appendModule { compiler-nix-name = lib.mkForce ghcVer; };
 
   jobs = lib.filterAttrsRecursive (n: v: n != "recurseForDerivations") ({
+    inherit (pkgs) long-range-attack;
     native = {
       haskell = mkHaskellJobsFor pkgs.hsPkgs;
     } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
