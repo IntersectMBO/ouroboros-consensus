@@ -63,10 +63,10 @@
                 genesis-poc = (inputs.cardano-node.project.${system}.appendModule {
                   cabalProjectLocal = ''
                     packages:
-                      ${./.}/ouroboros-consensus
-                      ${./.}/ouroboros-consensus-diffusion
-                      ${./.}/ouroboros-consensus-protocol
-                      ${./.}/ouroboros-consensus-cardano
+                      ${./ouroboros-consensus}
+                      ${./ouroboros-consensus-diffusion}
+                      ${./ouroboros-consensus-protocol}
+                      ${./ouroboros-consensus-cardano}
                   '';
                 }).hsPkgs.cardano-node.components.exes.cardano-node;
               };
