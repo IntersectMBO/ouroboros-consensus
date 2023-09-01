@@ -561,8 +561,8 @@ test-suite consensus-test
     , deepseq
     , diff-containers                                                     >=1.1
     , fingertree-rm                                                       >=1.0
-    , fs-sim ^>=0.2
     , fs-api                                                              ^>=0.1
+    , fs-sim                                                              ^>=0.2
     , generics-sop
     , hashable
     , io-classes
