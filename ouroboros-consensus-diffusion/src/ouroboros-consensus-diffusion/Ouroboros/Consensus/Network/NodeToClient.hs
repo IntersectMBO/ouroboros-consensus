@@ -3,9 +3,9 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeApplications      #-}
 
 -- | Intended for qualified import
 module Ouroboros.Consensus.Network.NodeToClient (
@@ -40,6 +40,7 @@ import           Codec.CBOR.Read (DeserialiseFailure)
 import           Codec.Serialise (Serialise)
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
+import           Data.Typeable
 import           Data.Void (Void)
 import           Network.TypedProtocol.Codec
 import           Ouroboros.Consensus.Block
@@ -108,7 +109,7 @@ mkHandlers
      ( IOLike m
      , LedgerSupportsMempool blk
      , LedgerSupportsProtocol blk
-     , QueryLedger blk
+     , BlockSupportsLedgerQuery blk
      , ConfigSupportsNode blk
      )
   => NodeKernelArgs m addrNTN addrNTC blk
@@ -174,7 +175,7 @@ type ClientCodecs blk  m =
 defaultCodecs :: forall m blk.
                  ( MonadST m
                  , SerialiseNodeToClientConstraints blk
-                 , ShowQuery (BlockQuery blk)
+                 , forall fp. ShowQuery (BlockQuery blk fp)
                  , StandardHash blk
                  , Serialise (HeaderHash blk)
                  )
@@ -204,7 +205,7 @@ defaultCodecs ccfg version networkVersion = Codecs {
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
           (queryEncodeNodeToClient ccfg queryVersion version . SomeSecond)
-          ((\(SomeSecond qry) -> Some qry) <$> queryDecodeNodeToClient ccfg queryVersion version)
+          ((\(SomeSecond q) -> Some q) <$> queryDecodeNodeToClient ccfg queryVersion version)
           (encodeResult ccfg version)
           (decodeResult ccfg version)
 
@@ -233,7 +234,7 @@ defaultCodecs ccfg version networkVersion = Codecs {
 clientCodecs :: forall m blk.
                 ( MonadST m
                 , SerialiseNodeToClientConstraints blk
-                , ShowQuery (BlockQuery blk)
+                , forall fp. ShowQuery (BlockQuery blk fp)
                 , StandardHash blk
                 , Serialise (HeaderHash blk)
                 )
@@ -263,7 +264,7 @@ clientCodecs ccfg version networkVersion = Codecs {
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
           (queryEncodeNodeToClient ccfg queryVersion version . SomeSecond)
-          ((\(SomeSecond qry) -> Some qry) <$> queryDecodeNodeToClient ccfg queryVersion version)
+          ((\(SomeSecond q) -> Some q) <$> queryDecodeNodeToClient ccfg queryVersion version)
           (encodeResult ccfg version)
           (decodeResult ccfg version)
 
@@ -287,7 +288,7 @@ clientCodecs ccfg version networkVersion = Codecs {
     dec = decodeNodeToClient ccfg version
 
 -- | Identity codecs used in tests.
-identityCodecs :: (Monad m, QueryLedger blk)
+identityCodecs :: (Monad m, SameDepIndex2 (BlockQuery blk))
                => Codecs blk CodecFailure m
                     (AnyMessage (ChainSync (Serialised blk) (Point blk) (Tip blk)))
                     (AnyMessage (LocalTxSubmission (GenTx blk) (ApplyTxErr blk)))
@@ -341,7 +342,7 @@ showTracers :: ( Show peer
                , Show (GenTx blk)
                , Show (GenTxId blk)
                , Show (ApplyTxErr blk)
-               , ShowQuery (BlockQuery blk)
+               , forall fp. ShowQuery (BlockQuery blk fp)
                , HasHeader blk
                )
             => Tracer m String -> Tracers m peer blk e
@@ -383,10 +384,10 @@ mkApps
      , Exception e
      , ShowProxy blk
      , ShowProxy (ApplyTxErr blk)
-     , ShowProxy (BlockQuery blk)
      , ShowProxy (GenTx blk)
      , ShowProxy (GenTxId blk)
-     , ShowQuery (BlockQuery blk)
+     , ShowProxy (Query blk)
+     , forall fp. ShowQuery (BlockQuery blk fp)
      )
   => NodeKernel m addrNTN addrNTC blk
   -> Tracers m addrNTC blk e

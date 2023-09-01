@@ -1,20 +1,26 @@
-{-# LANGUAGE BangPatterns          #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes            #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE UndecidableInstances  #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE PolyKinds                  #-}
+{-# LANGUAGE QuantifiedConstraints      #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE StandaloneKindSignatures   #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE UndecidableInstances       #-}
+
 module Ouroboros.Consensus.Ledger.Query (
     BlockQuery
   , ConfigSupportsNode (..)
   , Query (..)
-  , QueryLedger (..)
+  , BlockSupportsLedgerQuery (..)
   , QueryVersion (..)
   , ShowQuery (..)
   , answerQuery
@@ -23,10 +29,11 @@ module Ouroboros.Consensus.Ledger.Query (
   , queryEncodeNodeToClient
     -- * Table queries
   , DiskLedgerView (..)
-  , TraversingQueryHandler (..)
-  , handleQueryWithStowedKeySets
-  , handleTraversingQuery
   , mkDiskLedgerView
+    -- * Footprints
+  , QueryFootprint (..)
+  , Sing (SQFNoTables, SQFLookupTables, SQFTraverseTables)
+  , SomeBlockQuery (..)
   ) where
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
@@ -43,7 +50,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Monoid
 import qualified Data.Set as Set
-import           Data.Typeable (Typeable)
+import           Data.SOP.Strict ((:.:) (..))
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (CodecConfig)
 import           Ouroboros.Consensus.BlockchainTime (SystemStart)
@@ -54,13 +61,12 @@ import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..),
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query.Version
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
-import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (BlockNodeToClientVersion)
 import           Ouroboros.Consensus.Node.Serialisation
-                     (SerialiseNodeToClient (..), SerialiseResult (..))
+                     (SerialiseNodeToClient (..), SerialiseResult (..),
+                     SerialiseResult' (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView (..),
                      closeLedgerDBView)
@@ -70,10 +76,100 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbCha
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
 import           Ouroboros.Consensus.Util.DepPair
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.Singletons
 import           Ouroboros.Network.Block (HeaderHash, Point (..), StandardHash,
                      decodePoint, encodePoint)
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
-                     (ShowQuery (..))
+
+{-------------------------------------------------------------------------------
+  Footprints
+-------------------------------------------------------------------------------}
+
+-- | Queries on the local state might require reading ledger tables from disk.
+-- This datatype (which will sometimes be concretized via @sing@) allows
+-- Consensus to categorize the queries.
+data QueryFootprint =
+    -- | The query doesn't need ledger tables, thus can be answered only with
+    -- the ledger state.
+    QFNoTables
+    -- | The query needs some tables, but doesn't need to traverse the whole
+    -- backing store.
+  | QFLookupTables
+    -- | The query needs to traverse the whole backing store.
+  | QFTraverseTables
+
+data instance Sing (qf :: QueryFootprint) where
+  SQFNoTables       :: Sing QFNoTables
+  SQFLookupTables   :: Sing QFLookupTables
+  SQFTraverseTables :: Sing QFTraverseTables
+
+instance SingI QFNoTables where
+  sing = SQFNoTables
+instance SingI QFLookupTables where
+  sing = SQFLookupTables
+instance SingI QFTraverseTables where
+  sing = SQFTraverseTables
+
+type SomeBlockQuery :: (QueryFootprint -> Type -> Type) -> Type
+data SomeBlockQuery q =
+  forall footprint result. SingI footprint => SomeBlockQuery (q footprint result)
+
+{-------------------------------------------------------------------------------
+  Block Queries
+-------------------------------------------------------------------------------}
+
+-- | Different queries supported by the ledger, indexed by the result type.
+type BlockQuery :: Type -> QueryFootprint ->  Type -> Type
+data family BlockQuery
+
+-- | Query the ledger extended state.
+--
+-- Used by the LocalStateQuery protocol to allow clients to query the extended
+-- ledger state.
+class
+     -- These instances are not needed for BlockSupportsLedgerQuery but we bundle them here
+     -- so that we don't need to put them in 'SingleEraBlock' later on
+     (forall fp. ShowQuery (BlockQuery blk fp), SameDepIndex2 (BlockQuery blk))
+  => BlockSupportsLedgerQuery blk where
+
+  -- | Answer the given query about the extended ledger state, without reading
+  -- ledger tables from the disk.
+  answerPureBlockQuery ::
+       ExtLedgerCfg blk
+    -> BlockQuery blk QFNoTables result
+    -> ExtLedgerState blk EmptyMK
+    -> result
+
+  -- | Answer a query that requires to perform a lookup on the ledger tables. As
+  -- consensus always runs with a HardForkBlock, this might result in a
+  -- different code path to answer a query compared to the one that a single
+  -- block would take, one that is aware of the fact that the ledger tables
+  -- might be HF ledger tables thus making use of some utilities to make these
+  -- queries faster.
+  --
+  -- For the hard fork block this will be instantiated to
+  -- @answerBlockQueryHFOne@.
+  answerBlockQueryLookup ::
+       Monad m
+    => ExtLedgerCfg blk
+    -> BlockQuery blk QFLookupTables result
+    -> DiskLedgerView m (ExtLedgerState blk)
+    -> m result
+
+  -- | Answer a query that requires to traverse the ledger tables. As consensus
+  -- always runs with a HardForkBlock, this might result in a different code
+  -- path to answer a query compared to the one that a single block would take,
+  -- one that is aware of the fact that the ledger tables might be HF ledger
+  -- tables thus making use of some utilities to make these queries faster.
+  --
+  -- For the hard fork block this will be instantiated to
+  -- @answerBlockQueryHFAll@.
+  answerBlockQueryTraverse ::
+       Monad m
+    => ExtLedgerCfg blk
+    -> BlockQuery blk QFTraverseTables result
+    -> DiskLedgerView m (ExtLedgerState blk)
+    -> m result
 
 {-------------------------------------------------------------------------------
   Queries
@@ -90,10 +186,12 @@ queryName query = case query of
 -- by the result type.
 --
 -- Additions to the set of queries is versioned by 'QueryVersion'
+type Query :: Type -> Type -> Type
 data Query blk result where
   -- | This constructor is supported by all @QueryVersion@s. The @BlockQuery@
   -- argument is versioned by the @BlockNodeToClientVersion blk@.
-  BlockQuery :: BlockQuery blk result -> Query blk result
+  BlockQuery ::
+    SingI footprint => BlockQuery blk footprint result -> Query blk result
 
   -- | Get the 'SystemStart' time.
   --
@@ -110,51 +208,115 @@ data Query blk result where
   -- Supported by 'QueryVersion' >= 'QueryVersion2'.
   GetChainPoint :: Query blk (Point blk)
 
-instance (ShowProxy (BlockQuery blk)) => ShowProxy (Query blk) where
-  showProxy (Proxy :: Proxy (Query blk)) = "Query (" ++ showProxy (Proxy @(BlockQuery blk)) ++ ")"
+-- | Answer the given query about the extended ledger state.
+answerQuery ::
+     forall blk m result.
+     (BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk, Monad m)
+  => ExtLedgerCfg blk
+  -> DiskLedgerView m (ExtLedgerState blk)
+  -> Query blk result
+  -> m result
+answerQuery config dlv query = case query of
+    BlockQuery (blockQuery :: BlockQuery blk footprint result) ->
+      case sing :: Sing footprint of
+        SQFNoTables ->
+          pure $ answerPureBlockQuery config blockQuery (dlvCurrent dlv)
+        SQFLookupTables ->
+          answerBlockQueryLookup config blockQuery dlv
+        SQFTraverseTables ->
+          answerBlockQueryTraverse config blockQuery dlv
+    GetSystemStart ->
+      pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
+    GetChainBlockNo ->
+      pure $ headerStateBlockNo (headerState st)
+    GetChainPoint ->
+      pure $ headerStatePoint (headerState st)
+  where
+    st = dlvCurrent dlv
 
-instance (ShowQuery (BlockQuery blk), StandardHash blk) => ShowQuery (Query blk) where
+{-------------------------------------------------------------------------------
+  Query instances
+-------------------------------------------------------------------------------}
+
+------
+-- Show
+------
+
+deriving instance
+     (forall footprint result. Show (BlockQuery blk footprint result))
+  => Show (SomeBlockQuery (BlockQuery blk))
+
+deriving instance
+     (forall footprint. Show (BlockQuery blk footprint result))
+  => Show (Query blk result)
+
+instance (ShowProxy (BlockQuery blk)) => ShowProxy (Query blk) where
+  showProxy (Proxy :: Proxy (Query blk)) =
+    "Query (" ++ showProxy (Proxy @(BlockQuery blk)) ++ ")"
+
+instance
+     (forall footprint. ShowQuery (BlockQuery blk footprint), StandardHash blk)
+  => ShowQuery (Query blk) where
   showResult (BlockQuery blockQuery) = showResult blockQuery
   showResult GetSystemStart          = show
   showResult GetChainBlockNo         = show
   showResult GetChainPoint           = show
 
-instance Eq (SomeSecond BlockQuery blk) => Eq (SomeSecond Query blk) where
-  SomeSecond (BlockQuery blockQueryA) == SomeSecond (BlockQuery blockQueryB)
-    = SomeSecond blockQueryA == SomeSecond blockQueryB
-  SomeSecond (BlockQuery _) == _ = False
-
-  SomeSecond GetSystemStart == SomeSecond GetSystemStart = True
-  SomeSecond GetSystemStart == _                         = False
-
-  SomeSecond GetChainBlockNo == SomeSecond GetChainBlockNo  = True
-  SomeSecond GetChainBlockNo == _                           = False
-
-  SomeSecond GetChainPoint == SomeSecond GetChainPoint  = True
-  SomeSecond GetChainPoint == _                         = False
-
-instance Show (SomeSecond BlockQuery blk) => Show (SomeSecond Query blk) where
-  show (SomeSecond (BlockQuery blockQueryA))  = "Query " ++ show (SomeSecond blockQueryA)
+instance Show (SomeBlockQuery (BlockQuery blk)) => Show (SomeSecond Query blk) where
+  show (SomeSecond (BlockQuery blockQueryA))  =
+    "Query " ++ show (SomeBlockQuery blockQueryA)
   show (SomeSecond GetSystemStart)            = "Query GetSystemStart"
   show (SomeSecond GetChainBlockNo)           = "Query GetChainBlockNo"
   show (SomeSecond GetChainPoint)             = "Query GetChainPoint"
 
+------
+-- Eq
+------
 
--- | Exception thrown in the encoders
-data QueryEncoderException blk =
-    -- | A query was submitted that is not supported by the given 'QueryVersion'
-    QueryEncoderUnsupportedQuery
-         (SomeSecond Query blk)
-         QueryVersion
+instance SameDepIndex (Query blk) => Eq (SomeSecond Query blk) where
+  SomeSecond l == SomeSecond r = isJust $ sameDepIndex l r
 
-deriving instance Show (SomeSecond BlockQuery blk) => Show (QueryEncoderException blk)
-instance (Typeable blk, Show (SomeSecond BlockQuery blk)) => Exception (QueryEncoderException blk)
+instance SameDepIndex2 query => Eq (SomeBlockQuery query) where
+  SomeBlockQuery l == SomeBlockQuery r = isJust $ sameDepIndex2 l r
+
+instance SameDepIndex2 (BlockQuery blk) => SameDepIndex (Query blk) where
+  sameDepIndex (BlockQuery blockQueryA) (BlockQuery blockQueryB)
+    = (\Refl -> Refl) <$> sameDepIndex2 blockQueryA blockQueryB
+  sameDepIndex (BlockQuery _) _
+    = Nothing
+  sameDepIndex GetSystemStart GetSystemStart
+    = Just Refl
+  sameDepIndex GetSystemStart _
+    = Nothing
+  sameDepIndex GetChainBlockNo GetChainBlockNo
+    = Just Refl
+  sameDepIndex GetChainBlockNo _
+    = Nothing
+  sameDepIndex GetChainPoint GetChainPoint
+    = Just Refl
+  sameDepIndex GetChainPoint _
+    = Nothing
+
+------
+-- Serialization
+------
+
+deriving newtype instance
+     SerialiseNodeToClient blk ( SomeBlockQuery     (query blk))
+  => SerialiseNodeToClient blk ((SomeBlockQuery :.: query) blk)
+
+-- | Exception thrown in the encoders: A query was submitted that is not
+-- supported by the given 'QueryVersion'
+data QueryEncoderException = forall blk. Show (SomeSecond Query blk) =>
+    QueryEncoderUnsupportedQuery (SomeSecond Query blk) QueryVersion
+
+deriving instance Show QueryEncoderException
+instance Show QueryEncoderException => Exception QueryEncoderException
 
 queryEncodeNodeToClient ::
      forall blk.
-     Typeable blk
-  => Show (SomeSecond BlockQuery blk)
-  => SerialiseNodeToClient blk (SomeSecond BlockQuery blk)
+     SerialiseNodeToClient blk (SomeBlockQuery (BlockQuery blk))
+  => Show (SomeSecond Query blk)
   => CodecConfig blk
   -> QueryVersion
   -> BlockNodeToClientVersion blk
@@ -194,17 +356,21 @@ queryEncodeNodeToClient codecConfig queryVersion blockVersion (SomeSecond query)
         then a
         else throw $ QueryEncoderUnsupportedQuery (SomeSecond query) queryVersion
 
+    encodeBlockQuery ::
+         SingI footprint
+      => BlockQuery blk footprint result
+      -> Encoding
     encodeBlockQuery blockQuery =
       encodeNodeToClient
         @blk
-        @(SomeSecond BlockQuery blk)
+        @(SomeBlockQuery (BlockQuery blk))
         codecConfig
         blockVersion
-        (SomeSecond blockQuery)
+        (SomeBlockQuery blockQuery)
 
 queryDecodeNodeToClient ::
      forall blk.
-     SerialiseNodeToClient blk (SomeSecond BlockQuery blk)
+     SerialiseNodeToClient blk (SomeBlockQuery (BlockQuery blk))
   => CodecConfig blk
   -> QueryVersion
   -> BlockNodeToClientVersion blk
@@ -234,18 +400,18 @@ queryDecodeNodeToClient codecConfig queryVersion blockVersion
 
     decodeBlockQuery :: Decoder s (SomeSecond Query blk)
     decodeBlockQuery = do
-      SomeSecond blockQuery <- decodeNodeToClient
+      SomeBlockQuery blockQuery <- decodeNodeToClient
         @blk
-        @(SomeSecond BlockQuery blk)
+        @(SomeBlockQuery (BlockQuery blk))
         codecConfig
         blockVersion
       return (SomeSecond (BlockQuery blockQuery))
 
-instance ( SerialiseResult blk (BlockQuery blk)
+instance ( SerialiseResult' blk BlockQuery
          , Serialise (HeaderHash blk)
-         ) => SerialiseResult blk (Query blk) where
+         ) => SerialiseResult blk Query where
   encodeResult codecConfig blockVersion (BlockQuery blockQuery) result
-    = encodeResult codecConfig blockVersion blockQuery result
+    = encodeResult' codecConfig blockVersion blockQuery result
   encodeResult _ _ GetSystemStart result
     = toCBOR result
   encodeResult _ _ GetChainBlockNo result
@@ -254,70 +420,13 @@ instance ( SerialiseResult blk (BlockQuery blk)
     = encodePoint encode result
 
   decodeResult codecConfig blockVersion (BlockQuery query)
-    = decodeResult codecConfig blockVersion query
+    = decodeResult' codecConfig blockVersion query
   decodeResult _ _ GetSystemStart
     = fromCBOR
   decodeResult _ _ GetChainBlockNo
     = fromCBOR
   decodeResult _ _ GetChainPoint
     = decodePoint decode
-
-instance SameDepIndex (BlockQuery blk) => SameDepIndex (Query blk) where
-  sameDepIndex (BlockQuery blockQueryA) (BlockQuery blockQueryB)
-    = sameDepIndex blockQueryA blockQueryB
-  sameDepIndex (BlockQuery _) _
-    = Nothing
-  sameDepIndex GetSystemStart GetSystemStart
-    = Just Refl
-  sameDepIndex GetSystemStart _
-    = Nothing
-  sameDepIndex GetChainBlockNo GetChainBlockNo
-    = Just Refl
-  sameDepIndex GetChainBlockNo _
-    = Nothing
-  sameDepIndex GetChainPoint GetChainPoint
-    = Just Refl
-  sameDepIndex GetChainPoint _
-    = Nothing
-
-deriving instance Show (BlockQuery blk result) => Show (Query blk result)
-
--- | Answer the given query about the extended ledger state.
-answerQuery ::
-     (QueryLedger blk, ConfigSupportsNode blk, HasAnnTip blk, Monad m)
-  => ExtLedgerCfg blk
-  -> DiskLedgerView m (ExtLedgerState blk)
-  -> Query blk result
-  -> m result
-answerQuery config dlv query = case query of
-    BlockQuery blockQuery -> answerBlockQuery config blockQuery dlv
-    GetSystemStart -> pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
-    GetChainBlockNo -> pure $ headerStateBlockNo (headerState st)
-    GetChainPoint -> pure $ headerStatePoint (headerState st)
-  where
-    st = dlvCurrent dlv
-
-
--- | Different queries supported by the ledger, indexed by the result type.
-data family BlockQuery blk :: Type -> Type
-
--- | Query the ledger extended state.
---
--- Used by the LocalStateQuery protocol to allow clients to query the extended
--- ledger state.
-class (ShowQuery (BlockQuery blk), SameDepIndex (BlockQuery blk)) => QueryLedger blk where
-
-  -- | Answer the given query about the extended ledger state.
-  answerBlockQuery :: Monad m => ExtLedgerCfg blk -> BlockQuery blk result -> DiskLedgerView m (ExtLedgerState blk) -> m result
-
-  getQueryKeySets :: BlockQuery blk result -> LedgerTables (LedgerState blk) KeysMK
-
-  tableTraversingQuery :: BlockQuery blk result -> Maybe (TraversingQueryHandler blk result)
-
-instance SameDepIndex (BlockQuery blk) => Eq (SomeSecond BlockQuery blk) where
-  SomeSecond qry == SomeSecond qry' = isJust (sameDepIndex qry qry')
-
-deriving instance (forall result. Show (BlockQuery blk result)) => Show (SomeSecond BlockQuery blk)
 
 {-------------------------------------------------------------------------------
   Ledger Tables queries
@@ -447,70 +556,3 @@ mkDiskLedgerView h@(LedgerDBView lvh ldb queryBatchSize) =
             Diff.applyDiff
               vs'
               (Diff.filterOnlyKey (< k) ds)
-
-
-{-------------------------------------------------------------------------------
-  Handle non in-mem queries
--------------------------------------------------------------------------------}
-
-handleQueryWithStowedKeySets ::
-     forall blk m result.
-     ( QueryLedger blk
-     , Monad m
-     , LedgerSupportsProtocol blk
-     , CanStowLedgerTables (LedgerState blk)
-     )
-  => DiskLedgerView m (ExtLedgerState blk)
-  -> BlockQuery blk result
-  -> (ExtLedgerState blk EmptyMK -> result)
-  -> m result
-handleQueryWithStowedKeySets dlv query f = do
-    let st     = dlvCurrent dlv
-        dbRead = dlvRead dlv
-        keys   = getQueryKeySets query
-    values <- dbRead (castLedgerTables keys)
-    pure $ f (stowLedgerTables $ st `withLedgerTables` values)
-
-data TraversingQueryHandler blk result where
-  TraversingQueryHandler :: forall blk result st.
-                            (ExtLedgerState blk EmptyMK -> st)
-                         -> st
-                         -> (st -> st -> st)
-                         -> (st -> result)
-                         -> TraversingQueryHandler blk result
-
-handleTraversingQuery ::
-     forall blk m result.
-     ( QueryLedger blk
-     , Monad m
-     , LedgerSupportsProtocol blk
-     , CanStowLedgerTables (LedgerState blk)
-     )
-  => DiskLedgerView m (ExtLedgerState blk)
-  -> BlockQuery blk result
-  -> m result
-handleTraversingQuery dlv query =
-  case tableTraversingQuery query of
-    Nothing -> error "Tried to perform a traversing query on a query that doesn't need to traverse the Ledger tables!"
-    Just (TraversingQueryHandler partial mt comb post) ->
-      let
-        loop !prev !acc = do
-          extValues <-
-            dbReadRange RangeQuery{rqPrev = prev, rqCount = fromIntegral queryBatchSize}
-          if ltcollapse $ ltmap (K2 . f) extValues
-          then pure acc
-          else loop
-                (Just $ ltmap toKeys extValues)
-                (comb acc $ partial (stowLedgerTables (st `withLedgerTables` extValues) `withLedgerTables` emptyLedgerTables))
-       in
-        post <$> loop Nothing mt
-  where
-    st             = dlvCurrent dlv
-    dbReadRange    = dlvRangeRead dlv
-    queryBatchSize = dlvQueryBatchSize dlv
-
-    f :: ValuesMK k v -> Bool
-    f (ValuesMK vs) = Map.null vs
-
-    toKeys :: ValuesMK k v -> KeysMK k v
-    toKeys (ValuesMK vs) = KeysMK $ Map.keysSet vs

@@ -25,6 +25,7 @@ import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Ledger.Conversions
 import           Ouroboros.Consensus.Byron.Protocol
 import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
@@ -177,13 +178,13 @@ instance SerialiseNodeToClient ByronBlock CC.ApplyMempoolPayloadErr where
   encodeNodeToClient _ _ = encodeByronApplyTxError
   decodeNodeToClient _ _ = decodeByronApplyTxError
 
-instance SerialiseNodeToClient ByronBlock (SomeSecond BlockQuery ByronBlock) where
-  encodeNodeToClient _ _ (SomeSecond q) = encodeByronQuery q
+instance SerialiseNodeToClient ByronBlock (SomeBlockQuery (BlockQuery ByronBlock)) where
+  encodeNodeToClient _ _ (SomeBlockQuery q) = encodeByronQuery q
   decodeNodeToClient _ _               = decodeByronQuery
 
-instance SerialiseResult ByronBlock (BlockQuery ByronBlock) where
-  encodeResult _ _ = encodeByronResult
-  decodeResult _ _ = decodeByronResult
+instance SerialiseResult' ByronBlock BlockQuery where
+  encodeResult' _ _ = encodeByronResult
+  decodeResult' _ _ = decodeByronResult
 
 {-------------------------------------------------------------------------------
   Nested contents
