@@ -74,6 +74,7 @@
           ];
         };
         hydraJobs = import ./nix/ci.nix pkgs;
+        poc = import ./nix/genesis-poc.nix { inherit pkgs; inherit (inputs) self; };
       in
       {
         devShells = {
@@ -82,9 +83,19 @@
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];
           };
+          genesis-poc = hydraJobs.native.haskell.devShell.overrideAttrs (old: {
+            shellHook = ''
+            ${old.shellHook}
+            ${poc.bootstrap}
+            '';
+          });
         };
         inherit hydraJobs;
         legacyPackages = pkgs;
+        apps.genesis-poc = {
+          type = "app";
+          program = "${poc.run}";
+        };
       }
     );
 }
