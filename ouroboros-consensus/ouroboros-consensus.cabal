@@ -228,6 +228,7 @@ library
     Ouroboros.Consensus.Util.MonadSTM.NormalForm
     Ouroboros.Consensus.Util.MonadSTM.RAWLock
     Ouroboros.Consensus.Util.MonadSTM.StrictSVar
+    Ouroboros.Consensus.Util.NormalForm.StrictMVar
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.ResourceRegistry
@@ -271,7 +272,7 @@ library
     , sop-core                     ^>=0.5
     , sop-extras                   ^>=0.1
     , streaming
-    , strict-checked-vars          ^>=0.1.0.3
+    , strict-checked-vars          ^>=0.1.0.4
     , strict-sop-core              ^>=0.1
     , strict-stm                   ^>=1.2
     , text                         ^>=2.0
