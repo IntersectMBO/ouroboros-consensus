@@ -3,6 +3,7 @@
 {-# LANGUAGE EmptyCase                  #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -23,6 +24,7 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Degenerate
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Storage.Serialisation
 
@@ -102,3 +104,13 @@ instance HasCanonicalTxIn '[ByronBlock] where
   encodeCanonicalTxIn = toCBOR
 
   decodeCanonicalTxIn = fromCBOR
+
+instance BlockSupportsHFLedgerQuery '[ByronBlock] where
+  answerBlockQueryHFLookup IZ      _cfg  (q :: BlockQuery ByronBlock QFLookupTables result) _dlv = case q of {}
+  answerBlockQueryHFLookup (IS is) _cfg _q _dlv = case is of {}
+
+  answerBlockQueryHFTraverse IZ      _cfg  (q :: BlockQuery ByronBlock QFTraverseTables result) _dlv = case q of {}
+  answerBlockQueryHFTraverse (IS is) _cfg _q _dlv = case is of {}
+
+  queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
+  queryLedgerGetTraversingFilter (IS is) _q = case is of {}

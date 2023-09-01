@@ -1,13 +1,13 @@
-{-# LANGUAGE DataKinds                #-}
-{-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE EmptyCase                #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE FlexibleInstances        #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE RecordWildCards          #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE TypeApplications         #-}
-{-# LANGUAGE TypeOperators            #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE EmptyCase           #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE KindSignatures      #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeOperators       #-}
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
     Inject (..)
   , inject'
@@ -37,6 +37,7 @@ import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..),
                      genesisHeaderState)
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
@@ -79,10 +80,10 @@ injectNestedCtxt_ idx nc = case idx of
     IS idx' -> NCS (injectNestedCtxt_ idx' nc)
 
 injectQuery ::
-     forall x xs result.
+     forall x xs result fp.
      Index xs x
-  -> BlockQuery x      result
-  -> QueryIfCurrent xs result
+  -> BlockQuery x fp      result
+  -> QueryIfCurrent xs fp result
 injectQuery idx q = case idx of
     IZ      -> QZ q
     IS idx' -> QS (injectQuery idx' q)
@@ -145,8 +146,9 @@ instance Inject WrapApplyTxErr where
       (WrapApplyTxErr . HardForkApplyTxErrFromEra)
         .: injectNS' (Proxy @WrapApplyTxErr)
 
-instance Inject (SomeSecond BlockQuery) where
-  inject _ idx (SomeSecond q) = SomeSecond (QueryIfCurrent (injectQuery idx q))
+instance Inject (SomeBlockQuery :.: BlockQuery) where
+  inject _ idx (Comp (SomeBlockQuery q)) =
+    Comp $ SomeBlockQuery $ QueryIfCurrent (injectQuery idx q)
 
 instance Inject AnnTip where
   inject _ = undistribAnnTip .: injectNS' (Proxy @AnnTip)
