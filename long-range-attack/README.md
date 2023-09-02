@@ -7,6 +7,16 @@ A primary goal of the ongoing effort to implement Ouroboros Genesis is to remove
 
 In this demo, we showcase how an existing proof-of-concept implementation of Genesis can already resist long-range attacks in a local testnet.
 
+### Quickstart
+
+We provide an out-of-the-box showcase that starts a tmux window or instance and runs all of the involved components in different windows, using Nix:
+
+```shell
+nix run .#genesis-poc
+```
+
+The focused window will listen for key presses that start a Genesis-enabled node (`g`) or a conventional one (`n`).
+
 ### Building the node
 
 #### Without Nix
