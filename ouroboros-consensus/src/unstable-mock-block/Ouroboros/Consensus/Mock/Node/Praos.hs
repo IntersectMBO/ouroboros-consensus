@@ -27,6 +27,7 @@ import           Ouroboros.Consensus.Mock.Protocol.Praos
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 
 type MockPraosBlock = SimplePraosBlock SimpleMockCrypto PraosMockCrypto
 
@@ -116,16 +117,17 @@ praosBlockForging ::
   -> HotKey PraosMockCrypto
   -> m (BlockForging m MockPraosBlock)
 praosBlockForging cid initHotKey = do
-    varHotKey <- newSVar initHotKey
+    varHotKey <- newMVar initHotKey
     return $ BlockForging {
         forgeLabel       = "praosBlockForging"
       , canBeLeader      = cid
-      , updateForgeState = \_ sno _ -> updateSVar varHotKey $
-                                 second forgeStateUpdateInfoFromUpdateInfo
+      , updateForgeState = \_ sno _ -> modifyMVar varHotKey $
+                                 pure
+                               . second forgeStateUpdateInfoFromUpdateInfo
                                . evolveKey sno
       , checkCanForge    = \_ _ _ _ _ -> return ()
       , forgeBlock       = \cfg bno sno tickedLedgerSt txs isLeader -> do
-                               hotKey <- readSVar varHotKey
+                               hotKey <- readMVar varHotKey
                                return $
                                  forgeSimple
                                    (forgePraosExt hotKey)

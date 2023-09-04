@@ -479,7 +479,7 @@ shrinkCmd _ cmd = case cmd of
 -- | Environment to run commands against the real VolatileDB implementation.
 data VolatileDBEnv = VolatileDBEnv
   { varErrors :: StrictTVar IO Errors
-  , varDB     :: StrictSVar IO (VolatileDB IO Block)
+  , varDB     :: StrictTVar IO (VolatileDB IO Block)
   , args      :: VolatileDbArgs Identity IO Block
   }
 
@@ -489,7 +489,7 @@ data VolatileDBEnv = VolatileDBEnv
 reopenDB :: VolatileDBEnv -> IO ()
 reopenDB VolatileDBEnv { varDB, args } = do
     db <- openDB args runWithTempRegistry
-    void $ swapSVar varDB db
+    void $ atomically $ swapTVar varDB db
 
 semanticsImpl :: VolatileDBEnv -> At CmdErr Concrete -> IO (At Resp Concrete)
 semanticsImpl env@VolatileDBEnv { varDB, varErrors }  (At (CmdErr cmd mbErrors)) =
@@ -500,7 +500,7 @@ semanticsImpl env@VolatileDBEnv { varDB, varErrors }  (At (CmdErr cmd mbErrors))
           tryVolatileDB (Proxy @Block) (runDB env cmd)
         -- As all operations on the VolatileDB are idempotent, close (not
         -- idempotent by default!), reopen it, and run the command again.
-        readSVar varDB >>= idemPotentCloseDB
+        readTVarIO varDB >>= idemPotentCloseDB
         reopenDB env
         tryVolatileDB (Proxy @Block) (runDB env cmd)
 
@@ -516,7 +516,7 @@ idemPotentCloseDB db =
     isClosedDBError _                             = Nothing
 
 runDB :: HasCallStack => VolatileDBEnv -> Cmd -> IO Success
-runDB env@VolatileDBEnv { varDB, args = VolatileDbArgs { volHasFS = SomeHasFS hasFS } } cmd = readSVar varDB >>= \db -> case cmd of
+runDB env@VolatileDBEnv { varDB, args = VolatileDbArgs { volHasFS = SomeHasFS hasFS } } cmd = readTVarIO varDB >>= \db -> case cmd of
     GetBlockComponent hash          -> MbAllComponents           <$> getBlockComponent db allComponents hash
     PutBlock blk                    -> Unit                      <$> putBlock db blk
     FilterByPredecessor hashes      -> Successors . (<$> hashes) <$> atomically (filterByPredecessor db)
@@ -525,7 +525,7 @@ runDB env@VolatileDBEnv { varDB, args = VolatileDbArgs { volHasFS = SomeHasFS ha
     GetMaxSlotNo                    -> MaxSlot                   <$> atomically (getMaxSlotNo db)
     Close                           -> Unit                      <$> closeDB db
     ReOpen                          -> do
-        readSVar varDB >>= idemPotentCloseDB
+        readTVarIO varDB >>= idemPotentCloseDB
         Unit <$> reopenDB env
     Corruption corrs                ->
       withClosedDB $
@@ -537,7 +537,7 @@ runDB env@VolatileDBEnv { varDB, args = VolatileDbArgs { volHasFS = SomeHasFS ha
   where
     withClosedDB :: IO () -> IO Success
     withClosedDB action = do
-      readSVar varDB >>= closeDB
+      readTVarIO varDB >>= closeDB
       action
       reopenDB env
       return $ Unit ()
@@ -592,11 +592,11 @@ test cmds = do
                  }
 
     (hist, res, trace) <- bracket
-      (openDB args runWithTempRegistry >>= newSVar)
+      (openDB args runWithTempRegistry >>= newTVarIO)
       -- Note: we might be closing a different VolatileDB than the one we
       -- opened, as we can reopen it the VolatileDB, swapping the VolatileDB
-      -- in the SVar.
-      (\varDB -> readSVar varDB >>= closeDB)
+      -- in the TVar.
+      (\varDB -> readTVarIO varDB >>= closeDB)
       $ \varDB -> do
         let env = VolatileDBEnv { varErrors, varDB, args }
             sm' = sm env dbm

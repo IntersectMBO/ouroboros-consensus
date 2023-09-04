@@ -38,7 +38,7 @@
 module Test.Consensus.BlockchainTime.Simple (tests) where
 
 import           Control.Applicative (Alternative (..))
-import           Control.Concurrent.Class.MonadMVar (MonadMVar)
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar
 import           Control.Monad (MonadPlus, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as LazySTM
 import           Control.Monad.Class.MonadTime
@@ -53,7 +53,8 @@ import qualified Data.Time.Clock as Time
 import           NoThunks.Class (AllowThunk (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
-import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
+import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (withWatcher)
 import           Ouroboros.Consensus.Util.Time
@@ -335,7 +336,7 @@ testOverrideDelay systemStart slotLength maxClockRewind numSlots = do
                       maxClockRewind)
       (\_btime   -> pure ())
       $ \btime   -> do
-      slotsVar <- uncheckedNewTVarM []
+      slotsVar <- newTVarIO []
       withWatcher
         "testOverrideDelay"
         ( knownSlotWatcher btime $ \slotNo -> do
@@ -380,6 +381,9 @@ deriving via AllowThunk (StrictTVar (OverrideDelay s) a)
 
 deriving via AllowThunk (StrictSVar (OverrideDelay s) a)
          instance NoThunks (StrictSVar (OverrideDelay s) a)
+
+deriving via AllowThunk (StrictMVar (OverrideDelay s) a)
+         instance NoThunks (StrictMVar (OverrideDelay s) a)
 
 instance MonadTimer.MonadDelay (OverrideDelay (IOSim s)) where
   threadDelay d = OverrideDelay $ ReaderT $ \schedule -> do

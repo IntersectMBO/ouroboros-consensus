@@ -352,7 +352,7 @@ data ChainDBState m blk = ChainDBState
 
 -- | Environment to run commands against the real ChainDB implementation.
 data ChainDBEnv m blk = ChainDBEnv {
-    varDB           :: StrictSVar m (ChainDBState m blk)
+    varDB           :: StrictTVar m (ChainDBState m blk)
   , registry        :: ResourceRegistry m
   , varCurSlot      :: StrictTVar m SlotNo
   , varNextId       :: StrictTVar m Id
@@ -376,7 +376,7 @@ reopen
   => ChainDBEnv m blk -> m ()
 reopen ChainDBEnv { varDB, args } = do
     chainDBState <- open args
-    void $ swapSVar varDB chainDBState
+    void $ atomically $ swapTVar varDB chainDBState
 
 close :: IOLike m => ChainDBState m blk -> m ()
 close ChainDBState { chainDB, addBlockAsync } = do
@@ -389,7 +389,7 @@ run :: forall m blk.
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
 run env@ChainDBEnv { varDB, .. } cmd =
-    readSVar varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
+    readTVarIO varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
       AddBlock blk             -> Point               <$> (advanceAndAdd st (blockSlot blk) blk)
       AddFutureBlock blk s     -> Point               <$> (advanceAndAdd st s               blk)
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
@@ -437,7 +437,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       close st
       atomically $ writeTVar varVolatileDbFs Mock.empty
       reopen env
-      ChainDB { getTipPoint } <- chainDB <$> readSVar varDB
+      ChainDB { getTipPoint } <- chainDB <$> readTVarIO varDB
       atomically getTipPoint
 
     giveWithEq :: a -> m (WithEq a)
@@ -1545,11 +1545,11 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                    maxClockSkew varCurSlot
 
       (hist, model, res, trace) <- bracket
-        (open args >>= newSVar)
+        (open args >>= newTVarIO)
         -- Note: we might be closing a different ChainDB than the one we
         -- opened, as we can reopen it the ChainDB, swapping the ChainDB in
-        -- the SVar.
-        (\varDB -> readSVar varDB >>= close)
+        -- the TVar.
+        (\varDB -> readTVarIO varDB >>= close)
 
         $ \varDB -> do
           let env = ChainDBEnv

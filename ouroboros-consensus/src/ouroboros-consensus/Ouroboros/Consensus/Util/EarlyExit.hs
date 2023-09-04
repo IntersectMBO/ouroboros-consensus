@@ -40,6 +40,7 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.IOLike (IOLike (..), StrictSVar,
                      StrictTVar)
+import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions
@@ -283,5 +284,6 @@ instance MonadEventlog m => MonadEventlog (WithEarlyExit m) where
 instance ( IOLike m
          , forall a. NoThunks (StrictTVar (WithEarlyExit m) a)
          , forall a. NoThunks (StrictSVar (WithEarlyExit m) a)
+         , forall a. NoThunks (StrictMVar (WithEarlyExit m) a)
          ) => IOLike (WithEarlyExit m) where
   forgetSignKeyKES = lift . forgetSignKeyKES

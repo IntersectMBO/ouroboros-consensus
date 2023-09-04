@@ -29,6 +29,8 @@
 -- up resources as threads terminate or crash.
 --
 module Test.Consensus.ResourceRegistry (tests) where
+
+import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad ((>=>))
 import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Except (Except, MonadError, runExcept,
@@ -287,14 +289,14 @@ data ThreadInstr m :: Type -> Type where
   -- | Raise an exception in the thread
   ThreadCrash :: ThreadInstr m ()
 
--- | Instruction along with an SVar for the result
-data QueuedInstr m = forall a. QueuedInstr (ThreadInstr m a) (StrictSVar m a)
+-- | Instruction along with an MVar for the result
+data QueuedInstr m = forall a. QueuedInstr (ThreadInstr m a) (StrictMVar m a)
 
 runInThread :: IOLike m => TestThread m -> ThreadInstr m a -> m a
 runInThread TestThread{..} instr = do
-    result <- uncheckedNewEmptySVar (error "no result yet")
+    result <- newEmptyMVar
     atomically $ writeTQueue threadComms (QueuedInstr instr result)
-    takeSVar result
+    takeMVar result
 
 instance (IOLike m) => Show (TestThread m) where
   show TestThread{..} = "<Thread " ++ show (threadId testThread) ++ ">"
@@ -314,7 +316,7 @@ newThread :: forall m. IOLike m
           -> m (TestThread m)
 newThread alive parentReg = \shouldLink -> do
     comms      <- atomically $ newTQueue
-    spawned    <- uncheckedNewEmptySVar (error "no thread spawned yet")
+    spawned    <- newEmptyMVar
 
     thread <- forkThread parentReg "newThread" $
                 withRegistry $ \childReg ->
@@ -332,15 +334,15 @@ newThread alive parentReg = \shouldLink -> do
 
     -- Make sure to register thread before starting it
     atomically $ modifyTVar alive (testThread:)
-    putSVar spawned testThread
+    putMVar spawned testThread
     return testThread
   where
     threadBody :: ResourceRegistry m
-               -> StrictSVar m (TestThread m)
+               -> StrictMVar m (TestThread m)
                -> TQueue m (QueuedInstr m)
                -> m ()
     threadBody childReg spawned comms = do
-        us <- readSVar spawned
+        us <- readMVar spawned
         loop us `finally` (atomically $ modifyTVar alive (delete us))
       where
         loop :: TestThread m -> m ()
@@ -349,12 +351,12 @@ newThread alive parentReg = \shouldLink -> do
           case instr of
             ThreadFork linked -> do
               child <- newThread alive childReg (const us <$> linked)
-              putSVar result child
+              putMVar result child
               loop us
             ThreadTerminate -> do
-              putSVar result ()
+              putMVar result ()
             ThreadCrash -> do
-              putSVar result ()
+              putMVar result ()
               error "crashing"
 
 runIO :: forall m. (IOLike m, MonadTimer m)

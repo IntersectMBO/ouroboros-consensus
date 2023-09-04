@@ -64,6 +64,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
                      allocate, runInnerWithTempRegistry, runWithTempRegistry)
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
@@ -170,7 +171,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       varFollowers       <- newTVarIO Map.empty
       varNextIteratorKey <- newTVarIO (IteratorKey 0)
       varNextFollowerKey <- newTVarIO (FollowerKey   0)
-      varCopyLock        <- newSVar  ()
+      varCopyLock        <- newMVar  ()
       varKillBgThreads   <- newTVarIO $ return ()
       blocksToAdd        <- newBlocksToAdd (Args.cdbBlocksToAddSize args)
 

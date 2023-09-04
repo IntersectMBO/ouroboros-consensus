@@ -228,6 +228,7 @@ library
     Ouroboros.Consensus.Util.MonadSTM.NormalForm
     Ouroboros.Consensus.Util.MonadSTM.RAWLock
     Ouroboros.Consensus.Util.MonadSTM.StrictSVar
+    Ouroboros.Consensus.Util.NormalForm.StrictMVar
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.ResourceRegistry
@@ -271,7 +272,7 @@ library
     , sop-core                     ^>=0.5
     , sop-extras                   ^>=0.1
     , streaming
-    , strict-checked-vars          ^>=0.1.0.3
+    , strict-checked-vars          ^>=0.1.0.4
     , strict-sop-core              ^>=0.1
     , strict-stm                   ^>=1.2
     , text                         ^>=2.0
@@ -340,6 +341,7 @@ library unstable-consensus-testlib
     , fs-api                                                  ^>=0.2
     , fs-sim                                                  ^>=0.2
     , generics-sop
+    , io-classes
     , io-sim
     , mtl
     , nothunks
@@ -489,7 +491,9 @@ test-suite consensus-test
     , si-timers
     , sop-core
     , sop-extras
+    , strict-mvar
     , strict-sop-core
+    , strict-stm
     , tasty
     , tasty-hunit
     , tasty-quickcheck

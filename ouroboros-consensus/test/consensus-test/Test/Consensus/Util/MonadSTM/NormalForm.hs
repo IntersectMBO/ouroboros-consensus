@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE RankNTypes         #-}
 {-# LANGUAGE TypeApplications   #-}
+
 module Test.Consensus.Util.MonadSTM.NormalForm (tests) where
 
 import           Control.Monad.IOSim

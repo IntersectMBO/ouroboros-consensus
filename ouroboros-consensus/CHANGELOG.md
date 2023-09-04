@@ -69,11 +69,6 @@
 
 - Always force new value of StrictMVar before calling putTMVar in updateMVar
 
-- Add a new `Control.Concurrent.Class.MonadMVar.Strict.NoThunks` module, which
-  provides `StrictMVar`s (from the `strict-mvar` package) with `NoThunks`
-  invariants checks. These checks can be enabled using a package flag
-  `+checkmvarinvariants`.
-
 - Fix the mempool benchmarks.
 
 - The `pure @(NonEmpty xs)` implementation was unlawful; this has been fixed by
