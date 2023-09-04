@@ -59,9 +59,9 @@ import           Test.Cardano.Ledger.Shelley.Examples.Consensus
                      (ShelleyLedgerExamples (..), ShelleyResultExamples (..),
                      ledgerExamplesShelley, testShelleyGenesis)
 import           Test.Util.Orphans.Arbitrary ()
-import qualified Test.Util.Serialisation.Golden as Golden
-import           Test.Util.Serialisation.Golden (labelled, unlabelled)
-import           Test.Util.Serialisation.Roundtrip (SomeResult (..))
+import           Test.Util.Serialisation.Examples (Examples (..), labelled,
+                     unlabelled)
+import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 
 {-------------------------------------------------------------------------------
@@ -74,11 +74,11 @@ codecConfig = ShelleyCodecConfig
 fromShelleyLedgerExamples
   :: ShelleyCompatible (TPraos (EraCrypto era)) era
   => ShelleyLedgerExamples era
-  -> Golden.Examples (ShelleyBlock (TPraos (EraCrypto era)) era)
+  -> Examples (ShelleyBlock (TPraos (EraCrypto era)) era)
 fromShelleyLedgerExamples ShelleyLedgerExamples {
                             sleResultExamples = ShelleyResultExamples{..}
                             , ..} =
-  Golden.Examples {
+  Examples {
       exampleBlock            = unlabelled blk
     , exampleSerialisedBlock  = unlabelled serialisedBlock
     , exampleHeader           = unlabelled $ getHeader blk
@@ -148,11 +148,11 @@ fromShelleyLedgerExamplesPraos ::
     TranslateProto (TPraos (EraCrypto era)) (Praos (EraCrypto era))
   )
   => ShelleyLedgerExamples era
-  -> Golden.Examples (ShelleyBlock (Praos (EraCrypto era)) era)
+  -> Examples (ShelleyBlock (Praos (EraCrypto era)) era)
 fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
                             sleResultExamples = ShelleyResultExamples{..}
                             , ..} =
-  Golden.Examples {
+  Examples {
       exampleBlock            = unlabelled blk
     , exampleSerialisedBlock  = unlabelled serialisedBlock
     , exampleHeader           = unlabelled $ getHeader blk
@@ -237,20 +237,20 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
 
 
 
-examplesShelley :: Golden.Examples StandardShelleyBlock
+examplesShelley :: Examples StandardShelleyBlock
 examplesShelley = fromShelleyLedgerExamples ledgerExamplesShelley
 
-examplesAllegra :: Golden.Examples StandardAllegraBlock
+examplesAllegra :: Examples StandardAllegraBlock
 examplesAllegra = fromShelleyLedgerExamples ledgerExamplesAllegra
 
-examplesMary :: Golden.Examples StandardMaryBlock
+examplesMary :: Examples StandardMaryBlock
 examplesMary = fromShelleyLedgerExamples ledgerExamplesMary
 
-examplesAlonzo :: Golden.Examples StandardAlonzoBlock
+examplesAlonzo :: Examples StandardAlonzoBlock
 examplesAlonzo = fromShelleyLedgerExamples ledgerExamplesAlonzo
 
-examplesBabbage :: Golden.Examples StandardBabbageBlock
+examplesBabbage :: Examples StandardBabbageBlock
 examplesBabbage = fromShelleyLedgerExamplesPraos ledgerExamplesBabbage
 
-examplesConway :: Golden.Examples StandardConwayBlock
+examplesConway :: Examples StandardConwayBlock
 examplesConway = fromShelleyLedgerExamplesPraos ledgerExamplesConway

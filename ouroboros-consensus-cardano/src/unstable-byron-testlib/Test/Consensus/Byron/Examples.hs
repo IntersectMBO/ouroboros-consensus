@@ -48,9 +48,10 @@ import qualified Test.Cardano.Chain.Genesis.Dummy as CC
 import qualified Test.Cardano.Chain.Update.Example as CC
 import qualified Test.Cardano.Chain.UTxO.Example as CC
 import           Test.ThreadNet.Infra.Byron.ProtocolInfo (mkLeaderCredentials)
-import qualified Test.Util.Serialisation.Golden as Golden
-import           Test.Util.Serialisation.Golden (Labelled, labelled, unlabelled)
-import           Test.Util.Serialisation.Roundtrip (SomeResult (..))
+import qualified Test.Util.Serialisation.Examples as Examples
+import           Test.Util.Serialisation.Examples (Examples (Examples),
+                     Labelled, labelled, unlabelled)
+import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 {-------------------------------------------------------------------------------
   Setup
@@ -89,8 +90,8 @@ leaderCredentials =
   Examples
 -------------------------------------------------------------------------------}
 
-examples :: Golden.Examples ByronBlock
-examples = Golden.Examples {
+examples :: Examples ByronBlock
+examples = Examples {
       exampleBlock            = regularAndEBB exampleBlock            exampleEBB
     , exampleSerialisedBlock  = regularAndEBB exampleSerialisedBlock  exampleSerialisedEBB
     , exampleHeader           = regularAndEBB exampleHeader           exampleEBBHeader

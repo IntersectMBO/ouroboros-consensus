@@ -20,7 +20,6 @@ module Test.Util.Serialisation.Roundtrip (
     -- * Test skeleton
   , Arbitrary'
   , Coherent (..)
-  , SomeResult (..)
   , WithVersion (..)
   , prop_hashSize
   , roundtrip_ConvertRawHash
@@ -64,6 +63,7 @@ import           Quiet (Quiet (..))
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
+import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 {------------------------------------------------------------------------------
   Basic test helpers
@@ -592,24 +592,3 @@ decodeThroughSerialised
 decodeThroughSerialised dec decSerialised = do
     serialised <- decSerialised
     fromSerialised dec serialised
-
-{-------------------------------------------------------------------------------
-  SomeResult
--------------------------------------------------------------------------------}
-
--- | To easily generate all the possible @result@s of the 'Query' GADT, we
--- introduce an existential that also bundles the corresponding 'Query' as
--- evidence. We also capture 'Eq', 'Show', and 'Typeable' constraints, as we
--- need them in the tests.
-data SomeResult blk where
-  SomeResult :: (Eq result, Show result, Typeable result)
-             => BlockQuery blk result -> result -> SomeResult blk
-
-instance Show (SomeResult blk) where
-  show (SomeResult _ result) = show result
-
-instance Eq (SomeResult blk) where
-  SomeResult _ (res1 :: result1) == SomeResult _ (res2 :: result2) =
-    case eqT @result1 @result2 of
-      Nothing   -> False
-      Just Refl -> res1 == res2

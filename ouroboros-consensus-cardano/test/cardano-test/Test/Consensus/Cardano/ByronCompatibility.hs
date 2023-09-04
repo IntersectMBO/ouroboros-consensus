@@ -48,6 +48,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Roundtrip
+import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 tests :: TestTree
 tests = adjustOption reduceTests $

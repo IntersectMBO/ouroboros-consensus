@@ -309,8 +309,10 @@ library unstable-consensus-testlib
     Test.Util.Range
     Test.Util.RefEnv
     Test.Util.Schedule
+    Test.Util.Serialisation.Examples
     Test.Util.Serialisation.Golden
     Test.Util.Serialisation.Roundtrip
+    Test.Util.Serialisation.SomeResult
     Test.Util.Shrink
     Test.Util.Slots
     Test.Util.SOP
