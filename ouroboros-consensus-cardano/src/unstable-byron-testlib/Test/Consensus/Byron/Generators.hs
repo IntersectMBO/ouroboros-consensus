@@ -45,6 +45,7 @@ import           Ouroboros.Consensus.Byron.Protocol
 import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HeaderValidation (AnnTip (..))
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
@@ -167,8 +168,8 @@ instance Arbitrary API.ApplyMempoolPayloadErr where
     -- , MempoolUpdateVoteErr     <$> arbitrary
     ]
 
-instance Arbitrary (SomeSecond BlockQuery ByronBlock) where
-  arbitrary = pure $ SomeSecond GetUpdateInterfaceState
+instance Arbitrary (SomeBlockQuery (BlockQuery ByronBlock)) where
+  arbitrary = pure $ SomeBlockQuery GetUpdateInterfaceState
 
 instance Arbitrary EpochNumber where
   arbitrary = hedgehog CC.genEpochNumber

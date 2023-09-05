@@ -58,6 +58,18 @@ import           Ouroboros.Consensus.Ledger.Query (QueryVersion,
                      nodeToClientVersionToQueryVersion)
 import           Ouroboros.Consensus.Ledger.Tables (HasLedgerTables,
                      valuesMKEncoder)
+import           Ouroboros.Consensus.Block (BlockProtocol, CodecConfig, Header,
+                     HeaderHash, SlotNo)
+import           Ouroboros.Consensus.HeaderValidation (AnnTip)
+import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
+                     encodeExtLedgerState)
+import           Ouroboros.Consensus.Ledger.Query (BlockQuery, QueryVersion,
+                     SomeBlockQuery, nodeToClientVersionToQueryVersion)
+import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx,
+                     GenTxId)
+import           Ouroboros.Consensus.Ledger.Tables (EmptyMK, HasLedgerTables,
+                     LedgerTables, ValuesMK, valuesMKEncoder)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (HasNetworkProtocolVersion (..),
                      SupportedNetworkProtocolVersion (..))
@@ -66,8 +78,11 @@ import           Ouroboros.Consensus.Node.Run (SerialiseDiskConstraints,
                      SerialiseNodeToNodeConstraints)
 import           Ouroboros.Consensus.Node.Serialisation
                      (SerialiseNodeToClient (..), SerialiseNodeToNode (..),
-                     SerialiseResult (..))
+                     SerialiseResult' (..))
 import           Ouroboros.Consensus.Storage.Serialisation (EncodeDisk (..))
+import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import           Ouroboros.Consensus.Storage.Serialisation (EncodeDisk (..),
+                     SerialisedHeader)
 import           Ouroboros.Consensus.Util.CBOR (decodeAsFlatTerm)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           System.Directory (createDirectoryIfMissing)
@@ -358,7 +373,7 @@ goldenTest_SerialiseNodeToClient codecConfig goldenDir Examples {..} =
         enc' = encodeNodeToClient codecConfig blockVersion
 
         encRes :: SomeResult blk -> Encoding
-        encRes (SomeResult q r) = encodeResult codecConfig blockVersion q r
+        encRes (SomeResult q r) = encodeResult' codecConfig blockVersion q r
 
         test :: TestName -> Labelled a -> (a -> Encoding) -> TestTree
         test testName exampleValues enc =
