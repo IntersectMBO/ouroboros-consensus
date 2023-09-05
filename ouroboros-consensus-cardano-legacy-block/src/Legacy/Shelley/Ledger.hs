@@ -1,4 +1,5 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE EmptyCase                #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE FlexibleInstances        #-}
 {-# LANGUAGE InstanceSigs             #-}
@@ -26,11 +27,17 @@ import           Legacy.LegacyBlock
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.HardFork.History.Util
+import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (mkHeaderView)
+import           Ouroboros.Consensus.Util.Singletons
+import           Ouroboros.Network.Block (mkSerialised)
 
 {-------------------------------------------------------------------------------
   Ticking
@@ -214,3 +221,159 @@ applyHelper f cfg (LegacyBlock blk) (TickedLegacyLedgerState stBefore) = do
     votingDeadline :: SlotNo
     votingDeadline = subSlots (2 * swindow) startOfNextEpoch
 
+{-------------------------------------------------------------------------------
+  Queries
+-------------------------------------------------------------------------------}
+
+castExtLedgerState ::
+     ExtLedgerState (LegacyBlock (ShelleyBlock proto era)) EmptyMK
+  -> ExtLedgerState (ShelleyBlock proto era) EmptyMK
+castExtLedgerState (ExtLedgerState st chaindep) =
+  ExtLedgerState (getLegacyLedgerState st) (castHeaderState chaindep)
+
+instance ( LedgerSupportsProtocol (ShelleyBlock proto era)
+         , ShelleyCompatible proto era
+         ) => BlockSupportsLedgerQuery (LegacyBlock (ShelleyBlock proto era)) where
+  answerPureBlockQuery cfg (LegacyBlockQuery (q :: BlockQuery (ShelleyBlock proto era) fp result)) ext =
+    case (sing :: Sing fp, q) of
+      (SQFTraverseTables, GetUTxOByAddress addrs) ->
+        flip SL.getFilteredUTxO addrs $ shelleyLedgerState $ getLegacyLedgerState $ ledgerState ext
+      (SQFTraverseTables, GetUTxOWhole) ->
+        SL.getUTxO $ shelleyLedgerState $ getLegacyLedgerState $ ledgerState ext
+      (SQFTraverseTables, GetCBOR q') ->
+          mkSerialised (encodeShelleyResult maxBound q')
+        $ answerPureBlockQuery cfg (LegacyBlockQuery q') ext
+      (SQFLookupTables, GetUTxOByTxIn txins) ->
+        flip SL.getUTxOSubset txins . shelleyLedgerState . getLegacyLedgerState . ledgerState $ ext
+      (SQFLookupTables, GetCBOR q') ->
+        mkSerialised (encodeShelleyResult maxBound q') $
+        answerPureBlockQuery cfg (LegacyBlockQuery q') ext
+      (SQFNoTables, _) -> answerPureBlockQuery (castExtLedgerCfg cfg) q $ castExtLedgerState ext
+
+  answerBlockQueryLookup _cfg q _dlv = case q of {}
+  answerBlockQueryTraverse _cfg q _dlv = case q of {}
+
+instance SameDepIndex2 (BlockQuery (LegacyBlock (ShelleyBlock proto era))) where
+  sameDepIndex2 (LegacyBlockQuery GetLedgerTip) (LegacyBlockQuery GetLedgerTip)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetLedgerTip) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetEpochNo) (LegacyBlockQuery GetEpochNo)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetEpochNo) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetNonMyopicMemberRewards creds)) (LegacyBlockQuery (GetNonMyopicMemberRewards creds'))
+    | creds == creds'
+    = Just Refl
+    | otherwise
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetNonMyopicMemberRewards _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetCurrentPParams) (LegacyBlockQuery GetCurrentPParams)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetCurrentPParams) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetProposedPParamsUpdates) (LegacyBlockQuery GetProposedPParamsUpdates)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetProposedPParamsUpdates) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetStakeDistribution) (LegacyBlockQuery GetStakeDistribution)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetStakeDistribution) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetUTxOByAddress addrs)) (LegacyBlockQuery (GetUTxOByAddress addrs'))
+    | addrs == addrs'
+    = Just Refl
+    | otherwise
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetUTxOByAddress _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetUTxOWhole) (LegacyBlockQuery GetUTxOWhole)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetUTxOWhole) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery DebugEpochState) (LegacyBlockQuery DebugEpochState)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery DebugEpochState) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetCBOR q)) (LegacyBlockQuery (GetCBOR q'))
+    = (\Refl -> Refl) <$> sameDepIndex2 q q'
+  sameDepIndex2 (LegacyBlockQuery (GetCBOR _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetFilteredDelegationsAndRewardAccounts creds))
+               (LegacyBlockQuery (GetFilteredDelegationsAndRewardAccounts creds'))
+    | creds == creds'
+    = Just Refl
+    | otherwise
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetFilteredDelegationsAndRewardAccounts _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetGenesisConfig) (LegacyBlockQuery GetGenesisConfig)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetGenesisConfig) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery DebugNewEpochState) (LegacyBlockQuery DebugNewEpochState)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery DebugNewEpochState) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery DebugChainDepState) (LegacyBlockQuery DebugChainDepState)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery DebugChainDepState) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetRewardProvenance) (LegacyBlockQuery GetRewardProvenance)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetRewardProvenance) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetUTxOByTxIn addrs)) (LegacyBlockQuery (GetUTxOByTxIn addrs'))
+    | addrs == addrs'
+    = Just Refl
+    | otherwise
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetUTxOByTxIn _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetStakePools) (LegacyBlockQuery GetStakePools)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetStakePools) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetStakePoolParams poolids)) (LegacyBlockQuery (GetStakePoolParams poolids'))
+    | poolids == poolids'
+    = Just Refl
+    | otherwise
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetStakePoolParams _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetRewardInfoPools) (LegacyBlockQuery GetRewardInfoPools)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetRewardInfoPools) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetPoolState poolids)) (LegacyBlockQuery (GetPoolState poolids'))
+    | poolids == poolids'
+    = Just Refl
+    | otherwise
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetPoolState _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetStakeSnapshots poolid)) (LegacyBlockQuery (GetStakeSnapshots poolid'))
+    | poolid == poolid'
+    = Just Refl
+    | otherwise
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetStakeSnapshots _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetPoolDistr poolids)) (LegacyBlockQuery (GetPoolDistr poolids'))
+    | poolids == poolids'
+    = Just Refl
+    | otherwise
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetPoolDistr _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetStakeDelegDeposits stakeCreds)) (LegacyBlockQuery (GetStakeDelegDeposits stakeCreds'))
+    | stakeCreds == stakeCreds'
+    = Just Refl
+    | otherwise
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery (GetStakeDelegDeposits _)) _
+    = Nothing
+  sameDepIndex2 (LegacyBlockQuery GetConstitutionHash) (LegacyBlockQuery GetConstitutionHash)
+    = Just Refl
+  sameDepIndex2 (LegacyBlockQuery GetConstitutionHash) _ = Nothing
