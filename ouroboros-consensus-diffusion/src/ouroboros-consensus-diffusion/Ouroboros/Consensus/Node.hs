@@ -114,7 +114,7 @@ import           Ouroboros.Network.NodeToNode (DiffusionMode (..),
                      ExceptionInHandler (..), MiniProtocolParameters,
                      NodeToNodeVersionData (..), RemoteAddress, Socket,
                      blockFetchPipeliningMax, defaultMiniProtocolParameters)
-import           Ouroboros.Network.PeerSelection.LedgerPeers
+import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerPeersConsensusInterface (..))
 import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
                      newPeerMetric, reportMetric)
@@ -548,7 +548,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 ],
             Diffusion.daLedgerPeersCtx =
               LedgerPeersConsensusInterface
-                (getPeersFromCurrentLedgerAfterSlot kernel)
+                (getSlotNo kernel)
+                (getLedgerStateJudgement kernel)
+                (getPeersFromCurrentLedger' kernel)
           }
 
         localRethrowPolicy :: RethrowPolicy

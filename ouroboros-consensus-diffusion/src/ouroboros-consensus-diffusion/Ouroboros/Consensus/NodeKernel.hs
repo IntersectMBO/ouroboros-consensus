@@ -22,7 +22,10 @@ module Ouroboros.Consensus.NodeKernel (
   , getMempoolWriter
   , getPeersFromCurrentLedger
   , getPeersFromCurrentLedgerAfterSlot
+  , getSlotNo
+  , getLedgerStateJudgement
   , initNodeKernel
+  , getPeersFromCurrentLedger'
   ) where
 
 
@@ -84,6 +87,9 @@ import           Ouroboros.Network.TxSubmission.Mempool.Reader
                      (TxSubmissionMempoolReader)
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
 import           System.Random (StdGen)
+
+import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
+                     (LedgerStateJudgement (..))
 
 {-------------------------------------------------------------------------------
   Relay node
@@ -659,3 +665,37 @@ getPeersFromCurrentLedgerAfterSlot kernel slotNo =
       case ledgerTipSlot st of
         Origin        -> False
         NotOrigin tip -> tip > slotNo
+
+getSlotNo ::
+     forall m blk addrNTN addrNTC .
+     ( IOLike m
+     , UpdateLedger blk
+     )
+  => NodeKernel m addrNTN addrNTC blk
+  -> STM m SlotNo
+getSlotNo kernel = do
+    immutableLedger <-
+      ledgerState <$> ChainDB.getImmutableLedger (getChainDB kernel)
+    case ledgerTipSlot immutableLedger of
+      Origin -> retry
+      NotOrigin tip -> return tip
+
+getLedgerStateJudgement ::
+     forall m blk addrNTN addrNTC .
+     ( IOLike m
+     )
+  => NodeKernel m addrNTN addrNTC blk
+  -> STM m LedgerStateJudgement
+getLedgerStateJudgement _ = pure TooOld
+
+getPeersFromCurrentLedger' ::
+     (IOLike m, LedgerSupportsPeerSelection blk)
+  => NodeKernel m addrNTN addrNTC blk
+  -> STM m [(PoolStake, NonEmpty RelayAccessPoint)]
+getPeersFromCurrentLedger' kernel = do
+    immutableLedger <-
+      ledgerState <$> ChainDB.getImmutableLedger (getChainDB kernel)
+    return $ do
+        map (second (fmap stakePoolRelayAccessPoint))
+        $ force
+        $ getPeers immutableLedger

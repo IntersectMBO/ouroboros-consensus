@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2023-11-17T12:52:02Z
+  , hackage.haskell.org 2023-11-23T13:15:03Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2023-11-17T12:59:10Z
+  , cardano-haskell-packages 2023-11-22T22:19:44Z
 
 packages:
   ouroboros-consensus
@@ -31,3 +31,15 @@ tests: true
 benchmarks: true
 
 import: ./asserts.cabal
+
+source-repository-package
+    type: git
+    location: https://github.com/input-output-hk/ouroboros-network/
+    tag: 20bdd74e227c58e17e066f49cd34681d0b351904
+    subdir: ouroboros-network
+            ouroboros-network-framework
+            ouroboros-network-protocols
+            ouroboros-network-api
+            cardano-ping
+            network-mux
+    --sha256: sha256-DYjD0+YPeE1JgoiyWCuS8g4z6GuZjY9DKaavoZsHZag=
