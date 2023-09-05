@@ -10,7 +10,7 @@
   };
   inputs = {
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
-    flake-utils.follows = "haskellNix/flake-utils";
+    flake-utils.url = "github:numtide/flake-utils";
     haskellNix = {
       url = "github:input-output-hk/haskell.nix";
       inputs.hackage.follows = "hackageNix";
@@ -28,7 +28,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-compat = {
-      url = "github:edolstra/flake-compat";
+      url = "github:nix-community/flake-compat";
       flake = false;
     };
   };
