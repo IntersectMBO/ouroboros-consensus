@@ -46,8 +46,7 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
 import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
-import           Ouroboros.Consensus.Ledger.Query (BlockQuery, Query (..),
-                     QueryVersion)
+import           Ouroboros.Consensus.Ledger.Query
 import qualified Ouroboros.Consensus.Ledger.Query as Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx,
                      GenTxId)
@@ -143,7 +142,7 @@ roundtrip_all
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
-     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk))
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
      )
@@ -217,7 +216,7 @@ type ArbitraryWithVersion v a = (Arbitrary (WithVersion v a), Eq a, Show a)
 
 instance ( blockVersion ~ BlockNodeToClientVersion blk
          , Arbitrary blockVersion
-         , Arbitrary (WithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk))
+         , Arbitrary (WithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk)))
          )
       => Arbitrary (WithVersion (QueryVersion, blockVersion) (SomeSecond Query blk)) where
   arbitrary = do
@@ -229,7 +228,8 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
       Query.QueryVersion1 -> genTopLevelQuery1
       Query.QueryVersion2 -> genTopLevelQuery2
     where
-      mkEntry :: QueryVersion
+      mkEntry ::
+           QueryVersion
         -> Query blk query
         -> Gen
             (WithVersion (QueryVersion, blockVersion) (SomeSecond Query blk))
@@ -257,7 +257,7 @@ instance ( blockVersion ~ BlockNodeToClientVersion blk
                           -> Gen (WithVersion (QueryVersion, blockVersion)
                                               (SomeSecond Query blk))
       arbitraryBlockQuery queryVersion = do
-        WithVersion blockV (SomeSecond someBlockQuery) <- arbitrary
+        WithVersion blockV (SomeBlockQuery someBlockQuery) <- arbitrary
         return (WithVersion (queryVersion, blockV)
                             (SomeSecond (BlockQuery someBlockQuery)))
 
@@ -382,7 +382,7 @@ roundtrip_SerialiseNodeToClient
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
-     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk))
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
 
@@ -396,7 +396,7 @@ roundtrip_SerialiseNodeToClient ccfg =
     [ rt (Proxy @blk)                         "blk"
     , rt (Proxy @(GenTx blk))                 "GenTx"
     , rt (Proxy @(ApplyTxErr blk))            "ApplyTxErr"
-    , rt (Proxy @(SomeSecond BlockQuery blk)) "BlockQuery"
+    , rt (Proxy @(SomeBlockQuery (BlockQuery blk))) "BlockQuery"
     , rtWith
         @(SomeSecond Query blk)
         @(QueryVersion, BlockNodeToClientVersion blk)
@@ -429,8 +429,8 @@ roundtrip_SerialiseNodeToClient ccfg =
     , testProperty "roundtrip Result" $
         \(WithVersion version (SomeResult query result :: SomeResult blk)) ->
           roundtrip
-            (encodeResult ccfg version query)
-            (decodeResult ccfg version query)
+            (encodeResult' ccfg version query)
+            (decodeResult' ccfg version query)
             result
     ]
   where
@@ -605,7 +605,7 @@ decodeThroughSerialised dec decSerialised = do
 -- need them in the tests.
 data SomeResult blk where
   SomeResult :: (Eq result, Show result, Typeable result)
-             => BlockQuery blk result -> result -> SomeResult blk
+             => BlockQuery blk fp result -> result -> SomeResult blk
 
 instance Show (SomeResult blk) where
   show (SomeResult _ result) = show result

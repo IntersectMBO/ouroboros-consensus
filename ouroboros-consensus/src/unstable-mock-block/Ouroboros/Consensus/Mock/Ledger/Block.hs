@@ -583,34 +583,30 @@ txSize :: GenTx (SimpleBlock c ext) -> Word32
 txSize = fromIntegral . Lazy.length . serialise
 
 {-------------------------------------------------------------------------------
-  Support for QueryLedger
+  Support for BlockSupportsLedgerQuery
 -------------------------------------------------------------------------------}
 
-data instance BlockQuery (SimpleBlock c ext) result where
-    QueryLedgerTip :: BlockQuery (SimpleBlock c ext) (Point (SimpleBlock c ext))
+data instance BlockQuery (SimpleBlock c ext) fp result where
+    QueryLedgerTip :: BlockQuery (SimpleBlock c ext) QFNoTables (Point (SimpleBlock c ext))
 
-instance MockProtocolSpecific c ext => QueryLedger (SimpleBlock c ext) where
-  answerBlockQuery _cfg QueryLedgerTip =
-        pure
-      . castPoint
+instance MockProtocolSpecific c ext => BlockSupportsLedgerQuery (SimpleBlock c ext) where
+  answerPureBlockQuery _cfg QueryLedgerTip =
+        castPoint
       . ledgerTipPoint
       . ledgerState
-      . dlvCurrent
+  answerBlockQueryLookup _cfg q = case q of {}
+  answerBlockQueryTraverse _cfg q = case q of {}
 
-  getQueryKeySets _ = emptyLedgerTables
+instance SameDepIndex2 (BlockQuery (SimpleBlock c ext)) where
+  sameDepIndex2 QueryLedgerTip QueryLedgerTip = Just Refl
 
-  tableTraversingQuery = pure Nothing
-
-instance SameDepIndex (BlockQuery (SimpleBlock c ext)) where
-  sameDepIndex QueryLedgerTip QueryLedgerTip = Just Refl
-
-deriving instance Show (BlockQuery (SimpleBlock c ext) result)
+deriving instance Show (BlockQuery (SimpleBlock c ext) fp result)
 
 instance (Typeable c, Typeable ext)
     => ShowProxy (BlockQuery (SimpleBlock c ext)) where
 
 instance (SimpleCrypto c, Typeable ext)
-      => ShowQuery (BlockQuery (SimpleBlock c ext)) where
+      => ShowQuery (BlockQuery (SimpleBlock c ext) fp) where
   showResult QueryLedgerTip = show
 
 {-------------------------------------------------------------------------------

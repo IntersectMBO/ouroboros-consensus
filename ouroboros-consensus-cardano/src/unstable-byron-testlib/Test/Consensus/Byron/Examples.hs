@@ -39,6 +39,7 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.NodeId
@@ -116,7 +117,7 @@ examples = Golden.Examples {
     regularAndEBB :: a -> a -> Labelled a
     regularAndEBB regular ebb = labelled [("regular", regular), ("EBB", ebb)]
 
-    exampleQuery  = SomeSecond GetUpdateInterfaceState
+    exampleQuery  = SomeBlockQuery GetUpdateInterfaceState
     exampleResult = SomeResult GetUpdateInterfaceState exampleUPIState
 
 exampleBlock :: ByronBlock

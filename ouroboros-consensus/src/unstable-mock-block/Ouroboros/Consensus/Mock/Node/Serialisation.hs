@@ -21,6 +21,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation (AnnTip,
                      defaultDecodeAnnTip, defaultEncodeAnnTip)
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mock.Ledger
 import           Ouroboros.Consensus.Mock.Node.Abstract
@@ -110,13 +111,13 @@ instance SerialiseNodeToClient (MockBlock ext) (GenTxId (MockBlock ext))
 instance SerialiseNodeToClient (MockBlock ext) (MockError (MockBlock ext))
 instance SerialiseNodeToClient (MockBlock ext) SlotNo
 
-instance SerialiseNodeToClient (MockBlock ext) (SomeSecond BlockQuery (MockBlock ext)) where
-  encodeNodeToClient _ _ (SomeSecond QueryLedgerTip) = encode ()
-  decodeNodeToClient _ _ = (\() -> SomeSecond QueryLedgerTip) <$> decode
+instance SerialiseNodeToClient (MockBlock ext) (SomeBlockQuery (BlockQuery (MockBlock ext))) where
+  encodeNodeToClient _ _ (SomeBlockQuery QueryLedgerTip) = encode ()
+  decodeNodeToClient _ _ = (\() -> SomeBlockQuery QueryLedgerTip) <$> decode
 
-instance SerialiseResult (MockBlock ext) (BlockQuery (MockBlock ext)) where
-  encodeResult _ _ QueryLedgerTip = encode
-  decodeResult _ _ QueryLedgerTip = decode
+instance SerialiseResult' (MockBlock ext) BlockQuery where
+  encodeResult' _ _ QueryLedgerTip = encode
+  decodeResult' _ _ QueryLedgerTip = decode
 
 {-------------------------------------------------------------------------------
   Nested contents

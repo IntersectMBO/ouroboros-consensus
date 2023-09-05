@@ -102,8 +102,8 @@ instance Arbitrary SimpleBody where
 instance Arbitrary (SomeSecond (NestedCtxt Header) (SimpleBlock c ext)) where
   arbitrary = return $ SomeSecond indexIsTrivial
 
-instance Arbitrary (SomeSecond BlockQuery (SimpleBlock c ext)) where
-  arbitrary = return $ SomeSecond QueryLedgerTip
+instance Arbitrary (SomeBlockQuery (BlockQuery (SimpleBlock c ext))) where
+  arbitrary = return $ SomeBlockQuery QueryLedgerTip
 
 instance (SimpleCrypto c, Typeable ext) => Arbitrary (SomeResult (SimpleBlock c ext)) where
   arbitrary = SomeResult QueryLedgerTip <$> arbitrary

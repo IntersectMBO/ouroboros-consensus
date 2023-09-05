@@ -35,6 +35,7 @@ import           Lens.Micro
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ledger.Tables.Utils
@@ -136,13 +137,13 @@ fromShelleyLedgerExamples ShelleyLedgerExamples {
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
     queries = labelled [
-          ("GetLedgerTip",              SomeSecond GetLedgerTip)
-        , ("GetEpochNo",                SomeSecond GetEpochNo)
-        , ("GetCurrentPParams",         SomeSecond GetCurrentPParams)
-        , ("GetProposedPParamsUpdates", SomeSecond GetProposedPParamsUpdates)
-        , ("GetStakeDistribution",      SomeSecond GetStakeDistribution)
-        , ("GetNonMyopicMemberRewards", SomeSecond $ GetNonMyopicMemberRewards sleRewardsCredentials)
-        , ("GetGenesisConfig",          SomeSecond GetGenesisConfig)
+          ("GetLedgerTip",              SomeBlockQuery GetLedgerTip)
+        , ("GetEpochNo",                SomeBlockQuery GetEpochNo)
+        , ("GetCurrentPParams",         SomeBlockQuery GetCurrentPParams)
+        , ("GetProposedPParamsUpdates", SomeBlockQuery GetProposedPParamsUpdates)
+        , ("GetStakeDistribution",      SomeBlockQuery GetStakeDistribution)
+        , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards sleRewardsCredentials)
+        , ("GetGenesisConfig",          SomeBlockQuery GetGenesisConfig)
       ]
     results = labelled [
           ("LedgerTip",              SomeResult GetLedgerTip (blockPoint blk))
@@ -232,13 +233,13 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     serialisedHeader =
       SerialisedHeaderFromDepPair $ GenDepPair (NestedCtxt CtxtShelley) (Serialised "<HEADER>")
     queries = labelled [
-          ("GetLedgerTip",              SomeSecond GetLedgerTip)
-        , ("GetEpochNo",                SomeSecond GetEpochNo)
-        , ("GetCurrentPParams",         SomeSecond GetCurrentPParams)
-        , ("GetProposedPParamsUpdates", SomeSecond GetProposedPParamsUpdates)
-        , ("GetStakeDistribution",      SomeSecond GetStakeDistribution)
-        , ("GetNonMyopicMemberRewards", SomeSecond $ GetNonMyopicMemberRewards sleRewardsCredentials)
-        , ("GetGenesisConfig",          SomeSecond GetGenesisConfig)
+          ("GetLedgerTip",              SomeBlockQuery GetLedgerTip)
+        , ("GetEpochNo",                SomeBlockQuery GetEpochNo)
+        , ("GetCurrentPParams",         SomeBlockQuery GetCurrentPParams)
+        , ("GetProposedPParamsUpdates", SomeBlockQuery GetProposedPParamsUpdates)
+        , ("GetStakeDistribution",      SomeBlockQuery GetStakeDistribution)
+        , ("GetNonMyopicMemberRewards", SomeBlockQuery $ GetNonMyopicMemberRewards sleRewardsCredentials)
+        , ("GetGenesisConfig",          SomeBlockQuery GetGenesisConfig)
       ]
     results = labelled [
           ("LedgerTip",              SomeResult GetLedgerTip (blockPoint blk))
