@@ -77,5 +77,6 @@ library
     , ouroboros-consensus
     , ouroboros-consensus-cardano
     , ouroboros-consensus-protocol
+    , ouroboros-network-api
     , small-steps
     , sop-core
