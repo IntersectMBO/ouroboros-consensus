@@ -1,4 +1,5 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE EmptyCase                #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE FlexibleInstances        #-}
 {-# LANGUAGE InstanceSigs             #-}
@@ -15,8 +16,12 @@ import           Control.Monad.Except
 import           GHC.Stack (HasCallStack)
 import           Legacy.LegacyBlock
 import           Ouroboros.Consensus.Byron.Ledger
+import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import           Ouroboros.Consensus.Util.DepPair
 
 {-------------------------------------------------------------------------------
   Ticking
@@ -118,3 +123,23 @@ instance ApplyBlock (LedgerState ByronBlock) ByronBlock
        LegacyBlock ByronBlock
     -> LedgerTables (LedgerState (LegacyBlock ByronBlock)) KeysMK
   getBlockKeySets = const trivialLedgerTables
+
+{-------------------------------------------------------------------------------
+  Queries
+-------------------------------------------------------------------------------}
+
+castExtLedgerState ::
+     ExtLedgerState (LegacyBlock ByronBlock) mk
+  -> ExtLedgerState ByronBlock mk
+castExtLedgerState (ExtLedgerState st chaindep) =
+  ExtLedgerState (convertMapKind $ getLegacyLedgerState st) (castHeaderState chaindep)
+
+instance BlockSupportsLedgerQuery (LegacyBlock ByronBlock) where
+  answerPureBlockQuery cfg (LegacyBlockQuery GetUpdateInterfaceState) ext =
+    answerPureBlockQuery (castExtLedgerCfg cfg) GetUpdateInterfaceState $ castExtLedgerState ext
+  answerBlockQueryLookup _cfg q _dlv = case q of {}
+  answerBlockQueryTraverse _cfg q _dlv = case q of {}
+
+instance SameDepIndex2 (BlockQuery (LegacyBlock ByronBlock)) where
+  sameDepIndex2 (LegacyBlockQuery GetUpdateInterfaceState) (LegacyBlockQuery GetUpdateInterfaceState)
+    = Just Refl

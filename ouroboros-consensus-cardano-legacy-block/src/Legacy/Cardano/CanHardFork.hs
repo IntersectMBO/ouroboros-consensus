@@ -1,4 +1,5 @@
 {-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DerivingStrategies       #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE FlexibleInstances        #-}
@@ -760,3 +761,4 @@ translateLegacyLedgerTables = TranslateLedgerTables {
       translateTxInWith  = absurd
     , translateTxOutWith = absurd
     }
+

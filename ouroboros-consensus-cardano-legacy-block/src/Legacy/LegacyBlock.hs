@@ -1,13 +1,17 @@
+{-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE ExistentialQuantification  #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs               #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE QuantifiedConstraints      #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -18,6 +22,7 @@
 
 module Legacy.LegacyBlock (
     BlockConfig (..)
+  , BlockQuery (..)
   , CodecConfig (..)
   , GenTx (..)
   , LedgerState (..)
@@ -26,6 +31,7 @@ module Legacy.LegacyBlock (
   , StorageConfig (..)
   , Ticked1 (..)
   , Validated (..)
+  , castExtLedgerCfg
   ) where
 
 import           Cardano.Prelude (Bifunctor (..), ByteString, Coercible, Word32)
@@ -39,25 +45,24 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, castTopLevelConfig)
 import           Ouroboros.Consensus.Forecast (Forecast)
-import           Ouroboros.Consensus.HardFork.Combinator (BlockQuery, EpochInfo,
-                     Except, GenTx, HasPartialLedgerConfig (..),
-                     PastHorizonException, SingleEraInfo, Ticked, Validated)
+import           Ouroboros.Consensus.HardFork.Combinator (EpochInfo, Except,
+                     GenTx, HasPartialLedgerConfig (..), PastHorizonException,
+                     SingleEraInfo, Ticked, Validated)
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
                      (SingleEraBlock (..))
 import           Ouroboros.Consensus.HardFork.History.EraParams (EraParams)
 import           Ouroboros.Consensus.HardFork.History.Summary (Bound)
-import           Ouroboros.Consensus.HeaderValidation (AnnTip (..),
-                     BasicEnvelopeValidation (..), HasAnnTip (..),
-                     HeaderState (HeaderState), ValidateEnvelope (..))
+import           Ouroboros.Consensus.HeaderValidation
+                     (BasicEnvelopeValidation (..), HasAnnTip (..),
+                     ValidateEnvelope (..))
 import           Ouroboros.Consensus.Ledger.Abstract (ApplyBlock, UpdateLedger)
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
                      (CommonProtocolParams (..))
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect (InspectLedger (..),
                      LedgerEvent, castLedgerEvent)
-import           Ouroboros.Consensus.Ledger.Query (ConfigSupportsNode,
-                     QueryLedger (..), ShowQuery, TraversingQueryHandler (..))
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr,
                      HasTxId (..), LedgerSupportsMempool (..), TxId,
                      WhetherToIntervene)
@@ -73,8 +78,8 @@ import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks (ChunkInfo)
 import           Ouroboros.Consensus.Storage.Serialisation (PrefixLen,
                      ReconstructNestedCtxt (..), SizeInBytes)
-import           Ouroboros.Consensus.Ticked (Ticked1)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
+import           Ouroboros.Consensus.Util.Singletons
 
 {-------------------------------------------------------------------------------
   LegacyBlock
@@ -102,6 +107,9 @@ newtype instance StorageConfig (LegacyBlock blk) = LegacyStorageConfig (StorageC
 deriving newtype instance NoThunks (StorageConfig blk)
                        => NoThunks (StorageConfig (LegacyBlock blk))
 
+castExtLedgerCfg :: ExtLedgerCfg (LegacyBlock blk) -> ExtLedgerCfg blk
+castExtLedgerCfg (ExtLedgerCfg t) = ExtLedgerCfg $ castTopLevelConfig t
+
 newtype instance GenTx (LegacyBlock blk) = LegacyGenTx {getLegacyGenTx :: GenTx blk}
 
 deriving newtype instance Show (GenTx blk) => Show (GenTx (LegacyBlock blk))
@@ -116,12 +124,14 @@ deriving newtype instance Eq (Validated (GenTx blk))
 deriving newtype instance Show (Validated (GenTx blk))
                        => Show (Validated (GenTx (LegacyBlock blk)))
 
-newtype instance BlockQuery (LegacyBlock blk) a = LegacyBlockQuery (BlockQuery blk a)
-deriving newtype instance Show (BlockQuery blk a)
-                       => Show (BlockQuery (LegacyBlock blk) a)
-deriving newtype instance ShowQuery (BlockQuery blk)
-                       => ShowQuery (BlockQuery (LegacyBlock blk))
+data instance BlockQuery (LegacyBlock blk) fp a where
+  LegacyBlockQuery :: SingI fp' => BlockQuery blk fp' a -> BlockQuery (LegacyBlock blk) QFNoTables a
 
+instance (forall fp'. Show (BlockQuery blk fp' a)) => Show (BlockQuery (LegacyBlock blk) fp a) where
+  show (LegacyBlockQuery q) = show q
+
+instance (forall fp'. ShowQuery (BlockQuery blk fp')) => ShowQuery (BlockQuery (LegacyBlock blk) fp) where
+  showResult (LegacyBlockQuery q) = showResult q
 
 type instance ApplyTxErr (LegacyBlock blk) = ApplyTxErr blk
 
@@ -429,6 +439,7 @@ instance ( HasPartialLedgerConfig blk
 instance ( SingleEraBlock blk
          , ApplyBlock (LedgerState (LegacyBlock blk)) (LegacyBlock blk)
          , NoThunks (Ticked1 (LedgerState blk) EmptyMK)
+         , BlockSupportsLedgerQuery (LegacyBlock blk)
          ) => SingleEraBlock (LegacyBlock blk) where
   singleEraTransition ::
        PartialLedgerConfig (LegacyBlock blk)
@@ -454,48 +465,6 @@ instance ( ApplyBlock (LedgerState (LegacyBlock blk)) (LegacyBlock blk)
 
   maxTxSize :: LedgerState (LegacyBlock blk) mk -> Word32
   maxTxSize = maxTxSize . coerce
-
---
--- SameDepIndex
---
-
-deriving newtype instance SameDepIndex (BlockQuery blk)
-                       => SameDepIndex (BlockQuery (LegacyBlock blk))
-
---
--- QueryLedger
---
-
-instance QueryLedger blk => QueryLedger (LegacyBlock blk) where
-  answerBlockQuery =
-      error "answerBlockQuery: LegacyBlock does not support ledger queries"
-
-  getQueryKeySets ::
-       BlockQuery (LegacyBlock blk) result
-    -> LedgerTables (LedgerState (LegacyBlock blk)) KeysMK
-  getQueryKeySets = const trivialLedgerTables
-
-  tableTraversingQuery ::
-       BlockQuery (LegacyBlock blk) result
-    -> Maybe (TraversingQueryHandler (LegacyBlock blk) result)
-  tableTraversingQuery = fmap fixup . tableTraversingQuery . coerce
-    where
-      fixup ::
-           TraversingQueryHandler blk result
-        -> TraversingQueryHandler (LegacyBlock blk) result
-      fixup (TraversingQueryHandler partial empty comb post) = TraversingQueryHandler
-        (\(ExtLedgerState lst (HeaderState tip chaindep)) ->
-            partial (ExtLedgerState (coerce lst) (HeaderState (fmap castAnnTip tip) chaindep)))
-        empty
-        comb
-        post
-
-        where
-          castAnnTip AnnTip{..} = AnnTip {
-                annTipSlotNo
-              , annTipBlockNo
-              , annTipInfo
-              }
 
 --
 -- HasNestedContent
