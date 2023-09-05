@@ -118,17 +118,17 @@ library
     , cardano-crypto-wrapper
     , cardano-data
     , cardano-ledger-allegra
-    , cardano-ledger-alonzo         ^>=1.4
-    , cardano-ledger-api            ^>=1.4
-    , cardano-ledger-babbage        ^>=1.4
+    , cardano-ledger-alonzo         ^>=1.4.1
+    , cardano-ledger-api            ^>=1.5
+    , cardano-ledger-babbage        ^>=1.4.4
     , cardano-ledger-binary
     , cardano-ledger-byron
-    , cardano-ledger-conway         ^>=1.7
-    , cardano-ledger-core           ^>=1.5
+    , cardano-ledger-conway         ^>=1.8
+    , cardano-ledger-core           ^>=1.6
     , cardano-ledger-mary
-    , cardano-ledger-shelley        ^>=1.5
+    , cardano-ledger-shelley        ^>=1.6
     , cardano-prelude
-    , cardano-protocol-tpraos       ^>=1.0.1
+    , cardano-protocol-tpraos       ^>=1.0.3.5
     , cardano-slotting
     , cardano-strict-containers
     , cborg                         ^>=0.2.2
@@ -282,7 +282,7 @@ library unstable-shelley-testlib
     , cardano-ledger-alonzo-test
     , cardano-ledger-babbage
     , cardano-ledger-babbage-test
-    , cardano-ledger-conway-test                                                              >=1.2.0.1
+    , cardano-ledger-conway-test                                                              >=1.2.0.5
     , cardano-ledger-core:{cardano-ledger-core, testlib}
     , cardano-ledger-mary
     , cardano-ledger-shelley-ma-test
@@ -360,9 +360,9 @@ library unstable-cardano-testlib
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
     , cardano-ledger-byron
-    , cardano-ledger-conway-test                                                                 ^>=1.2.0.1
+    , cardano-ledger-conway-test                                                                 ^>=1.2.0.5
     , cardano-ledger-core:{cardano-ledger-core, testlib}
-    , cardano-ledger-shelley                                                                     ^>=1.5
+    , cardano-ledger-shelley                                                                     ^>=1.6
     , cardano-protocol-tpraos
     , cardano-slotting
     , cardano-strict-containers
@@ -476,9 +476,9 @@ library unstable-cardano-tools
 
   build-depends:
     , aeson
-    , base                           >=4.14   && <4.19
+    , base                           >=4.14     && <4.19
     , base16-bytestring              >=1.0
-    , bytestring                     >=0.10   && <0.12
+    , bytestring                     >=0.10     && <0.12
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
@@ -492,11 +492,11 @@ library unstable-cardano-tools
     , cardano-ledger-mary
     , cardano-ledger-shelley
     , cardano-prelude
-    , cardano-protocol-tpraos        >=1.0.1  && <1.1
+    , cardano-protocol-tpraos        ^>=1.0.3.5
     , cardano-slotting
     , cardano-strict-containers
     , cborg                          ^>=0.2.2
-    , containers                     >=0.5    && <0.7
+    , containers                     >=0.5      && <0.7
     , contra-tracer
     , directory
     , filepath
