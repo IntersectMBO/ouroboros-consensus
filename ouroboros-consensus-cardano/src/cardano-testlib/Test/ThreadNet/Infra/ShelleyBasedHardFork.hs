@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE PatternSynonyms            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -242,6 +243,42 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       ]
 
   latestReleasedNodeVersion = latestReleasedNodeVersionDefault
+
+{-------------------------------------------------------------------------------
+  Query HF
+-------------------------------------------------------------------------------}
+
+instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+      => BlockSupportsHFLedgerQuery '[ShelleyBlock proto1 era1, ShelleyBlock proto2 era2] where
+  answerBlockQueryHFLookup idx@IZ cfg q dlv =
+    answerShelleyLookupQueries idx cfg q dlv
+  answerBlockQueryHFLookup idx@(IS IZ) cfg q dlv =
+    answerShelleyLookupQueries idx cfg q dlv
+  answerBlockQueryHFLookup (IS (IS idx)) _cfg _q _dlv =
+    case idx of {}
+
+  answerBlockQueryHFTraverse idx@IZ cfg q dlv =
+    answerShelleyTraversingQueries idx cfg q dlv
+  answerBlockQueryHFTraverse idx@(IS IZ) cfg q dlv =
+    answerShelleyTraversingQueries idx cfg q dlv
+  answerBlockQueryHFTraverse (IS (IS idx)) _cfg _q _dlv =
+    case idx of {}
+
+  queryLedgerGetTraversingFilter idx@IZ q = case q of
+    GetUTxOByAddress addrs -> \case
+      Z (WrapTxOut x) -> filterGetUTxOByAddressOne addrs x
+      S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
+    GetUTxOWhole ->
+      const True
+    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
+  queryLedgerGetTraversingFilter idx@(IS IZ) q = case q of
+    GetUTxOByAddress addrs -> \case
+      Z (WrapTxOut x) -> filterGetUTxOByAddressOne addrs x
+      S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
+    GetUTxOWhole ->
+      const True
+    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
+  queryLedgerGetTraversingFilter (IS (IS idx)) _q = case idx of {}
 
 {-------------------------------------------------------------------------------
   Protocol info
