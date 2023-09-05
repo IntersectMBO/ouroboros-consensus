@@ -28,7 +28,7 @@ jobs:
       CABAL_CACHE_VERSION: "2023-09-04"
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
@@ -218,7 +218,7 @@ jobs:
     strategy:
        fail-fast: false
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v3
         with:
