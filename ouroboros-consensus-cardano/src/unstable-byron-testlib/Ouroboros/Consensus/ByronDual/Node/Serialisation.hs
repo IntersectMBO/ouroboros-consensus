@@ -18,6 +18,7 @@ import           Ouroboros.Consensus.ByronDual.Ledger
 import           Ouroboros.Consensus.ByronSpec.Ledger
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Dual
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -162,15 +163,15 @@ instance SerialiseNodeToClient DualByronBlock (DualGenTxErr ByronBlock ByronSpec
   encodeNodeToClient _ _ = encodeDualGenTxErr encodeByronApplyTxError
   decodeNodeToClient _ _ = decodeDualGenTxErr decodeByronApplyTxError
 
-instance SerialiseNodeToClient DualByronBlock (SomeSecond BlockQuery DualByronBlock) where
-  encodeNodeToClient _ _ = \case {}
+instance SerialiseNodeToClient DualByronBlock (SomeBlockQuery (BlockQuery DualByronBlock)) where
+  encodeNodeToClient _ _ (SomeBlockQuery q) = case q of {}
   decodeNodeToClient _ _ = error "DualByron: no query to decode"
 
 instance SerialiseNodeToClient DualByronBlock SlotNo
 
-instance SerialiseResult DualByronBlock (BlockQuery DualByronBlock) where
-  encodeResult _ _ = \case {}
-  decodeResult _ _ = \case {}
+instance SerialiseResult' DualByronBlock BlockQuery where
+  encodeResult' _ _ = \case {}
+  decodeResult' _ _ = \case {}
 
 {-------------------------------------------------------------------------------
   Auxiliary

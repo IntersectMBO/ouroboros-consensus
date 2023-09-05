@@ -383,8 +383,8 @@ instance Arbitrary QueryVersion where
   arbitrary = arbitraryBoundedEnum
   shrink v = if v == minBound then [] else [pred v]
 
-instance Arbitrary (SomeSecond BlockQuery blk)
+instance Arbitrary (SomeBlockQuery (BlockQuery blk))
       => Arbitrary (SomeSecond Query blk) where
   arbitrary = do
-    SomeSecond someBlockQuery <- arbitrary
+    SomeBlockQuery someBlockQuery <- arbitrary
     return (SomeSecond (BlockQuery someBlockQuery))

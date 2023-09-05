@@ -43,6 +43,7 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr)
 import           Ouroboros.Consensus.Ledger.Tables (EmptyMK, ValuesMK,
                      castLedgerTables)
@@ -124,7 +125,7 @@ instance Inject Examples where
       , exampleGenTx            = inj (Proxy @GenTx)                         exampleGenTx
       , exampleGenTxId          = inj (Proxy @WrapGenTxId)                   exampleGenTxId
       , exampleApplyTxErr       = inj (Proxy @WrapApplyTxErr)                exampleApplyTxErr
-      , exampleQuery            = inj (Proxy @(SomeSecond BlockQuery))       exampleQuery
+      , exampleQuery            = inj (Proxy @(SomeBlockQuery :.: BlockQuery))    exampleQuery
       , exampleResult           = inj (Proxy @SomeResult)                    exampleResult
       , exampleAnnTip           = inj (Proxy @AnnTip)                        exampleAnnTip
       , exampleLedgerState      = inj (Proxy @(Flip LedgerState EmptyMK))    exampleLedgerState
@@ -334,25 +335,25 @@ exampleApplyTxErrWrongEraShelley :: ApplyTxErr (CardanoBlock Crypto)
 exampleApplyTxErrWrongEraShelley =
       HardForkApplyTxErrWrongEra exampleEraMismatchShelley
 
-exampleQueryEraMismatchByron :: SomeSecond BlockQuery (CardanoBlock Crypto)
+exampleQueryEraMismatchByron :: SomeBlockQuery (BlockQuery (CardanoBlock Crypto))
 exampleQueryEraMismatchByron =
-    SomeSecond (QueryIfCurrentShelley Shelley.GetLedgerTip)
+    SomeBlockQuery (QueryIfCurrentShelley Shelley.GetLedgerTip)
 
-exampleQueryEraMismatchShelley :: SomeSecond BlockQuery (CardanoBlock Crypto)
+exampleQueryEraMismatchShelley :: SomeBlockQuery (BlockQuery (CardanoBlock Crypto))
 exampleQueryEraMismatchShelley =
-    SomeSecond (QueryIfCurrentByron Byron.GetUpdateInterfaceState)
+    SomeBlockQuery (QueryIfCurrentByron Byron.GetUpdateInterfaceState)
 
-exampleQueryAnytimeByron :: SomeSecond BlockQuery (CardanoBlock Crypto)
+exampleQueryAnytimeByron :: SomeBlockQuery (BlockQuery (CardanoBlock Crypto))
 exampleQueryAnytimeByron =
-    SomeSecond (QueryAnytimeByron GetEraStart)
+    SomeBlockQuery (QueryAnytimeByron GetEraStart)
 
-exampleQueryAnytimeShelley :: SomeSecond BlockQuery (CardanoBlock Crypto)
+exampleQueryAnytimeShelley :: SomeBlockQuery (BlockQuery (CardanoBlock Crypto))
 exampleQueryAnytimeShelley =
-    SomeSecond (QueryAnytimeShelley GetEraStart)
+    SomeBlockQuery (QueryAnytimeShelley GetEraStart)
 
-exampleQueryHardFork :: SomeSecond BlockQuery (CardanoBlock Crypto)
+exampleQueryHardFork :: SomeBlockQuery (BlockQuery (CardanoBlock Crypto))
 exampleQueryHardFork =
-    SomeSecond (QueryHardFork GetInterpreter)
+    SomeBlockQuery (QueryHardFork GetInterpreter)
 
 exampleResultEraMismatchByron :: SomeResult (CardanoBlock Crypto)
 exampleResultEraMismatchByron =

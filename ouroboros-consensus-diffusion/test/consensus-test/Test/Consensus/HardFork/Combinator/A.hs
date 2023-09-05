@@ -370,19 +370,19 @@ newtype instance TxId (GenTx BlockA) = TxIdA Int
 instance HasTxId (GenTx BlockA) where
   txId = txA_id
 
-instance ShowQuery (BlockQuery BlockA) where
+instance ShowQuery (BlockQuery BlockA fp) where
   showResult qry = case qry of {}
 
-data instance BlockQuery BlockA result
+data instance BlockQuery BlockA fp result
   deriving (Show)
 
-instance QueryLedger BlockA where
-  answerBlockQuery _ qry = case qry of {}
-  getQueryKeySets _ = trivialLedgerTables
-  tableTraversingQuery _ = Nothing
+instance BlockSupportsLedgerQuery BlockA where
+  answerPureBlockQuery _ qry = case qry of {}
+  answerBlockQueryLookup _ qry = case qry of {}
+  answerBlockQueryTraverse _ qry = case qry of {}
 
-instance SameDepIndex (BlockQuery BlockA) where
-  sameDepIndex qry _qry' = case qry of {}
+instance SameDepIndex2 (BlockQuery BlockA) where
+  sameDepIndex2 qry _qry' = case qry of {}
 
 instance ConvertRawHash BlockA where
   toRawHash   _ = id
@@ -607,10 +607,10 @@ instance SerialiseNodeToClient BlockA Void where
   encodeNodeToClient _ _ = absurd
   decodeNodeToClient _ _ = fail "no ApplyTxErr to be decoded"
 
-instance SerialiseNodeToClient BlockA (SomeSecond BlockQuery BlockA) where
-  encodeNodeToClient _ _ = \case {}
+instance SerialiseNodeToClient BlockA (SomeBlockQuery (BlockQuery BlockA)) where
+  encodeNodeToClient _ _ (SomeBlockQuery q) = case q of {}
   decodeNodeToClient _ _ = fail "there are no queries to be decoded"
 
-instance SerialiseResult BlockA (BlockQuery BlockA) where
-  encodeResult _ _ = \case {}
-  decodeResult _ _ = \case {}
+instance SerialiseResult' BlockA BlockQuery where
+  encodeResult' _ _ = \case {}
+  decodeResult' _ _ = \case {}
