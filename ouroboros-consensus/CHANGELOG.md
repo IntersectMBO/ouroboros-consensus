@@ -2,6 +2,28 @@
 
 # Changelog entries
 
+<a id='changelog-0.11.0.0'></a>
+## 0.11.0.0 — 2023-09-06
+
+### Patch
+
+- Use `ouroboros-network-0.9.0.0`.
+- Use `io-classes-1.2` and `strict-checked-vars-0.1.0.3`.
+
+- Use `strict-checked-vars-0.1.0.4`.
+
+### Non-Breaking
+
+- Add `StrictMVar`s with default `NoThunks` invariants
+    `Ouroboros.Consensus.Util.NormalForm.StrictMVar`.
+
+### Breaking
+
+- Removed the orphaned `NoThunk` instance for `Time` defined in `si-timers`
+  package.
+
+- Replace `StrictSVar`s by `StrictMVar`s where possible.
+
 <a id='changelog-0.10.0.1'></a>
 ## 0.10.0.1 — 2023-08-21
 
