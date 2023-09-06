@@ -286,10 +286,10 @@ If they these packages are not installed, then run:
 pip install bs4 html5lib
 ```
 
-To cut a release we rely on a script in `ouroboros-network`. Simply run:
+To cut a release we rely on a script. Simply run:
 
 ```sh
-./scripts/release/create-release.sh
+./scripts/release/create-release.hs
 ```
 
 After the script is run, open a pull request, get it approved and add it to the
