@@ -2,6 +2,25 @@
 
 # Changelog entries
 
+<a id='changelog-0.9.0.0'></a>
+## 0.9.0.0 — 2023-09-06
+
+### Non-Breaking
+
+- Updated to newer `cardano-ledger-*` packages:
+    * `cardano-ledger-api-1.5`,
+    * `cardano-ledger-alonzo-1.4.1`
+    * `cardano-ledger-shelley-1.6`
+    * `cardano-ledger-babbage-1.4.4`
+    * `cardano-ledger-conway-1.8`
+    * `cardano-ledger-tpraos-1.0.3.5`
+
+### Breaking
+
+- Use `ouroboros-network-framework-0.8`. Types of
+  `Cardano.Tools.ImmDBServer.MiniProtocols.immDBServer` and
+  `Cardano.Tools.ImmDBServer.Diffusion.serve` have changed.
+
 <a id='changelog-0.8.0.1'></a>
 ## 0.8.0.1 — 2023-08-21
 
