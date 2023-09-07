@@ -61,8 +61,7 @@ import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
-import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot),
-                     addSlots)
+import           Ouroboros.Consensus.HardFork.History (Bound (..), addSlots)
 import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -389,7 +388,7 @@ translateLedgerStateByronToShelleyWrapper ::
        (ShelleyBlock (TPraos c) (ShelleyEra c))
 translateLedgerStateByronToShelleyWrapper =
     RequireBoth $ \_ (WrapLedgerConfig cfgShelley) ->
-    Translate   $ \epochNo ledgerByron ->
+    Translate   $ \bound ledgerByron ->
       ShelleyLedgerState {
         shelleyLedgerTip =
           translatePointByronToShelley
@@ -398,7 +397,7 @@ translateLedgerStateByronToShelleyWrapper =
       , shelleyLedgerState =
           SL.translateToShelleyLedgerState
             (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
-            epochNo
+            (boundEpoch bound)
             (byronLedgerState ledgerByron)
       , shelleyLedgerTransition =
           ShelleyTransitionInfo{shelleyAfterVoting = 0}
@@ -514,7 +513,7 @@ translateLedgerStateShelleyToAllegraWrapper ::
        (ShelleyBlock (TPraos c) (AllegraEra c))
 translateLedgerStateShelleyToAllegraWrapper =
     ignoringBoth $
-      Translate $ \_epochNo ->
+      Translate $ \_bound ->
         unComp . SL.translateEra' () . Comp
 
 translateTxShelleyToAllegraWrapper ::
@@ -546,7 +545,7 @@ translateLedgerStateAllegraToMaryWrapper ::
        (ShelleyBlock (TPraos c) (MaryEra c))
 translateLedgerStateAllegraToMaryWrapper =
     ignoringBoth $
-      Translate $ \_epochNo ->
+      Translate $ \_bound ->
         unComp . SL.translateEra' () . Comp
 
 {-------------------------------------------------------------------------------
@@ -582,7 +581,7 @@ translateLedgerStateMaryToAlonzoWrapper ::
        (ShelleyBlock (TPraos c) (AlonzoEra c))
 translateLedgerStateMaryToAlonzoWrapper =
     RequireBoth $ \_cfgMary cfgAlonzo ->
-      Translate $ \_epochNo ->
+      Translate $ \_bound ->
         unComp . SL.translateEra' (getAlonzoTranslationContext cfgAlonzo) . Comp
 
 getAlonzoTranslationContext ::
@@ -623,7 +622,7 @@ translateLedgerStateAlonzoToBabbageWrapper ::
        (ShelleyBlock (Praos c) (BabbageEra c))
 translateLedgerStateAlonzoToBabbageWrapper =
     RequireBoth $ \_cfgAlonzo _cfgBabbage ->
-      Translate $ \_epochNo ->
+      Translate $ \_bound ->
         unComp . SL.translateEra' () . Comp . transPraosLS
   where
     transPraosLS ::
@@ -685,7 +684,7 @@ translateLedgerStateBabbageToConwayWrapper ::
        (ShelleyBlock (Praos c) (ConwayEra c))
 translateLedgerStateBabbageToConwayWrapper =
     RequireBoth $ \_cfgBabbage cfgConway ->
-      Translate $ \_epochNo ->
+      Translate $ \_bound ->
         unComp . SL.translateEra' (getConwayTranslationContext cfgConway) . Comp
 
 getConwayTranslationContext ::

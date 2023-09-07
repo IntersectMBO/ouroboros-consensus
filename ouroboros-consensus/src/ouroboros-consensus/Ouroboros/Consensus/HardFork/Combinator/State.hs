@@ -224,7 +224,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
         , Current {
               currentStart = currentEnd
             , currentState = translateWith f
-                               (History.boundEpoch currentEnd)
+                               currentEnd
                                (currentState cur)
             }
         )

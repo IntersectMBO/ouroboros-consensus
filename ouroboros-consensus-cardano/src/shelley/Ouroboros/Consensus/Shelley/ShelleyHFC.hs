@@ -291,7 +291,7 @@ translateChainDepStateAcrossShelley ::
        (ShelleyBlock protoTo eraTo)
 translateChainDepStateAcrossShelley =
     ignoringBoth $
-      Translate $ \_epochNo (WrapChainDepState chainDepState) ->
+      Translate $ \_bound (WrapChainDepState chainDepState) ->
         -- Same protocol, same 'ChainDepState'. Note that we don't have to apply
         -- any changes related to an epoch transition, this is already done when
         -- ticking the state.

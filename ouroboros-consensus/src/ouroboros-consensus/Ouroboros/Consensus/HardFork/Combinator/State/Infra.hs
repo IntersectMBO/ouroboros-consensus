@@ -145,7 +145,7 @@ align fs updTip (HardForkState alignWith) (HardForkState toAlign) =
                   }
         , Current { currentStart = curEnd
                   , currentState = translateWith f
-                                     (boundEpoch curEnd)
+                                     curEnd
                                      (currentState curF)
                   }
         )

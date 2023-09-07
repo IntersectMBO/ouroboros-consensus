@@ -160,7 +160,7 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       translateLedgerState =
           InPairs.RequireBoth
         $ \_cfg1 cfg2 -> HFC.Translate
-        $ \_epochNo ->
+        $ \_bound ->
               unComp
             . SL.translateEra'
                 (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))

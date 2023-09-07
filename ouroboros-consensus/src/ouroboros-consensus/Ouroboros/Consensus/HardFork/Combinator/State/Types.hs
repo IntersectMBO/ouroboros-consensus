@@ -111,13 +111,15 @@ sequenceHardForkState (HardForkState tel) =
   Supporting types
 -------------------------------------------------------------------------------}
 
--- | Translate @f x@ to @g y@ across an era transition
+-- | Translate @f x@ to @g y@ across an era transition with the provided
+-- 'Bound', which is the exclusive upper bound of the era of @x@ or equivalently
+-- an inclusive lower bound of the era of @y@.
 --
 -- Typically @f@/@g@ will be ('Ticked')
 -- 'Ouroboros.Consensus.Ledger.Basics.LedgerState' or
 -- 'Ouroboros.Consensus.TypeFamilyWrappers.WrapChainDepState'.
 newtype Translate' f g x y = Translate {
-      translateWith :: EpochNo -> f x -> g y
+      translateWith :: Bound -> f x -> g y
     }
 
 -- | Homogenous version of 'Translate''.
