@@ -139,7 +139,7 @@ byronTransition ByronPartialLedgerConfig{..} shelleyMajorVersion state =
     . Byron.Inspect.protocolUpdates byronLedgerConfig
     $ state
   where
-    ByronTransitionInfo transitionInfo = byronLedgerTransition state
+    ByronTransitionInfo transitionInfo tipBlockNo = byronLedgerTransition state
 
     genesis = byronLedgerConfig
     k       = CC.Genesis.gdK $ CC.Genesis.configGenesisData genesis
@@ -192,7 +192,7 @@ byronTransition ByronPartialLedgerConfig{..} shelleyMajorVersion state =
     isReallyStable (BlockNo bno) = distance >= CC.unBlockCount k
       where
         distance :: Word64
-        distance = case byronLedgerTipBlockNo state of
+        distance = case tipBlockNo of
                      Origin                  -> bno + 1
                      NotOrigin (BlockNo tip) -> tip - bno
 
@@ -393,7 +393,7 @@ translateLedgerStateByronToShelleyWrapper =
         shelleyLedgerTip =
           translatePointByronToShelley
             (ledgerTipPoint ledgerByron)
-            (byronLedgerTipBlockNo ledgerByron)
+            (byronLedgerTipBlockNo $ byronLedgerTransition ledgerByron)
       , shelleyLedgerState =
           SL.translateToShelleyLedgerState
             (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))

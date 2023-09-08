@@ -89,27 +89,30 @@ import           Ouroboros.Consensus.Util (ShowProxy (..), (..:))
 -------------------------------------------------------------------------------}
 
 data instance LedgerState ByronBlock = ByronLedgerState {
-      byronLedgerTipBlockNo :: !(WithOrigin BlockNo)
-    , byronLedgerState      :: !CC.ChainValidationState
+      byronLedgerState      :: !CC.ChainValidationState
     , byronLedgerTransition :: !ByronTransition
     }
   deriving (Eq, Show, Generic, NoThunks)
 
 -- | Information required to determine the transition from Byron to Shelley
-data ByronTransition =
-    -- | Per candidate proposal, the 'BlockNo' in which it became a candidate
-    --
-    -- The HFC needs to know when a candidate proposal becomes stable. We cannot
-    -- reliably do this using 'SlotNo': doing so would mean that if we were to
-    -- switch to a denser fork, something that was previously deemed stable is
-    -- suddenly not deemed stable anymore (although in actuality it still is).
-    -- We therefore must do this based on 'BlockNo' instead, but unfortunately
-    -- the Byron ledger does not record this information. Therefore, we record
-    -- it here instead.
-    --
-    -- Invariant: the domain of this map should equal the set of candidate
-    -- proposals.
-    ByronTransitionInfo !(Map Update.ProtocolVersion BlockNo)
+data ByronTransition = ByronTransitionInfo {
+      -- | Per candidate proposal, the 'BlockNo' in which it became a candidate
+      --
+      -- The HFC needs to know when a candidate proposal becomes stable. We
+      -- cannot reliably do this using 'SlotNo': doing so would mean that if we
+      -- were to switch to a denser fork, something that was previously deemed
+      -- stable is suddenly not deemed stable anymore (although in actuality it
+      -- still is). We therefore must do this based on 'BlockNo' instead, but
+      -- unfortunately the Byron ledger does not record this information.
+      -- Therefore, we record it here instead.
+      --
+      -- Invariant: the domain of this map should equal the set of candidate
+      -- proposals.
+      perCandidateProposals :: !(Map Update.ProtocolVersion BlockNo)
+    , -- | Block number of the last applied block, used to compute when a
+      -- proposal became stable.
+      byronLedgerTipBlockNo :: !(WithOrigin BlockNo)
+    }
   deriving (Eq, Show, Generic, NoThunks)
 
 instance UpdateLedger ByronBlock
@@ -121,8 +124,7 @@ initByronLedgerState :: Gen.Config
                      -> LedgerState ByronBlock
 initByronLedgerState genesis mUtxo = ByronLedgerState {
       byronLedgerState      = override mUtxo initState
-    , byronLedgerTipBlockNo = Origin
-    , byronLedgerTransition = ByronTransitionInfo Map.empty
+    , byronLedgerTransition = ByronTransitionInfo Map.empty Origin
     }
   where
     initState :: CC.ChainValidationState
@@ -249,7 +251,7 @@ instance LedgerSupportsProtocol ByronBlock where
   --
   -- To create a forecast, take the delegation state from the given ledger
   -- state, and apply the updates that should be applied by the given slot.
-  ledgerViewForecastAt cfg (ByronLedgerState _tipBlkNo st _) = Forecast at $ \for ->
+  ledgerViewForecastAt cfg (ByronLedgerState st _) = Forecast at $ \for ->
       toTickedPBftLedgerView <$> if
         | for == lastSlot ->
           return $ CC.getDelegationMap st
@@ -358,19 +360,23 @@ applyABlock validationMode cfg blk blkHash blkNo TickedByronLedgerState{..} = do
             aux candidate = (UPE.cpuProtocolVersion candidate, blkNo)
 
         transition' :: ByronTransition
-        transition' =
-            case untickedByronLedgerTransition of
-              ByronTransitionInfo oldEntries -> ByronTransitionInfo $
+        transition' = ByronTransitionInfo {
+              perCandidateProposals =
                 -- Candidates that have /just/ become candidates
                 let newEntries :: Map Update.ProtocolVersion BlockNo
                     newEntries = ifNew `Map.difference` oldEntries
 
                 -- Remove any entries that aren't candidates anymore
                 in (oldEntries `Map.intersection` ifNew) `Map.union` newEntries
+            , byronLedgerTipBlockNo = NotOrigin blkNo
+            }
+          where
+            ByronTransitionInfo {
+                perCandidateProposals = oldEntries
+              } = untickedByronLedgerTransition
 
     return ByronLedgerState {
-          byronLedgerTipBlockNo = NotOrigin blkNo
-        , byronLedgerState      = st'
+          byronLedgerState      = st'
         , byronLedgerTransition = transition'
         }
 
@@ -386,9 +392,10 @@ applyABoundaryBlock :: Gen.Config
 applyABoundaryBlock cfg blk blkNo TickedByronLedgerState{..} = do
     st' <- CC.validateBoundary cfg blk tickedByronLedgerState
     return ByronLedgerState {
-        byronLedgerTipBlockNo = NotOrigin blkNo
-      , byronLedgerState      = st'
-      , byronLedgerTransition = untickedByronLedgerTransition
+        byronLedgerState      = st'
+      , byronLedgerTransition = untickedByronLedgerTransition {
+            byronLedgerTipBlockNo = NotOrigin blkNo
+          }
       }
 
 {-------------------------------------------------------------------------------
@@ -412,7 +419,7 @@ encodeByronHeaderState = encodeHeaderState
     encodeByronChainDepState
     encodeByronAnnTip
 
--- | Encode transition info
+-- | Encode candidate proposals (in 'ByronTransition').
 --
 -- We encode the absence of any info separately. This gives us a bit more
 -- wiggle room to change our mind about what we store in snapshots, as they
@@ -422,8 +429,8 @@ encodeByronHeaderState = encodeHeaderState
 -- inclusion of a list length. We didn't, so the decoder is a bit awkward :/
 --
 -- TODO: If we break compatibility anyway, we might decide to clean this up.
-encodeByronTransition :: ByronTransition -> Encoding
-encodeByronTransition (ByronTransitionInfo bNos)
+encodeByronCandidateProposals :: Map Update.ProtocolVersion BlockNo -> Encoding
+encodeByronCandidateProposals bNos
   | Map.null bNos = CBOR.encodeWord8 0
   | otherwise     =
          CBOR.encodeListLen (fromIntegral (Map.size bNos))
@@ -438,13 +445,13 @@ encodeByronTransition (ByronTransitionInfo bNos)
         , encode bno
         ]
 
--- | Decode Byron transition info
+-- | Decode candidate proposals (in 'ByronTransition')
 --
 -- See comments for 'encodeByronTransition'.
-decodeByronTransition :: Decoder s ByronTransition
-decodeByronTransition = do
+decodeByronCandidateProposals :: Decoder s (Map Update.ProtocolVersion BlockNo)
+decodeByronCandidateProposals = do
     ttype <- CBOR.peekTokenType
-    fmap ByronTransitionInfo $ case ttype of
+    case ttype of
       CBOR.TypeUInt -> do
         tag <- CBOR.decodeWord8
         case tag of
@@ -470,16 +477,19 @@ encodeByronLedgerState ByronLedgerState{..} = mconcat [
       encodeListLen 3
     , encode byronLedgerTipBlockNo
     , encode byronLedgerState
-    , encodeByronTransition byronLedgerTransition
+    , encodeByronCandidateProposals perCandidateProposals
     ]
+  where
+    ByronTransitionInfo{..} = byronLedgerTransition
 
 decodeByronLedgerState :: Decoder s (LedgerState ByronBlock)
 decodeByronLedgerState = do
     enforceSize "ByronLedgerState" 3
-    ByronLedgerState
-      <$> decode
-      <*> decode
-      <*> decodeByronTransition
+    tipBlockNo         <- decode
+    ledgerState        <- decode
+    candidateProposals <- decodeByronCandidateProposals
+    let transitionInfo = ByronTransitionInfo candidateProposals tipBlockNo
+    pure $ ByronLedgerState ledgerState transitionInfo
 
 encodeByronQuery :: BlockQuery ByronBlock result -> Encoding
 encodeByronQuery query = case query of

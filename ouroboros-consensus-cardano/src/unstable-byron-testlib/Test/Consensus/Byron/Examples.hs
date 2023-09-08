@@ -168,9 +168,8 @@ exampleChainDepState = S.fromList signers
 
 emptyLedgerState :: LedgerState ByronBlock
 emptyLedgerState = ByronLedgerState {
-      byronLedgerTipBlockNo = Origin
-    , byronLedgerState      = initState
-    , byronLedgerTransition = ByronTransitionInfo Map.empty
+      byronLedgerState      = initState
+    , byronLedgerTransition = ByronTransitionInfo Map.empty Origin
     }
   where
     initState :: CC.Block.ChainValidationState

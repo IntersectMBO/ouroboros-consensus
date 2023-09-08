@@ -260,10 +260,12 @@ instance Arbitrary CC.Del.Map where
   arbitrary = CC.Del.fromList <$> arbitrary
 
 instance Arbitrary ByronTransition where
-  arbitrary = ByronTransitionInfo . Map.fromList <$> arbitrary
+  arbitrary = ByronTransitionInfo
+    <$> (Map.fromList <$> arbitrary)
+    <*> arbitrary
 
 instance Arbitrary (LedgerState ByronBlock) where
-  arbitrary = ByronLedgerState <$> arbitrary <*> arbitrary <*> arbitrary
+  arbitrary = ByronLedgerState <$> arbitrary <*> arbitrary
 
 instance Arbitrary (TipInfoIsEBB ByronBlock) where
   arbitrary = TipInfoIsEBB <$> arbitrary <*> elements [IsEBB, IsNotEBB]
