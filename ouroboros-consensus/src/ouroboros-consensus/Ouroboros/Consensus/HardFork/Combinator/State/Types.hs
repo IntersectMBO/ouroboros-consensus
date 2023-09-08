@@ -12,8 +12,10 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   , sequenceHardForkState
     -- * Supporting types
   , CrossEraForecaster (..)
+  , TickedTranslate
   , TransitionInfo (..)
-  , Translate (..)
+  , Translate
+  , Translate' (..)
   ) where
 
 import           Control.Monad.Except
@@ -109,12 +111,25 @@ sequenceHardForkState (HardForkState tel) =
   Supporting types
 -------------------------------------------------------------------------------}
 
--- | Translate @f x@ to @f y@ across an era transition
+-- | Translate @f x@ to @g y@ across an era transition
 --
--- Typically @f@ will be 'LedgerState' or 'WrapChainDepState'.
-newtype Translate f x y = Translate {
-      translateWith :: EpochNo -> f x -> f y
+-- Typically @f@/@g@ will be ('Ticked')
+-- 'Ouroboros.Consensus.Ledger.Basics.LedgerState' or
+-- 'Ouroboros.Consensus.TypeFamilyWrappers.WrapChainDepState'.
+newtype Translate' f g x y = Translate {
+      translateWith :: EpochNo -> f x -> g y
     }
+
+-- | Homogenous version of 'Translate''.
+type Translate f = Translate' f f
+
+-- | Version of 'Translate'' that is translating and "unticking" something from
+-- one era to another.
+--
+-- This is motivated by wanting to first tick something, then translate it, and
+-- then tick it again. As ticking always results in something 'Ticked', and we
+-- have no generic way to "untick", we do it as part of translating.
+type TickedTranslate f = Translate' (Ticked :.: f) f
 
 -- | Forecast a @'Ticked' (view y)@ from a @state x@ across an
 -- era transition.

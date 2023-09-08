@@ -51,7 +51,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
                      (HardForkLedgerView, HardForkLedgerView_ (..), Ticked (..))
 import           Ouroboros.Consensus.HardFork.Combinator.State (HardForkState,
-                     Translate (..))
+                     Translate)
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.HardFork.Combinator.Translation
 import           Ouroboros.Consensus.Protocol.Abstract
