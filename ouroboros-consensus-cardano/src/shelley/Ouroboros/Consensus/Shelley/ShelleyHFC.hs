@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StandaloneDeriving    #-}
@@ -21,6 +22,7 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   , crossEraForecastAcrossShelley
   , forecastAcrossShelley
   , translateChainDepStateAcrossShelley
+  , translateLedgerStateAcrossShelley
   ) where
 
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
@@ -279,6 +281,59 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
                (boundSlot transition)
                (SL.stabilityWindow (shelleyLedgerGlobals cfgFrom))
                (SL.stabilityWindow (shelleyLedgerGlobals cfgTo))
+
+translateLedgerStateAcrossShelley ::
+     forall eraFrom eraTo protoFrom protoTo.
+     ( SL.TranslateEra eraTo (LedgerState :.: ShelleyBlock protoTo)
+     , SL.PreviousEra eraTo ~ eraFrom
+     , HeaderHash (ShelleyBlock protoFrom eraFrom) ~ HeaderHash (ShelleyBlock protoTo eraFrom)
+     )
+  => RequiringBoth
+       WrapLedgerConfig
+       (TickedTranslate LedgerState)
+       (ShelleyBlock protoFrom eraFrom)
+       (ShelleyBlock protoTo   eraTo)
+translateLedgerStateAcrossShelley =
+    RequireBoth $ \_cfgFrom (WrapLedgerConfig cfgTo) ->
+      Translate $ \_bound ->
+          unComp
+        . SL.translateEra' (shelleyLedgerTranslationContext cfgTo)
+        . Comp
+        . changeLedgerStateProto
+        . untickShelleyLedgerState
+        . unComp
+  where
+     changeLedgerStateProto ::
+          LedgerState (ShelleyBlock protoFrom eraFrom)
+       -> LedgerState (ShelleyBlock protoTo   eraFrom)
+     changeLedgerStateProto st = ShelleyLedgerState {
+           shelleyLedgerTip        = castShelleyTip <$> shelleyLedgerTip
+         , shelleyLedgerState
+         , shelleyLedgerTransition
+         }
+       where
+         ShelleyLedgerState {
+             shelleyLedgerTip
+           , shelleyLedgerState
+           , shelleyLedgerTransition
+           } = st
+
+     -- See 'translateLedgerState' in 'EraTranslation' for why we get a /ticked/
+     -- ledger state as an input here.
+     untickShelleyLedgerState ::
+          Ticked (LedgerState (ShelleyBlock proto era))
+       -> LedgerState         (ShelleyBlock proto era)
+     untickShelleyLedgerState st = ShelleyLedgerState {
+           shelleyLedgerTip        = untickedShelleyLedgerTip
+         , shelleyLedgerState      = tickedShelleyLedgerState
+         , shelleyLedgerTransition = tickedShelleyLedgerTransition
+         }
+       where
+         TickedShelleyLedgerState {
+             untickedShelleyLedgerTip
+           , tickedShelleyLedgerState
+           , tickedShelleyLedgerTransition
+           } = st
 
 translateChainDepStateAcrossShelley ::
      forall eraFrom eraTo protoFrom protoTo.

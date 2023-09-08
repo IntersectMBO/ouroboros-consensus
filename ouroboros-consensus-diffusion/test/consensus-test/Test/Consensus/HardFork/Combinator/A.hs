@@ -35,6 +35,7 @@ module Test.Consensus.HardFork.Combinator.A (
   , LedgerState (..)
   , NestedCtxt_ (..)
   , StorageConfig (..)
+  , Ticked (..)
   , TxId (..)
   ) where
 

@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -26,15 +27,18 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   , Ticked (..)
     -- * Low-level API (exported for the benefit of testing)
   , AnnForecast (..)
-  , extendToSlot
+  , extendToEraOfSlot
   , mkHardForkForecast
   ) where
 
 import           Control.Monad (guard)
 import           Control.Monad.Except (throwError, withExcept)
-import           Data.Functor ((<&>))
+import           Control.Monad.Trans.Writer.CPS
+import           Data.Foldable (toList)
 import           Data.Functor.Product
 import           Data.Proxy
+import           Data.Sequence (Seq)
+import qualified Data.Sequence as Seq
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
@@ -121,39 +125,48 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
   type AuxLedgerEvent (LedgerState (HardForkBlock xs)) = OneEraLedgerEvent xs
 
   applyChainTickLedgerResult cfg@HardForkLedgerConfig{..} slot (HardForkLedgerState st) =
-      sequenceHardForkState
-        (hcizipWith proxySingle (tickOne ei slot) cfgs extended) <&> \l' ->
-      TickedHardForkLedgerState {
+      LedgerResult {
+        lrEvents = lrEvents extended <> lrEvents ticked
+      , lrResult = TickedHardForkLedgerState {
           tickedHardForkLedgerStateTransition =
             -- We are bundling a 'TransitionInfo' with a /ticked/ ledger state,
-            -- but /derive/ that 'TransitionInfo' from the /unticked/  (albeit
-            -- extended) state. That requires justification. Three cases:
+            -- but /derive/ that 'TransitionInfo' from the /extended/ ledger
+            -- state (which will usually not yet have been fully ticked to
+            -- @slot@, see the documentation of 'extendToEraOfSlot'). That
+            -- requires justification. Three cases:
             --
             -- o 'TransitionUnknown'. If the transition is unknown, then it
-            --   cannot become known due to ticking. In this case, we record
-            --   the tip of the ledger, which ticking also does not modify
-            --   (this is an explicit postcondition of 'applyChainTick').
+            --   cannot become known due to ticking. In this case, we record the
+            --   tip of the ledger, which ticking also does not modify (this is
+            --   an explicit postcondition of 'applyChainTick').
             -- o 'TransitionKnown'. If the transition to the next epoch is
             --   already known, then ticking does not change that information.
-            --   It can't be the case that the 'SlotNo' we're ticking to is
-            --   /in/ that next era, because if was, then 'extendToSlot' would
-            --   have extended the telescope further.
-            --   (This does mean however that it is important to use the
-            --   /extended/ ledger state, not the original, to determine the
-            --   'TransitionInfo'.)
+            --   It can't be the case that the 'SlotNo' we're ticking to is /in/
+            --   that next era, because if was, then 'extendToEraOfSlot' would
+            --   have extended the telescope further. (This does mean however
+            --   that it is important to use the /extended/ ledger state, not
+            --   the original, to determine the 'TransitionInfo'.)
             -- o 'TransitionImpossible'. This has two subcases: either we are
             --   in the final era, in which case ticking certainly won't be able
             --   to change that, or we're forecasting, which is simply not
             --   applicable here.
-            State.mostRecentTransitionInfo cfg extended
-        , tickedHardForkLedgerStatePerEra = l'
+            State.mostRecentTransitionInfo cfg (lrResult extended)
+        , tickedHardForkLedgerStatePerEra = lrResult ticked
         }
+      }
     where
       cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
       ei   = State.epochInfoLedger cfg st
 
-      extended :: HardForkState LedgerState xs
-      extended = extendToSlot cfg slot st
+      extended ::
+           LedgerResult (LedgerState (HardForkBlock xs)) (HardForkState LedgerState xs)
+      extended = extendToEraOfSlot cfg slot st
+
+      ticked ::
+           LedgerResult (LedgerState (HardForkBlock xs)) (HardForkState (Ticked :.: LedgerState) xs)
+      ticked =
+          sequenceHardForkState
+            (hcizipWith proxySingle (tickOne ei slot) cfgs (lrResult extended))
 
 tickOne :: SingleEraBlock blk
         => EpochInfo (Except PastHorizonException)
@@ -738,17 +751,42 @@ shiftUpdate = go
   Extending
 -------------------------------------------------------------------------------}
 
--- | Extend the telescope until the specified slot is within the era at the tip
-extendToSlot :: forall xs. CanHardFork xs
-             => HardForkLedgerConfig xs
-             -> SlotNo
-             -> HardForkState LedgerState xs -> HardForkState LedgerState xs
-extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
-      HardForkState . unI
+-- | Extend the telescope until the tip is in the same era as the specified
+-- slot.
+--
+-- This function relies on 'singleEraTransition' to find out when a specific era
+-- is ending. If so, we:
+--
+--  * first tick just across the era boundary using the logic of the old era,
+--
+--  * then translate the ledger state into the new era (using
+--    'translateLedgerState').
+--
+-- The final tick to the given slot does /not/ happen here, but rather in
+-- 'applyChainTickLedgerResult' above.
+--
+-- It can be the case that the telescope is extended multiple times, for example
+-- when there are eras which consist of zero epochs/slots, which arise in
+-- benchmarking\/testing scenarios where we directly want to start in a later
+-- era (also see
+-- 'Ouroboros.Consensus.HardFork.Combinator.Embed.Nary.injectInitialExtLedgerState').
+extendToEraOfSlot ::
+     forall xs. CanHardFork xs
+  => HardForkLedgerConfig xs
+  -> SlotNo
+  -> HardForkState LedgerState xs
+  -> LedgerResult (LedgerState (HardForkBlock xs)) (HardForkState LedgerState xs)
+extendToEraOfSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
+      writerToLedgerResult
+    . fmap HardForkState
     . Telescope.extend
-        ( InPairs.hmap (\f -> Require $ \(K t)
-                           -> Extend  $ \cur
-                           -> I $ howExtend f t cur)
+        ( InPairs.requiring (hzipWith Pair cfgs indices)
+        . InPairs.hcmap
+            proxySingle
+            (\f -> Require $ \(Pair cfg index)
+                -> Require $ \(K t)
+                -> Extend  $ \cur
+                -> howExtend index cfg f t cur)
         $ translate
         )
         (hczipWith
@@ -761,6 +799,13 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
     pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
     cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
     ei    = State.epochInfoLedger ledgerCfg ledgerSt
+
+    writerToLedgerResult ::
+         Writer (Seq (AuxLedgerEvent l)) a -> LedgerResult l a
+    writerToLedgerResult w =
+        LedgerResult {lrEvents = toList evs, lrResult = a}
+      where
+        (a, evs) = runWriter w
 
     -- Return the end of this era if we should transition to the next
     whenExtend :: SingleEraBlock              blk
@@ -781,24 +826,39 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
         guard (slot >= boundSlot endBound)
         return endBound
 
-    howExtend :: Translate LedgerState blk blk'
-              -> History.Bound
-              -> Current LedgerState blk
-              -> (K Past blk, Current LedgerState blk')
-    howExtend f currentEnd cur = (
-          K Past {
-              pastStart    = currentStart cur
-            , pastEnd      = currentEnd
-            }
-        , Current {
-              currentStart = currentEnd
-            , currentState = translateWith f
+    -- First tick just across the era boundary, then translate.
+    howExtend ::
+         IsLedger (LedgerState blk)
+      => Index xs blk
+      -> WrapLedgerConfig blk
+      -> TickedTranslate LedgerState blk blk'
+      -> History.Bound
+      -> Current LedgerState blk
+      -> Writer
+           (Seq (AuxLedgerEvent (LedgerState (HardForkBlock xs))))
+           (K Past blk, Current LedgerState blk')
+    howExtend index cfg f currentEnd cur = do
+        let LedgerResult{lrEvents, lrResult} =
+              applyChainTickLedgerResult
+                (unwrapLedgerConfig cfg)
+                (boundSlot currentEnd)
+                (currentState cur)
+        tell $ injectLedgerEvent index <$> Seq.fromList lrEvents
+        pure
+          (
+            K Past {
+                pastStart    = currentStart cur
+              , pastEnd      = currentEnd
+              }
+          , Current {
+                currentStart = currentEnd
+              , currentState = translateWith f
                                currentEnd
-                               (currentState cur)
-            }
-        )
+                               (Comp lrResult)
+              }
+          )
 
-    translate :: InPairs (Translate LedgerState) xs
+    translate :: InPairs (TickedTranslate LedgerState) xs
     translate = InPairs.requiringBoth cfgs $
                   translateLedgerState hardForkEraTranslation
 

@@ -37,7 +37,8 @@ import           Data.Void (Void)
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano.CanHardFork
                      (ShelleyPartialLedgerConfig (..), forecastAcrossShelley,
-                     translateChainDepStateAcrossShelley)
+                     translateChainDepStateAcrossShelley,
+                     translateLedgerStateAcrossShelley)
 import           Ouroboros.Consensus.Cardano.Node
                      (ProtocolTransitionParams (..), TriggerHardFork (..))
 import           Ouroboros.Consensus.HardFork.Combinator
@@ -45,7 +46,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import qualified Ouroboros.Consensus.HardFork.Combinator.State.Types as HFC
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Mempool (TxLimits)
@@ -146,26 +147,11 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
 instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
       => CanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
   hardForkEraTranslation = EraTranslation {
-        translateLedgerState   = PCons translateLedgerState                PNil
+        translateLedgerState   = PCons translateLedgerStateAcrossShelley   PNil
       , translateChainDepState = PCons translateChainDepStateAcrossShelley PNil
       , crossEraForecast       = PCons forecastAcrossShelleyWrapper        PNil
       }
     where
-      translateLedgerState ::
-           InPairs.RequiringBoth
-             WrapLedgerConfig
-             (HFC.Translate LedgerState)
-             (ShelleyBlock proto1 era1)
-             (ShelleyBlock proto2 era2)
-      translateLedgerState =
-          InPairs.RequireBoth
-        $ \_cfg1 cfg2 -> HFC.Translate
-        $ \_bound ->
-              unComp
-            . SL.translateEra'
-                (shelleyLedgerTranslationContext (unwrapLedgerConfig cfg2))
-            . Comp
-
       forecastAcrossShelleyWrapper ::
            InPairs.RequiringBoth
               WrapLedgerConfig

@@ -34,6 +34,7 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..),
                      genesisHeaderState)
+import           Ouroboros.Consensus.Ledger.Abstract (LedgerResult (..))
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.TypeFamilyWrappers
@@ -205,10 +206,14 @@ injectInitialExtLedgerState cfg extLedgerState0 =
 
     targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs))
     targetEraLedgerState =
-        HardForkLedgerState $
+        -- Note that we are discarding the ledger events here that might arise
+        -- via the ticking (by zero slots) performed in 'extendToEraOfSlot'. Usually,
+        -- only testnets and benchmark scenarios have hard forks scheduled for
+        -- the first slot, so this seems acceptable.
+        HardForkLedgerState . lrResult $
           -- We can immediately extend it to the right slot, executing any
           -- scheduled hard forks in the first slot
-          extendToSlot
+          extendToEraOfSlot
             (configLedger cfg)
             (SlotNo 0)
             (initHardForkState (ledgerState extLedgerState0))

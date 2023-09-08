@@ -16,6 +16,7 @@
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -361,11 +362,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
     prop_finalProtVers :: Property
     prop_finalProtVers =
         counterexample ("final protocol versions: " <> show finalProtVers) $
-        -- TODO This property is showcasing a problem with the HFC: even though
-        -- we will definitely end up in era B (and hence, the protocol version
-        -- should be @'succ' 'initProtVer'@), this is currently not the case.
-        -- Subsequent commits will fix this.
-        all (== initProtVer) finalProtVers
+        all (== succ initProtVer) finalProtVers
 
     finalProtVers :: Map.Map NodeId Integer
     finalProtVers = getProtVer `Map.map` testOutputNodes testOutput
@@ -429,12 +426,12 @@ instance SerialiseHFC '[BlockA, BlockB]
 ledgerState_AtoB ::
      RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       (TickedTranslate LedgerState)
        BlockA
        BlockB
-ledgerState_AtoB = InPairs.ignoringBoth $ Translate $ \_ LgrA{..} -> LgrB {
-      lgrB_tip = castPoint lgrA_tip
-    , lgrB_protVer = lgrA_protVer
+ledgerState_AtoB = InPairs.ignoringBoth $ Translate $ \_ (Comp st) -> LgrB {
+      lgrB_tip = castPoint . lgrA_tip . getTickedLedgerStateA $ st
+    , lgrB_protVer = lgrA_protVer . getTickedLedgerStateA $ st
     }
 
 chainDepState_AtoB ::
