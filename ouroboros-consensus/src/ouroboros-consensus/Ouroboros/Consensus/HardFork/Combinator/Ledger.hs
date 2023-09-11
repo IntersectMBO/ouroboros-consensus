@@ -26,6 +26,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
   , Ticked (..)
     -- * Low-level API (exported for the benefit of testing)
   , AnnForecast (..)
+  , extendToSlot
   , mkHardForkForecast
   ) where
 
@@ -38,11 +39,11 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
 import           Data.SOP.Index
-import           Data.SOP.InPairs (InPairs (..))
+import           Data.SOP.InPairs (InPairs (..), Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
 import qualified Data.SOP.Match as Match
 import           Data.SOP.Strict
-import           Data.SOP.Telescope (Telescope (..))
+import           Data.SOP.Telescope (Extend (..), Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks (..))
@@ -69,6 +70,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -151,7 +153,7 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
       ei   = State.epochInfoLedger cfg st
 
       extended :: HardForkState LedgerState xs
-      extended = State.extendToSlot cfg slot st
+      extended = extendToSlot cfg slot st
 
 tickOne :: SingleEraBlock blk
         => EpochInfo (Except PastHorizonException)
@@ -731,6 +733,74 @@ shiftUpdate = go
         HardForkUpdateTransitionRolledBack
           (eraIndexSucc ix)
           (eraIndexSucc ix')
+
+{-------------------------------------------------------------------------------
+  Extending
+-------------------------------------------------------------------------------}
+
+-- | Extend the telescope until the specified slot is within the era at the tip
+extendToSlot :: forall xs. CanHardFork xs
+             => HardForkLedgerConfig xs
+             -> SlotNo
+             -> HardForkState LedgerState xs -> HardForkState LedgerState xs
+extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st) =
+      HardForkState . unI
+    . Telescope.extend
+        ( InPairs.hmap (\f -> Require $ \(K t)
+                           -> Extend  $ \cur
+                           -> I $ howExtend f t cur)
+        $ translate
+        )
+        (hczipWith
+           proxySingle
+           (fn .: whenExtend)
+           pcfgs
+           (getExactly (History.getShape hardForkLedgerConfigShape)))
+    $ st
+  where
+    pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
+    cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
+    ei    = State.epochInfoLedger ledgerCfg ledgerSt
+
+    -- Return the end of this era if we should transition to the next
+    whenExtend :: SingleEraBlock              blk
+               => WrapPartialLedgerConfig     blk
+               -> K History.EraParams         blk
+               -> Current LedgerState         blk
+               -> (Maybe :.: K History.Bound) blk
+    whenExtend pcfg (K eraParams) cur = Comp $ K <$> do
+        transition <- singleEraTransition'
+                        pcfg
+                        eraParams
+                        (currentStart cur)
+                        (currentState cur)
+        let endBound = History.mkUpperBound
+                         eraParams
+                         (currentStart cur)
+                         transition
+        guard (slot >= boundSlot endBound)
+        return endBound
+
+    howExtend :: Translate LedgerState blk blk'
+              -> History.Bound
+              -> Current LedgerState blk
+              -> (K Past blk, Current LedgerState blk')
+    howExtend f currentEnd cur = (
+          K Past {
+              pastStart    = currentStart cur
+            , pastEnd      = currentEnd
+            }
+        , Current {
+              currentStart = currentEnd
+            , currentState = translateWith f
+                               currentEnd
+                               (currentState cur)
+            }
+        )
+
+    translate :: InPairs (Translate LedgerState) xs
+    translate = InPairs.requiringBoth cfgs $
+                  translateLedgerState hardForkEraTranslation
 
 {-------------------------------------------------------------------------------
   Auxiliary

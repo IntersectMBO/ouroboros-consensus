@@ -208,7 +208,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
         HardForkLedgerState $
           -- We can immediately extend it to the right slot, executing any
           -- scheduled hard forks in the first slot
-          State.extendToSlot
+          extendToSlot
             (configLedger cfg)
             (SlotNo 0)
             (initHardForkState (ledgerState extLedgerState0))
