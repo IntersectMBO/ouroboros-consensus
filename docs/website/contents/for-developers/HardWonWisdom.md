@@ -523,3 +523,34 @@ Or more directly: require that `singleEraTransition` returns `Nothing` for the i
 TODO The current code, Edsko's chapter in the report, and the "the precisely-worded high-level rule" for the safe zone semantics sometimes applies the safe zone from the first slot of the era.
 Perhaps this suggests that the translated-but-not-actually-ticked state is indeed kind of summary of everything that came before, a la the "genesis block"?
 In which case it does in some sense require ticking at least parts of the last ledger state of the previous era across the epoch boundary (as in the minimal Babbage->Conway bugfix PR <https://github.com/IntersectMBO/ouroboros-consensus/pull/366>).
+
+## Ledger predictions: time translation, forecasting, stability window, safe zone, double stability
+
+We often mix these concepts up, so this is an attempt to relate them all to each other in one place.
+
+- A _stability window_ is defined as the number of slots in which the Chain Growth property of Ouroboros Praos implies the best chain in the network will grow by at least `k` blocks.
+- By design, the Cardano ledger also ensures that the leader schedule is known at least one stability window in advance.
+  See "Why use the Honest Chain Growth window as the Ledger's Stability Window?".
+- Within a single era, we use one stability window as the upper bound on how far the forecast logic is willing to predict.
+  Indeed, one stability window is the greatest value such that there are no arguments for which the forecast logic would be unable to predict that far.
+  But, for some arguments, the forecast logic could correctly predict up to one epoch farther than that, if we allowed that.
+  But we don't; the `ledgerViewForecastAt` will refuse to forecast beyond one stability window, even when it could.
+  (For example, if that logic always forecasted as far as it could, then the number of headers held in-memory by ChainSync while syncing would oscillate significantly.)
+- When forecasting across eras with different stability windows, we need a different limit; see "How does cross-era forecasting work?".
+- For Cardano, the time translation's safe zone is also set to the value of one stability window.
+  The value is equivalent, since they both are predicting things that change at the epoch boundary and only do so when the change is known at least one stability window in advance.
+- However, there is one more subtlety.
+    - Forecasting predicts essentially the next epoch's leader schedule.
+      The ledger rules do determine that schedule after the last block that is at least `3k/f` slots before the epoch transition.
+    - Similarly, time translation is predicting the next epoch's era according to the hard fork combinator.
+      For the Cardano eras, the hard fork combinator will transition to the next era at an epoch transition if two conditions are met.
+      First, the ledger rules must increase the major protocol version protocol parameter at that epoch transition.
+      Second, there must exist at least `k` blocks before the epoch transition and after the ledger state in which that protocol parameter update became certain.
+    - For this reason, the ledger's governance rules require that all votes for changing protocol parameters must be cast at least `6k/f` slots before the epoch transition.
+      Thus, Chain Growth ensures that `k` blocks will extend the latest-possible ledger state that determines whether the protocol major version will change, and the `k`th such block will still be at least `3k/f` slots before the epoch transition.
+      And so the safe zone of `3k/f` is respected, since it's ultimately the existence of that `k`th block that determines whether the hard fork combinator will actually transition to the next era.
+    - The arithmetic is `stability window + safe zone = 6k/f`, but the value could be different if the safe zone weren't equivalent to one stability window.
+      The safe zone can't be less than a stability window, because then the leader schedule also couldn't be known at least a stability window before the epoch transition (the next era might have a different leadership schedule).
+      But the safe zone could be greater than a stability window (eg maybe requiring the ledger rules end voting `7k/f` before the epoch transition).
+    - The above terminology doesn't match Conway's new governance rules, but the nub is the same.
+- In contrast to the forecast logic, the time translation logic does do translations beyond the safe zone when it's able to.
