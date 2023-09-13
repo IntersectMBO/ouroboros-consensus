@@ -189,10 +189,10 @@ And, at that same time, all valid Cardano chains and their prefixes (aka all val
 A Hard Fork Combinator ledger state provides enough information to determine which era it is in.
 It must also determine (ie record) when that era and every preceding era started.
 Trivially, this also determines when all the _preceding_ eras ended (ie when the successor started).
-The ledger state _might_ also determine when the ledger state's own era will end.
-Thus, every ledger state determines the start time of `N` eras and the end time of the preceding `N-1` eras (note: there's one more start time than end times), where the ledger state inhabits either the `N-1`th or the `N`th era.
-Subsequent ledger states may have greater `N`s, but the invariant remains true.
+Thus, every ledger state determines the start time of `N` eras and the end time of the preceding `N-1` eras (note: there's one more start time than end times) for some `N`.
 Every `N` will be at least 1, at most the length of the sequence of eras the code supports, and subsequent ledger states on a chain cannot have a lesser `N`.
+For the real Cardano chain, it's possible the ledger state itself inhabits either either the `N-1`th or the `N`th era, since it it _might_ also determine when its own era will end.
+However, beyond the concrete case of Cardano, it's possible that a ledger state could already know when eras after its own will end.
 
 ### Aside: Warning
 
@@ -208,31 +208,41 @@ The possibility of an never-ending era is only supported for tests and for reuse
 ### The Wrinkle with Time
 
 For interpreting slot/time/epoch translation queries, the key motivating fact is that each era can have a different size of epoch (in slots) and/or a different length of slot (a time duration).
-Thus, we cannot handle a translation query unless we know which era its argument---be it a slot, an epoch, or a UTC time---is in and the durations of all preceding eras, or, equivalently, the start times of all eras up-to-and-including the argument is in.
+Thus, we cannot handle a translation query unless we know which era its argument---be it a slot, an epoch, or a UTC time---is in and the durations of all preceding eras, or, equivalently, the start times of all eras up-to-and-including the one the argument is in.
 
 Each query is handled by some piece of code and with respect to some ledger state.
 The code (including config files) determines the supported eras (including their epoch size and slot length), and the ledger state determines which prefix of eras has known start times.
 The known start times are enough to recognize when the given argument is during some era with a known end time, in which case the translation succeeds.
 (The translation starts from the chain's start time, adds the duration of all preceding eras, and then adds the relative time since the beginning of the argument's era.)
 Otherwise, we need more information to know whether the given argument is during the last era with a known start time, ie the first era with an unknown end time.
-When the query argument is after that start time, the fact that the era's end is not yet known means that the query argument maybe either be in that era or instead be in a future era with a different epoch size/slot length, and so the correct translation may differ from the hypothetical response derived from the assumption the query argument precedes the first unknown end time.
+When the query argument is after that start time, the fact that the era's end is not yet known means that the query argument is either in that era or instead in a future era with a possibly different epoch size/slot length, and so the correct translation may differ from the hypothetical response derived from the assumption the query argument precedes the first unknown end time.
 
-For the first era with an unknown end time (ie the last era with a known start time), the code relies an a lower bound for that end time, ie the soonest that era could possibly end (aka "the horizon" or "the forecast horizon").
-If the query argument precedes that horizon, then the translation succeeds, otherwise it fails.
-For this purpose, the code (including config files) cannot support an era unless it also knows a "safe zone" for that era, where the safe zone (along with any additional assumptions the Consensus code makes) is enough information to determine the horizon induced by a given ledger state.
+For a ledger state in the first era with an unknown end time (ie the last era with a known start time), the code relies an a lower bound for that end time, ie the soonest that era could possibly end.
+If a query argument handled by that ledger state precedes that bound, then the time-slot translation requested by that query succeeds, otherwise it fails.
+For this purpose, the code (including config files) cannot support an era unless it also knows a "safe zone" for that era, where the safe zone (along with any additional assumptions the Consensus code makes) is enough information to determine the bound induced by a given ledger state.
 
 In general, it would be possible to design a system such that even the final ledger state in an era did not determine when that era would end.
 That'd be an empty safe zone, consisting of zero slots.
 For example, perhaps the first block of an era identifies itself as such simply by setting some field in its header.
 For that kind of chain, some ledger states would not provide enough information to do any translations whatsoever of slots/times/epochs _after_ that ledger state's tip.
+(Note that if the first block of an era declares itself as such, then the node that minted that block has some how already decideded to transition to the next era.
+Hence the correspondingly hypothetical leadership check would have known whether it's about to forge a block in the current era or the next, and so it would still be able to determine the slot of the wallclock _according to the era of the block it's planning to forge_.)
 
-For the case of Cardano, however, other concerns (not directly related to slot/epoch/time translations) already require a seperate cutoff, similar to the horizon, to be above some minimum.
-For the sake of simplicity, we take that same minimum to be the safe zone.
-As a result, the safe zone is equal to one _stability window_, which is `2k` slots for Byron and `3k/f` slots for every Shelley era.
+For the case of Cardano, however, other concerns (not directly related to slot/epoch/time translations) already require a degree of "stability" from the ledger rules to be above some minimum.
+This "stability" is a stronger requirement than the safe zone, so, for the sake of simplicity, we take that same minimum (aka one _stability window_) to be the safe zone.
+Thus the safe zone is `2k` slots for Byron and `3k/f` slots for every Shelley era.
+
+Recap:
+
+- Consider some Cardano ledger state.
+  There is a first era that has an unknown end time according to that ledger state, which is also the last era with a known start time.
+- Even though the end time is unknown, it cannot be sooner than one safe zone after the known start time.
+- Moreover, if the ledger state also inhabits this era, the era cannot end sooner than one safe zone after the slot this ledger state was most recently ticked to.
+- Overall, it can be defined as: the _safe zone_ of an era is a lower bound on the number of slots that exist before the end of that era and after the latest-possible ledger state that does not determine the end of that era.
 
 ### Aside: The Necessary Stability of Header Validity
 
-[Esgen suggests that this could eventually be migrated to section 24.5 ("Eliminating safe zones") of the Consensus and Storage Layour Report (or the succeeding section).]
+[Esgen suggests that this could eventually be migrated to section 24.5 ("Eliminating safe zones") of the Consensus and Storage Layer Report (or the succeeding section).]
 
 (Skip this section on your first several reads.)
 
