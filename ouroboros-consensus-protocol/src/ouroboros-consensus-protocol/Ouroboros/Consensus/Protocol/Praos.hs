@@ -246,7 +246,13 @@ newtype instance Ticked (Views.LedgerView c) = TickedPraosLedgerView
 -- as a series of nonces which get updated in different ways over the course of
 -- an epoch.
 data PraosState c = PraosState
-  { praosStateLastSlot            :: !(WithOrigin SlotNo),
+  { -- | The slot this state was last ticked to.
+    --
+    -- This is used solely to find out whether we are ticking across an epoch
+    -- boundary. Hence, it would actually suffice to store an epoch number here;
+    -- we might want to change that, but as it breaks the binary format for
+    -- ledger snapshots, it is a bit inconvenient.
+    praosStateLastSlot            :: !(WithOrigin SlotNo),
     -- | Operation Certificate counters
     praosStateOCertCounters       :: !(Map (KeyHash 'BlockIssuer c) Word64),
     -- | Evolving nonce
@@ -399,7 +405,8 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   -- Updating the chain dependent state for Praos.
   --
   -- If we are not in a new epoch, then nothing happens. If we are in a new
-  -- epoch, we do two things:
+  -- epoch, we do three things:
+  -- - Set the last slot to what slot we are ticking to.
   -- - Update the epoch nonce to the combination of the candidate nonce and the
   --   nonce derived from the last block of the previous epoch.
   -- - Update the "last block of previous epoch" nonce to the nonce derived from
@@ -410,7 +417,8 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
     slot
     st =
       TickedPraosState
-        { tickedPraosStateChainDepState = st',
+        { tickedPraosStateChainDepState =
+            st' { praosStateLastSlot = NotOrigin slot },
           tickedPraosStateLedgerView = TickedPraosLedgerView lv
         }
       where
@@ -474,8 +482,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
     slot
     tcs =
       cs
-        { praosStateLastSlot = NotOrigin slot,
-          praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b),
+        { praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b),
           praosStateEvolvingNonce = newEvolvingNonce,
           praosStateCandidateNonce =
             if slot +* Duration stabilityWindow < firstSlotNextEpoch
