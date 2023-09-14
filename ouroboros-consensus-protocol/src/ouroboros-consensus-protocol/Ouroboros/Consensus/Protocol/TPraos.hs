@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Protocol.TPraos (
   , PraosChainSelectView (..)
   , TPraos
   , TPraosFields (..)
+  , TPraosHorizonView
   , TPraosIsLeader (..)
   , TPraosParams (..)
   , TPraosState (..)
@@ -40,7 +41,7 @@ module Ouroboros.Consensus.Protocol.TPraos (
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), enforceSize)
 import qualified Cardano.Crypto.VRF as VRF
-import qualified Cardano.Ledger.BaseTypes as SL (ActiveSlotCoeff, Seed)
+import qualified Cardano.Ledger.BaseTypes as SL (ActiveSlotCoeff, Seed, (⭒))
 import           Cardano.Ledger.Crypto (StandardCrypto)
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -247,6 +248,12 @@ newtype instance Ticked (SL.LedgerView c) = TickedPraosLedgerView {
       getTickedPraosLedgerView :: SL.LedgerView c
     }
 
+data TPraosHorizonView
+
+newtype instance Ticked TPraosHorizonView = TickedTPraosHorizonView {
+      tickedTPraosHorizonViewExtraEntropy :: SL.Nonce
+    }
+
 -- | Transitional Praos consensus state.
 data TPraosState c = TPraosState {
       -- | The slot this state was last ticked to.
@@ -301,7 +308,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type CanBeLeader   (TPraos c) = PraosCanBeLeader c
   type SelectView    (TPraos c) = PraosChainSelectView c
   type LedgerView    (TPraos c) = SL.LedgerView c
-  type HorizonView   (TPraos c) = SL.LedgerView c
+  type HorizonView   (TPraos c) = TPraosHorizonView
   type ValidationErr (TPraos c) = SL.ChainTransitionError c
   type ValidateView  (TPraos c) = TPraosValidateView c
 
@@ -361,27 +368,43 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
 
       SL.GenDelegs dlgMap = SL.lvGenDelegs lv
 
-  projectHorizonView _ = id
+  projectHorizonView _cfg =
+        TickedTPraosHorizonView
+      . SL.lvExtraEntropy
+      . getTickedPraosLedgerView
 
-  tickChainDepState_ cfg@TPraosConfig{..}
-                     (TickedPraosLedgerView lv)
+  tickChainDepState_ TPraosConfig{..}
+                     (TickedTPraosHorizonView extraEntropy)
                      slot
                      (TPraosState lastSlot st) =
       TickedChainDepState {
-          tickedTPraosStateChainDepState = st'
+          tickedTPraosStateChainDepState =
+            if newEpoch then stNextEpoch else st
         , tickedTPraosStateSlot          = slot
         }
     where
-      st' = SL.tickChainDepState
-              shelleyGlobals
-              lv
-              ( isNewEpoch
-                  (History.toPureEpochInfo tpraosEpochInfo)
-                  lastSlot
-                  slot
-              )
-              st
-      shelleyGlobals = mkShelleyGlobals cfg
+      newEpoch = isNewEpoch
+                   (History.toPureEpochInfo tpraosEpochInfo)
+                   lastSlot
+                   slot
+
+      -- We can't use 'SL.tickChainDepState' as it unnecessarily takes the
+      -- entire 'SL.LedgerView' as an argument. Hence, we inline it here; future
+      -- work should include moving the TPraos logic entirely to the
+      -- ouroboros-consensus repository.
+      --
+      -- Reference:
+      -- https://github.com/input-output-hk/cardano-ledger/blob/cardano-protocol-tpraos-1.0.3.5/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/API.hs#L453
+      -- https://github.com/input-output-hk/cardano-ledger/blob/cardano-protocol-tpraos-1.0.3.5/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/Rules/Tickn.hs#L96-L97
+      stNextEpoch = st {
+          SL.csTickn = SL.TicknState {
+              SL.ticknStateEpochNonce =
+                     (let SL.PrtclState _ _ x = SL.csProtocol st in x) -- candidateNonce
+                SL.⭒ SL.ticknStatePrevHashNonce (SL.csTickn st)
+                SL.⭒ extraEntropy
+            , SL.ticknStatePrevHashNonce = SL.csLabNonce st
+            }
+          }
 
   updateChainDepState cfg b tlv _slot cs =
       TPraosState (NotOrigin $ tickedTPraosStateSlot cs) <$>
