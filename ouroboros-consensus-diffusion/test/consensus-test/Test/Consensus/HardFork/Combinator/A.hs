@@ -105,21 +105,24 @@ data instance ConsensusConfig ProtocolA = CfgA {
 instance ConsensusProtocol ProtocolA where
   type ChainDepState ProtocolA = ()
   type LedgerView    ProtocolA = ()
+  type HorizonView   ProtocolA = ()
   type IsLeader      ProtocolA = ()
   type CanBeLeader   ProtocolA = ()
   type ValidateView  ProtocolA = ()
   type ValidationErr ProtocolA = Void
 
-  checkIsLeader CfgA{..} () slot _ =
+  checkIsLeader CfgA{..} () _ slot _ =
       if slot `Set.member` cfgA_leadInSlots
       then Just ()
       else Nothing
 
   protocolSecurityParam = cfgA_k
 
-  tickChainDepState     _ _ _ _ = TickedTrivial
-  updateChainDepState   _ _ _ _ = return ()
-  reupdateChainDepState _ _ _ _ = ()
+  projectHorizonView _ _ = TickedTrivial
+
+  tickChainDepState_    _ _ _ _   = TickedTrivial
+  updateChainDepState   _ _ _ _ _ = return ()
+  reupdateChainDepState _ _ _ _ _ = ()
 
 data BlockA = BlkA {
       blkA_header :: Header BlockA
@@ -313,7 +316,7 @@ blockForgingA = BlockForging {
      forgeLabel       = "BlockA"
    , canBeLeader      = ()
    , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-   , checkCanForge    = \_ _ _ _ _ -> return ()
+   , checkCanForge    = \_ _ _ _ _ _ -> return ()
    , forgeBlock       = \cfg bno slot st txs proof -> return $
        forgeBlockA cfg bno slot st (fmap txForgetValidated txs) proof
    }

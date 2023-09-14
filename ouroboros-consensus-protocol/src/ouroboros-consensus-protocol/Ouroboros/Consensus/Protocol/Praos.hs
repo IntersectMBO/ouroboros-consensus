@@ -86,7 +86,7 @@ import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF,
                      vrfLeaderValue, vrfNonceValue)
 import           Ouroboros.Consensus.Protocol.TPraos
                      (ConsensusConfig (TPraosConfig, tpraosEpochInfo, tpraosParams))
-import           Ouroboros.Consensus.Ticked (Ticked)
+import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.Versioned (VersionDecoder (Decode),
                      decodeVersion, encodeVersion)
 
@@ -316,9 +316,8 @@ instance PraosCrypto c => Serialise (PraosState c) where
           <*> fromCBOR
 
 -- | Ticked 'PraosState'
-data instance Ticked (PraosState c) = TickedPraosState
-  { tickedPraosStateChainDepState :: PraosState c,
-    tickedPraosStateLedgerView :: Ticked (Views.LedgerView c)
+newtype instance Ticked (PraosState c) = TickedPraosState
+  { tickedPraosStateChainDepState :: PraosState c
   }
 
 -- | Errors which we might encounter
@@ -373,6 +372,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type CanBeLeader (Praos c) = PraosCanBeLeader c
   type SelectView (Praos c) = PraosChainSelectView c
   type LedgerView (Praos c) = Views.LedgerView c
+  type HorizonView (Praos c) = ()
   type ValidationErr (Praos c) = PraosValidationErr c
   type ValidateView (Praos c) = PraosValidateView c
 
@@ -384,6 +384,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       { praosCanBeLeaderSignKeyVRF,
         praosCanBeLeaderColdVerKey
       }
+    tlv
     slot
     cs =
       if meetsLeaderThreshold cfg lv (SL.coerceKeyRole vkhCold) rho
@@ -395,12 +396,14 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
         else Nothing
       where
         chainState = tickedPraosStateChainDepState cs
-        lv = getTickedPraosLedgerView $ tickedPraosStateLedgerView cs
+        lv = getTickedPraosLedgerView tlv
         eta0 = praosStateEpochNonce chainState
         vkhCold = SL.hashKey praosCanBeLeaderColdVerKey
         rho' = mkInputVRF slot eta0
 
         rho = VRF.evalCertified () rho' praosCanBeLeaderSignKeyVRF
+
+  projectHorizonView _cfg _tlv = TickedTrivial
 
   -- Updating the chain dependent state for Praos.
   --
@@ -411,16 +414,12 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   --   nonce derived from the last block of the previous epoch.
   -- - Update the "last block of previous epoch" nonce to the nonce derived from
   --   the last applied block.
-  tickChainDepState
+  tickChainDepState_
     PraosConfig {praosEpochInfo}
-    (TickedPraosLedgerView lv)
+    TickedTrivial
     slot
     st =
-      TickedPraosState
-        { tickedPraosStateChainDepState =
-            st' { praosStateLastSlot = NotOrigin slot },
-          tickedPraosStateLedgerView = TickedPraosLedgerView lv
-        }
+      TickedPraosState st' { praosStateLastSlot = NotOrigin slot }
       where
         newEpoch =
           isNewEpoch
@@ -452,6 +451,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
             _
           )
     b
+    tlv
     slot
     tcs = do
       -- First, we check the KES signature, which validates that the issuer is
@@ -461,9 +461,9 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       -- right to issue in this slot.
       validateVRFSignature (praosStateEpochNonce cs) lv praosLeaderF b
       -- Finally, we apply the changes from this header to the chain state.
-      pure $ reupdateChainDepState cfg b slot tcs
+      pure $ reupdateChainDepState cfg b tlv slot tcs
       where
-        lv = getTickedPraosLedgerView (tickedPraosStateLedgerView tcs)
+        lv = getTickedPraosLedgerView tlv
         cs = tickedPraosStateChainDepState tcs
 
   -- Re-update the chain dependent state as a result of processing a header.
@@ -479,6 +479,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
              ei
            )
     b
+    _tlv
     slot
     tcs =
       cs

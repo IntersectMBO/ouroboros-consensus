@@ -7,6 +7,7 @@ module Ouroboros.Consensus.Protocol.Abstract (
     ConsensusConfig
   , ConsensusProtocol (..)
   , preferCandidate
+  , tickChainDepState
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
@@ -116,6 +117,16 @@ class ( Show (ChainDepState   p)
   -- calculation does not depend on this).
   type family LedgerView p :: Type
 
+  -- | A projection of 'LedgerView' containing only what is needed for ticking
+  --
+  -- For single-era protocols, there are further constraints on this type, see
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock.eraTransitionHorizonView'.
+  -- Usually, 'HorizonView' will be a singleton type.
+  --
+  -- For the 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkProtocol'
+  -- combinator, this is the same as the 'LedgerView'.
+  type family HorizonView p :: Type
+
   -- | Validation errors
   type family ValidationErr p :: Type
 
@@ -126,26 +137,27 @@ class ( Show (ChainDepState   p)
   checkIsLeader :: HasCallStack
                 => ConsensusConfig       p
                 -> CanBeLeader           p
+                -> Ticked (LedgerView    p)
                 -> SlotNo
                 -> Ticked (ChainDepState p)
                 -> Maybe (IsLeader       p)
 
-  -- | Tick the 'ChainDepState'
-  --
-  -- We pass the ticked 'LedgerView' to 'tickChainDepState'. Functions that
-  -- /take/ a ticked 'ChainDepState' are not separately passed a ticked ledger
-  -- view; protocols that require it, can include it in their ticked
-  -- 'ChainDepState' type.
-  tickChainDepState :: ConsensusConfig p
-                    -> Ticked (LedgerView p)
-                    -> SlotNo
-                    -> ChainDepState p
-                    -> Ticked (ChainDepState p)
+  projectHorizonView :: ConsensusConfig     p
+                     -> Ticked (LedgerView  p)
+                     -> Ticked (HorizonView p)
+
+  -- | Tick the 'ChainDepState', also see 'tickChainDepState'
+  tickChainDepState_ :: ConsensusConfig p
+                     -> Ticked (HorizonView p)
+                     -> SlotNo
+                     -> ChainDepState p
+                     -> Ticked (ChainDepState p)
 
   -- | Apply a header
   updateChainDepState :: HasCallStack
                       => ConsensusConfig       p
                       -> ValidateView          p
+                      -> Ticked (LedgerView    p)
                       -> SlotNo
                       -> Ticked (ChainDepState p)
                       -> Except (ValidationErr p) (ChainDepState p)
@@ -164,12 +176,22 @@ class ( Show (ChainDepState   p)
   reupdateChainDepState :: HasCallStack
                         => ConsensusConfig       p
                         -> ValidateView          p
+                        -> Ticked (LedgerView    p)
                         -> SlotNo
                         -> Ticked (ChainDepState p)
                         -> ChainDepState         p
 
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
+
+-- | Tick the 'ChainDepState'
+tickChainDepState :: ConsensusProtocol p
+                  => ConsensusConfig p
+                  -> Ticked (LedgerView p)
+                  -> SlotNo
+                  -> ChainDepState p
+                  -> Ticked (ChainDepState p)
+tickChainDepState cfg = tickChainDepState_ cfg . projectHorizonView cfg
 
 -- | Compare a candidate chain to our own
 --

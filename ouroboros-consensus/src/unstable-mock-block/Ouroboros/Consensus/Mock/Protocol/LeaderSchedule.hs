@@ -40,6 +40,7 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
 
   type ChainDepState (WithLeaderSchedule p) = ()
   type LedgerView    (WithLeaderSchedule p) = ()
+  type HorizonView   (WithLeaderSchedule p) = ()
   type ValidationErr (WithLeaderSchedule p) = ()
   type IsLeader      (WithLeaderSchedule p) = ()
   type ValidateView  (WithLeaderSchedule p) = ()
@@ -47,16 +48,18 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
 
   protocolSecurityParam = protocolSecurityParam . wlsConfigP
 
-  checkIsLeader WLSConfig{..} () slot _ =
+  checkIsLeader WLSConfig{..} () _ slot _ =
     case Map.lookup slot $ getLeaderSchedule wlsConfigSchedule of
         Nothing -> error $ "WithLeaderSchedule: missing slot " ++ show slot
         Just nids
             | wlsConfigNodeId `elem` nids -> Just ()
             | otherwise                   -> Nothing
 
-  tickChainDepState     _ _ _ _ = TickedTrivial
-  updateChainDepState   _ _ _ _ = return ()
-  reupdateChainDepState _ _ _ _ = ()
+  projectHorizonView _ _ = TickedTrivial
+
+  tickChainDepState_    _ _ _ _ = TickedTrivial
+  updateChainDepState   _ _ _ _ _ = return ()
+  reupdateChainDepState _ _ _ _ _ = ()
 
 instance ConsensusProtocol p
       => NoThunks (ConsensusConfig (WithLeaderSchedule p))

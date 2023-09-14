@@ -276,10 +276,9 @@ newtype instance ConsensusConfig (PBft c) = PBftConfig {
     }
   deriving (Generic, NoThunks)
 
--- Ticking has no effect on the PBFtState, but we do need the ticked ledger view
-data instance Ticked (PBftState c) = TickedPBftState {
-      tickedPBftLedgerView :: Ticked (LedgerView (PBft c))
-    , getTickedPBftState   :: PBftState c
+-- Ticking has no effect on the PBFtState
+newtype instance Ticked (PBftState c) = TickedPBftState {
+      getTickedPBftState :: PBftState c
     }
 
 instance PBftCrypto c => ConsensusProtocol (PBft c) where
@@ -292,6 +291,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
   --   - Protocol parameters, for the signature window and threshold.
   --   - The delegation map.
   type LedgerView    (PBft c) = PBftLedgerView  c
+  type HorizonView   (PBft c) = ()
   type IsLeader      (PBft c) = PBftIsLeader    c
   type ChainDepState (PBft c) = PBftState       c
   type CanBeLeader   (PBft c) = PBftCanBeLeader c
@@ -300,6 +300,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
 
   checkIsLeader PBftConfig{pbftParams}
                 PBftCanBeLeader{..}
+                _tickedLedgerView
                 (SlotNo n)
                 _tickedChainDepState =
       -- We are the slot leader based on our node index, and the current
@@ -316,12 +317,15 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
       PBftParams{pbftNumNodes = NumCoreNodes numCoreNodes} = pbftParams
       CoreNodeId i = pbftCanBeLeaderCoreNodeId
 
-  tickChainDepState _ lv _ = TickedPBftState lv
+  projectHorizonView _cfg _lv = TickedTrivial
+
+  tickChainDepState_ _cfg _hv _slot = TickedPBftState
 
   updateChainDepState cfg
                       toValidate
+                      (TickedPBftLedgerView dms)
                       slot
-                      (TickedPBftState (TickedPBftLedgerView dms) state) =
+                      (TickedPBftState state) =
       case toValidate of
         PBftValidateBoundary ->
           return state
@@ -357,8 +361,9 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
 
   reupdateChainDepState cfg
                         toValidate
+                        (TickedPBftLedgerView dms)
                         slot
-                        (TickedPBftState (TickedPBftLedgerView dms) state) =
+                        (TickedPBftState state) =
       case toValidate of
         PBftValidateBoundary -> state
         PBftValidateRegular PBftFields{pbftIssuer} _ _ ->
@@ -472,10 +477,11 @@ pbftCheckCanForge ::
      forall c. PBftCrypto c
   => ConsensusConfig (PBft c)
   -> PBftCanBeLeader c
+  -> Ticked (PBftLedgerView c)
   -> SlotNo
   -> Ticked (PBftState c)
   -> Either (PBftCannotForge c) ()
-pbftCheckCanForge cfg PBftCanBeLeader{..} slot tickedChainDepState =
+pbftCheckCanForge cfg PBftCanBeLeader{..} (TickedPBftLedgerView dms) slot tickedChainDepState =
     case Bimap.lookupR dlgKeyHash dms of
       Nothing -> Left $ PBftCannotForgeInvalidDelegation dlgKeyHash
       Just gk ->
@@ -487,7 +493,7 @@ pbftCheckCanForge cfg PBftCanBeLeader{..} slot tickedChainDepState =
     dlgKeyHash :: PBftVerKeyHash c
     dlgKeyHash = hashVerKey . dlgCertDlgVerKey $ pbftCanBeLeaderDlgCert
 
-    TickedPBftState (TickedPBftLedgerView dms) cds = tickedChainDepState
+    TickedPBftState cds = tickedChainDepState
 
 {-------------------------------------------------------------------------------
   Condense

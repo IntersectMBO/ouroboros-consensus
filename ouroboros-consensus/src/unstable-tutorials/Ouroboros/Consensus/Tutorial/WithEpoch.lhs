@@ -74,7 +74,7 @@ And imports, of course:
 > import Ouroboros.Consensus.Protocol.Abstract
 >   (ConsensusConfig, SecurityParam, ConsensusProtocol (..))
 >
-> import Ouroboros.Consensus.Ticked (Ticked)
+> import Ouroboros.Consensus.Ticked (Ticked (..))
 > import Ouroboros.Consensus.Ledger.Abstract
 >   (LedgerState, LedgerCfg, GetTip, LedgerResult (..), ApplyBlock (..),
 >    UpdateLedger, IsLedger (..))
@@ -487,13 +487,8 @@ specific to `PrtclD`:
 
 > data ChainDepStateD = ChainDepStateD
 >   deriving (Eq,Show,Generic,NoThunks)
-
-However, the `Ticked` representation contains the `LedgerViewD` containing the
-epoch snapshot.  This is due to functions for `ConsensusProtocol` only taking
-the `LedgerView` as an argument in some cases:
-
-> data instance Ticked ChainDepStateD =
->   TickedChainDepStateD { tickedChainDepLV :: LedgerViewD }
+>
+> data instance Ticked ChainDepStateD = TickedChainDepStateD
 >   deriving (Eq, Show, Generic, NoThunks)
 
 `ConsensusProtocol` is set up this way mostly because this is what
@@ -531,6 +526,8 @@ functions defined above:
 >   -- | View on the ledger required by the protocol
 >   type LedgerView PrtclD = LedgerViewD
 >
+>   type HorizonView PrtclD = ()
+>
 >   -- | View on a block header required for header validation
 >   type ValidateView  PrtclD = NodeId  -- need this for the leader check
 >                                       -- currently not doing other checks
@@ -538,18 +535,18 @@ functions defined above:
 >   type ValidationErr PrtclD = String
 >
 >   -- | checkIsLeader - Am I the leader this slot?
->   checkIsLeader cfg _cbl slot tcds =
+>   checkIsLeader cfg _cbl (TickedLedgerViewD lv) slot _tcds =
 >     case ccpd_mbCanBeLeader cfg of
 >       Just (PrtclD_CanBeLeader nodeId)
 >         -- not providing any cryptographic proof
->         | isLeader nodeId slot (tickedChainDepLV tcds) -> Just PrtclD_IsLeader
->       _                             -> Nothing
+>         | isLeader nodeId slot lv -> Just PrtclD_IsLeader
+>       _                           -> Nothing
 >
 >   protocolSecurityParam = ccpd_securityParam
 >
->   tickChainDepState _cfg tlv _slot _cds = TickedChainDepStateD lv
->     where
->       TickedLedgerViewD lv = tlv
+>   projectHorizonView _cfg _tlv = TickedTrivial
+>
+>   tickChainDepState_ _cfg _hv _slot _cds = TickedChainDepStateD
 >
 >   -- | apply the header (hdrView) and do a header check.
 >   --
@@ -557,13 +554,13 @@ functions defined above:
 >   -- this doesn't give us too much confidence, as there is nothing that
 >   -- precludes a node from masquerading as any other node).
 >
->   updateChainDepState _cfg hdrVw slot tcds =
->     if isLeader hdrVw slot (tickedChainDepLV tcds) then
+>   updateChainDepState _cfg hdrVw (TickedLedgerViewD lv) slot _tcds =
+>     if isLeader hdrVw slot lv then
 >       return ChainDepStateD
 >     else
 >       throwError $ "leader check failed: " ++ show (hdrVw,slot)
 >
->   reupdateChainDepState _ _ _ _ = ChainDepStateD
+>   reupdateChainDepState _ _ _ _ _ = ChainDepStateD
 
 Integration
 ===========

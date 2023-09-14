@@ -143,7 +143,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
       , updateForgeState = \_ curSlot _ ->
                                forgeStateUpdateInfoFromUpdateInfo <$>
                                  HotKey.evolve hotKey (slotToPeriod curSlot)
-      , checkCanForge    = \cfg curSlot _tickedChainDepState ->
+      , checkCanForge    = \cfg _tickedLedgerView curSlot _tickedChainDepState ->
                                tpraosCheckCanForge
                                  (configConsensus cfg)
                                  forgingVRFHash

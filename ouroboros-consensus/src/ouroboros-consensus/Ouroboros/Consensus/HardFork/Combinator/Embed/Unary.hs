@@ -423,10 +423,11 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (injTickedChainDepSt
                                      (noHardForksEpochInfo cfg)
                                      tickedChainDepSt)
-      , checkCanForge    = \cfg sno tickedChainDepSt isLeader forgeStateInfo ->
+      , checkCanForge    = \cfg tickedLedgerView sno tickedChainDepSt isLeader forgeStateInfo ->
                                first (project' (Proxy @(WrapCannotForge blk))) $
                                  checkCanForge
                                    (inject cfg)
+                                   (injTickedLedgerView tickedLedgerView)
                                    sno
                                    (injTickedChainDepSt
                                      (noHardForksEpochInfo cfg)
@@ -457,6 +458,17 @@ instance Functor m => Isomorphic (BlockForging m) where
           . Comp
           . WrapTickedChainDepState
 
+      injTickedLedgerView ::
+           Ticked (LedgerView (BlockProtocol blk))
+        -> Ticked (LedgerView (HardForkProtocol '[blk]))
+      injTickedLedgerView =
+            (TickedHardForkLedgerView TransitionImpossible)
+          . HardForkState
+          . Telescope.TZ
+          . State.Current History.initBound
+          . Comp
+          . WrapTickedLedgerView
+
   inject :: forall blk. NoHardForks blk
          => BlockForging m blk -> BlockForging m (HardForkBlock '[blk])
   inject BlockForging {..} = BlockForging {
@@ -468,10 +480,11 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (project cfg)
                                    sno
                                    (projTickedChainDepSt tickedChainDepSt)
-      , checkCanForge    = \cfg sno tickedChainDepSt isLeader forgeStateInfo ->
+      , checkCanForge    = \cfg tickedLedgerView sno tickedChainDepSt isLeader forgeStateInfo ->
                                first (inject' (Proxy @(WrapCannotForge blk))) $
                                  checkCanForge
                                    (project cfg)
+                                   (projTickedLedgerView tickedLedgerView)
                                    sno
                                    (projTickedChainDepSt tickedChainDepSt)
                                    (project' (Proxy @(WrapIsLeader blk)) isLeader)
@@ -496,6 +509,15 @@ instance Functor m => Isomorphic (BlockForging m) where
           . unComp
           . State.fromTZ
           . tickedHardForkChainDepStatePerEra
+
+      projTickedLedgerView ::
+           Ticked (LedgerView (HardForkProtocol '[blk]))
+        -> Ticked (LedgerView (BlockProtocol blk))
+      projTickedLedgerView =
+            unwrapTickedLedgerView
+          . unComp
+          . State.fromTZ
+          . tickedHardForkLedgerViewPerEra
 
 instance Isomorphic ProtocolInfo where
   project :: forall blk. NoHardForks blk

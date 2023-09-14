@@ -125,13 +125,14 @@ instance BftCrypto c => ConsensusProtocol (Bft c) where
   type ValidationErr (Bft c) = BftValidationErr
   type ValidateView  (Bft c) = BftValidateView c
   type LedgerView    (Bft c) = ()
+  type HorizonView   (Bft c) = ()
   type IsLeader      (Bft c) = ()
   type ChainDepState (Bft c) = ()
   type CanBeLeader   (Bft c) = CoreNodeId
 
   protocolSecurityParam = bftSecurityParam . bftParams
 
-  checkIsLeader BftConfig{..} (CoreNodeId i) (SlotNo n) _ =
+  checkIsLeader BftConfig{..} (CoreNodeId i) TickedTrivial (SlotNo n) _ =
       if n `mod` numCoreNodes == i
       then Just ()
       else Nothing
@@ -141,6 +142,7 @@ instance BftCrypto c => ConsensusProtocol (Bft c) where
 
   updateChainDepState BftConfig{..}
                       (BftValidateView BftFields{..} signed)
+                      TickedTrivial
                       (SlotNo n)
                       _ =
       -- TODO: Should deal with unknown node IDs
@@ -156,8 +158,10 @@ instance BftCrypto c => ConsensusProtocol (Bft c) where
       expectedLeader = CoreId $ CoreNodeId (n `mod` numCoreNodes)
       NumCoreNodes numCoreNodes = bftNumNodes
 
-  reupdateChainDepState _ _ _ _ = ()
-  tickChainDepState     _ _ _ _ = TickedTrivial
+  reupdateChainDepState _ _ _ _ _ = ()
+  tickChainDepState_    _ _ _ _   = TickedTrivial
+
+  projectHorizonView _ TickedTrivial = TickedTrivial
 
 instance BftCrypto c => NoThunks (ConsensusConfig (Bft c))
   -- use generic instance

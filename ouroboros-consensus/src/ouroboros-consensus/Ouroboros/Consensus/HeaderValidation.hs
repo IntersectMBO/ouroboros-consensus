@@ -430,6 +430,7 @@ validateHeader cfg ledgerView hdr st = do
       updateChainDepState
         (configConsensus cfg)
         (validateView (configBlock cfg) hdr)
+        ledgerView
         (blockSlot hdr)
         (tickedHeaderStateChainDep st)
     return $ HeaderState (NotOrigin (getAnnTip hdr)) chainDepState'
@@ -459,6 +460,7 @@ revalidateHeader cfg ledgerView hdr st =
         reupdateChainDepState
           (configConsensus cfg)
           (validateView (configBlock cfg) hdr)
+          ledgerView
           (blockSlot hdr)
           (tickedHeaderStateChainDep st)
 

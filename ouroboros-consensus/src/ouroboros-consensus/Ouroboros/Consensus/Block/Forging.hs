@@ -120,6 +120,7 @@ data BlockForging m blk = BlockForging {
       -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
     , checkCanForge ::
            TopLevelConfig blk
+        -> Ticked (LedgerView (BlockProtocol blk))
         -> SlotNo
         -> Ticked (ChainDepState (BlockProtocol blk))
         -> IsLeader (BlockProtocol blk)
@@ -205,12 +206,14 @@ checkShouldForge ::
   -> Tracer m (ForgeStateInfo blk)
   -> TopLevelConfig blk
   -> SlotNo
+  -> Ticked (LedgerView (BlockProtocol blk))
   -> Ticked (ChainDepState (BlockProtocol blk))
   -> m (ShouldForge blk)
 checkShouldForge BlockForging{..}
                  forgeStateInfoTracer
                  cfg
                  slot
+                 lv
                  tickedChainDepState =
     updateForgeState cfg slot tickedChainDepState >>= \updateInfo ->
       case updateInfo of
@@ -229,6 +232,7 @@ checkShouldForge BlockForging{..}
         checkIsLeader
           (configConsensus cfg)
           canBeLeader
+          lv
           slot
           tickedChainDepState
 
@@ -238,7 +242,7 @@ checkShouldForge BlockForging{..}
         return $ case mbIsLeader of
           Nothing       -> NotLeader
           Just isLeader ->
-              case checkCanForge cfg slot tickedChainDepState isLeader info of
+              case checkCanForge cfg lv slot tickedChainDepState isLeader info of
                 Left cannotForge -> CannotForge cannotForge
                 Right ()         -> ShouldForge isLeader
 

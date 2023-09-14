@@ -291,7 +291,6 @@ instance SL.PraosCrypto c => Serialise (TPraosState c) where
 -- | Ticked 'TPraosState'
 data instance Ticked (TPraosState c) = TickedChainDepState {
       tickedTPraosStateChainDepState :: SL.ChainDepState c
-    , tickedTPraosStateLedgerView    :: Ticked (LedgerView (TPraos c))
     , -- | The 'SlotNo' this state was ticked to.
       tickedTPraosStateSlot          :: !SlotNo
     }
@@ -302,12 +301,13 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type CanBeLeader   (TPraos c) = PraosCanBeLeader c
   type SelectView    (TPraos c) = PraosChainSelectView c
   type LedgerView    (TPraos c) = SL.LedgerView c
+  type HorizonView   (TPraos c) = SL.LedgerView c
   type ValidationErr (TPraos c) = SL.ChainTransitionError c
   type ValidateView  (TPraos c) = TPraosValidateView c
 
   protocolSecurityParam = tpraosSecurityParam . tpraosParams
 
-  checkIsLeader cfg PraosCanBeLeader{..} slot cs = do
+  checkIsLeader cfg PraosCanBeLeader{..} tlv slot cs = do
       -- First, check whether we're in the overlay schedule
       case SL.lookupInOverlaySchedule firstSlot gkeys d asc slot of
         -- Slot isn't in the overlay schedule, so we're in Praos
@@ -343,7 +343,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
               -> Nothing
     where
       chainState = tickedTPraosStateChainDepState cs
-      lv         = getTickedPraosLedgerView $ tickedTPraosStateLedgerView cs
+      lv         = getTickedPraosLedgerView tlv
       d          = SL.lvD lv
       asc        = tpraosLeaderF $ tpraosParams cfg
       firstSlot  =
@@ -361,13 +361,14 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
 
       SL.GenDelegs dlgMap = SL.lvGenDelegs lv
 
-  tickChainDepState cfg@TPraosConfig{..}
-                    (TickedPraosLedgerView lv)
-                    slot
-                    (TPraosState lastSlot st) =
+  projectHorizonView _ = id
+
+  tickChainDepState_ cfg@TPraosConfig{..}
+                     (TickedPraosLedgerView lv)
+                     slot
+                     (TPraosState lastSlot st) =
       TickedChainDepState {
           tickedTPraosStateChainDepState = st'
-        , tickedTPraosStateLedgerView    = TickedPraosLedgerView lv
         , tickedTPraosStateSlot          = slot
         }
     where
@@ -382,7 +383,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
               st
       shelleyGlobals = mkShelleyGlobals cfg
 
-  updateChainDepState cfg b _slot cs =
+  updateChainDepState cfg b tlv _slot cs =
       TPraosState (NotOrigin $ tickedTPraosStateSlot cs) <$>
         SL.updateChainDepState
           shelleyGlobals
@@ -391,9 +392,9 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
           (tickedTPraosStateChainDepState cs)
     where
       shelleyGlobals = mkShelleyGlobals cfg
-      lv = getTickedPraosLedgerView (tickedTPraosStateLedgerView cs)
+      lv = getTickedPraosLedgerView tlv
 
-  reupdateChainDepState cfg b _slot cs =
+  reupdateChainDepState cfg b tlv _slot cs =
       TPraosState (NotOrigin $ tickedTPraosStateSlot cs) $
         SL.reupdateChainDepState
           shelleyGlobals
@@ -402,7 +403,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
           (tickedTPraosStateChainDepState cs)
     where
       shelleyGlobals = mkShelleyGlobals cfg
-      lv = getTickedPraosLedgerView (tickedTPraosStateLedgerView cs)
+      lv = getTickedPraosLedgerView tlv
 
 mkShelleyGlobals :: ConsensusConfig (TPraos c) -> SL.Globals
 mkShelleyGlobals TPraosConfig{..} = SL.Globals {

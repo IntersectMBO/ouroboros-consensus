@@ -91,11 +91,12 @@ pbftBlockForging canBeLeader = BlockForging {
       forgeLabel       = "pbftBlockForging"
     , canBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-    , checkCanForge    = \cfg slot tickedPBftState _isLeader ->
+    , checkCanForge    = \cfg tickedLedgerView slot tickedPBftState _isLeader ->
                            return $
                              pbftCheckCanForge
                                (configConsensus cfg)
                                canBeLeader
+                               tickedLedgerView
                                slot
                                tickedPBftState
     , forgeBlock       = \cfg slot bno lst txs proof ->

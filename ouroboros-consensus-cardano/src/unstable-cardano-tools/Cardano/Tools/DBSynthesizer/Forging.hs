@@ -139,7 +139,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
         -- Check if any forger is slot leader
         let
             checkShouldForge' f =
-              checkShouldForge f nullTracer cfg currentSlot tickedChainDepState
+              checkShouldForge f nullTracer cfg currentSlot ledgerView tickedChainDepState
 
         checks <- zip blockForging <$> liftIO (mapM checkShouldForge' blockForging)
 

@@ -204,6 +204,7 @@ hardForkCheckCanForge ::
      forall m xs empty. CanHardFork xs
   => OptNP empty (BlockForging m) xs
   -> TopLevelConfig (HardForkBlock xs)
+  -> Ticked (HardForkLedgerView xs)
   -> SlotNo
   -> Ticked (HardForkChainDepState xs)
   -> HardForkIsLeader xs
@@ -211,6 +212,7 @@ hardForkCheckCanForge ::
   -> Either (HardForkCannotForge xs) ()
 hardForkCheckCanForge blockForging
                       cfg
+                      tickedLedgerView
                       curSlot
                       (TickedHardForkChainDepState chainDepState ei)
                       isLeader
@@ -225,6 +227,7 @@ hardForkCheckCanForge blockForging
         -- enforce it statically.
         ( Match.mustMatchNS "ForgeStateInfo" forgeStateInfo'
         $ Match.mustMatchNS "IsLeader"       (getOneEraIsLeader isLeader)
+        $ Match.mustMatchNS "LedgerView"     (State.tip (tickedHardForkLedgerViewPerEra tickedLedgerView))
         $ State.tip chainDepState
         )
   where
@@ -252,7 +255,10 @@ hardForkCheckCanForge blockForging
            WrapForgeStateInfo
            (Product
              WrapIsLeader
-             (Ticked :.: WrapChainDepState))
+             (Product
+               (Ticked :.: WrapLedgerView)
+               (Ticked :.: WrapChainDepState)
+               ))
            blk
       -> (Maybe :.: WrapCannotForge) blk
          -- ^ We use @Maybe x@ instead of @Either x ()@ because the former can
@@ -264,13 +270,17 @@ hardForkCheckCanForge blockForging
                (WrapForgeStateInfo forgeStateInfo'')
                (Pair
                  (WrapIsLeader isLeader')
-                 (Comp tickedChainDepState))) =
+                 (Pair
+                   (Comp tickedLedgerView')
+                   (Comp tickedChainDepState)
+                 ))) =
         Comp $ either (Just . WrapCannotForge) (const Nothing) $
           checkCanForge
             (fromMaybe
               (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
               mBlockForging')
             cfg'
+            (unwrapTickedLedgerView tickedLedgerView')
             curSlot
             (unwrapTickedChainDepState tickedChainDepState)
             isLeader'

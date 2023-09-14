@@ -132,6 +132,7 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 >   type SelectView    SP = BlockNo
 >
 >   type LedgerView    SP = ()
+>   type HorizonView   SP = ()
 >
 >   type IsLeader      SP = SP_IsLeader
 >   type CanBeLeader   SP = SP_CanBeLeader
@@ -140,18 +141,20 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 >   type ValidateView  SP = ()
 >   type ValidationErr SP = Void
 >
->   checkIsLeader cfg SP_CanBeLeader slot _tcds =
+>   checkIsLeader cfg SP_CanBeLeader _tlv slot _tcds =
 >       if slot `Set.member` cfgsp_slotsLedByMe cfg
 >       then Just SP_IsLeader
 >       else Nothing
 >
 >   protocolSecurityParam _cfg = k
 >
->   tickChainDepState _ _ _ _ = TickedTrivial
+>   projectHorizonView _cfg _tlv = TickedTrivial
 >
->   updateChainDepState _ _ _ _ = return ()
+>   tickChainDepState_ _ _ _ _ = TickedTrivial
 >
->   reupdateChainDepState _ _ _ _ = ()
+>   updateChainDepState _ _ _ _ _ = return ()
+>
+>   reupdateChainDepState _ _ _ _ _ = ()
 
 Finally we define a few extra things used in this instantiation:
 
@@ -184,8 +187,8 @@ For `SP` we will use only `BlockNo` - to implement the simplest rule of
 preferring longer chains to shorter chains.
 
 
-Ledger Integration: `LedgerView`
---------------------------------
+Ledger Integration: `LedgerView` (and `HorizonView`)
+----------------------------------------------------
 
 Some decisions that a consensus protocol needs to make will depend on the
 ledger's state, `LedgerState blk`.  The data required from the ledger is of
@@ -197,8 +200,10 @@ For `SP` we do not require any information from the ledger to make decisions of
 any kind.  In the Praos protocol, the `LedgerView` contains information about
 the stake distribution among other things.
 
-Notably, this is used in the `tickChainDepState` function elsewhere in the
-`ConsensusProtocol`.
+This is used in most functions in `ConsensusProtocol`, but `tickChainDepState_`
+can also work with only a `HorizonView`. For our purposes, we can ignore
+`HorizonView` and assume it to be a singleton type, so there is no difference
+between `tickChainDepState_` and `tickChainDepState` for us.
 
 
 Protocol State: `ChainDepState`, `ValidateView` and `ValidationErr`

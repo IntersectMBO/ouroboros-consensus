@@ -32,11 +32,13 @@ instance ( ConsensusProtocol p
     type IsLeader      (ModChainSel p s) = IsLeader      p
     type CanBeLeader   (ModChainSel p s) = CanBeLeader   p
     type LedgerView    (ModChainSel p s) = LedgerView    p
+    type HorizonView   (ModChainSel p s) = HorizonView   p
     type ValidationErr (ModChainSel p s) = ValidationErr p
     type ValidateView  (ModChainSel p s) = ValidateView  p
 
     checkIsLeader         = checkIsLeader         . mcsConfigP
-    tickChainDepState     = tickChainDepState     . mcsConfigP
+    projectHorizonView    = projectHorizonView    . mcsConfigP
+    tickChainDepState_    = tickChainDepState_    . mcsConfigP
     updateChainDepState   = updateChainDepState   . mcsConfigP
     reupdateChainDepState = reupdateChainDepState . mcsConfigP
     protocolSecurityParam = protocolSecurityParam . mcsConfigP

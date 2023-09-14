@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -93,13 +94,14 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
   type ValidationErr (HardForkProtocol xs) = HardForkValidationErr xs
   type SelectView    (HardForkProtocol xs) = HardForkSelectView    xs
   type LedgerView    (HardForkProtocol xs) = HardForkLedgerView    xs
+  type HorizonView   (HardForkProtocol xs) = HardForkLedgerView    xs
   type CanBeLeader   (HardForkProtocol xs) = HardForkCanBeLeader   xs
   type IsLeader      (HardForkProtocol xs) = HardForkIsLeader      xs
   type ValidateView  (HardForkProtocol xs) = OneEraValidateView    xs
 
   -- Operations on the state
 
-  tickChainDepState     = tick
+  tickChainDepState_    = tick
   checkIsLeader         = check
   updateChainDepState   = update
   reupdateChainDepState = reupdate
@@ -110,6 +112,8 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
 
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK
+
+  projectHorizonView _ = id
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol
@@ -204,35 +208,41 @@ type HardForkCanBeLeader xs = SomeErasCanBeLeader xs
 check :: forall xs. (CanHardFork xs, HasCallStack)
       => ConsensusConfig (HardForkProtocol xs)
       -> HardForkCanBeLeader xs
+      -> Ticked (LedgerView (HardForkProtocol xs))
       -> SlotNo
       -> Ticked (ChainDepState (HardForkProtocol xs))
       -> Maybe (HardForkIsLeader xs)
 check HardForkConsensusConfig{..}
       (SomeErasCanBeLeader canBeLeader)
+      (TickedHardForkLedgerView _transition tickedLedgerView)
       slot
       (TickedHardForkChainDepState chainDepState ei) =
-    undistrib $
-      hczipWith3
-        proxySingle
-        checkOne
-        cfgs
-        (OptNP.toNP canBeLeader)
-        (State.tip chainDepState)
+    case eLedgerData of
+      Left{}          -> Nothing
+      Right matchPair ->
+          undistrib
+        $ hcpure proxySingle (fn_3 checkOne)
+            `hap` cfgs
+            `hap` (OptNP.toNP canBeLeader)
+            `hap` (State.tip matchPair)
   where
     cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
+
+    eLedgerData = State.match (State.tip tickedLedgerView) chainDepState
 
     checkOne ::
          SingleEraBlock                 blk
       => WrapPartialConsensusConfig     blk
       -> (Maybe :.: WrapCanBeLeader)    blk
-      -> (Ticked :.: WrapChainDepState) blk
+      -> ((Ticked :.: WrapLedgerView) `Product` (Ticked :.: WrapChainDepState)) blk
       -> (Maybe :.: WrapIsLeader)       blk
-    checkOne cfg' (Comp mCanBeLeader) (Comp chainDepState') = Comp $ do
+    checkOne cfg' (Comp mCanBeLeader) (Comp ledgerView' `Pair` Comp chainDepState') = Comp $ do
         canBeLeader' <- mCanBeLeader
         WrapIsLeader <$>
           checkIsLeader
             (completeConsensusConfig' ei cfg')
             (unwrapCanBeLeader canBeLeader')
+            (unwrapTickedLedgerView ledgerView')
             slot
             (unwrapTickedChainDepState chainDepState')
 
@@ -260,11 +270,13 @@ data HardForkValidationErr xs =
 update :: forall xs. CanHardFork xs
        => ConsensusConfig (HardForkProtocol xs)
        -> OneEraValidateView xs
+       -> Ticked (HardForkLedgerView xs)
        -> SlotNo
        -> Ticked (HardForkChainDepState xs)
        -> Except (HardForkValidationErr xs) (HardForkChainDepState xs)
 update HardForkConsensusConfig{..}
        (OneEraValidateView view)
+       ledgerView
        slot
        (TickedHardForkChainDepState chainDepState ei) =
     case State.match view chainDepState of
@@ -275,38 +287,54 @@ update HardForkConsensusConfig{..}
             singleEraInfo
             (LedgerEraInfo . chainDepStateInfo . State.currentState)
             mismatch
-      Right matched ->
+      Right matchedPair -> case State.match (State.tip matchedPair) tickedHardForkLedgerViewPerEra of
+        Left mismatch ->
+          throwError $ HardForkValidationErrWrongEra . MismatchEraInfo $
+            Match.bihcmap
+              proxySingle
+              singleEraInfo
+              (LedgerEraInfo . ledgerViewInfo . State.currentState)
+              mismatch
+        Right matchedTriple ->
            hsequence'
          . hcizipWith proxySingle (updateEra ei slot) cfgs
-         $ matched
+         $ matchedTriple
   where
     cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
+
+    TickedHardForkLedgerView {
+        tickedHardForkLedgerViewTransition = _
+      , tickedHardForkLedgerViewPerEra
+      } = ledgerView
 
 updateEra :: forall xs blk. SingleEraBlock blk
           => EpochInfo (Except PastHorizonException)
           -> SlotNo
           -> Index xs blk
           -> WrapPartialConsensusConfig blk
-          -> Product WrapValidateView (Ticked :.: WrapChainDepState) blk
+          -> (WrapValidateView `Product` (Ticked :.: WrapChainDepState) `Product` (Ticked :.: WrapLedgerView)) blk
           -> (Except (HardForkValidationErr xs) :.: WrapChainDepState) blk
 updateEra ei slot index cfg
-          (Pair view (Comp chainDepState)) = Comp $
+          (view `Pair` Comp chainDepState `Pair` Comp ledgerView) = Comp $
     withExcept (injectValidationErr index) $
       fmap WrapChainDepState $
         updateChainDepState
           (completeConsensusConfig' ei cfg)
           (unwrapValidateView view)
+          (unwrapTickedLedgerView ledgerView)
           slot
           (unwrapTickedChainDepState chainDepState)
 
 reupdate :: forall xs. CanHardFork xs
          => ConsensusConfig (HardForkProtocol xs)
          -> OneEraValidateView xs
+         -> Ticked (HardForkLedgerView xs)
          -> SlotNo
          -> Ticked (HardForkChainDepState xs)
          -> HardForkChainDepState xs
 reupdate HardForkConsensusConfig{..}
          (OneEraValidateView view)
+         ledgerView
          slot
          (TickedHardForkChainDepState chainDepState ei) =
     case State.match view chainDepState of
@@ -317,23 +345,37 @@ reupdate HardForkConsensusConfig{..}
             singleEraInfo
             (LedgerEraInfo . chainDepStateInfo . State.currentState)
             mismatch
-      Right matched ->
+      Right matchedPair -> case State.match (State.tip matchedPair) tickedHardForkLedgerViewPerEra of
+        Left mismatch ->
+          error $ show . HardForkValidationErrWrongEra . MismatchEraInfo $
+            Match.bihcmap
+              proxySingle
+              singleEraInfo
+              (LedgerEraInfo . ledgerViewInfo . State.currentState)
+              mismatch
+        Right matchedTriple ->
            hczipWith proxySingle (reupdateEra ei slot) cfgs
-         $ matched
+         $ matchedTriple
   where
     cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
+
+    TickedHardForkLedgerView {
+        tickedHardForkLedgerViewTransition = _
+      , tickedHardForkLedgerViewPerEra
+      } = ledgerView
 
 reupdateEra :: SingleEraBlock blk
             => EpochInfo (Except PastHorizonException)
             -> SlotNo
             -> WrapPartialConsensusConfig blk
-            -> Product WrapValidateView (Ticked :.: WrapChainDepState) blk
+            -> (WrapValidateView `Product` (Ticked :.: WrapChainDepState) `Product` (Ticked :.: WrapLedgerView)) blk
             -> WrapChainDepState blk
-reupdateEra ei slot cfg (Pair view (Comp chainDepState)) =
+reupdateEra ei slot cfg (view `Pair` Comp chainDepState `Pair` Comp ledgerView) =
     WrapChainDepState $
       reupdateChainDepState
         (completeConsensusConfig' ei cfg)
         (unwrapValidateView view)
+        (unwrapTickedLedgerView ledgerView)
         slot
         (unwrapTickedChainDepState chainDepState)
 
@@ -344,6 +386,10 @@ reupdateEra ei slot cfg (Pair view (Comp chainDepState)) =
 chainDepStateInfo :: forall blk. SingleEraBlock blk
                   => (Ticked :.: WrapChainDepState) blk -> SingleEraInfo blk
 chainDepStateInfo _ = singleEraInfo (Proxy @blk)
+
+ledgerViewInfo :: forall blk. SingleEraBlock blk
+                  => (Ticked :.: WrapLedgerView) blk -> SingleEraInfo blk
+ledgerViewInfo _ = singleEraInfo (Proxy @blk)
 
 translateConsensus :: forall xs. CanHardFork xs
                    => EpochInfo (Except PastHorizonException)

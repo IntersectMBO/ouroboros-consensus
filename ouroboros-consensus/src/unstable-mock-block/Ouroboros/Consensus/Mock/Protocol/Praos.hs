@@ -433,10 +433,8 @@ infosEta l@PraosConfig{praosParams = PraosParams{..}} xs e =
 -- choose the right nonce from that; this means that ticking has no effect.
 --
 -- We do however need access to the ticked stake distribution.
-data instance Ticked (PraosChainDepState c) = TickedPraosChainDepState {
-      tickedPraosLedgerView      :: Ticked (LedgerView (Praos c))
-      -- ^ The ticked ledger view.
-    , untickedPraosChainDepState :: PraosChainDepState c
+newtype instance Ticked (PraosChainDepState c) = TickedPraosChainDepState {
+      untickedPraosChainDepState :: PraosChainDepState c
       -- ^ The unticked chain dependent state, containing the full history.
     }
 
@@ -445,13 +443,14 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   protocolSecurityParam = praosSecurityParam . praosParams
 
   type LedgerView    (Praos c) = ()
+  type HorizonView   (Praos c) = ()
   type IsLeader      (Praos c) = PraosProof           c
   type ValidationErr (Praos c) = PraosValidationError c
   type ValidateView  (Praos c) = PraosValidateView    c
   type ChainDepState (Praos c) = PraosChainDepState   c
   type CanBeLeader   (Praos c) = CoreNodeId
 
-  checkIsLeader cfg@PraosConfig{..} nid slot (TickedPraosChainDepState _u  cds) =
+  checkIsLeader cfg@PraosConfig{..} nid TickedTrivial slot (TickedPraosChainDepState cds) =
       -- See Figure 4 of the Praos paper.
       -- In order to be leader, y must be < Tᵢ
       if fromIntegral (getOutputVRFNatural (certifiedOutput y)) < t
@@ -466,12 +465,15 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       rho = evalCertified () rho' praosSignKeyVRF
       y   = evalCertified () y'   praosSignKeyVRF
 
-  tickChainDepState _ lv _ = TickedPraosChainDepState lv
+  projectHorizonView _ _ = TickedTrivial
+
+  tickChainDepState_ _ _ _ = TickedPraosChainDepState
 
   updateChainDepState cfg@PraosConfig{..}
                       (PraosValidateView PraosFields{..} toSign)
+                      TickedTrivial
                       slot
-                      (TickedPraosChainDepState TickedTrivial cds) = do
+                      (TickedPraosChainDepState cds) = do
     let PraosExtraFields {..} = praosExtraFields
         nid = praosCreator
 
@@ -533,8 +535,9 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
 
   reupdateChainDepState _
                         (PraosValidateView PraosFields{..} _)
+                        TickedTrivial
                         slot
-                        (TickedPraosChainDepState TickedTrivial cds) =
+                        (TickedPraosChainDepState cds) =
     let PraosExtraFields{..} = praosExtraFields
         !bi = BlockInfo
             { biSlot  = slot

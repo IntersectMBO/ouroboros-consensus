@@ -352,6 +352,7 @@ forkBlockForging IS{..} blockForging =
                 (forgeStateInfoTracer tracers))
               cfg
               currentSlot
+              ledgerView
               tickedChainDepState
           case shouldForge of
             ForgeStateUpdateError err -> do
