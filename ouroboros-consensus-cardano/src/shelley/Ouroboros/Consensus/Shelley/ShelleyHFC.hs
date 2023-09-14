@@ -341,12 +341,12 @@ translateChainDepStateAcrossShelley ::
      )
   => RequiringBoth
        WrapConsensusConfig
-       (Translate WrapChainDepState)
+       (TickedTranslate WrapChainDepState)
        (ShelleyBlock protoFrom eraFrom)
        (ShelleyBlock protoTo eraTo)
 translateChainDepStateAcrossShelley =
     ignoringBoth $
-      Translate $ \_bound (WrapChainDepState chainDepState) ->
+      Translate $ \_bound (Comp (WrapTickedChainDepState chainDepState)) ->
         -- Same protocol, same 'ChainDepState'. Note that we don't have to apply
         -- any changes related to an epoch transition, this is already done when
         -- ticking the state.

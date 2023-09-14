@@ -30,8 +30,12 @@ data EraTranslation xs = EraTranslation {
       --
       -- For more context/motivation, see
       -- <https://github.com/input-output-hk/ouroboros-consensus/issues/339>.
-      translateLedgerState   :: InPairs (RequiringBoth WrapLedgerConfig    (TickedTranslate LedgerState)) xs
-    , translateChainDepState :: InPairs (RequiringBoth WrapConsensusConfig (Translate WrapChainDepState)) xs
+      translateLedgerState   :: InPairs (RequiringBoth WrapLedgerConfig    (TickedTranslate LedgerState))                   xs
+      -- | Translate a @'Ticked' 'ChainDepState'@ from one era to a 'ChainDepState'
+      -- in the next era.
+      --
+      -- Identical remarks as for 'translateLedgerState' apply.
+    , translateChainDepState :: InPairs (RequiringBoth WrapConsensusConfig (TickedTranslate WrapChainDepState))             xs
     , crossEraForecast       :: InPairs (RequiringBoth WrapLedgerConfig    (CrossEraForecaster LedgerState WrapLedgerView)) xs
     }
   deriving NoThunks

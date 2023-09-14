@@ -47,6 +47,8 @@ import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Numeric.Natural (Natural)
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
+                     (SingleEraProtocol)
 import           Ouroboros.Consensus.Protocol.Abstract (CanBeLeader,
                      ChainDepState, ConsensusConfig, ConsensusProtocol,
                      IsLeader, LedgerView, ValidateView)
@@ -193,6 +195,7 @@ class ProtocolHeaderSupportsLedger proto where
 
 class
   ( ConsensusProtocol proto,
+    SingleEraProtocol proto,
     Typeable (ShelleyProtocolHeader proto),
     ProtocolHeaderSupportsEnvelope proto,
     ProtocolHeaderSupportsKES proto,

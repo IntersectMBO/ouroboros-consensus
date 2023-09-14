@@ -25,11 +25,11 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Dict (Dict (..))
 import           Data.SOP.Index
-import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
+import qualified Ouroboros.Consensus.HardFork.Combinator.Protocol as Protocol
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..),
@@ -228,11 +228,8 @@ injectInitialExtLedgerState cfg extLedgerState0 =
     targetEraChainDepState :: HardForkChainDepState (x ': xs)
     targetEraChainDepState =
         -- Align the 'ChainDepState' with the ledger state of the target era.
-        State.align
-          (InPairs.requiringBoth
-            (hmap (WrapConsensusConfig . configConsensus) cfgs)
-            (translateChainDepState hardForkEraTranslation))
-          (hpure (fn_2 (\_ st -> st)))
+        Protocol.extendToHorizon
+          (hmap (WrapConsensusConfig . configConsensus) cfgs)
           (hardForkLedgerStatePerEra targetEraLedgerState)
           firstEraChainDepState
 

@@ -437,7 +437,7 @@ ledgerState_AtoB = InPairs.ignoringBoth $ Translate $ \_ (Comp st) -> LgrB {
 chainDepState_AtoB ::
      RequiringBoth
        WrapConsensusConfig
-       (Translate WrapChainDepState)
+       (TickedTranslate WrapChainDepState)
        BlockA
        BlockB
 chainDepState_AtoB = InPairs.ignoringBoth $ Translate $ \_ _ ->

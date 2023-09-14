@@ -60,6 +60,8 @@ import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
+                     (SingleEraProtocol (..))
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -269,6 +271,9 @@ data PBftIsLeader c = PBftIsLeader {
   deriving (Generic)
 
 instance PBftCrypto c => NoThunks (PBftIsLeader c)
+
+instance SingleEraProtocol (PBft c) where
+  eraTransitionHorizonView _cfg = TickedTrivial
 
 -- | (Static) node configuration
 newtype instance ConsensusConfig (PBft c) = PBftConfig {

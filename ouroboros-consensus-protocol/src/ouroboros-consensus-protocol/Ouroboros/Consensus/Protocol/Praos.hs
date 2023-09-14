@@ -74,6 +74,8 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
+                     (SingleEraProtocol (..))
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -365,6 +367,9 @@ deriving instance PraosCrypto c => Eq (PraosValidationErr c)
 deriving instance PraosCrypto c => NoThunks (PraosValidationErr c)
 
 deriving instance PraosCrypto c => Show (PraosValidationErr c)
+
+instance SingleEraProtocol (Praos c) where
+  eraTransitionHorizonView _cfg = TickedTrivial
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PraosState c

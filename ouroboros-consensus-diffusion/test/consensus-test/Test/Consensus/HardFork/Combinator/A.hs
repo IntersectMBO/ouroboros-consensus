@@ -102,6 +102,9 @@ data instance ConsensusConfig ProtocolA = CfgA {
     }
   deriving NoThunks via OnlyCheckWhnfNamed "CfgA" (ConsensusConfig ProtocolA)
 
+instance SingleEraProtocol ProtocolA where
+  eraTransitionHorizonView _cfg = TickedTrivial
+
 instance ConsensusProtocol ProtocolA where
   type ChainDepState ProtocolA = ()
   type LedgerView    ProtocolA = ()

@@ -37,6 +37,7 @@ import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos,
                      TPraosState (TPraosState))
+import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto,
                      translateChainDepState)
 import           Ouroboros.Consensus.Shelley.Eras
@@ -230,7 +231,10 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
     }
     chainDepState = translateChainDepState @(TPraos (EraCrypto era)) @(Praos (EraCrypto era))
-      $ TPraosState (NotOrigin 1) sleChainDepState
+      TPraos.TickedChainDepState {
+          TPraos.tickedTPraosStateChainDepState = sleChainDepState
+        , TPraos.tickedTPraosStateSlot          = SlotNo 1
+        }
     extLedgerState = ExtLedgerState
                        ledgerState
                        (genesisHeaderState chainDepState)

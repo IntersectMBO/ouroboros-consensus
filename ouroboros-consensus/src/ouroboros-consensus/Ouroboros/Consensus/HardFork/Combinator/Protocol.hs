@@ -27,13 +27,15 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol (
   , HardForkLedgerView_ (..)
     -- * Type family instances
   , Ticked (..)
+    -- * Internal
+  , extendToHorizon
   ) where
 
 import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Index
-import           Data.SOP.InPairs (InPairs (..))
+import           Data.SOP.InPairs (InPairs (..), Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
 import qualified Data.SOP.Match as Match
 import qualified Data.SOP.OptNP as OptNP
@@ -51,10 +53,10 @@ import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
                      (HardForkLedgerView, HardForkLedgerView_ (..), Ticked (..))
-import           Ouroboros.Consensus.HardFork.Combinator.State (HardForkState,
-                     Translate)
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
+import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.Combinator.Translation
+import           Ouroboros.Consensus.HardFork.History (Bound (..))
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
@@ -113,7 +115,7 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK
 
-  projectHorizonView _ = id
+  projectHorizonView _cfg = id
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol
@@ -150,43 +152,110 @@ data instance Ticked (HardForkChainDepState xs) =
              EpochInfo (Except PastHorizonException)
       }
 
-tick :: CanHardFork xs
+tick :: forall xs. CanHardFork xs
      => ConsensusConfig (HardForkProtocol xs)
-     -> Ticked (HardForkLedgerView xs)
+     -> Ticked (LedgerView (HardForkProtocol xs))
      -> SlotNo
      -> HardForkChainDepState xs
      -> Ticked (HardForkChainDepState xs)
-tick cfg@HardForkConsensusConfig{..}
-     (TickedHardForkLedgerView transition ledgerView)
-     slot
-     chainDepState = TickedHardForkChainDepState {
-      tickedHardForkChainDepStateEpochInfo = ei
-    , tickedHardForkChainDepStatePerEra =
-         State.align
-           (translateConsensus ei cfg)
-           (hcmap proxySingle (fn_2 . tickOne) cfgs)
-           ledgerView
-           chainDepState
-    }
+tick cfg ledgerView slot chainDepState =
+    TickedHardForkChainDepState {
+        tickedHardForkChainDepStateEpochInfo = ei
+      , tickedHardForkChainDepStatePerEra    =
+          extendToHorizon' finalTick ccfgs lv chainDepState
+      }
   where
-    cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
-    ei   = State.epochInfoPrecomputedTransitionInfo
-             hardForkConsensusConfigShape
-             transition
-             ledgerView
+    HardForkConsensusConfig{..}            = cfg
+    TickedHardForkLedgerView transition lv = ledgerView
 
-    tickOne :: SingleEraBlock                 blk
-            => WrapPartialConsensusConfig     blk
-            -> (Ticked :.: WrapLedgerView)    blk
-            -> WrapChainDepState              blk
-            -> (Ticked :.: WrapChainDepState) blk
-    tickOne cfg' (Comp ledgerView') chainDepState' = Comp $
-        WrapTickedChainDepState $
-          tickChainDepState
-            (completeConsensusConfig' ei cfg')
-            (unwrapTickedLedgerView ledgerView')
-            slot
-            (unwrapChainDepState chainDepState')
+    ei :: EpochInfo (Except PastHorizonException)
+    ei =
+        State.epochInfoPrecomputedTransitionInfo
+          hardForkConsensusConfigShape
+          transition
+          lv
+
+    ccfgs :: NP WrapConsensusConfig xs
+    ccfgs =
+        hcmap
+          proxySingle
+          (completeConsensusConfig'' ei)
+          (getPerEraConsensusConfig hardForkConsensusConfigPerEra)
+
+    -- tick to the final slot, @slot@
+    --
+    -- This is the final tick and is done according to the rules of whatever
+    -- era that final slot is in.
+    --
+    -- If there is no era transition, then this is the only tick.
+    finalTick ::
+         NP (     Ticked :.: WrapLedgerView
+             -.-> WrapChainDepState
+             -.-> Ticked :.: WrapChainDepState
+            ) xs
+    finalTick =
+        hcmap
+          proxySingle
+          (\(WrapConsensusConfig ccfg) -> fn_2 $ \(Comp tlv) cs ->
+                Comp . WrapTickedChainDepState
+              $ tickChainDepState
+                  ccfg
+                  (unwrapTickedLedgerView tlv)
+                  slot
+                  (unwrapChainDepState cs)
+          )
+          ccfgs
+
+-- | Extend the given 'HardForkChainDepState' such that it is aligned with the
+-- given 'HardForkState'.
+--
+-- When they are already aligned, this function returns the
+-- 'HardForkChainDepState' unmodified.
+--
+-- For each transition (if any) from @x@ to @y@, this function first ticks just
+-- across the era boundary using @x@'s logic, and then translates the @'Ticked'
+-- 'ChainDepState' x@ to a @'ChainDepState' y@ using 'translateChainDepState'.
+extendToHorizon ::
+     forall xs f. CanHardFork xs
+  => NP WrapConsensusConfig xs
+  -> HardForkState f xs
+     -- ^ The tip is unused; we only use the era boundary information.
+  -> HardForkChainDepState xs
+  -> HardForkChainDepState xs
+extendToHorizon = extendToHorizon' (hpure $ fn_2 $ const id)
+
+-- | Like 'extendToHorizon', but also allows to apply a function at the tip.
+extendToHorizon' ::
+     forall xs f g. CanHardFork xs
+  => NP (f -.-> WrapChainDepState -.-> g) xs
+  -> NP WrapConsensusConfig xs
+  -> HardForkState f xs
+  -> HardForkChainDepState xs
+  -> HardForkState g xs
+extendToHorizon' atTip ccfgs =
+    State.align tickAndTranslate atTip
+  where
+    -- If there is no era transition, then 'State.align' won't invoke this.
+    tickAndTranslate :: InPairs (Translate WrapChainDepState) xs
+    tickAndTranslate =
+        InPairs.requiring ccfgs
+      $ InPairs.hcmap
+          proxySingle
+          (\translation ->
+            Require $ \(WrapConsensusConfig ccfg) ->
+            Translate $ \bound x ->
+                -- ...then translate
+                translateWith translation bound
+              $ Comp . WrapTickedChainDepState
+              $ -- first tick just across the era boundary...
+                tickChainDepState_
+                  ccfg
+                  (eraTransitionHorizonView ccfg)
+                  (boundSlot bound)
+                  (unwrapChainDepState x)
+          )
+      $ InPairs.requiringBoth ccfgs
+      $ translateChainDepState hardForkEraTranslation
 
 {-------------------------------------------------------------------------------
   Leader check
@@ -390,17 +459,6 @@ chainDepStateInfo _ = singleEraInfo (Proxy @blk)
 ledgerViewInfo :: forall blk. SingleEraBlock blk
                   => (Ticked :.: WrapLedgerView) blk -> SingleEraInfo blk
 ledgerViewInfo _ = singleEraInfo (Proxy @blk)
-
-translateConsensus :: forall xs. CanHardFork xs
-                   => EpochInfo (Except PastHorizonException)
-                   -> ConsensusConfig (HardForkProtocol xs)
-                   -> InPairs (Translate WrapChainDepState) xs
-translateConsensus ei HardForkConsensusConfig{..} =
-    InPairs.requiringBoth cfgs $
-       translateChainDepState hardForkEraTranslation
-  where
-    pcfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
-    cfgs  = hcmap proxySingle (completeConsensusConfig'' ei) pcfgs
 
 injectValidationErr :: Index xs blk
                     -> ValidationErr (BlockProtocol blk)

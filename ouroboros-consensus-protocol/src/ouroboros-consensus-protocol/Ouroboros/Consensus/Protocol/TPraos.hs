@@ -66,6 +66,8 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks (..))
 import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
+                     (SingleEraProtocol (..))
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -301,6 +303,30 @@ data instance Ticked (TPraosState c) = TickedChainDepState {
     , -- | The 'SlotNo' this state was ticked to.
       tickedTPraosStateSlot          :: !SlotNo
     }
+
+instance SingleEraProtocol (TPraos c) where
+  -- When ticking from a TPraos era into another TPraos era, we always use a
+  -- neutral nonce as the extra entropy even if the extra entropy protocol
+  -- parameter was set to a non-neutral value either in the epoch just before or
+  -- after the era boundary.
+  --
+  -- This is a change in behavior from a previous implementation of how the
+  -- TPraos was invoked by the HFC, where the extra entropy of the epoch just
+  -- after the era boundary had been used.
+  --
+  -- On Cardano mainnet, extra entropy was set to a non-neutral value only in
+  -- epoch 259, which is not adjacent to an era boundary. Hence, this change in
+  -- behavior is unobservable on mainnet. Also see
+  -- https://iohk.io/en/blog/posts/2021/03/29/the-secure-transition-to-decentralization/
+  -- for additional context.
+  --
+  -- We are not aware of any other non-ephemeral deployments that ever used a
+  -- non-neutral value. If the need ever arises to support a deployment that set
+  -- the extra entropy nonce in a way that is not backwards-compatible as
+  -- described above, we recommend to modify 'translateChainDep' appropriately.
+  eraTransitionHorizonView _cfg = TickedTPraosHorizonView {
+        tickedTPraosHorizonViewExtraEntropy = SL.NeutralNonce
+      }
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ChainDepState (TPraos c) = TPraosState c

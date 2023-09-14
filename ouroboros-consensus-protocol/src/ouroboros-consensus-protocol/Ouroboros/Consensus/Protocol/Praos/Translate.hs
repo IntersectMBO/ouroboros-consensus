@@ -18,20 +18,34 @@ import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
+import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Protocol.Praos (ConsensusConfig (..),
                      Praos, PraosParams (..), PraosState (..),
-                     Ticked (TickedPraosLedgerView))
+                     Ticked (TickedPraosLedgerView),
+                     tickedPraosStateChainDepState)
 import           Ouroboros.Consensus.Protocol.Praos.Views
                      (LedgerView (lvMaxBodySize, lvMaxHeaderSize, lvProtocolVersion))
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
-import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..),
-                     TPraosState (tpraosStateChainDepState, tpraosStateLastSlot))
+import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto (..))
 
 {-------------------------------------------------------------------------------
   Translation from transitional Praos
 -------------------------------------------------------------------------------}
+
+instance (c1 ~ c2) => TranslateProto (TPraos c1) (TPraos c2) where
+  translateConsensusConfig = id
+  translateTickedLedgerView = id
+  translateChainDepState st = TPraos.TPraosState {
+      TPraos.tpraosStateLastSlot      = NotOrigin $ TPraos.tickedTPraosStateSlot st
+    , TPraos.tpraosStateChainDepState = TPraos.tickedTPraosStateChainDepState st
+    }
+
+instance (c1 ~ c2) => TranslateProto (Praos c1) (Praos c2) where
+  translateConsensusConfig = id
+  translateTickedLedgerView = id
+  translateChainDepState = tickedPraosStateChainDepState
 
 -- | We can translate between TPraos and Praos, provided:
 --
@@ -87,7 +101,7 @@ instance
 
   translateChainDepState tpState =
     PraosState
-      { praosStateLastSlot = tpraosStateLastSlot tpState,
+      { praosStateLastSlot = NotOrigin $ TPraos.tickedTPraosStateSlot tpState,
         praosStateOCertCounters = Map.mapKeysMonotonic coerce certCounters,
         praosStateEvolvingNonce = evolvingNonce,
         praosStateCandidateNonce = candidateNonce,
@@ -97,6 +111,6 @@ instance
       }
     where
       SL.ChainDepState {SL.csProtocol, SL.csTickn, SL.csLabNonce} =
-        tpraosStateChainDepState tpState
+        TPraos.tickedTPraosStateChainDepState tpState
       SL.PrtclState certCounters evolvingNonce candidateNonce =
         csProtocol

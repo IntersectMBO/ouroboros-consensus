@@ -73,6 +73,7 @@ import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Protocol.TPraos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto)
@@ -407,12 +408,12 @@ translateLedgerStateByronToShelleyWrapper =
 translateChainDepStateByronToShelleyWrapper ::
      RequiringBoth
        WrapConsensusConfig
-       (Translate WrapChainDepState)
+       (TickedTranslate WrapChainDepState)
        ByronBlock
        (ShelleyBlock (TPraos c) (ShelleyEra c))
 translateChainDepStateByronToShelleyWrapper =
     RequireBoth $ \_ (WrapConsensusConfig cfgShelley) ->
-      Translate $ \_ (WrapChainDepState pbftState) ->
+      Translate $ \_ (Comp (WrapTickedChainDepState (TickedPBftState pbftState))) ->
         WrapChainDepState $
           translateChainDepStateByronToShelley cfgShelley pbftState
 

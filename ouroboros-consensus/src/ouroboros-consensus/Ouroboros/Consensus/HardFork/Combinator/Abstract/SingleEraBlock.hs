@@ -9,6 +9,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (
     -- * Single era block
     SingleEraBlock (..)
+  , SingleEraProtocol (..)
   , proxySingle
   , singleEraTransition'
     -- * Era index
@@ -45,12 +46,20 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Node.InitStorage
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Ticked (Ticked)
 import           Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
   SingleEraBlock
 -------------------------------------------------------------------------------}
+
+-- | Protocols which can be used as part of a 'HardForkProtocol'.
+class SingleEraProtocol p where
+  -- | The horizon view that will be used when ticking across an era boundary.
+  -- In all other cases, the HFC logic will use 'projectHorizonView'.
+  eraTransitionHorizonView :: ConsensusConfig p -> Ticked (HorizonView p)
 
 -- | Blocks from which we can assemble a hard fork
 class ( LedgerSupportsProtocol blk
@@ -67,6 +76,7 @@ class ( LedgerSupportsProtocol blk
       , ConfigSupportsNode blk
       , NodeInitStorage blk
       , BlockSupportsMetrics blk
+      , SingleEraProtocol (BlockProtocol blk)
         -- Instances required to support testing
       , Eq   (GenTx blk)
       , Eq   (Validated (GenTx blk))
