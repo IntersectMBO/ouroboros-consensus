@@ -1,7 +1,4 @@
 {-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DeriveFoldable             #-}
-{-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DeriveTraversable          #-}
 {-# LANGUAGE DerivingVia                #-}
@@ -13,7 +10,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
@@ -49,6 +46,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -479,3 +477,20 @@ injectTx_AtoB ::
        BlockB
 injectTx_AtoB =
     InPairs.ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx
+
+{-------------------------------------------------------------------------------
+  Query HF
+-------------------------------------------------------------------------------}
+
+instance BlockSupportsHFLedgerQuery '[BlockA, BlockB] where
+  answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery BlockA QFLookupTables result) = case q of {}
+  answerBlockQueryHFLookup (IS IZ) _cfg (q :: BlockQuery BlockB QFLookupTables result) = case q of {}
+  answerBlockQueryHFLookup (IS (IS idx)) _cfg _q = case idx of {}
+
+  answerBlockQueryHFTraverse IZ _cfg (q :: BlockQuery BlockA QFTraverseTables result) = case q of {}
+  answerBlockQueryHFTraverse (IS IZ) _cfg (q :: BlockQuery BlockB QFTraverseTables result) = case q of {}
+  answerBlockQueryHFTraverse (IS (IS idx)) _cfg _q = case idx of {}
+
+  queryLedgerGetTraversingFilter IZ (q :: BlockQuery BlockA QFTraverseTables result) = case q of {}
+  queryLedgerGetTraversingFilter (IS IZ) (q :: BlockQuery BlockB QFTraverseTables result) = case q of {}
+  queryLedgerGetTraversingFilter (IS (IS idx)) _q = case idx of {}

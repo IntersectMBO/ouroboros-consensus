@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE EmptyCase             #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -60,7 +61,6 @@ import           Codec.Serialise (decode, encode)
 import           Control.Monad (replicateM)
 import           Control.Monad.Except (Except, runExcept, throwError)
 import           Data.ByteString (ByteString)
-import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Void (Void)
@@ -212,24 +212,24 @@ instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
 
   getBlockKeySets _ = emptyLedgerTables
 
-data instance BlockQuery ByronBlock :: Type -> Type where
-  GetUpdateInterfaceState :: BlockQuery ByronBlock UPI.State
+data instance BlockQuery ByronBlock fp result where
+  GetUpdateInterfaceState :: BlockQuery ByronBlock QFNoTables UPI.State
 
-instance QueryLedger ByronBlock where
-  answerBlockQuery _cfg GetUpdateInterfaceState dlv =
-      pure $ CC.cvsUpdateState (byronLedgerState ledgerState)
+instance BlockSupportsLedgerQuery ByronBlock where
+  answerPureBlockQuery _cfg GetUpdateInterfaceState dlv =
+      CC.cvsUpdateState (byronLedgerState ledgerState)
     where
-      ExtLedgerState { ledgerState } = dlvCurrent dlv
-  getQueryKeySets _ = trivialLedgerTables
-  tableTraversingQuery _ = Nothing
+      ExtLedgerState { ledgerState } = dlv
+  answerBlockQueryLookup _cfg q _dlv = case q of {}
+  answerBlockQueryTraverse _cfg q _dlv = case q of {}
 
-instance SameDepIndex (BlockQuery ByronBlock) where
-  sameDepIndex GetUpdateInterfaceState GetUpdateInterfaceState = Just Refl
+instance SameDepIndex2 (BlockQuery ByronBlock) where
+  sameDepIndex2 GetUpdateInterfaceState GetUpdateInterfaceState = Just Refl
 
-deriving instance Eq (BlockQuery ByronBlock result)
-deriving instance Show (BlockQuery ByronBlock result)
+deriving instance Eq (BlockQuery ByronBlock fp result)
+deriving instance Show (BlockQuery ByronBlock fp result)
 
-instance ShowQuery (BlockQuery ByronBlock) where
+instance ShowQuery (BlockQuery ByronBlock fp) where
   showResult GetUpdateInterfaceState = show
 
 instance ShowProxy (BlockQuery ByronBlock) where
@@ -501,22 +501,22 @@ decodeByronLedgerState = do
       <*> decode
       <*> decodeByronTransition
 
-encodeByronQuery :: BlockQuery ByronBlock result -> Encoding
+encodeByronQuery :: BlockQuery ByronBlock fp result -> Encoding
 encodeByronQuery query = case query of
     GetUpdateInterfaceState -> CBOR.encodeWord8 0
 
-decodeByronQuery :: Decoder s (SomeSecond BlockQuery ByronBlock)
+decodeByronQuery :: Decoder s (SomeBlockQuery (BlockQuery ByronBlock))
 decodeByronQuery = do
     tag <- CBOR.decodeWord8
     case tag of
-      0 -> return $ SomeSecond GetUpdateInterfaceState
+      0 -> return $ SomeBlockQuery GetUpdateInterfaceState
       _ -> fail $ "decodeByronQuery: invalid tag " <> show tag
 
-encodeByronResult :: BlockQuery ByronBlock result -> result -> Encoding
+encodeByronResult :: BlockQuery ByronBlock fp result -> result -> Encoding
 encodeByronResult query = case query of
     GetUpdateInterfaceState -> toByronCBOR
 
-decodeByronResult :: BlockQuery ByronBlock result
+decodeByronResult :: BlockQuery ByronBlock fp result
                   -> forall s. Decoder s result
 decodeByronResult query = case query of
     GetUpdateInterfaceState -> fromByronCBOR

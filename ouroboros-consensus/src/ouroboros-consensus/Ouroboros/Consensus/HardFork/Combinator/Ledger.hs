@@ -36,6 +36,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
     -- * Ledger tables
   , HardForkHasLedgerTables
   , distribLedgerTables
+  , distribTxOut
   , injectLedgerTables
     -- ** Re-export
   , HasCanonicalTxIn (..)
@@ -1044,19 +1045,21 @@ distribLedgerTables ::
   -> LedgerTables (LedgerState                x  ) mk
 distribLedgerTables idx =
     LedgerTables
-  . mapKeysMK distrTxIn
-  . mapMaybeMK distrTxOut
+  . mapKeysMK (distribCanonicalTxIn idx)
+  . mapMaybeMK (distribTxOut idx)
   . getLedgerTables
-  where
-    distrTxIn :: Key (LedgerState (HardForkBlock xs)) -> Key (LedgerState x)
-    distrTxIn = distribCanonicalTxIn idx
 
-    distrTxOut :: Value (LedgerState (HardForkBlock xs)) -> Maybe (Value (LedgerState x))
-    distrTxOut =
-        fmap unwrapTxOut
-      . unComp
-      . apFn (projectNP idx $ composeTxOutTranslations $ ipTranslateTxOut hardForkEraTranslation)
-      . K
+distribTxOut ::
+     forall xs x.
+     CanHardFork xs
+  => Index xs x
+  -> Value (LedgerState (HardForkBlock xs))
+  -> Maybe (Value (LedgerState x))
+distribTxOut idx =
+    fmap unwrapTxOut
+  . unComp
+  . apFn (projectNP idx $ composeTxOutTranslations $ ipTranslateTxOut hardForkEraTranslation)
+  . K
 
 composeTxOutTranslations ::
      SListI xs

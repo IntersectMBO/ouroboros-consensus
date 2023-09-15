@@ -629,26 +629,25 @@ instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
   hardForkSummary = neverForksHardForkSummary id
 
-data instance BlockQuery TestBlock result where
-  QueryLedgerTip :: BlockQuery TestBlock (Point TestBlock)
+data instance BlockQuery TestBlock fp result where
+  QueryLedgerTip :: BlockQuery TestBlock QFNoTables (Point TestBlock)
 
-instance QueryLedger TestBlock where
-  answerBlockQuery _cfg QueryLedgerTip dlv =
+instance BlockSupportsLedgerQuery TestBlock where
+  answerPureBlockQuery _cfg QueryLedgerTip dlv =
     let
-      TestLedger{ lastAppliedPoint } = ledgerState $ dlvCurrent dlv
+      TestLedger{ lastAppliedPoint } = ledgerState dlv
     in
-      pure $ lastAppliedPoint
-  getQueryKeySets = const emptyLedgerTables
-  tableTraversingQuery = const Nothing
+      lastAppliedPoint
+  answerBlockQueryLookup _cfg q = case q of {}
+  answerBlockQueryTraverse _cfg q = case q of {}
 
+instance SameDepIndex2 (BlockQuery TestBlock) where
+  sameDepIndex2 QueryLedgerTip QueryLedgerTip = Just Refl
 
-instance SameDepIndex (BlockQuery TestBlock) where
-  sameDepIndex QueryLedgerTip QueryLedgerTip = Just Refl
+deriving instance Eq (BlockQuery TestBlock fp result)
+deriving instance Show (BlockQuery TestBlock fp result)
 
-deriving instance Eq (BlockQuery TestBlock result)
-deriving instance Show (BlockQuery TestBlock result)
-
-instance ShowQuery (BlockQuery TestBlock) where
+instance ShowQuery (BlockQuery TestBlock fp) where
   showResult QueryLedgerTip = show
 
 testInitLedger :: LedgerState TestBlock ValuesMK
