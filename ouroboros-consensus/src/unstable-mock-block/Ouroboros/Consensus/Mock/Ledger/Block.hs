@@ -520,10 +520,10 @@ instance MockProtocolSpecific c ext
      let st' = stowLedgerTables st
      st'' <- unstowLedgerTables
              <$> updateSimpleUTxO slot tx st'
-     return ( calculateDifference st st''
+     return ( forgetTrackingValues $ calculateDifference st st''
              , ValidatedSimpleGenTx tx )
 
-  reapplyTx _cfg slot vtx st = fst
+  reapplyTx _cfg slot vtx st = applyDiffs st . fst
     <$> applyTx _cfg DoNotIntervene slot (forgetValidatedSimpleGenTx vtx) st
 
   -- Large value so that the Mempool tests never run out of capacity when they
