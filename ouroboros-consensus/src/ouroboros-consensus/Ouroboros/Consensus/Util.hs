@@ -4,7 +4,6 @@
 {-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE FlexibleInstances        #-}
 {-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE KindSignatures           #-}
 {-# LANGUAGE LambdaCase               #-}
 {-# LANGUAGE PolyKinds                #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
@@ -74,6 +73,8 @@ module Ouroboros.Consensus.Util (
   , StaticEither (..)
   , fromStaticLeft
   , fromStaticRight
+    -- * Tuple comments
+  , type (--^)
   ) where
 
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytes,
@@ -427,3 +428,13 @@ fromStaticLeft (StaticLeft x) = x
 
 fromStaticRight :: StaticEither 'True l r -> r
 fromStaticRight (StaticRight x) = x
+
+{-------------------------------------------------------------------------------
+ Tuple comments
+-------------------------------------------------------------------------------}
+
+-- | Haddock doesn't allow to attach a comment to a component of a tuple,
+-- however sometimes it is easier to do so and more informative than adding it
+-- to the top of the function. This is just a tiny type trickery to allow us to
+-- do something functional.
+type a --^ (name :: k) = a
