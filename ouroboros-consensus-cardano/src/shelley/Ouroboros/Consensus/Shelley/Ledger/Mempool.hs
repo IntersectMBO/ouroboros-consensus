@@ -227,7 +227,7 @@ applyShelleyTx :: forall era proto.
   -> GenTx (ShelleyBlock proto era)
   -> TickedLedgerState (ShelleyBlock proto era) ValuesMK
   -> Except (ApplyTxErr (ShelleyBlock proto era))
-       ( TickedLedgerState (ShelleyBlock proto era) TrackingMK
+       ( TickedLedgerState (ShelleyBlock proto era) DiffMK
        , Validated (GenTx (ShelleyBlock proto era))
        )
 applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
@@ -245,8 +245,9 @@ applyShelleyTx cfg wti slot (ShelleyTx _ tx) st0 = do
          wti
          tx
 
-    let st' :: TickedLedgerState (ShelleyBlock proto era) TrackingMK
-        st' = calculateDifference st0
+    let st' :: TickedLedgerState (ShelleyBlock proto era) DiffMK
+        st' = forgetTrackingValues
+            $ calculateDifference st0
             $ unstowLedgerTables
             $ set theLedgerLens mempoolState' st1
 
@@ -258,7 +259,7 @@ reapplyShelleyTx ::
   -> SlotNo
   -> Validated (GenTx (ShelleyBlock proto era))
   -> TickedLedgerState (ShelleyBlock proto era) ValuesMK
-  -> Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era) TrackingMK)
+  -> Except (ApplyTxErr (ShelleyBlock proto era)) (TickedLedgerState (ShelleyBlock proto era) ValuesMK)
 reapplyShelleyTx cfg slot vgtx st0 = do
     let st1     = stowLedgerTables st0
         innerSt = tickedShelleyLedgerState st1
@@ -270,8 +271,7 @@ reapplyShelleyTx cfg slot vgtx st0 = do
           (SL.mkMempoolState innerSt)
           vtx
 
-    let st2 = calculateDifference st0
-          $ unstowLedgerTables
+    let st2 = unstowLedgerTables
           $ set theLedgerLens mempoolState' st1
 
     pure st2

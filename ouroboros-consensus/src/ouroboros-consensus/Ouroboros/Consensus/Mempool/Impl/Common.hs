@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds            #-}
 {-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
@@ -20,28 +21,23 @@ module Ouroboros.Consensus.Mempool.Impl.Common (
   , LedgerInterface (..)
   , chainDBLedgerInterface
     -- * Validation
-  , ValidationResult (..)
-  , extendVRNew
-  , extendVRPrevApplied
+  , RevalidateTxsResult (..)
   , revalidateTxsFor
+  , validateNewTransaction
     -- * Tracing
   , TraceEventMempool (..)
     -- * Conversions
-  , internalStateFromVR
   , snapshotFromIS
-  , validationResultFromIS
     -- * Ticking a ledger state
   , tickLedgerState
   ) where
 
 import           Control.Concurrent.Class.MonadMVar (MVar, newMVar)
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar (newTMVarIO)
-import           Control.Exception (assert)
 import           Control.Monad.Trans.Except (runExcept)
 import           Control.Tracer
 import           Data.Foldable
 import qualified Data.List.NonEmpty as NE
-import           Data.Maybe (isNothing)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Typeable
@@ -63,7 +59,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
                      (PointNotFound)
 import           Ouroboros.Consensus.Ticked
-import           Ouroboros.Consensus.Util (repeatedly)
 import           Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
@@ -270,176 +265,99 @@ tickLedgerState  cfg (ForgeInUnknownSlot st) =
   Validation
 -------------------------------------------------------------------------------}
 
-data ValidationResult invalidTx blk = ValidationResult {
-      -- | The tip of the chain before applying these transactions
-      vrBeforeTip      :: Point blk
-
-      -- | The slot number of the (imaginary) block the txs will be placed in
-    , vrSlotNo         :: SlotNo
-
-      -- | Capacity of the Mempool. Corresponds to 'vrBeforeTip' and
-      -- 'vrBeforeSlotNo', /not/ 'vrAfter'.
-    , vrBeforeCapacity :: MempoolCapacityBytes
-
-      -- | The transactions that were found to be valid (oldest to newest)
-    , vrValid          :: TxSeq (Validated (GenTx blk))
-
-      -- | The cached IDs of transactions that were found to be valid (oldest to
-      -- newest)
-    , vrValidTxIds     :: Set (GenTxId blk)
-
-      -- | A new transaction (not previously known) which was found to be valid.
-      --
-      -- n.b. This will only contain a valid transaction that was /newly/ added
-      -- to the mempool (not a previously known valid transaction).
-    , vrNewValid       :: Maybe (Validated (GenTx blk))
-
-      -- | The state of the ledger after applying 'vrValid' against the ledger
-      -- state identifeid by 'vrBeforeTip'.
-    , vrAfter          :: TickedLedgerState blk TrackingMK
-
-      -- | The transactions that were invalid, along with their errors
-      --
-      -- From oldest to newest.
-    , vrInvalid        :: [(invalidTx, ApplyTxErr blk)]
-
-      -- | The mempool 'TicketNo' counter.
-      --
-      -- When validating new transactions, this should be incremented, starting
-      -- from 'isLastTicketNo' of the 'InternalState'.
-      -- When validating previously applied transactions, this field should not
-      -- be affected.
-    , vrLastTicketNo   :: TicketNo
-  }
-
--- | Extend 'ValidationResult' with a previously validated transaction that
--- may or may not be valid in this ledger state
---
--- n.b. Even previously validated transactions may not be valid in a different
--- ledger state;  it is /still/ useful to indicate whether we have previously
--- validated this transaction because, if we have, we can utilize 'reapplyTx'
--- rather than 'applyTx' and, therefore, skip things like cryptographic
--- signatures.
-extendVRPrevApplied :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
-                    => LedgerConfig blk
-                    -> TxTicket (Validated (GenTx blk))
-                    -> ValidationResult (Validated (GenTx blk)) blk
-                    -> ValidationResult (Validated (GenTx blk)) blk
-extendVRPrevApplied cfg txTicket vr =
-    case runExcept (reapplyTx cfg vrSlotNo tx (forgetTrackingDiffs vrAfter)) of
-      Left err  -> vr { vrInvalid    = (tx, err) : vrInvalid
-                      }
-      Right st' -> vr { vrValid      = vrValid :> txTicket
-                      , vrValidTxIds = Set.insert (txId (txForgetValidated tx)) vrValidTxIds
-                      , vrAfter      = prependTrackingDiffs vrAfter st'
-                      }
-  where
-    TxTicket { txTicketTx = tx } = txTicket
-    ValidationResult { vrValid, vrSlotNo, vrValidTxIds, vrAfter, vrInvalid } = vr
-
--- | Extend 'ValidationResult' with a new transaction (one which we have not
+-- | Extend 'InternalState' with a new transaction (one which we have not
 -- previously validated) that may or may not be valid in this ledger state.
---
--- PRECONDITION: 'vrNewValid' is 'Nothing'. In other words: new transactions
--- should be validated one-by-one, not by calling 'extendVRNew' on its result
--- again.
-extendVRNew :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
-            => LedgerConfig blk
-            -> (GenTx blk -> TxSizeInBytes)
-            -> WhetherToIntervene
-            -> GenTx blk
-            -> ValidationResult (GenTx blk) blk
-            -> ( Either (ApplyTxErr blk) (Validated (GenTx blk))
-               , ValidationResult (GenTx blk) blk
-               )
-extendVRNew cfg txSize wti tx vr = assert (isNothing vrNewValid) $
-    case runExcept (applyTx cfg wti vrSlotNo tx $ forgetTrackingDiffs vrAfter) of
-      Left err         ->
-        ( Left err
-        , vr { vrInvalid      = (tx, err) : vrInvalid
-             }
-        )
+validateNewTransaction
+  :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
+  => LedgerConfig blk
+  -> (GenTx blk -> TxSizeInBytes)
+  -> WhetherToIntervene
+  -> GenTx blk
+  -> LedgerTables (LedgerState blk) ValuesMK
+  -> InternalState blk
+  -> ( Either (ApplyTxErr blk) (Validated (GenTx blk))
+     , InternalState blk
+     )
+validateNewTransaction cfg txSize wti tx values is =
+    case runExcept (applyTx cfg wti isSlotNo tx $ applyDiffs values isLedgerState) of
+      Left err         -> ( Left err, is )
       Right (st', vtx) ->
         ( Right vtx
-        , vr { vrValid        = vrValid :> TxTicket vtx nextTicketNo (txSize tx)
-             , vrValidTxIds   = Set.insert (txId tx) vrValidTxIds
-             , vrNewValid     = Just vtx
-             , vrAfter        = prependTrackingDiffs vrAfter st'
-             , vrLastTicketNo = nextTicketNo
+        , is { isTxs          = isTxs :> TxTicket vtx nextTicketNo (txSize tx)
+             , isTxIds        = Set.insert (txId tx) isTxIds
+             , isLedgerState  = prependDiffs isLedgerState st'
+             , isLastTicketNo = nextTicketNo
              }
         )
   where
-    ValidationResult {
-        vrValid
-      , vrValidTxIds
-      , vrAfter
-      , vrInvalid
-      , vrLastTicketNo
-      , vrNewValid
-      , vrSlotNo
-      } = vr
-
-    nextTicketNo = succ vrLastTicketNo
-
-{-------------------------------------------------------------------------------
-  Conversions
--------------------------------------------------------------------------------}
-
--- | Construct internal state from 'ValidationResult'
---
--- Discards information about invalid and newly valid transactions
-internalStateFromVR ::
-     HasLedgerTables (Ticked1 (LedgerState blk))
-  => ValidationResult invalidTx blk
-  -> InternalState blk
-internalStateFromVR vr = IS {
-      isTxs          = vrValid
-    , isTxIds        = vrValidTxIds
-    , isLedgerState  = forgetTrackingValues vrAfter
-    , isTip          = vrBeforeTip
-    , isSlotNo       = vrSlotNo
-    , isLastTicketNo = vrLastTicketNo
-    , isCapacity     = vrBeforeCapacity
-    }
-  where
-    ValidationResult {
-        vrBeforeTip
-      , vrSlotNo
-      , vrBeforeCapacity
-      , vrValid
-      , vrValidTxIds
-      , vrAfter
-      , vrLastTicketNo
-      } = vr
-
--- | Construct a 'ValidationResult' from internal state.
-validationResultFromIS ::
-     (HasLedgerTables (LedgerState blk), HasLedgerTables (Ticked1 (LedgerState blk)))
-  => LedgerTables (LedgerState blk) ValuesMK
-  -> InternalState blk
-  -> ValidationResult invalidTx blk
-validationResultFromIS values is = ValidationResult {
-      vrBeforeTip      = isTip
-    , vrSlotNo         = isSlotNo
-    , vrBeforeCapacity = isCapacity
-    , vrValid          = isTxs
-    , vrValidTxIds     = isTxIds
-    , vrNewValid       = Nothing
-    , vrAfter          = attachAndApplyDiffs isLedgerState values
-    , vrInvalid        = []
-    , vrLastTicketNo   = isLastTicketNo
-    }
-  where
-
     IS {
         isTxs
       , isTxIds
       , isLedgerState
-      , isTip
-      , isSlotNo
       , isLastTicketNo
-      , isCapacity
+      , isSlotNo
       } = is
+
+    nextTicketNo = succ isLastTicketNo
+
+-- | Revalidate the given transactions against the given ticked ledger state,
+-- producing a new 'InternalState'.
+--
+-- Note that this function will perform revalidation so it is expected that the
+-- transactions given to it were previously applied, for example if we are
+-- revalidating the whole set of transactions onto a new state, or if we remove
+-- some transactions and revalidate the remaining ones.
+revalidateTxsFor
+  :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
+  => MempoolCapacityBytesOverride
+  -> LedgerConfig blk
+  -> SlotNo
+  -> TickedLedgerState blk DiffMK
+     -- ^ The ticked ledger state againt which txs will be revalidated
+  -> LedgerTables (LedgerState blk) ValuesMK
+     -- ^ The tables with all the inputs for the transactions
+  -> TicketNo -- ^ 'isLastTicketNo' & 'vrLastTicketNo'
+  -> [TxTicket (Validated (GenTx blk))]
+  -> RevalidateTxsResult blk
+revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
+  let ReapplyTxsResult err val st' =
+        reapplyTxs cfg slot (map txTicketTx txTickets) (st `withLedgerTables` castLedgerTables values)
+
+      -- TODO: This is ugly, but I couldn't find a way to sneak the 'TxTicket' into
+      -- 'reapplyTxs'.
+      filterTxTickets _ [] = []
+      filterTxTickets (t1 : t1s) t2ss@(t2 : t2s)
+        | txId (txForgetValidated $ txTicketTx t1) == txId (txForgetValidated t2)
+        = t1 : filterTxTickets t1s t2s
+        | otherwise
+        = filterTxTickets t1s t2ss
+      filterTxTickets [] _ =
+        error "There are less transactions given to the revalidate function than \
+              \ transactions revalidated! This is unacceptable (and impossible)!"
+
+  in RevalidateTxsResult
+      (IS {
+         isTxs          = foldl (:>) TxSeq.Empty $ filterTxTickets txTickets val
+       , isTxIds        = Set.fromList $ map (txId . txForgetValidated) val
+       , isLedgerState  = st'
+       , isTip          = castPoint $ getTip st
+       , isSlotNo       = slot
+       , isLastTicketNo = lastTicketNo
+       , isCapacity     = computeMempoolCapacity st capacityOverride
+       })
+       err
+
+data RevalidateTxsResult blk =
+  RevalidateTxsResult {
+     -- | The internal state after revalidation
+     newInternalState :: !(InternalState blk)
+     -- | The previously valid transactions that were now invalid
+   , removedTxs       :: ![Invalidated blk]
+   }
+
+{-------------------------------------------------------------------------------
+  Conversions
+-------------------------------------------------------------------------------}
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
 snapshotFromIS
@@ -481,39 +399,6 @@ snapshotFromIS is = MempoolSnapshot {
   implSnapshotGetMempoolSize :: InternalState blk
                              -> MempoolSize
   implSnapshotGetMempoolSize = TxSeq.toMempoolSize . isTxs
-
-{-------------------------------------------------------------------------------
-  Validating txs
--------------------------------------------------------------------------------}
-
--- | Revalidate the given transactions against the given ticked ledger state.
---
--- Note that this function will perform revalidation so it is expected that the
--- transactions given to it were previously applied, for example if we are
--- revalidating the whole set of transactions onto a new state, or if we remove
--- some transactions and revalidate the remaining ones.
-revalidateTxsFor
-  :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
-  => MempoolCapacityBytesOverride
-  -> LedgerConfig blk
-  -> SlotNo
-  -> TickedLedgerState blk DiffMK
-     -- ^ The ticked ledger state againt which txs will be revalidated
-  -> LedgerTables (LedgerState blk) ValuesMK
-     -- ^ The tables with all the inputs for the transactions
-  -> TicketNo -- ^ 'isLastTicketNo' & 'vrLastTicketNo'
-  -> [TxTicket (Validated (GenTx blk))]
-  -> ( InternalState blk
-     , [Validated (GenTx blk)]
-     )
-revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
-    let vr = repeatedly
-             (extendVRPrevApplied cfg)
-             txTickets
-             $ validationResultFromIS values
-             $ initInternalState capacityOverride lastTicketNo slot st
-    in (internalStateFromVR vr, map fst (vrInvalid vr))
-
 
 {-------------------------------------------------------------------------------
   Tracing support for the mempool operations

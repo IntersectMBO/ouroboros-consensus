@@ -7,6 +7,7 @@ module Data.SOP.Functors (
     Flip (..)
   , K1 (..)
   , Product2 (..)
+  , product2Snd
   ) where
 
 import           Data.Kind (Type)
@@ -16,6 +17,9 @@ import           NoThunks.Class (NoThunks)
 type Product2 :: (x -> y -> Type) -> (x -> y -> Type) -> x -> y -> Type
 data Product2 f g x y = Pair2 (f x y) (g x y)
   deriving (Eq, Generic, Show)
+
+product2Snd :: Product2 f g x y -> g x y
+product2Snd (Pair2 _ g) = g
 
 type Flip :: (x -> y -> Type) -> y -> x -> Type
 newtype Flip f x y = Flip {unFlip :: f y x}

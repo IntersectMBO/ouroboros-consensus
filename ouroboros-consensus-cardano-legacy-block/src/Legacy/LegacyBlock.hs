@@ -252,7 +252,7 @@ instance ( LedgerSupportsMempool blk
     -> TickedLedgerState (LegacyBlock blk) ValuesMK
     -> Except
          (ApplyTxErr (LegacyBlock blk))
-         (TickedLedgerState (LegacyBlock blk) TrackingMK,
+         (TickedLedgerState (LegacyBlock blk) DiffMK,
          Validated (GenTx (LegacyBlock blk)))
   applyTx lcfg toIntervene sl tx tst =
       bimap (coerce . flip withLedgerTables emptyLedgerTables) coerce <$>
@@ -271,7 +271,7 @@ instance ( LedgerSupportsMempool blk
     -> TickedLedgerState (LegacyBlock blk) ValuesMK
     -> Except
          (ApplyTxErr (LegacyBlock blk))
-         (TickedLedgerState (LegacyBlock blk) TrackingMK)
+         (TickedLedgerState (LegacyBlock blk) ValuesMK)
   reapplyTx lcfg sl tx tst =
       coerce . flip withLedgerTables emptyLedgerTables <$>
         reapplyTx
