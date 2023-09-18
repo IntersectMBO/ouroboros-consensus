@@ -95,11 +95,12 @@ pureGetSnapshotFor capacityOverride cfg values is (ForgeInKnownSlot slot st) =
   snapshotFromIS $
     if pointHash (isTip is) == castHash (getTipHash st) && isSlotNo is == slot
     then is
-    else fst $ revalidateTxsFor
-                 capacityOverride
-                 cfg
-                 slot
-                 st
-                 values
-                 (isLastTicketNo is)
-                 (TxSeq.toList $ isTxs is)
+    else newInternalState
+       $ revalidateTxsFor
+           capacityOverride
+           cfg
+           slot
+           st
+           values
+           (isLastTicketNo is)
+           (TxSeq.toList $ isTxs is)
