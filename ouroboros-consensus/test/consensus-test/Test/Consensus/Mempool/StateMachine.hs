@@ -457,7 +457,7 @@ foldTxs cfg nextTk remainingCap initialState  =
             go ( MempoolTxAdded vtx:acc
                , succ tk
                , if txInBlockSize tx > cap then 0 else cap - txInBlockSize tx
-               , forgetTrackingDiffs st'
+               , applyDiffs st st'
                )
                next
 

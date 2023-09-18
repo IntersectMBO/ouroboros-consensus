@@ -280,7 +280,7 @@ instance TxGen DualByronBlock where
                              tx
                              st of
             Right (st', _vtx) ->
-              go (tx:acc) (n - 1) (forgetTrackingDiffs st')
+              go (tx:acc) (n - 1) (applyDiffs st st')
             Left _            -> error "testGenTxs: unexpected invalid tx"
 
 -- | Generate transaction

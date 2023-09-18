@@ -44,7 +44,6 @@ import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
                      HasLedgerTables, Key, KeysMK (..), LedgerTables (..),
                      NoThunksMK, ShowMK, Value, ValuesMK (..))
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
-                     (rawAttachAndApplyDiffs)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Test.Util.TestBlock (LedgerState (TestLedger),
                      PayloadSemantics (PayloadDependentError, PayloadDependentState, applyPayload, getPayloadKeySets),
@@ -192,11 +191,11 @@ txSize (TestBlockGenTx tx) = fromIntegral $ 1 + length (consumed tx) + length (p
 
 instance Ledger.LedgerSupportsMempool TestBlock where
   applyTx _cfg _shouldIntervene _slot (TestBlockGenTx tx) tickedSt =
-    except $ fmap (, ValidatedGenTx (TestBlockGenTx tx))
+    except $ fmap ((, ValidatedGenTx (TestBlockGenTx tx)) . Ledger.forgetTrackingValues)
            $ applyDirectlyToPayloadDependentState tickedSt tx
 
   reapplyTx cfg slot (ValidatedGenTx genTx) tickedSt =
-    fst <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
+    Ledger.applyDiffs tickedSt . fst <$> Ledger.applyTx cfg Ledger.DoNotIntervene slot genTx tickedSt
     -- FIXME: it is ok to use 'DoNotIntervene' here?
 
   -- We tweaked this in such a way that we test the case in which we exceed the
