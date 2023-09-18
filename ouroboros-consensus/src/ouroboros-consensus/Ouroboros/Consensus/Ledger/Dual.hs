@@ -587,7 +587,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
               }
       return (TickedDualLedgerState {
           tickedDualLedgerStateMain    = main'
-        , tickedDualLedgerStateAux     = forgetTrackingDiffs aux'
+        , tickedDualLedgerStateAux     = applyDiffs tickedDualLedgerStateAux aux'
         , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
         , tickedDualLedgerStateBridge  = updateBridgeWithTx
                                            vtx
@@ -614,7 +614,7 @@ instance Bridge m a => LedgerSupportsMempool (DualBlock m a) where
           )
       return $ TickedDualLedgerState {
           tickedDualLedgerStateMain    = main'
-        , tickedDualLedgerStateAux     = forgetTrackingDiffs aux'
+        , tickedDualLedgerStateAux     = aux'
         , tickedDualLedgerStateAuxOrig = tickedDualLedgerStateAuxOrig
         , tickedDualLedgerStateBridge  = updateBridgeWithTx
                                            tx
