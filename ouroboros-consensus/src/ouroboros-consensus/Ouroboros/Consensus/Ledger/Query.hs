@@ -18,9 +18,9 @@
 
 module Ouroboros.Consensus.Ledger.Query (
     BlockQuery
+  , BlockSupportsLedgerQuery (..)
   , ConfigSupportsNode (..)
   , Query (..)
-  , BlockSupportsLedgerQuery (..)
   , QueryVersion (..)
   , ShowQuery (..)
   , answerQuery
