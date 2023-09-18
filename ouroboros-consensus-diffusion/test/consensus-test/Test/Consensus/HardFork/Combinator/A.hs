@@ -354,7 +354,7 @@ instance LedgerSupportsMempool BlockA where
         InitiateAtoB -> do
           return (TickedLedgerStateA $ st { lgrA_transition = Just sno }, ValidatedGenTxA tx)
 
-  reapplyTx cfg slot = fmap fst .: (applyTx cfg DoNotIntervene slot . forgetValidatedGenTxA)
+  reapplyTx cfg slot tx st = applyDiffs st . fst <$> applyTx cfg DoNotIntervene slot (forgetValidatedGenTxA tx) st
 
   txsMaxBytes   _ = maxBound
   txInBlockSize _ = 0

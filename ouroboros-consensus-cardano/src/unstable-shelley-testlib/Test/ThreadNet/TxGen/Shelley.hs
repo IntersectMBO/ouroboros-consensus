@@ -83,7 +83,7 @@ instance HashAlgorithm h => TxGen (ShelleyBlock (TPraos (MockCrypto h)) (MockShe
           Just tx -> case runExcept $ fst <$> applyTx lcfg DoNotIntervene curSlotNo tx st of
               -- We don't mind generating invalid transactions
               Left  _   -> go (tx:acc) (n - 1) st
-              Right st' -> go (tx:acc) (n - 1) (forgetTrackingDiffs st')
+              Right st' -> go (tx:acc) (n - 1) (applyDiffs st st')
 
 genTx
   :: forall h. HashAlgorithm h
