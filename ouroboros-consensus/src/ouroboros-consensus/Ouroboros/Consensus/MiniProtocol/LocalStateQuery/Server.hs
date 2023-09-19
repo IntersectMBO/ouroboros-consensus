@@ -6,8 +6,8 @@ module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryS
 
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Query (DiskLedgerView (..), Query,
-                     BlockSupportsLedgerQuery)
+import           Ouroboros.Consensus.Ledger.Query (BlockSupportsLedgerQuery,
+                     DiskLedgerView (..), Query)
 import qualified Ouroboros.Consensus.Ledger.Query as Query
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)

@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleContexts           #-}
@@ -18,9 +19,9 @@
 
 module Ouroboros.Consensus.Ledger.Query (
     BlockQuery
+  , BlockSupportsLedgerQuery (..)
   , ConfigSupportsNode (..)
   , Query (..)
-  , BlockSupportsLedgerQuery (..)
   , QueryVersion (..)
   , ShowQuery (..)
   , answerQuery
@@ -129,7 +130,13 @@ data family BlockQuery
 class
      -- These instances are not needed for BlockSupportsLedgerQuery but we bundle them here
      -- so that we don't need to put them in 'SingleEraBlock' later on
-     (forall fp. ShowQuery (BlockQuery blk fp), SameDepIndex2 (BlockQuery blk))
+     (
+#if __GLASGOW_HASKELL__ <= 902
+       forall fp result. Show          (BlockQuery blk fp result),
+#endif
+       forall fp.        ShowQuery     (BlockQuery blk fp)
+     ,                   SameDepIndex2 (BlockQuery blk)
+     )
   => BlockSupportsLedgerQuery blk where
 
   -- | Answer the given query about the extended ledger state, without reading

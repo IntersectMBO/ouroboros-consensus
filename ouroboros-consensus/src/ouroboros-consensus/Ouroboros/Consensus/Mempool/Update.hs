@@ -11,10 +11,9 @@ module Ouroboros.Consensus.Mempool.Update (
 
 import           Cardano.Slotting.Slot
 import           Control.Concurrent.Class.MonadMVar (withMVar)
-import           Control.Exception (assert)
 import           Control.Tracer
 import qualified Data.List.NonEmpty as NE
-import           Data.Maybe (fromMaybe, isJust, isNothing)
+import           Data.Maybe (fromMaybe)
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block.Abstract (castHash, castPoint,
                      pointHash)
@@ -185,8 +184,8 @@ doAddTx mpEnv wti tx =
 -- It returns 'NoSpaceLeft' only when the current mempool size is bigger or
 -- equal than then mempool capacity. Otherwise it will validate the transaction
 -- and add it to the mempool if there is at least one byte free on the mempool.
-pureTryAddTx
-  :: ( LedgerSupportsMempool blk
+pureTryAddTx ::
+     ( LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
      )
   => LedgerCfg (LedgerState blk)
@@ -204,36 +203,31 @@ pureTryAddTx
 pureTryAddTx cfg txSize wti tx is values
   | let curSize = msNumBytes $ isMempoolSize is
   , curSize < getMempoolCapacityBytes (isCapacity is)
-  = -- We add the transaction if there is at least one byte free left in the mempool.
-  case eVtx of
-      -- We only extended the ValidationResult with a single transaction
-      -- ('tx'). So if it's not in 'vrInvalid', it must be in 'vrNewValid'.
+  = -- We add the transaction if there is at least one byte free left in the
+    -- mempool.
+  Processed $ case eVtx of
       Right vtx ->
-        assert (isJust (vrNewValid vr)) $
-          Processed $ TransactionProcessingResult
-            (Just is')
-            (MempoolTxAdded vtx)
-            (TraceMempoolAddedTx
-              vtx
-              (isMempoolSize is)
-              (isMempoolSize is')
-            )
+        TransactionProcessingResult
+          (Just is')
+          (MempoolTxAdded vtx)
+          (TraceMempoolAddedTx
+            vtx
+            (isMempoolSize is)
+            (isMempoolSize is')
+          )
       Left err ->
-        assert (isNothing (vrNewValid vr))  $
-          assert (length (vrInvalid vr) == 1) $
-            Processed $ TransactionProcessingResult
-              Nothing
-              (MempoolTxRejected tx err)
-              (TraceMempoolRejectedTx
-               tx
-               err
-               (isMempoolSize is)
-              )
+        TransactionProcessingResult
+          Nothing
+          (MempoolTxRejected tx err)
+          (TraceMempoolRejectedTx
+            tx
+            err
+            (isMempoolSize is)
+          )
   | otherwise
   = NoSpaceLeft
   where
-    (eVtx, vr) = extendVRNew cfg txSize wti tx $ validationResultFromIS values is
-    is'        = internalStateFromVR vr
+    (eVtx, is') = validateNewTransaction cfg txSize wti tx values is
 
 {-------------------------------------------------------------------------------
   Remove transactions
@@ -304,17 +298,18 @@ pureRemoveTxs
   -> NE.NonEmpty (GenTxId blk) -- ^ IDs to remove
   -> (InternalState blk, TraceEventMempool blk)
 pureRemoveTxs capacityOverride lcfg slot lstate values tkt txs txIds =
-    let (is', removed) = revalidateTxsFor
-                           capacityOverride
-                           lcfg
-                           slot
-                           lstate
-                           values
-                           tkt
-                           txs
+    let RevalidateTxsResult is' removed =
+          revalidateTxsFor
+            capacityOverride
+            lcfg
+            slot
+            lstate
+            values
+            tkt
+            txs
         trace = TraceMempoolManuallyRemovedTxs
                   txIds
-                  removed
+                  (map getInvalidated removed)
                   (isMempoolSize is')
     in (is', trace)
 
@@ -395,17 +390,18 @@ pureSyncWithLedger
      , Maybe (TraceEventMempool blk)
      )
 pureSyncWithLedger capacityOverride lcfg slot lstate values istate =
-  let (is', removed) = revalidateTxsFor
-                         capacityOverride
-                         lcfg
-                         slot
-                         lstate
-                         values
-                         (isLastTicketNo istate)
-                         (TxSeq.toList $ isTxs istate)
+  let RevalidateTxsResult is' removed =
+        revalidateTxsFor
+          capacityOverride
+          lcfg
+          slot
+          lstate
+          values
+          (isLastTicketNo istate)
+          (TxSeq.toList $ isTxs istate)
       mTrace = if null removed
                then
                  Nothing
                else
-                 Just $ TraceMempoolRemoveTxs removed (isMempoolSize is')
+                 Just $ TraceMempoolRemoveTxs (map getInvalidated removed) (isMempoolSize is')
   in (is', mTrace)

@@ -20,11 +20,11 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Ledger.Query (
     BlockQuery (..)
+  , BlockSupportsHFLedgerQuery (..)
   , HardForkQueryResult
   , QueryAnytime (..)
   , QueryHardFork (..)
   , QueryIfCurrent (..)
-  , BlockSupportsHFLedgerQuery (..)
   , decodeQueryAnytimeResult
   , decodeQueryHardForkResult
   , encodeQueryAnytimeResult
