@@ -1,8 +1,10 @@
 {-# LANGUAGE DeriveAnyClass            #-}
 {-# LANGUAGE DeriveGeneric             #-}
+{-# LANGUAGE EmptyCase                 #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
+{-# LANGUAGE LambdaCase                #-}
 {-# LANGUAGE MultiParamTypeClasses     #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE RecordWildCards           #-}
@@ -124,10 +126,12 @@ data instance ConsensusConfig (Bft c) = BftConfig {
 instance BftCrypto c => ConsensusProtocol (Bft c) where
   type ValidationErr (Bft c) = BftValidationErr
   type ValidateView  (Bft c) = BftValidateView c
-  type LedgerView    (Bft c) = ()
+  type LedgerView    (Bft c) = VoidUntilTicked
   type IsLeader      (Bft c) = ()
   type ChainDepState (Bft c) = ()
   type CanBeLeader   (Bft c) = CoreNodeId
+
+  invariantLedgerViewEmpty _proxy = \case {}
 
   protocolSecurityParam = bftSecurityParam . bftParams
 

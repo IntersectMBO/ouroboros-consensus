@@ -84,7 +84,7 @@ import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
 import           Ouroboros.Consensus.Protocol.TPraos (MaxMajorProtVer (..),
-                     Ticked (TickedPraosLedgerView))
+                     Ticked (TickedTPraosLedgerView))
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config

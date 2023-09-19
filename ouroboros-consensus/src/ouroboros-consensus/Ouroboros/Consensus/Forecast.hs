@@ -6,6 +6,7 @@ module Ouroboros.Consensus.Forecast (
   , constantForecastOf
   , mapForecast
   , trivialForecast
+  , trivialVoidForecast
     -- * Utilities for constructing forecasts
   , crossEraForecastBound
   ) where
@@ -39,6 +40,13 @@ mapForecast f (Forecast at for) = Forecast{
 -- Specialization of 'constantForecast'.
 trivialForecast :: GetTip b => b -> Forecast ()
 trivialForecast x = constantForecastOf TickedTrivial (getTipSlot x)
+
+-- | Trivial forecast of values of type @()@ performed by an instance of
+-- 'GetTip'.
+--
+-- Specialization of 'constantForecast'.
+trivialVoidForecast :: GetTip b => b -> Forecast VoidUntilTicked
+trivialVoidForecast x = constantForecastOf TickedVoid (getTipSlot x)
 
 -- | Forecast where the values are never changing
 --

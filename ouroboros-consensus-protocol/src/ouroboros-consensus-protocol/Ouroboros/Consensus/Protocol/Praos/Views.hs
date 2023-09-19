@@ -1,8 +1,11 @@
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DataKinds      #-}
+{-# LANGUAGE EmptyDataDecls #-}
+{-# LANGUAGE TypeFamilies   #-}
 
 module Ouroboros.Consensus.Protocol.Praos.Views (
     HeaderView (..)
-  , LedgerView (..)
+  , PraosLedgerView
+  , Ticked (..)
   ) where
 
 import           Cardano.Crypto.KES (SignedKES)
@@ -17,6 +20,7 @@ import           Cardano.Slotting.Slot (SlotNo)
 import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Protocol.Praos.Header (HeaderBody)
 import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
+import           Ouroboros.Consensus.Ticked
 
 -- | View of the block header required by the Praos protocol.
 data HeaderView crypto = HeaderView
@@ -38,7 +42,10 @@ data HeaderView crypto = HeaderView
     hvSignature :: !(SignedKES (KES crypto) (HeaderBody crypto))
   }
 
-data LedgerView crypto = LedgerView
+data PraosLedgerView crypto
+
+-- | Ledger view at a particular slot
+data instance Ticked (PraosLedgerView crypto) = TickedPraosLedgerView
   { -- | Stake distribution
     lvPoolDistr       :: SL.PoolDistr crypto,
     -- | Maximum header size

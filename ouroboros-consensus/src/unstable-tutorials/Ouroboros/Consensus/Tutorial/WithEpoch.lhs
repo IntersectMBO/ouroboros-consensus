@@ -44,7 +44,9 @@ As before, we require a few language extensions:
 > {-# LANGUAGE DerivingVia                #-}
 > {-# LANGUAGE DataKinds                  #-}
 > {-# LANGUAGE DeriveGeneric              #-}
+> {-# LANGUAGE EmptyCase                  #-}
 > {-# LANGUAGE FlexibleInstances          #-}
+> {-# LANGUAGE LambdaCase                 #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 > {-# LANGUAGE DeriveAnyClass #-}
@@ -471,13 +473,8 @@ is determined by the parity of the epoch snapshot along with the slot number,
 our `LedgerView` for `PrtclD` will simply be the snapshot (though we could have
 just as easily used a `Bool` representing the parity):
 
-> newtype LedgerViewD = LVD Word64
->   deriving stock (Show, Eq, Generic)
->   deriving newtype (Serialise, NoThunks)
-
-We also define a trivial `Ticked LedgerViewD` instance:
-
-> newtype instance Ticked LedgerViewD = TickedLedgerViewD LedgerViewD
+> data LedgerViewD
+> newtype instance Ticked LedgerViewD = TickedLedgerViewD Word64
 >   deriving stock (Show, Eq, Generic)
 >   deriving newtype (Serialise, NoThunks)
 
@@ -493,7 +490,7 @@ epoch snapshot.  This is due to functions for `ConsensusProtocol` only taking
 the `LedgerView` as an argument in some cases:
 
 > data instance Ticked ChainDepStateD =
->   TickedChainDepStateD { tickedChainDepLV :: LedgerViewD }
+>   TickedChainDepStateD { tickedChainDepLV :: Ticked LedgerViewD }
 >   deriving (Eq, Show, Generic, NoThunks)
 
 `ConsensusProtocol` is set up this way mostly because this is what
@@ -506,8 +503,8 @@ function modeling the leadership schedule.  For ease of use in our instantiation
 of `ConsensusProtocol PrtclD` we will represent the epoch snapshot using the
 `LedgerView` we just defined:
 
-> isLeader :: NodeId -> SlotNo -> LedgerView PrtclD -> Bool
-> isLeader nodeId (SlotNo slot) (LVD cntr) =
+> isLeader :: NodeId -> SlotNo -> Ticked LedgerViewD -> Bool
+> isLeader nodeId (SlotNo slot) (TickedLedgerViewD cntr) =
 >   case cntr `mod` 2 of
 >     -- nodes [0..9]   do round-robin (if even cntr)
 >     0 -> slot `mod` 10      == nodeId
@@ -537,6 +534,8 @@ functions defined above:
 >
 >   type ValidationErr PrtclD = String
 >
+>   invariantLedgerViewEmpty _proxy = \case {}
+>
 >   -- | checkIsLeader - Am I the leader this slot?
 >   checkIsLeader cfg _cbl slot tcds =
 >     case ccpd_mbCanBeLeader cfg of
@@ -547,9 +546,7 @@ functions defined above:
 >
 >   protocolSecurityParam = ccpd_securityParam
 >
->   tickChainDepState _cfg tlv _slot _cds = TickedChainDepStateD lv
->     where
->       TickedLedgerViewD lv = tlv
+>   tickChainDepState _cfg tlv _slot _cds = TickedChainDepStateD tlv
 >
 >   -- | apply the header (hdrView) and do a header check.
 >   --
@@ -596,7 +593,7 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 
 > instance LedgerSupportsProtocol BlockD where
 >   protocolLedgerView _ldgrCfg (TickedLedgerStateD ldgrSt) =
->     TickedLedgerViewD (LVD $ lsbd_snapshot2 ldgrSt)
+>     TickedLedgerViewD (lsbd_snapshot2 ldgrSt)
 >       -- note that we use the snapshot from 2 epochs ago.
 >
 >   -- | Borrowing somewhat from Ouroboros/Consensus/Byron/Ledger/Ledger.hs
@@ -614,7 +611,7 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 >                         }
 >                  else
 >                    return
->                      $ TickedLedgerViewD $ LVD
+>                      $ TickedLedgerViewD
 >                      $ if for < nextEpochStartSlot at then
 >                          lsbd_snapshot2 ldgrSt
 >                            -- for the rest of the current epoch,

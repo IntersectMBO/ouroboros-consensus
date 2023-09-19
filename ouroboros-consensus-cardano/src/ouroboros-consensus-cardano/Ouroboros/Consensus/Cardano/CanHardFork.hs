@@ -476,7 +476,7 @@ crossEraForecastByronToShelleyWrapper =
     forecast cfgShelley bound forecastFor currentByronState
         | forecastFor < maxFor
         = return $
-            WrapTickedLedgerView $ TickedPraosLedgerView $
+            WrapTickedLedgerView $ TickedTPraosLedgerView $
               SL.mkInitialShelleyLedgerView
                 (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
         | otherwise

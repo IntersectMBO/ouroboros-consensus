@@ -1,3 +1,4 @@
+{-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -10,11 +11,12 @@
 module Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView (
     -- * Hard fork
     HardForkLedgerView
-  , HardForkLedgerView_ (..)
+  , HardForkLedgerView_
     -- * Type family instances
   , Ticked (..)
   ) where
 
+import           Data.Kind (Type)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Dict
@@ -29,13 +31,7 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
   HardForkLedgerView
 -------------------------------------------------------------------------------}
 
-data HardForkLedgerView_ f xs = HardForkLedgerView {
-      -- | Information about the transition to the next era, if known
-      hardForkLedgerViewTransition :: !TransitionInfo
-
-      -- | The underlying ledger view
-    , hardForkLedgerViewPerEra     :: !(HardForkState f xs)
-    }
+data HardForkLedgerView_ (f :: Type -> Type) (xs :: [Type])
 
 deriving instance CanHardFork xs => Show (HardForkLedgerView_ WrapLedgerView xs)
 
@@ -46,27 +42,15 @@ type HardForkLedgerView = HardForkLedgerView_ WrapLedgerView
 -------------------------------------------------------------------------------}
 
 data instance Ticked (HardForkLedgerView_ f xs) = TickedHardForkLedgerView {
+      -- | Information about the transition to the next era, if known
       tickedHardForkLedgerViewTransition :: !TransitionInfo
+      -- | The underlying ledger view
     , tickedHardForkLedgerViewPerEra     :: !(HardForkState (Ticked :.: f) xs)
     }
 
 {-------------------------------------------------------------------------------
   Show instance for the benefit of tests
 -------------------------------------------------------------------------------}
-
-instance (SListI xs, Show a) => Show (HardForkLedgerView_ (K a) xs) where
-  show HardForkLedgerView{..} =
-      case (dictPast, dictCurrent) of
-        (Dict, Dict) -> show (
-            hardForkLedgerViewTransition
-          , getHardForkState hardForkLedgerViewPerEra
-          )
-    where
-      dictPast :: Dict (All (Compose Show (K Past))) xs
-      dictPast = all_NP $ hpure Dict
-
-      dictCurrent :: Dict (All (Compose Show (Current (K a)))) xs
-      dictCurrent = all_NP $ hpure Dict
 
 instance (SListI xs, Show (Ticked a)) => Show (Ticked (HardForkLedgerView_ (K a) xs)) where
   show TickedHardForkLedgerView{..} =

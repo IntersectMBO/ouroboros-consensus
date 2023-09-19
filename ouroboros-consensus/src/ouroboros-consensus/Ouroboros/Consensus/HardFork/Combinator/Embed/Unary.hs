@@ -556,14 +556,6 @@ instance Isomorphic WrapForgeStateInfo where
       . OneEraForgeStateInfo
       . Z
 
-instance Isomorphic WrapLedgerView where
-  project = State.fromTZ . hardForkLedgerViewPerEra . unwrapLedgerView
-  inject  = WrapLedgerView
-          . HardForkLedgerView TransitionImpossible
-          . HardForkState
-          . Telescope.TZ
-          . Current History.initBound
-
 instance Isomorphic (SomeSecond (NestedCtxt f)) where
   project (SomeSecond ctxt) = SomeSecond $ projNestedCtxt ctxt
   inject  (SomeSecond ctxt) = SomeSecond $ injNestedCtxt  ctxt

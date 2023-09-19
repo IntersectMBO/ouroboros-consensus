@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Protocol.Abstract (
 
 import           Control.Monad.Except
 import           Data.Kind (Type)
+import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
 import           GHC.Stack
 import           NoThunks.Class (NoThunks)
@@ -35,13 +36,12 @@ data family ConsensusConfig p :: Type
 --
 -- This class encodes the part that is independent from any particular
 -- block representation.
-class ( Show (ChainDepState   p)
-      , Show (ValidationErr   p)
-      , Show (SelectView      p)
-      , Show (LedgerView      p)
-      , Eq   (ChainDepState   p)
-      , Eq   (ValidationErr   p)
-      , Ord  (SelectView      p)
+class ( Show (ChainDepState       p)
+      , Show (ValidationErr       p)
+      , Show (SelectView          p)
+      , Eq   (ChainDepState       p)
+      , Eq   (ValidationErr       p)
+      , Ord  (SelectView          p)
       , NoThunks (ConsensusConfig p)
       , NoThunks (ChainDepState   p)
       , NoThunks (ValidationErr   p)
@@ -77,20 +77,24 @@ class ( Show (ChainDepState   p)
 
   -- | Projection of the ledger state the Ouroboros protocol needs access to
   --
-  -- The 'LedgerView' is a summary of the state of the ledger that the consensus
-  -- algorithm requires to do its job. Under certain circumstances the consensus
-  -- algorithm may require the 'LedgerView' for slots in the past (before the
-  -- current tip of the chain) or in the (near) future (beyond the tip of the
-  -- current chain, without having seen those future blocks yet).
+  -- The @'Ticked' LedgerView@ must be a summary of the state of the ledger that
+  -- the consensus algorithm requires to do its job. For non-trivial protocols,
+  -- the consensus algorithm will require this view on the ledger in the near
+  -- future, slightly beyond the tip of the current chain, without having seen
+  -- those future blocks yet.
   --
-  -- This puts limitations on what the 'LedgerView' can be. For example, it
-  -- cannot be the "current stake distribution", since it is of course
+  -- This data type itself should be empty, because the consensus layer only
+  -- ever requires @'Ticked' LedgerView@s, so that type is where the actual
+  -- data is.
+  --
+  -- This puts limitations on what the @'Ticked' LedgerView@ can be. For example,
+  -- it cannot be the "current stake distribution", since it is of course
   -- impossible to compute the current stake distibution for a slot in the
-  -- future. This means that for a consensus algorithm that requires the
-  -- stake distribution such as Praos, the 'LedgerView' for a particular slot
-  -- must be the "stake distribution for the purpose of leader selection".
-  -- This "relevant" stake distribution /can/ be computed for slots in the
-  -- (near) future because it is based on historical stake, not current.
+  -- future. This means that for a consensus algorithm that requires the stake
+  -- distribution, such as Praos, the ledger view for a particular slot must be
+  -- the "stake distribution for the purpose of leader selection". This
+  -- "relevant" stake distribution /can/ be computed for slots in the (near)
+  -- future because it is based on historical stake, not current.
   --
   -- A somewhat unfortunate consequence of this is that some decisions that
   -- ought to live in the consensus layer (such as the decision precisely which
@@ -121,6 +125,14 @@ class ( Show (ChainDepState   p)
 
   -- | View on a header required to validate it
   type family ValidateView p :: Type
+
+  -- | The @'LedgerView' p@ type should be empty; only @'Ticked' (LedgerView
+  -- p)@ is used by the code base.
+  --
+  -- (We do not simply define 'LedgerView' once and for all as an empty data
+  -- type, because some of our protocol combinators rely on different protocols
+  -- having equivalent 'LedgerView's.)
+  invariantLedgerViewEmpty :: Proxy p -> LedgerView p -> a
 
   -- | Check if a node is the leader
   checkIsLeader :: HasCallStack

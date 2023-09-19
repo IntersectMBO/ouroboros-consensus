@@ -1,9 +1,12 @@
 {-# LANGUAGE DeriveAnyClass            #-}
 {-# LANGUAGE DeriveGeneric             #-}
+{-# LANGUAGE EmptyCase                 #-}
+{-# LANGUAGE EmptyDataDecls            #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
 {-# LANGUAGE MultiParamTypeClasses     #-}
+{-# LANGUAGE LambdaCase                #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE PatternSynonyms           #-}
 {-# LANGUAGE RecordWildCards           #-}
@@ -19,7 +22,7 @@ module Ouroboros.Consensus.Protocol.PBFT (
   , PBftCanBeLeader (..)
   , PBftFields (..)
   , PBftIsLeader (..)
-  , PBftLedgerView (..)
+  , PBftLedgerView
   , PBftParams (..)
   , PBftSelectView (..)
   , PBftSignatureThreshold (..)
@@ -188,27 +191,24 @@ forgePBftFields contextDSIGN PBftIsLeader{..} toSign =
   Information PBFT requires from the ledger
 -------------------------------------------------------------------------------}
 
-newtype PBftLedgerView c = PBftLedgerView {
-      -- | ProtocolParameters: map from genesis to delegate keys.
-      pbftDelegates :: Bimap (PBftVerKeyHash c) (PBftVerKeyHash c)
-    }
-  deriving (Generic)
+data PBftLedgerView c
 
 newtype instance Ticked (PBftLedgerView c) = TickedPBftLedgerView {
       -- | The updated delegates
       tickedPBftDelegates :: Bimap (PBftVerKeyHash c) (PBftVerKeyHash c)
     }
+  deriving (Generic)
 
-deriving instance PBftCrypto c => NoThunks (PBftLedgerView c)
+deriving instance PBftCrypto c => NoThunks (Ticked (PBftLedgerView c))
   -- use generic instance
 
-deriving instance Eq (PBftVerKeyHash c) => Eq (PBftLedgerView c)
-deriving instance Show (PBftVerKeyHash c) => Show (PBftLedgerView c)
+deriving instance Eq (PBftVerKeyHash c) => Eq (Ticked (PBftLedgerView c))
+deriving instance Show (PBftVerKeyHash c) => Show (Ticked (PBftLedgerView c))
 
 instance (Serialise (PBftVerKeyHash c), Ord (PBftVerKeyHash c))
-      => Serialise (PBftLedgerView c) where
-  encode (PBftLedgerView ds) = encode (Bimap.toList ds)
-  decode = PBftLedgerView . Bimap.fromList <$> decode
+      => Serialise (Ticked (PBftLedgerView c)) where
+  encode (TickedPBftLedgerView ds) = encode (Bimap.toList ds)
+  decode = TickedPBftLedgerView . Bimap.fromList <$> decode
 
 {-------------------------------------------------------------------------------
   Protocol proper
@@ -296,6 +296,8 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
   type ChainDepState (PBft c) = PBftState       c
   type CanBeLeader   (PBft c) = PBftCanBeLeader c
 
+  invariantLedgerViewEmpty _proxy = \case {}
+
   protocolSecurityParam = pbftSecurityParam . pbftParams
 
   checkIsLeader PBftConfig{pbftParams}
@@ -346,7 +348,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
             Nothing ->
               throwError $ PBftNotGenesisDelegate
                              (hashVerKey pbftIssuer)
-                             (PBftLedgerView dms)
+                             (TickedPBftLedgerView dms)
             Just gk -> do
               let state' = append cfg params (slot, gk) state
               case pbftWindowExceedsThreshold params state' gk of
@@ -366,7 +368,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
             Nothing ->
               error $ show $ PBftNotGenesisDelegate
                                (hashVerKey pbftIssuer)
-                               (PBftLedgerView dms)
+                               (TickedPBftLedgerView dms)
             Just gk -> do
               let state' = append cfg params (slot, gk) state
               case pbftWindowExceedsThreshold params state' gk of
@@ -438,7 +440,7 @@ append PBftConfig{} PBftWindowParams{..} =
 -- avoid space leaks.
 data PBftValidationErr c
   = PBftInvalidSignature !Text
-  | PBftNotGenesisDelegate !(PBftVerKeyHash c) !(PBftLedgerView c)
+  | PBftNotGenesisDelegate !(PBftVerKeyHash c) !(Ticked (PBftLedgerView c))
   -- | We record how many slots this key signed
   | PBftExceededSignThreshold !(PBftVerKeyHash c) !Word64
   | PBftInvalidSlot

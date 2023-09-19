@@ -72,14 +72,14 @@ instance BlockSupportsProtocol ByronBlock where
 
   selectView _ = mkPBftSelectView
 
-toPBftLedgerView :: Delegation.Map -> PBftLedgerView PBftByronCrypto
-toPBftLedgerView = PBftLedgerView . Delegation.unMap
+toPBftLedgerView :: Delegation.Map -> Ticked (PBftLedgerView PBftByronCrypto)
+toPBftLedgerView = TickedPBftLedgerView . Delegation.unMap
 
 toTickedPBftLedgerView :: Delegation.Map -> Ticked (PBftLedgerView PBftByronCrypto)
 toTickedPBftLedgerView = TickedPBftLedgerView . Delegation.unMap
 
-fromPBftLedgerView :: PBftLedgerView PBftByronCrypto -> Delegation.Map
-fromPBftLedgerView = Delegation.Map . pbftDelegates
+fromPBftLedgerView :: Ticked (PBftLedgerView PBftByronCrypto) -> Delegation.Map
+fromPBftLedgerView = Delegation.Map . tickedPBftDelegates
 
 encodeByronChainDepState
   :: ChainDepState (BlockProtocol ByronBlock)

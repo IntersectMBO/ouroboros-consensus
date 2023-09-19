@@ -1,7 +1,9 @@
 {-# LANGUAGE DataKinds               #-}
 {-# LANGUAGE DeriveAnyClass          #-}
 {-# LANGUAGE DeriveGeneric           #-}
+{-# LANGUAGE EmptyCase               #-}
 {-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE LambdaCase              #-}
 {-# LANGUAGE MultiParamTypeClasses   #-}
 {-# LANGUAGE NamedFieldPuns          #-}
 {-# LANGUAGE OverloadedStrings       #-}
@@ -236,10 +238,6 @@ type PraosValidateView c = Views.HeaderView c
   ConsensusProtocol
 -------------------------------------------------------------------------------}
 
--- | Ledger view at a particular slot
-newtype instance Ticked (Views.LedgerView c) = TickedPraosLedgerView
-  { getTickedPraosLedgerView :: Views.LedgerView c }
-
 -- | Praos consensus state.
 --
 -- We track the last slot and the counters for operational certificates, as well
@@ -312,7 +310,7 @@ instance PraosCrypto c => Serialise (PraosState c) where
 -- | Ticked 'PraosState'
 data instance Ticked (PraosState c) = TickedPraosState
   { tickedPraosStateChainDepState :: PraosState c,
-    tickedPraosStateLedgerView :: Ticked (Views.LedgerView c)
+    tickedPraosStateLedgerView :: Ticked (Views.PraosLedgerView c)
   }
 
 -- | Errors which we might encounter
@@ -366,9 +364,11 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type IsLeader (Praos c) = PraosIsLeader c
   type CanBeLeader (Praos c) = PraosCanBeLeader c
   type SelectView (Praos c) = PraosChainSelectView c
-  type LedgerView (Praos c) = Views.LedgerView c
+  type LedgerView (Praos c) = Views.PraosLedgerView c
   type ValidationErr (Praos c) = PraosValidationErr c
   type ValidateView (Praos c) = PraosValidateView c
+
+  invariantLedgerViewEmpty _proxy = \case {}
 
   protocolSecurityParam = praosSecurityParam . praosParams
 
@@ -389,7 +389,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
         else Nothing
       where
         chainState = tickedPraosStateChainDepState cs
-        lv = getTickedPraosLedgerView $ tickedPraosStateLedgerView cs
+        lv = tickedPraosStateLedgerView cs
         eta0 = praosStateEpochNonce chainState
         vkhCold = SL.hashKey praosCanBeLeaderColdVerKey
         rho' = mkInputVRF slot eta0
@@ -404,14 +404,10 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   --   nonce derived from the last block of the previous epoch.
   -- - Update the "last block of previous epoch" nonce to the nonce derived from
   --   the last applied block.
-  tickChainDepState
-    PraosConfig {praosEpochInfo}
-    (TickedPraosLedgerView lv)
-    slot
-    st =
+  tickChainDepState PraosConfig{praosEpochInfo} lv slot st =
       TickedPraosState
         { tickedPraosStateChainDepState = st',
-          tickedPraosStateLedgerView = TickedPraosLedgerView lv
+          tickedPraosStateLedgerView = lv
         }
       where
         newEpoch =
@@ -455,7 +451,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       -- Finally, we apply the changes from this header to the chain state.
       pure $ reupdateChainDepState cfg b slot tcs
       where
-        lv = getTickedPraosLedgerView (tickedPraosStateLedgerView tcs)
+        lv = tickedPraosStateLedgerView tcs
         cs = tickedPraosStateChainDepState tcs
 
   -- Re-update the chain dependent state as a result of processing a header.
@@ -506,13 +502,13 @@ meetsLeaderThreshold ::
   forall c.
   PraosCrypto c =>
   ConsensusConfig (Praos c) ->
-  LedgerView (Praos c) ->
+  Ticked (Views.PraosLedgerView c) ->
   SL.KeyHash 'SL.StakePool c ->
   VRF.CertifiedVRF (VRF c) InputVRF ->
   Bool
 meetsLeaderThreshold
   PraosConfig {praosParams}
-  Views.LedgerView {Views.lvPoolDistr}
+  Views.TickedPraosLedgerView {Views.lvPoolDistr}
   keyHash
   rho =
     checkLeaderNatValue
@@ -530,7 +526,7 @@ validateVRFSignature ::
   ( PraosCrypto c
   ) =>
   Nonce ->
-  Views.LedgerView c ->
+  Ticked (Views.PraosLedgerView c) ->
   ActiveSlotCoeff ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
@@ -558,7 +554,7 @@ validateVRFSignature eta0 (Views.lvPoolDistr -> SL.PoolDistr pd) f b = do
 validateKESSignature ::
   PraosCrypto c =>
   ConsensusConfig (Praos c) ->
-  LedgerView (Praos c) ->
+  Ticked (Views.PraosLedgerView c) ->
   Map (KeyHash 'BlockIssuer c) Word64 ->
   Views.HeaderView c ->
   Except (PraosValidationErr c) ()
@@ -567,7 +563,7 @@ validateKESSignature
            PraosParams {praosMaxKESEvo, praosSlotsPerKESPeriod}
            _ei
          )
-  Views.LedgerView {Views.lvPoolDistr}
+  Views.TickedPraosLedgerView {Views.lvPoolDistr}
   ocertCounters
   b = do
     c0 <= kp ?! KESBeforeStartOCERT c0 kp

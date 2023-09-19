@@ -45,8 +45,8 @@ protocolInfoMockPBFT params eraParams =
                                          (genesisHeaderState S.empty)
       }
   where
-    ledgerView :: PBftLedgerView PBftMockCrypto
-    ledgerView = PBftLedgerView $ Bimap.fromList [
+    ledgerView :: Ticked (PBftLedgerView PBftMockCrypto)
+    ledgerView = TickedPBftLedgerView $ Bimap.fromList [
           (PBftMockVerKeyHash (verKey n), PBftMockVerKeyHash (verKey n))
         | n <- enumCoreNodes (pbftNumNodes params)
         ]

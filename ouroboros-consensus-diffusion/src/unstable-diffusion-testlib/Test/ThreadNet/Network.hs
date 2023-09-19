@@ -89,7 +89,6 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
-import           Ouroboros.Consensus.Util.RedundantConstraints
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM
 import           Ouroboros.Consensus.Util.Time
@@ -421,8 +420,6 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
     mkTestOutput vertexInfos
   where
-    _ = keepRedundantConstraint (Proxy @(Show (LedgerView (BlockProtocol blk))))
-
     -- epoch size of the first era (ie the one that might have EBBs)
     epochSize0 :: EpochSize
     epochSize0 = HFF.futureFirstEpochSize future

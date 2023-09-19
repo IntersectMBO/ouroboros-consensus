@@ -1,5 +1,7 @@
 {-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE EmptyCase         #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TypeFamilies      #-}
 
@@ -39,11 +41,13 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
   type SelectView    (WithLeaderSchedule p) = SelectView p
 
   type ChainDepState (WithLeaderSchedule p) = ()
-  type LedgerView    (WithLeaderSchedule p) = ()
+  type LedgerView    (WithLeaderSchedule p) = VoidUntilTicked
   type ValidationErr (WithLeaderSchedule p) = ()
   type IsLeader      (WithLeaderSchedule p) = ()
   type ValidateView  (WithLeaderSchedule p) = ()
   type CanBeLeader   (WithLeaderSchedule p) = ()
+
+  invariantLedgerViewEmpty _proxy = \case {}
 
   protocolSecurityParam = protocolSecurityParam . wlsConfigP
 

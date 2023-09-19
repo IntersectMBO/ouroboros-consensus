@@ -429,7 +429,7 @@ forecast_AtoB ::
         BlockA
         BlockB
 forecast_AtoB = InPairs.ignoringBoth $ CrossEraForecaster $ \_ _ _ -> return $
-    WrapTickedLedgerView TickedTrivial
+    WrapTickedLedgerView TickedVoid
 
 injectTx_AtoB ::
      RequiringBoth

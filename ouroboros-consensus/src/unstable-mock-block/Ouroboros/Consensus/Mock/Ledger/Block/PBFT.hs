@@ -90,7 +90,7 @@ _simplePBftHeader = simpleHeader
 instance (SimpleCrypto c, PBftCrypto c')
       => MockProtocolSpecific c (SimplePBftExt c c') where
   -- | PBFT requires the ledger view; for the mock ledger, this is constant
-  type MockLedgerConfig c (SimplePBftExt c c') = PBftLedgerView c'
+  type MockLedgerConfig c (SimplePBftExt c c') = Ticked (PBftLedgerView c')
 
 {-------------------------------------------------------------------------------
   Evidence that SimpleBlock can support PBFT
@@ -118,14 +118,10 @@ instance ( SimpleCrypto c
 instance ( SimpleCrypto c
          , Signable MockDSIGN (SignedSimplePBft c PBftMockCrypto)
          ) => LedgerSupportsProtocol (SimplePBftBlock c PBftMockCrypto) where
-  protocolLedgerView   cfg _  = pretendTicked $ simpleMockLedgerConfig cfg
+  protocolLedgerView   cfg _  = simpleMockLedgerConfig cfg
   ledgerViewForecastAt cfg st = constantForecastOf
-                                 (pretendTicked $ simpleMockLedgerConfig cfg)
+                                 (simpleMockLedgerConfig cfg)
                                  (getTipSlot st)
-
-pretendTicked :: PBftLedgerView PBftMockCrypto
-              -> Ticked (PBftLedgerView PBftMockCrypto)
-pretendTicked (PBftLedgerView ds) = TickedPBftLedgerView ds
 
 {-------------------------------------------------------------------------------
   Forging

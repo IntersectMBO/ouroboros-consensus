@@ -25,7 +25,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers (
   , WrapChainDepState (..)
   , WrapConsensusConfig (..)
   , WrapIsLeader (..)
-  , WrapLedgerView (..)
+  , WrapLedgerView
   , WrapSelectView (..)
   , WrapValidateView (..)
   , WrapValidatedGenTx (..)
@@ -84,7 +84,7 @@ newtype WrapCanBeLeader     blk = WrapCanBeLeader     { unwrapCanBeLeader     ::
 newtype WrapChainDepState   blk = WrapChainDepState   { unwrapChainDepState   :: ChainDepState   (BlockProtocol blk) }
 newtype WrapConsensusConfig blk = WrapConsensusConfig { unwrapConsensusConfig :: ConsensusConfig (BlockProtocol blk) }
 newtype WrapIsLeader        blk = WrapIsLeader        { unwrapIsLeader        :: IsLeader        (BlockProtocol blk) }
-newtype WrapLedgerView      blk = WrapLedgerView      { unwrapLedgerView      :: LedgerView      (BlockProtocol blk) }
+data    WrapLedgerView      blk
 newtype WrapSelectView      blk = WrapSelectView      { unwrapSelectView      :: SelectView      (BlockProtocol blk) }
 newtype WrapValidateView    blk = WrapValidateView    { unwrapValidateView    :: ValidateView    (BlockProtocol blk) }
 newtype WrapValidationErr   blk = WrapValidationErr   { unwrapValidationErr   :: ValidationErr   (BlockProtocol blk) }
@@ -140,7 +140,6 @@ deriving instance Eq (ValidationErr (BlockProtocol blk)) => Eq (WrapValidationEr
 deriving instance Ord (SelectView (BlockProtocol blk)) => Ord (WrapSelectView blk)
 
 deriving instance Show (ChainDepState (BlockProtocol blk)) => Show (WrapChainDepState blk)
-deriving instance Show (LedgerView    (BlockProtocol blk)) => Show (WrapLedgerView    blk)
 deriving instance Show (SelectView    (BlockProtocol blk)) => Show (WrapSelectView    blk)
 deriving instance Show (ValidationErr (BlockProtocol blk)) => Show (WrapValidationErr blk)
 

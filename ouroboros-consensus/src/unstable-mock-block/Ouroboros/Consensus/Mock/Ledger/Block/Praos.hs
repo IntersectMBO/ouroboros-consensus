@@ -31,7 +31,6 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
-import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mock.Ledger.Address
 import           Ouroboros.Consensus.Mock.Ledger.Block
@@ -116,10 +115,8 @@ instance ( SimpleCrypto c
          , PraosCrypto c'
          , Signable (PraosKES c') (SignedSimplePraos c c')
          ) => LedgerSupportsProtocol (SimplePraosBlock c c') where
-  protocolLedgerView   _ _  = TickedTrivial
-  ledgerViewForecastAt _ st = constantForecastOf
-                                 TickedTrivial
-                                 (getTipSlot st)
+  protocolLedgerView   _ _  = TickedVoid
+  ledgerViewForecastAt _    = trivialVoidForecast
 
 {-------------------------------------------------------------------------------
   Forging

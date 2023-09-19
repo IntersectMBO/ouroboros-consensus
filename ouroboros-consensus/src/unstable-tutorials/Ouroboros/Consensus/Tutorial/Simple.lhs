@@ -26,9 +26,11 @@ This example uses several extensions:
 > {-# LANGUAGE TypeFamilies               #-}
 > {-# LANGUAGE DerivingVia                #-}
 > {-# LANGUAGE DataKinds                  #-}
-> {-# LANGUAGE DeriveGeneric              #-}
-> {-# LANGUAGE FlexibleInstances          #-}
 > {-# LANGUAGE DeriveAnyClass             #-}
+> {-# LANGUAGE DeriveGeneric              #-}
+> {-# LANGUAGE EmptyCase                  #-}
+> {-# LANGUAGE FlexibleInstances          #-}
+> {-# LANGUAGE LambdaCase                 #-}
 > {-# LANGUAGE MultiParamTypeClasses      #-}
 > {-# LANGUAGE StandaloneDeriving         #-}
 
@@ -50,7 +52,8 @@ First, some imports we'll need:
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
 >   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..) )
-> import Ouroboros.Consensus.Ticked ( Ticked(TickedTrivial) )
+> import Ouroboros.Consensus.Ticked
+>   (Ticked(TickedTrivial, TickedVoid), VoidUntilTicked)
 > import Ouroboros.Consensus.Block
 >   (BlockSupportsProtocol (selectView, validateView))
 > import Ouroboros.Consensus.Ledger.Abstract
@@ -59,7 +62,7 @@ First, some imports we'll need:
 >    LedgerState, ApplyBlock(..), UpdateLedger)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
 >   (LedgerSupportsProtocol(..))
-> import Ouroboros.Consensus.Forecast (trivialForecast)
+> import Ouroboros.Consensus.Forecast (trivialVoidForecast)
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
 
@@ -131,7 +134,7 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 > instance ConsensusProtocol SP where
 >   type SelectView    SP = BlockNo
 >
->   type LedgerView    SP = ()
+>   type LedgerView    SP = VoidUntilTicked
 >
 >   type IsLeader      SP = SP_IsLeader
 >   type CanBeLeader   SP = SP_CanBeLeader
@@ -139,6 +142,8 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 >   type ChainDepState SP = ()
 >   type ValidateView  SP = ()
 >   type ValidationErr SP = Void
+>
+>   invariantLedgerViewEmpty _proxy = \case {}
 >
 >   checkIsLeader cfg SP_CanBeLeader slot _tcds =
 >       if slot `Set.member` cfgsp_slotsLedByMe cfg
@@ -667,14 +672,14 @@ Note that since a block is associated with one and only one protocol, we can use
 the block to index both the ledger and the protocol.
 
 > instance LedgerSupportsProtocol BlockC where
->   protocolLedgerView _lcfg  _tl = TickedTrivial
->   ledgerViewForecastAt _lccf = trivialForecast
+>   protocolLedgerView _lcfg  _tl = TickedVoid
+>   ledgerViewForecastAt _lccf = trivialVoidForecast
 
 The `protocolLedgerView` function describes how to project the
 consensus-specific `LedgerView` out of `LedgerState` and `LedgerCfg` together -
 however `SP` does not use any information from the ledger to make any decisions
-and since `LedgerView SP` is simply `()` - we use `TickedTrivial` here for the
-implementation of protocolLedgerView which constructs a `Ticked ()` value.
+and since `LedgerView SP` is simply `VoidUntilTicked` - we use `TickedVoid` here for the
+implementation of protocolLedgerView which constructs a `Ticked VoidUntilTicked` value.
 
 `ledgerViewForecastAt` returns a `Forecast` (defined in
 `Ouroboros.Consensus.Forecast`) of a `LedgerView` - where a `Forecast` is a

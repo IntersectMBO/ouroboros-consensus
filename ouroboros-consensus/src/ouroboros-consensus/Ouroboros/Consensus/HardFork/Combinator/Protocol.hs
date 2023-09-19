@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE EmptyCase                  #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -23,7 +24,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol (
   , HardForkValidationErr (..)
     -- * Re-exports to keep 'Protocol.LedgerView' an internal module
   , HardForkLedgerView
-  , HardForkLedgerView_ (..)
+  , HardForkLedgerView_
     -- * Type family instances
   , Ticked (..)
   ) where
@@ -49,7 +50,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
-                     (HardForkLedgerView, HardForkLedgerView_ (..), Ticked (..))
+                     (HardForkLedgerView, HardForkLedgerView_, Ticked (..))
 import           Ouroboros.Consensus.HardFork.Combinator.State (HardForkState,
                      Translate (..))
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
@@ -107,6 +108,8 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
   --
   -- Straight-forward extensions
   --
+
+  invariantLedgerViewEmpty _proxy = \case {}
 
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK

@@ -36,7 +36,6 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol (..))
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto,
@@ -54,7 +53,7 @@ instance
   LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era)
   where
   protocolLedgerView _cfg =
-    TPraos.TickedPraosLedgerView
+    TPraos.TickedTPraosLedgerView
       . SL.currentLedgerView
       . tickedShelleyLedgerState
 
@@ -63,7 +62,7 @@ instance
   ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
     if
         | NotOrigin for == at ->
-          return $ TPraos.TickedPraosLedgerView $ SL.currentLedgerView shelleyLedgerState
+          return $ TPraos.TickedTPraosLedgerView $ SL.currentLedgerView shelleyLedgerState
         | for < maxFor ->
           return $ futureLedgerView for
         | otherwise ->
@@ -79,11 +78,11 @@ instance
       swindow = SL.stabilityWindow globals
       at = ledgerTipSlot ledgerState
 
-      futureLedgerView :: SlotNo -> Ticked (SL.LedgerView (EraCrypto era))
+      futureLedgerView :: SlotNo -> Ticked (TPraos.TPraosLedgerView (EraCrypto era))
       futureLedgerView =
         either
           (\e -> error ("futureLedgerView failed: " <> show e))
-          TPraos.TickedPraosLedgerView
+          TPraos.TickedTPraosLedgerView
           . SL.futureLedgerView globals shelleyLedgerState
 
       -- Exclusive upper bound
@@ -106,8 +105,7 @@ instance
         pparam :: forall a. Lens.Micro.Lens' (LedgerCore.PParams era) a -> a
         pparam lens = getPParams nes Lens.Micro.^. lens
 
-     in Praos.TickedPraosLedgerView $
-          Praos.LedgerView
+     in Praos.TickedPraosLedgerView
             { Praos.lvPoolDistr       = nesPd,
               Praos.lvMaxBodySize     = pparam LedgerCore.ppMaxBBSizeL,
               Praos.lvMaxHeaderSize   = pparam LedgerCore.ppMaxBHSizeL,

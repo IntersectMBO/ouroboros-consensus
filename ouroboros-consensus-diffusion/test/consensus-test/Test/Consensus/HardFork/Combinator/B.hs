@@ -67,6 +67,7 @@ import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Ticked (VoidUntilTicked)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
@@ -88,11 +89,13 @@ data instance ConsensusConfig ProtocolB = CfgB {
 
 instance ConsensusProtocol ProtocolB where
   type ChainDepState ProtocolB = ()
-  type LedgerView    ProtocolB = ()
+  type LedgerView    ProtocolB = VoidUntilTicked
   type IsLeader      ProtocolB = ()
   type CanBeLeader   ProtocolB = ()
   type ValidateView  ProtocolB = ()
   type ValidationErr ProtocolB = Void
+
+  invariantLedgerViewEmpty _proxy = \case {}
 
   checkIsLeader CfgB{..} () slot _ =
       if slot `Set.member` cfgB_leadInSlots
@@ -201,8 +204,8 @@ instance BlockSupportsProtocol BlockB where
   validateView _ _ = ()
 
 instance LedgerSupportsProtocol BlockB where
-  protocolLedgerView   _ _ = TickedTrivial
-  ledgerViewForecastAt _   = trivialForecast
+  protocolLedgerView   _ _ = TickedVoid
+  ledgerViewForecastAt _   = trivialVoidForecast
 
 instance HasPartialConsensusConfig ProtocolB
 

@@ -1,4 +1,6 @@
 {-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE EmptyCase         #-}
+{-# LANGUAGE LambdaCase        #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies      #-}
 
@@ -8,6 +10,7 @@ module Ouroboros.Consensus.Protocol.ModChainSel (
   , ConsensusConfig (..)
   ) where
 
+import           Data.Proxy (Proxy (Proxy))
 import           Data.Typeable (Typeable)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -34,6 +37,11 @@ instance ( ConsensusProtocol p
     type LedgerView    (ModChainSel p s) = LedgerView    p
     type ValidationErr (ModChainSel p s) = ValidationErr p
     type ValidateView  (ModChainSel p s) = ValidateView  p
+
+    invariantLedgerViewEmpty = invariantLedgerViewEmpty . proxyP
+      where
+        proxyP :: Proxy (ModChainSel p s) -> Proxy p
+        proxyP Proxy = Proxy
 
     checkIsLeader         = checkIsLeader         . mcsConfigP
     tickChainDepState     = tickChainDepState     . mcsConfigP

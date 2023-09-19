@@ -50,7 +50,6 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.NodeId
-import           Ouroboros.Consensus.Protocol.Abstract (LedgerView)
 import           Ouroboros.Consensus.Protocol.LeaderSchedule
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.TypeFamilyWrappers
@@ -58,7 +57,6 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
-import           Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Ouroboros.Network.Mock.Chain as MockChain
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS (MockFS)
@@ -490,8 +488,6 @@ prop_general_internal syncity pga testOutput =
     propSync prop = case syncity of
         Sync     -> prop
         SemiSync -> property True
-
-    _ = keepRedundantConstraint (Proxy @(Show (LedgerView (BlockProtocol blk))))
 
     PropGeneralArgs
       { pgaBlockProperty       = prop_valid_block

@@ -1,8 +1,10 @@
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE EmptyCase           #-}
 {-# LANGUAGE EmptyDataDecls      #-}
 {-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -20,6 +22,7 @@ module Ouroboros.Consensus.Protocol.TPraos (
   , TPraos
   , TPraosFields (..)
   , TPraosIsLeader (..)
+  , TPraosLedgerView
   , TPraosParams (..)
   , TPraosState (..)
   , TPraosToSign (..)
@@ -241,8 +244,10 @@ data instance ConsensusConfig (TPraos c) = TPraosConfig {
 
 instance SL.PraosCrypto c => NoThunks (ConsensusConfig (TPraos c))
 
+data TPraosLedgerView c
+
 -- | Ledger view at a particular slot
-newtype instance Ticked (SL.LedgerView c) = TickedPraosLedgerView {
+newtype instance Ticked (TPraosLedgerView c) = TickedTPraosLedgerView {
       -- TODO: Perhaps it would be cleaner to define this as a separate type
       getTickedPraosLedgerView :: SL.LedgerView c
     }
@@ -287,7 +292,7 @@ instance SL.PraosCrypto c => Serialise (TPraosState c) where
 -- | Ticked 'TPraosState'
 data instance Ticked (TPraosState c) = TickedChainDepState {
       tickedTPraosStateChainDepState :: SL.ChainDepState c
-    , tickedTPraosStateLedgerView    :: Ticked (LedgerView (TPraos c))
+    , tickedTPraosStateLedgerView    :: Ticked (TPraosLedgerView c)
     }
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
@@ -295,9 +300,11 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type IsLeader      (TPraos c) = TPraosIsLeader c
   type CanBeLeader   (TPraos c) = PraosCanBeLeader c
   type SelectView    (TPraos c) = PraosChainSelectView c
-  type LedgerView    (TPraos c) = SL.LedgerView c
+  type LedgerView    (TPraos c) = TPraosLedgerView c
   type ValidationErr (TPraos c) = SL.ChainTransitionError c
   type ValidateView  (TPraos c) = TPraosValidateView c
+
+  invariantLedgerViewEmpty _proxy = \case {}
 
   protocolSecurityParam = tpraosSecurityParam . tpraosParams
 
@@ -356,12 +363,12 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
       SL.GenDelegs dlgMap = SL.lvGenDelegs lv
 
   tickChainDepState cfg@TPraosConfig{..}
-                    (TickedPraosLedgerView lv)
+                    (TickedTPraosLedgerView lv)
                     slot
                     (TPraosState lastSlot st) =
       TickedChainDepState {
           tickedTPraosStateChainDepState = st'
-        , tickedTPraosStateLedgerView    = TickedPraosLedgerView lv
+        , tickedTPraosStateLedgerView    = TickedTPraosLedgerView lv
         }
     where
       st' = SL.tickChainDepState
@@ -423,7 +430,7 @@ mkShelleyGlobals TPraosConfig{..} = SL.Globals {
 meetsLeaderThreshold ::
      forall c. SL.PraosCrypto c
   => ConsensusConfig (TPraos c)
-  -> LedgerView (TPraos c)
+  -> SL.LedgerView c
   -> SL.KeyHash 'SL.StakePool c
   -> SL.CertifiedVRF c SL.Seed
   -> Bool

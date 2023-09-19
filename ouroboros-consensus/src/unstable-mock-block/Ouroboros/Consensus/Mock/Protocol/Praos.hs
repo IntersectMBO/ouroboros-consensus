@@ -3,11 +3,13 @@
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE EmptyCase                  #-}
 {-# LANGUAGE ExistentialQuantification  #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures             #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -76,6 +78,7 @@ import           Ouroboros.Consensus.Mock.Ledger.Stake
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Signed
+import           Ouroboros.Consensus.Ticked (VoidUntilTicked)
 import           Ouroboros.Consensus.Util.Condense
 
 -- The Praos paper can be located at https://ia.cr/2017/573
@@ -442,9 +445,11 @@ data instance Ticked (PraosChainDepState c) = TickedPraosChainDepState {
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
 
+  invariantLedgerViewEmpty _proxy = \case {}
+
   protocolSecurityParam = praosSecurityParam . praosParams
 
-  type LedgerView    (Praos c) = ()
+  type LedgerView    (Praos c) = VoidUntilTicked
   type IsLeader      (Praos c) = PraosProof           c
   type ValidationErr (Praos c) = PraosValidationError c
   type ValidateView  (Praos c) = PraosValidateView    c
@@ -471,7 +476,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   updateChainDepState cfg@PraosConfig{..}
                       (PraosValidateView PraosFields{..} toSign)
                       slot
-                      (TickedPraosChainDepState TickedTrivial cds) = do
+                      (TickedPraosChainDepState TickedVoid cds) = do
     let PraosExtraFields {..} = praosExtraFields
         nid = praosCreator
 
@@ -534,7 +539,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   reupdateChainDepState _
                         (PraosValidateView PraosFields{..} _)
                         slot
-                        (TickedPraosChainDepState TickedTrivial cds) =
+                        (TickedPraosChainDepState TickedVoid cds) =
     let PraosExtraFields{..} = praosExtraFields
         !bi = BlockInfo
             { biSlot  = slot

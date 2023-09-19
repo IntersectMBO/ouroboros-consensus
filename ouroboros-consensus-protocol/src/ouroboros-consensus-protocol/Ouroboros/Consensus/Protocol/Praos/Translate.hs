@@ -19,10 +19,7 @@ import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Protocol.Praos (ConsensusConfig (..),
-                     Praos, PraosParams (..), PraosState (..),
-                     Ticked (TickedPraosLedgerView))
-import           Ouroboros.Consensus.Protocol.Praos.Views
-                     (LedgerView (lvMaxBodySize, lvMaxHeaderSize, lvProtocolVersion))
+                     Praos, PraosParams (..), PraosState (..))
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..),
                      TPraosState (tpraosStateChainDepState, tpraosStateLastSlot))
@@ -64,15 +61,15 @@ instance
         praosEpochInfo = tpraosEpochInfo
       }
 
-  translateTickedLedgerView (TPraos.TickedPraosLedgerView lv) =
-      TickedPraosLedgerView $ translateLedgerView lv
+  translateTickedLedgerView (TPraos.TickedTPraosLedgerView lv) =
+      translateLedgerView lv
     where
       translateLedgerView SL.LedgerView {SL.lvPoolDistr, SL.lvChainChecks} =
-        Views.LedgerView
+        Views.TickedPraosLedgerView
           { Views.lvPoolDistr = coercePoolDistr lvPoolDistr,
-            lvMaxHeaderSize = SL.ccMaxBHSize lvChainChecks,
-            lvMaxBodySize = SL.ccMaxBBSize lvChainChecks,
-            lvProtocolVersion = SL.ccProtocolVersion lvChainChecks
+            Views.lvMaxHeaderSize = SL.ccMaxBHSize lvChainChecks,
+            Views.lvMaxBodySize = SL.ccMaxBBSize lvChainChecks,
+            Views.lvProtocolVersion = SL.ccProtocolVersion lvChainChecks
           }
         where
           coercePoolDistr :: SL.PoolDistr c1 -> SL.PoolDistr c2
