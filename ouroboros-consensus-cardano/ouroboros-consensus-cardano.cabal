@@ -119,11 +119,11 @@ library
     , cardano-data
     , cardano-ledger-allegra
     , cardano-ledger-alonzo         ^>=1.4.1
-    , cardano-ledger-api            ^>=1.5
+    , cardano-ledger-api            ^>=1.6
     , cardano-ledger-babbage        ^>=1.4.4
     , cardano-ledger-binary
     , cardano-ledger-byron
-    , cardano-ledger-conway         ^>=1.8
+    , cardano-ledger-conway         ^>=1.9
     , cardano-ledger-core           ^>=1.6
     , cardano-ledger-mary
     , cardano-ledger-shelley        ^>=1.6
