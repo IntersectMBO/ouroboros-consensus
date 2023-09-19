@@ -30,10 +30,12 @@ module Ouroboros.Consensus.HeaderValidation (
   , mapAnnTip
     -- * Header state
   , HeaderState (..)
+  , PreparedHeaderState (..)
   , castHeaderState
   , genesisHeaderState
   , headerStateBlockNo
   , headerStatePoint
+  , prepareToUpdateHeaderState
   , tickHeaderState
     -- * Validate header envelope
   , BasicEnvelopeValidation (..)
@@ -184,6 +186,42 @@ data instance Ticked (HeaderState blk) = TickedHeaderState {
       untickedHeaderStateTip    :: WithOrigin (AnnTip blk)
     , tickedHeaderStateChainDep :: Ticked (ChainDepState (BlockProtocol blk))
     }
+
+-- | The result of 'prepareToUpdateHeaderState'
+data PreparedHeaderState blk = PreparedHeaderState {
+    tickedHeaderState :: !(Ticked (HeaderState blk))
+  , tickedLedgerView  :: !(Ticked (LedgerView (BlockProtocol blk)))
+  , tickedToSlot      :: !SlotNo
+  }
+
+-- | A wrapper around the 'tickedHeaderStateChainDep' selector
+preparedChainDepState :: PreparedHeaderState blk -> PreparedChainDepState (BlockProtocol blk)
+preparedChainDepState x =
+    PreparedChainDepState {
+        tickedChainDepState = tickedHeaderStateChainDep tickedHeaderState
+      , tickedLedgerView
+      , tickedToSlot
+      }
+  where
+    PreparedHeaderState {
+        tickedHeaderState
+      , tickedLedgerView
+      , tickedToSlot
+      } = x
+
+-- | A wrapper around 'prepareChainDepState'
+prepareToUpdateHeaderState :: ConsensusProtocol (BlockProtocol blk)
+                           => ConsensusConfig (BlockProtocol blk)
+                           -> Ticked (LedgerView (BlockProtocol blk))
+                           -> SlotNo
+                           -> HeaderState blk
+                           -> PreparedHeaderState blk
+prepareToUpdateHeaderState cfg tlv slot hst =
+    PreparedHeaderState {
+        tickedHeaderState = tickHeaderState cfg tlv slot hst
+      , tickedLedgerView  = tlv
+      , tickedToSlot      = slot
+      }
 
 -- | Tick the 'ChainDepState' inside the 'HeaderState'
 tickHeaderState :: ConsensusProtocol (BlockProtocol blk)
@@ -415,24 +453,27 @@ castHeaderError (HeaderEnvelopeError e) = HeaderEnvelopeError $
 -- entire block (not just the block body).
 validateHeader :: (BlockSupportsProtocol blk, ValidateEnvelope blk)
                => TopLevelConfig blk
-               -> Ticked (LedgerView (BlockProtocol blk))
+               -> PreparedHeaderState blk
                -> Header blk
-               -> Ticked (HeaderState blk)
                -> Except (HeaderError blk) (HeaderState blk)
-validateHeader cfg ledgerView hdr st = do
+validateHeader cfg phst hdr = do
     withExcept HeaderEnvelopeError $
       validateEnvelope
         cfg
-        ledgerView
-        (untickedHeaderStateTip st)
+        tickedLedgerView
+        (untickedHeaderStateTip tickedHeaderState)
         hdr
     chainDepState' <- withExcept HeaderProtocolError $
       updateChainDepState
         (configConsensus cfg)
         (validateView (configBlock cfg) hdr)
-        (blockSlot hdr)
-        (tickedHeaderStateChainDep st)
+        (preparedChainDepState phst)
     return $ HeaderState (NotOrigin (getAnnTip hdr)) chainDepState'
+  where
+    PreparedHeaderState {
+        tickedHeaderState
+      , tickedLedgerView
+      } = phst
 
 -- | Header revalidation
 --
@@ -444,30 +485,33 @@ validateHeader cfg ledgerView hdr st = do
 revalidateHeader ::
      forall blk. (BlockSupportsProtocol blk, ValidateEnvelope blk, HasCallStack)
   => TopLevelConfig blk
-  -> Ticked (LedgerView (BlockProtocol blk))
+  -> PreparedHeaderState blk
   -> Header blk
-  -> Ticked (HeaderState blk)
   -> HeaderState blk
-revalidateHeader cfg ledgerView hdr st =
+revalidateHeader cfg phst hdr =
     assertWithMsg envelopeCheck $
       HeaderState
         (NotOrigin (getAnnTip hdr))
         chainDepState'
   where
+    PreparedHeaderState {
+        tickedHeaderState
+      , tickedLedgerView
+      } = phst
+
     chainDepState' :: ChainDepState (BlockProtocol blk)
     chainDepState' =
         reupdateChainDepState
           (configConsensus cfg)
           (validateView (configBlock cfg) hdr)
-          (blockSlot hdr)
-          (tickedHeaderStateChainDep st)
+          (preparedChainDepState phst)
 
     envelopeCheck :: Either String ()
     envelopeCheck = runExcept $ withExcept show $
         validateEnvelope
           cfg
-          ledgerView
-          (untickedHeaderStateTip st)
+          tickedLedgerView
+          (untickedHeaderStateTip tickedHeaderState)
           hdr
 
 {-------------------------------------------------------------------------------

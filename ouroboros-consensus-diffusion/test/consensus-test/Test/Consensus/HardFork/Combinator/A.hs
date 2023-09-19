@@ -10,6 +10,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -108,16 +109,16 @@ instance ConsensusProtocol ProtocolA where
   type ValidateView  ProtocolA = ()
   type ValidationErr ProtocolA = Void
 
-  checkIsLeader CfgA{..} () slot _ =
-      if slot `Set.member` cfgA_leadInSlots
+  checkIsLeader CfgA{..} () PreparedChainDepState{tickedToSlot} =
+      if tickedToSlot `Set.member` cfgA_leadInSlots
       then Just ()
       else Nothing
 
   protocolSecurityParam = cfgA_k
 
   tickChainDepState     _ _ _ _ = TickedTrivial
-  updateChainDepState   _ _ _ _ = return ()
-  reupdateChainDepState _ _ _ _ = ()
+  updateChainDepState   _ _ _   = return ()
+  reupdateChainDepState _ _ _   = ()
 
 data BlockA = BlkA {
       blkA_header :: Header BlockA
@@ -183,7 +184,7 @@ data instance LedgerState BlockA = LgrA {
   deriving (Show, Eq, Generic, Serialise)
   deriving NoThunks via OnlyCheckWhnfNamed "LgrA" (LedgerState BlockA)
 
--- | Ticking has no state on the A ledger state
+-- | Ticking has no effect on the A ledger state
 newtype instance Ticked (LedgerState BlockA) = TickedLedgerStateA {
       getTickedLedgerStateA :: LedgerState BlockA
     }
@@ -286,8 +287,8 @@ blockForgingA :: Monad m => BlockForging m BlockA
 blockForgingA = BlockForging {
      forgeLabel       = "BlockA"
    , canBeLeader      = ()
-   , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-   , checkCanForge    = \_ _ _ _ _ -> return ()
+   , updateForgeState = \_ _ -> return $ ForgeStateUpdated ()
+   , checkCanForge    = \_ _ _ _ -> return ()
    , forgeBlock       = \cfg bno slot st txs proof -> return $
        forgeBlockA cfg bno slot st (fmap txForgetValidated txs) proof
    }

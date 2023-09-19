@@ -35,10 +35,11 @@ instance ( ConsensusProtocol p
     type ValidationErr (ModChainSel p s) = ValidationErr p
     type ValidateView  (ModChainSel p s) = ValidateView  p
 
-    checkIsLeader         = checkIsLeader         . mcsConfigP
-    tickChainDepState     = tickChainDepState     . mcsConfigP
-    updateChainDepState   = updateChainDepState   . mcsConfigP
-    reupdateChainDepState = reupdateChainDepState . mcsConfigP
+    checkIsLeader         = \cfg cbl -> checkIsLeader         (mcsConfigP cfg) cbl . castPreparedChainDepState
+    tickChainDepState     = \cfg     -> tickChainDepState     (mcsConfigP cfg)
+    updateChainDepState   = \cfg vv  -> updateChainDepState   (mcsConfigP cfg) vv  . castPreparedChainDepState
+    reupdateChainDepState = \cfg vv  -> reupdateChainDepState (mcsConfigP cfg) vv  . castPreparedChainDepState
+
     protocolSecurityParam = protocolSecurityParam . mcsConfigP
 
 instance ConsensusProtocol p => NoThunks (ConsensusConfig (ModChainSel p s))

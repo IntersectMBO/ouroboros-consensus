@@ -66,7 +66,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Mempool (TxLimits)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Protocol.Abstract
+import           Ouroboros.Consensus.Protocol.Abstract as Proto
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos.Common
@@ -140,14 +140,14 @@ shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
     BlockForging {
         forgeLabel       = label <> "_" <> shelleyBasedEraName (Proxy @era)
       , canBeLeader      = canBeLeader
-      , updateForgeState = \_ curSlot _ ->
+      , updateForgeState = \_cfg pcst ->
                                forgeStateUpdateInfoFromUpdateInfo <$>
-                                 HotKey.evolve hotKey (slotToPeriod curSlot)
-      , checkCanForge    = \cfg curSlot _tickedChainDepState ->
+                                 HotKey.evolve hotKey (slotToPeriod (Proto.tickedToSlot pcst))
+      , checkCanForge    = \cfg pcst ->
                                tpraosCheckCanForge
                                  (configConsensus cfg)
                                  forgingVRFHash
-                                 curSlot
+                                 (Proto.tickedToSlot pcst)
       , forgeBlock       = \cfg ->
           forgeShelleyBlock
             hotKey

@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TypeFamilies      #-}
 
@@ -47,16 +48,16 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
 
   protocolSecurityParam = protocolSecurityParam . wlsConfigP
 
-  checkIsLeader WLSConfig{..} () slot _ =
-    case Map.lookup slot $ getLeaderSchedule wlsConfigSchedule of
-        Nothing -> error $ "WithLeaderSchedule: missing slot " ++ show slot
+  checkIsLeader WLSConfig{..} () PreparedChainDepState{tickedToSlot} =
+    case Map.lookup tickedToSlot $ getLeaderSchedule wlsConfigSchedule of
+        Nothing -> error $ "WithLeaderSchedule: missing slot " ++ show tickedToSlot
         Just nids
             | wlsConfigNodeId `elem` nids -> Just ()
             | otherwise                   -> Nothing
 
   tickChainDepState     _ _ _ _ = TickedTrivial
-  updateChainDepState   _ _ _ _ = return ()
-  reupdateChainDepState _ _ _ _ = ()
+  updateChainDepState   _ _ _   = return ()
+  reupdateChainDepState _ _ _   = ()
 
 instance ConsensusProtocol p
       => NoThunks (ConsensusConfig (WithLeaderSchedule p))

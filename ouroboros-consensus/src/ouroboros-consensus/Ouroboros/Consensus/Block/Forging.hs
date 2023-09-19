@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE NamedFieldPuns       #-}
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
@@ -37,7 +38,6 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mempool.Capacity (TxLimits)
 import qualified Ouroboros.Consensus.Mempool.Capacity as MempoolCapacity
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Ticked
 
 -- | Information about why we /cannot/ forge a block, although we are a leader
 --
@@ -108,8 +108,7 @@ data BlockForging m blk = BlockForging {
       -- and don't call 'checkCanForge'.
     , updateForgeState ::
            TopLevelConfig blk
-        -> SlotNo
-        -> Ticked (ChainDepState (BlockProtocol blk))
+        -> PreparedChainDepState (BlockProtocol blk)
         -> m (ForgeStateUpdateInfo blk)
 
       -- | After checking that the node indeed is a leader ('checkIsLeader'
@@ -120,8 +119,7 @@ data BlockForging m blk = BlockForging {
       -- When 'CannotForge' is returned, we don't call 'forgeBlock'.
     , checkCanForge ::
            TopLevelConfig blk
-        -> SlotNo
-        -> Ticked (ChainDepState (BlockProtocol blk))
+        -> PreparedChainDepState (BlockProtocol blk)
         -> IsLeader (BlockProtocol blk)
         -> ForgeStateInfo blk  -- Proof that 'updateForgeState' did not fail
         -> Either (CannotForge blk) ()
@@ -204,15 +202,13 @@ checkShouldForge ::
   => BlockForging m blk
   -> Tracer m (ForgeStateInfo blk)
   -> TopLevelConfig blk
-  -> SlotNo
-  -> Ticked (ChainDepState (BlockProtocol blk))
+  -> PreparedChainDepState (BlockProtocol blk)
   -> m (ShouldForge blk)
 checkShouldForge BlockForging{..}
                  forgeStateInfoTracer
                  cfg
-                 slot
-                 tickedChainDepState =
-    updateForgeState cfg slot tickedChainDepState >>= \updateInfo ->
+                 pcst =
+    updateForgeState cfg pcst >>= \updateInfo ->
       case updateInfo of
         ForgeStateUpdated      info -> handleUpdated info
         ForgeStateUpdateFailed err  -> return $ ForgeStateUpdateError err
@@ -229,8 +225,7 @@ checkShouldForge BlockForging{..}
         checkIsLeader
           (configConsensus cfg)
           canBeLeader
-          slot
-          tickedChainDepState
+          pcst
 
     handleUpdated :: ForgeStateInfo blk -> m (ShouldForge blk)
     handleUpdated info = do
@@ -238,7 +233,7 @@ checkShouldForge BlockForging{..}
         return $ case mbIsLeader of
           Nothing       -> NotLeader
           Just isLeader ->
-              case checkCanForge cfg slot tickedChainDepState isLeader info of
+              case checkCanForge cfg pcst isLeader info of
                 Left cannotForge -> CannotForge cannotForge
                 Right ()         -> ShouldForge isLeader
 

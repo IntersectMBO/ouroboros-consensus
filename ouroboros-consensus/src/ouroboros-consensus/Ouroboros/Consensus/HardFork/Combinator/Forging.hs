@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving  #-}
@@ -37,6 +38,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Mempool
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Protocol.Abstract (PreparedChainDepState (..))
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
 
@@ -104,21 +106,18 @@ hardForkUpdateForgeState ::
      forall m xs. (CanHardFork xs, Monad m)
   => NonEmptyOptNP (BlockForging m) xs
   -> TopLevelConfig (HardForkBlock xs)
-  -> SlotNo
-  -> Ticked (HardForkChainDepState xs)
+  -> PreparedChainDepState (HardForkProtocol xs)
   -> m (ForgeStateUpdateInfo (HardForkBlock xs))
 hardForkUpdateForgeState blockForging
                          cfg
-                         curSlot
-                         (TickedHardForkChainDepState chainDepState ei) =
+                         pcst =
     case OptNP.view blockForging of
       OptNP_ExactlyOne blockForging' ->
         injectSingle <$>
           updateForgeState
             blockForging'
             (hd (distribTopLevelConfig ei cfg))
-            curSlot
-            (unwrapTickedChainDepState . unComp . State.fromTZ $ chainDepState)
+            (unwrapPreparedChainDepState . State.fromTZ $ distribPreparedChainDepState pcst)
       OptNP_AtLeastTwo ->
           fmap undistrib
         $ hsequence'
@@ -126,8 +125,12 @@ hardForkUpdateForgeState blockForging
             aux
             (OptNP.toNP blockForging)
             (distribTopLevelConfig ei cfg)
-        $ State.tip chainDepState
+        $ State.tip (distribPreparedChainDepState pcst)
   where
+    PreparedChainDepState{tickedChainDepState} = pcst
+
+    TickedHardForkChainDepState{tickedHardForkChainDepStateEpochInfo = ei} = tickedChainDepState
+
     injectSingle ::
          xs ~ '[blk]
       => ForgeStateUpdateInfo blk
@@ -144,17 +147,16 @@ hardForkUpdateForgeState blockForging
     aux ::
          (Maybe :.: BlockForging m)               blk
       -> TopLevelConfig                           blk
-      -> (Ticked :.: WrapChainDepState)           blk
+      -> WrapPreparedChainDepState                blk
       -> (m :.: (Maybe :.: ForgeStateUpdateInfo)) blk
-    aux (Comp mBlockForging) cfg' (Comp chainDepState') =
+    aux (Comp mBlockForging) cfg' pcst' =
         Comp $ fmap Comp $ case mBlockForging of
           Nothing -> return Nothing
           Just blockForging' -> Just <$>
             updateForgeState
               blockForging'
               cfg'
-              curSlot
-              (unwrapTickedChainDepState chainDepState')
+              (unwrapPreparedChainDepState pcst')
 
     injInfo ::
          Index xs blk
@@ -204,15 +206,13 @@ hardForkCheckCanForge ::
      forall m xs empty. CanHardFork xs
   => OptNP empty (BlockForging m) xs
   -> TopLevelConfig (HardForkBlock xs)
-  -> SlotNo
-  -> Ticked (HardForkChainDepState xs)
+  -> PreparedChainDepState (HardForkProtocol xs)
   -> HardForkIsLeader xs
   -> HardForkForgeStateInfo xs
   -> Either (HardForkCannotForge xs) ()
 hardForkCheckCanForge blockForging
                       cfg
-                      curSlot
-                      (TickedHardForkChainDepState chainDepState ei)
+                      pcst
                       isLeader
                       forgeStateInfo =
     distrib $
@@ -225,13 +225,17 @@ hardForkCheckCanForge blockForging
         -- enforce it statically.
         ( Match.mustMatchNS "ForgeStateInfo" forgeStateInfo'
         $ Match.mustMatchNS "IsLeader"       (getOneEraIsLeader isLeader)
-        $ State.tip chainDepState
+        $ State.tip (distribPreparedChainDepState pcst)
         )
   where
     distrib ::
          NS (Maybe :.: WrapCannotForge) xs
       -> Either (HardForkCannotForge xs) ()
     distrib = maybe (Right ()) (Left . OneEraCannotForge) . hsequence'
+
+    PreparedChainDepState{tickedChainDepState} = pcst
+
+    TickedHardForkChainDepState{tickedHardForkChainDepStateEpochInfo = ei} = tickedChainDepState
 
     missingBlockForgingImpossible :: EraIndex xs -> String
     missingBlockForgingImpossible eraIndex =
@@ -252,7 +256,7 @@ hardForkCheckCanForge blockForging
            WrapForgeStateInfo
            (Product
              WrapIsLeader
-             (Ticked :.: WrapChainDepState))
+             WrapPreparedChainDepState)
            blk
       -> (Maybe :.: WrapCannotForge) blk
          -- ^ We use @Maybe x@ instead of @Either x ()@ because the former can
@@ -264,15 +268,14 @@ hardForkCheckCanForge blockForging
                (WrapForgeStateInfo forgeStateInfo'')
                (Pair
                  (WrapIsLeader isLeader')
-                 (Comp tickedChainDepState))) =
+                 (WrapPreparedChainDepState pcst'))) =
         Comp $ either (Just . WrapCannotForge) (const Nothing) $
           checkCanForge
             (fromMaybe
               (error (missingBlockForgingImpossible (eraIndexFromIndex index)))
               mBlockForging')
             cfg'
-            curSlot
-            (unwrapTickedChainDepState tickedChainDepState)
+            pcst'
             isLeader'
             forgeStateInfo''
 

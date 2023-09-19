@@ -26,6 +26,7 @@ import           Ouroboros.Consensus.Mock.Ledger
 import           Ouroboros.Consensus.Mock.Protocol.Praos
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
+import qualified Ouroboros.Consensus.Protocol.Abstract as Proto
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 
@@ -121,11 +122,11 @@ praosBlockForging cid initHotKey = do
     return $ BlockForging {
         forgeLabel       = "praosBlockForging"
       , canBeLeader      = cid
-      , updateForgeState = \_ sno _ -> modifyMVar varHotKey $
+      , updateForgeState = \_cfg pcst -> modifyMVar varHotKey $ \hk ->
                                  pure
-                               . second forgeStateUpdateInfoFromUpdateInfo
-                               . evolveKey sno
-      , checkCanForge    = \_ _ _ _ _ -> return ()
+                               $ second forgeStateUpdateInfoFromUpdateInfo
+                               $ evolveKey (Proto.tickedToSlot pcst) hk
+      , checkCanForge    = \_ _ _ _ -> return ()
       , forgeBlock       = \cfg bno sno tickedLedgerSt txs isLeader -> do
                                hotKey <- readMVar varHotKey
                                return $

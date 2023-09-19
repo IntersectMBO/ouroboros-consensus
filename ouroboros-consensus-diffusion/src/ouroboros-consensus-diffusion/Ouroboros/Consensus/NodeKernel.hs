@@ -336,9 +336,9 @@ forkBlockForging IS{..} blockForging =
         -- for. We only need the ticked 'ChainDepState' to check the whether
         -- we're a leader. This is much cheaper than ticking the entire
         -- 'ExtLedgerState'.
-        let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
-            tickedChainDepState =
-                tickChainDepState
+        let preparedChainDepState :: PreparedChainDepState (BlockProtocol blk)
+            preparedChainDepState =
+                prepareToUpdateChainDepState
                   (configConsensus cfg)
                   ledgerView
                   currentSlot
@@ -351,8 +351,7 @@ forkBlockForging IS{..} blockForging =
               (contramap (TraceLabelCreds (forgeLabel blockForging))
                 (forgeStateInfoTracer tracers))
               cfg
-              currentSlot
-              tickedChainDepState
+              preparedChainDepState
           case shouldForge of
             ForgeStateUpdateError err -> do
               trace $ TraceForgeStateUpdateError currentSlot err

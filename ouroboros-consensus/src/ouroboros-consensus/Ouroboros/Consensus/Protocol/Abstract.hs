@@ -1,12 +1,18 @@
 {-# LANGUAGE DefaultSignatures #-}
 {-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE TypeOperators     #-}
 
 module Ouroboros.Consensus.Protocol.Abstract (
     -- * Abstract definition of the Ouroboros protocol
     ConsensusConfig
   , ConsensusProtocol (..)
   , preferCandidate
+    -- ** 'PreparedChainDepState'
+  , PreparedChainDepState (..)
+  , castPreparedChainDepState
+  , prepareToUpdateChainDepState
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
@@ -126,16 +132,12 @@ class ( Show (ChainDepState   p)
   checkIsLeader :: HasCallStack
                 => ConsensusConfig       p
                 -> CanBeLeader           p
-                -> SlotNo
-                -> Ticked (ChainDepState p)
+                -> PreparedChainDepState p
                 -> Maybe (IsLeader       p)
 
   -- | Tick the 'ChainDepState'
   --
-  -- We pass the ticked 'LedgerView' to 'tickChainDepState'. Functions that
-  -- /take/ a ticked 'ChainDepState' are not separately passed a ticked ledger
-  -- view; protocols that require it, can include it in their ticked
-  -- 'ChainDepState' type.
+  -- Primarily used via 'prepareToUpdateChainDepState'.
   tickChainDepState :: ConsensusConfig p
                     -> Ticked (LedgerView p)
                     -> SlotNo
@@ -146,8 +148,7 @@ class ( Show (ChainDepState   p)
   updateChainDepState :: HasCallStack
                       => ConsensusConfig       p
                       -> ValidateView          p
-                      -> SlotNo
-                      -> Ticked (ChainDepState p)
+                      -> PreparedChainDepState p
                       -> Except (ValidationErr p) (ChainDepState p)
 
   -- | Re-apply a header to the same 'ChainDepState' we have been able to
@@ -164,12 +165,51 @@ class ( Show (ChainDepState   p)
   reupdateChainDepState :: HasCallStack
                         => ConsensusConfig       p
                         -> ValidateView          p
-                        -> SlotNo
-                        -> Ticked (ChainDepState p)
+                        -> PreparedChainDepState p
                         -> ChainDepState         p
 
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
+
+-- | The result of 'prepareToUpdateChainDepState'
+data PreparedChainDepState p = PreparedChainDepState {
+    -- | INVARIANT: this is the result of @'tickChainDepState' cfg 'tickedLedgerView' 'tickedToSlot' cst@
+    tickedChainDepState :: !(Ticked (ChainDepState p))
+  , tickedLedgerView    :: !(Ticked (LedgerView p))
+  , tickedToSlot        :: !SlotNo
+  }
+
+-- | A wrapper around 'tickChainDepState' that records its arguments
+prepareToUpdateChainDepState :: ConsensusProtocol p
+                             => ConsensusConfig p
+                             -> Ticked (LedgerView p)
+                             -> SlotNo
+                             -> ChainDepState p
+                             -> PreparedChainDepState p
+prepareToUpdateChainDepState cfg tlv slot cst =
+    PreparedChainDepState {
+        tickedChainDepState = tickChainDepState cfg tlv slot cst
+      , tickedLedgerView    = tlv
+      , tickedToSlot        = slot
+      }
+
+castPreparedChainDepState :: ( ChainDepState p1 ~ ChainDepState p2
+                             , LedgerView p1 ~ LedgerView p2
+                             )
+                          => PreparedChainDepState p1
+                          -> PreparedChainDepState p2
+castPreparedChainDepState x =
+    PreparedChainDepState {
+        tickedChainDepState
+      , tickedLedgerView
+      , tickedToSlot
+      }
+  where
+    PreparedChainDepState {
+        tickedChainDepState
+      , tickedLedgerView
+      , tickedToSlot
+      } = x
 
 -- | Compare a candidate chain to our own
 --

@@ -36,8 +36,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast (forecastFor)
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..),
-                     HeaderState (..), annTipPoint, tickHeaderState,
-                     validateHeader)
+                     HeaderState (..), PreparedHeaderState, annTipPoint,
+                     prepareToUpdateHeaderState, validateHeader)
 import           Ouroboros.Consensus.Ledger.Abstract (LedgerCfg, LedgerConfig,
                      applyBlockLedgerResult, applyChainTick,
                      tickThenApplyLedgerResult, tickThenReapply)
@@ -526,9 +526,9 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
         -- 'time' takes care of forcing the evaluation of its argument's result.
         (tkLdgrView, tForecast) <- time $ forecast            slot prevLedgerState
         (tkHdrSt,    tHdrTick)  <- time $ tickTheHeaderState  slot prevLedgerState tkLdgrView
-        (hdrSt',     tHdrApp)   <- time $ applyTheHeader                           tkLdgrView tkHdrSt
+        (hdrSt',     tHdrApp)   <- time $ applyTheHeader                           tkHdrSt
         (tkLdgrSt,   tBlkTick)  <- time $ tickTheLedgerState  slot prevLedgerState
-        (ldgrSt',    tBlkApp)   <- time $ applyTheBlock                                       tkLdgrSt
+        (ldgrSt',    tBlkApp)   <- time $ applyTheBlock                            tkLdgrSt
 
         currentRtsStats <- GC.getRTSStats
         let
@@ -576,19 +576,20 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
              SlotNo
           -> ExtLedgerState blk
           -> Ticked (LedgerView (BlockProtocol blk))
-          -> IO (Ticked (HeaderState blk))
+          -> IO (PreparedHeaderState blk)
         tickTheHeaderState slot st tickedLedgerView =
-            pure $! tickHeaderState ccfg
-                                    tickedLedgerView
-                                    slot
-                                    (headerState st)
+            pure
+         $! prepareToUpdateHeaderState
+              ccfg
+              tickedLedgerView
+              slot
+              (headerState st)
 
         applyTheHeader ::
-             Ticked (LedgerView (BlockProtocol blk))
-          -> Ticked (HeaderState blk)
+             PreparedHeaderState blk
           -> IO (HeaderState blk)
-        applyTheHeader tickedLedgerView tickedHeaderState = do
-            case runExcept $ validateHeader cfg tickedLedgerView (getHeader blk) tickedHeaderState of
+        applyTheHeader phst = do
+            case runExcept $ validateHeader cfg phst (getHeader blk) of
               Left err -> fail $ "benchmark doesn't support invalid headers: " <> show rp <> " " <> show err
               Right x -> pure x
 

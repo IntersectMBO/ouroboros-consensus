@@ -309,11 +309,8 @@ instance PraosCrypto c => Serialise (PraosState c) where
           <*> fromCBOR
           <*> fromCBOR
 
--- | Ticked 'PraosState'
-data instance Ticked (PraosState c) = TickedPraosState
-  { tickedPraosStateChainDepState :: PraosState c,
-    tickedPraosStateLedgerView :: Ticked (Views.LedgerView c)
-  }
+newtype instance Ticked (PraosState c) =
+  TickedPraosState { tickedPraosStateChainDepState :: PraosState c }
 
 -- | Errors which we might encounter
 data PraosValidationErr c
@@ -378,8 +375,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       { praosCanBeLeaderSignKeyVRF,
         praosCanBeLeaderColdVerKey
       }
-    slot
-    cs =
+    pcst =
       if meetsLeaderThreshold cfg lv (SL.coerceKeyRole vkhCold) rho
         then
           Just
@@ -388,11 +384,18 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
               }
         else Nothing
       where
-        chainState = tickedPraosStateChainDepState cs
-        lv = getTickedPraosLedgerView $ tickedPraosStateLedgerView cs
+        PreparedChainDepState {
+            tickedChainDepState
+          , tickedLedgerView
+          , tickedToSlot
+          } = pcst
+
+        chainState = tickedPraosStateChainDepState tickedChainDepState
+        lv = getTickedPraosLedgerView tickedLedgerView
+
         eta0 = praosStateEpochNonce chainState
         vkhCold = SL.hashKey praosCanBeLeaderColdVerKey
-        rho' = mkInputVRF slot eta0
+        rho' = mkInputVRF tickedToSlot eta0
 
         rho = VRF.evalCertified () rho' praosCanBeLeaderSignKeyVRF
 
@@ -406,29 +409,23 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   --   the last applied block.
   tickChainDepState
     PraosConfig {praosEpochInfo}
-    (TickedPraosLedgerView lv)
+    _tickedLedgerView
     slot
     st =
-      TickedPraosState
-        { tickedPraosStateChainDepState = st',
-          tickedPraosStateLedgerView = TickedPraosLedgerView lv
-        }
+        TickedPraosState
+      $ if not newEpoch then st else
+          st
+            { praosStateEpochNonce =
+                praosStateCandidateNonce st
+                  ⭒ praosStateLastEpochBlockNonce st,
+              praosStateLastEpochBlockNonce = praosStateLabNonce st
+            }
       where
         newEpoch =
           isNewEpoch
             (History.toPureEpochInfo praosEpochInfo)
             (praosStateLastSlot st)
             slot
-        st' =
-          if newEpoch
-            then
-              st
-                { praosStateEpochNonce =
-                    praosStateCandidateNonce st
-                      ⭒ praosStateLastEpochBlockNonce st,
-                  praosStateLastEpochBlockNonce = praosStateLabNonce st
-                }
-            else st
 
   -- Validate and update the chain dependent state as a result of processing a
   -- new header.
@@ -438,14 +435,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   -- - Validate the KES checks
   -- - Call 'reupdateChainDepState'
   --
-  updateChainDepState
-    cfg@( PraosConfig
-            PraosParams {praosLeaderF}
-            _
-          )
-    b
-    slot
-    tcs = do
+  updateChainDepState cfg b pcst = do
       -- First, we check the KES signature, which validates that the issuer is
       -- in fact who they say they are.
       validateKESSignature cfg lv (praosStateOCertCounters cs) b
@@ -453,10 +443,18 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       -- right to issue in this slot.
       validateVRFSignature (praosStateEpochNonce cs) lv praosLeaderF b
       -- Finally, we apply the changes from this header to the chain state.
-      pure $ reupdateChainDepState cfg b slot tcs
-      where
-        lv = getTickedPraosLedgerView (tickedPraosStateLedgerView tcs)
-        cs = tickedPraosStateChainDepState tcs
+      pure $ reupdateChainDepState cfg b pcst
+    where
+      PraosConfig {praosParams} = cfg
+      PraosParams {praosLeaderF} = praosParams
+
+      PreparedChainDepState {
+          tickedChainDepState
+        , tickedLedgerView
+        } = pcst
+
+      cs = tickedPraosStateChainDepState tickedChainDepState
+      lv = getTickedPraosLedgerView tickedLedgerView
 
   -- Re-update the chain dependent state as a result of processing a header.
   --
@@ -465,35 +463,38 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   -- - Update the evolving and (potentially) candidate nonces based on the
   --   position in the epoch.
   -- - Update the operational certificate counter.
-  reupdateChainDepState
-    _cfg@( PraosConfig
-             PraosParams {praosSecurityParam, praosLeaderF}
-             ei
-           )
-    b
-    slot
-    tcs =
+  reupdateChainDepState cfg b pcst =
       cs
-        { praosStateLastSlot = NotOrigin slot,
+        { praosStateLastSlot = NotOrigin tickedToSlot,
           praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b),
           praosStateEvolvingNonce = newEvolvingNonce,
           praosStateCandidateNonce =
-            if slot +* Duration stabilityWindow < firstSlotNextEpoch
+            if tickedToSlot +* Duration stabilityWindow < firstSlotNextEpoch
               then newEvolvingNonce
               else praosStateCandidateNonce cs,
           praosStateOCertCounters =
             Map.insert hk n $ praosStateOCertCounters cs
         }
       where
+        PraosConfig {
+            praosEpochInfo = ei
+          , praosParams = PraosParams {praosSecurityParam, praosLeaderF}
+          } = cfg
+
+        PreparedChainDepState {
+            tickedChainDepState
+          , tickedToSlot
+          } = pcst
+
         epochInfoWithErr =
           hoistEpochInfo
             (either throw pure . runExcept)
             ei
         firstSlotNextEpoch = runIdentity $ do
-          EpochNo currentEpochNo <- epochInfoEpoch epochInfoWithErr slot
+          EpochNo currentEpochNo <- epochInfoEpoch epochInfoWithErr tickedToSlot
           let nextEpoch = EpochNo $ currentEpochNo + 1
           epochInfoFirst epochInfoWithErr nextEpoch
-        cs = tickedPraosStateChainDepState tcs
+        cs = tickedPraosStateChainDepState tickedChainDepState
         stabilityWindow =
           computeStabilityWindow (maxRollbacks praosSecurityParam) praosLeaderF
         eta = vrfNonceValue (Proxy @c) $ Views.hvVrfRes b

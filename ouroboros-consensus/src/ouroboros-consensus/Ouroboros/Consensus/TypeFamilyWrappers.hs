@@ -26,6 +26,7 @@ module Ouroboros.Consensus.TypeFamilyWrappers (
   , WrapConsensusConfig (..)
   , WrapIsLeader (..)
   , WrapLedgerView (..)
+  , WrapPreparedChainDepState (..)
   , WrapSelectView (..)
   , WrapValidateView (..)
   , WrapValidatedGenTx (..)
@@ -80,14 +81,15 @@ newtype WrapValidatedGenTx        blk = WrapValidatedGenTx        { unwrapValida
   Consensus based
 -------------------------------------------------------------------------------}
 
-newtype WrapCanBeLeader     blk = WrapCanBeLeader     { unwrapCanBeLeader     :: CanBeLeader     (BlockProtocol blk) }
-newtype WrapChainDepState   blk = WrapChainDepState   { unwrapChainDepState   :: ChainDepState   (BlockProtocol blk) }
-newtype WrapConsensusConfig blk = WrapConsensusConfig { unwrapConsensusConfig :: ConsensusConfig (BlockProtocol blk) }
-newtype WrapIsLeader        blk = WrapIsLeader        { unwrapIsLeader        :: IsLeader        (BlockProtocol blk) }
-newtype WrapLedgerView      blk = WrapLedgerView      { unwrapLedgerView      :: LedgerView      (BlockProtocol blk) }
-newtype WrapSelectView      blk = WrapSelectView      { unwrapSelectView      :: SelectView      (BlockProtocol blk) }
-newtype WrapValidateView    blk = WrapValidateView    { unwrapValidateView    :: ValidateView    (BlockProtocol blk) }
-newtype WrapValidationErr   blk = WrapValidationErr   { unwrapValidationErr   :: ValidationErr   (BlockProtocol blk) }
+newtype WrapCanBeLeader           blk = WrapCanBeLeader           { unwrapCanBeLeader           :: CanBeLeader           (BlockProtocol blk) }
+newtype WrapChainDepState         blk = WrapChainDepState         { unwrapChainDepState         :: ChainDepState         (BlockProtocol blk) }
+newtype WrapConsensusConfig       blk = WrapConsensusConfig       { unwrapConsensusConfig       :: ConsensusConfig       (BlockProtocol blk) }
+newtype WrapIsLeader              blk = WrapIsLeader              { unwrapIsLeader              :: IsLeader              (BlockProtocol blk) }
+newtype WrapLedgerView            blk = WrapLedgerView            { unwrapLedgerView            :: LedgerView            (BlockProtocol blk) }
+newtype WrapPreparedChainDepState blk = WrapPreparedChainDepState { unwrapPreparedChainDepState :: PreparedChainDepState (BlockProtocol blk) }
+newtype WrapSelectView            blk = WrapSelectView            { unwrapSelectView            :: SelectView            (BlockProtocol blk) }
+newtype WrapValidateView          blk = WrapValidateView          { unwrapValidateView          :: ValidateView          (BlockProtocol blk) }
+newtype WrapValidationErr         blk = WrapValidationErr         { unwrapValidationErr         :: ValidationErr         (BlockProtocol blk) }
 
 {-------------------------------------------------------------------------------
   Versioning

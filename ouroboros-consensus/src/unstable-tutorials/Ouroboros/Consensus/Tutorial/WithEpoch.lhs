@@ -72,7 +72,8 @@ And imports, of course:
 > import Ouroboros.Consensus.Block.SupportsProtocol
 >   (BlockSupportsProtocol (..))
 > import Ouroboros.Consensus.Protocol.Abstract
->   (ConsensusConfig, SecurityParam, ConsensusProtocol (..))
+>   (ConsensusConfig, SecurityParam, ConsensusProtocol (..),
+>    PreparedChainDepState (..))
 >
 > import Ouroboros.Consensus.Ticked (Ticked)
 > import Ouroboros.Consensus.Ledger.Abstract
@@ -538,12 +539,17 @@ functions defined above:
 >   type ValidationErr PrtclD = String
 >
 >   -- | checkIsLeader - Am I the leader this slot?
->   checkIsLeader cfg _cbl slot tcds =
+>   checkIsLeader cfg _cbl pcst =
+>     let PreparedChainDepState {
+>             tickedChainDepState = tcds
+>           , tickedToSlot        = slot
+>           } = pcst
+>     in
 >     case ccpd_mbCanBeLeader cfg of
 >       Just (PrtclD_CanBeLeader nodeId)
 >         -- not providing any cryptographic proof
 >         | isLeader nodeId slot (tickedChainDepLV tcds) -> Just PrtclD_IsLeader
->       _                             -> Nothing
+>       _                                                -> Nothing
 >
 >   protocolSecurityParam = ccpd_securityParam
 >
@@ -557,13 +563,18 @@ functions defined above:
 >   -- this doesn't give us too much confidence, as there is nothing that
 >   -- precludes a node from masquerading as any other node).
 >
->   updateChainDepState _cfg hdrVw slot tcds =
+>   updateChainDepState _cfg hdrVw pcst =
+>     let PreparedChainDepState {
+>             tickedChainDepState = tcds
+>           , tickedToSlot        = slot
+>           } = pcst
+>     in
 >     if isLeader hdrVw slot (tickedChainDepLV tcds) then
 >       return ChainDepStateD
 >     else
 >       throwError $ "leader check failed: " ++ show (hdrVw,slot)
 >
->   reupdateChainDepState _ _ _ _ = ChainDepStateD
+>   reupdateChainDepState _ _ _ = ChainDepStateD
 
 Integration
 ===========

@@ -8,6 +8,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures             #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -433,10 +434,8 @@ infosEta l@PraosConfig{praosParams = PraosParams{..}} xs e =
 -- choose the right nonce from that; this means that ticking has no effect.
 --
 -- We do however need access to the ticked stake distribution.
-data instance Ticked (PraosChainDepState c) = TickedPraosChainDepState {
-      tickedPraosLedgerView      :: Ticked (LedgerView (Praos c))
-      -- ^ The ticked ledger view.
-    , untickedPraosChainDepState :: PraosChainDepState c
+newtype instance Ticked (PraosChainDepState c) = TickedPraosChainDepState {
+      untickedPraosChainDepState :: PraosChainDepState c
       -- ^ The unticked chain dependent state, containing the full history.
     }
 
@@ -451,7 +450,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PraosChainDepState   c
   type CanBeLeader   (Praos c) = CoreNodeId
 
-  checkIsLeader cfg@PraosConfig{..} nid slot (TickedPraosChainDepState _u  cds) =
+  checkIsLeader cfg@PraosConfig{..} nid pcst =
       -- See Figure 4 of the Praos paper.
       -- In order to be leader, y must be < Tᵢ
       if fromIntegral (getOutputVRFNatural (certifiedOutput y)) < t
@@ -462,24 +461,35 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
              }
       else Nothing
     where
-      (rho', y', t) = rhoYT cfg (praosHistory cds) slot nid
+      PreparedChainDepState {
+          tickedChainDepState
+        , tickedToSlot
+        } = pcst
+
+      history = praosHistory $ untickedPraosChainDepState tickedChainDepState
+
+      (rho', y', t) = rhoYT cfg history tickedToSlot nid
       rho = evalCertified () rho' praosSignKeyVRF
       y   = evalCertified () y'   praosSignKeyVRF
 
-  tickChainDepState _ lv _ = TickedPraosChainDepState lv
+  tickChainDepState _cfg _lv _slot = TickedPraosChainDepState
 
   updateChainDepState cfg@PraosConfig{..}
                       (PraosValidateView PraosFields{..} toSign)
-                      slot
-                      (TickedPraosChainDepState TickedTrivial cds) = do
+                      pcst = do
     let PraosExtraFields {..} = praosExtraFields
         nid = praosCreator
+        PreparedChainDepState {
+            tickedChainDepState
+          , tickedToSlot
+          } = pcst
+        history = praosHistory $ untickedPraosChainDepState tickedChainDepState
 
     -- check that the new block advances time
-    case praosHistory cds of
+    case history of
         (c : _)
-            | biSlot c >= slot -> throwError $ PraosInvalidSlot slot (biSlot c)
-        _                      -> return ()
+            | biSlot c >= tickedToSlot -> throwError $ PraosInvalidSlot tickedToSlot (biSlot c)
+        _                              -> return ()
 
     -- check that block creator is a known core node
     (vkKES, vkVRF) <- case Map.lookup nid praosVerKeys of
@@ -490,17 +500,17 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
     case verifySignedKES
            ()
            vkKES
-           (fromIntegral $ unSlotNo slot)
+           (fromIntegral $ unSlotNo tickedToSlot)
            toSign
            praosSignature of
        Right () -> return ()
        Left err -> throwError $ PraosInvalidSig
                                   err
                                   vkKES
-                                  (fromIntegral $ unSlotNo slot)
+                                  (fromIntegral $ unSlotNo tickedToSlot)
                                   (getSig praosSignature)
 
-    let (rho', y', t) = rhoYT cfg (praosHistory cds) slot nid
+    let (rho', y', t) = rhoYT cfg history tickedToSlot nid
 
     -- verify rho proof
     unless (verifyCertified () vkVRF rho' praosRho) $
@@ -525,22 +535,25 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
 
     -- "store" a block by adding it to the chain dependent state
     let !bi = BlockInfo
-            { biSlot  = slot
+            { biSlot  = tickedToSlot
             , biRho   = praosRho
             }
 
-    return $ PraosChainDepState $ bi : praosHistory cds
+    return $ PraosChainDepState $ bi : history
 
   reupdateChainDepState _
                         (PraosValidateView PraosFields{..} _)
-                        slot
-                        (TickedPraosChainDepState TickedTrivial cds) =
+                        pcst =
     let PraosExtraFields{..} = praosExtraFields
+        PreparedChainDepState {
+            tickedChainDepState
+          , tickedToSlot
+          } = pcst
         !bi = BlockInfo
-            { biSlot  = slot
+            { biSlot  = tickedToSlot
             , biRho   = praosRho
             }
-    in PraosChainDepState $ bi : praosHistory cds
+    in PraosChainDepState $ bi : praosHistory (untickedPraosChainDepState tickedChainDepState)
 
   -- (Standard) Praos uses the standard chain selection rule, so no need to
   -- override (though see note regarding clock skew).

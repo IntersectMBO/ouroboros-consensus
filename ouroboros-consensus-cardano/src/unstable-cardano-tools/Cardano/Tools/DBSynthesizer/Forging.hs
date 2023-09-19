@@ -28,8 +28,8 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
-                     tickChainDepState)
+import           Ouroboros.Consensus.Protocol.Abstract (PreparedChainDepState,
+                     prepareToUpdateChainDepState)
 import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
                      (AddBlockResult (..), ChainDB, addBlockAsync,
                      blockProcessed, getCurrentChain, getPastLedger)
@@ -128,9 +128,9 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
             Left err -> exitEarly' $ "no ledger view: " ++ show err
             Right lv -> return lv
 
-        let tickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
-            tickedChainDepState =
-                tickChainDepState
+        let preparedChainDepState :: PreparedChainDepState (BlockProtocol blk)
+            preparedChainDepState =
+                prepareToUpdateChainDepState
                   (configConsensus cfg)
                   ledgerView
                   currentSlot
@@ -139,7 +139,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
         -- Check if any forger is slot leader
         let
             checkShouldForge' f =
-              checkShouldForge f nullTracer cfg currentSlot tickedChainDepState
+              checkShouldForge f nullTracer cfg preparedChainDepState
 
         checks <- zip blockForging <$> liftIO (mapM checkShouldForge' blockForging)
 

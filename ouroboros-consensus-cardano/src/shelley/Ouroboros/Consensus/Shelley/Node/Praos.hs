@@ -25,6 +25,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (configConsensus)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
+import           Ouroboros.Consensus.Protocol.Abstract (tickedToSlot)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
                      praosCheckCanForge)
@@ -98,13 +99,13 @@ praosSharedBlockForging
     BlockForging
       { forgeLabel = label <> "_" <> shelleyBasedEraName (Proxy @era),
         canBeLeader = canBeLeader,
-        updateForgeState = \_ curSlot _ ->
+        updateForgeState = \_ pcst ->
           forgeStateUpdateInfoFromUpdateInfo
-            <$> HotKey.evolve hotKey (slotToPeriod curSlot),
-        checkCanForge = \cfg curSlot _tickedChainDepState _isLeader ->
+            <$> HotKey.evolve hotKey (slotToPeriod (tickedToSlot pcst)),
+        checkCanForge = \cfg pcst _isLeader ->
           praosCheckCanForge
             (configConsensus cfg)
-            curSlot,
+            (tickedToSlot pcst),
         forgeBlock = \cfg ->
           forgeShelleyBlock
             hotKey

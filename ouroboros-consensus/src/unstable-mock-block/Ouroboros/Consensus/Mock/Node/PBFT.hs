@@ -90,14 +90,13 @@ pbftBlockForging ::
 pbftBlockForging canBeLeader = BlockForging {
       forgeLabel       = "pbftBlockForging"
     , canBeLeader
-    , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-    , checkCanForge    = \cfg slot tickedPBftState _isLeader ->
+    , updateForgeState = \_cfg _pcst -> return $ ForgeStateUpdated ()
+    , checkCanForge    = \cfg pcst _isLeader ->
                            return $
                              pbftCheckCanForge
                                (configConsensus cfg)
                                canBeLeader
-                               slot
-                               tickedPBftState
+                               pcst
     , forgeBlock       = \cfg slot bno lst txs proof ->
         return
           $ forgeSimple

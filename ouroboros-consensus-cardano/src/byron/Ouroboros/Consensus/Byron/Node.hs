@@ -132,13 +132,12 @@ byronBlockForging
 byronBlockForging maxTxCapacityOverrides creds = BlockForging {
       forgeLabel       = blcLabel creds
     , canBeLeader
-    , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-    , checkCanForge    = \cfg slot tickedPBftState _isLeader () ->
+    , updateForgeState = \_ _ -> return $ ForgeStateUpdated ()
+    , checkCanForge    = \cfg pcst _isLeader () ->
                              pbftCheckCanForge
                                (configConsensus cfg)
                                canBeLeader
-                               slot
-                               tickedPBftState
+                               pcst
     , forgeBlock       = \cfg -> return ....: forgeByronBlock cfg maxTxCapacityOverrides
     }
   where

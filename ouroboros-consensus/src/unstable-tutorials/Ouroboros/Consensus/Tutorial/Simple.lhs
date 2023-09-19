@@ -49,7 +49,8 @@ First, some imports we'll need:
 >    Header, StorageConfig, ChainHash, HasHeader(..), HeaderFields(..),
 >    HeaderHash, Point, StandardHash)
 > import Ouroboros.Consensus.Protocol.Abstract
->   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..) )
+>   (SecurityParam(..), ConsensusConfig, ConsensusProtocol(..),
+>    PreparedChainDepState (..))
 > import Ouroboros.Consensus.Ticked ( Ticked(TickedTrivial) )
 > import Ouroboros.Consensus.Block
 >   (BlockSupportsProtocol (selectView, validateView))
@@ -140,7 +141,9 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 >   type ValidateView  SP = ()
 >   type ValidationErr SP = Void
 >
->   checkIsLeader cfg SP_CanBeLeader slot _tcds =
+>   checkIsLeader cfg SP_CanBeLeader pcst =
+>       let PreparedChainDepState{tickedToSlot = slot} = pcst
+>       in
 >       if slot `Set.member` cfgsp_slotsLedByMe cfg
 >       then Just SP_IsLeader
 >       else Nothing
@@ -149,9 +152,9 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 >
 >   tickChainDepState _ _ _ _ = TickedTrivial
 >
->   updateChainDepState _ _ _ _ = return ()
+>   updateChainDepState _ _ _ = return ()
 >
->   reupdateChainDepState _ _ _ _ = ()
+>   reupdateChainDepState _ _ _ = ()
 
 Finally we define a few extra things used in this instantiation:
 

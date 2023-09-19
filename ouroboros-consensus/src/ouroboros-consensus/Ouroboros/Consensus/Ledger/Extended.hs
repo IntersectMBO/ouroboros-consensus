@@ -83,9 +83,8 @@ deriving instance ( LedgerSupportsProtocol blk
 -------------------------------------------------------------------------------}
 
 data instance Ticked (ExtLedgerState blk) = TickedExtLedgerState {
-      tickedLedgerState :: Ticked (LedgerState blk)
-    , tickedLedgerView  :: Ticked (LedgerView (BlockProtocol blk))
-    , tickedHeaderState :: Ticked (HeaderState blk)
+      tickedLedgerState   :: Ticked (LedgerState blk)
+    , preparedHeaderState :: PreparedHeaderState blk
     }
 
 -- | " Ledger " configuration for the extended ledger
@@ -126,9 +125,9 @@ instance ( LedgerSupportsProtocol blk
       let tickedLedgerView :: Ticked (LedgerView (BlockProtocol blk))
           tickedLedgerView = protocolLedgerView lcfg tickedLedgerState
 
-          tickedHeaderState :: Ticked (HeaderState blk)
-          tickedHeaderState =
-              tickHeaderState
+          preparedHeaderState :: PreparedHeaderState blk
+          preparedHeaderState =
+              prepareToUpdateHeaderState
                 (configConsensus $ getExtLedgerCfg cfg)
                 tickedLedgerView
                 slot
@@ -152,9 +151,8 @@ instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
         withExcept ExtValidationErrorHeader
       $ validateHeader @blk
           (getExtLedgerCfg cfg)
-          tickedLedgerView
+          preparedHeaderState
           (getHeader blk)
-          tickedHeaderState
     pure $ (\l -> ExtLedgerState l hdr) <$> castLedgerResult ledgerResult
 
   reapplyBlockLedgerResult cfg blk TickedExtLedgerState{..} =
@@ -168,9 +166,8 @@ instance LedgerSupportsProtocol blk => ApplyBlock (ExtLedgerState blk) blk where
       hdr      =
         revalidateHeader
           (getExtLedgerCfg cfg)
-          tickedLedgerView
+          preparedHeaderState
           (getHeader blk)
-          tickedHeaderState
 
 {-------------------------------------------------------------------------------
   Serialisation

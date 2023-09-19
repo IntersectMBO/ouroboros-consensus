@@ -6,6 +6,7 @@
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE KindSignatures        #-}
+{-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
@@ -415,22 +416,16 @@ instance Functor m => Isomorphic (BlockForging m) where
   project BlockForging {..} = BlockForging {
         forgeLabel       = forgeLabel
       , canBeLeader      = project' (Proxy @(WrapCanBeLeader blk)) canBeLeader
-      , updateForgeState = \cfg sno tickedChainDepSt ->
+      , updateForgeState = \cfg pcst ->
                                project <$>
                                  updateForgeState
                                    (inject cfg)
-                                   sno
-                                   (injTickedChainDepSt
-                                     (noHardForksEpochInfo cfg)
-                                     tickedChainDepSt)
-      , checkCanForge    = \cfg sno tickedChainDepSt isLeader forgeStateInfo ->
+                                   (injPreparedChainDepSt (noHardForksEpochInfo cfg) pcst)
+      , checkCanForge    = \cfg pcst isLeader forgeStateInfo ->
                                first (project' (Proxy @(WrapCannotForge blk))) $
                                  checkCanForge
                                    (inject cfg)
-                                   sno
-                                   (injTickedChainDepSt
-                                     (noHardForksEpochInfo cfg)
-                                     tickedChainDepSt)
+                                   (injPreparedChainDepSt (noHardForksEpochInfo cfg) pcst)
                                    (inject' (Proxy @(WrapIsLeader blk)) isLeader)
                                    (inject' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
 
@@ -445,6 +440,34 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (inject' (Proxy @(WrapIsLeader blk)) isLeader)
       }
     where
+      injPreparedChainDepSt ::
+           EpochInfo (Except PastHorizonException)
+        -> PreparedChainDepState (BlockProtocol blk)
+        -> PreparedChainDepState (HardForkProtocol '[blk])
+      injPreparedChainDepSt ei pcst =
+          PreparedChainDepState {
+              tickedChainDepState = injTickedChainDepSt ei tickedChainDepState
+            , tickedLedgerView    = injTickedLedgerView    tickedLedgerView
+            , tickedToSlot
+            }
+        where
+          PreparedChainDepState {
+              tickedChainDepState
+            , tickedLedgerView
+            , tickedToSlot
+            } = pcst
+
+      injTickedLedgerView ::
+           Ticked (LedgerView (BlockProtocol blk))
+        -> Ticked (LedgerView (HardForkProtocol '[blk]))
+      injTickedLedgerView =
+            TickedHardForkLedgerView TransitionImpossible
+          . HardForkState
+          . Telescope.TZ
+          . Current History.initBound
+          . Comp
+          . WrapTickedLedgerView
+
       injTickedChainDepSt ::
            EpochInfo (Except PastHorizonException)
         -> Ticked (ChainDepState (BlockProtocol blk))
@@ -462,18 +485,16 @@ instance Functor m => Isomorphic (BlockForging m) where
   inject BlockForging {..} = BlockForging {
         forgeLabel       = forgeLabel
       , canBeLeader      = inject' (Proxy @(WrapCanBeLeader blk)) canBeLeader
-      , updateForgeState = \cfg sno tickedChainDepSt ->
+      , updateForgeState = \cfg pcst ->
                                inject <$>
                                  updateForgeState
                                    (project cfg)
-                                   sno
-                                   (projTickedChainDepSt tickedChainDepSt)
-      , checkCanForge    = \cfg sno tickedChainDepSt isLeader forgeStateInfo ->
+                                   (projPreparedChainDepSt pcst)
+      , checkCanForge    = \cfg pcst isLeader forgeStateInfo ->
                                first (inject' (Proxy @(WrapCannotForge blk))) $
                                  checkCanForge
                                    (project cfg)
-                                   sno
-                                   (projTickedChainDepSt tickedChainDepSt)
+                                   (projPreparedChainDepSt pcst)
                                    (project' (Proxy @(WrapIsLeader blk)) isLeader)
                                    (project' (Proxy @(WrapForgeStateInfo blk)) forgeStateInfo)
 
@@ -488,6 +509,31 @@ instance Functor m => Isomorphic (BlockForging m) where
                                    (project' (Proxy @(WrapIsLeader blk)) isLeader)
       }
     where
+      projPreparedChainDepSt ::
+           PreparedChainDepState (HardForkProtocol '[blk])
+        -> PreparedChainDepState (BlockProtocol blk)
+      projPreparedChainDepSt pcst =
+          PreparedChainDepState {
+              tickedChainDepState = projTickedChainDepSt tickedChainDepState
+            , tickedLedgerView    = projTickedLedgerView tickedLedgerView
+            , tickedToSlot
+            }
+        where
+          PreparedChainDepState {
+              tickedChainDepState
+            , tickedLedgerView
+            , tickedToSlot
+            } = pcst
+
+      projTickedLedgerView ::
+           Ticked (LedgerView (HardForkProtocol '[blk]))
+        -> Ticked (LedgerView (BlockProtocol blk))
+      projTickedLedgerView =
+            unwrapTickedLedgerView
+          . unComp
+          . State.fromTZ
+          . tickedHardForkLedgerViewPerEra
+
       projTickedChainDepSt ::
            Ticked (ChainDepState (HardForkProtocol '[blk]))
         -> Ticked (ChainDepState (BlockProtocol blk))
@@ -555,14 +601,6 @@ instance Isomorphic WrapForgeStateInfo where
       . CurrentEraForgeStateUpdated
       . OneEraForgeStateInfo
       . Z
-
-instance Isomorphic WrapLedgerView where
-  project = State.fromTZ . hardForkLedgerViewPerEra . unwrapLedgerView
-  inject  = WrapLedgerView
-          . HardForkLedgerView TransitionImpossible
-          . HardForkState
-          . Telescope.TZ
-          . Current History.initBound
 
 instance Isomorphic (SomeSecond (NestedCtxt f)) where
   project (SomeSecond ctxt) = SomeSecond $ projNestedCtxt ctxt

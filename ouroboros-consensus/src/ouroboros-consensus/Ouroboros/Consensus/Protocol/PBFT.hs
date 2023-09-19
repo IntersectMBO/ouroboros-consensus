@@ -276,11 +276,9 @@ newtype instance ConsensusConfig (PBft c) = PBftConfig {
     }
   deriving (Generic, NoThunks)
 
--- Ticking has no effect on the PBFtState, but we do need the ticked ledger view
-data instance Ticked (PBftState c) = TickedPBftState {
-      tickedPBftLedgerView :: Ticked (LedgerView (PBft c))
-    , getTickedPBftState   :: PBftState c
-    }
+newtype instance Ticked (PBftState c) = TickedPBftState {
+     getTickedPBftState :: PBftState c
+   }
 
 instance PBftCrypto c => ConsensusProtocol (PBft c) where
   type ValidationErr (PBft c) = PBftValidationErr c
@@ -300,8 +298,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
 
   checkIsLeader PBftConfig{pbftParams}
                 PBftCanBeLeader{..}
-                (SlotNo n)
-                _tickedChainDepState =
+                pcst =
       -- We are the slot leader based on our node index, and the current
       -- slot number. Our node index depends which genesis key has delegated
       -- to us, see 'genesisKeyCoreNodeId'.
@@ -316,12 +313,13 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
       PBftParams{pbftNumNodes = NumCoreNodes numCoreNodes} = pbftParams
       CoreNodeId i = pbftCanBeLeaderCoreNodeId
 
-  tickChainDepState _ lv _ = TickedPBftState lv
+      PreparedChainDepState {
+          tickedToSlot = SlotNo n
+        } = pcst
 
-  updateChainDepState cfg
-                      toValidate
-                      slot
-                      (TickedPBftState (TickedPBftLedgerView dms) state) =
+  tickChainDepState _ _ _ = TickedPBftState
+
+  updateChainDepState cfg toValidate pcst =
       case toValidate of
         PBftValidateBoundary ->
           return state
@@ -339,7 +337,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
           -- FIXME confirm that non-strict inequality is ok in general.
           -- It's here because EBBs have the same slot as the first block of their
           -- epoch.
-          unless (NotOrigin slot >= S.lastSignedSlot state)
+          unless (NotOrigin tickedToSlot >= S.lastSignedSlot state)
             $ throwError PBftInvalidSlot
 
           case Bimap.lookupR (hashVerKey pbftIssuer) dms of
@@ -348,17 +346,20 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
                              (hashVerKey pbftIssuer)
                              (PBftLedgerView dms)
             Just gk -> do
-              let state' = append cfg params (slot, gk) state
+              let state' = append cfg params (tickedToSlot, gk) state
               case pbftWindowExceedsThreshold params state' gk of
                 Left n   -> throwError $ PBftExceededSignThreshold gk n
                 Right () -> return $! state'
     where
       params = pbftWindowParams cfg
 
-  reupdateChainDepState cfg
-                        toValidate
-                        slot
-                        (TickedPBftState (TickedPBftLedgerView dms) state) =
+      PreparedChainDepState {
+          tickedChainDepState = TickedPBftState state
+        , tickedLedgerView    = TickedPBftLedgerView dms
+        , tickedToSlot
+        } = pcst
+
+  reupdateChainDepState cfg toValidate pcst =
       case toValidate of
         PBftValidateBoundary -> state
         PBftValidateRegular PBftFields{pbftIssuer} _ _ ->
@@ -368,12 +369,18 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
                                (hashVerKey pbftIssuer)
                                (PBftLedgerView dms)
             Just gk -> do
-              let state' = append cfg params (slot, gk) state
+              let state' = append cfg params (tickedToSlot, gk) state
               case pbftWindowExceedsThreshold params state' gk of
                 Left n   -> error $ show $ PBftExceededSignThreshold gk n
                 Right () -> state'
     where
       params = pbftWindowParams cfg
+
+      PreparedChainDepState {
+          tickedChainDepState = TickedPBftState state
+        , tickedLedgerView    = TickedPBftLedgerView dms
+        , tickedToSlot
+        } = pcst
 
 {-------------------------------------------------------------------------------
   Internal: thin wrapper on top of 'PBftState'
@@ -472,22 +479,25 @@ pbftCheckCanForge ::
      forall c. PBftCrypto c
   => ConsensusConfig (PBft c)
   -> PBftCanBeLeader c
-  -> SlotNo
-  -> Ticked (PBftState c)
+  -> PreparedChainDepState (PBft c)
   -> Either (PBftCannotForge c) ()
-pbftCheckCanForge cfg PBftCanBeLeader{..} slot tickedChainDepState =
+pbftCheckCanForge cfg PBftCanBeLeader{..} pcst =
     case Bimap.lookupR dlgKeyHash dms of
       Nothing -> Left $ PBftCannotForgeInvalidDelegation dlgKeyHash
       Just gk ->
         first PBftCannotForgeThresholdExceeded $
-          pbftWindowExceedsThreshold params (append cfg params (slot, gk) cds) gk
+          pbftWindowExceedsThreshold params (append cfg params (tickedToSlot, gk) cds) gk
   where
     params = pbftWindowParams cfg
 
     dlgKeyHash :: PBftVerKeyHash c
     dlgKeyHash = hashVerKey . dlgCertDlgVerKey $ pbftCanBeLeaderDlgCert
 
-    TickedPBftState (TickedPBftLedgerView dms) cds = tickedChainDepState
+    PreparedChainDepState {
+        tickedChainDepState = TickedPBftState cds
+      , tickedLedgerView    = TickedPBftLedgerView dms
+      , tickedToSlot
+      } = pcst
 
 {-------------------------------------------------------------------------------
   Condense

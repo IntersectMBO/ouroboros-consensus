@@ -10,6 +10,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -94,16 +95,16 @@ instance ConsensusProtocol ProtocolB where
   type ValidateView  ProtocolB = ()
   type ValidationErr ProtocolB = Void
 
-  checkIsLeader CfgB{..} () slot _ =
-      if slot `Set.member` cfgB_leadInSlots
+  checkIsLeader CfgB{..} () PreparedChainDepState{tickedToSlot} =
+      if tickedToSlot `Set.member` cfgB_leadInSlots
       then Just ()
       else Nothing
 
   protocolSecurityParam = cfgB_k
 
   tickChainDepState     _ _ _ _ = TickedTrivial
-  updateChainDepState   _ _ _ _ = return ()
-  reupdateChainDepState _ _ _ _ = ()
+  updateChainDepState   _ _ _   = return ()
+  reupdateChainDepState _ _ _   = ()
 
 data BlockB = BlkB {
       blkB_header :: Header BlockB
@@ -167,7 +168,7 @@ data instance LedgerState BlockB = LgrB {
 
 type instance LedgerCfg (LedgerState BlockB) = ()
 
--- | Ticking has no state on the B ledger state
+-- | Ticking has no effect on the B ledger state
 newtype instance Ticked (LedgerState BlockB) = TickedLedgerStateB {
       getTickedLedgerStateB :: LedgerState BlockB
     }
@@ -235,8 +236,8 @@ blockForgingB :: Monad m => BlockForging m BlockB
 blockForgingB = BlockForging {
      forgeLabel       = "BlockB"
    , canBeLeader      = ()
-   , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
-   , checkCanForge    = \_ _ _ _ _ -> return ()
+   , updateForgeState = \_ _ -> return $ ForgeStateUpdated ()
+   , checkCanForge    = \_ _ _ _ -> return ()
    , forgeBlock       = \cfg bno slot st txs proof -> return $
        forgeBlockB cfg bno slot st (fmap txForgetValidated txs) proof
    }
