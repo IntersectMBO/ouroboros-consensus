@@ -70,8 +70,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.SOP.Constraint
 import           Data.SOP.Index
-import           Data.SOP.Strict
 import           Data.Typeable (Typeable)
 import qualified Data.VMap as VMap
 import           GHC.Generics (Generic)

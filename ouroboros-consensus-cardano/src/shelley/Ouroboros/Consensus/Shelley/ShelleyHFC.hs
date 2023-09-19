@@ -39,8 +39,6 @@ import           Control.Monad.Except (runExcept, throwError, withExceptT)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
 import           Data.SOP.BasicFunctors
-import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
-import qualified Data.Monoid as Monoid
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)

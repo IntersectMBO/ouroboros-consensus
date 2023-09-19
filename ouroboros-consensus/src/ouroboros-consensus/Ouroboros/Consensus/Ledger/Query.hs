@@ -51,7 +51,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Monoid
 import qualified Data.Set as Set
-import           Data.SOP.Strict ((:.:) (..))
+import           Data.SOP ((:.:) (..))
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (CodecConfig)
 import           Ouroboros.Consensus.BlockchainTime (SystemStart)

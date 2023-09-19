@@ -59,7 +59,7 @@ import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
 import qualified Data.SOP.Match as Match
-import           Data.SOP.Strict hiding (shape, tl)
+import           Data.SOP.Strict hiding (tl)
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           Data.Void

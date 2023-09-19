@@ -60,11 +60,13 @@ module Legacy.Convert (
 
 import           Data.Coerce
 import           Data.Constraint
+import           Data.Proxy
 import           Data.SOP.Classes
+import           Data.SOP.Constraint
 import           Data.SOP.Counting
 import           Data.SOP.Functors
 import           Data.SOP.Match
-import           Data.SOP.Strict
+import           Data.SOP.Sing
 import           Legacy.Cardano
 import           Legacy.LegacyBlock
 import           Ouroboros.Consensus.Block.Abstract

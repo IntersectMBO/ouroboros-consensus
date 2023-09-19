@@ -38,6 +38,7 @@ import           Data.Bifunctor (first)
 import           Data.Coerce
 import           Data.Kind (Type)
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (..))
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict

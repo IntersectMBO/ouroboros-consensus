@@ -42,7 +42,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
 import qualified Data.SOP.InPairs as InPairs
-import           Data.SOP.Strict (NP (..), NS (..), unComp, (:.:) (..))
+import           Data.SOP.Strict (NP (..), NS (..))
 import qualified Data.SOP.Tails as Tails
 import           Data.Void (Void)
 import           Lens.Micro ((^.))

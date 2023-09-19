@@ -12,7 +12,6 @@ module Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC) where
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Data.Map.Strict as Map
 import           Data.SOP.Index (Index (..))
-import           Data.SOP.Strict
 import           Data.Void (Void, absurd)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
