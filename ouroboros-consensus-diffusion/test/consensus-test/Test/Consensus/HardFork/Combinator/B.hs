@@ -67,6 +67,7 @@ import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
@@ -161,6 +162,7 @@ instance ValidateEnvelope BlockB where
 
 data instance LedgerState BlockB = LgrB {
       lgrB_tip :: Point BlockB
+    , lgrB_protVer :: Integer
     }
   deriving (Show, Eq, Generic, Serialise)
   deriving NoThunks via OnlyCheckWhnfNamed "LgrB" (LedgerState BlockB)
@@ -188,8 +190,9 @@ instance IsLedger (LedgerState BlockB) where
   applyChainTickLedgerResult _ _ = pureLedgerResult . TickedLedgerStateB
 
 instance ApplyBlock (LedgerState BlockB) BlockB where
-  applyBlockLedgerResult   = \_ b _ -> return $ pureLedgerResult $ LgrB (blockPoint b)
-  reapplyBlockLedgerResult = \_ b _ ->          pureLedgerResult $ LgrB (blockPoint b)
+  applyBlockLedgerResult = return ..: reapplyBlockLedgerResult
+  reapplyBlockLedgerResult _cfg b (TickedLedgerStateB st) =
+      pureLedgerResult st{lgrB_tip = blockPoint b}
 
 instance UpdateLedger BlockB
 

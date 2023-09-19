@@ -45,7 +45,7 @@ import           Control.Monad.Except (runExcept)
 import qualified Data.Binary as B
 import           Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Functor.Identity (Identity)
+import           Data.Functor.Identity
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
@@ -65,6 +65,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import           Ouroboros.Consensus.HardFork.History (Bound (..),
                      EraParams (..))
 import qualified Ouroboros.Consensus.HardFork.History as History
+import           Ouroboros.Consensus.HardFork.History.Util (addSlots)
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
@@ -179,6 +180,10 @@ data instance LedgerState BlockA = LgrA {
 
       -- | The 'SlotNo' of the block containing the 'InitiateAtoB' transaction
     , lgrA_transition :: Maybe SlotNo
+
+      -- | The protocol version. Increments at epoch boundaries whenever
+      -- 'InitiateAtoB' would signal an era transition.
+    , lgrA_protVer :: Integer
     }
   deriving (Show, Eq, Generic, Serialise)
   deriving NoThunks via OnlyCheckWhnfNamed "LgrA" (LedgerState BlockA)
@@ -211,7 +216,27 @@ instance IsLedger (LedgerState BlockA) where
   type AuxLedgerEvent (LedgerState BlockA) =
     VoidLedgerEvent (LedgerState BlockA)
 
-  applyChainTickLedgerResult _ _ = pureLedgerResult . TickedLedgerStateA
+  applyChainTickLedgerResult (ei, cfg) targetSlot st =
+        pureLedgerResult
+      . TickedLedgerStateA
+      . incrProtVer
+      $ st
+    where
+      incrProtVer
+        | targetSlot >= firstSlotNextEpoch -- cross-epoch tick
+        , Just (_, confirmationDepth) <- getConfirmationDepth st
+          -- block with transition tx is doubly stable
+        , confirmationDepth >= safeFromTipA k + stabilityWindowA k
+        = \s -> s { lgrA_protVer = succ (lgrA_protVer s) }
+        | otherwise = id
+
+      k = lcfgA_k cfg
+
+      firstSlotNextEpoch = runIdentity $ do
+        currentEpoch        <- epochInfoEpoch ei (fromWithOrigin 0 $ getTipSlot st)
+        firstSlot           <- epochInfoFirst ei currentEpoch
+        EpochSize epochSize <- epochInfoSize ei currentEpoch
+        pure $ addSlots epochSize firstSlot
 
 instance ApplyBlock (LedgerState BlockA) BlockA where
   applyBlockLedgerResult cfg blk =

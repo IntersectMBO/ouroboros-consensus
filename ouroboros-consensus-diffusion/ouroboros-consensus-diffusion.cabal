@@ -227,6 +227,7 @@ test-suite consensus-test
     , quiet
     , serialise
     , si-timers
+    , sop-core
     , sop-extras
     , strict-sop-core
     , tasty

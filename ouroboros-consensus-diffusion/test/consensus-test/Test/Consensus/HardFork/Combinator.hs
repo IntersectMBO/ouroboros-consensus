@@ -22,6 +22,7 @@
 module Test.Consensus.HardFork.Combinator (tests) where
 
 import qualified Data.Map.Strict as Map
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
@@ -138,7 +139,8 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
     counterexample ("eraSizeA: " <> show eraSizeA) $
     tabulate "epochs in era A" [labelEraSizeA] $
     prop_general args testOutput .&&.
-    prop_allExpectedBlocks
+    prop_allExpectedBlocks .&&.
+    prop_finalProtVers
   where
     k :: SecurityParam
     k = testSetupK
@@ -239,10 +241,13 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         $ OptNil
       ]
 
+    initProtVer = 0
+
     initLedgerState :: LedgerState BlockA
     initLedgerState = LgrA {
           lgrA_tip        = GenesisPoint
         , lgrA_transition = Nothing
+        , lgrA_protVer    = initProtVer
         }
 
     initChainDepState :: ChainDepState ProtocolA
@@ -353,6 +358,24 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
             . filter p
             $ Mock.chainToList nodeOutputFinalChain
 
+    prop_finalProtVers :: Property
+    prop_finalProtVers =
+        counterexample ("final protocol versions: " <> show finalProtVers) $
+        -- TODO This property is showcasing a problem with the HFC: even though
+        -- we will definitely end up in era B (and hence, the protocol version
+        -- should be @'succ' 'initProtVer'@), this is currently not the case.
+        -- Subsequent commits will fix this.
+        all (== initProtVer) finalProtVers
+
+    finalProtVers :: Map.Map NodeId Integer
+    finalProtVers = getProtVer `Map.map` testOutputNodes testOutput
+      where
+        getProtVer =
+            hcollapse
+          . hap (fn (K . lgrA_protVer) :* fn (K . lgrB_protVer) :* Nil)
+          . hardForkLedgerStatePerEra
+          . nodeOutputFinalLedger
+
 -- We ignore the mempool for these tests
 instance TxGen TestBlock where
   testGenTxs _ _ _ _ _ _ = return []
@@ -411,6 +434,7 @@ ledgerState_AtoB ::
        BlockB
 ledgerState_AtoB = InPairs.ignoringBoth $ Translate $ \_ LgrA{..} -> LgrB {
       lgrB_tip = castPoint lgrA_tip
+    , lgrB_protVer = lgrA_protVer
     }
 
 chainDepState_AtoB ::
