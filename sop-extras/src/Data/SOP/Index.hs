@@ -4,7 +4,6 @@
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE GADTs                    #-}
 {-# LANGUAGE LambdaCase               #-}
-{-# LANGUAGE PolyKinds                #-}
 {-# LANGUAGE RankNTypes               #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -37,11 +36,15 @@ module Data.SOP.Index (
 
 import           Data.Coerce
 import           Data.Kind (Type)
+import           Data.Proxy
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Dict
+import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Data.Word
 
-type Index :: [k] -> k -> Type
+type Index :: [Type] -> Type -> Type
 data Index xs x where
   IZ ::               Index (x ': xs) x
   IS :: Index xs x -> Index (y ': xs) x

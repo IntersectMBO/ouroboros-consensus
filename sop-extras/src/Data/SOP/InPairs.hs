@@ -39,6 +39,7 @@ import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.SOP.Constraint
 import           Data.SOP.NonEmpty
+import           Data.SOP.Sing
 import           Data.SOP.Strict hiding (hcmap, hcpure, hczipWith, hmap, hpure)
 
 {-------------------------------------------------------------------------------

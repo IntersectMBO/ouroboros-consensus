@@ -41,8 +41,9 @@ import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.IOLike (IOLike (..), StrictSVar,
-                     StrictTVar)
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar)
+                     StrictTVar, castStrictSVar, castStrictTVar)
+import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar,
+                     castStrictMVar)
 
 {-------------------------------------------------------------------------------
   Basic definitions
@@ -70,6 +71,12 @@ instance NoThunks (StrictSVar m a)
   showTypeOf _ = "StrictSVar (WithEarlyExit m)"
   wNoThunks ctxt tv = do
       wNoThunks ctxt (castStrictSVar tv :: StrictSVar m a)
+
+instance NoThunks (StrictMVar m a)
+      => NoThunks (StrictMVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictMVar (WithEarlyExit m)"
+  wNoThunks ctxt tv = do
+      wNoThunks ctxt (castStrictMVar tv :: StrictMVar m a)
 
 -- | Internal only
 earlyExit :: m (Maybe a) -> WithEarlyExit m a
@@ -298,7 +305,5 @@ instance MonadEventlog m => MonadEventlog (WithEarlyExit m) where
   Finally, the consensus IOLike wrapper
 -------------------------------------------------------------------------------}
 
-instance ( IOLike m
-         , forall a. NoThunks (StrictMVar (WithEarlyExit m) a)
-         ) => IOLike (WithEarlyExit m) where
+instance IOLike m => IOLike (WithEarlyExit m) where
   forgetSignKeyKES = lift . forgetSignKeyKES

@@ -23,7 +23,7 @@ import qualified Data.Bimap as Bimap
 import           Data.IntPSQ (IntPSQ)
 import qualified Data.IntPSQ as PSQ
 import           Data.Monoid
-import           Data.SOP.Strict
+import           Data.SOP.BasicFunctors
 import           NoThunks.Class (InspectHeap (..), InspectHeapNamed (..),
                      NoThunks (..), OnlyCheckWhnfNamed (..), allNoThunks,
                      noThunksInKeysAndValues)

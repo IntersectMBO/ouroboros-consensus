@@ -4,6 +4,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams () where
 
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (unFlip))
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract

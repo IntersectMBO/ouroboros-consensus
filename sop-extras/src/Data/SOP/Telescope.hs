@@ -3,7 +3,9 @@
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE GADTs                    #-}
 {-# LANGUAGE LambdaCase               #-}
+{-# LANGUAGE MultiParamTypeClasses    #-}
 {-# LANGUAGE PolyKinds                #-}
+{-# LANGUAGE QuantifiedConstraints    #-}
 {-# LANGUAGE RankNTypes               #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE StandaloneDeriving       #-}
@@ -53,6 +55,9 @@ module Data.SOP.Telescope (
 import           Data.Coerce (coerce)
 import           Data.Functor.Product
 import           Data.Kind
+import           Data.Proxy
+import           Data.SOP (K (..), unComp, (:.:) (..))
+import           Data.SOP.Constraint
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (InPairs (..), Requiring (..))
 import qualified Data.SOP.InPairs as InPairs

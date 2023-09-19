@@ -36,9 +36,10 @@ import           Control.Monad.Except (runExcept, throwError)
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
+import           Data.SOP (unComp, (:.:) (..))
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
-import           Data.SOP.Strict (hpure, unComp, (:.:) (..))
+import           Data.SOP.Strict (hpure)
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
 import           Data.Void (absurd)

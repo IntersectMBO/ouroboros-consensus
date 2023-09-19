@@ -80,3 +80,5 @@ library
     , ouroboros-network-api
     , small-steps
     , sop-core
+    , sop-extras
+    , strict-sop-core
