@@ -828,7 +828,7 @@ decodeShelleyResult v query = case query of
     GetGovState                                -> fromCBOR
     GetDRepState {}                            -> LC.fromEraCBOR @era
     GetDRepStakeDistr {}                       -> LC.fromEraCBOR @era
-    GetCommitteeState                          -> fromCBOR
+    GetCommitteeState                          -> LC.fromEraCBOR @era
 
 currentPParamsEnDecoding ::
      forall era s.
