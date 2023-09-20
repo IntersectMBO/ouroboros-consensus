@@ -190,7 +190,7 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
                     candidates) $
         assert (all (preferAnchoredCandidate bcfg curChain) candidates) $ do
           cse <- chainSelEnv
-          chainSelection cse (Diff.extend <$> candidates)
+          chainSelection (const $ pure ()) cse (Diff.extend <$> candidates)
       where
         curChain = VF.validatedFragment curChainAndLedger
         ledger   = VF.validatedLedger   curChainAndLedger
@@ -261,10 +261,11 @@ addBlockSync
      , HasHardForkHistory blk
      , HasCallStack
      )
-  => ChainDbEnv m blk
+  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  -> ChainDbEnv m blk
   -> BlockToAdd m blk
   -> m ()
-addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
+addBlockSync handleLedgerEvent cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
     (isMember, invalid, curChain) <- atomically $ (,,)
       <$> VolatileDB.getIsMember          cdbVolatileDB
       <*> (forgetFingerprint <$> readTVar cdbInvalid)
@@ -317,7 +318,7 @@ addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
         -- new block. When some future blocks are now older than the current
         -- block, we will do chain selection in a more chronological order.
         void $ chainSelectionForFutureBlocks cdb blockCache
-        chainSelectionForBlock cdb blockCache hdr blockPunish
+        chainSelectionForBlock handleLedgerEvent cdb blockCache hdr blockPunish
 
     deliverProcessed newTip
   where
@@ -388,7 +389,9 @@ chainSelectionForFutureBlocks
      , HasHardForkHistory blk
      , HasCallStack
      )
-  => ChainDbEnv m blk -> BlockCache blk -> m (Point blk)
+  => ChainDbEnv m blk
+  -> BlockCache blk
+  -> m (Point blk)
 chainSelectionForFutureBlocks cdb@CDB{..} blockCache = do
     -- Get 'cdbFutureBlocks' and empty the map in the TVar. It will be
     -- repopulated with the blocks that are still from the future (but not the
@@ -400,7 +403,7 @@ chainSelectionForFutureBlocks cdb@CDB{..} blockCache = do
       return $ Map.elems futureBlocks
     forM_ futureBlockHeaders $ \(hdr, punish) -> do
       traceWith tracer $ ChainSelectionForFutureBlock (headerRealPoint hdr)
-      chainSelectionForBlock cdb blockCache hdr punish
+      chainSelectionForBlock (const $ pure ()) cdb blockCache hdr punish
     atomically $ Query.getTipPoint cdb
   where
     tracer = TraceAddBlockEvent >$< cdbTracer
@@ -445,12 +448,13 @@ chainSelectionForBlock
      , HasHardForkHistory blk
      , HasCallStack
      )
-  => ChainDbEnv m blk
+  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  -> ChainDbEnv m blk
   -> BlockCache blk
   -> Header blk
   -> InvalidBlockPunishment m
   -> m (Point blk)
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
+chainSelectionForBlock handleLedgerEvent cdb@CDB{..} blockCache hdr punish = do
     (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB)
       <- atomically $ (,,,,,)
           <$> (forgetFingerprint <$> readTVar cdbInvalid)
@@ -597,7 +601,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         case chainDiffs of
           Nothing          -> return curTip
           Just chainDiffs' ->
-            chainSelection chainSelEnv chainDiffs' >>= \case
+            chainSelection handleLedgerEvent chainSelEnv chainDiffs' >>= \case
               Nothing ->
                 return curTip
               Just validatedChainDiff ->
@@ -658,7 +662,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
           -- No candidates preferred over the current chain
           Nothing          -> return curTip
           Just chainDiffs' ->
-            chainSelection chainSelEnv chainDiffs' >>= \case
+            chainSelection handleLedgerEvent chainSelEnv chainDiffs' >>= \case
               Nothing                 ->
                 return curTip
               Just validatedChainDiff ->
@@ -877,13 +881,14 @@ chainSelection
      , LedgerSupportsProtocol blk
      , HasCallStack
      )
-  => ChainSelEnv m blk
+  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  -> ChainSelEnv m blk
   -> NonEmpty (ChainDiff (Header blk))
   -> m (Maybe (ValidatedChainDiff (Header blk) (LedgerDB' blk)))
      -- ^ The (valid) chain diff and corresponding LedgerDB that was selected,
      -- or 'Nothing' if there is no valid chain diff preferred over the current
      -- chain.
-chainSelection chainSelEnv chainDiffs =
+chainSelection handleLedgerEvent chainSelEnv chainDiffs =
     assert (all (preferAnchoredCandidate bcfg curChain . Diff.getSuffix)
                 chainDiffs) $
     assert (all (isJust . Diff.apply curChain)
@@ -912,7 +917,7 @@ chainSelection chainSelEnv chainDiffs =
     go []            = return Nothing
     go (candidate:candidates0) = do
         mTentativeHeader <- setTentativeHeader
-        validateCandidate chainSelEnv candidate >>= \case
+        validateCandidate handleLedgerEvent chainSelEnv candidate >>= \case
           InsufficientSuffix ->
             -- When the body of the tentative block turns out to be invalid, we
             -- have a valid *empty* prefix, as the tentative header fits on top
@@ -1056,11 +1061,12 @@ ledgerValidateCandidate
      , LedgerSupportsProtocol blk
      , HasCallStack
      )
-  => ChainSelEnv m blk
+  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  -> ChainSelEnv m blk
   -> ChainDiff (Header blk)
   -> m (ValidatedChainDiff (Header blk) (LedgerDB' blk))
-ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) =
-    LgrDB.validate lgrDB curLedger (const (pure ())) blockCache rollback traceUpdate newBlocks >>= \case
+ledgerValidateCandidate handleLedgerEvent chainSelEnv chainDiff@(ChainDiff rollback suffix) =
+    LgrDB.validate lgrDB curLedger handleLedgerEvent blockCache rollback traceUpdate newBlocks >>= \case
       LgrDB.ValidateExceededRollBack {} ->
         -- Impossible: we asked the LgrDB to roll back past the immutable tip,
         -- which is impossible, since the candidates we construct must connect
@@ -1217,11 +1223,12 @@ validateCandidate
      , LedgerSupportsProtocol blk
      , HasCallStack
      )
-  => ChainSelEnv m blk
+  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  -> ChainSelEnv m blk
   -> ChainDiff (Header blk)
   -> m (ValidationResult blk)
-validateCandidate chainSelEnv chainDiff =
-    ledgerValidateCandidate chainSelEnv chainDiff >>= \case
+validateCandidate handleLedgerEvent chainSelEnv chainDiff =
+    ledgerValidateCandidate handleLedgerEvent chainSelEnv chainDiff >>= \case
       validatedChainDiff
         | ValidatedDiff.rollbackExceedsSuffix validatedChainDiff
         -> return InsufficientSuffix

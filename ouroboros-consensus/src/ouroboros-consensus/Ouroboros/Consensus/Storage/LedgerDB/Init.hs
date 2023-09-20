@@ -208,7 +208,7 @@ initStartingWith tracer cfg streamAPI initDb = do
   where
     push :: blk -> (LedgerDB' blk, Word64) -> m (LedgerDB' blk, Word64)
     push blk !(!db, !replayed) = do
-        !db' <- ledgerDbPush cfg (ReapplyVal blk) db
+        !db' <- ledgerDbPush cfg (const $ pure ()) (ReapplyVal blk) db
 
         let replayed' :: Word64
             !replayed' = replayed + 1

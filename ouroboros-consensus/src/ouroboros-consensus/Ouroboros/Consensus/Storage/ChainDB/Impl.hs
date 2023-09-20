@@ -46,6 +46,8 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.HardFork.Abstract
+import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
@@ -85,10 +87,11 @@ withDB
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      )
-  => ChainDbArgs Identity m blk
+  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  -> ChainDbArgs Identity m blk
   -> (ChainDB m blk -> m a)
   -> m a
-withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
+withDB handleLedgerEvent args = bracket (fst <$> openDBInternal handleLedgerEvent args True) API.closeDB
 
 openDB
   :: forall m blk.
@@ -99,9 +102,11 @@ openDB
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      )
-  => ChainDbArgs Identity m blk
+  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  -> ChainDbArgs Identity m blk
   -> m (ChainDB m blk)
-openDB args = fst <$> openDBInternal args True
+openDB handleLedgerEvent args =
+  fst <$> openDBInternal handleLedgerEvent args True
 
 openDBInternal
   :: forall m blk.
@@ -112,10 +117,11 @@ openDBInternal
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      )
-  => ChainDbArgs Identity m blk
+  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  -> ChainDbArgs Identity m blk
   -> Bool -- ^ 'True' = Launch background tasks
   -> m (ChainDB m blk, Internal m blk)
-openDBInternal args launchBgTasks = runWithTempRegistry $ do
+openDBInternal handleLedgerEvent args launchBgTasks = runWithTempRegistry $ do
     lift $ traceWith tracer $ TraceOpenEvent StartedOpeningDB
     lift $ traceWith tracer $ TraceOpenEvent StartedOpeningImmutableDB
     immutableDB <- ImmutableDB.openDB argsImmutableDb $ innerOpenCont ImmutableDB.closeDB
@@ -221,7 +227,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             { intCopyToImmutableDB       = getEnv  h Background.copyToImmutableDB
             , intGarbageCollect          = getEnv1 h Background.garbageCollect
             , intUpdateLedgerSnapshots   = getEnv  h Background.updateLedgerSnapshots
-            , intAddBlockRunner          = getEnv  h Background.addBlockRunner
+            , intAddBlockRunner          = getEnv  h $ Background.addBlockRunner handleLedgerEvent
             , intKillBgThreads           = varKillBgThreads
             }
 
@@ -229,7 +235,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         (castPoint $ AF.anchorPoint chain)
         (castPoint $ AF.headPoint   chain)
 
-      when launchBgTasks $ Background.launchBgTasks env replayed
+      when launchBgTasks $ Background.launchBgTasks handleLedgerEvent env replayed
 
       return (chainDB, testing, env)
 
