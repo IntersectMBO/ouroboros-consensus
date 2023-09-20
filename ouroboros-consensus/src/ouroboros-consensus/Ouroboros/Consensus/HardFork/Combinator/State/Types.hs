@@ -155,7 +155,7 @@ data TransitionInfo =
   | TransitionImpossible
   deriving (Show, Generic, NoThunks)
 
-type CrossEraTickChainDepState' x y =                            (ConsensusConfig x -> ConsensusConfig y -> Ticked (LedgerView y)  -> EpochNo -> SlotNo -> ChainDepState x ->                                                             Ticked (ChainDepState y))
-data CrossEraTickLedgerState    x y = CrossEraTickLedgerState    (LedgerConfig    x -> LedgerConfig    y ->                           EpochNo -> SlotNo -> LedgerState   x -> LedgerResult (LedgerState x) (LedgerResult (LedgerState y) (Ticked (LedgerState   y))))
+type CrossEraTickChainDepState' x y =                         (ConsensusConfig x -> ConsensusConfig y -> Ticked (LedgerView y)  -> EpochNo -> SlotNo -> ChainDepState x ->                                                             Ticked (ChainDepState y))
+data CrossEraTickLedgerState    x y = CrossEraTickLedgerState (LedgerConfig    x -> LedgerConfig    y ->                           EpochNo -> SlotNo -> LedgerState   x -> LedgerResult (LedgerState x) (LedgerResult (LedgerState y) (Ticked (LedgerState   y))))
 
 data CrossEraTickChainDepState x y = CrossEraTickChainDepState (Proxy x -> Proxy y -> CrossEraTickChainDepState' (BlockProtocol x) (BlockProtocol y))
