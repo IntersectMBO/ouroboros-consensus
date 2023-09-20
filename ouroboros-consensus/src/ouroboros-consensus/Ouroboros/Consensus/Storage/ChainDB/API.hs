@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , getHeaderStateHistory
   , getImmutableLedger
   , getPastLedger
+  , getStatistics
   , getTipBlockNo
     -- * Adding a block
   , AddBlockPromise (..)
@@ -75,11 +76,14 @@ import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.Common
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView')
+import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView',
+                     closeLedgerDBView)
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
                      (anchorlessChangelog)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Query as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
                      (PointNotFound)
 import           Ouroboros.Consensus.Storage.Serialisation
@@ -390,6 +394,17 @@ getImmutableLedger ::
      Monad (STM m)
   => ChainDB m blk -> STM m (ExtLedgerState blk EmptyMK)
 getImmutableLedger = fmap (LedgerDB.anchor . anchorlessChangelog) . getLedgerDB
+
+getStatistics ::
+  (Monad m, LedgerSupportsProtocol blk)
+  => ChainDB m blk -> m Statistics
+getStatistics cdb = do
+  getLedgerDBViewAtPoint cdb Nothing >>=  \case
+    Left{} -> error "Impossible, we are asking for a view at the tip"
+    Right view -> do
+      stats <- LedgerDB.getStatistics view
+      closeLedgerDBView view
+      pure stats
 
 -- | Get the ledger for the given point.
 --
