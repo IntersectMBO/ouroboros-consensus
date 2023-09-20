@@ -71,6 +71,7 @@ import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
+import           Ouroboros.Consensus.Ledger.Basics (AuxLedgerEvent (..))
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -180,6 +181,9 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
 
       -- | Network PeerSharing miniprotocol willingness flag
     , rnPeerSharing :: PeerSharing
+
+      -- | An event handler to trigger custom action when ledger events are emitted.
+    , rnHandleLedgerEvent :: AuxLedgerEvent (ExtLedgerState blk) -> m ()
     }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -342,8 +346,13 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   , ChainDB.cdbVolatileDbValidation  = ValidateAll
                   }
 
-        chainDB <- openChainDB registry inFuture cfg initLedger
-                  llrnChainDbArgsDefaults customiseChainDbArgs'
+        chainDB <- openChainDB rnHandleLedgerEvent
+                               registry
+                               inFuture
+                               cfg
+                               initLedger
+                               llrnChainDbArgsDefaults
+                               customiseChainDbArgs'
 
         continueWithCleanChainDB chainDB $ do
           btime <-
@@ -567,7 +576,8 @@ stdWithCheckedDB pb databasePath networkMagic body = do
 
 openChainDB
   :: forall m blk. (RunNode blk, IOLike m)
-  => ResourceRegistry m
+  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  -> ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk
   -> ExtLedgerState blk
@@ -576,8 +586,8 @@ openChainDB
   -> (ChainDbArgs Identity m blk -> ChainDbArgs Identity m blk)
       -- ^ Customise the 'ChainDbArgs'
   -> m (ChainDB m blk)
-openChainDB registry inFuture cfg initLedger defArgs customiseArgs =
-    ChainDB.openDB args
+openChainDB handleLedgerEvent registry inFuture cfg initLedger defArgs customiseArgs =
+    ChainDB.openDB handleLedgerEvent args
   where
     args :: ChainDbArgs Identity m blk
     args = customiseArgs $
