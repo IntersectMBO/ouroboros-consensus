@@ -68,6 +68,7 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Condense
 
@@ -118,16 +119,13 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
 
   type AuxLedgerEvent (LedgerState (HardForkBlock xs)) = OneEraLedgerEvent xs
 
-  applyChainTickLedgerResult cfg@HardForkLedgerConfig{..} slot (HardForkLedgerState st) =
+  applyChainTickLedgerResult cfg slot (HardForkLedgerState st) =
       extendToSlot cfg slot st <&> \st' ->
       TickedHardForkLedgerState {
-          tickedHardForkLedgerStateTransition =
-            State.mostRecentTransitionInfo cfg st'
-        , tickedHardForkLedgerStatePerEra = st'
+          tickedHardForkLedgerStatePerEra     = st'
+        , tickedHardForkLedgerStateTransition =
+            State.mostRecentTransitionInfo cfg $ hmap (Comp . YesTicked . unComp) st'
         }
-    where
-      cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
-      ei   = State.epochInfoLedger cfg st
 
 {-------------------------------------------------------------------------------
   Extending
@@ -174,8 +172,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt =
 -}
 
     pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
-    cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
-    ei    = State.epochInfoLedger ledgerCfg ledgerSt
+    ei    = State.epochInfoLedger ledgerCfg (hmap (Comp . NoTicked) ledgerSt)
 
 {-
     mbEndBound :: Maybe History.Bound
@@ -319,6 +316,7 @@ instance All SingleEraBlock xs => HasHardForkHistory (HardForkBlock xs) where
   type HardForkIndices (HardForkBlock xs) = xs
 
   hardForkSummary cfg = State.reconstructSummaryLedger cfg
+                      . hmap (Comp . NoTicked)
                       . hardForkLedgerStatePerEra
 
 {-------------------------------------------------------------------------------
@@ -407,7 +405,7 @@ instance CanHardFork xs => LedgerSupportsProtocol (HardForkBlock xs) where
         (InPairs.requiringBoth cfgs $ crossEraForecast hardForkEraTranslation)
         annForecast
     where
-      ei    = State.epochInfoLedger ledgerCfg ledgerSt
+      ei    = State.epochInfoLedger ledgerCfg (hmap (Comp . NoTicked) ledgerSt)
       pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
       cfgs  = hcmap proxySingle (completeLedgerConfig'' ei) pcfgs
 
@@ -434,7 +432,11 @@ instance CanHardFork xs => LedgerSupportsProtocol (HardForkBlock xs) where
               , annForecastState = st
               , annForecastTip   = ledgerTipSlot st
               , annForecastEnd   = History.mkUpperBound params start <$>
-                                     singleEraTransition' cfg params start st
+                                     singleEraTransition'
+                                       cfg
+                                       params
+                                       start
+                                       (NoTicked st)
               }
           }
         where
@@ -625,7 +627,7 @@ instance CanHardFork xs => InspectLedger (HardForkBlock xs) where
       pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
       shape = History.getShape hardForkLedgerConfigShape
       cfgs  = distribTopLevelConfig ei cfg
-      ei    = State.epochInfoLedger (configLedger cfg) after
+      ei    = State.epochInfoLedger (configLedger cfg) (hmap (Comp . NoTicked) after)
 
 inspectHardForkLedger ::
      CanHardFork xs
@@ -694,12 +696,12 @@ inspectHardForkLedger = go
                             (unwrapPartialLedgerConfig pc)
                             ps
                             (currentStart before)
-                            (currentState before)
+                            (NoTicked $ currentState before)
         confirmedAfter  = singleEraTransition
                             (unwrapPartialLedgerConfig pc)
                             ps
                             (currentStart after)
-                            (currentState after)
+                            (NoTicked $ currentState after)
 
     go Nil _ _ before _ =
         case before of {}

@@ -6,7 +6,10 @@
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
 
-module Ouroboros.Consensus.Ticked (Ticked (..)) where
+module Ouroboros.Consensus.Ticked (
+  Ticked (..),
+  WhetherTickedOrNot (..),
+  ) where
 
 import           Data.Kind (Type)
 import           Data.SOP.BasicFunctors
@@ -36,6 +39,8 @@ data instance Ticked () = TickedTrivial
   deriving (Show)
 
 newtype instance Ticked (K a x) = TickedK { getTickedK :: Ticked a }
+
+data WhetherTickedOrNot x = YesTicked !(Ticked x) | NoTicked !x
 
 {-------------------------------------------------------------------------------
   Forwarding type class instances

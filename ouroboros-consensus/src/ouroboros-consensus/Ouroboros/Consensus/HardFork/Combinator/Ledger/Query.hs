@@ -69,6 +69,7 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Node.Serialisation (Some (..))
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Ouroboros.Consensus.TypeFamilyWrappers (WrapChainDepState (..))
 import           Ouroboros.Consensus.Util (ShowProxy)
 
@@ -134,7 +135,7 @@ instance All SingleEraBlock xs => QueryLedger (HardForkBlock xs) where
     where
       cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
       lcfg = configLedger cfg
-      ei   = State.epochInfoLedger lcfg hardForkState
+      ei   = State.epochInfoLedger lcfg $ hmap (Comp . NoTicked) hardForkState
 
 -- | Precondition: the 'ledgerState' and 'headerState' should be from the same
 -- era. In practice, this is _always_ the case, unless the 'ExtLedgerState' was
@@ -300,7 +301,7 @@ answerQueryAnytime HardForkLedgerConfig{..} =
           (unwrapPartialLedgerConfig c)
           ps
           (currentStart cur)
-          (currentState cur)
+          (NoTicked $ currentState cur)
 
 {-------------------------------------------------------------------------------
   Hard fork queries

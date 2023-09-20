@@ -36,6 +36,7 @@ import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..),
                      genesisHeaderState)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
 
@@ -198,20 +199,22 @@ injectInitialExtLedgerState cfg extLedgerState0 =
     cfgs :: NP TopLevelConfig (x ': xs)
     cfgs =
         distribTopLevelConfig
-          (State.epochInfoLedger
-             (configLedger cfg)
-             (hardForkLedgerStatePerEra targetEraLedgerState))
+          ( State.epochInfoLedger (configLedger cfg)
+          $ hmap (Comp . NoTicked)
+          $ hardForkLedgerStatePerEra targetEraLedgerState
+          )
           cfg
 
     targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs))
     targetEraLedgerState =
         HardForkLedgerState $
+          undefined cfgs {-
           -- We can immediately extend it to the right slot, executing any
           -- scheduled hard forks in the first slot
           State.extendToSlot
             (configLedger cfg)
             (SlotNo 0)
-            (initHardForkState (ledgerState extLedgerState0))
+            (initHardForkState (ledgerState extLedgerState0)) -}
 
     firstEraChainDepState :: HardForkChainDepState (x ': xs)
     firstEraChainDepState =
@@ -222,6 +225,8 @@ injectInitialExtLedgerState cfg extLedgerState0 =
 
     targetEraChainDepState :: HardForkChainDepState (x ': xs)
     targetEraChainDepState =
+        undefined InPairs.requiringBoth firstEraChainDepState {-
+
         -- Align the 'ChainDepState' with the ledger state of the target era.
         State.align
           (InPairs.requiringBoth
@@ -229,7 +234,7 @@ injectInitialExtLedgerState cfg extLedgerState0 =
             (translateChainDepState hardForkEraTranslation))
           (hpure (fn_2 (\_ st -> st)))
           (hardForkLedgerStatePerEra targetEraLedgerState)
-          firstEraChainDepState
+          firstEraChainDepState -}
 
     targetEraHeaderState :: HeaderState (HardForkBlock (x ': xs))
     targetEraHeaderState = genesisHeaderState targetEraChainDepState
