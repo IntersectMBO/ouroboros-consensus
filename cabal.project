@@ -37,8 +37,8 @@ import: ./asserts.cabal
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/cardano-ledger
-  tag: 83cdef1643efe86a55be91bab25b1c81db11a280
-  --sha256: 06h4a12p46k8qfizpjfjrg9hxvsqma4mq6k4apcndnx6wq8w3aiv
+  tag: 513857a0d802a6c0e96f8f79bd1af2337bd42e4e
+  --sha256: 0j4gv5mzs9y00ff270v3r1cvqhkd76q8wc1nyd6ajxwi8d0r0g7m
   subdir:
     eras/allegra/impl
     eras/alonzo/impl
