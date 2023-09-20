@@ -272,7 +272,7 @@ numInserts (UnsafeDiffSeq ft) = rmNumInserts $ measureRoot ft
 numDeletes ::
      SM k v
   => DiffSeq k v -> Sum Int
-numDeletes (UnsafeDiffSeq ft) = rmNumInserts $ measureRoot ft
+numDeletes (UnsafeDiffSeq ft) = rmNumDeletes $ measureRoot ft
 
 {-------------------------------------------------------------------------------
   Construction
