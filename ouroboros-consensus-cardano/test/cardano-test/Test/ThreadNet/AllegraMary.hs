@@ -20,6 +20,7 @@ module Test.ThreadNet.AllegraMary (tests) where
 import           Cardano.Crypto.Hash (ShortHash)
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
+import qualified Cardano.Ledger.Shelley.Transition as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import           Control.Monad (replicateM)
@@ -259,6 +260,9 @@ prop_simple_allegraMary_convergence TestSetup
                     (SL.ProtVer majorVersion1 0)
                     (SL.ProtVer majorVersion2 0)
                     ()
+                    ( SL.mkTransitionConfig ()
+                    $ SL.mkShelleyTransitionConfig genesisShelley
+                    )
                     protocolTransitionParamsIntraShelley
              in TestNodeInitialization {
                   tniCrucialTxs   =

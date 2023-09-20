@@ -116,7 +116,6 @@ library
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
-    , cardano-data
     , cardano-ledger-allegra
     , cardano-ledger-alonzo         ^>=1.4.1
     , cardano-ledger-api            ^>=1.6

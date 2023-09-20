@@ -59,6 +59,7 @@ import           Cardano.Chain.Slotting (EpochSlots)
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Era as Core
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.Shelley.Transition as SL
 import           Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
                      ocertKESPeriod)
@@ -70,7 +71,6 @@ import           Control.Exception (assert)
 import qualified Data.ByteString.Short as Short
 import           Data.Functor.These (These1 (..))
 import           Data.Kind (Type)
-import qualified Data.ListMap as ListMap
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
@@ -731,11 +731,11 @@ protocolInfoCardano paramsCardano
         , transitionByronToShelleyTrigger            = triggerHardForkShelley
         } = transitionParamsByronToShelley
     ProtocolTransitionParamsIntraShelley {
-          transitionIntraShelleyTranslationContext = ()
+          transitionIntraShelleyTranslationContext = transCtxtAllegra
         , transitionIntraShelleyTrigger            = triggerHardForkAllegra
         } = transitionParamsShelleyToAllegra
     ProtocolTransitionParamsIntraShelley {
-          transitionIntraShelleyTranslationContext = ()
+          transitionIntraShelleyTranslationContext = transCtxtMary
         , transitionIntraShelleyTrigger            = triggerHardForkMary
         } = transitionParamsAllegraToMary
     ProtocolTransitionParamsIntraShelley {
@@ -1030,7 +1030,7 @@ protocolInfoCardano paramsCardano
     initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c)
     initExtLedgerStateCardano = ExtLedgerState {
           headerState = initHeaderState
-        , ledgerState = overShelleyBasedLedgerState register initLedgerState
+        , ledgerState = overShelleyBasedLedgerState register' initLedgerState
         }
       where
         initHeaderState :: HeaderState (CardanoBlock c)
@@ -1038,18 +1038,53 @@ protocolInfoCardano paramsCardano
         ExtLedgerState initLedgerState initHeaderState =
           injectInitialExtLedgerState cfg initExtLedgerStateByron
 
+        -- TODO remove boilerplate via SOP stuff?
+
+        transitionConfigShelley :: SL.TransitionConfig (ShelleyEra c)
+        transitionConfigShelley =
+            SL.mkShelleyTransitionConfig genesisShelley
+
+        transitionConfigAllegra :: SL.TransitionConfig (AllegraEra c)
+        transitionConfigAllegra =
+            SL.mkTransitionConfig transCtxtAllegra transitionConfigShelley
+
+        transitionConfigMary :: SL.TransitionConfig (MaryEra c)
+        transitionConfigMary =
+            SL.mkTransitionConfig transCtxtMary transitionConfigAllegra
+
+        transitionConfigAlonzo :: SL.TransitionConfig (AlonzoEra c)
+        transitionConfigAlonzo =
+            SL.mkTransitionConfig transCtxtAlonzo transitionConfigMary
+
+        transitionConfigBabbage :: SL.TransitionConfig (BabbageEra c)
+        transitionConfigBabbage =
+            SL.mkTransitionConfig transCtxtBabbage transitionConfigAlonzo
+
+        transitionConfigConway :: SL.TransitionConfig (ConwayEra c)
+        transitionConfigConway =
+            SL.mkTransitionConfig transCtxtConway transitionConfigBabbage
+
+        register' :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
+        register' =
+               fn (register transitionConfigShelley)
+            :* fn (register transitionConfigAllegra)
+            :* fn (register transitionConfigMary)
+            :* fn (register transitionConfigAlonzo)
+            :* fn (register transitionConfigBabbage)
+            :* fn (register transitionConfigConway)
+            :* Nil
+
         register ::
-             (EraCrypto era ~ c, ShelleyBasedEra era)
-          => LedgerState (ShelleyBlock proto era)
+             (ShelleyBasedEra era)
+          => SL.TransitionConfig era
           -> LedgerState (ShelleyBlock proto era)
-        register st = st {
+          -> LedgerState (ShelleyBlock proto era)
+        register cfg st = st {
               Shelley.shelleyLedgerState =
                 -- We must first register the initial funds, because the stake
                 -- information depends on it.
-                  registerGenesisStaking
-                    (SL.sgStaking genesisShelley)
-                . registerInitialFunds
-                    (ListMap.toMap (SL.sgInitialFunds genesisShelley))
+                  SL.registerInitialStaking cfg
+                . SL.registerInitialFunds cfg
                 $ Shelley.shelleyLedgerState st
             }
 

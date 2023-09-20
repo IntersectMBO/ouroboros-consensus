@@ -21,6 +21,7 @@ import qualified Cardano.Ledger.BaseTypes as SL (Version, getVersion,
                      natVersion)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
+import qualified Cardano.Ledger.Shelley.Transition as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import           Control.Monad (replicateM)
@@ -264,6 +265,10 @@ prop_simple_allegraAlonzo_convergence TestSetup
                     (SL.ProtVer majorVersion1 0)
                     (SL.ProtVer majorVersion2 0)
                     ()
+                    ( SL.mkTransitionConfig ()
+                    . SL.mkTransitionConfig ()
+                    $ SL.mkShelleyTransitionConfig shelleyGenesis
+                    )
                     protocolTransitionParamsIntraShelley
             in
             TestNodeInitialization {

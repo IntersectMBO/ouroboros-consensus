@@ -15,38 +15,14 @@ module Ouroboros.Consensus.Cardano.ShelleyBased (overShelleyBasedLedgerState) wh
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.HardFork.Combinator
-import qualified Ouroboros.Consensus.Protocol.Praos as Praos
-import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Shelley.HFEras ()
-import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
-                     ShelleyCompatible)
 
 -- | When the given ledger state corresponds to a Shelley-based era, apply the
 -- given function to it.
 overShelleyBasedLedgerState ::
      forall c.
-     (TPraos.PraosCrypto c, Praos.PraosCrypto c)
-  => (   forall era proto. (EraCrypto era ~ c, ShelleyCompatible proto era)
-      => LedgerState (ShelleyBlock proto era)
-      -> LedgerState (ShelleyBlock proto era)
-     )
+     NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
   -> LedgerState (CardanoBlock c)
   -> LedgerState (CardanoBlock c)
-overShelleyBasedLedgerState f (HardForkLedgerState st) =
-    HardForkLedgerState $ hap fs st
-  where
-    fs :: NP (LedgerState -.-> LedgerState)
-             (CardanoEras c)
-    fs = fn id
-        :* injectSingleEra
-        :* injectSingleEra
-        :* injectSingleEra
-        :* injectSingleEra
-        :* injectSingleEra
-        :* injectSingleEra
-        :* Nil
-
-    injectSingleEra ::
-         (EraCrypto era ~ c, ShelleyCompatible proto era)
-      => (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
-    injectSingleEra = fn f
+overShelleyBasedLedgerState fs (HardForkLedgerState st) =
+    HardForkLedgerState $ hap (fn id :* fs) st

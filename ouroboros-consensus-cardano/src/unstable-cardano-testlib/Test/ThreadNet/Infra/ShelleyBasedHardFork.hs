@@ -27,6 +27,7 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
 
 import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.Shelley.Transition as SL
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
@@ -130,8 +131,6 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
 
   , SL.TranslationError   era2 SL.NewEpochState ~ Void
 
-  , SL.AdditionalGenesisConfig era1 ~ ()
-  , SL.AdditionalGenesisConfig era2 ~ SL.TranslationContext era2
     -- At the moment, fix the protocols together
   , EraCrypto era1 ~ EraCrypto era2
   , PraosCrypto (EraCrypto era1)
@@ -228,6 +227,7 @@ protocolInfoShelleyBasedHardFork ::
   -> SL.ProtVer
   -> SL.ProtVer
   -> SL.TranslationContext era1
+  -> SL.TransitionConfig era1
   -> ProtocolTransitionParams (ShelleyBlock proto1 era1) (ShelleyBlock proto2 era2)
   -> ( ProtocolInfo      (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
      , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
@@ -236,6 +236,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
                                  protVer1
                                  protVer2
                                  transCtx1
+                                 transCfg1
                                  protocolTransitionParams =
     protocolInfoBinary
       -- Era 1
@@ -267,7 +268,8 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
     (protocolInfo1, blockForging1) =
         protocolInfoTPraosShelleyBased
           protocolParamsShelleyBased
-          ((), transCtx1)
+          transCtx1
+          transCfg1
           protVer1
           (Mempool.mkOverrides Mempool.noOverridesMeasure)
 
@@ -298,7 +300,8 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
             , shelleyBasedInitialNonce
             , shelleyBasedLeaderCredentials
             }
-          (transCtxt2, transCtxt2)
+          transCtxt2
+          (SL.mkTransitionConfig transCtxt2 transCfg1)
           protVer2
           (Mempool.mkOverrides Mempool.noOverridesMeasure)
 
