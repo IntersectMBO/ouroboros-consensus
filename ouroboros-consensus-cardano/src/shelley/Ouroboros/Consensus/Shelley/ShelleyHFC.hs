@@ -60,6 +60,7 @@ import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
 import           Ouroboros.Consensus.Shelley.Node ()
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Ouroboros.Consensus.TypeFamilyWrappers
 
 {-------------------------------------------------------------------------------
@@ -131,17 +132,19 @@ shelleyTransition ::
      forall era proto. ShelleyCompatible proto era
   => PartialLedgerConfig (ShelleyBlock proto era)
   -> Word16   -- ^ Next era's initial major protocol version
-  -> LedgerState (ShelleyBlock proto era)
+  -> WhetherTickedOrNot (LedgerState (ShelleyBlock proto era))
   -> Maybe EpochNo
 shelleyTransition ShelleyPartialLedgerConfig{..}
                   transitionMajorVersionRaw
-                  state =
+                  wtState =
       takeAny
     . mapMaybe isTransition
     . Shelley.Inspect.protocolUpdates genesis
-    $ state
+    $ wtState
   where
-    ShelleyTransitionInfo{..} = shelleyLedgerTransition state
+    ShelleyTransitionInfo{..} = case wtState of
+        YesTicked st -> tickedShelleyLedgerTransition st
+        NoTicked  st -> shelleyLedgerTransition st
 
     -- 'shelleyLedgerConfig' contains a dummy 'EpochInfo' but this does not
     -- matter for extracting the genesis config

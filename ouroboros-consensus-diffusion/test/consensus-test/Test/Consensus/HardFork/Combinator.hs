@@ -365,9 +365,9 @@ type TestBlock = HardForkBlock '[BlockA, BlockB]
 
 instance CanHardFork '[BlockA, BlockB] where
   hardForkEraTranslation = EraTranslation {
-        translateLedgerState   = PCons ledgerState_AtoB   PNil
-      , translateChainDepState = PCons chainDepState_AtoB PNil
-      , crossEraForecast       = PCons forecast_AtoB      PNil
+        crossEraTickLedgerState   = PCons ledgerState_AtoB   PNil
+      , crossEraTickChainDepState = PCons chainDepState_AtoB PNil
+      , crossEraForecast          = PCons forecast_AtoB      PNil
       }
   hardForkChainSel  = Tails.mk2 CompareBlockNo
   hardForkInjectTxs = InPairs.mk2 injectTx_AtoB
@@ -403,24 +403,18 @@ instance SerialiseHFC '[BlockA, BlockB]
   Translation
 -------------------------------------------------------------------------------}
 
-ledgerState_AtoB ::
-     RequiringBoth
-       WrapLedgerConfig
-       (Translate LedgerState)
-       BlockA
-       BlockB
-ledgerState_AtoB = InPairs.ignoringBoth $ Translate $ \_ LgrA{..} -> LgrB {
-      lgrB_tip = castPoint lgrA_tip
-    }
+ledgerState_AtoB :: CrossEraTickLedgerState BlockA BlockB
+ledgerState_AtoB =
+    CrossEraTickLedgerState
+  $ \_cfgA _cfgB _eno _slot LgrA{..} ->
+      pureLedgerResult
+    $ pureLedgerResult
+    $ TickedLedgerStateB $ LgrB {lgrB_tip = castPoint lgrA_tip}
 
-chainDepState_AtoB ::
-     RequiringBoth
-       WrapConsensusConfig
-       (Translate WrapChainDepState)
-       BlockA
-       BlockB
-chainDepState_AtoB = InPairs.ignoringBoth $ Translate $ \_ _ ->
-    WrapChainDepState ()
+chainDepState_AtoB :: CrossEraTickChainDepState BlockA BlockB
+chainDepState_AtoB =
+    CrossEraTickChainDepState
+  $ \Proxy Proxy _cfgA _cfgB TickedTrivial _eno _slot () -> TickedTrivial
 
 forecast_AtoB ::
       RequiringBoth

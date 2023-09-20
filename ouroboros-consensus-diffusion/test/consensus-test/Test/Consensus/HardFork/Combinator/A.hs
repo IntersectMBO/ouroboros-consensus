@@ -80,6 +80,7 @@ import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ImmutableDB (simpleChunkInfo)
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Ouroboros.Consensus.Util (repeatedlyM, (..:), (.:))
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -431,7 +432,9 @@ instance SingleEraBlock BlockA where
   singleEraInfo _ = SingleEraInfo "A"
 
   singleEraTransition cfg EraParams{..} eraStart st = do
-      (confirmedInSlot, confirmationDepth) <- getConfirmationDepth st
+      (confirmedInSlot, confirmationDepth) <- getConfirmationDepth $ case st of
+        NoTicked x                       -> x
+        YesTicked (TickedLedgerStateA x) -> x
 
       -- The ledger must report the scheduled transition to the next era as soon
       -- as the block containing this transaction is immutable (that is, at

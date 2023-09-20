@@ -23,6 +23,7 @@ import           Ouroboros.Consensus.HardFork.Combinator
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import           Ouroboros.Consensus.NodeId (CoreNodeId)
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Test.QuickCheck (Gen)
 
 {-------------------------------------------------------------------------------
@@ -90,7 +91,8 @@ testGenTxsHfc coreNodeId numCoreNodes curSlotNo cfg extras state =
     cfgs = distribTopLevelConfig ei cfg
     ei   = State.epochInfoLedger
              (configLedger cfg)
-             (hardForkLedgerStatePerEra state)
+         $ hmap (Comp . NoTicked)
+         $ hardForkLedgerStatePerEra state
 
     aux ::
          forall blk. TxGen blk

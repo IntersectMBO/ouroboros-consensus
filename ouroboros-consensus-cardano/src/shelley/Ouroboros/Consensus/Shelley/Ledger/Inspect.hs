@@ -34,6 +34,7 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Ouroboros.Consensus.Util.Condense
 
 data ProtocolUpdate era = ProtocolUpdate {
@@ -102,9 +103,9 @@ data UpdateState c = UpdateState {
 protocolUpdates ::
        forall era proto. ShelleyBasedEra era
     => SL.ShelleyGenesis (EraCrypto era)
-    -> LedgerState (ShelleyBlock proto era)
+    -> WhetherTickedOrNot (LedgerState (ShelleyBlock proto era))
     -> [ProtocolUpdate era]
-protocolUpdates genesis st = [
+protocolUpdates genesis wtSt = [
       ProtocolUpdate {
           protocolUpdateProposal = UpdateProposal {
               proposalParams  = proposal
@@ -120,6 +121,10 @@ protocolUpdates genesis st = [
     | (proposal, votes) <- Map.toList $ invertMap proposals
     ]
   where
+    nes = case wtSt of
+        YesTicked x -> tickedShelleyLedgerState x
+        NoTicked  x -> shelleyLedgerState x
+
     invertMap :: Ord b => Map a b -> Map b [a]
     invertMap = Map.fromListWith (<>) . fmap swizzle . Map.toList
       where
@@ -134,9 +139,7 @@ protocolUpdates genesis st = [
         . SL.lsUTxOState
         . SL.esLState
         . SL.nesEs
-        . shelleyLedgerState
-        $ st
-
+        $ nes
     -- A proposal is accepted if the number of votes is equal to or greater
     -- than the quorum. The quorum itself must be strictly greater than half
     -- the number of genesis keys, but we do not rely on that property here.
@@ -146,7 +149,7 @@ protocolUpdates genesis st = [
     -- The proposals in 'SL.proposals' are for the upcoming epoch
     -- (we ignore 'futureProposals')
     currentEpoch :: EpochNo
-    currentEpoch = SL.nesEL . shelleyLedgerState $ st
+    currentEpoch = SL.nesEL nes
 
 {-------------------------------------------------------------------------------
   Inspection
@@ -173,5 +176,5 @@ instance ShelleyBasedEra era => InspectLedger (ShelleyBlock proto era) where
       genesis = shelleyLedgerGenesis (configLedger tlc)
 
       updatesBefore, updatesAfter :: [ProtocolUpdate era]
-      updatesBefore = protocolUpdates genesis before
-      updatesAfter  = protocolUpdates genesis after
+      updatesBefore = protocolUpdates genesis (NoTicked before)
+      updatesAfter  = protocolUpdates genesis (NoTicked after)
