@@ -193,7 +193,7 @@ initLgrDB k chain = do
     varDB          <- newTVarIO genesisLedgerDB
     varPrevApplied <- newTVarIO mempty
     let lgrDB = mkLgrDB varDB varPrevApplied resolve args
-    LgrDB.validate lgrDB genesisLedgerDB BlockCache.empty 0 noopTrace
+    LgrDB.validate lgrDB genesisLedgerDB (const $ pure ()) BlockCache.empty 0 noopTrace
       (map getHeader (Chain.toOldestFirst chain)) >>= \case
         LgrDB.ValidateExceededRollBack _ ->
           error "impossible: rollback was 0"

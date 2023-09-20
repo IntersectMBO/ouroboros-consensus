@@ -744,6 +744,7 @@ runDB standalone@DB{..} cmd =
             defaultResolveWithErrors dbResolve $
               ledgerDbSwitch
                 dbLedgerDbCfg
+                (const $ pure ())
                 n
                 (const $ pure ())
                 (map ApplyVal bs)

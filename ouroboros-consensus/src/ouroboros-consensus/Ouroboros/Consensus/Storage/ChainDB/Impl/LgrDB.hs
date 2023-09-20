@@ -327,7 +327,11 @@ data ValidateResult blk =
   | ValidateLedgerError      (LedgerDB.AnnLedgerError' blk)
   | ValidateExceededRollBack LedgerDB.ExceededRollback
 
-validate :: forall m blk. (IOLike m, LedgerSupportsProtocol blk, HasCallStack)
+validate :: forall m blk.
+            ( IOLike m
+	    , LedgerSupportsProtocol blk
+	    , HasCallStack
+	    )
          => LgrDB m blk
          -> LedgerDB' blk
             -- ^ This is used as the starting point for validation, not the one
