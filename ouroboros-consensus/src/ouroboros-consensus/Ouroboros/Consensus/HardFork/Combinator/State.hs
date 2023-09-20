@@ -17,7 +17,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.State (
     module X
     -- * Support for defining instances
-  , getTip
+  , Ouroboros.Consensus.HardFork.Combinator.State.getTip
     -- * Serialisation support
   , recover
     -- * EpochInfo
@@ -48,7 +48,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.State.Instances as X ()
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types as X
 import           Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
+import           Ouroboros.Consensus.Ledger.Abstract as Ledger
 import           Ouroboros.Consensus.Ticked (Ticked)
 import           Ouroboros.Consensus.TypeFamilyWrappers (WrapLedgerConfig (..))
 import           Ouroboros.Consensus.Util ((.:))
@@ -126,8 +126,8 @@ mostRecentTransitionInfo HardForkLedgerConfig{..} st =
                   -> Current (Ticked :.: LedgerState) blk
                   -> K TransitionInfo                 blk
     getTransition cfg (K eraParams) Current{..} = K $
-        case singleEraTransition' cfg eraParams currentStart currentState of
-          Nothing -> TransitionUnknown (ledgerTipSlot currentState)
+        case singleEraTransition' cfg eraParams currentStart (unComp currentState) of
+          Nothing -> TransitionUnknown (pointSlot $ Ledger.getTip (unComp currentState))
           Just e  -> TransitionKnown e
 
 reconstructSummaryLedger :: All SingleEraBlock xs
