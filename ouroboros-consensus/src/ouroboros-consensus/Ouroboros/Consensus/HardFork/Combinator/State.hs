@@ -17,7 +17,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.State (
     module X
     -- * Support for defining instances
-  , Ouroboros.Consensus.HardFork.Combinator.State.getTip
+  , getTip
     -- * Serialisation support
   , recover
     -- * EpochInfo
@@ -48,7 +48,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.State.Instances as X ()
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types as X
 import           Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
-import           Ouroboros.Consensus.Ledger.Abstract as Ledger
+import           Ouroboros.Consensus.Ledger.Abstract hiding (getTip)
 import           Ouroboros.Consensus.Ticked (Ticked)
 import           Ouroboros.Consensus.TypeFamilyWrappers (WrapLedgerConfig (..))
 import           Ouroboros.Consensus.Util ((.:))
@@ -107,7 +107,7 @@ recover =
 
 mostRecentTransitionInfo :: All SingleEraBlock xs
                          => HardForkLedgerConfig xs
-                         -> HardForkState (Ticked :.: LedgerState) xs
+                         -> HardForkState LedgerState xs
                          -> TransitionInfo
 mostRecentTransitionInfo HardForkLedgerConfig{..} st =
     hcollapse $
@@ -120,19 +120,19 @@ mostRecentTransitionInfo HardForkLedgerConfig{..} st =
   where
     cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
 
-    getTransition :: SingleEraBlock                   blk
-                  => WrapPartialLedgerConfig          blk
-                  -> K History.EraParams              blk
-                  -> Current (Ticked :.: LedgerState) blk
-                  -> K TransitionInfo                 blk
+    getTransition :: SingleEraBlock          blk
+                  => WrapPartialLedgerConfig blk
+                  -> K History.EraParams     blk
+                  -> Current LedgerState     blk
+                  -> K TransitionInfo        blk
     getTransition cfg (K eraParams) Current{..} = K $
-        case singleEraTransition' cfg eraParams currentStart (unComp currentState) of
-          Nothing -> TransitionUnknown (pointSlot $ Ledger.getTip (unComp currentState))
+        case singleEraTransition' cfg eraParams currentStart currentState of
+          Nothing -> TransitionUnknown (ledgerTipSlot currentState)
           Just e  -> TransitionKnown e
 
 reconstructSummaryLedger :: All SingleEraBlock xs
                          => HardForkLedgerConfig xs
-                         -> HardForkState (Ticked :.: LedgerState) xs
+                         -> HardForkState LedgerState xs
                          -> History.Summary xs
 reconstructSummaryLedger cfg@HardForkLedgerConfig{..} st =
     reconstructSummary
@@ -146,7 +146,7 @@ reconstructSummaryLedger cfg@HardForkLedgerConfig{..} st =
 -- It should not be stored.
 epochInfoLedger :: All SingleEraBlock xs
                 => HardForkLedgerConfig xs
-                -> HardForkState (Ticked :.: LedgerState) xs
+                -> HardForkState LedgerState xs
                 -> EpochInfo (Except PastHorizonException)
 epochInfoLedger cfg st =
     History.summaryToEpochInfo $
