@@ -38,9 +38,7 @@ import           Test.Util.Serialisation.Roundtrip
 tests :: TestTree
 tests = testGroup "Byron"
     [ roundtrip_all testCodecCfg dictNestedHdr
-
     , testProperty "BinaryBlockInfo sanity check" prop_byronBinaryBlockInfo
-
     , testGroup "Integrity"
         [ testProperty "detect corruption in RegularBlock" prop_detectCorruption_RegularBlock
         ]

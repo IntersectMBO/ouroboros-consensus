@@ -31,6 +31,7 @@ import           Ouroboros.Consensus.Protocol.BFT
 import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Roundtrip
+import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 {-------------------------------------------------------------------------------
   General instances

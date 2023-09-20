@@ -49,9 +49,9 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Network.Block (Serialised (..))
 import qualified Test.Consensus.Byron.Examples as Byron
 import qualified Test.Consensus.Shelley.Examples as Shelley
-import qualified Test.Util.Serialisation.Golden as Golden
-import           Test.Util.Serialisation.Golden (Examples, Labelled, labelled)
-import           Test.Util.Serialisation.Roundtrip (SomeResult (..))
+import           Test.Util.Serialisation.Examples (Examples (..), Labelled,
+                     labelled, prefixExamples)
+import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 type Crypto = StandardCrypto
 
@@ -91,7 +91,7 @@ combineEras = mconcat . hcollapse . hap eraInjections
       -> Examples blk
       -> Examples (CardanoBlock Crypto)
     injExamples eraName idx =
-          Golden.prefixExamples eraName
+          prefixExamples eraName
         . inject exampleStartBounds idx
 
 {-------------------------------------------------------------------------------
@@ -108,7 +108,7 @@ instance Inject SomeResult where
       SomeResult (QueryIfCurrent (injectQuery idx q)) (Right r)
 
 instance Inject Examples where
-  inject startBounds (idx :: Index xs x) Golden.Examples {..} = Golden.Examples {
+  inject startBounds (idx :: Index xs x) Examples {..} = Examples {
         exampleBlock            = inj (Proxy @I)                       exampleBlock
       , exampleSerialisedBlock  = inj (Proxy @Serialised)              exampleSerialisedBlock
       , exampleHeader           = inj (Proxy @Header)                  exampleHeader
@@ -240,7 +240,7 @@ summary =
       (State.TransitionKnown shelleyTransitionEpoch)
       (hardForkLedgerStatePerEra (ledgerStateByron byronLedger))
   where
-    (_, byronLedger) = head $ Golden.exampleLedgerState Byron.examples
+    (_, byronLedger) = head $ exampleLedgerState Byron.examples
 
 eraInfoByron :: SingleEraInfo ByronBlock
 eraInfoByron = singleEraInfo (Proxy @ByronBlock)
@@ -277,16 +277,16 @@ ledgerStateByron stByron =
 -- | Multi-era examples, e.g., applying a transaction to the wrong era.
 multiEraExamples :: Examples (CardanoBlock Crypto)
 multiEraExamples = mempty {
-      Golden.exampleApplyTxErr = labelled [
+      exampleApplyTxErr = labelled [
           ("WrongEraByron",   exampleApplyTxErrWrongEraByron)
         , ("WrongEraShelley", exampleApplyTxErrWrongEraShelley)
         ]
-    , Golden.exampleQuery = labelled [
+    , exampleQuery = labelled [
           ("AnytimeByron",   exampleQueryAnytimeByron)
         , ("AnytimeShelley", exampleQueryAnytimeShelley)
         , ("HardFork",       exampleQueryHardFork)
         ]
-    , Golden.exampleResult = labelled [
+    , exampleResult = labelled [
           ("EraMismatchByron",   exampleResultEraMismatchByron)
         , ("EraMismatchShelley", exampleResultEraMismatchShelley)
         , ("AnytimeByron",       exampleResultAnytimeByron)

@@ -56,7 +56,8 @@ import           Test.QuickCheck hiding (Result)
 import           Test.QuickCheck.Hedgehog (hedgehog)
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Roundtrip (Coherent (..),
-                     SomeResult (..), WithVersion (..))
+                     WithVersion (..))
+import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 
 {-------------------------------------------------------------------------------
   Generators

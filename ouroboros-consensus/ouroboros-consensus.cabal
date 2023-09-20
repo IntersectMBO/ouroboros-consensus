@@ -309,8 +309,10 @@ library unstable-consensus-testlib
     Test.Util.Range
     Test.Util.RefEnv
     Test.Util.Schedule
+    Test.Util.Serialisation.Examples
     Test.Util.Serialisation.Golden
     Test.Util.Serialisation.Roundtrip
+    Test.Util.Serialisation.SomeResult
     Test.Util.Shrink
     Test.Util.Slots
     Test.Util.SOP
@@ -349,6 +351,7 @@ library unstable-consensus-testlib
     , ouroboros-consensus
     , ouroboros-network-api
     , ouroboros-network-mock
+    , pretty-simple
     , QuickCheck
     , quickcheck-state-machine
     , quiet
@@ -358,9 +361,11 @@ library unstable-consensus-testlib
     , sop-extras
     , strict-sop-core
     , tasty
+    , tasty-expected-failure
     , tasty-golden
     , tasty-quickcheck
     , template-haskell
+    , text
     , time
     , tree-diff
     , utf8-string
