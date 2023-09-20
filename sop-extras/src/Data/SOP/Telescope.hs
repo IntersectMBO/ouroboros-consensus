@@ -33,17 +33,12 @@ module Data.SOP.Telescope (
   , bihczipWith
   , bihmap
   , bihzipWith
-    -- * Extension, retraction, alignment
+    -- * Extension and alignment
   , Extend (..)
-  , Retract (..)
   , align
   , extend
-  , retract
     -- ** Simplified API
-  , alignExtend
-  , alignExtendNS
-  , extendIf
-  , retractIf
+  , alignNS
     -- * Additional API
   , ScanNext (..)
   , SimpleTelescope (..)
@@ -57,10 +52,9 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (InPairs (..), Requiring (..))
+import           Data.SOP.InPairs (type (--.-->) (..), (:**:) (..), Comp2 (..), Le (..), Ri (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
-import           Data.SOP.Tails (Tails (..))
-import qualified Data.SOP.Tails as Tails
 import           GHC.Stack
 import           NoThunks.Class (NoThunks (..), allNoThunks)
 import           Prelude hiding (scanl, sequence, zipWith)
@@ -91,7 +85,7 @@ import           Prelude hiding (scanl, sequence, zipWith)
 -- > \ bifunctor: 'Telescope' (unlike 'NS'/'NP') is a higher order /bifunctor/
 --
 -- In addition to the standard SOP operators, the new operators that make
--- a 'Telescope' a telescope are 'extend', 'retract' and 'align'; see their
+-- a 'Telescope' a telescope are 'extend' and 'align'; see their
 -- documentation for details.
 type Telescope :: (k -> Type) -> (k -> Type) -> [k] -> Type
 data Telescope g f xs where
@@ -285,151 +279,99 @@ fromTZ :: Telescope g f '[x] -> f x
 fromTZ (TZ fx)  = fx
 
 {-------------------------------------------------------------------------------
-  Extension and retraction
+  Extension
 -------------------------------------------------------------------------------}
 
-newtype Extend m g f x y = Extend { extendWith :: f x -> m (g x, f y) }
+newtype Extend m g f f' x y = Extend { extendWith :: f x -> m (g x, f' y) }
 
 -- | Extend the telescope
 --
 -- We will not attempt to extend the telescope past its final segment.
-extend :: forall m h g f xs. Monad m
-       => InPairs (Requiring h (Extend m g f)) xs -- ^ How to extend
-       -> NP (f -.-> Maybe :.: h) xs              -- ^ Where to extend /from/
-       -> Telescope g f xs -> m (Telescope g f xs)
-extend = go
+--
+-- We will not attempt to extend the telescope more than one segment.
+extend :: forall m h g f f' xs. Monad m
+       => NP (f -.-> Maybe :.: h) xs                 -- ^ Whether to extend
+       -> NP (f -.-> f') xs                          -- ^ How to not extend
+       -> InPairs (Requiring h (Extend m g f f')) xs -- ^ How to extend
+       -> Telescope g f xs -> m (Telescope g f' xs)
+extend =
+    \predicates noExts exts tele -> go exts tele predicates noExts
   where
-    go :: InPairs (Requiring h (Extend m g f)) xs'
+    go :: InPairs (Requiring h (Extend m g f f')) xs'
+       -> Telescope g f xs'
        -> NP (f -.-> Maybe :.: h) xs'
-       -> Telescope g f xs' -> m (Telescope g f xs')
-    go PNil _ (TZ fx) =
-        return (TZ fx)
-    go (PCons e es) (p :* ps) (TZ fx) =
-        case unComp $ apFn p fx of
+       -> NP (f -.-> f') xs'
+       -> m (Telescope g f' xs')
+
+    go (PCons _ exts) (TS gx fx) (_ :* predicates) (_ :* noExts) =
+        TS gx <$> go exts fx predicates noExts
+
+    go PNil          (TZ fx) _                  (noExt :* Nil) =
+        return $ TZ (noExt `apFn` fx)
+    go (PCons ext _) (TZ fx) (predicate :* _  ) (noExt :* _  ) =
+        case unComp $ apFn predicate fx of
           Nothing ->
-            return (TZ fx)
+            return $ TZ $ noExt `apFn` fx
           Just hx -> do
-            (gx, fy) <- extendWith (provide e hx) fx
-            TS gx <$> go es ps (TZ fy)
-    go (PCons _ es) (_ :* ps) (TS gx fx) =
-        TS gx <$> go es ps fx
-
-newtype Retract m g f x y = Retract { retractWith :: g x -> f y -> m (f x) }
-
--- | Retract a telescope
-retract :: forall m h g f xs. Monad m
-        => Tails (Requiring h (Retract m g f)) xs  -- ^ How to retract
-        -> NP (g -.-> Maybe :.: h) xs              -- ^ Where to retract /to/
-        -> Telescope g f xs -> m (Telescope g f xs)
-retract =
-    \tails np ->
-       npToSListI np $ go tails np
-  where
-    go :: SListI xs'
-       => Tails (Requiring h (Retract m g f)) xs'
-       -> NP (g -.-> Maybe :.: h) xs'
-       -> Telescope g f xs' -> m (Telescope g f xs')
-    go _            _         (TZ fx)   = return $ TZ fx
-    go (TCons r rs) (p :* ps) (TS gx t) =
-        case unComp (apFn p gx) of
-          Just hx ->
-            fmap (TZ . hcollapse) $ hsequence' $
-              hzipWith (retractAux hx gx) r (tip t)
-          Nothing ->
-            TS gx <$> go rs ps t
-
--- | Internal auxiliary to 'retract' and 'alignWith'
-retractAux :: Functor m
-           => h x  -- Proof that we need to retract
-           -> g x  -- Era we are retracting to
-           -> Requiring h (Retract m g f) x z
-           -> f z  -- Current tip (what we are retracting from)
-           -> (m :.: K (f x)) z
-retractAux hx gx r fz = Comp $ K <$> retractWith (provide r hx) gx fz
+            (gx, fy) <- extendWith (provide ext hx) fx
+            return $ TS gx $ TZ fy
 
 -- | Align a telescope with another, then apply a function to the tips
 --
--- Aligning is a combination of extension and retraction, extending or
--- retracting the telescope as required to match up with the other telescope.
-align :: forall m g' g f' f f'' xs. Monad m
-      => InPairs (Requiring g' (Extend  m g f)) xs  -- ^ How to extend
-      -> Tails   (Requiring f' (Retract m g f)) xs  -- ^ How to retract
-      -> NP (f' -.-> f -.-> f'') xs  -- ^ Function to apply at the tip
-      -> Telescope g' f' xs          -- ^ Telescope we are aligning with
-      -> Telescope g f xs -> m (Telescope g f'' xs)
-align = \es rs atTip ->
-    npToSListI atTip $ go es rs atTip
+-- Aligning is zero or one uses of extension to match up with the other telescope.
+--
+-- PRE: The telescope we are aligning with is either in our same state (no op)
+-- or in the next state.
+align :: forall m g' g f' f f'' xs. (Monad m, HasCallStack)
+      => InPairs (Le f --.--> Le g' --.--> Ri f' --.--> Comp2 m (Le g :**: Ri f'')) xs  -- ^ How to extend
+      -> NP (f -.-> f' -.-> f'') xs  -- ^ How to not extend
+      -> Telescope g  f  xs
+      -> Telescope g' f' xs
+      -> m (Telescope g f'' xs)
+align = \exts noExts src tgt ->
+    npToSListI noExts $ go src tgt exts noExts
   where
     go :: SListI xs'
-       => InPairs (Requiring g' (Extend  m g f)) xs'
-       -> Tails   (Requiring f' (Retract m g f)) xs'
-       -> NP (f' -.-> f -.-> f'') xs'
-       -> Telescope g' f' xs' -> Telescope g f xs' -> m (Telescope g f'' xs')
-    go _ _ (f :* _) (TZ f'x) (TZ fx) =
-        return $ TZ (f `apFn` f'x `apFn` fx)
-    go (PCons _ es) (TCons _ rs) (_ :* fs) (TS _ f'x) (TS gx fx) =
-        TS gx <$> go es rs fs f'x fx
-    go _ (TCons r _) (f :* _) (TZ f'x) (TS gx fx) =
-        fmap (TZ . (\fx' -> f `apFn` f'x `apFn` fx') . hcollapse) $ hsequence' $
-          hzipWith (retractAux f'x gx) r (tip fx)
-    go (PCons e es) (TCons _ rs) (_ :* fs) (TS g'x t'x) (TZ fx) = do
-        (gx, fy) <- extendWith (provide e g'x) fx
-        TS gx <$> go es rs fs t'x (TZ fy)
+       => Telescope g  f  xs'
+       -> Telescope g' f' xs'
+       -> InPairs (Le f --.--> Le g' --.--> Ri f' --.--> Comp2 m (Le g :**: Ri f'')) xs'
+       -> NP (f -.-> f' -.-> f'') xs'
+       -> m (Telescope g f'' xs')
+
+    go (TS gx fx) (TS _ f'x) (PCons _ exts) (_ :* noExts) =
+        TS gx <$> go fx f'x exts noExts
+
+    go (TZ fx) (TZ f'x) _exts (noExt :* _) =
+        return $ TZ $ noExt `apFn` fx `apFn` f'x
+
+    go (TZ fx) (TS g'x (TZ f'y)) (PCons ext _) _noExts = do
+        Le gx `DoublePair` Ri f''y <- unComp2 $ ext `apDoubleFun` Le fx `apDoubleFun` Le g'x `apDoubleFun` Ri f'y
+        return $ TS gx $ TZ f''y
+
+    go TS{} TZ{} _ _ = error "precondition violation: backwards"
+
+    go TZ{} (TS _ TS{}) _ _ = error "precondition violation: more than one step"
 
 {-------------------------------------------------------------------------------
   Derived API
 -------------------------------------------------------------------------------}
 
--- | Version of 'extend' where the evidence is a simple 'Bool'
-extendIf :: Monad m
-         => InPairs (Extend m g f) xs -- ^ How to extend
-         -> NP (f -.-> K Bool) xs     -- ^ Where to extend /from/
-         -> Telescope g f xs -> m (Telescope g f xs)
-extendIf es ps = npToSListI ps $
-    extend
-      (InPairs.hmap (Require . const) es)
-      (hmap (\f -> fn $ fromBool . apFn f) ps)
-
--- | Version of 'retract' where the evidence is a simple 'Bool'
-retractIf :: Monad m
-          => Tails (Retract m g f) xs  -- ^ How to retract
-          -> NP (g -.-> K Bool) xs     -- ^ Where to retract /to/
-          -> Telescope g f xs -> m (Telescope g f xs)
-retractIf rs ps = npToSListI ps $
-    retract
-      (Tails.hmap (Require . const) rs)
-      (hmap (\f -> fn $ fromBool . apFn f) ps)
-
--- | Version of 'align' that never retracts, only extends
---
--- PRE: The telescope we are aligning with cannot be behind us.
-alignExtend :: (Monad m, HasCallStack)
-            => InPairs (Requiring g' (Extend m g f)) xs  -- ^ How to extend
-            -> NP (f' -.-> f -.-> f'') xs  -- ^ Function to apply at the tip
-            -> Telescope g' f' xs          -- ^ Telescope we are aligning with
-            -> Telescope g f xs -> m (Telescope g f'' xs)
-alignExtend es atTip = npToSListI atTip $
-    align es (Tails.hpure $ Require $ \_ -> error precondition) atTip
-  where
-    precondition :: String
-    precondition = "alignExtend: precondition violated"
-
--- | Version of 'alignExtend' that extends with an NS instead
-alignExtendNS :: (Monad m, HasCallStack)
-              => InPairs (Extend m g f) xs   -- ^ How to extend
-              -> NP (f' -.-> f -.-> f'') xs  -- ^ Function to apply at the tip
-              -> NS f' xs                    -- ^ NS we are aligning with
-              -> Telescope g f xs -> m (Telescope g f'' xs)
-alignExtendNS es atTip ns = npToSListI atTip $
-   alignExtend
-     (InPairs.hmap (Require . const) es)
-     atTip
-     (fromTip ns)
-
--- | Internal auxiliary to 'extendIf' and 'retractIf'
-fromBool :: K Bool x -> (Maybe :.: K ()) x
-fromBool (K True)  = Comp $ Just $ K ()
-fromBool (K False) = Comp Nothing
+-- | Version of 'align' that extends with an NS instead
+alignNS :: (Monad m, HasCallStack)
+        => InPairs (Le f --.--> Ri f' --.--> Comp2 m (Le g :**: Ri f'')) xs  -- ^ How to extend
+        -> NP (f -.-> f' -.-> f'') xs  -- ^ How to not extend
+        -> Telescope g f xs
+        -> NS f' xs
+        -> m (Telescope g f'' xs)
+alignNS exts noExts src tgt = npToSListI noExts $
+   align
+     (InPairs.hmap
+        (\ext -> DoubleFun $ \fx -> DoubleFun $ \_g'x -> ext `apDoubleFun` fx)
+        exts
+     )
+     noExts
+     src
+     (fromTip tgt)
 
 {-------------------------------------------------------------------------------
   Additional API

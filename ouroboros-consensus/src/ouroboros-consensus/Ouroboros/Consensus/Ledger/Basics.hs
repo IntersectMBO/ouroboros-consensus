@@ -19,6 +19,7 @@ module Ouroboros.Consensus.Ledger.Basics (
   , VoidLedgerEvent
   , castLedgerResult
   , embedLedgerResult
+  , joinLedgerResult
   , pureLedgerResult
     -- * Definition of a ledger independent of a choice of block
   , IsLedger (..)
@@ -85,6 +86,19 @@ embedLedgerResult ::
   -> LedgerResult l  a
   -> LedgerResult l' a
 embedLedgerResult inj lr = lr{lrEvents = inj `map` lrEvents lr}
+
+joinLedgerResult ::
+     (AuxLedgerEvent l1 -> AuxLedgerEvent l')
+  -> (AuxLedgerEvent l2 -> AuxLedgerEvent l')
+  -> LedgerResult l1 (LedgerResult l2 a)
+  -> LedgerResult l' a
+joinLedgerResult inj1 inj2 outer =
+  LedgerResult {
+      lrEvents = map inj1 (lrEvents outer) <> map inj2 (lrEvents inner)
+    , lrResult = lrResult inner
+    }
+  where
+    inner = lrResult outer
 
 pureLedgerResult :: a -> LedgerResult l a
 pureLedgerResult a = LedgerResult {

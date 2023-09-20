@@ -10,23 +10,24 @@ module Ouroboros.Consensus.HardFork.Combinator.Translation (
 import           Data.SOP.InPairs (InPairs (..), RequiringBoth (..))
 import           NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
-import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 import           Ouroboros.Consensus.TypeFamilyWrappers
+
 {-------------------------------------------------------------------------------
   Translate from one era to the next
 -------------------------------------------------------------------------------}
 
 data EraTranslation xs = EraTranslation {
-      translateLedgerState   :: InPairs (RequiringBoth WrapLedgerConfig    (Translate LedgerState))       xs
-    , translateChainDepState :: InPairs (RequiringBoth WrapConsensusConfig (Translate WrapChainDepState)) xs
-    , crossEraForecast       :: InPairs (RequiringBoth WrapLedgerConfig    (CrossEraForecaster LedgerState WrapLedgerView)) xs
+      crossEraForecast          :: InPairs (RequiringBoth WrapLedgerConfig (CrossEraForecaster LedgerState WrapLedgerView)) xs
+    , crossEraTickChainDepState :: InPairs CrossEraTickChainDepState xs
+    , crossEraTickLedgerState   :: InPairs CrossEraTickLedgerState   xs
     }
   deriving NoThunks
        via OnlyCheckWhnfNamed "EraTranslation" (EraTranslation xs)
 
 trivialEraTranslation :: EraTranslation '[blk]
 trivialEraTranslation = EraTranslation {
-      translateLedgerState   = PNil
-    , crossEraForecast       = PNil
-    , translateChainDepState = PNil
+      crossEraForecast          = PNil
+    , crossEraTickChainDepState = PNil
+    , crossEraTickLedgerState   = PNil
     }

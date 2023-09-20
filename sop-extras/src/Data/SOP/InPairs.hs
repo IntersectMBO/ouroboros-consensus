@@ -25,6 +25,13 @@ module Data.SOP.InPairs (
   , hcpure
   , hmap
   , hpure
+    -- * Functions
+  , type (--.-->) (..)
+  , (:**:) (..)
+  , Le (..)
+  , Ri (..)
+  , Comp2 (..)
+  , apNP
     -- * Requiring
   , Requiring (..)
   , RequiringBoth (..)
@@ -99,6 +106,17 @@ hcpure _ f =
   RequiringBoth
 -------------------------------------------------------------------------------}
 
+infixr 0 --.-->
+
+newtype Comp2 f g x y = Comp2 {unComp2 :: f (g x y)}
+
+newtype (--.-->) f g x y = DoubleFun {apDoubleFun :: f x y -> g x y}
+
+data (:**:) f g x y = DoublePair (f x y) (g x y)
+
+newtype Le f x y = Le (f x)
+newtype Ri f x y = Ri (f y)
+
 newtype Requiring h f x y = Require {
       provide :: h x -> f x y
     }
@@ -124,3 +142,10 @@ requiringBoth = flip go
     go :: InPairs (RequiringBoth h f) xs -> NP h xs -> InPairs f xs
     go PNil         _              = PNil
     go (PCons f fs) (x :* y :* zs) = PCons (provideBoth f x y) (go fs (y :* zs))
+
+apNP :: InPairs (Le f --.--> Ri f --.--> g) xs -> NP f xs -> InPairs g xs
+apNP = go
+  where
+    go :: InPairs (Le f --.--> Ri f --.--> g) xs -> NP f xs -> InPairs g xs
+    go PNil         _              = PNil
+    go (PCons f fs) (x :* y :* zs) = PCons (f `apDoubleFun` Le x `apDoubleFun` Ri y) (go fs (y :* zs))

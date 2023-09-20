@@ -19,8 +19,9 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Infra (
     -- * Situated
   , Situated (..)
   , situate
-    -- * Aligning
-  , align
+    -- * Towing
+  , CrossEra (..)
+  , tow
     -- * EpochInfo/Summary
   , reconstructSummary
   ) where
@@ -29,17 +30,17 @@ import           Data.Functor.Product
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting
-import           Data.SOP.InPairs (InPairs, Requiring (..))
+import           Data.SOP.InPairs (InPairs)
+import           Data.SOP.InPairs (type (--.-->) (..), (:**:) (..), Comp2 (..), Le (..), Ri (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Match (Mismatch)
 import qualified Data.SOP.Match as Match
 import           Data.SOP.NonEmpty
 import           Data.SOP.Strict
-import           Data.SOP.Telescope (Extend (..), Telescope (..))
+import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
-import           Ouroboros.Consensus.HardFork.Combinator.State.Lift
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.History (Bound (..), EraEnd (..),
                      EraParams (..), EraSummary (..), SafeZone (..))
@@ -111,47 +112,53 @@ situate ns = go ns . getHardForkState
     go (S    era)  (TS _ st)   = SituatedShift $ go era st
 
 {-------------------------------------------------------------------------------
-  Aligning
+  Towing
 -------------------------------------------------------------------------------}
 
-align :: forall xs f f' f''. All SingleEraBlock xs
-      => InPairs (Translate f) xs
-      -> NP (f' -.-> f -.-> f'') xs
-      -> HardForkState f'  xs -- ^ State we are aligning with
-      -> HardForkState f   xs -- ^ State we are aligning
-      -> HardForkState f'' xs
-align fs updTip (HardForkState alignWith) (HardForkState toAlign) =
-    HardForkState . unI $
-      Telescope.alignExtend
-        (InPairs.hmap (\f    -> Require $
-                       \past -> Extend  $
-                       \cur  -> I       $
-                         newCurrent f past cur) fs)
-        (hmap (fn_2 . liftUpdTip) updTip)
-        alignWith
-        toAlign
-  where
-    liftUpdTip :: (f' -.-> f -.-> f'') blk
-               -> Current f' blk -> Current f blk -> Current f'' blk
-    liftUpdTip f = lift . apFn . apFn f . currentState
+newtype CrossEra f f' f'' x y = CrossEra (f x -> EpochNo -> f' y -> f'' y)
 
-    newCurrent :: Translate f blk blk'
-               -> K Past blk
-               -> Current f blk
-               -> (K Past blk, Current f blk')
-    newCurrent f (K past) curF = (
-          K Past  { pastStart    = currentStart curF
-                  , pastEnd      = curEnd
-                  }
-        , Current { currentStart = curEnd
-                  , currentState = translateWith f
-                                     (boundEpoch curEnd)
-                                     (currentState curF)
-                  }
-        )
-      where
-        curEnd :: Bound
-        curEnd = pastEnd past
+tow :: forall xs f f' f''. All SingleEraBlock xs
+    => InPairs (CrossEra f f' f'')  xs   -- ^ how to cross a boundary
+    -> NP      (f -.-> f' -.-> f'') xs   -- ^ how to not cross a boundary
+    -> HardForkState f   xs   -- ^ eg the unticked chain dep state
+    -> HardForkState f'  xs   -- ^ eg the forecasted ledger view
+    -> HardForkState f'' xs   -- ^ eg the ticked chain dep state
+tow cross noCross (HardForkState src) (HardForkState tgt) =
+    HardForkState . unI $
+      Telescope.align
+        (InPairs.hmap adaptExt   cross)
+        (hmap         adaptNoExt noCross)
+        src
+        tgt
+  where
+    adaptNoExt :: (        f -.->         f' -.->         f'') blk
+               -> (Current f -.-> Current f' -.-> Current f'') blk
+    adaptNoExt f = fn_2 $ \a b -> Current {
+        currentStart = currentStart a
+      , currentState = f `apFn` currentState a `apFn` currentState b
+      }
+
+    adaptExt :: CrossEra f f' f''                              blk blk'
+             -> (       Le (Current f)
+                 --.--> Le (K Past)
+                 --.--> Ri (Current f')
+                 --.--> Comp2 I
+                          (Le (K Past) :**: Ri (Current f''))) blk blk'
+    adaptExt (CrossEra f) =
+        DoubleFun $ \(Le cur'f'x) ->
+        DoubleFun $ \(Le (K past)) ->
+        let curEnd :: Bound
+            curEnd = pastEnd past
+        in
+        DoubleFun $ \(Ri cur'f'y) ->
+        Comp2 $ pure $
+        DoublePair
+          (Le (K Past  { pastStart    = currentStart cur'f'x
+                       , pastEnd      = curEnd
+                       }))
+          (Ri (Current { currentStart = curEnd
+                       , currentState = f (currentState cur'f'x) (boundEpoch curEnd) (currentState cur'f'y)
+                       }))
 
 {-------------------------------------------------------------------------------
   Summary/EpochInfo

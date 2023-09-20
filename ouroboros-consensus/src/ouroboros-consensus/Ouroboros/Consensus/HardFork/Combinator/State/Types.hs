@@ -12,8 +12,10 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   , sequenceHardForkState
     -- * Supporting types
   , CrossEraForecaster (..)
+  , CrossEraTickChainDepState (..)
+  , CrossEraTickChainDepState'
+  , CrossEraTickLedgerState (..)
   , TransitionInfo (..)
-  , Translate (..)
   ) where
 
 import           Control.Monad.Except
@@ -27,6 +29,9 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History (Bound)
+import           Ouroboros.Consensus.Ledger.Abstract (LedgerConfig, LedgerResult, LedgerState)
+import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
+                     ConsensusConfig, LedgerView)
 import           Ouroboros.Consensus.Ticked
 import           Prelude
 
@@ -109,13 +114,6 @@ sequenceHardForkState (HardForkState tel) =
   Supporting types
 -------------------------------------------------------------------------------}
 
--- | Translate @f x@ to @f y@ across an era transition
---
--- Typically @f@ will be 'LedgerState' or 'WrapChainDepState'.
-newtype Translate f x y = Translate {
-      translateWith :: EpochNo -> f x -> f y
-    }
-
 -- | Forecast a @'Ticked' (view y)@ from a @state x@ across an
 -- era transition.
 --
@@ -156,3 +154,8 @@ data TransitionInfo =
     --   the transition to the /next/ era cannot happen.
   | TransitionImpossible
   deriving (Show, Generic, NoThunks)
+
+type CrossEraTickChainDepState' x y =                            (ConsensusConfig x -> ConsensusConfig y -> Ticked (LedgerView y)  -> EpochNo -> SlotNo -> ChainDepState x ->                                                             Ticked (ChainDepState y))
+data CrossEraTickLedgerState    x y = CrossEraTickLedgerState    (LedgerConfig    x -> LedgerConfig    y ->                           EpochNo -> SlotNo -> LedgerState   x -> LedgerResult (LedgerState x) (LedgerResult (LedgerState y) (Ticked (LedgerState   y))))
+
+data CrossEraTickChainDepState x y = CrossEraTickChainDepState (Proxy x -> Proxy y -> CrossEraTickChainDepState' (BlockProtocol x) (BlockProtocol y))

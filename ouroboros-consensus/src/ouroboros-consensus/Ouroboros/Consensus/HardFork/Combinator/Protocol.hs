@@ -32,7 +32,6 @@ import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Index
-import           Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
 import qualified Data.SOP.Match as Match
 import qualified Data.SOP.OptNP as OptNP
@@ -50,8 +49,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
                      (HardForkLedgerView, HardForkLedgerView_ (..), Ticked (..))
-import           Ouroboros.Consensus.HardFork.Combinator.State (HardForkState,
-                     Translate (..))
+import           Ouroboros.Consensus.HardFork.Combinator.State (HardForkState)
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.HardFork.Combinator.Translation
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -152,35 +150,68 @@ tick :: CanHardFork xs
      -> SlotNo
      -> HardForkChainDepState xs
      -> Ticked (HardForkChainDepState xs)
-tick cfg@HardForkConsensusConfig{..}
+tick HardForkConsensusConfig{..}
      (TickedHardForkLedgerView transition ledgerView)
      slot
      chainDepState = TickedHardForkChainDepState {
       tickedHardForkChainDepStateEpochInfo = ei
     , tickedHardForkChainDepStatePerEra =
-         State.align
-           (translateConsensus ei cfg)
-           (hcmap proxySingle (fn_2 . tickOne) cfgs)
-           ledgerView
-           chainDepState
+        State.tow
+          (  InPairs.hcmap
+               proxySingle
+               (\tick_ ->
+                  InPairs.DoubleFun $ \(InPairs.Le pcfg) ->
+                  InPairs.DoubleFun $ \(InPairs.Ri pcfg') ->
+                  crossTickOne tick_ pcfg pcfg'
+               )
+               (crossEraTickChainDepState hardForkEraTranslation)
+           `InPairs.apNP` pcfgs
+          )
+          (hcmap proxySingle (\pcfg -> fn_2 $ monoTickOne pcfg) pcfgs)
+          chainDepState
+          ledgerView
     }
   where
-    cfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
-    ei   = State.epochInfoPrecomputedTransitionInfo
-             hardForkConsensusConfigShape
-             transition
-             ledgerView
+    pcfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
+    ei    = State.epochInfoPrecomputedTransitionInfo
+              hardForkConsensusConfigShape
+              transition
+              ledgerView
 
-    tickOne :: SingleEraBlock                 blk
-            => WrapPartialConsensusConfig     blk
-            -> (Ticked :.: WrapLedgerView)    blk
-            -> WrapChainDepState              blk
-            -> (Ticked :.: WrapChainDepState) blk
-    tickOne cfg' (Comp ledgerView') chainDepState' = Comp $
+    crossTickOne :: SingleEraBlock                  blk
+                 => SingleEraBlock                  blk'
+                 => State.CrossEraTickChainDepState blk blk'
+                 -> WrapPartialConsensusConfig      blk
+                 -> WrapPartialConsensusConfig      blk'
+                 -> State.CrossEra
+                      WrapChainDepState
+                      (Ticked :.: WrapLedgerView)
+                      (Ticked :.: WrapChainDepState)
+                      blk blk'
+    crossTickOne (State.CrossEraTickChainDepState tick_) pcfg pcfg' =
+        State.CrossEra $ \cdst eno lv ->
+        Comp $
+        WrapTickedChainDepState $
+          tick_
+            Proxy
+            Proxy
+            (completeConsensusConfig' ei pcfg )
+            (completeConsensusConfig' ei pcfg')
+            (unwrapTickedLedgerView (unComp lv))
+            eno
+            slot
+            (unwrapChainDepState cdst)
+
+    monoTickOne :: SingleEraBlock                 blk
+                => WrapPartialConsensusConfig     blk
+                -> WrapChainDepState              blk
+                -> (Ticked :.: WrapLedgerView)    blk
+                -> (Ticked :.: WrapChainDepState) blk
+    monoTickOne pcfg' chainDepState' ledgerView' = Comp $
         WrapTickedChainDepState $
           tickChainDepState
-            (completeConsensusConfig' ei cfg')
-            (unwrapTickedLedgerView ledgerView')
+            (completeConsensusConfig' ei pcfg')
+            (unwrapTickedLedgerView (unComp ledgerView'))
             slot
             (unwrapChainDepState chainDepState')
 
@@ -344,7 +375,7 @@ reupdateEra ei slot cfg (Pair view (Comp chainDepState)) =
 chainDepStateInfo :: forall blk. SingleEraBlock blk
                   => (Ticked :.: WrapChainDepState) blk -> SingleEraInfo blk
 chainDepStateInfo _ = singleEraInfo (Proxy @blk)
-
+{-
 translateConsensus :: forall xs. CanHardFork xs
                    => EpochInfo (Except PastHorizonException)
                    -> ConsensusConfig (HardForkProtocol xs)
@@ -355,7 +386,7 @@ translateConsensus ei HardForkConsensusConfig{..} =
   where
     pcfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
     cfgs  = hcmap proxySingle (completeConsensusConfig'' ei) pcfgs
-
+-}
 injectValidationErr :: Index xs blk
                     -> ValidationErr (BlockProtocol blk)
                     -> HardForkValidationErr xs

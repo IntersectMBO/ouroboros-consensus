@@ -46,6 +46,7 @@ import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Ticked (Ticked)
 import           Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -92,7 +93,7 @@ class ( LedgerSupportsProtocol blk
   singleEraTransition :: PartialLedgerConfig blk
                       -> EraParams -- ^ Current era parameters
                       -> Bound     -- ^ Start of this era
-                      -> LedgerState blk
+                      -> Ticked (LedgerState blk)
                       -> Maybe EpochNo
 
   -- | Era information (for use in error messages)
@@ -105,7 +106,8 @@ singleEraTransition' :: SingleEraBlock blk
                      => WrapPartialLedgerConfig blk
                      -> EraParams
                      -> Bound
-                     -> LedgerState blk -> Maybe EpochNo
+                     -> Ticked (LedgerState blk)
+                     -> Maybe EpochNo
 singleEraTransition' = singleEraTransition . unwrapPartialLedgerConfig
 
 {-------------------------------------------------------------------------------
