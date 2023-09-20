@@ -1060,7 +1060,7 @@ ledgerValidateCandidate
   -> ChainDiff (Header blk)
   -> m (ValidatedChainDiff (Header blk) (LedgerDB' blk))
 ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) =
-    LgrDB.validate lgrDB curLedger blockCache rollback traceUpdate newBlocks >>= \case
+    LgrDB.validate lgrDB curLedger (const (pure ())) blockCache rollback traceUpdate newBlocks >>= \case
       LgrDB.ValidateExceededRollBack {} ->
         -- Impossible: we asked the LgrDB to roll back past the immutable tip,
         -- which is impossible, since the candidates we construct must connect

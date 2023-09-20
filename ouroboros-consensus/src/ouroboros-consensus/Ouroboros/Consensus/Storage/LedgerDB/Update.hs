@@ -314,12 +314,13 @@ ledgerDbPushMany trace cfg aps initDb = (repeatedlyM pushAndTrace) aps initDb
 -- | Switch to a fork
 ledgerDbSwitch :: (ApplyBlock l blk, Monad m, c)
                => LedgerDbCfg l
+	       -> (AuxLedgerEvent l -> m ())
                -> Word64          -- ^ How many blocks to roll back
                -> (UpdateLedgerDbTraceEvent blk -> m ())
                -> [Ap m l blk c]  -- ^ New blocks to apply
                -> LedgerDB l
                -> m (Either ExceededRollback (LedgerDB l))
-ledgerDbSwitch cfg numRollbacks trace newBlocks db =
+ledgerDbSwitch cfg _handleLedgerEvent numRollbacks trace newBlocks db =
     case rollback numRollbacks db of
       Nothing ->
         return $ Left $ ExceededRollback {
@@ -383,7 +384,7 @@ ledgerDbSwitch' :: forall l blk. ApplyBlock l blk
                 => LedgerDbCfg l
                 -> Word64 -> [blk] -> LedgerDB l -> Maybe (LedgerDB l)
 ledgerDbSwitch' cfg n bs db =
-    case runIdentity $ ledgerDbSwitch cfg n (const $ pure ()) (map pureBlock bs) db of
+    case runIdentity $ ledgerDbSwitch cfg (const $ pure ()) n (const $ pure ()) (map pureBlock bs) db of
       Left  ExceededRollback{} -> Nothing
       Right db'                -> Just db'
 

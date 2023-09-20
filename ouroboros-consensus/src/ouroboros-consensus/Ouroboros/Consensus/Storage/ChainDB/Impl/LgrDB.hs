@@ -327,21 +327,27 @@ data ValidateResult blk =
   | ValidateLedgerError      (LedgerDB.AnnLedgerError' blk)
   | ValidateExceededRollBack LedgerDB.ExceededRollback
 
-validate :: forall m blk. (IOLike m, LedgerSupportsProtocol blk, HasCallStack)
+validate :: forall m blk.
+	    ( IOLike m
+	    , LedgerSupportsProtocol blk
+	    , HasCallStack
+	    )
          => LgrDB m blk
          -> LedgerDB' blk
             -- ^ This is used as the starting point for validation, not the one
             -- in the 'LgrDB'.
+	 -> (AuxLedgerEvent (ExtLedgerState blk) -> m ())
          -> BlockCache blk
          -> Word64  -- ^ How many blocks to roll back
          -> (LedgerDB.UpdateLedgerDbTraceEvent blk -> m ())
          -> [Header blk]
          -> m (ValidateResult blk)
-validate LgrDB{..} ledgerDB blockCache numRollbacks trace = \hdrs -> do
+validate LgrDB{..} ledgerDB handleLedgerEvent blockCache numRollbacks trace = \hdrs -> do
     aps <- mkAps hdrs <$> atomically (readTVar varPrevApplied)
     res <- fmap rewrap $ LedgerDB.defaultResolveWithErrors resolveBlock $
              LedgerDB.ledgerDbSwitch
                (LedgerDB.configLedgerDb cfg)
+	       (lift . lift . handleLedgerEvent)
                numRollbacks
                (lift . lift . trace)
                aps
