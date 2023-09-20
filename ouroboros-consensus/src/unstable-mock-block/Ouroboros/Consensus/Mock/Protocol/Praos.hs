@@ -443,7 +443,6 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   protocolSecurityParam = praosSecurityParam . praosParams
 
   type LedgerView    (Praos c) = ()
-  type HorizonView   (Praos c) = ()
   type IsLeader      (Praos c) = PraosProof           c
   type ValidationErr (Praos c) = PraosValidationError c
   type ValidateView  (Praos c) = PraosValidateView    c
@@ -465,9 +464,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       rho = evalCertified () rho' praosSignKeyVRF
       y   = evalCertified () y'   praosSignKeyVRF
 
-  projectHorizonView _ _ = TickedTrivial
-
-  tickChainDepState_ _ _ _ = TickedPraosChainDepState
+  tickChainDepState _ _ _ = TickedPraosChainDepState
 
   updateChainDepState cfg@PraosConfig{..}
                       (PraosValidateView PraosFields{..} toSign)

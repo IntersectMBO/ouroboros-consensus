@@ -526,8 +526,6 @@ functions defined above:
 >   -- | View on the ledger required by the protocol
 >   type LedgerView PrtclD = LedgerViewD
 >
->   type HorizonView PrtclD = ()
->
 >   -- | View on a block header required for header validation
 >   type ValidateView  PrtclD = NodeId  -- need this for the leader check
 >                                       -- currently not doing other checks
@@ -544,9 +542,7 @@ functions defined above:
 >
 >   protocolSecurityParam = ccpd_securityParam
 >
->   projectHorizonView _cfg _tlv = TickedTrivial
->
->   tickChainDepState_ _cfg _hv _slot _cds = TickedChainDepStateD
+>   tickChainDepState _cfg _lv _slot _cds = TickedChainDepStateD
 >
 >   -- | apply the header (hdrView) and do a header check.
 >   --

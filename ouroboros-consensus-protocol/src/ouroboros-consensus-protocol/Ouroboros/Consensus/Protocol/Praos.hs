@@ -74,8 +74,7 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
-                     (SingleEraProtocol (..))
+import qualified Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock as SingleEra
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -368,8 +367,44 @@ deriving instance PraosCrypto c => NoThunks (PraosValidationErr c)
 
 deriving instance PraosCrypto c => Show (PraosValidationErr c)
 
-instance SingleEraProtocol (Praos c) where
+instance SingleEra.SingleEraProtocol (Praos c) where
+  type HorizonView (Praos c) = ()
+
   eraTransitionHorizonView _cfg = TickedTrivial
+
+  projectHorizonView _cfg _tlv = TickedTrivial
+
+  -- Updating the chain dependent state for Praos.
+  --
+  -- Always sets 'praosStateLastSlot' to the destination slot. If we are in a
+  -- new epoch, we do two more things.
+  --
+  -- - Update the epoch nonce to the combination of the candidate nonce and the
+  --   nonce derived from the last block of the previous epoch.
+  -- - Update the "last block of previous epoch" nonce to the nonce derived from
+  --   the last applied block.
+  tickChainDepState_
+    PraosConfig {praosEpochInfo}
+    TickedTrivial
+    slot
+    st =
+      TickedPraosState st' { praosStateLastSlot = NotOrigin slot }
+      where
+        newEpoch =
+          isNewEpoch
+            (History.toPureEpochInfo praosEpochInfo)
+            (praosStateLastSlot st)
+            slot
+        st' =
+          if newEpoch
+            then
+              st
+                { praosStateEpochNonce =
+                    praosStateCandidateNonce st
+                      ⭒ praosStateLastEpochBlockNonce st,
+                  praosStateLastEpochBlockNonce = praosStateLabNonce st
+                }
+            else st
 
 instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ChainDepState (Praos c) = PraosState c
@@ -377,7 +412,6 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type CanBeLeader (Praos c) = PraosCanBeLeader c
   type SelectView (Praos c) = PraosChainSelectView c
   type LedgerView (Praos c) = Views.LedgerView c
-  type HorizonView (Praos c) = ()
   type ValidationErr (Praos c) = PraosValidationErr c
   type ValidateView (Praos c) = PraosValidateView c
 
@@ -408,39 +442,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
 
         rho = VRF.evalCertified () rho' praosCanBeLeaderSignKeyVRF
 
-  projectHorizonView _cfg _tlv = TickedTrivial
-
-  -- Updating the chain dependent state for Praos.
-  --
-  -- If we are not in a new epoch, then nothing happens. If we are in a new
-  -- epoch, we do three things:
-  -- - Set the last slot to what slot we are ticking to.
-  -- - Update the epoch nonce to the combination of the candidate nonce and the
-  --   nonce derived from the last block of the previous epoch.
-  -- - Update the "last block of previous epoch" nonce to the nonce derived from
-  --   the last applied block.
-  tickChainDepState_
-    PraosConfig {praosEpochInfo}
-    TickedTrivial
-    slot
-    st =
-      TickedPraosState st' { praosStateLastSlot = NotOrigin slot }
-      where
-        newEpoch =
-          isNewEpoch
-            (History.toPureEpochInfo praosEpochInfo)
-            (praosStateLastSlot st)
-            slot
-        st' =
-          if newEpoch
-            then
-              st
-                { praosStateEpochNonce =
-                    praosStateCandidateNonce st
-                      ⭒ praosStateLastEpochBlockNonce st,
-                  praosStateLastEpochBlockNonce = praosStateLabNonce st
-                }
-            else st
+  tickChainDepState = SingleEra.tickChainDepStateDefault
 
   -- Validate and update the chain dependent state as a result of processing a
   -- new header.

@@ -40,7 +40,6 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
 
   type ChainDepState (WithLeaderSchedule p) = ()
   type LedgerView    (WithLeaderSchedule p) = ()
-  type HorizonView   (WithLeaderSchedule p) = ()
   type ValidationErr (WithLeaderSchedule p) = ()
   type IsLeader      (WithLeaderSchedule p) = ()
   type ValidateView  (WithLeaderSchedule p) = ()
@@ -55,9 +54,7 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
             | wlsConfigNodeId `elem` nids -> Just ()
             | otherwise                   -> Nothing
 
-  projectHorizonView _ _ = TickedTrivial
-
-  tickChainDepState_    _ _ _ _ = TickedTrivial
+  tickChainDepState       _ _ _ _ = TickedTrivial
   updateChainDepState   _ _ _ _ _ = return ()
   reupdateChainDepState _ _ _ _ _ = ()
 

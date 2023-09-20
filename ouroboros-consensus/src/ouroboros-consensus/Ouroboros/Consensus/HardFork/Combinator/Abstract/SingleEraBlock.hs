@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -12,6 +13,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (
   , SingleEraProtocol (..)
   , proxySingle
   , singleEraTransition'
+  , tickChainDepStateDefault
     -- * Era index
   , EraIndex (..)
   , eraIndexEmpty
@@ -24,6 +26,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (
 
 import           Codec.Serialise
 import           Data.Either (isRight)
+import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -57,9 +60,39 @@ import           Ouroboros.Consensus.Util.Condense
 
 -- | Protocols which can be used as part of a 'HardForkProtocol'.
 class SingleEraProtocol p where
+  -- | A projection of 'LedgerView' containing only what is needed for ticking
+  --
+  -- For single-era protocols, there are further constraints on this type, see
+  -- 'Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock.eraTransitionHorizonView'.
+  -- Usually, 'HorizonView' will be a singleton type.
+  --
+  -- For the 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkProtocol'
+  -- combinator, this is the same as the 'LedgerView'.
+  type family HorizonView p :: Type
+
+  projectHorizonView :: ConsensusConfig     p
+                     -> Ticked (LedgerView  p)
+                     -> Ticked (HorizonView p)
+
   -- | The horizon view that will be used when ticking across an era boundary.
   -- In all other cases, the HFC logic will use 'projectHorizonView'.
   eraTransitionHorizonView :: ConsensusConfig p -> Ticked (HorizonView p)
+
+  -- | A variant of 'tickChainDepState' that requires only the 'HorizonView'
+  -- instead of 'LedgerView'.
+  tickChainDepState_ :: ConsensusConfig p
+                     -> Ticked (HorizonView p)
+                     -> SlotNo
+                     -> ChainDepState p
+                     -> Ticked (ChainDepState p)
+
+tickChainDepStateDefault :: SingleEraProtocol p
+                         => ConsensusConfig p
+                         -> Ticked (LedgerView p)
+                         -> SlotNo
+                         -> ChainDepState p
+                         -> Ticked (ChainDepState p)
+tickChainDepStateDefault cfg = tickChainDepState_ cfg . projectHorizonView cfg
 
 -- | Blocks from which we can assemble a hard fork
 class ( LedgerSupportsProtocol blk

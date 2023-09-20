@@ -66,8 +66,7 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks (..))
 import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
-                     (SingleEraProtocol (..))
+import qualified Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock as SingleEra
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -304,7 +303,14 @@ data instance Ticked (TPraosState c) = TickedChainDepState {
       tickedTPraosStateSlot          :: !SlotNo
     }
 
-instance SingleEraProtocol (TPraos c) where
+instance SingleEra.SingleEraProtocol (TPraos c) where
+  type HorizonView (TPraos c) = TPraosHorizonView
+
+  projectHorizonView _cfg =
+        TickedTPraosHorizonView
+      . SL.lvExtraEntropy
+      . getTickedPraosLedgerView
+
   -- When ticking from a TPraos era into another TPraos era, we always use a
   -- neutral nonce as the extra entropy even if the extra entropy protocol
   -- parameter was set to a non-neutral value either in the epoch just before or
@@ -328,13 +334,44 @@ instance SingleEraProtocol (TPraos c) where
         tickedTPraosHorizonViewExtraEntropy = SL.NeutralNonce
       }
 
+  tickChainDepState_ TPraosConfig{..}
+                     (TickedTPraosHorizonView extraEntropy)
+                     slot
+                     (TPraosState lastSlot st) =
+      TickedChainDepState {
+          tickedTPraosStateChainDepState =
+            if newEpoch then stNextEpoch else st
+        , tickedTPraosStateSlot          = slot
+        }
+    where
+      newEpoch = isNewEpoch
+                   (History.toPureEpochInfo tpraosEpochInfo)
+                   lastSlot
+                   slot
+
+      -- We can't use 'SL.tickChainDepState' as it unnecessarily takes the
+      -- entire 'SL.LedgerView' as an argument. Hence, we inline it here; future
+      -- work should include moving the TPraos logic entirely to the ouroboros-consensus repository.
+      --
+      -- Reference:
+      -- https://github.com/input-output-hk/cardano-ledger/blob/cardano-protocol-tpraos-1.0.3.5/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/API.hs#L453
+      -- https://github.com/input-output-hk/cardano-ledger/blob/cardano-protocol-tpraos-1.0.3.5/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/Rules/Tickn.hs#L96-L97
+      stNextEpoch = st {
+          SL.csTickn = SL.TicknState {
+              SL.ticknStateEpochNonce =
+                     (let SL.PrtclState _ _ x = SL.csProtocol st in x) -- candidateNonce
+                SL.⭒ SL.ticknStatePrevHashNonce (SL.csTickn st)
+                SL.⭒ extraEntropy
+            , SL.ticknStatePrevHashNonce = SL.csLabNonce st
+            }
+          }
+
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ChainDepState (TPraos c) = TPraosState c
   type IsLeader      (TPraos c) = TPraosIsLeader c
   type CanBeLeader   (TPraos c) = PraosCanBeLeader c
   type SelectView    (TPraos c) = PraosChainSelectView c
   type LedgerView    (TPraos c) = SL.LedgerView c
-  type HorizonView   (TPraos c) = TPraosHorizonView
   type ValidationErr (TPraos c) = SL.ChainTransitionError c
   type ValidateView  (TPraos c) = TPraosValidateView c
 
@@ -394,43 +431,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
 
       SL.GenDelegs dlgMap = SL.lvGenDelegs lv
 
-  projectHorizonView _cfg =
-        TickedTPraosHorizonView
-      . SL.lvExtraEntropy
-      . getTickedPraosLedgerView
-
-  tickChainDepState_ TPraosConfig{..}
-                     (TickedTPraosHorizonView extraEntropy)
-                     slot
-                     (TPraosState lastSlot st) =
-      TickedChainDepState {
-          tickedTPraosStateChainDepState =
-            if newEpoch then stNextEpoch else st
-        , tickedTPraosStateSlot          = slot
-        }
-    where
-      newEpoch = isNewEpoch
-                   (History.toPureEpochInfo tpraosEpochInfo)
-                   lastSlot
-                   slot
-
-      -- We can't use 'SL.tickChainDepState' as it unnecessarily takes the
-      -- entire 'SL.LedgerView' as an argument. Hence, we inline it here; future
-      -- work should include moving the TPraos logic entirely to the
-      -- ouroboros-consensus repository.
-      --
-      -- Reference:
-      -- https://github.com/input-output-hk/cardano-ledger/blob/cardano-protocol-tpraos-1.0.3.5/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/API.hs#L453
-      -- https://github.com/input-output-hk/cardano-ledger/blob/cardano-protocol-tpraos-1.0.3.5/libs/cardano-protocol-tpraos/src/Cardano/Protocol/TPraos/Rules/Tickn.hs#L96-L97
-      stNextEpoch = st {
-          SL.csTickn = SL.TicknState {
-              SL.ticknStateEpochNonce =
-                     (let SL.PrtclState _ _ x = SL.csProtocol st in x) -- candidateNonce
-                SL.⭒ SL.ticknStatePrevHashNonce (SL.csTickn st)
-                SL.⭒ extraEntropy
-            , SL.ticknStatePrevHashNonce = SL.csLabNonce st
-            }
-          }
+  tickChainDepState = SingleEra.tickChainDepStateDefault
 
   updateChainDepState cfg b tlv _slot cs =
       TPraosState (NotOrigin $ tickedTPraosStateSlot cs) <$>

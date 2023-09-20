@@ -96,14 +96,13 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
   type ValidationErr (HardForkProtocol xs) = HardForkValidationErr xs
   type SelectView    (HardForkProtocol xs) = HardForkSelectView    xs
   type LedgerView    (HardForkProtocol xs) = HardForkLedgerView    xs
-  type HorizonView   (HardForkProtocol xs) = HardForkLedgerView    xs
   type CanBeLeader   (HardForkProtocol xs) = HardForkCanBeLeader   xs
   type IsLeader      (HardForkProtocol xs) = HardForkIsLeader      xs
   type ValidateView  (HardForkProtocol xs) = OneEraValidateView    xs
 
   -- Operations on the state
 
-  tickChainDepState_    = tick
+  tickChainDepState     = tick
   checkIsLeader         = check
   updateChainDepState   = update
   reupdateChainDepState = reupdate
@@ -114,8 +113,6 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
 
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK
-
-  projectHorizonView _cfg = id
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol

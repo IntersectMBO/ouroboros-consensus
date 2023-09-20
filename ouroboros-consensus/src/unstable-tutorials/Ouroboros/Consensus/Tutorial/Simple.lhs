@@ -132,7 +132,6 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 >   type SelectView    SP = BlockNo
 >
 >   type LedgerView    SP = ()
->   type HorizonView   SP = ()
 >
 >   type IsLeader      SP = SP_IsLeader
 >   type CanBeLeader   SP = SP_CanBeLeader
@@ -148,9 +147,7 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 >
 >   protocolSecurityParam _cfg = k
 >
->   projectHorizonView _cfg _tlv = TickedTrivial
->
->   tickChainDepState_ _ _ _ _ = TickedTrivial
+>   tickChainDepState _ _ _ _ = TickedTrivial
 >
 >   updateChainDepState _ _ _ _ _ = return ()
 >
@@ -187,7 +184,7 @@ For `SP` we will use only `BlockNo` - to implement the simplest rule of
 preferring longer chains to shorter chains.
 
 
-Ledger Integration: `LedgerView` (and `HorizonView`)
+Ledger Integration: `LedgerView`
 ----------------------------------------------------
 
 Some decisions that a consensus protocol needs to make will depend on the
@@ -199,11 +196,6 @@ a typeclass, namely `LedgerSupportsProtocol`.
 For `SP` we do not require any information from the ledger to make decisions of
 any kind.  In the Praos protocol, the `LedgerView` contains information about
 the stake distribution among other things.
-
-This is used in most functions in `ConsensusProtocol`, but `tickChainDepState_`
-can also work with only a `HorizonView`. For our purposes, we can ignore
-`HorizonView` and assume it to be a singleton type, so there is no difference
-between `tickChainDepState_` and `tickChainDepState` for us.
 
 
 Protocol State: `ChainDepState`, `ValidateView` and `ValidationErr`

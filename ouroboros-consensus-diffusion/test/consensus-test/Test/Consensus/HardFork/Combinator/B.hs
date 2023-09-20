@@ -88,12 +88,16 @@ data instance ConsensusConfig ProtocolB = CfgB {
   deriving NoThunks via OnlyCheckWhnfNamed "CfgB" (ConsensusConfig ProtocolB)
 
 instance SingleEraProtocol ProtocolB where
+  type HorizonView ProtocolB = ()
+
+  projectHorizonView        _ _ = TickedTrivial
   eraTransitionHorizonView _cfg = TickedTrivial
+
+  tickChainDepState_  _ _ _ _   = TickedTrivial
 
 instance ConsensusProtocol ProtocolB where
   type ChainDepState ProtocolB = ()
   type LedgerView    ProtocolB = ()
-  type HorizonView   ProtocolB = ()
   type IsLeader      ProtocolB = ()
   type CanBeLeader   ProtocolB = ()
   type ValidateView  ProtocolB = ()
@@ -106,9 +110,8 @@ instance ConsensusProtocol ProtocolB where
 
   protocolSecurityParam = cfgB_k
 
-  projectHorizonView _ _ = TickedTrivial
+  tickChainDepState = tickChainDepStateDefault
 
-  tickChainDepState_    _ _ _ _   = TickedTrivial
   updateChainDepState   _ _ _ _ _ = return ()
   reupdateChainDepState _ _ _ _ _ = ()
 

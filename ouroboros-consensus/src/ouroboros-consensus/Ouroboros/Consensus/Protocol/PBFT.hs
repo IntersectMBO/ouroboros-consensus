@@ -60,8 +60,7 @@ import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
-                     (SingleEraProtocol (..))
+import qualified Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock as SingleEra
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -272,8 +271,13 @@ data PBftIsLeader c = PBftIsLeader {
 
 instance PBftCrypto c => NoThunks (PBftIsLeader c)
 
-instance SingleEraProtocol (PBft c) where
-  eraTransitionHorizonView _cfg = TickedTrivial
+instance SingleEra.SingleEraProtocol (PBft c) where
+  type HorizonView (PBft c) = ()
+
+  projectHorizonView       _cfg _lv = TickedTrivial
+  eraTransitionHorizonView _cfg     = TickedTrivial
+
+  tickChainDepState_ _cfg _hv _slot = TickedPBftState
 
 -- | (Static) node configuration
 newtype instance ConsensusConfig (PBft c) = PBftConfig {
@@ -296,7 +300,6 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
   --   - Protocol parameters, for the signature window and threshold.
   --   - The delegation map.
   type LedgerView    (PBft c) = PBftLedgerView  c
-  type HorizonView   (PBft c) = ()
   type IsLeader      (PBft c) = PBftIsLeader    c
   type ChainDepState (PBft c) = PBftState       c
   type CanBeLeader   (PBft c) = PBftCanBeLeader c
@@ -322,9 +325,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
       PBftParams{pbftNumNodes = NumCoreNodes numCoreNodes} = pbftParams
       CoreNodeId i = pbftCanBeLeaderCoreNodeId
 
-  projectHorizonView _cfg _lv = TickedTrivial
-
-  tickChainDepState_ _cfg _hv _slot = TickedPBftState
+  tickChainDepState = SingleEra.tickChainDepStateDefault
 
   updateChainDepState cfg
                       toValidate

@@ -7,7 +7,6 @@ module Ouroboros.Consensus.Protocol.Abstract (
     ConsensusConfig
   , ConsensusProtocol (..)
   , preferCandidate
-  , tickChainDepState
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
@@ -117,16 +116,6 @@ class ( Show (ChainDepState   p)
   -- calculation does not depend on this).
   type family LedgerView p :: Type
 
-  -- | A projection of 'LedgerView' containing only what is needed for ticking
-  --
-  -- For single-era protocols, there are further constraints on this type, see
-  -- 'Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock.eraTransitionHorizonView'.
-  -- Usually, 'HorizonView' will be a singleton type.
-  --
-  -- For the 'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkProtocol'
-  -- combinator, this is the same as the 'LedgerView'.
-  type family HorizonView p :: Type
-
   -- | Validation errors
   type family ValidationErr p :: Type
 
@@ -142,16 +131,12 @@ class ( Show (ChainDepState   p)
                 -> Ticked (ChainDepState p)
                 -> Maybe (IsLeader       p)
 
-  projectHorizonView :: ConsensusConfig     p
-                     -> Ticked (LedgerView  p)
-                     -> Ticked (HorizonView p)
-
-  -- | Tick the 'ChainDepState', also see 'tickChainDepState'
-  tickChainDepState_ :: ConsensusConfig p
-                     -> Ticked (HorizonView p)
-                     -> SlotNo
-                     -> ChainDepState p
-                     -> Ticked (ChainDepState p)
+  -- | Tick the 'ChainDepState'
+  tickChainDepState :: ConsensusConfig p
+                    -> Ticked (LedgerView p)
+                    -> SlotNo
+                    -> ChainDepState p
+                    -> Ticked (ChainDepState p)
 
   -- | Apply a header
   updateChainDepState :: HasCallStack
@@ -183,15 +168,6 @@ class ( Show (ChainDepState   p)
 
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
-
--- | Tick the 'ChainDepState'
-tickChainDepState :: ConsensusProtocol p
-                  => ConsensusConfig p
-                  -> Ticked (LedgerView p)
-                  -> SlotNo
-                  -> ChainDepState p
-                  -> Ticked (ChainDepState p)
-tickChainDepState cfg = tickChainDepState_ cfg . projectHorizonView cfg
 
 -- | Compare a candidate chain to our own
 --

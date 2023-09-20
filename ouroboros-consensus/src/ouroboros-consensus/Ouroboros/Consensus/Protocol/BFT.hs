@@ -125,7 +125,6 @@ instance BftCrypto c => ConsensusProtocol (Bft c) where
   type ValidationErr (Bft c) = BftValidationErr
   type ValidateView  (Bft c) = BftValidateView c
   type LedgerView    (Bft c) = ()
-  type HorizonView   (Bft c) = ()
   type IsLeader      (Bft c) = ()
   type ChainDepState (Bft c) = ()
   type CanBeLeader   (Bft c) = CoreNodeId
@@ -159,9 +158,7 @@ instance BftCrypto c => ConsensusProtocol (Bft c) where
       NumCoreNodes numCoreNodes = bftNumNodes
 
   reupdateChainDepState _ _ _ _ _ = ()
-  tickChainDepState_    _ _ _ _   = TickedTrivial
-
-  projectHorizonView _ TickedTrivial = TickedTrivial
+  tickChainDepState     _ _ _ _   = TickedTrivial
 
 instance BftCrypto c => NoThunks (ConsensusConfig (Bft c))
   -- use generic instance
