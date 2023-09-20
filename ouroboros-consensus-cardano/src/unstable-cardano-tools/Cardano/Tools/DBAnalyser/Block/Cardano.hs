@@ -28,13 +28,10 @@ import           Cardano.Crypto (RequiresNetworkMagic (..))
 import qualified Cardano.Crypto as Crypto
 import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import           Cardano.Crypto.Raw (Raw)
-import qualified Cardano.Ledger.Alonzo.Genesis as SL (AlonzoGenesis)
+import qualified Cardano.Ledger.Api.Era as L (LatestKnownEra)
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL (natVersion)
-import qualified Cardano.Ledger.Conway.Genesis as SL (ConwayGenesis)
-import qualified Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Crypto
-import qualified Cardano.Ledger.Shelley.Translation as SL
-                     (toFromByronTranslationContext)
 import           Cardano.Node.Types (AdjustFilePaths (..))
 import qualified Cardano.Tools.DBAnalyser.Block.Byron as BlockByron
 import           Cardano.Tools.DBAnalyser.Block.Shelley ()
@@ -69,6 +66,7 @@ import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
+import           Lens.Micro ((^.))
 import           System.Directory (makeAbsolute)
 import           System.FilePath (takeDirectory, (</>))
 
@@ -140,6 +138,9 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
     genesisConway  <- either (error . show) return =<<
       Aeson.eitherDecodeFileStrict' (conwayGenesisPath cc)
 
+    let ledgerTransitionConfig =
+          L.mkLatestTransitionConfig genesisShelley genesisAlonzo genesisConway
+
     initialNonce <- case shelleyGenesisHash cc of
       Just h  -> pure h
       Nothing -> do
@@ -154,9 +155,7 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
       $ mkCardanoProtocolInfo
           genesisByron
           threshold
-          genesisShelley
-          genesisAlonzo
-          genesisConway
+          ledgerTransitionConfig
           initialNonce
           (hardForkTriggers cc)
 
@@ -205,10 +204,7 @@ instance AdjustFilePaths CardanoConfig where
 -- | Shelley transition arguments
 data ShelleyTransitionArguments :: Type -> Type where
   ShelleyTransitionArguments ::
-       -- so far, the context is either () or AlonzoGenesis or ConwayGenesis
-       ((ShelleyGenesis StandardCrypto, SL.AlonzoGenesis, SL.ConwayGenesis StandardCrypto) ->
-        Core.TranslationContext era)
-    -> TriggerHardFork
+       TriggerHardFork
     -> ShelleyTransitionArguments (ShelleyBlock proto era)
 
 instance Aeson.FromJSON CardanoConfig where
@@ -234,26 +230,24 @@ instance Aeson.FromJSON CardanoConfig where
       let f ::
                Aeson.Key
             -> Word16   -- ^ the argument to 'TriggerHardForkAtVersion'
-            -> ((ShelleyGenesis StandardCrypto, SL.AlonzoGenesis, SL.ConwayGenesis StandardCrypto) ->
-                Core.TranslationContext era)
             -> (Aeson.Parser :.: ShelleyTransitionArguments) (ShelleyBlock proto era)
-          f nm majProtVer ctxt = Comp $
-              fmap (ShelleyTransitionArguments ctxt)
+          f nm majProtVer = Comp $
+              fmap ShelleyTransitionArguments
             $           (fmap TriggerHardForkAtEpoch <$> (v Aeson..:? nm))
               Aeson..!= (TriggerHardForkAtVersion majProtVer)
 
       stas <- hsequence'
-        $  f "TestShelleyHardForkAtEpoch" 2 (\(sg, _, _) -> SL.toFromByronTranslationContext sg)
-        :* f "TestAllegraHardForkAtEpoch" 3 (\_ -> ())
-        :* f "TestMaryHardForkAtEpoch"    4 (\_ -> ())
-        :* f "TestAlonzoHardForkAtEpoch"  5 ((\(_, ag, _) -> ag))
-        :* f "TestBabbageHardForkAtEpoch" 7 (\_ -> ())
-        :* f "TestConwayHardForkAtEpoch"  9 (\(_, _, cg) -> cg)
+        $  f "TestShelleyHardForkAtEpoch" 2
+        :* f "TestAllegraHardForkAtEpoch" 3
+        :* f "TestMaryHardForkAtEpoch"    4
+        :* f "TestAlonzoHardForkAtEpoch"  5
+        :* f "TestBabbageHardForkAtEpoch" 7
+        :* f "TestConwayHardForkAtEpoch"  9
         :* Nil
 
       let isBad :: NP ShelleyTransitionArguments xs -> Bool
           isBad = \case
-            ShelleyTransitionArguments _ TriggerHardForkAtVersion{} :* ShelleyTransitionArguments _ TriggerHardForkAtEpoch{} :* _ -> True
+            ShelleyTransitionArguments TriggerHardForkAtVersion{} :* ShelleyTransitionArguments TriggerHardForkAtEpoch{} :* _ -> True
 
             ShelleyTransitionArguments{} :* np -> isBad np
             Nil          -> False
@@ -289,13 +283,11 @@ type CardanoBlockArgs = Args (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo ::
      Byron.Genesis.Config
   -> Maybe PBftSignatureThreshold
-  -> ShelleyGenesis StandardCrypto
-  -> SL.AlonzoGenesis
-  -> SL.ConwayGenesis StandardCrypto
+  -> L.TransitionConfig (L.LatestKnownEra StandardCrypto)
   -> Nonce
   -> NP ShelleyTransitionArguments (CardanoShelleyEras StandardCrypto)
   -> ProtocolInfo (CardanoBlock StandardCrypto)
-mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlonzo genesisConway initialNonce hardForkTriggers =
+mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce hardForkTriggers =
     fst $ protocolInfoCardano @_ @IO
       (CardanoProtocolParams
         ProtocolParamsByron {
@@ -307,7 +299,7 @@ mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlon
           , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
         ProtocolParamsShelleyBased {
-            shelleyBasedGenesis           = genesisShelley
+            shelleyBasedGenesis           = transitionConfig ^. L.tcShelleyGenesisL
           , shelleyBasedInitialNonce      = initialNonce
           , shelleyBasedLeaderCredentials = []
           }
@@ -344,6 +336,7 @@ mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlon
         (unIntraShelleyTransitionArguments   alonzoTransition)
         (unIntraShelleyTransitionArguments   babbageTransition)
         (unIntraShelleyTransitionArguments   conwayTransition)
+        transitionConfig
       )
   where
     ( shelleyTransition :*
@@ -358,18 +351,14 @@ mkCardanoProtocolInfo genesisByron signatureThreshold genesisShelley genesisAlon
     unByronToShelleyTransitionArguments ::
          ShelleyTransitionArguments (ShelleyBlock proto era)
       -> ProtocolTransitionParams ByronBlock (ShelleyBlock proto era)
-    unByronToShelleyTransitionArguments (ShelleyTransitionArguments ctxt trigger) =
-      ProtocolTransitionParamsByronToShelley
-      (ctxt (genesisShelley, genesisAlonzo, genesisConway))
-      trigger
+    unByronToShelleyTransitionArguments (ShelleyTransitionArguments trigger) =
+      ProtocolTransitionParamsByronToShelley trigger
 
     unIntraShelleyTransitionArguments ::
          ShelleyTransitionArguments (ShelleyBlock proto era)
       -> ProtocolTransitionParams (ShelleyBlock proto' era') (ShelleyBlock proto era)
-    unIntraShelleyTransitionArguments (ShelleyTransitionArguments ctxt trigger) =
-      ProtocolTransitionParamsIntraShelley
-      (ctxt (genesisShelley, genesisAlonzo, genesisConway))
-      trigger
+    unIntraShelleyTransitionArguments (ShelleyTransitionArguments trigger) =
+      ProtocolTransitionParamsIntraShelley trigger
 
 castHeaderHash ::
      HeaderHash ByronBlock

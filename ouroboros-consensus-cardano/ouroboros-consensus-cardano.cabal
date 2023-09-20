@@ -357,6 +357,7 @@ library unstable-cardano-testlib
     , base
     , cardano-crypto-class
     , cardano-crypto-wrapper
+    , cardano-ledger-api                                                                         >= 1.6
     , cardano-ledger-alonzo-test
     , cardano-ledger-byron
     , cardano-ledger-conway-test                                                                 ^>=1.2.0.5
@@ -401,6 +402,7 @@ test-suite cardano-test
     , base16-bytestring
     , bytestring
     , cardano-crypto-class
+    , cardano-ledger-api
     , cardano-ledger-alonzo
     , cardano-ledger-alonzo-test
     , cardano-ledger-byron
@@ -481,6 +483,7 @@ library unstable-cardano-tools
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
+    , cardano-ledger-api             >= 1.6
     , cardano-ledger-allegra
     , cardano-ledger-alonzo
     , cardano-ledger-babbage

@@ -19,9 +19,8 @@ module Cardano.Node.Protocol.Cardano (
 import           Cardano.Api.Any
 import           Cardano.Api.Protocol.Types
 import qualified Cardano.Chain.Update as Byron
+import qualified Cardano.Ledger.Api.Transition as L
 import           Cardano.Ledger.BaseTypes (natVersion)
-import           Cardano.Ledger.Shelley.Translation
-                     (toFromByronTranslationContext)
 import qualified Cardano.Node.Protocol.Alonzo as Alonzo
 import qualified Cardano.Node.Protocol.Byron as Byron
 import qualified Cardano.Node.Protocol.Conway as Conway
@@ -135,6 +134,9 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
       firstExceptT CardanoProtocolInstantiationPraosLeaderCredentialsError $
         Shelley.readLeaderCredentials files
 
+    let transitionLedgerConfig =
+          L.mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis
+
     --TODO: all these protocol versions below are confusing and unnecessary.
     -- It could and should all be automated and these config entries eliminated.
     return $!
@@ -236,7 +238,6 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
           --
           -- Byron to Shelley hard fork parameters
           Consensus.ProtocolTransitionParamsByronToShelley {
-            transitionByronToShelleyTranslationContext = toFromByronTranslationContext shelleyGenesis,
             transitionByronToShelleyTrigger =
               -- What will trigger the Byron -> Shelley hard fork?
               case npcTestShelleyHardForkAtEpoch of
@@ -267,7 +268,6 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
           }
           -- Shelley to Allegra hard fork parameters
           Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = (),
             transitionIntraShelleyTrigger =
               case npcTestAllegraHardForkAtEpoch of
                 Nothing -> Consensus.TriggerHardForkAtVersion
@@ -276,7 +276,6 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
           }
           -- Allegra to Mary hard fork parameters
           Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = (),
             transitionIntraShelleyTrigger =
               case npcTestMaryHardForkAtEpoch of
                 Nothing -> Consensus.TriggerHardForkAtVersion
@@ -285,7 +284,6 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
           }
           -- Mary to Alonzo hard fork parameters
           Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = alonzoGenesis,
             transitionIntraShelleyTrigger =
               case npcTestAlonzoHardForkAtEpoch of
                 Nothing -> Consensus.TriggerHardForkAtVersion
@@ -294,7 +292,6 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
           }
           -- Alonzo to Babbage hard fork parameters
           Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = (),
             transitionIntraShelleyTrigger =
               case npcTestBabbageHardForkAtEpoch of
                   Nothing -> Consensus.TriggerHardForkAtVersion
@@ -304,7 +301,6 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
           }
           -- Babbage to Conway hard fork parameters
           Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = conwayGenesis,
             transitionIntraShelleyTrigger =
               case npcTestConwayHardForkAtEpoch of
                   Nothing -> Consensus.TriggerHardForkAtVersion
@@ -312,6 +308,7 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
                   Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
 
           }
+          transitionLedgerConfig
         )
 
 ------------------------------------------------------------------------------

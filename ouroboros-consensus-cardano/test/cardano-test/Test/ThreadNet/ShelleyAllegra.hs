@@ -18,11 +18,9 @@
 module Test.ThreadNet.ShelleyAllegra (tests) where
 
 import           Cardano.Crypto.Hash (ShortHash)
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
-import qualified Cardano.Ledger.Shelley.Transition as SL
-import qualified Cardano.Ledger.Shelley.Translation as SL
-                     (toFromByronTranslationContext)
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import           Control.Monad (replicateM)
@@ -262,8 +260,7 @@ prop_simple_shelleyAllegra_convergence TestSetup
                     }
                 protocolTransitionParamsIntraShelley =
                   ProtocolTransitionParamsIntraShelley {
-                      transitionIntraShelleyTranslationContext = ()
-                    , transitionIntraShelleyTrigger            =
+                      transitionIntraShelleyTrigger            =
                         TriggerHardForkAtVersion $ SL.getVersion majorVersion2
                     }
                 (protocolInfo, blockForging) =
@@ -271,8 +268,9 @@ prop_simple_shelleyAllegra_convergence TestSetup
                     protocolParamsShelleyBased
                     (SL.ProtVer majorVersion1 0)
                     (SL.ProtVer majorVersion2 0)
-                    (SL.toFromByronTranslationContext genesisShelley)
-                    (SL.mkShelleyTransitionConfig genesisShelley)
+                    (L.mkTransitionConfig ()
+                      $ L.mkShelleyTransitionConfig genesisShelley
+                    )
                     protocolTransitionParamsIntraShelley
             in
             TestNodeInitialization {

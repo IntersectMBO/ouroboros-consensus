@@ -25,9 +25,9 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
   , protocolInfoShelleyBasedHardFork
   ) where
 
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Ledger.Shelley.Transition as SL
 import           Control.Monad.Except (runExcept)
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
@@ -35,6 +35,7 @@ import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import           Data.Void (Void)
+import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano.CanHardFork
                      (ShelleyPartialLedgerConfig (..), forecastAcrossShelley,
@@ -226,8 +227,7 @@ protocolInfoShelleyBasedHardFork ::
   => ProtocolParamsShelleyBased era1
   -> SL.ProtVer
   -> SL.ProtVer
-  -> SL.TranslationContext era1
-  -> SL.TransitionConfig era1
+  -> L.TransitionConfig era2
   -> ProtocolTransitionParams (ShelleyBlock proto1 era1) (ShelleyBlock proto2 era2)
   -> ( ProtocolInfo      (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
      , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
@@ -235,8 +235,7 @@ protocolInfoShelleyBasedHardFork ::
 protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
                                  protVer1
                                  protVer2
-                                 transCtx1
-                                 transCfg1
+                                 transCfg2
                                  protocolTransitionParams =
     protocolInfoBinary
       -- Era 1
@@ -268,8 +267,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
     (protocolInfo1, blockForging1) =
         protocolInfoTPraosShelleyBased
           protocolParamsShelleyBased
-          transCtx1
-          transCfg1
+          (transCfg2 ^. L.tcPreviousEraConfigL)
           protVer1
           (Mempool.mkOverrides Mempool.noOverridesMeasure)
 
@@ -277,8 +275,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
     eraParams1 = shelleyEraParams genesis
 
     ProtocolTransitionParamsIntraShelley {
-        transitionIntraShelleyTranslationContext = transCtxt2
-      , transitionIntraShelleyTrigger
+        transitionIntraShelleyTrigger
       } = protocolTransitionParams
 
     toPartialLedgerConfig1 ::
@@ -300,8 +297,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
             , shelleyBasedInitialNonce
             , shelleyBasedLeaderCredentials
             }
-          transCtxt2
-          (SL.mkTransitionConfig transCtxt2 transCfg1)
+          transCfg2
           protVer2
           (Mempool.mkOverrides Mempool.noOverridesMeasure)
 

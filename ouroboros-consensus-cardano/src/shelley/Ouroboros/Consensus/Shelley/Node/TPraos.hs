@@ -34,11 +34,8 @@ module Ouroboros.Consensus.Shelley.Node.TPraos (
   ) where
 
 import qualified Cardano.Crypto.VRF as VRF
-import qualified Cardano.Ledger.Core as Core
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Ledger.Shelley.Transition as SL
-import qualified Cardano.Ledger.Shelley.Translation as SL
-                     (emptyFromByronTranslationContext)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..))
 import qualified Cardano.Protocol.TPraos.OCert as SL
@@ -72,6 +69,7 @@ import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.IOLike
+import           Lens.Micro ((^.))
 
 {-------------------------------------------------------------------------------
   BlockForging
@@ -217,8 +215,7 @@ protocolInfoShelley protocolParamsShelleyBased
                       } =
     protocolInfoTPraosShelleyBased
       protocolParamsShelleyBased
-      SL.emptyFromByronTranslationContext
-      (SL.mkShelleyTransitionConfig (shelleyBasedGenesis protocolParamsShelleyBased))
+      (L.mkShelleyTransitionConfig (shelleyBasedGenesis protocolParamsShelleyBased))
       protVer
       maxTxCapacityOverrides
 
@@ -231,8 +228,7 @@ protocolInfoTPraosShelleyBased ::
       , c ~ EraCrypto era
       )
   => ProtocolParamsShelleyBased era
-  -> Core.TranslationContext era
-  -> SL.TransitionConfig era
+  -> L.TransitionConfig era
   -> SL.ProtVer
   -> Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) era)
@@ -243,7 +239,6 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                            , shelleyBasedInitialNonce      = initialNonce
                            , shelleyBasedLeaderCredentials = credentialss
                            }
-                         translationCtxt
                          transitionCfg
                          protVer
                          maxTxCapacityOverrides =
@@ -279,7 +274,7 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
     ledgerConfig =
         mkShelleyLedgerConfig
          genesis
-         translationCtxt
+         (transitionCfg ^. L.tcTranslationContextG)
          epochInfo
          maxMajorProtVer
 
@@ -309,8 +304,8 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
     initLedgerState = ShelleyLedgerState {
         shelleyLedgerTip        = Origin
       , shelleyLedgerState      =
-            SL.registerInitialStaking transitionCfg
-          $ SL.createInitialState transitionCfg
+            L.registerInitialStaking transitionCfg
+          $ L.createInitialState transitionCfg
       , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
       }
 

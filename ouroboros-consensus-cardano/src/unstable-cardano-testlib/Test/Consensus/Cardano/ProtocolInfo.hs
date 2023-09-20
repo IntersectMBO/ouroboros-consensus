@@ -23,8 +23,8 @@ module Test.Consensus.Cardano.ProtocolInfo (
 
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
-import qualified Cardano.Ledger.Shelley.Translation as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Cardano.Slotting.Time as Time
 import           Data.Proxy (Proxy (..))
@@ -308,33 +308,30 @@ mkTestProtocolInfo
             , conwayMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
             }
           ProtocolTransitionParamsByronToShelley {
-            transitionByronToShelleyTranslationContext = SL.toFromByronTranslationContext shelleyGenesis
-          , transitionByronToShelleyTrigger            = hfSpecTransitionTrigger Shelley hardForkSpec
+            transitionByronToShelleyTrigger            = hfSpecTransitionTrigger Shelley hardForkSpec
           }
           ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext = ()
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Allegra hardForkSpec
+              transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Allegra hardForkSpec
             }
           ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext = ()
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Mary hardForkSpec
+              transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Mary hardForkSpec
             }
           ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext =
-                -- tests using this ProtocolInfo do not even reach Allegra
-                SL.exampleAlonzoGenesis
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Alonzo hardForkSpec
+              transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Alonzo hardForkSpec
             }
           ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext = ()
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Babbage hardForkSpec
+              transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Babbage hardForkSpec
             }
           ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext =
-                -- tests using this ProtocolInfo do not even reach Allegra
-                SL.exampleConwayGenesis
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Conway hardForkSpec
+              transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Conway hardForkSpec
             }
+          ( L.mkLatestTransitionConfig
+              shelleyGenesis
+              -- tests using this ProtocolInfo do not even reach Allegra
+              SL.exampleAlonzoGenesis
+              -- tests using this ProtocolInfo do not even reach Allegra
+              SL.exampleConwayGenesis
+          )
         )
 
   where

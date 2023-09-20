@@ -17,11 +17,11 @@ module Test.ThreadNet.MaryAlonzo (tests) where
 
 import           Cardano.Crypto.Hash (ShortHash)
 import           Cardano.Ledger.Alonzo.Genesis (AlonzoGenesis)
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL (Version, getVersion,
                      natVersion)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
-import qualified Cardano.Ledger.Shelley.Transition as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import           Control.Monad (replicateM)
@@ -255,8 +255,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
                     }
                 protocolTransitionParamsIntraShelley =
                   ProtocolTransitionParamsIntraShelley {
-                      transitionIntraShelleyTranslationContext = alonzoGenesis
-                    , transitionIntraShelleyTrigger            =
+                      transitionIntraShelleyTrigger            =
                         TriggerHardForkAtVersion $ SL.getVersion majorVersion2
                     }
                 (protocolInfo, blockForging) =
@@ -264,10 +263,10 @@ prop_simple_allegraAlonzo_convergence TestSetup
                     protocolParamsShelleyBased
                     (SL.ProtVer majorVersion1 0)
                     (SL.ProtVer majorVersion2 0)
-                    ()
-                    ( SL.mkTransitionConfig ()
-                    . SL.mkTransitionConfig ()
-                    $ SL.mkShelleyTransitionConfig shelleyGenesis
+                    ( L.mkTransitionConfig alonzoGenesis
+                      $ L.mkTransitionConfig ()
+                      $ L.mkTransitionConfig ()
+                      $ L.mkShelleyTransitionConfig shelleyGenesis
                     )
                     protocolTransitionParamsIntraShelley
             in
