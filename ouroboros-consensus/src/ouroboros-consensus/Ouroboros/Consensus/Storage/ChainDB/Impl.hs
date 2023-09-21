@@ -87,7 +87,7 @@ withDB
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      )
-  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  => LedgerEventHandler m (ExtLedgerState blk)
   -> ChainDbArgs Identity m blk
   -> (ChainDB m blk -> m a)
   -> m a
@@ -102,7 +102,7 @@ openDB
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      )
-  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  => LedgerEventHandler m (ExtLedgerState blk)
   -> ChainDbArgs Identity m blk
   -> m (ChainDB m blk)
 openDB handleLedgerEvent args =
@@ -117,7 +117,7 @@ openDBInternal
      , ConvertRawHash blk
      , SerialiseDiskConstraints blk
      )
-  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  => LedgerEventHandler m (ExtLedgerState blk)
   -> ChainDbArgs Identity m blk
   -> Bool -- ^ 'True' = Launch background tasks
   -> m (ChainDB m blk, Internal m blk)

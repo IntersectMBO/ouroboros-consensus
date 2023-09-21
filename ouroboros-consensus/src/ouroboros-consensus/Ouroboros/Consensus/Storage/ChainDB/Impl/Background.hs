@@ -88,7 +88,7 @@ launchBgTasks
      , HasHardForkHistory blk
      , LgrDbSerialiseConstraints blk
      )
-  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  => LedgerEventHandler m (ExtLedgerState blk)
   -> ChainDbEnv m blk
   -> Word64 -- ^ Number of immutable blocks replayed on ledger DB startup
   -> m ()
@@ -528,7 +528,7 @@ addBlockRunner
      , HasHardForkHistory blk
      , HasCallStack
      )
-  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  => LedgerEventHandler m (ExtLedgerState blk)
   -> ChainDbEnv m blk
   -> m Void
 addBlockRunner handleLedgerEvent cdb@CDB{..} = forever $ do

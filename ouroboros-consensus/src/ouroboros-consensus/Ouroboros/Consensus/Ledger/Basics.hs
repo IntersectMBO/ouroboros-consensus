@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveFunctor     #-}
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE TypeFamilies      #-}
 
 -- | Definition is 'IsLedger'
@@ -19,6 +20,9 @@ module Ouroboros.Consensus.Ledger.Basics (
   , castLedgerResult
   , embedLedgerResult
   , pureLedgerResult
+  , LedgerEventHandler(..)
+  , discardEvent
+  , natHandler
     -- * Definition of a ledger independent of a choice of block
   , IsLedger (..)
   , LedgerCfg
@@ -164,6 +168,16 @@ class ( -- Requirements on the ledger state itself
 -- | 'lrResult' after 'applyChainTickLedgerResult'
 applyChainTick :: IsLedger l => LedgerCfg l -> SlotNo -> l -> Ticked l
 applyChainTick = lrResult ..: applyChainTickLedgerResult
+
+
+-- | Handler for ledger events
+newtype LedgerEventHandler m l = LedgerEventHandler { handleLedgerEvent :: AuxLedgerEvent l -> m () }
+
+natHandler :: (m () -> n ()) -> LedgerEventHandler m l -> LedgerEventHandler n l
+natHandler nat LedgerEventHandler{handleLedgerEvent} = LedgerEventHandler (nat . handleLedgerEvent)
+
+discardEvent :: Applicative m => LedgerEventHandler m l
+discardEvent = LedgerEventHandler { handleLedgerEvent = const $ pure () }
 
 {-------------------------------------------------------------------------------
   Link block to its ledger

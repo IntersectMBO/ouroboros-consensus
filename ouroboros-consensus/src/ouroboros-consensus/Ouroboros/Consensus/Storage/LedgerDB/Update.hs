@@ -114,10 +114,10 @@ toRealPoint (Weaken ap)      = toRealPoint ap
 -- We take in the entire 'LedgerDB' because we record that as part of errors.
 applyBlock :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
            => LedgerCfg l
-           -> (AuxLedgerEvent l -> m ())
+           -> LedgerEventHandler m l
            -> Ap m l blk c
            -> LedgerDB l -> m l
-applyBlock cfg handleLedgerEvent ap db = case ap of
+applyBlock cfg eventHandler@LedgerEventHandler{handleLedgerEvent} ap db = case ap of
     ReapplyVal b ->
       return $
         tickThenReapply cfg b l
@@ -135,7 +135,7 @@ applyBlock cfg handleLedgerEvent ap db = case ap of
       either (throwLedgerError db r) return $ runExcept $
         tickThenApply cfg b l
     Weaken ap' ->
-      applyBlock cfg handleLedgerEvent ap' db
+      applyBlock cfg eventHandler ap' db
   where
     l :: l
     l = ledgerDbCurrent db
@@ -296,7 +296,7 @@ data ExceededRollback = ExceededRollback {
 
 ledgerDbPush :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
              => LedgerDbCfg l
-             -> (AuxLedgerEvent l -> m ())
+             -> LedgerEventHandler m l
              -> Ap m l blk c -> LedgerDB l -> m (LedgerDB l)
 ledgerDbPush cfg handleLedgerEvent ap db =
     (\current' -> pushLedgerState (ledgerDbCfgSecParam cfg) current' db) <$>
@@ -306,7 +306,7 @@ ledgerDbPush cfg handleLedgerEvent ap db =
 ledgerDbPushMany ::
      forall m c l blk . (ApplyBlock l blk, Monad m, c)
   => (Pushing blk -> m ())
-  -> (AuxLedgerEvent l -> m ())
+  -> LedgerEventHandler m l
   -> LedgerDbCfg l
   -> [Ap m l blk c] -> LedgerDB l -> m (LedgerDB l)
 ledgerDbPushMany trace handleLedgerEvent cfg aps initDb = (repeatedlyM pushAndTrace) aps initDb
@@ -319,7 +319,7 @@ ledgerDbPushMany trace handleLedgerEvent cfg aps initDb = (repeatedlyM pushAndTr
 -- | Switch to a fork
 ledgerDbSwitch :: (ApplyBlock l blk, Monad m, c)
                => LedgerDbCfg l
-               -> (AuxLedgerEvent l -> m ())
+               -> LedgerEventHandler m l
                -> Word64          -- ^ How many blocks to roll back
                -> (UpdateLedgerDbTraceEvent blk -> m ())
                -> [Ap m l blk c]  -- ^ New blocks to apply
@@ -379,18 +379,18 @@ pureBlock = ReapplyVal
 
 ledgerDbPush' :: ApplyBlock l blk
               => LedgerDbCfg l -> blk -> LedgerDB l -> LedgerDB l
-ledgerDbPush' cfg b = runIdentity . ledgerDbPush cfg (const $ pure ()) (pureBlock b)
+ledgerDbPush' cfg b = runIdentity . ledgerDbPush cfg discardEvent (pureBlock b)
 
 ledgerDbPushMany' :: ApplyBlock l blk
                   => LedgerDbCfg l -> [blk] -> LedgerDB l -> LedgerDB l
 ledgerDbPushMany' cfg bs =
-  runIdentity . ledgerDbPushMany (const $ pure ()) (const $ pure ()) cfg (map pureBlock bs)
+  runIdentity . ledgerDbPushMany (const $ pure ()) discardEvent cfg (map pureBlock bs)
 
 ledgerDbSwitch' :: forall l blk. ApplyBlock l blk
                 => LedgerDbCfg l
                 -> Word64 -> [blk] -> LedgerDB l -> Maybe (LedgerDB l)
 ledgerDbSwitch' cfg n bs db =
-    case runIdentity $ ledgerDbSwitch cfg (const $ pure ()) n (const $ pure ()) (map pureBlock bs) db of
+    case runIdentity $ ledgerDbSwitch cfg discardEvent n (const $ pure ()) (map pureBlock bs) db of
       Left  ExceededRollback{} -> Nothing
       Right db'                -> Just db'
 

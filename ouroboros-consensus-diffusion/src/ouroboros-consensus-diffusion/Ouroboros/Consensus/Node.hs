@@ -71,7 +71,7 @@ import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
-import           Ouroboros.Consensus.Ledger.Basics (AuxLedgerEvent (..))
+import           Ouroboros.Consensus.Ledger.Basics (LedgerEventHandler)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -183,7 +183,7 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
     , rnPeerSharing :: PeerSharing
 
       -- | An event handler to trigger custom action when ledger events are emitted.
-    , rnHandleLedgerEvent :: AuxLedgerEvent (ExtLedgerState blk) -> m ()
+    , rnHandleLedgerEvent :: LedgerEventHandler m (ExtLedgerState blk)
     }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -576,7 +576,7 @@ stdWithCheckedDB pb databasePath networkMagic body = do
 
 openChainDB
   :: forall m blk. (RunNode blk, IOLike m)
-  => (AuxLedgerEvent (ExtLedgerState blk) -> m ())
+  => LedgerEventHandler m (ExtLedgerState blk)
   -> ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk
