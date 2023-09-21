@@ -285,15 +285,15 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         $ PCons crossEraTickLedgerStateAcrossTPraos
         $ PCons crossEraTickLedgerStateAcrossTPraos
         $ PCons crossEraTickLedgerStateAcrossTPraos
-        $ PCons crossEraTickLedgerStateTPraosToPraos
-        $ PCons crossEraTickLedgerStateAcrossPraos
+        $ PCons crossEraTickLedgerStateTPraosToPraos   -- TODO is there an Alonzo->Babbage bug wrt extraEntropy?
+        $ PCons crossEraTickLedgerStateAcrossPraos   -- TODO fix Babbage->Conway bug
         $ PNil
     , crossEraTickChainDepState =
           PCons crossEraTickChainDepStateByronToShelley
         $ PCons crossEraTickChainDepStateAcrossShelley
         $ PCons crossEraTickChainDepStateAcrossShelley
         $ PCons crossEraTickChainDepStateAcrossShelley
-        $ PCons crossEraTickChainDepStateAcrossShelley
+        $ PCons crossEraTickChainDepStateAcrossShelley   -- TODO is there an Alonzo->Babbage bug wrt extraEntropy?
         $ PCons crossEraTickChainDepStateAcrossShelley
         $ PNil
     , crossEraForecast =
@@ -301,7 +301,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         $ PCons crossEraForecastAcrossShelley
         $ PCons crossEraForecastAcrossShelley
         $ PCons crossEraForecastAcrossShelley
-        $ PCons crossEraForecastAcrossShelley
+        $ PCons crossEraForecastAcrossShelley   -- TODO is there an Alonzo->Babbage bug wrt extraEntropy?
         $ PCons crossEraForecastAcrossShelley
         $ PNil
     }
