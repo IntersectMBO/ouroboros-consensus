@@ -27,10 +27,9 @@ module Data.SOP.InPairs (
   , hpure
     -- * Functions
   , type (--.-->) (..)
-  , (:**:) (..)
   , Le (..)
   , Ri (..)
-  , Comp2 (..)
+  , (:..:) (..)
   , apNP
     -- * Requiring
   , Requiring (..)
@@ -106,13 +105,11 @@ hcpure _ f =
   RequiringBoth
 -------------------------------------------------------------------------------}
 
+infixr 2 :..:
+newtype (:..:) f g x y = Comp2 {unComp2 :: f (g x y)}
+
 infixr 0 --.-->
-
-newtype Comp2 f g x y = Comp2 {unComp2 :: f (g x y)}
-
 newtype (--.-->) f g x y = DoubleFun {apDoubleFun :: f x y -> g x y}
-
-data (:**:) f g x y = DoublePair (f x y) (g x y)
 
 newtype Le f x y = Le (f x)
 newtype Ri f x y = Ri (f y)

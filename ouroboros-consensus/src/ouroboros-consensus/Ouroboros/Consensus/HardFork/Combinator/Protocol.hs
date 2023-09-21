@@ -375,18 +375,7 @@ reupdateEra ei slot cfg (Pair view (Comp chainDepState)) =
 chainDepStateInfo :: forall blk. SingleEraBlock blk
                   => (Ticked :.: WrapChainDepState) blk -> SingleEraInfo blk
 chainDepStateInfo _ = singleEraInfo (Proxy @blk)
-{-
-translateConsensus :: forall xs. CanHardFork xs
-                   => EpochInfo (Except PastHorizonException)
-                   -> ConsensusConfig (HardForkProtocol xs)
-                   -> InPairs (Translate WrapChainDepState) xs
-translateConsensus ei HardForkConsensusConfig{..} =
-    InPairs.requiringBoth cfgs $
-       translateChainDepState hardForkEraTranslation
-  where
-    pcfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
-    cfgs  = hcmap proxySingle (completeConsensusConfig'' ei) pcfgs
--}
+
 injectValidationErr :: Index xs blk
                     -> ValidationErr (BlockProtocol blk)
                     -> HardForkValidationErr xs

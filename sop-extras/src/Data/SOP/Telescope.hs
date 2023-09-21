@@ -37,8 +37,6 @@ module Data.SOP.Telescope (
   , Extend (..)
   , align
   , extend
-    -- ** Simplified API
-  , alignNS
     -- * Additional API
   , ScanNext (..)
   , SimpleTelescope (..)
@@ -52,8 +50,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (InPairs (..), Requiring (..))
-import           Data.SOP.InPairs (type (--.-->) (..), (:**:) (..), Comp2 (..), Le (..), Ri (..))
-import qualified Data.SOP.InPairs as InPairs
+import           Data.SOP.InPairs (type (--.-->) (..), (:..:) (..), Le (..), Ri (..))
 import           Data.SOP.Strict
 import           GHC.Stack
 import           NoThunks.Class (NoThunks (..), allNoThunks)
@@ -323,55 +320,34 @@ extend =
 -- PRE: The telescope we are aligning with is either in our same state (no op)
 -- or in the next state.
 align :: forall m g' g f' f f'' xs. (Monad m, HasCallStack)
-      => InPairs (Le f --.--> Le g' --.--> Ri f' --.--> Comp2 m (Le g :**: Ri f'')) xs  -- ^ How to extend
+      => InPairs (Le f --.--> Le g' --.--> Ri f' --.--> m :..: Ri f'') xs  -- ^ How to extend
       -> NP (f -.-> f' -.-> f'') xs  -- ^ How to not extend
       -> Telescope g  f  xs
       -> Telescope g' f' xs
-      -> m (Telescope g f'' xs)
+      -> m (Telescope g' f'' xs)
 align = \exts noExts src tgt ->
     npToSListI noExts $ go src tgt exts noExts
   where
     go :: SListI xs'
        => Telescope g  f  xs'
        -> Telescope g' f' xs'
-       -> InPairs (Le f --.--> Le g' --.--> Ri f' --.--> Comp2 m (Le g :**: Ri f'')) xs'
+       -> InPairs (Le f --.--> Le g' --.--> Ri f' --.--> m :..: Ri f'') xs'
        -> NP (f -.-> f' -.-> f'') xs'
-       -> m (Telescope g f'' xs')
+       -> m (Telescope g' f'' xs')
 
-    go (TS gx fx) (TS _ f'x) (PCons _ exts) (_ :* noExts) =
-        TS gx <$> go fx f'x exts noExts
+    go (TS _gx fx) (TS g'x f'x) (PCons _ exts) (_ :* noExts) =
+        TS g'x <$> go fx f'x exts noExts
 
     go (TZ fx) (TZ f'x) _exts (noExt :* _) =
         return $ TZ $ noExt `apFn` fx `apFn` f'x
 
     go (TZ fx) (TS g'x (TZ f'y)) (PCons ext _) _noExts = do
-        Le gx `DoublePair` Ri f''y <- unComp2 $ ext `apDoubleFun` Le fx `apDoubleFun` Le g'x `apDoubleFun` Ri f'y
-        return $ TS gx $ TZ f''y
+        Ri f''y <- unComp2 $ ext `apDoubleFun` Le fx `apDoubleFun` Le g'x `apDoubleFun` Ri f'y
+        return $ TS g'x $ TZ f''y
 
     go TS{} TZ{} _ _ = error "precondition violation: backwards"
 
     go TZ{} (TS _ TS{}) _ _ = error "precondition violation: more than one step"
-
-{-------------------------------------------------------------------------------
-  Derived API
--------------------------------------------------------------------------------}
-
--- | Version of 'align' that extends with an NS instead
-alignNS :: (Monad m, HasCallStack)
-        => InPairs (Le f --.--> Ri f' --.--> Comp2 m (Le g :**: Ri f'')) xs  -- ^ How to extend
-        -> NP (f -.-> f' -.-> f'') xs  -- ^ How to not extend
-        -> Telescope g f xs
-        -> NS f' xs
-        -> m (Telescope g f'' xs)
-alignNS exts noExts src tgt = npToSListI noExts $
-   align
-     (InPairs.hmap
-        (\ext -> DoubleFun $ \fx -> DoubleFun $ \_g'x -> ext `apDoubleFun` fx)
-        exts
-     )
-     noExts
-     src
-     (fromTip tgt)
 
 {-------------------------------------------------------------------------------
   Additional API

@@ -32,7 +32,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (InPairs)
-import           Data.SOP.InPairs (type (--.-->) (..), (:**:) (..), Comp2 (..), Le (..), Ri (..))
+import           Data.SOP.InPairs (type (--.-->) (..), (:..:) (..), Le (..), Ri (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Match (Mismatch)
 import qualified Data.SOP.Match as Match
@@ -116,6 +116,7 @@ situate ns = go ns . getHardForkState
   Towing
 -------------------------------------------------------------------------------}
 
+-- | Advance to the next era if the current end 'Bound' is known
 check :: forall xs f. (All SingleEraBlock xs, IsNonEmpty xs)
       => NP (Current f -.-> K (Maybe Bound)) xs
          -- ^ the era end 'Bound', if known
@@ -150,8 +151,10 @@ check endChecks (HardForkState tele) =
                 , currentStart = end
                 }
 
+-- | See 'tow'
 newtype CrossEra f f' f'' x y = CrossEra (f x -> EpochNo -> f' y -> f'' y)
 
+-- | Advance to the next era if the second state argument is already there
 tow :: forall xs f f' f''. All SingleEraBlock xs
     => InPairs (CrossEra f f' f'')  xs   -- ^ how to cross a boundary
     -> NP      (f -.-> f' -.-> f'') xs   -- ^ how to not cross a boundary
@@ -173,27 +176,23 @@ tow cross noCross (HardForkState src) (HardForkState tgt) =
       , currentState = f `apFn` currentState a `apFn` currentState b
       }
 
-    adaptExt :: CrossEra f f' f''                              blk blk'
-             -> (       Le (Current f)
-                 --.--> Le (K Past)
-                 --.--> Ri (Current f')
-                 --.--> Comp2 I
-                          (Le (K Past) :**: Ri (Current f''))) blk blk'
+    adaptExt :: CrossEra f f' f''                blk blk'
+             -> (              Le (Current f)
+                 --.-->        Le (K Past)
+                 --.-->        Ri (Current f')
+                 --.--> I :..: Ri (Current f'')) blk blk'
     adaptExt (CrossEra f) =
-        DoubleFun $ \(Le cur'f'x) ->
+        DoubleFun $ \(Le fx      ) ->
         DoubleFun $ \(Le (K past)) ->
         let curEnd :: Bound
             curEnd = pastEnd past
         in
-        DoubleFun $ \(Ri cur'f'y) ->
-        Comp2 $ pure $
-        DoublePair
-          (Le (K Past  { pastStart    = currentStart cur'f'x
-                       , pastEnd      = curEnd
-                       }))
-          (Ri (Current { currentStart = curEnd
-                       , currentState = f (currentState cur'f'x) (boundEpoch curEnd) (currentState cur'f'y)
-                       }))
+        DoubleFun $ \(Ri f'y) ->
+          Comp2 $ pure $ Ri $ Current {
+              currentStart = curEnd
+            , currentState =
+                f (currentState fx) (boundEpoch curEnd) (currentState f'y)
+            }
 
 {-------------------------------------------------------------------------------
   Summary/EpochInfo
