@@ -521,6 +521,12 @@ test-suite infra-test
     Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.PointScheduleTest
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.ChainDb
     Test.Util.ChainUpdates.Tests
     Test.Util.Schedule.Tests
     Test.Util.Split.Tests
@@ -534,6 +540,39 @@ test-suite infra-test
     , tasty
     , tasty-quickcheck
     , vector
+    , async
+    , cardano-binary
+    , cardano-crypto-class
+    , cardano-slotting
+    , cborg
+    , unstable-consensus-testlib
+    , containers
+    , contra-tracer
+    , deepseq
+    , fs-api
+    , generics-sop
+    , hashable
+    , io-classes
+    , io-sim
+    , unstable-mock-block
+    , nothunks
+    , ouroboros-consensus
+    , ouroboros-network
+    , ouroboros-network-api
+    , ouroboros-network-mock
+    , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
+    , QuickCheck
+    , quickcheck-state-machine
+    , random
+    , serialise
+    , si-timers
+    , tasty
+    , tasty-hunit
+    , tasty-quickcheck
+    , time
+    , tree-diff
+    , typed-protocols
+    , typed-protocols-examples
 
 test-suite storage-test
   import:         common-test
