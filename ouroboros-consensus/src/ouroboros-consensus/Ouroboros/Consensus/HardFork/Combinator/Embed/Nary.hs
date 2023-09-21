@@ -8,6 +8,8 @@
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeOperators            #-}
+{-# LANGUAGE UndecidableInstances     #-}
+
 module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
     Inject (..)
   , inject'
@@ -17,16 +19,19 @@ module Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (
   , injectQuery
     -- * Initial 'ExtLedgerState'
   , injectInitialExtLedgerState
+  , Untick (..)
+  , UntickHFC
   ) where
 
 import           Data.Bifunctor (first)
 import           Data.Coerce (Coercible, coerce)
+import           Data.Function (on)
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Classes
+import           Data.SOP.Constraint (All)
 import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Dict (Dict (..))
 import           Data.SOP.Index
-import qualified Data.SOP.InPairs as InPairs
-import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
@@ -34,9 +39,10 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation (AnnTip, HeaderState (..),
                      genesisHeaderState)
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import           Ouroboros.Consensus.Ledger.Basics (applyChainTick)
+import qualified Ouroboros.Consensus.Ledger.Extended as Ext
+import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
 
@@ -165,8 +171,8 @@ instance Inject HeaderState where
                             $ WrapChainDepState headerStateChainDep
       }
 
-instance Inject ExtLedgerState where
-  inject startBounds idx ExtLedgerState {..} = ExtLedgerState {
+instance Inject Ext.ExtLedgerState where
+  inject startBounds idx Ext.ExtLedgerState {..} = Ext.ExtLedgerState {
         ledgerState = inject startBounds idx ledgerState
       , headerState = inject startBounds idx headerState
       }
@@ -186,55 +192,70 @@ instance Inject ExtLedgerState where
 -- problematic, but extending 'ledgerViewForecastAt' is a lot more subtle; see
 -- @forecastNotFinal@.
 injectInitialExtLedgerState ::
-     forall x xs. CanHardFork (x ': xs)
+     forall x xs. (CanHardFork (x ': xs), Untick (Ext.ExtLedgerState (HardForkBlock (x ': xs))))
   => TopLevelConfig (HardForkBlock (x ': xs))
-  -> ExtLedgerState x
-  -> ExtLedgerState (HardForkBlock (x ': xs))
+  -> Ext.ExtLedgerState x
+  -> Ext.ExtLedgerState (HardForkBlock (x ': xs))
 injectInitialExtLedgerState cfg extLedgerState0 =
-    ExtLedgerState {
-        ledgerState = targetEraLedgerState
-      , headerState = targetEraHeaderState
+    go Ext.ExtLedgerState {
+        ledgerState =
+            HardForkLedgerState
+          $ initHardForkState
+          $ Ext.ledgerState extLedgerState0
+      , headerState =
+            genesisHeaderState
+          $ initHardForkState
+          $ WrapChainDepState
+          $ headerStateChainDep
+          $ Ext.headerState extLedgerState0
       }
   where
-    cfgs :: NP TopLevelConfig (x ': xs)
-    cfgs =
-        distribTopLevelConfig
-          ( State.epochInfoLedger (configLedger cfg)
-          $ hmap (Comp . NoTicked)
-          $ hardForkLedgerStatePerEra targetEraLedgerState
+    go :: Ext.ExtLedgerState (HardForkBlock (x ': xs)) -> Ext.ExtLedgerState (HardForkBlock (x ': xs))
+    go st =
+        if ((==) `on` eraTag) st st' then st else go st'
+      where
+        LockBox st' = untick $ applyChainTick (Ext.ExtLedgerCfg cfg) (SlotNo 0) st
+
+        eraTag = nsToIndex . State.tip . hardForkLedgerStatePerEra . Ext.ledgerState
+
+-----
+
+-- | Because this is not exported, only this module can make use of 'Untick' instances
+newtype LockBox a = LockBox a
+
+instance Functor     LockBox where fmap f (LockBox a) = LockBox (f a)
+instance Applicative LockBox where
+  pure                    = LockBox
+  LockBox f <*> LockBox a = LockBox (f a)
+
+class Untick x where untick :: Ticked x -> LockBox x
+
+instance ( Untick (LedgerState blk)
+         , Untick (ChainDepState (BlockProtocol blk))
+         ) => Untick (Ext.ExtLedgerState blk) where
+  untick st =
+          Ext.ExtLedgerState
+      <$> untick (Ext.tickedLedgerState st)
+      <*> (    HeaderState (untickedHeaderStateTip (Ext.tickedHeaderState st))
+           <$> untick (tickedHeaderStateChainDep   (Ext.tickedHeaderState st))
           )
-          cfg
 
-    targetEraLedgerState :: LedgerState (HardForkBlock (x ': xs))
-    targetEraLedgerState =
-        HardForkLedgerState $
-          undefined cfgs {-
-          -- We can immediately extend it to the right slot, executing any
-          -- scheduled hard forks in the first slot
-          State.extendToSlot
-            (configLedger cfg)
-            (SlotNo 0)
-            (initHardForkState (ledgerState extLedgerState0)) -}
+class    (Untick (WrapChainDepState x), Untick (LedgerState x)) => UntickHFC x
+instance (Untick (WrapChainDepState x), Untick (LedgerState x)) => UntickHFC x
 
-    firstEraChainDepState :: HardForkChainDepState (x ': xs)
-    firstEraChainDepState =
-        initHardForkState $
-          WrapChainDepState $
-            headerStateChainDep $
-              headerState extLedgerState0
+instance All UntickHFC xs => Untick (HardForkState WrapChainDepState xs) where
+  untick =
+      hsequence'
+    . hcmap
+        (Proxy :: Proxy UntickHFC)
+        (Comp . untick . unComp)
+    . tickedHardForkChainDepStatePerEra
 
-    targetEraChainDepState :: HardForkChainDepState (x ': xs)
-    targetEraChainDepState =
-        undefined InPairs.requiringBoth firstEraChainDepState {-
-
-        -- Align the 'ChainDepState' with the ledger state of the target era.
-        State.align
-          (InPairs.requiringBoth
-            (hmap (WrapConsensusConfig . configConsensus) cfgs)
-            (translateChainDepState hardForkEraTranslation))
-          (hpure (fn_2 (\_ st -> st)))
-          (hardForkLedgerStatePerEra targetEraLedgerState)
-          firstEraChainDepState -}
-
-    targetEraHeaderState :: HeaderState (HardForkBlock (x ': xs))
-    targetEraHeaderState = genesisHeaderState targetEraChainDepState
+instance All UntickHFC xs => Untick (LedgerState (HardForkBlock xs)) where
+  untick =
+      fmap HardForkLedgerState
+    . hsequence'
+    . hcmap
+        (Proxy :: Proxy UntickHFC)
+        (Comp . untick . unComp)
+    . tickedHardForkLedgerStatePerEra

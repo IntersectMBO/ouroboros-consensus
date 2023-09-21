@@ -84,6 +84,9 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.PBFT
 import           Ouroboros.Consensus.Util (ShowProxy (..), (..:))
 
+import           Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (Untick (..))
+import           Ouroboros.Consensus.TypeFamilyWrappers (WrapChainDepState (..), unwrapTickedChainDepState)
+
 {-------------------------------------------------------------------------------
   LedgerState
 -------------------------------------------------------------------------------}
@@ -503,3 +506,21 @@ decodeByronResult :: BlockQuery ByronBlock result
                   -> forall s. Decoder s result
 decodeByronResult query = case query of
     GetUpdateInterfaceState -> fromByronCBOR
+
+-----
+
+instance Untick (WrapChainDepState ByronBlock) where
+  untick = pure . WrapChainDepState . getTickedPBftState . unwrapTickedChainDepState
+
+instance Untick (LedgerState ByronBlock) where
+  untick st = pure ByronLedgerState {
+        byronLedgerTipBlockNo = untickedByronLedgerTipBlockNo
+      , byronLedgerState      = tickedByronLedgerState
+      , byronLedgerTransition = untickedByronLedgerTransition
+      }
+    where
+      TickedByronLedgerState {
+          tickedByronLedgerState
+        , untickedByronLedgerTipBlockNo
+        , untickedByronLedgerTransition
+        } = st

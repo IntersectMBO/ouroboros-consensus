@@ -24,7 +24,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , ShelleyLedgerError (..)
   , ShelleyTip (..)
   , ShelleyTransition (..)
-  , Ticked (..)
+  , Ticked (TickedPraosLedgerView, TickedShelleyLedgerState, untickedShelleyLedgerTip, tickedShelleyLedgerTransition, tickedShelleyLedgerState)
   , castShelleyTip
   , shelleyLedgerTipPoint
   , shelleyTipToPoint
@@ -81,10 +81,8 @@ import           Ouroboros.Consensus.HardFork.History.Util
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
-import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import           Ouroboros.Consensus.Protocol.TPraos (MaxMajorProtVer (..),
-                     Ticked (TickedPraosLedgerView))
+import           Ouroboros.Consensus.Protocol.TPraos (MaxMajorProtVer (..))
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
@@ -95,6 +93,11 @@ import           Ouroboros.Consensus.Util ((..:))
 import           Ouroboros.Consensus.Util.CBOR (decodeWithOrigin,
                      encodeWithOrigin)
 import           Ouroboros.Consensus.Util.Versioned
+
+import           Ouroboros.Consensus.HardFork.Combinator.Embed.Nary (Untick (..))
+import qualified Ouroboros.Consensus.Protocol.Praos as Praos
+import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
+import           Ouroboros.Consensus.TypeFamilyWrappers (WrapChainDepState (..), unwrapTickedChainDepState)
 
 {-------------------------------------------------------------------------------
   Ledger errors
@@ -584,3 +587,34 @@ decodeShelleyLedgerState = decodeVersion [
         , shelleyLedgerState
         , shelleyLedgerTransition
         }
+
+-----
+
+instance Untick (WrapChainDepState (ShelleyBlock (TPraos.TPraos c) era)) where
+  untick st =
+      pure
+    $ WrapChainDepState
+    $ TPraos.TPraosState {
+          tpraosStateLastSlot      = Origin
+        , tpraosStateChainDepState = TPraos.tickedTPraosStateChainDepState $ unwrapTickedChainDepState st
+        }
+
+instance Untick (WrapChainDepState (ShelleyBlock (Praos.Praos c) era)) where
+  untick =
+      pure
+    . WrapChainDepState
+    . Praos.tickedPraosStateChainDepState
+    . unwrapTickedChainDepState
+
+instance Untick (LedgerState (ShelleyBlock proto era)) where
+  untick st = pure ShelleyLedgerState {
+        shelleyLedgerTip        = untickedShelleyLedgerTip
+      , shelleyLedgerState      = tickedShelleyLedgerState
+      , shelleyLedgerTransition = tickedShelleyLedgerTransition
+      }
+    where
+      TickedShelleyLedgerState {
+          untickedShelleyLedgerTip
+        , tickedShelleyLedgerTransition
+        , tickedShelleyLedgerState
+        } = st
