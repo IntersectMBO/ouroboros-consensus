@@ -171,13 +171,14 @@ applyChainTick = lrResult ..: applyChainTickLedgerResult
 
 
 -- | Handler for ledger events
-newtype LedgerEventHandler m l = LedgerEventHandler { handleLedgerEvent :: AuxLedgerEvent l -> m () }
+newtype LedgerEventHandler m l =
+  LedgerEventHandler { handleLedgerEvent :: HeaderHash l -> SlotNo -> AuxLedgerEvent l -> m () }
 
 natHandler :: (m () -> n ()) -> LedgerEventHandler m l -> LedgerEventHandler n l
-natHandler nat LedgerEventHandler{handleLedgerEvent} = LedgerEventHandler (nat . handleLedgerEvent)
+natHandler nat LedgerEventHandler{handleLedgerEvent} = LedgerEventHandler (\ h s -> nat . handleLedgerEvent h s)
 
 discardEvent :: Applicative m => LedgerEventHandler m l
-discardEvent = LedgerEventHandler { handleLedgerEvent = const $ pure () }
+discardEvent = LedgerEventHandler { handleLedgerEvent = \ _ _ _ -> pure () }
 
 {-------------------------------------------------------------------------------
   Link block to its ledger

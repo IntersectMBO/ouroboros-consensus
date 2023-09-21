@@ -124,7 +124,7 @@ applyBlock cfg eventHandler@LedgerEventHandler{handleLedgerEvent} ap db = case a
     ApplyVal b -> do
       result <- either (throwLedgerError db (blockRealPoint b)) return $ runExcept $
         tickThenApplyLedgerResult cfg b l
-      mapM_ handleLedgerEvent (lrEvents result)
+      mapM_ (handleLedgerEvent (headerFieldHash $ getHeaderFields b) (headerFieldSlot $ getHeaderFields b)) (lrEvents result)
       return (lrResult result)
     ReapplyRef r  -> do
       b <- doResolveBlock r
