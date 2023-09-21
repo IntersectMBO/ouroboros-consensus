@@ -34,6 +34,7 @@ import           Data.Traversable (for)
 import           Network.TypedProtocol.Codec (AnyMessageAndAgency (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Basics (discardEvent)
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -248,7 +249,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
         (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
           allocate
             registry
-            (\_ -> ChainDBImpl.openDBInternal chainDbArgs False)
+            (\_ -> ChainDBImpl.openDBInternal discardEvent chainDbArgs False)
             (ChainDB.closeDB . fst)
         _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
 

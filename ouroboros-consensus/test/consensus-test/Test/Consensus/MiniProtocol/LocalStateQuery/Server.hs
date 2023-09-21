@@ -29,6 +29,7 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Basics(discardEvent)
 import           Ouroboros.Consensus.Ledger.Query (Query (..))
 import           Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
@@ -193,7 +194,7 @@ initLgrDB k chain = do
     varDB          <- newTVarIO genesisLedgerDB
     varPrevApplied <- newTVarIO mempty
     let lgrDB = mkLgrDB varDB varPrevApplied resolve args
-    LgrDB.validate lgrDB genesisLedgerDB (const $ pure ()) BlockCache.empty 0 noopTrace
+    LgrDB.validate lgrDB genesisLedgerDB discardEvent BlockCache.empty 0 noopTrace
       (map getHeader (Chain.toOldestFirst chain)) >>= \case
         LgrDB.ValidateExceededRollBack _ ->
           error "impossible: rollback was 0"

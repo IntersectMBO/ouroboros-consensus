@@ -23,6 +23,7 @@ import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
 import           Ouroboros.Consensus.Config (configSecurityParam, configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
+import           Ouroboros.Consensus.Ledger.Basics (discardEvent)
 import qualified Ouroboros.Consensus.Node as Node (mkChainDbArgs,
                      stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
@@ -131,7 +132,7 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
                 putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
                 preOpenChainDB synthOpenMode confDbDir
                 let dbTracer = nullTracer
-                ChainDB.withDB dbArgs {ChainDB.cdbTracer = dbTracer} $ \chainDB -> do
+                ChainDB.withDB discardEvent dbArgs {ChainDB.cdbTracer = dbTracer} $ \chainDB -> do
                     slotNo <- do
                         tip <- atomically (ChainDB.getTipPoint chainDB)
                         pure $ case pointSlot tip of

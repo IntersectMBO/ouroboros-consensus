@@ -30,6 +30,7 @@ import qualified Data.Set as Set
 import           Data.Time.Clock (secondsToDiffTime)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.Basics (discardEvent)
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
@@ -178,7 +179,7 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
         (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
           allocate
             registry
-            (\_ -> ChainDBImpl.openDBInternal chainDbArgs False)
+            (\_ -> ChainDBImpl.openDBInternal discardEvent chainDbArgs False)
             (ChainDB.closeDB . fst)
         _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
         pure chainDB

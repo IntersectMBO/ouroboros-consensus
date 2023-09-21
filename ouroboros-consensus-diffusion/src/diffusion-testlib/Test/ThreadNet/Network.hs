@@ -800,7 +800,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
             nodeInfoDBs
             coreNodeId
       chainDB <- snd <$>
-        allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
+        allocate registry (const (ChainDB.openDB discardEvent chainDbArgs)) ChainDB.closeDB
 
       let customForgeBlock ::
                BlockForging m blk

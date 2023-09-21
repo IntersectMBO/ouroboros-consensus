@@ -107,6 +107,7 @@ import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.HardFork.Abstract
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -365,7 +366,7 @@ open
   :: (IOLike m, TestConstraints blk)
   => ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
-    (chainDB, internal) <- openDBInternal args False
+    (chainDB, internal) <- openDBInternal discardEvent args False
     addBlockAsync       <- async (intAddBlockRunner internal)
     link addBlockAsync
     return ChainDBState { chainDB, internal, addBlockAsync }

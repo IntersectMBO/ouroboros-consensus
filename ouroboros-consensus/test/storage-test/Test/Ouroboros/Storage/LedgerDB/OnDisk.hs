@@ -62,6 +62,7 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util
@@ -734,6 +735,7 @@ runDB standalone@DB{..} cmd =
             defaultThrowLedgerErrors $
               ledgerDbPush
                 dbLedgerDbCfg
+                discardEvent
                 (ApplyVal b)
                 db
     go _ (Switch n bs) = do
@@ -744,7 +746,7 @@ runDB standalone@DB{..} cmd =
             defaultResolveWithErrors dbResolve $
               ledgerDbSwitch
                 dbLedgerDbCfg
-                (const $ pure ())
+                discardEvent
                 n
                 (const $ pure ())
                 (map ApplyVal bs)

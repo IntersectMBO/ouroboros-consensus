@@ -16,6 +16,7 @@ import qualified Debug.Trace as Debug
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
                      (HasTxs)
@@ -105,7 +106,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
             putStrLn $ "ImmutableDB tip: " ++ show tipPoint
             pure result
         SelectChainDB ->
-          ChainDB.withDB chainDbArgs $ \chainDB -> do
+          ChainDB.withDB discardEvent chainDbArgs $ \chainDB -> do
             result <- runAnalysis analysis $ AnalysisEnv {
                 cfg
               , initLedger = genesisLedger
