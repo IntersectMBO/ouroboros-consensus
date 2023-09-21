@@ -20,7 +20,7 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   , ShelleyPartialLedgerConfig (..)
   , crossEraForecastAcrossShelley
   , forecastAcrossShelley
-  , translateChainDepStateAcrossShelley
+  , crossEraTickChainDepStateAcrossShelley
   ) where
 
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
@@ -33,7 +33,7 @@ import           Control.Monad.Except (runExcept, throwError, withExceptT)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
 import           Data.SOP.BasicFunctors
-import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
+import           Data.SOP.InPairs (RequiringBoth (..) {- , ignoringBoth -})
 import qualified Data.Text as T (pack)
 import           Data.Void (Void)
 import           Data.Word
@@ -52,6 +52,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol, ledgerViewForecastAt)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.TPraos hiding (PraosCrypto)
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto)
@@ -283,22 +284,19 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
                (SL.stabilityWindow (shelleyLedgerGlobals cfgFrom))
                (SL.stabilityWindow (shelleyLedgerGlobals cfgTo))
 
-translateChainDepStateAcrossShelley ::
+crossEraTickChainDepStateAcrossShelley ::
      forall eraFrom eraTo protoFrom protoTo.
      ( TranslateProto protoFrom protoTo
+     , ConsensusProtocol protoTo
      )
-  => RequiringBoth
-       WrapConsensusConfig
-       (Translate WrapChainDepState)
+  => CrossEraTickChainDepState
        (ShelleyBlock protoFrom eraFrom)
        (ShelleyBlock protoTo eraTo)
-translateChainDepStateAcrossShelley =
-    ignoringBoth $
-      Translate $ \_epochNo (WrapChainDepState chainDepState) ->
-        -- Same protocol, same 'ChainDepState'. Note that we don't have to apply
-        -- any changes related to an epoch transition, this is already done when
-        -- ticking the state.
-        WrapChainDepState $ Proto.translateChainDepState @protoFrom @protoTo chainDepState
+crossEraTickChainDepStateAcrossShelley =
+    CrossEraTickChainDepState
+  $ \Proxy Proxy _cfg cfg' lv' _eno sno cdst ->
+      tickChainDepState cfg' lv' sno
+    $ Proto.translateChainDepState @protoFrom @protoTo cdst
 
 crossEraForecastAcrossShelley ::
      forall eraFrom eraTo protoFrom protoTo.

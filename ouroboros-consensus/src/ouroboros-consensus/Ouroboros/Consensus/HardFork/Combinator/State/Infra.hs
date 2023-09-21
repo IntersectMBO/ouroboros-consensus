@@ -21,6 +21,7 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Infra (
   , situate
     -- * Towing
   , CrossEra (..)
+  , check
   , tow
     -- * EpochInfo/Summary
   , reconstructSummary
@@ -114,6 +115,40 @@ situate ns = go ns . getHardForkState
 {-------------------------------------------------------------------------------
   Towing
 -------------------------------------------------------------------------------}
+
+check :: forall xs f. (All SingleEraBlock xs, IsNonEmpty xs)
+      => NP (Current f -.-> K (Maybe Bound)) xs
+         -- ^ the era end 'Bound', if known
+      -> HardForkState f                     xs
+      -> HardForkState Proxy                 xs
+check endChecks (HardForkState tele) =
+    HardForkState . unI
+  $ Telescope.extend
+      (hcmap proxySingle doEndCheck endChecks)
+      (hpure $ fn $ \fx -> fx { currentState = Proxy })
+      (InPairs.hcpure
+         proxySingle
+         ( InPairs.Require $ \(K end) -> Telescope.Extend $ \fx ->
+             return $ step fx end
+         )
+      )
+      tele
+  where
+    doEndCheck :: (Current f -.-> K (Maybe Bound)  ) x
+               -> (Current f -.-> Maybe :.: K Bound) x
+    doEndCheck endCheck =
+      fn $ \curfx -> Comp $ fmap K . unK $ endCheck `apFn` curfx
+
+    step :: Current f x -> Bound -> (K Past x, Current Proxy y)
+    step cur end =
+      (,)
+        (K Past { pastStart = currentStart cur
+                , pastEnd   = end
+                })
+        Current {
+                  currentState = Proxy
+                , currentStart = end
+                }
 
 newtype CrossEra f f' f'' x y = CrossEra (f x -> EpochNo -> f' y -> f'' y)
 

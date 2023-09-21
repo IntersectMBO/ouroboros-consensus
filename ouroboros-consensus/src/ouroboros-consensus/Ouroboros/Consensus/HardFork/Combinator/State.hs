@@ -27,16 +27,14 @@ module Ouroboros.Consensus.HardFork.Combinator.State (
   , reconstructSummaryLedger
   ) where
 
-import           Control.Monad (guard)
 import           Data.Functor.Product
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Counting (getExactly)
-import           Data.SOP.InPairs (InPairs)
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
-import           Data.SOP.Telescope (Extend (..), ScanNext (..), Telescope)
+import           Data.SOP.Telescope (ScanNext (..), Telescope)
 import qualified Data.SOP.Telescope as Telescope
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
@@ -46,12 +44,9 @@ import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.State.Infra as X
 import           Ouroboros.Consensus.HardFork.Combinator.State.Instances as X ()
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types as X
-import           Ouroboros.Consensus.HardFork.Combinator.Translation
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Abstract as Ledger
-import           Ouroboros.Consensus.Ticked (Ticked, WhetherTickedOrNot (..))
-import           Ouroboros.Consensus.TypeFamilyWrappers (WrapLedgerConfig (..))
-import           Ouroboros.Consensus.Util ((.:))
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Prelude hiding (sequence)
 
 {-------------------------------------------------------------------------------

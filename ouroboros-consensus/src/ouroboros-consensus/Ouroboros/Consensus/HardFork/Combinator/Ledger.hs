@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -127,11 +128,6 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
             State.mostRecentTransitionInfo cfg $ hmap (Comp . YesTicked . unComp) st'
         }
 
-{-------------------------------------------------------------------------------
-  Extending
--------------------------------------------------------------------------------}
-
--- | Extend the telescope until the specified slot is within the era at the tip
 extendToSlot :: forall xs. CanHardFork xs
              => HardForkLedgerConfig xs
              -> SlotNo
@@ -155,36 +151,37 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt =
        `InPairs.apNP` indices
        `InPairs.apNP` pcfgs
       )
-      (hcimap proxySingle (\index pcfg -> fn_2 $ monoTickOne index pcfg) pcfgs)
+      (hcimap proxySingle monoTickOne pcfgs)
       ledgerSt
-      slotEra
+  $ State.check
+      (hczipWith proxySingle endCheck pcfgs eraParamss)
+      ledgerSt
   where
-    slotEra :: HardForkState Proxy xs
-    slotEra = undefined
-
-{-
-        (hczipWith
-           proxySingle
-           (fn .: whenExtend)
-           pcfgs
-           (getExactly (History.getShape hardForkLedgerConfigShape))
-        )
--}
+    eraParamss :: NP (K EraParams) xs
+    eraParamss = getExactly $ History.getShape hardForkLedgerConfigShape
 
     pcfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
-    ei    = State.epochInfoLedger ledgerCfg (hmap (Comp . NoTicked) ledgerSt)
+    ei    =
+        State.epochInfoLedger ledgerCfg
+      $ hmap (Comp . NoTicked) ledgerSt
 
-{-
-    mbEndBound :: Maybe History.Bound
-    mbEndBound = do
-        let transition = State.mostRecentTransitionInfo ledgerCfg ledgerSt
-        let endBound = History.mkUpperBound
-                         eraParams
-                         (currentStart cur)
-                         transition
+    -- Return the end 'Bound' of the given ledger state's era, if known
+    endCheck :: SingleEraBlock                blk
+             => WrapPartialLedgerConfig       blk
+             -> K EraParams                   blk
+             -> (     Current LedgerState
+                 -.-> K (Maybe History.Bound)
+                )                             blk
+    endCheck pcfg (K eraParams) = fn $ \cur -> K $ do
+        let Current{currentStart, currentState} = cur
+        eno <- singleEraTransition'
+                 pcfg
+                 eraParams
+                 currentStart
+                 (NoTicked currentState)
+        let endBound = History.mkUpperBound eraParams currentStart eno
         guard (slot >= History.boundSlot endBound)
         return endBound
--}
 
     crossTickOne :: SingleEraBlock                blk
                  => SingleEraBlock                blk'
@@ -197,7 +194,8 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt =
                       LedgerState
                       Proxy
                       (    LedgerResult (LedgerState (HardForkBlock xs))
-                       :.: (Ticked :.: LedgerState)
+                       :.: Ticked
+                       :.: LedgerState
                       )
                       blk blk'
     crossTickOne (State.CrossEraTickLedgerState tick_) index index' pcfg pcfg' =
@@ -215,15 +213,16 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt =
           slot
           st
 
-    monoTickOne :: SingleEraBlock                                     blk
-                => Index xs                                           blk
-                -> WrapPartialLedgerConfig                            blk
-                -> LedgerState                                        blk
-                -> Proxy                                              blk
-                -> (    LedgerResult (LedgerState (HardForkBlock xs))
-                    :.: (Ticked :.: LedgerState)
-                   )                                                  blk
-    monoTickOne index pcfg st Proxy =
+    monoTickOne :: SingleEraBlock                                          blk
+                => Index xs                                                blk
+                -> WrapPartialLedgerConfig                                 blk
+                -> (     LedgerState
+                    -.-> Proxy
+                    -.->     LedgerResult (LedgerState (HardForkBlock xs))
+                         :.: Ticked
+                         :.: LedgerState
+                   )                                                       blk
+    monoTickOne index pcfg = fn_2 $ \st Proxy ->
         Comp
       $ fmap Comp
       $ embedLedgerResult (injectLedgerEvent index)

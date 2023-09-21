@@ -163,6 +163,7 @@ getByronTip state =
 -- | The ticked Byron ledger state
 data instance Ticked (LedgerState ByronBlock) = TickedByronLedgerState {
       tickedByronLedgerState        :: !CC.ChainValidationState
+    , untickedByronLedgerTipBlockNo :: !(WithOrigin BlockNo)
     , untickedByronLedgerTransition :: !ByronTransition
     }
   deriving (Generic, NoThunks)
@@ -179,6 +180,8 @@ instance IsLedger (LedgerState ByronBlock) where
             CC.applyChainTick cfg (toByronSlotNo slotNo) byronLedgerState
         , untickedByronLedgerTransition =
             byronLedgerTransition
+        , untickedByronLedgerTipBlockNo =
+            byronLedgerTipBlockNo
         }
 
 {-------------------------------------------------------------------------------

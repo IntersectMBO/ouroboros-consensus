@@ -36,6 +36,7 @@ import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History.Util as History
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Ouroboros.Consensus.Util.Condense
 
 {-------------------------------------------------------------------------------
@@ -103,7 +104,7 @@ data UpdateState =
 -- | All proposal updates, from new to old
 protocolUpdates ::
        LedgerConfig ByronBlock
-    -> LedgerState ByronBlock
+    -> WhetherTickedOrNot (LedgerState ByronBlock)
     -> [ProtocolUpdate]
 protocolUpdates genesis st = concat [
       map fromCandidate candidates
@@ -125,13 +126,17 @@ protocolUpdates genesis st = concat [
     stableAfter      = CC.unSlotCount $ CC.kSlotSecurityParam    k
     takesEffectAfter = CC.unSlotCount $ CC.kUpdateStabilityParam k
 
+    rootSlot = case st of
+        NoTicked  x -> pointSlot $ getTip x
+        YesTicked x -> pointSlot $ getTip x
+
     -- The impossible cases are impossible because these slots refer to
     -- the slots of blocks on the chain.
     isStable :: SlotNo -> Bool
     isStable slotNo = depth >= stableAfter
       where
         depth :: Word64
-        depth = case ledgerTipSlot st of
+        depth = case rootSlot of
                   Origin       -> error "isStable: impossible"
                   NotOrigin s  -> if s < slotNo
                                     then error "isStable: impossible"
@@ -147,7 +152,11 @@ protocolUpdates genesis st = concat [
     candidates   :: [U.E.CandidateProtocolUpdate]
     endorsements :: Map U.ProtocolVersion (Set CC.KeyHash)
 
-    updState     = CC.cvsUpdateState $ byronLedgerState st
+    cvs = case st of
+        NoTicked  x -> byronLedgerState       x
+        YesTicked x -> tickedByronLedgerState x
+
+    updState     = CC.cvsUpdateState cvs
     registered   = U.I.registeredProtocolUpdateProposals updState
     registeredAt = U.I.proposalRegistrationSlot          updState
     confirmed    = U.I.confirmedProposals                updState
@@ -259,5 +268,5 @@ instance InspectLedger ByronBlock where
       return $ LedgerUpdate $ ByronUpdatedProtocolUpdates updatesAfter
     where
       updatesBefore, updatesAfter :: [ProtocolUpdate]
-      updatesBefore = protocolUpdates (configLedger tlc) before
-      updatesAfter  = protocolUpdates (configLedger tlc) after
+      updatesBefore = protocolUpdates (configLedger tlc) (NoTicked before)
+      updatesAfter  = protocolUpdates (configLedger tlc) (NoTicked after)

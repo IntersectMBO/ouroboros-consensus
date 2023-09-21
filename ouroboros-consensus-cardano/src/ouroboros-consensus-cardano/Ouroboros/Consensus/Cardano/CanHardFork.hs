@@ -21,7 +21,7 @@ module Ouroboros.Consensus.Cardano.CanHardFork (
     -- * Re-exports of Shelley code
   , ShelleyPartialLedgerConfig (..)
   , forecastAcrossShelley
-  , translateChainDepStateAcrossShelley
+  , crossEraTickChainDepStateAcrossShelley
   ) where
 
 import qualified Cardano.Chain.Common as CC
@@ -50,6 +50,7 @@ import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import           Data.SOP.Strict (hpure)
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
+import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -69,7 +70,6 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
-import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos as Praos
@@ -80,6 +80,7 @@ import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Shelley.ShelleyHFC
+import           Ouroboros.Consensus.Ticked (WhetherTickedOrNot (..))
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.RedundantConstraints
@@ -132,15 +133,17 @@ import           Ouroboros.Consensus.Util.RedundantConstraints
 
 byronTransition :: PartialLedgerConfig ByronBlock
                 -> Word16   -- ^ Shelley major protocol version
-                -> LedgerState ByronBlock
+                -> WhetherTickedOrNot (LedgerState ByronBlock)
                 -> Maybe EpochNo
-byronTransition ByronPartialLedgerConfig{..} shelleyMajorVersion state =
+byronTransition ByronPartialLedgerConfig{..} shelleyMajorVersion wtState =
       takeAny
     . mapMaybe isTransitionToShelley
     . Byron.Inspect.protocolUpdates byronLedgerConfig
-    $ state
+    $ wtState
   where
-    ByronTransitionInfo transitionInfo = byronLedgerTransition state
+    ByronTransitionInfo transitionInfo = case wtState of
+      NoTicked  st -> byronLedgerTransition st
+      YesTicked st -> untickedByronLedgerTransition st
 
     genesis = byronLedgerConfig
     k       = CC.Genesis.gdK $ CC.Genesis.configGenesisData genesis
@@ -193,9 +196,14 @@ byronTransition ByronPartialLedgerConfig{..} shelleyMajorVersion state =
     isReallyStable (BlockNo bno) = distance >= CC.unBlockCount k
       where
         distance :: Word64
-        distance = case byronLedgerTipBlockNo state of
+        distance = case rootBno of
                      Origin                  -> bno + 1
                      NotOrigin (BlockNo tip) -> tip - bno
+
+    rootBno :: WithOrigin BlockNo
+    rootBno = case wtState of
+        NoTicked  st -> byronLedgerTipBlockNo st
+        YesTicked st -> untickedByronLedgerTipBlockNo st
 
     -- We only expect a single proposal that updates to Shelley, but in case
     -- there are multiple, any one will do
@@ -272,23 +280,23 @@ type CardanoHardForkConstraints c =
 
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   hardForkEraTranslation = EraTranslation {
-      translateLedgerState   =
-          PCons translateLedgerStateByronToShelleyWrapper
-        $ PCons translateLedgerStateShelleyToAllegraWrapper
-        $ PCons translateLedgerStateAllegraToMaryWrapper
-        $ PCons translateLedgerStateMaryToAlonzoWrapper
-        $ PCons translateLedgerStateAlonzoToBabbageWrapper
-        $ PCons translateLedgerStateBabbageToConwayWrapper
+      crossEraTickLedgerState =
+          PCons crossEraTickLedgerStateByronToShelley
+        $ PCons crossEraTickLedgerStateAcrossTPraos
+        $ PCons crossEraTickLedgerStateAcrossTPraos
+        $ PCons crossEraTickLedgerStateAcrossTPraos
+        $ PCons crossEraTickLedgerStateTPraosToPraos
+        $ PCons crossEraTickLedgerStateAcrossPraos
         $ PNil
-    , translateChainDepState =
-          PCons translateChainDepStateByronToShelleyWrapper
-        $ PCons translateChainDepStateAcrossShelley
-        $ PCons translateChainDepStateAcrossShelley
-        $ PCons translateChainDepStateAcrossShelley
-        $ PCons translateChainDepStateAcrossShelley
-        $ PCons translateChainDepStateAcrossShelley
+    , crossEraTickChainDepState =
+          PCons crossEraTickChainDepStateByronToShelley
+        $ PCons crossEraTickChainDepStateAcrossShelley
+        $ PCons crossEraTickChainDepStateAcrossShelley
+        $ PCons crossEraTickChainDepStateAcrossShelley
+        $ PCons crossEraTickChainDepStateAcrossShelley
+        $ PCons crossEraTickChainDepStateAcrossShelley
         $ PNil
-    , crossEraForecast       =
+    , crossEraForecast =
           PCons crossEraForecastByronToShelleyWrapper
         $ PCons crossEraForecastAcrossShelley
         $ PCons crossEraForecastAcrossShelley
@@ -315,7 +323,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                     translateValidatedTxAllegraToMaryWrapper
               )
       $ PCons (RequireBoth $ \_cfgMary cfgAlonzo ->
-                let ctxt = getAlonzoTranslationContext cfgAlonzo
+                let ctxt = shelleyLedgerTranslationContext $ unwrapLedgerConfig cfgAlonzo
                 in
                 Pair2
                   (translateTxMaryToAlonzoWrapper          ctxt)
@@ -329,7 +337,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
                   (translateValidatedTxAlonzoToBabbageWrapper ctxt)
               )
       $ PCons (RequireBoth $ \_cfgBabbage cfgConway ->
-                let ctxt = getConwayTranslationContext cfgConway
+                let ctxt = shelleyLedgerTranslationContext $ unwrapLedgerConfig cfgConway
                 in
                 Pair2
                   (translateTxBabbageToConwayWrapper          ctxt)
@@ -377,75 +385,75 @@ translatePointByronToShelley point bNo =
       _otherwise ->
         error "translatePointByronToShelley: invalid Byron state"
 
-translateLedgerStateByronToShelleyWrapper ::
+crossEraTickLedgerStateByronToShelley ::
      ( ShelleyCompatible (TPraos c) (ShelleyEra c)
      , HASH     c ~ Blake2b_256
      , ADDRHASH c ~ Blake2b_224
      )
-  => RequiringBoth
-       WrapLedgerConfig
-       (Translate LedgerState)
+  => CrossEraTickLedgerState
        ByronBlock
        (ShelleyBlock (TPraos c) (ShelleyEra c))
-translateLedgerStateByronToShelleyWrapper =
-    RequireBoth $ \_ (WrapLedgerConfig cfgShelley) ->
-    Translate   $ \epochNo ledgerByron ->
-      ShelleyLedgerState {
-        shelleyLedgerTip =
-          translatePointByronToShelley
-            (ledgerTipPoint ledgerByron)
-            (byronLedgerTipBlockNo ledgerByron)
-      , shelleyLedgerState =
-          SL.translateToShelleyLedgerState
-            (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
-            epochNo
-            (byronLedgerState ledgerByron)
-      , shelleyLedgerTransition =
-          ShelleyTransitionInfo{shelleyAfterVoting = 0}
-      }
-
-translateChainDepStateByronToShelleyWrapper ::
-     RequiringBoth
-       WrapConsensusConfig
-       (Translate WrapChainDepState)
-       ByronBlock
-       (ShelleyBlock (TPraos c) (ShelleyEra c))
-translateChainDepStateByronToShelleyWrapper =
-    RequireBoth $ \_ (WrapConsensusConfig cfgShelley) ->
-      Translate $ \_ (WrapChainDepState pbftState) ->
-        WrapChainDepState $
-          translateChainDepStateByronToShelley cfgShelley pbftState
-
-translateChainDepStateByronToShelley ::
-     forall bc c.
-     ConsensusConfig (TPraos c)
-  -> PBftState bc
-  -> TPraosState c
-translateChainDepStateByronToShelley TPraosConfig { tpraosParams } pbftState =
-    -- Note that the 'PBftState' doesn't know about EBBs. So if the last slot of
-    -- the Byron era were occupied by an EBB (and no regular block in that same
-    -- slot), we would pick the wrong slot here, i.e., the slot of the regular
-    -- block before the EBB.
-    --
-    -- Fortunately, this is impossible for two reasons:
-    --
-    -- 1. On mainnet we stopped producing EBBs a while before the transition.
-    -- 2. The transition happens at the start of an epoch, so if the last slot
-    --    were occupied by an EBB, it must have been the EBB at the start of the
-    --    previous epoch. This means the previous epoch must have been empty,
-    --    which is a violation of the "@k@ blocks per @2k@ slots" property.
-    TPraosState (PBftState.lastSignedSlot pbftState) $
-      SL.ChainDepState
-        { SL.csProtocol = SL.PrtclState Map.empty nonce nonce
-        , SL.csTickn    = SL.TicknState {
-              ticknStateEpochNonce    = nonce
-            , ticknStatePrevHashNonce = SL.NeutralNonce
+crossEraTickLedgerStateByronToShelley =
+    CrossEraTickLedgerState
+  $ \_byronCfg cfgShelley epochNo sno ledgerByron ->
+      let st = ShelleyLedgerState {
+              shelleyLedgerTip =
+                translatePointByronToShelley
+                  (ledgerTipPoint ledgerByron)
+                  (byronLedgerTipBlockNo ledgerByron)
+            , shelleyLedgerState =
+                SL.translateToShelleyLedgerState
+                  (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
+                  epochNo
+                  (byronLedgerState ledgerByron)
+            , shelleyLedgerTransition =
+                ShelleyTransitionInfo{shelleyAfterVoting = 0}
             }
-          -- Overridden before used
-        , SL.csLabNonce = SL.NeutralNonce
-        }
-  where
-    nonce = tpraosInitialNonce tpraosParams
+      in
+      -- Somewhat unintuitively: the Byron ledger rule for ticking across the
+      -- epoch transition is not invoked.
+      --
+      -- The epoch number in the initial NewEpochState is the only sense in
+      -- which it is "younger" than the ledger state immediately after the
+      -- final Byron block.
+      pureLedgerResult $ applyChainTickLedgerResult cfgShelley sno st
+
+crossEraTickChainDepStateByronToShelley ::
+     PraosCrypto c
+  => CrossEraTickChainDepState
+       ByronBlock
+       (ShelleyBlock (TPraos c) (ShelleyEra c))
+crossEraTickChainDepStateByronToShelley =
+    CrossEraTickChainDepState
+  $ \Proxy Proxy _byronCfg cfgShelley ledgerViewShelley _epochNo sno pbftState ->
+    let TPraosConfig { tpraosParams } = cfgShelley
+
+        nonce = tpraosInitialNonce tpraosParams
+
+        -- Note that the 'PBftState' doesn't know about EBBs. So if the last slot of
+        -- the Byron era were occupied by an EBB (and no regular block in that same
+        -- slot), we would pick the wrong slot here, i.e., the slot of the regular
+        -- block before the EBB.
+        --
+        -- Fortunately, this is impossible for two reasons:
+        --
+        -- 1. On mainnet we stopped producing EBBs a while before the transition.
+        -- 2. The transition happens at the start of an epoch, so if the last slot
+        --    were occupied by an EBB, it must have been the EBB at the start of the
+        --    previous epoch. This means the previous epoch must have been empty,
+        --    which is a violation of the "@k@ blocks per @2k@ slots" property.
+        st = TPraosState (PBftState.lastSignedSlot pbftState) $
+               SL.ChainDepState
+                 { SL.csProtocol = SL.PrtclState Map.empty nonce nonce
+                 , SL.csTickn    = SL.TicknState {
+                       ticknStateEpochNonce    = nonce
+                     , ticknStatePrevHashNonce = SL.NeutralNonce
+                     }
+                   -- Overridden before used
+                 , SL.csLabNonce = SL.NeutralNonce
+                 }
+    in
+    tickChainDepState cfgShelley ledgerViewShelley sno st
 
 crossEraForecastByronToShelleyWrapper ::
      forall c. Crypto c =>
@@ -505,17 +513,79 @@ crossEraForecastByronToShelleyWrapper =
   Translation from Shelley to Allegra
 -------------------------------------------------------------------------------}
 
-translateLedgerStateShelleyToAllegraWrapper ::
-     (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
-  => RequiringBoth
-       WrapLedgerConfig
-       (Translate LedgerState)
-       (ShelleyBlock (TPraos c) (ShelleyEra c))
-       (ShelleyBlock (TPraos c) (AllegraEra c))
-translateLedgerStateShelleyToAllegraWrapper =
-    ignoringBoth $
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' () . Comp
+crossEraTickLedgerStateAcrossTPraos ::
+     ( ShelleyBasedEra (SL.PreviousEra toEra)
+     , ShelleyBasedEra toEra
+     , SL.TranslateEra toEra SL.NewEpochState
+     , Void ~ SL.TranslationError toEra SL.NewEpochState
+     , EraCrypto toEra ~ EraCrypto (SL.PreviousEra toEra)
+     )
+  => CrossEraTickLedgerState
+       (ShelleyBlock (TPraos c) (SL.PreviousEra toEra))
+       (ShelleyBlock (TPraos c) toEra)
+crossEraTickLedgerStateAcrossTPraos =
+    CrossEraTickLedgerState
+  $ \_cfg cfg' _epochNo sno st ->
+      -- Somewhat unintuitively: the first era's ledger rule for ticking across
+      -- the epoch transition is not invoked.
+        pureLedgerResult
+      $ applyChainTickLedgerResult cfg' sno
+      $ unComp
+      $ SL.translateEra' (shelleyLedgerTranslationContext cfg')
+      $ Comp st
+
+crossEraTickLedgerStateTPraosToPraos ::
+     ( ShelleyBasedEra (SL.PreviousEra toEra)
+     , ShelleyBasedEra toEra
+     , SL.TranslateEra toEra SL.NewEpochState
+     , Void ~ SL.TranslationError toEra SL.NewEpochState
+     , EraCrypto toEra ~ EraCrypto (SL.PreviousEra toEra)
+     )
+  => CrossEraTickLedgerState
+       (ShelleyBlock (TPraos c) (SL.PreviousEra toEra))
+       (ShelleyBlock (Praos c) toEra)
+crossEraTickLedgerStateTPraosToPraos =
+    CrossEraTickLedgerState
+  $ \_cfg cfg' _epochNo sno st ->
+      -- Somewhat unintuitively: the first era's ledger rule for ticking across
+      -- the epoch transition is not invoked.
+        pureLedgerResult
+      $ applyChainTickLedgerResult cfg' sno
+      $ unComp
+      $ SL.translateEra' (shelleyLedgerTranslationContext cfg')
+      $ Comp
+      $ transPraosLS st
+  where
+    transPraosLS ::
+      LedgerState (ShelleyBlock (TPraos c) era) ->
+      LedgerState (ShelleyBlock (Praos c)  era)
+    transPraosLS (ShelleyLedgerState wo nes st) =
+      ShelleyLedgerState
+        { shelleyLedgerTip        = fmap castShelleyTip wo
+        , shelleyLedgerState      = nes
+        , shelleyLedgerTransition = st
+        }
+
+crossEraTickLedgerStateAcrossPraos ::
+     ( ShelleyBasedEra (SL.PreviousEra toEra)
+     , ShelleyBasedEra toEra
+     , SL.TranslateEra toEra SL.NewEpochState
+     , Void ~ SL.TranslationError toEra SL.NewEpochState
+     , EraCrypto toEra ~ EraCrypto (SL.PreviousEra toEra)
+     )
+  => CrossEraTickLedgerState
+       (ShelleyBlock (Praos (EraCrypto (SL.PreviousEra toEra))) (SL.PreviousEra toEra))
+       (ShelleyBlock (Praos (EraCrypto                 toEra)) toEra)
+crossEraTickLedgerStateAcrossPraos =
+    CrossEraTickLedgerState
+  $ \_cfg cfg' _epochNo sno st ->
+      -- Somewhat unintuitively: the first era's ledger rule for ticking across
+      -- the epoch transition is not invoked.
+        pureLedgerResult
+      $ applyChainTickLedgerResult cfg' sno
+      $ unComp
+      $ SL.translateEra' (shelleyLedgerTranslationContext cfg')
+      $ Comp st
 
 translateTxShelleyToAllegraWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -532,22 +602,6 @@ translateValidatedTxShelleyToAllegraWrapper ::
        (ShelleyBlock (TPraos c) (AllegraEra c))
 translateValidatedTxShelleyToAllegraWrapper = InjectValidatedTx $
     fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp
-
-{-------------------------------------------------------------------------------
-  Translation from Shelley to Allegra
--------------------------------------------------------------------------------}
-
-translateLedgerStateAllegraToMaryWrapper ::
-     (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
-  => RequiringBoth
-       WrapLedgerConfig
-       (Translate LedgerState)
-       (ShelleyBlock (TPraos c) (AllegraEra c))
-       (ShelleyBlock (TPraos c) (MaryEra c))
-translateLedgerStateAllegraToMaryWrapper =
-    ignoringBoth $
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' () . Comp
 
 {-------------------------------------------------------------------------------
   Translation from Allegra to Mary
@@ -573,24 +627,6 @@ translateValidatedTxAllegraToMaryWrapper = InjectValidatedTx $
   Translation from Mary to Alonzo
 -------------------------------------------------------------------------------}
 
-translateLedgerStateMaryToAlonzoWrapper ::
-     (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
-  => RequiringBoth
-       WrapLedgerConfig
-       (Translate LedgerState)
-       (ShelleyBlock (TPraos c) (MaryEra c))
-       (ShelleyBlock (TPraos c) (AlonzoEra c))
-translateLedgerStateMaryToAlonzoWrapper =
-    RequireBoth $ \_cfgMary cfgAlonzo ->
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' (getAlonzoTranslationContext cfgAlonzo) . Comp
-
-getAlonzoTranslationContext ::
-     WrapLedgerConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
-  -> SL.TranslationContext (AlonzoEra c)
-getAlonzoTranslationContext =
-    shelleyLedgerTranslationContext . unwrapLedgerConfig
-
 translateTxMaryToAlonzoWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => SL.TranslationContext (AlonzoEra c)
@@ -613,28 +649,6 @@ translateValidatedTxMaryToAlonzoWrapper ctxt = InjectValidatedTx $
 {-------------------------------------------------------------------------------
   Translation from Alonzo to Babbage
 -------------------------------------------------------------------------------}
-
-translateLedgerStateAlonzoToBabbageWrapper ::
-     (Praos.PraosCrypto c, TPraos.PraosCrypto c)
-  => RequiringBoth
-       WrapLedgerConfig
-       (Translate LedgerState)
-       (ShelleyBlock (TPraos c) (AlonzoEra c))
-       (ShelleyBlock (Praos c) (BabbageEra c))
-translateLedgerStateAlonzoToBabbageWrapper =
-    RequireBoth $ \_cfgAlonzo _cfgBabbage ->
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' () . Comp . transPraosLS
-  where
-    transPraosLS ::
-      LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c)) ->
-      LedgerState (ShelleyBlock (Praos c)  (AlonzoEra c))
-    transPraosLS (ShelleyLedgerState wo nes st) =
-      ShelleyLedgerState
-        { shelleyLedgerTip        = fmap castShelleyTip wo
-        , shelleyLedgerState      = nes
-        , shelleyLedgerTransition = st
-        }
 
 translateTxAlonzoToBabbageWrapper ::
      (Praos.PraosCrypto c)
@@ -675,24 +689,6 @@ translateValidatedTxAlonzoToBabbageWrapper ctxt = InjectValidatedTx $
 {-------------------------------------------------------------------------------
   Translation from Babbage to Conway
 -------------------------------------------------------------------------------}
-
-translateLedgerStateBabbageToConwayWrapper ::
-     (Praos.PraosCrypto c)
-  => RequiringBoth
-       WrapLedgerConfig
-       (Translate LedgerState)
-       (ShelleyBlock (Praos c) (BabbageEra c))
-       (ShelleyBlock (Praos c) (ConwayEra c))
-translateLedgerStateBabbageToConwayWrapper =
-    RequireBoth $ \_cfgBabbage cfgConway ->
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' (getConwayTranslationContext cfgConway) . Comp
-
-getConwayTranslationContext ::
-     WrapLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))
-  -> SL.TranslationContext (ConwayEra c)
-getConwayTranslationContext =
-    shelleyLedgerTranslationContext . unwrapLedgerConfig
 
 translateTxBabbageToConwayWrapper ::
      (Praos.PraosCrypto c)
