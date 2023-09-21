@@ -74,25 +74,18 @@ exampleTestSetup params seed =
     fast = True
     advId = PeerId "adversary"
     HonestRecipe (Kcp k) (Scg scg) _ (Len len) = testRecipeH params
+
     genesisAcrossIntersection = not genesisAfterIntersection && len > scg
-    -- TODO: also need: at least k+1 blocks after the intersection
-    genesisAfterIntersection =
-         fragLenA > fromIntegral scg
-      && advLenAfterIntersection >= fromIntegral k
-    advLenAfterIntersection =
-      withOrigin 0 unBlockNo (AF.headBlockNo badChain)
-        - withOrigin 0 unBlockNo prefixBlockNo
+    genesisAfterIntersection = fragLenA > scg && advLenAfterIntersection > k
+
+    fragLenA = BT.slotLength badChain
+    advLenAfterIntersection = AF.length badChainSuffix
 
     blockTree = genChains (testAscA params) (testRecipeA params) (testRecipeA' params) seed
     goodChain = BT.trunk blockTree
 
-    BT.BlockTreeBranch { prefix = badChainPrefix, full = badChain } =
+    BT.BlockTreeBranch { suffix = badChainSuffix, full = badChain } =
       head $ BT.branches blockTree
-
-    prefixBlockNo = AF.anchorToBlockNo $ AF.headAnchor badChainPrefix
-    fragLenA =
-      withOrigin 0 id (AF.anchorToSlotNo $ AF.headAnchor badChain)
-        - withOrigin 0 id (AF.anchorToSlotNo $ AF.anchor badChain)
 
 stripBlockBodies :: TestFrag -> TestFragH
 stripBlockBodies = AF.bimap AF.castAnchor getHeader
