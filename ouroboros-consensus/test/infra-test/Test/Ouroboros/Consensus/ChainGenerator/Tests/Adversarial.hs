@@ -4,7 +4,11 @@
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE TypeApplications          #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial (tests) where
+module Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial (
+  tests,
+  SomeTestAdversarial(..),
+  TestAdversarial(..)
+  ) where
 
 import           Control.Applicative ((<|>))
 import qualified Control.Monad.Except as Exn
