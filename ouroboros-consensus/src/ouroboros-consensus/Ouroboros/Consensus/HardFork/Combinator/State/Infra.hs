@@ -172,6 +172,21 @@ reconstructSummary (History.Shape shape) transition (HardForkState st) =
         NonEmptyCons (EraSummary pastStart (EraEnd pastEnd) params) $ go ss t
     go (ExactlyCons params ss) (TZ Current{..}) =
         case transition of
+          TransitionNever -> NonEmptyOne $ EraSummary {
+                eraStart  = currentStart
+              , eraParams = params
+              , eraEnd    = EraUnbounded
+              }
+          TransitionUnknown ledgerTip -> NonEmptyOne $ EraSummary {
+                eraStart  = currentStart
+              , eraParams = params
+              , eraEnd    = applySafeZone
+                              params
+                              currentStart
+                              -- Even if the safe zone is 0, the first slot at
+                              -- which the next era could begin is the /next/
+                              (next ledgerTip)
+              }
           TransitionKnown epoch ->
             -- We haven't reached the next era yet, but the transition is
             -- already known. The safe zone applies from the start of the
@@ -214,29 +229,6 @@ reconstructSummary (History.Shape shape) transition (HardForkState st) =
                   , eraParams = params
                   , eraEnd    = EraEnd currentEnd
                   }
-          TransitionUnknown ledgerTip -> NonEmptyOne $ EraSummary {
-                eraStart  = currentStart
-              , eraParams = params
-              , eraEnd    = applySafeZone
-                              params
-                              currentStart
-                              -- Even if the safe zone is 0, the first slot at
-                              -- which the next era could begin is the /next/
-                              (next ledgerTip)
-              }
-          -- 'TransitionImpossible' is used in one of two cases: we are in the
-          -- final era this chain will ever have (handled by the corresponding
-          -- 'UnsafeIndefiniteSafeZone' case within 'applySafeZone' below) or
-          -- this era is a future era that hasn't begun yet, in which case the
-          -- safe zone must start at the beginning of this era.
-          TransitionImpossible -> NonEmptyOne $ EraSummary {
-                eraStart  = currentStart
-              , eraParams = params
-              , eraEnd    = applySafeZone
-                              params
-                              currentStart
-                              (boundSlot currentStart)
-              }
 
     -- Apply safe zone from the specified 'SlotNo'
     --

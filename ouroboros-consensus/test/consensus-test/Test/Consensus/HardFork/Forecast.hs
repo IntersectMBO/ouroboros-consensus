@@ -270,9 +270,18 @@ acrossErasForecast :: forall xs.
   -> Forecast LedgerView
 acrossErasForecast setup@TestSetup{..} ledgerStates =
     mapForecast aux $
-      mkHardForkForecast (translations setup) (HardForkState (go testEras))
+      mkHardForkForecast
+        (Exactly staticallyKnownTransitions)
+        (translations setup)
+        (HardForkState (go testEras))
   where
     TestForecastParams{..} = testForecastParams
+
+    -- an arbitrary but reasonable value for this test
+    --
+    -- This value implies no era's transition is known statically.
+    staticallyKnownTransitions :: NP (K (Bound -> Maybe TransitionInfo)) xs
+    staticallyKnownTransitions = hpure $ K $ \_start -> Nothing
 
     aux :: Ticked (HardForkLedgerView_ (K LedgerView) xs)
         -> Ticked LedgerView
@@ -310,7 +319,7 @@ acrossErasForecast setup@TestSetup{..} ledgerStates =
                                          st
                 , annForecastState = K st
                 , annForecastTip   = testForecastAt
-                , annForecastEnd   = Just end
+                , annForecastEnd   = Just $ Just end
                 }
             }
         else

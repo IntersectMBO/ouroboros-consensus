@@ -333,8 +333,8 @@ instance BlockSupportsMetrics BlockB where
   isSelfIssued = isSelfIssuedConstUnknown
 
 instance SingleEraBlock BlockB where
-  singleEraInfo _     = SingleEraInfo "B"
-  singleEraTransition = \_ _ _ _ -> Nothing
+  singleEraInfo _           = SingleEraInfo "B"
+  singleEraTransition _ _ _ = FixedTransition Nothing
 
 instance HasTxs BlockB where
   extractTxs = const []

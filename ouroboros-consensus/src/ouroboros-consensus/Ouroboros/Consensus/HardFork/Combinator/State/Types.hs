@@ -146,13 +146,12 @@ data TransitionInfo =
     -- | Transition to the next era is known to happen at this 'EpochNo'
   | TransitionKnown !EpochNo
 
-    -- | The transition is impossible
+    -- | The current era will never end
     --
-    -- This can be due to one of two reasons:
-    --
-    -- * We are in the final era
-    -- * This era has not actually begun yet (we are forecasting). In this case,
-    --   we cannot look past the safe zone of this era and hence, by definition,
-    --   the transition to the /next/ era cannot happen.
-  | TransitionImpossible
+    -- This effectively disables the hard fork combinator, and so is not
+    -- recommended. However, it's the right choice when the intention is for
+    -- @'Ouroboros.Consensus.HardFork.Combinator.Basics.HardForkBlock' '[x]@ to
+    -- be indistinguishable from @x@, as in the
+    -- "Ouroboros.Consensus.HardFork.Combinator.Embed.Unary" module.
+  | TransitionNever
   deriving (Show, Generic, NoThunks)

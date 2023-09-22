@@ -126,9 +126,12 @@ mostRecentTransitionInfo HardForkLedgerConfig{..} st =
                   -> Current LedgerState     blk
                   -> K TransitionInfo        blk
     getTransition cfg (K eraParams) Current{..} = K $
-        case singleEraTransition' cfg eraParams currentStart currentState of
-          Nothing -> TransitionUnknown (ledgerTipSlot currentState)
-          Just e  -> TransitionKnown e
+        case singleEraTransition' cfg eraParams currentStart of
+            FixedTransition Nothing  -> TransitionNever
+            FixedTransition (Just e) -> TransitionKnown e
+            EventualTransition f     -> case f currentState of
+                Nothing -> TransitionUnknown (ledgerTipSlot currentState)
+                Just e  -> TransitionKnown e
 
 reconstructSummaryLedger :: All SingleEraBlock xs
                          => HardForkLedgerConfig xs
@@ -200,8 +203,8 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                -> Current LedgerState         blk
                -> (Maybe :.: K History.Bound) blk
     whenExtend pcfg (K eraParams) cur = Comp $ K <$> do
-        transition <- singleEraTransition'
-                        pcfg
+        transition <- joinedSingleEraTransition
+                        (unwrapPartialLedgerConfig pcfg)
                         eraParams
                         (currentStart cur)
                         (currentState cur)

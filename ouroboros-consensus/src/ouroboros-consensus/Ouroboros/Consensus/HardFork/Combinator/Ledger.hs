@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -36,7 +37,7 @@ import           Data.Functor.Product
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
-import           Data.SOP.Counting (getExactly)
+import           Data.SOP.Counting (Exactly (..))
 import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
@@ -139,10 +140,7 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
             --   (This does mean however that it is important to use the
             --   /extended/ ledger state, not the original, to determine the
             --   'TransitionInfo'.)
-            -- o 'TransitionImpossible'. This has two subcases: either we are
-            --   in the final era, in which case ticking certainly won't be able
-            --   to change that, or we're forecasting, which is simply not
-            --   applicable here.
+            -- o 'TransitionNever'. This is an absorbing state.
             State.mostRecentTransitionInfo cfg extended
         , tickedHardForkLedgerStatePerEra = l'
         }
@@ -338,6 +336,12 @@ instance CanHardFork xs => LedgerSupportsProtocol (HardForkBlock xs) where
   ledgerViewForecastAt ledgerCfg@HardForkLedgerConfig{..}
                        (HardForkLedgerState ledgerSt) =
       mkHardForkForecast
+        (Exactly $ hczipWith
+           proxySingle
+           staticTransitionInfo
+           pcfgs
+           (getExactly (History.getShape hardForkLedgerConfigShape))
+        )
         (InPairs.requiringBoth cfgs $ crossEraForecast hardForkEraTranslation)
         annForecast
     where
@@ -367,13 +371,28 @@ instance CanHardFork xs => LedgerSupportsProtocol (HardForkBlock xs) where
                                      ledgerViewForecastAt cfg' st
               , annForecastState = st
               , annForecastTip   = ledgerTipSlot st
-              , annForecastEnd   = History.mkUpperBound params start <$>
-                                     singleEraTransition' cfg params start st
+              , annForecastEnd   =
+                      fmap (History.mkUpperBound params start)
+                  <$> case singleEraTransition' cfg params start of
+                          FixedTransition Nothing  -> Nothing
+                          FixedTransition (Just e) -> Just $ Just e
+                          EventualTransition     f -> Just $ f st
               }
           }
         where
           cfg' :: LedgerConfig blk
           cfg' = completeLedgerConfig' ei cfg
+
+      staticTransitionInfo ::
+             forall blk. SingleEraBlock blk
+          => WrapPartialLedgerConfig blk
+          -> K EraParams blk
+          -> K (Bound -> Maybe TransitionInfo) blk
+      staticTransitionInfo pcfg (K params) = K $ \start ->
+          case singleEraTransition' pcfg params start of
+              FixedTransition Nothing  -> Just $ TransitionNever
+              FixedTransition (Just e) -> Just $ TransitionKnown e
+              EventualTransition{}     -> Nothing
 
 {-------------------------------------------------------------------------------
   Annotated forecasts
@@ -384,53 +403,71 @@ data AnnForecast state view blk = AnnForecast {
       annForecast      :: Forecast (view blk)
     , annForecastState :: state blk
     , annForecastTip   :: WithOrigin SlotNo
-    , annForecastEnd   :: Maybe Bound
+      -- | Exclusive upper bound of the era of the ledger state that determined
+      -- 'annForecast'
+      --
+      -- @Nothing@ means /known to never end/. @Just Nothing@ means /end not
+      -- yet known/.
+    , annForecastEnd   :: Maybe (Maybe Bound)
     }
 
 -- | Change a telescope of a forecast into a forecast of a telescope
 mkHardForkForecast ::
      forall state view xs.
      SListI xs
-  => InPairs (CrossEraForecaster state view) xs
+  => Exactly xs (Bound -> Maybe TransitionInfo)
+  -> InPairs (CrossEraForecaster state view) xs
   -> HardForkState (AnnForecast state view) xs
   -> Forecast (HardForkLedgerView_ view xs)
-mkHardForkForecast translations st = Forecast {
+mkHardForkForecast transitions crosses st = Forecast {
       forecastAt  = hcollapse (hmap (K . forecastAt . annForecast) st)
-    , forecastFor = \sno -> go sno translations (getHardForkState st)
+    , forecastFor = \sno ->
+        go sno (getExactly transitions) crosses (getHardForkState st)
     }
   where
     go :: SlotNo
+       -> NP (K (Bound -> Maybe TransitionInfo)) xs'
        -> InPairs (CrossEraForecaster state view) xs'
        -> Telescope (K Past) (Current (AnnForecast state view)) xs'
        -> Except OutsideForecastRange (Ticked (HardForkLedgerView_ view xs'))
-    go sno pairs        (TZ cur)       = oneForecast sno pairs cur
-    go sno (PCons _ ts) (TS past rest) = shiftView past <$> go sno ts rest
+    go sno ts        cs           (TZ cur)       = oneForecast sno ts cs cur
+    go sno (_ :* ts) (PCons _ cs) (TS past rest) = shiftView past <$> go sno ts cs rest
 
 oneForecast ::
      forall state view blk blks.
      SlotNo
+  -> NP (K (Bound -> Maybe TransitionInfo)) (blk : blks)
   -> InPairs (CrossEraForecaster state view) (blk : blks)
      -- ^ this function uses at most the first translation
   -> Current (AnnForecast state view) blk
   -> Except OutsideForecastRange (Ticked (HardForkLedgerView_ view (blk : blks)))
-oneForecast sno pairs (Current start AnnForecast{..}) =
-    case annForecastEnd of
+oneForecast sno staticTransitions crosses (Current start AnnForecast{..}) =
+    (\k -> maybe (neverEnd <$> forecastFor annForecast sno) k annForecastEnd) $ \case
       Nothing  -> endUnknown <$> forecastFor annForecast sno
       Just end ->
         if sno < boundSlot end
         then beforeKnownEnd end <$> forecastFor annForecast sno
-        else case pairs of
-          PCons translate _ ->
-                afterKnownEnd end
-            <$> crossEraForecastWith translate end sno annForecastState
-          PNil              ->
+        else case crosses of
+          PNil          ->
             -- The requested slot is after the last era the code knows about.
             throwError OutsideForecastRange {
                 outsideForecastAt     = forecastAt annForecast
               , outsideForecastMaxFor = boundSlot end
               , outsideForecastFor    = sno
               }
+          PCons cross _ -> case staticTransitions of
+              _ :* K transition :* _ ->
+                      afterKnownEnd end (transition end)
+                  <$> crossEraForecastWith cross end sno annForecastState
   where
+    neverEnd :: Ticked (f blk)
+             -> Ticked (HardForkLedgerView_ f (blk : blks))
+    neverEnd view = TickedHardForkLedgerView {
+          tickedHardForkLedgerViewTransition = TransitionNever
+        , tickedHardForkLedgerViewPerEra     = HardForkState $
+            TZ (Current start (Comp view))
+        }
+
     endUnknown ::
          Ticked (f blk)
       -> Ticked (HardForkLedgerView_ f (blk : blks))
@@ -454,13 +491,17 @@ oneForecast sno pairs (Current start AnnForecast{..}) =
 
     afterKnownEnd ::
          Bound
+      -> Maybe TransitionInfo
       -> Ticked (f blk')
       -> Ticked (HardForkLedgerView_ f (blk : blk' : blks'))
-    afterKnownEnd end view = TickedHardForkLedgerView {
+    afterKnownEnd end mbTransition view = TickedHardForkLedgerView {
           tickedHardForkLedgerViewTransition =
-            -- We assume that we only ever have to translate to the /next/ era
-            -- (as opposed to /any/ subsequent era)
-            TransitionImpossible
+            -- The current era is not responsible for determining when the
+            -- /next/ era ends. Thus the next era's transition info is unknown,
+            -- /unless/ it's statically determined by its own configuration.
+            case mbTransition of
+                Nothing         -> TransitionUnknown (NotOrigin (boundSlot end))
+                Just transition -> transition
         , tickedHardForkLedgerViewPerEra = HardForkState $
             TS (K (Past start end)) $
             TZ (Current end (Comp view))
@@ -583,7 +624,8 @@ inspectHardForkLedger = go
           map liftEvent $
             inspectLedger c (currentState before) (currentState after)
 
-        , case (pss, confirmedBefore, confirmedAfter) of
+          -- TODO assert currentStart before == currentStart after?
+        , (\k -> case singleEraTransition' pc ps (currentStart before) of FixedTransition{} -> []; EventualTransition f -> k f) $ \f -> case (pss, f (currentState before), f (currentState after)) of
             (_, Nothing, Nothing) ->
               []
             (_, Just _, Nothing) ->
@@ -622,18 +664,6 @@ inspectHardForkLedger = go
                   transition
                   transition'
         ]
-      where
-        confirmedBefore, confirmedAfter :: Maybe EpochNo
-        confirmedBefore = singleEraTransition
-                            (unwrapPartialLedgerConfig pc)
-                            ps
-                            (currentStart before)
-                            (currentState before)
-        confirmedAfter  = singleEraTransition
-                            (unwrapPartialLedgerConfig pc)
-                            ps
-                            (currentStart after)
-                            (currentState after)
 
     go Nil _ _ before _ =
         case before of {}

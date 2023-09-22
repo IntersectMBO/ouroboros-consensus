@@ -73,6 +73,13 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
   Projection/injection for a single block into degenerate HardForkBlock
 -------------------------------------------------------------------------------}
 
+-- | The isomorphism between @HardForkBlock '[blk]@ and @blk@
+--
+-- PRECONDITION This isomorphism assumes that
+-- 'Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock.singleEraTransition'
+-- always returns
+-- @Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock.FixedTransition
+-- Nothing@ for @blk@.
 class Isomorphic f where
   project :: NoHardForks blk => f (HardForkBlock '[blk]) -> f blk
   inject  :: NoHardForks blk => f blk -> f (HardForkBlock '[blk])
@@ -344,7 +351,7 @@ instance Isomorphic (Ticked :.: LedgerState) where
 
   inject =
         Comp
-      . TickedHardForkLedgerState TransitionImpossible
+      . TickedHardForkLedgerState TransitionNever
       . HardForkState
       . Telescope.TZ
       . State.Current History.initBound
@@ -559,7 +566,7 @@ instance Isomorphic WrapForgeStateInfo where
 instance Isomorphic WrapLedgerView where
   project = State.fromTZ . hardForkLedgerViewPerEra . unwrapLedgerView
   inject  = WrapLedgerView
-          . HardForkLedgerView TransitionImpossible
+          . HardForkLedgerView TransitionNever
           . HardForkState
           . Telescope.TZ
           . Current History.initBound

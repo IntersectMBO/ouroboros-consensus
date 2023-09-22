@@ -9,6 +9,8 @@
 module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (
     -- * Single era block
     SingleEraBlock (..)
+  , StaticTransition (..)
+  , joinedSingleEraTransition
   , proxySingle
   , singleEraTransition'
     -- * Era index
@@ -89,23 +91,57 @@ class ( LedgerSupportsProtocol blk
   -- Since we need this to construct the 'HardForkSummary' (and hence the
   -- 'EpochInfo'), this takes the /partial/ config, not the full config
   -- (or we'd end up with a catch-22).
+  --
+  -- INVARIANT: The hard fork combinator's behavior is only well-defined if
+  -- this always returns 'FixedTransition' when the given
+  -- 'Ouroboros.Consensus.HardFork.History.EraParams.eraSafeZone' is
+  -- 'Ouroboros.Consensus.HardFork.History.EraParams.UnsafeIndefiniteSafeZone'.
   singleEraTransition :: PartialLedgerConfig blk
                       -> EraParams -- ^ Current era parameters
                       -> Bound     -- ^ Start of this era
-                      -> LedgerState blk
-                      -> Maybe EpochNo
+                      -> StaticTransition blk
 
   -- | Era information (for use in error messages)
   singleEraInfo       :: proxy blk -> SingleEraInfo blk
+
+data StaticTransition blk =
+    -- | The transition out of this era does not depend on the ledger state
+    --
+    -- It may depend on the start of the era (which may depend on the chain),
+    -- since we always know the start of the era before we need to know its
+    -- end.
+    --
+    -- @Nothing@ means /known to never happen/.
+    --
+    -- @Just e@ means @e@ is the /known/ exclusive upper bound of this era.
+    FixedTransition (Maybe EpochNo)
+  |
+    -- | The transition out of this era does depend on the ledger state
+    --
+    -- @Nothing@ means /not yet known/.
+    --
+    -- @Just e@ means @e@ is the /known/ exclusive upper bound of this era.
+    EventualTransition (LedgerState blk -> Maybe EpochNo)
+
+joinedSingleEraTransition :: SingleEraBlock blk
+                          => PartialLedgerConfig blk
+                          -> EraParams -- ^ Current era parameters
+                          -> Bound     -- ^ Start of this era
+                          -> LedgerState blk
+                          -> Maybe EpochNo
+joinedSingleEraTransition pcfg params start st =
+    case singleEraTransition pcfg params start of
+        FixedTransition mb -> mb   -- "never" does imply "not yet"
+        EventualTransition f -> f st
 
 proxySingle :: Proxy SingleEraBlock
 proxySingle = Proxy
 
 singleEraTransition' :: SingleEraBlock blk
                      => WrapPartialLedgerConfig blk
-                     -> EraParams
-                     -> Bound
-                     -> LedgerState blk -> Maybe EpochNo
+                     -> EraParams -- ^ Current era parameters
+                     -> Bound     -- ^ Start of this era
+                     -> StaticTransition blk
 singleEraTransition' = singleEraTransition . unwrapPartialLedgerConfig
 
 {-------------------------------------------------------------------------------

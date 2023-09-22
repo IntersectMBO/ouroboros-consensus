@@ -152,7 +152,7 @@ defaultEraParams (SecurityParam k) slotLength = EraParams {
     , eraSafeZone   = StandardSafeZone (k * 2)
     }
 
--- | Zone in which it is guaranteed that no hard fork can take place
+-- | Zone in which the next hard fork point cannot /become known/
 data SafeZone =
     -- | Standard safe zone
     --
@@ -161,7 +161,6 @@ data SafeZone =
     -- * Number of slots from the tip of the ledger.
     --   This should be (at least) the number of slots in which we are
     --   guaranteed to have @k@ blocks.
-    -- * Optionally, an 'EpochNo' before which no hard fork can take place.
     StandardSafeZone !Word64
 
     -- | Pretend the transition to the next era will not take place.
@@ -173,16 +172,12 @@ data SafeZone =
     -- * slot to time conversions for blocks that are past the actual safe zone
     -- * time to slot conversions for the current time, when behind in syncing
     --
-    -- This is safe when the code is simply not yet ready to transition to the
-    -- next era, because in that case, we can be sure that blocks that come in
-    -- are still from this era. It also means that we can always /produce/ a
-    -- block, no matter how far ahead of the current ledger we are.
+    -- Notably, it is appropriate for an era that never ends, such as the sole
+    -- era involved in a use of the
+    -- "Ouroboros.Consensus.HardFork.Combinator.Embed.Unary" module.
     --
-    -- If the code is ready for the transition, just awaiting an update
-    -- proposal, then 'LowerBound' can be used instead.
-    --
-    -- This constructor can be regarded as an " extreme " version of
-    -- 'LowerBound', and can be used for similar reasons.
+    -- TODO can this be removed, since the safezone is utterly irrelevant for
+    -- eras that never end?
   | UnsafeIndefiniteSafeZone
   deriving stock    (Show, Eq, Generic)
   deriving anyclass (NoThunks)

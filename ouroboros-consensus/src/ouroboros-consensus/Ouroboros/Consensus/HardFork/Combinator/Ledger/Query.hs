@@ -296,11 +296,11 @@ answerQueryAnytime HardForkLedgerConfig{..} =
       SituatedCurrent cur _ -> Just $ currentStart cur
       SituatedNext cur _    ->
         History.mkUpperBound ps (currentStart cur) <$>
-          singleEraTransition
-          (unwrapPartialLedgerConfig c)
-          ps
-          (currentStart cur)
-          (currentState cur)
+          joinedSingleEraTransition
+            (unwrapPartialLedgerConfig c)
+            ps
+            (currentStart cur)
+            (currentState cur)
 
 {-------------------------------------------------------------------------------
   Hard fork queries

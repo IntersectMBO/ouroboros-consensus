@@ -430,7 +430,16 @@ instance BlockSupportsMetrics BlockA where
 instance SingleEraBlock BlockA where
   singleEraInfo _ = SingleEraInfo "A"
 
-  singleEraTransition cfg EraParams{..} eraStart st = do
+  singleEraTransition cfg EraParams{..} eraStart = EventualTransition $ \st -> do
+      let k = lcfgA_k cfg
+
+      -- Slot conversion (valid for slots in this era only)
+      let slotToEpoch :: SlotNo -> EpochNo
+          slotToEpoch s =
+              History.addEpochs
+                (History.countSlots s (boundSlot eraStart) `div` unEpochSize eraEpochSize)
+                (boundEpoch eraStart)
+
       (confirmedInSlot, confirmationDepth) <- getConfirmationDepth st
 
       -- The ledger must report the scheduled transition to the next era as soon
@@ -467,15 +476,6 @@ instance SingleEraBlock BlockA where
           firstEpochNextEra = succ lastEpochThisEra
 
       return firstEpochNextEra
-   where
-      k = lcfgA_k cfg
-
-      -- Slot conversion (valid for slots in this era only)
-      slotToEpoch :: SlotNo -> EpochNo
-      slotToEpoch s =
-          History.addEpochs
-            (History.countSlots s (boundSlot eraStart) `div` unEpochSize eraEpochSize)
-            (boundEpoch eraStart)
 
 instance HasTxs BlockA where
   extractTxs = blkA_body

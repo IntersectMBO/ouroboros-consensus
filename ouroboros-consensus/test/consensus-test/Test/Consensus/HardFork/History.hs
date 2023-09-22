@@ -39,6 +39,7 @@ import           Data.Functor.Identity
 import qualified Data.List as L
 import           Data.Maybe (catMaybes, fromMaybe)
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Classes (hpure)
 import           Data.SOP.Counting
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.NonEmpty
@@ -294,6 +295,9 @@ data ArbitraryParams xs = ArbitraryParams {
       --
       -- 0 <= arbitraryDiffTime < s
     , arbitraryDiffTime    :: NominalDiffTime
+
+      -- | How many of the known transitions to reveal statically, at most?
+    , arbitraryMask        :: Int
     }
   deriving (Show)
 
@@ -422,6 +426,7 @@ instance Arbitrary ArbitraryChain where
       split  <- choose (0, length events - 1)
       rawIx  <- choose (0, length events - 1)
       diff   <- genDiffTime $ HF.eraSlotLength (eventEraParams (events !! rawIx))
+      n      <- choose (0, length (HF.getShape shape))
       return $ mkArbitraryChain $ ArbitraryParams {
           arbitraryChainEvents = events
         , arbitraryChainEras   = eras
@@ -429,6 +434,7 @@ instance Arbitrary ArbitraryChain where
         , arbitraryRawEventIx  = rawIx
         , arbitraryChainSplit  = split
         , arbitraryDiffTime    = diff
+        , arbitraryMask        = n
         }
     where
       genDiffTime :: SlotLength -> Gen NominalDiffTime
@@ -807,6 +813,7 @@ hardForkEpochInfo ArbitraryChain{..} for =
                      arbitraryChainShape
                      arbitraryTransitions
                      arbitraryChain
+                     arbitraryMask
     in case runExcept $ forecastFor forecast for of
          Left err -> (
              EpochInfo {
@@ -837,9 +844,11 @@ mockHardForkLedgerView :: SListI xs
                        => HF.Shape xs
                        -> HF.Transitions xs
                        -> Chain xs
+                       -> Int
                        -> Forecast (HardForkLedgerView_ (K ()) xs)
-mockHardForkLedgerView = \(HF.Shape pss) (HF.Transitions ts) (Chain ess) ->
+mockHardForkLedgerView = \(HF.Shape pss) (HF.Transitions ts) (Chain ess) mask ->
     mkHardForkForecast
+      (const <$> staticTransitions mask ts (void pss))
       (InPairs.hpure $ CrossEraForecaster $ \_epoch _slot _ -> return $
          TickedK TickedTrivial)
       (HardForkState (mockState HF.initBound pss ts ess))
@@ -857,7 +866,7 @@ mockHardForkLedgerView = \(HF.Shape pss) (HF.Transitions ts) (Chain ess) ->
               }
           , annForecastState = K ()
           , annForecastTip   = tip es
-          , annForecastEnd   = HF.mkUpperBound ps start <$> atMostHead ts
+          , annForecastEnd   = Just $ HF.mkUpperBound ps start <$> atMostHead ts
           }
     mockState start (ExactlyCons ps pss) (AtMostCons t ts) (NonEmptyCons _ ess) =
         TS (K (Past start end)) (mockState end pss ts ess)
@@ -870,3 +879,15 @@ mockHardForkLedgerView = \(HF.Shape pss) (HF.Transitions ts) (Chain ess) ->
     tip :: [Event] -> WithOrigin SlotNo
     tip [] = Origin
     tip es = NotOrigin $ eventTimeSlot $ eventTime (last es)
+
+    staticTransitions :: SListI xs
+                      => Int
+                      -> AtMost       xs  EpochNo   -- ^ the epoch in which the era /starts/
+                      -> Exactly (x : xs) ()
+                      -> Exactly (x : xs) (Maybe TransitionInfo)
+    staticTransitions 0    _  = \_units -> Exactly $ hpure $ K Nothing
+    staticTransitions mask es = \case
+        ExactlyCons () ExactlyNil          -> ExactlyCons Nothing ExactlyNil
+        ExactlyCons () units@ExactlyCons{} -> case es of
+            AtMostNil        -> Exactly $ hpure $ K Nothing
+            AtMostCons e ess -> ExactlyCons (Just (TransitionKnown e)) (staticTransitions (mask - 1) ess units)
