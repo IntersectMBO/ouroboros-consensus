@@ -20,8 +20,8 @@ module Ouroboros.Consensus.Cardano.CanHardFork (
   , TriggerHardFork (..)
     -- * Re-exports of Shelley code
   , ShelleyPartialLedgerConfig (..)
-  , forecastAcrossShelley
   , crossEraTickChainDepStateAcrossShelley
+  , forecastAcrossShelley
   ) where
 
 import qualified Cardano.Chain.Common as CC
@@ -50,7 +50,6 @@ import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import           Data.SOP.Strict (hpure)
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
-import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -282,11 +281,11 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   hardForkEraTranslation = EraTranslation {
       crossEraTickLedgerState =
           PCons crossEraTickLedgerStateByronToShelley
-        $ PCons crossEraTickLedgerStateAcrossTPraos
-        $ PCons crossEraTickLedgerStateAcrossTPraos
-        $ PCons crossEraTickLedgerStateAcrossTPraos
-        $ PCons crossEraTickLedgerStateTPraosToPraos   -- TODO is there an Alonzo->Babbage bug wrt extraEntropy?
-        $ PCons crossEraTickLedgerStateAcrossPraos   -- TODO fix Babbage->Conway bug
+        $ PCons crossEraTickLedgerStateViaTranslateThenTick
+        $ PCons crossEraTickLedgerStateViaTranslateThenTick
+        $ PCons crossEraTickLedgerStateViaTranslateThenTick
+        $ PCons crossEraTickLedgerStateViaTranslateThenTick   -- TODO is there an Alonzo->Babbage bug wrt extraEntropy?
+        $ PCons crossEraTickLedgerStateViaTranslateThenTick -- TODO fix Babbage->Conway bug
         $ PNil
     , crossEraTickChainDepState =
           PCons crossEraTickChainDepStateByronToShelley
@@ -510,82 +509,44 @@ crossEraForecastByronToShelleyWrapper =
         maxFor = addSlots swindow (boundSlot bound)
 
 {-------------------------------------------------------------------------------
-  Translation from Shelley to Allegra
+  Cross-era ledger state ticking strategies
 -------------------------------------------------------------------------------}
 
-crossEraTickLedgerStateAcrossTPraos ::
-     ( ShelleyBasedEra (SL.PreviousEra toEra)
-     , ShelleyBasedEra toEra
-     , SL.TranslateEra toEra SL.NewEpochState
-     , Void ~ SL.TranslationError toEra SL.NewEpochState
-     , EraCrypto toEra ~ EraCrypto (SL.PreviousEra toEra)
+crossEraTickLedgerStateViaTranslateThenTick ::
+     forall fromEra toEra fromProto toProto.
+     ( ShelleyBasedEra toEra
+     , SL.TranslateEra toEra (LedgerState :.: ShelleyBlock toProto)
+     , fromEra ~ SL.PreviousEra toEra
+     , HeaderHash (ShelleyBlock fromProto fromEra) ~ HeaderHash (ShelleyBlock toProto fromEra)
      )
   => CrossEraTickLedgerState
-       (ShelleyBlock (TPraos c) (SL.PreviousEra toEra))
-       (ShelleyBlock (TPraos c) toEra)
-crossEraTickLedgerStateAcrossTPraos =
+       (ShelleyBlock fromProto fromEra)
+       (ShelleyBlock toProto   toEra)
+crossEraTickLedgerStateViaTranslateThenTick =
     CrossEraTickLedgerState
-  $ \_cfg cfg' _epochNo sno st ->
+  $ \_cfg cfg' _epochNo sno ->
       -- Somewhat unintuitively: the first era's ledger rule for ticking across
       -- the epoch transition is not invoked.
         pureLedgerResult
-      $ applyChainTickLedgerResult cfg' sno
-      $ unComp
-      $ SL.translateEra' (shelleyLedgerTranslationContext cfg')
-      $ Comp st
-
-crossEraTickLedgerStateTPraosToPraos ::
-     ( ShelleyBasedEra (SL.PreviousEra toEra)
-     , ShelleyBasedEra toEra
-     , SL.TranslateEra toEra SL.NewEpochState
-     , Void ~ SL.TranslationError toEra SL.NewEpochState
-     , EraCrypto toEra ~ EraCrypto (SL.PreviousEra toEra)
-     )
-  => CrossEraTickLedgerState
-       (ShelleyBlock (TPraos c) (SL.PreviousEra toEra))
-       (ShelleyBlock (Praos c) toEra)
-crossEraTickLedgerStateTPraosToPraos =
-    CrossEraTickLedgerState
-  $ \_cfg cfg' _epochNo sno st ->
-      -- Somewhat unintuitively: the first era's ledger rule for ticking across
-      -- the epoch transition is not invoked.
-        pureLedgerResult
-      $ applyChainTickLedgerResult cfg' sno
-      $ unComp
-      $ SL.translateEra' (shelleyLedgerTranslationContext cfg')
-      $ Comp
-      $ transPraosLS st
+      . applyChainTickLedgerResult cfg' sno
+      . unComp
+      . SL.translateEra' (shelleyLedgerTranslationContext cfg')
+      . Comp
+      . transProtoLS
   where
-    transPraosLS ::
-      LedgerState (ShelleyBlock (TPraos c) era) ->
-      LedgerState (ShelleyBlock (Praos c)  era)
-    transPraosLS (ShelleyLedgerState wo nes st) =
+    transProtoLS ::
+         LedgerState (ShelleyBlock fromProto fromEra)
+      -> LedgerState (ShelleyBlock toProto   fromEra)
+    transProtoLS (ShelleyLedgerState wo nes st) =
       ShelleyLedgerState
         { shelleyLedgerTip        = fmap castShelleyTip wo
         , shelleyLedgerState      = nes
         , shelleyLedgerTransition = st
         }
 
-crossEraTickLedgerStateAcrossPraos ::
-     ( ShelleyBasedEra (SL.PreviousEra toEra)
-     , ShelleyBasedEra toEra
-     , SL.TranslateEra toEra SL.NewEpochState
-     , Void ~ SL.TranslationError toEra SL.NewEpochState
-     , EraCrypto toEra ~ EraCrypto (SL.PreviousEra toEra)
-     )
-  => CrossEraTickLedgerState
-       (ShelleyBlock (Praos (EraCrypto (SL.PreviousEra toEra))) (SL.PreviousEra toEra))
-       (ShelleyBlock (Praos (EraCrypto                 toEra)) toEra)
-crossEraTickLedgerStateAcrossPraos =
-    CrossEraTickLedgerState
-  $ \_cfg cfg' _epochNo sno st ->
-      -- Somewhat unintuitively: the first era's ledger rule for ticking across
-      -- the epoch transition is not invoked.
-        pureLedgerResult
-      $ applyChainTickLedgerResult cfg' sno
-      $ unComp
-      $ SL.translateEra' (shelleyLedgerTranslationContext cfg')
-      $ Comp st
+{-------------------------------------------------------------------------------
+  Translation from Shelley to Allegra
+-------------------------------------------------------------------------------}
 
 translateTxShelleyToAllegraWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
