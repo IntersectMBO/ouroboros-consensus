@@ -19,8 +19,8 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   , ShelleyBlockHFC
   , ShelleyPartialLedgerConfig (..)
   , crossEraForecastAcrossShelley
-  , forecastAcrossShelley
   , crossEraTickChainDepStateAcrossShelley
+  , forecastAcrossShelley
   ) where
 
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
@@ -33,7 +33,7 @@ import           Control.Monad.Except (runExcept, throwError, withExceptT)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
 import           Data.SOP.BasicFunctors
-import           Data.SOP.InPairs (RequiringBoth (..) {- , ignoringBoth -})
+import           Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.Text as T (pack)
 import           Data.Void (Void)
 import           Data.Word
@@ -337,6 +337,20 @@ instance ( ShelleyBasedEra era
           shelleyLedgerTip        = tip'
         , shelleyLedgerState      = state'
         , shelleyLedgerTransition = ShelleyTransitionInfo 0
+        }
+
+instance ( ShelleyBasedEra era
+         , SL.TranslateEra era (ShelleyTip proto)
+         , SL.TranslateEra era SL.NewEpochState
+         , SL.TranslationError era SL.NewEpochState ~ Void
+         ) => SL.TranslateEra era ((Ticked :.: LedgerState) :.: ShelleyBlock proto) where
+  translateEra ctxt (Comp (Comp (TickedShelleyLedgerState tip  _transition state))) = do
+      tip'   <- mapM (SL.translateEra ctxt) tip
+      state' <- SL.translateEra ctxt state
+      return $ Comp $ Comp $ TickedShelleyLedgerState {
+          untickedShelleyLedgerTip      = tip'
+        , tickedShelleyLedgerTransition = ShelleyTransitionInfo 0 -- why set it here?
+        , tickedShelleyLedgerState      = state'
         }
 
 instance ( ShelleyBasedEra era

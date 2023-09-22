@@ -285,7 +285,7 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         $ PCons crossEraTickLedgerStateViaTranslateThenTick
         $ PCons crossEraTickLedgerStateViaTranslateThenTick
         $ PCons crossEraTickLedgerStateViaTranslateThenTick   -- TODO is there an Alonzo->Babbage bug wrt extraEntropy?
-        $ PCons crossEraTickLedgerStateViaTranslateThenTick -- TODO fix Babbage->Conway bug
+        $ PCons crossEraTickLedgerStateViaTickThenTranslate   -- TODO justify
         $ PNil
     , crossEraTickChainDepState =
           PCons crossEraTickChainDepStateByronToShelley
@@ -543,6 +543,30 @@ crossEraTickLedgerStateViaTranslateThenTick =
         , shelleyLedgerState      = nes
         , shelleyLedgerTransition = st
         }
+
+-- TODO tick-then-translate-then-tick would also work, but needs the slot right
+-- after the boundary (probably by passing in the full bound instead of just the
+-- epochNo).
+crossEraTickLedgerStateViaTickThenTranslate ::
+     forall fromEra toEra proto. -- could also be made proto-changing
+     ( ShelleyBasedEra fromEra
+     , SL.TranslateEra toEra ((Ticked :.: LedgerState) :.: ShelleyBlock proto)
+     , fromEra ~ SL.PreviousEra toEra
+     )
+  => CrossEraTickLedgerState
+       (ShelleyBlock proto fromEra)
+       (ShelleyBlock proto   toEra)
+crossEraTickLedgerStateViaTickThenTranslate =
+    CrossEraTickLedgerState
+  $ \cfg cfg' _epochNo sno ->
+      -- Somewhat unintuitively: the second era's ledger rule for ticking across
+      -- the epoch transition is not invoked.
+        fmap ( pureLedgerResult
+             . unComp . unComp
+             . SL.translateEra' (shelleyLedgerTranslationContext cfg')
+             . Comp . Comp
+             )
+      . applyChainTickLedgerResult cfg sno
 
 {-------------------------------------------------------------------------------
   Translation from Shelley to Allegra
