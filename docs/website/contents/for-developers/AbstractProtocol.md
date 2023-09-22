@@ -201,7 +201,7 @@ Classes connected to ledgers:
 
   -- | Link protocol to ledger
   class (BlockSupportsProtocol b, UpdateLedger b, ValidateEnvelope b) => LedgerSupportsProtocol b where
-    protocolLedgerView   :: lc → Ticked l → Ticked ledvw   -- 'ledvw' ('LedgerView (BlockProtocol b)') extracted from the ledger
+    protocolLedgerView   :: lc → Ticked l → ledvw          -- 'ledvw' ('LedgerView (BlockProtocol b)') extracted from the ledger
     ledgerViewForecastAt :: lc → l → Forecast ledvw        -- get a forecast (of future 'ledvw's) from a given ledger state.
       
   class (UpdateLedger b) => LedgerSupportsMempool b where

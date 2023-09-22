@@ -271,7 +271,7 @@ instance CanHardFork xs => ValidateEnvelope (HardForkBlock xs) where
   type OtherHeaderEnvelopeError (HardForkBlock xs) = HardForkEnvelopeErr xs
 
   additionalEnvelopeChecks tlc
-                           (TickedHardForkLedgerView transition hardForkView) =
+                           (HardForkLedgerView transition hardForkView) =
                           \(HardForkHeader (OneEraHeader hdr)) ->
       case Match.matchNS hdr (State.tip hardForkView) of
         Left mismatch ->
@@ -293,13 +293,13 @@ instance CanHardFork xs => ValidateEnvelope (HardForkBlock xs) where
       aux :: forall blk. SingleEraBlock blk
           => Index xs blk
           -> TopLevelConfig blk
-          -> Product Header (Ticked :.: WrapLedgerView) blk
+          -> Product Header WrapLedgerView blk
           -> K (Except (HardForkEnvelopeErr xs) ()) blk
-      aux index cfg (Pair hdr (Comp view)) = K $
+      aux index cfg (Pair hdr view) = K $
           withExcept injErr' $
             additionalEnvelopeChecks
               cfg
-              (unwrapTickedLedgerView view)
+              (unwrapLedgerView view)
               hdr
         where
           injErr' :: OtherHeaderEnvelopeError blk -> HardForkEnvelopeErr xs
@@ -315,10 +315,10 @@ instance CanHardFork xs => ValidateEnvelope (HardForkBlock xs) where
 instance CanHardFork xs => LedgerSupportsProtocol (HardForkBlock xs) where
   protocolLedgerView HardForkLedgerConfig{..}
                      (TickedHardForkLedgerState transition ticked) =
-      TickedHardForkLedgerView {
-          tickedHardForkLedgerViewTransition = transition
-        , tickedHardForkLedgerViewPerEra     =
-            hczipWith proxySingle tickedViewOne cfgs ticked
+      HardForkLedgerView {
+          hardForkLedgerViewTransition = transition
+        , hardForkLedgerViewPerEra     =
+            hczipWith proxySingle viewOne cfgs ticked
         }
     where
       cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra
@@ -327,12 +327,12 @@ instance CanHardFork xs => LedgerSupportsProtocol (HardForkBlock xs) where
                transition
                ticked
 
-      tickedViewOne :: SingleEraBlock              blk
-                    => WrapPartialLedgerConfig     blk
-                    -> (Ticked :.: LedgerState)    blk
-                    -> (Ticked :.: WrapLedgerView) blk
-      tickedViewOne cfg (Comp st) = Comp $
-          WrapTickedLedgerView $
+      viewOne :: SingleEraBlock           blk
+              => WrapPartialLedgerConfig  blk
+              -> (Ticked :.: LedgerState) blk
+              -> WrapLedgerView           blk
+      viewOne cfg (Comp st) =
+          WrapLedgerView $
             protocolLedgerView (completeLedgerConfig' ei cfg) st
 
   ledgerViewForecastAt ledgerCfg@HardForkLedgerConfig{..}
@@ -363,7 +363,7 @@ instance CanHardFork xs => LedgerSupportsProtocol (HardForkBlock xs) where
       forecastOne cfg (K params) (Current start st) = Current {
             currentStart = start
           , currentState = AnnForecast {
-                annForecast      = mapForecast WrapTickedLedgerView $
+                annForecast      = mapForecast WrapLedgerView $
                                      ledgerViewForecastAt cfg' st
               , annForecastState = st
               , annForecastTip   = ledgerTipSlot st
@@ -402,7 +402,7 @@ mkHardForkForecast translations st = Forecast {
     go :: SlotNo
        -> InPairs (CrossEraForecaster state view) xs'
        -> Telescope (K Past) (Current (AnnForecast state view)) xs'
-       -> Except OutsideForecastRange (Ticked (HardForkLedgerView_ view xs'))
+       -> Except OutsideForecastRange (HardForkLedgerView_ view xs')
     go sno pairs        (TZ cur)       = oneForecast sno pairs cur
     go sno (PCons _ ts) (TS past rest) = shiftView past <$> go sno ts rest
 
@@ -412,7 +412,7 @@ oneForecast ::
   -> InPairs (CrossEraForecaster state view) (blk : blks)
      -- ^ this function uses at most the first translation
   -> Current (AnnForecast state view) blk
-  -> Except OutsideForecastRange (Ticked (HardForkLedgerView_ view (blk : blks)))
+  -> Except OutsideForecastRange (HardForkLedgerView_ view (blk : blks))
 oneForecast sno pairs (Current start AnnForecast{..}) =
     case annForecastEnd of
       Nothing  -> endUnknown <$> forecastFor annForecast sno
@@ -432,50 +432,50 @@ oneForecast sno pairs (Current start AnnForecast{..}) =
               }
   where
     endUnknown ::
-         Ticked (f blk)
-      -> Ticked (HardForkLedgerView_ f (blk : blks))
-    endUnknown view = TickedHardForkLedgerView {
-          tickedHardForkLedgerViewTransition =
+         f blk
+      -> HardForkLedgerView_ f (blk : blks)
+    endUnknown view = HardForkLedgerView {
+          hardForkLedgerViewTransition =
             TransitionUnknown annForecastTip
-        , tickedHardForkLedgerViewPerEra = HardForkState $
-            TZ (Current start (Comp view))
+        , hardForkLedgerViewPerEra = HardForkState $
+            TZ (Current start view)
         }
 
     beforeKnownEnd ::
          Bound
-      -> Ticked (f blk)
-      -> Ticked (HardForkLedgerView_ f (blk : blks))
-    beforeKnownEnd end view = TickedHardForkLedgerView {
-          tickedHardForkLedgerViewTransition =
+      -> f blk
+      -> HardForkLedgerView_ f (blk : blks)
+    beforeKnownEnd end view = HardForkLedgerView {
+          hardForkLedgerViewTransition =
             TransitionKnown (boundEpoch end)
-        , tickedHardForkLedgerViewPerEra = HardForkState $
-            TZ (Current start (Comp view))
+        , hardForkLedgerViewPerEra = HardForkState $
+            TZ (Current start view)
         }
 
     afterKnownEnd ::
          Bound
-      -> Ticked (f blk')
-      -> Ticked (HardForkLedgerView_ f (blk : blk' : blks'))
-    afterKnownEnd end view = TickedHardForkLedgerView {
-          tickedHardForkLedgerViewTransition =
+      -> f blk'
+      -> HardForkLedgerView_ f (blk : blk' : blks')
+    afterKnownEnd end view = HardForkLedgerView {
+          hardForkLedgerViewTransition =
             -- We assume that we only ever have to translate to the /next/ era
             -- (as opposed to /any/ subsequent era)
             TransitionImpossible
-        , tickedHardForkLedgerViewPerEra = HardForkState $
+        , hardForkLedgerViewPerEra = HardForkState $
             TS (K (Past start end)) $
-            TZ (Current end (Comp view))
+            TZ (Current end view)
         }
 
 shiftView :: K Past blk
-          -> Ticked (HardForkLedgerView_ f blks)
-          -> Ticked (HardForkLedgerView_ f (blk : blks))
-shiftView past TickedHardForkLedgerView{..} = TickedHardForkLedgerView {
-      tickedHardForkLedgerViewTransition = tickedHardForkLedgerViewTransition
-    , tickedHardForkLedgerViewPerEra =
+          -> HardForkLedgerView_ f blks
+          -> HardForkLedgerView_ f (blk : blks)
+shiftView past HardForkLedgerView{..} = HardForkLedgerView {
+      hardForkLedgerViewTransition = hardForkLedgerViewTransition
+    , hardForkLedgerViewPerEra =
           HardForkState
         . TS past
         . getHardForkState
-        $ tickedHardForkLedgerViewPerEra
+        $ hardForkLedgerViewPerEra
     }
 
 {-------------------------------------------------------------------------------
@@ -741,7 +741,7 @@ ledgerInfo :: forall blk. SingleEraBlock blk
 ledgerInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 
 ledgerViewInfo :: forall blk f. SingleEraBlock blk
-               => (Ticked :.: f) blk -> LedgerEraInfo blk
+               => f blk -> LedgerEraInfo blk
 ledgerViewInfo _ = LedgerEraInfo $ singleEraInfo (Proxy @blk)
 
 injectLedgerError :: Index xs blk -> LedgerError blk -> HardForkLedgerError xs

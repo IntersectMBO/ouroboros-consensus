@@ -174,10 +174,6 @@ deriving instance Serialise (TipInfo                      blk)  => Serialise (Wr
   These are just forwarding instances
 -------------------------------------------------------------------------------}
 
-newtype instance Ticked (WrapLedgerView blk) = WrapTickedLedgerView {
-      unwrapTickedLedgerView :: Ticked (LedgerView (BlockProtocol blk))
-    }
-
 newtype instance Ticked (WrapChainDepState blk) = WrapTickedChainDepState {
       unwrapTickedChainDepState :: Ticked (ChainDepState (BlockProtocol blk))
     }

@@ -1044,7 +1044,7 @@ data IntersectCheck blk =
     -- the header 'rollForward' received.
   | Intersects
       (KnownIntersectionState blk)
-      (Ticked (LedgerView (BlockProtocol blk)))
+      (LedgerView (BlockProtocol blk))
 
 {-------------------------------------------------------------------------------
   Explicit state

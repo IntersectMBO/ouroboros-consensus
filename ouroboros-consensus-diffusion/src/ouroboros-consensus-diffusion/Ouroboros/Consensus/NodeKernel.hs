@@ -310,7 +310,7 @@ forkBlockForging IS{..} blockForging =
 
         trace $ TraceLedgerState currentSlot bcPrevPoint
 
-        -- We require the ticked ledger view in order to construct the ticked
+        -- We require the ledger view in order to construct the ticked
         -- 'ChainDepState'.
         ledgerView <-
           case runExcept $ forecastFor

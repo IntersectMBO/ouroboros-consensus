@@ -17,17 +17,15 @@ import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.History.Util (addSlots)
 import           Ouroboros.Consensus.Ledger.Basics (GetTip, getTipSlot)
-import           Ouroboros.Consensus.Ticked
 
--- | Forecast the effect of time ticking
 data Forecast a = Forecast {
       forecastAt  :: WithOrigin SlotNo
 
       -- Precondition: @At s >= forecastAt@
-    , forecastFor :: SlotNo -> Except OutsideForecastRange (Ticked a)
+    , forecastFor :: SlotNo -> Except OutsideForecastRange a
     }
 
-mapForecast :: (Ticked a -> Ticked b) -> Forecast a -> Forecast b
+mapForecast :: (a -> b) -> Forecast a -> Forecast b
 mapForecast f (Forecast at for) = Forecast{
       forecastAt  = at
     , forecastFor = fmap f . for
@@ -38,13 +36,13 @@ mapForecast f (Forecast at for) = Forecast{
 --
 -- Specialization of 'constantForecast'.
 trivialForecast :: GetTip b => b -> Forecast ()
-trivialForecast x = constantForecastOf TickedTrivial (getTipSlot x)
+trivialForecast x = constantForecastOf () (getTipSlot x)
 
 -- | Forecast where the values are never changing
 --
 -- This is primarily useful for tests; the forecast range is infinite, but we
 -- do still check the precondition, to catch any bugs.
-constantForecastOf :: Ticked a -> WithOrigin SlotNo -> Forecast a
+constantForecastOf :: a -> WithOrigin SlotNo -> Forecast a
 constantForecastOf a at = Forecast {
       forecastAt  = at
     , forecastFor = \for ->

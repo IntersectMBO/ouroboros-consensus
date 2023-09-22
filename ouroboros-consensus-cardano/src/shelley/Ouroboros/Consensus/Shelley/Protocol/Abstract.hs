@@ -52,7 +52,6 @@ import           Ouroboros.Consensus.Protocol.Abstract (CanBeLeader,
                      IsLeader, LedgerView, ValidateView)
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import           Ouroboros.Consensus.Protocol.Signed (SignedHeader)
-import           Ouroboros.Consensus.Ticked (Ticked)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 
 {-------------------------------------------------------------------------------
@@ -118,7 +117,7 @@ class
   -- check things like maximum header size.
   envelopeChecks ::
     ConsensusConfig proto ->
-    Ticked (LedgerView proto) ->
+    LedgerView proto ->
     ShelleyProtocolHeader proto ->
     Except (EnvelopeCheckError proto) ()
 

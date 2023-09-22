@@ -194,11 +194,6 @@ newtype PBftLedgerView c = PBftLedgerView {
     }
   deriving (Generic)
 
-newtype instance Ticked (PBftLedgerView c) = TickedPBftLedgerView {
-      -- | The updated delegates
-      tickedPBftDelegates :: Bimap (PBftVerKeyHash c) (PBftVerKeyHash c)
-    }
-
 deriving instance PBftCrypto c => NoThunks (PBftLedgerView c)
   -- use generic instance
 
@@ -276,10 +271,10 @@ newtype instance ConsensusConfig (PBft c) = PBftConfig {
     }
   deriving (Generic, NoThunks)
 
--- Ticking has no effect on the PBFtState, but we do need the ticked ledger view
+-- Ticking has no effect on the PBFtState, but we do need the ledger view
 data instance Ticked (PBftState c) = TickedPBftState {
-      tickedPBftLedgerView :: Ticked (LedgerView (PBft c))
-    , getTickedPBftState   :: PBftState c
+      getPBftLedgerView   :: LedgerView (PBft c)
+    , getTickedPBftState  :: PBftState c
     }
 
 instance PBftCrypto c => ConsensusProtocol (PBft c) where
@@ -321,7 +316,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
   updateChainDepState cfg
                       toValidate
                       slot
-                      (TickedPBftState (TickedPBftLedgerView dms) state) =
+                      (TickedPBftState (PBftLedgerView dms) state) =
       case toValidate of
         PBftValidateBoundary ->
           return state
@@ -358,7 +353,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
   reupdateChainDepState cfg
                         toValidate
                         slot
-                        (TickedPBftState (TickedPBftLedgerView dms) state) =
+                        (TickedPBftState (PBftLedgerView dms) state) =
       case toValidate of
         PBftValidateBoundary -> state
         PBftValidateRegular PBftFields{pbftIssuer} _ _ ->
@@ -487,7 +482,7 @@ pbftCheckCanForge cfg PBftCanBeLeader{..} slot tickedChainDepState =
     dlgKeyHash :: PBftVerKeyHash c
     dlgKeyHash = hashVerKey . dlgCertDlgVerKey $ pbftCanBeLeaderDlgCert
 
-    TickedPBftState (TickedPBftLedgerView dms) cds = tickedChainDepState
+    TickedPBftState (PBftLedgerView dms) cds = tickedChainDepState
 
 {-------------------------------------------------------------------------------
   Condense

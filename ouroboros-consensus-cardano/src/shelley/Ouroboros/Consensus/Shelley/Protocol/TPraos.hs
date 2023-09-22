@@ -22,8 +22,8 @@ import           Ouroboros.Consensus.Protocol.Signed (Signed,
 import           Ouroboros.Consensus.Protocol.TPraos
                      (MaxMajorProtVer (MaxMajorProtVer), TPraos,
                      TPraosCannotForge, TPraosFields (..), TPraosToSign (..),
-                     Ticked (TickedPraosLedgerView), forgeTPraosFields,
-                     tpraosMaxMajorPV, tpraosParams, tpraosSlotsPerKESPeriod)
+                     forgeTPraosFields, tpraosMaxMajorPV, tpraosParams,
+                     tpraosSlotsPerKESPeriod)
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
                      ProtocolHeaderSupportsEnvelope (..),
                      ProtocolHeaderSupportsKES (..),
@@ -46,7 +46,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
 
   type EnvelopeCheckError _ = ChainPredicateFailure
 
-  envelopeChecks cfg (TickedPraosLedgerView lv) hdr =
+  envelopeChecks cfg lv hdr =
     SL.chainChecks
       maxPV
       (SL.lvChainChecks lv)

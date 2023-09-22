@@ -118,14 +118,10 @@ instance ( SimpleCrypto c
 instance ( SimpleCrypto c
          , Signable MockDSIGN (SignedSimplePBft c PBftMockCrypto)
          ) => LedgerSupportsProtocol (SimplePBftBlock c PBftMockCrypto) where
-  protocolLedgerView   cfg _  = pretendTicked $ simpleMockLedgerConfig cfg
+  protocolLedgerView   cfg _  = simpleMockLedgerConfig cfg
   ledgerViewForecastAt cfg st = constantForecastOf
-                                 (pretendTicked $ simpleMockLedgerConfig cfg)
+                                 (simpleMockLedgerConfig cfg)
                                  (getTipSlot st)
-
-pretendTicked :: PBftLedgerView PBftMockCrypto
-              -> Ticked (PBftLedgerView PBftMockCrypto)
-pretendTicked (PBftLedgerView ds) = TickedPBftLedgerView ds
 
 {-------------------------------------------------------------------------------
   Forging

@@ -126,18 +126,18 @@ rewind p (HeaderStateHistory history) = HeaderStateHistory <$>
 validateHeader ::
      forall blk. (BlockSupportsProtocol blk, ValidateEnvelope blk)
   => TopLevelConfig blk
-  -> Ticked (LedgerView (BlockProtocol blk))
+  -> LedgerView (BlockProtocol blk)
   -> Header blk
   -> HeaderStateHistory blk
   -> Except (HeaderError blk) (HeaderStateHistory blk)
-validateHeader cfg ledgerView hdr history = do
-    st' <- HeaderValidation.validateHeader cfg ledgerView hdr st
+validateHeader cfg lv hdr history = do
+    st' <- HeaderValidation.validateHeader cfg lv hdr st
     return $ append st' history
   where
     st :: Ticked (HeaderState blk)
     st = tickHeaderState
            (configConsensus cfg)
-           ledgerView
+           lv
            (blockSlot hdr)
            (current history)
 

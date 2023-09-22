@@ -116,10 +116,8 @@ instance ( SimpleCrypto c
          , PraosCrypto c'
          , Signable (PraosKES c') (SignedSimplePraos c c')
          ) => LedgerSupportsProtocol (SimplePraosBlock c c') where
-  protocolLedgerView   _ _  = TickedTrivial
-  ledgerViewForecastAt _ st = constantForecastOf
-                                 TickedTrivial
-                                 (getTipSlot st)
+  protocolLedgerView   _ _  = ()
+  ledgerViewForecastAt _ st = constantForecastOf () (getTipSlot st)
 
 {-------------------------------------------------------------------------------
   Forging

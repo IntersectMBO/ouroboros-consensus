@@ -63,7 +63,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
 
   type EnvelopeCheckError _ = PraosEnvelopeError
 
-  envelopeChecks cfg (TickedPraosLedgerView lv) hdr = do
+  envelopeChecks cfg lv hdr = do
     unless (m <= maxpv) $ throwError (ObsoleteNode m maxpv)
     unless (fromIntegral (bhviewHSize bhv) <= maxHeaderSize) $
       throwError $

@@ -524,11 +524,11 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
         let slot = blockSlot      blk
         -- We do not use strictness annotation on the resulting tuples since
         -- 'time' takes care of forcing the evaluation of its argument's result.
-        (tkLdgrView, tForecast) <- time $ forecast            slot prevLedgerState
-        (tkHdrSt,    tHdrTick)  <- time $ tickTheHeaderState  slot prevLedgerState tkLdgrView
-        (hdrSt',     tHdrApp)   <- time $ applyTheHeader                           tkLdgrView tkHdrSt
-        (tkLdgrSt,   tBlkTick)  <- time $ tickTheLedgerState  slot prevLedgerState
-        (ldgrSt',    tBlkApp)   <- time $ applyTheBlock                                       tkLdgrSt
+        (ldgrView, tForecast) <- time $ forecast            slot prevLedgerState
+        (tkHdrSt,  tHdrTick)  <- time $ tickTheHeaderState  slot prevLedgerState ldgrView
+        (hdrSt',   tHdrApp)   <- time $ applyTheHeader                           ldgrView tkHdrSt
+        (tkLdgrSt, tBlkTick)  <- time $ tickTheLedgerState  slot prevLedgerState
+        (ldgrSt',  tBlkApp)   <- time $ applyTheBlock                                     tkLdgrSt
 
         currentRtsStats <- GC.getRTSStats
         let
@@ -565,7 +565,7 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
         forecast ::
              SlotNo
           -> ExtLedgerState blk
-          -> IO (Ticked (LedgerView (BlockProtocol blk)))
+          -> IO (LedgerView (BlockProtocol blk))
         forecast slot st = do
             let forecaster = ledgerViewForecastAt lcfg (ledgerState st)
             case runExcept $ forecastFor forecaster slot of
@@ -575,20 +575,20 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
         tickTheHeaderState ::
              SlotNo
           -> ExtLedgerState blk
-          -> Ticked (LedgerView (BlockProtocol blk))
+          -> LedgerView (BlockProtocol blk)
           -> IO (Ticked (HeaderState blk))
-        tickTheHeaderState slot st tickedLedgerView =
+        tickTheHeaderState slot st ledgerView =
             pure $! tickHeaderState ccfg
-                                    tickedLedgerView
+                                    ledgerView
                                     slot
                                     (headerState st)
 
         applyTheHeader ::
-             Ticked (LedgerView (BlockProtocol blk))
+             LedgerView (BlockProtocol blk)
           -> Ticked (HeaderState blk)
           -> IO (HeaderState blk)
-        applyTheHeader tickedLedgerView tickedHeaderState = do
-            case runExcept $ validateHeader cfg tickedLedgerView (getHeader blk) tickedHeaderState of
+        applyTheHeader ledgerView tickedHeaderState = do
+            case runExcept $ validateHeader cfg ledgerView (getHeader blk) tickedHeaderState of
               Left err -> fail $ "benchmark doesn't support invalid headers: " <> show rp <> " " <> show err
               Right x -> pure x
 

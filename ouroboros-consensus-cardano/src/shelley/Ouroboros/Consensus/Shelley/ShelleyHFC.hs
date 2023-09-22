@@ -250,7 +250,7 @@ forecastAcrossShelley ::
   -> Bound  -- ^ Transition between the two eras
   -> SlotNo -- ^ Forecast for this slot
   -> LedgerState (ShelleyBlock protoFrom eraFrom)
-  -> Except OutsideForecastRange (Ticked (WrapLedgerView (ShelleyBlock protoTo eraTo)))
+  -> Except OutsideForecastRange (WrapLedgerView (ShelleyBlock protoTo eraTo))
 forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
     | forecastFor < maxFor
     = return $ futureLedgerView forecastFor
@@ -263,12 +263,12 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
   where
     -- | 'SL.futureLedgerView' imposes its own bounds. Those bounds could
     -- /exceed/ the 'maxFor' we have computed, but should never be /less/.
-    futureLedgerView :: SlotNo -> Ticked (WrapLedgerView (ShelleyBlock protoTo era))
+    futureLedgerView :: SlotNo -> WrapLedgerView (ShelleyBlock protoTo era)
     futureLedgerView =
-          WrapTickedLedgerView
+          WrapLedgerView
         . either
             (\e -> error ("futureLedgerView failed: " <> show e))
-            (Proto.translateTickedLedgerView @protoFrom @protoTo)
+            (Proto.translateLedgerView @protoFrom @protoTo)
         . runExcept
         . Forecast.forecastFor (ledgerViewForecastAt cfgFrom ledgerStateFrom)
 
