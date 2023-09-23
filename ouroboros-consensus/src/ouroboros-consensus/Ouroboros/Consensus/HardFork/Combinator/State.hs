@@ -129,7 +129,7 @@ mostRecentTransitionInfo HardForkLedgerConfig{..} st =
         case singleEraTransition' cfg eraParams currentStart of
             FixedTransition Nothing  -> TransitionNever
             FixedTransition (Just e) -> TransitionKnown e
-            EventualTransition f     -> case f currentState of
+            EventualTransition f     -> case f currentState Nothing of
                 Nothing -> TransitionUnknown (ledgerTipSlot currentState)
                 Just e  -> TransitionKnown e
 
@@ -208,6 +208,7 @@ extendToSlot ledgerCfg@HardForkLedgerConfig{..} slot ledgerSt@(HardForkState st)
                         eraParams
                         (currentStart cur)
                         (currentState cur)
+                        (Just slot)
         let endBound = History.mkUpperBound
                          eraParams
                          (currentStart cur)

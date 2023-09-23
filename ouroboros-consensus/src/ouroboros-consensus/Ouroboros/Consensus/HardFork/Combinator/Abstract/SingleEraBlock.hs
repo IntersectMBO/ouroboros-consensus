@@ -97,8 +97,8 @@ class ( LedgerSupportsProtocol blk
   -- 'Ouroboros.Consensus.HardFork.History.EraParams.eraSafeZone' is
   -- 'Ouroboros.Consensus.HardFork.History.EraParams.UnsafeIndefiniteSafeZone'.
   singleEraTransition :: PartialLedgerConfig blk
-                      -> EraParams -- ^ Current era parameters
-                      -> Bound     -- ^ Start of this era
+                      -> EraParams    -- ^ Current era parameters
+                      -> Bound        -- ^ Start of this era
                       -> StaticTransition blk
 
   -- | Era information (for use in error messages)
@@ -118,21 +118,27 @@ data StaticTransition blk =
   |
     -- | The transition out of this era does depend on the ledger state
     --
+    -- A given @Just slot@ specifies that there are---and will be---no blocks
+    -- between this ledger state and @slot@, which will be after the block that
+    -- induced this ledger state (or perhaps simultaneous with it, if it was an
+    -- EBB).
+    --
     -- @Nothing@ means /not yet known/.
     --
     -- @Just e@ means @e@ is the /known/ exclusive upper bound of this era.
-    EventualTransition (LedgerState blk -> Maybe EpochNo)
+    EventualTransition (LedgerState blk -> Maybe SlotNo -> Maybe EpochNo)
 
 joinedSingleEraTransition :: SingleEraBlock blk
                           => PartialLedgerConfig blk
-                          -> EraParams -- ^ Current era parameters
-                          -> Bound     -- ^ Start of this era
+                          -> EraParams       -- ^ Current era parameters
+                          -> Bound           -- ^ Start of this era
                           -> LedgerState blk
+                          -> Maybe SlotNo    -- ^ Tick target
                           -> Maybe EpochNo
-joinedSingleEraTransition pcfg params start st =
+joinedSingleEraTransition pcfg params start st mbSlot =
     case singleEraTransition pcfg params start of
-        FixedTransition mb -> mb   -- "never" does imply "not yet"
-        EventualTransition f -> f st
+        FixedTransition mbE  -> mbE   -- "never" indeed implies "not yet"
+        EventualTransition f -> f st mbSlot
 
 proxySingle :: Proxy SingleEraBlock
 proxySingle = Proxy

@@ -212,7 +212,7 @@ instance SingleEraBlock ByronBlock where
         TriggerHardForkNever                         -> FixedTransition Nothing
         TriggerHardForkAtEpoch   epoch               -> FixedTransition (Just epoch)
         TriggerHardForkAtVersion shelleyMajorVersion -> EventualTransition $
-          \ledgerState ->
+          \ledgerState _slot ->
             byronTransition
               pcfg
               shelleyMajorVersion

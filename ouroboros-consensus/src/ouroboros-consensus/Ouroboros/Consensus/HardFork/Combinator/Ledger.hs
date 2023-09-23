@@ -376,7 +376,13 @@ instance CanHardFork xs => LedgerSupportsProtocol (HardForkBlock xs) where
                   <$> case singleEraTransition' cfg params start of
                           FixedTransition Nothing  -> Nothing
                           FixedTransition (Just e) -> Just $ Just e
-                          EventualTransition     f -> Just $ f st
+                          EventualTransition     f -> Just $ f st Nothing
+                              -- TODO when forecasting, the slot of the next
+                              -- block might be known, so this Nothing would be
+                              -- pessimistic. But right now that information is
+                              -- never available here, since it'd require an
+                              -- additional argument to either
+                              -- 'ledgerViewForecastAt' or 'forecastFor'.
               }
           }
         where
@@ -625,7 +631,7 @@ inspectHardForkLedger = go
             inspectLedger c (currentState before) (currentState after)
 
           -- TODO assert currentStart before == currentStart after?
-        , (\k -> case singleEraTransition' pc ps (currentStart before) of FixedTransition{} -> []; EventualTransition f -> k f) $ \f -> case (pss, f (currentState before), f (currentState after)) of
+        , (\k -> case singleEraTransition' pc ps (currentStart before) of FixedTransition{} -> []; EventualTransition f -> k (\st -> f st Nothing)) $ \f -> case (pss, f (currentState before), f (currentState after)) of
             (_, Nothing, Nothing) ->
               []
             (_, Just _, Nothing) ->

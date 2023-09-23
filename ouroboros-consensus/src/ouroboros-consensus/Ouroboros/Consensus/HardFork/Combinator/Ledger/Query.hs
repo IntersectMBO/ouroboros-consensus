@@ -301,6 +301,7 @@ answerQueryAnytime HardForkLedgerConfig{..} =
             ps
             (currentStart cur)
             (currentState cur)
+            Nothing
 
 {-------------------------------------------------------------------------------
   Hard fork queries

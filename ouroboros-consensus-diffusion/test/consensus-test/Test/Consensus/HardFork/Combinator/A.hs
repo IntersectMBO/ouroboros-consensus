@@ -430,7 +430,7 @@ instance BlockSupportsMetrics BlockA where
 instance SingleEraBlock BlockA where
   singleEraInfo _ = SingleEraInfo "A"
 
-  singleEraTransition cfg EraParams{..} eraStart = EventualTransition $ \st -> do
+  singleEraTransition cfg EraParams{..} eraStart = EventualTransition $ \st _slot -> do
       let k = lcfgA_k cfg
 
       -- Slot conversion (valid for slots in this era only)
