@@ -121,7 +121,21 @@ data StaticTransition blk =
     -- A given @Just slot@ specifies that there are---and will be---no blocks
     -- between this ledger state and @slot@, which will be after the block that
     -- induced this ledger state (or perhaps simultaneous with it, if it was an
-    -- EBB).
+    -- EBB). If @Nothing@ is given, then the slot of the successor block of the
+    -- given ledger state is unknown and in particular could even be in next
+    -- slot (or the same if the latest was an EBB).
+    --
+    -- Note that even if @Just slot@ is given, then @slot@ may be /after/ the
+    -- @blk@ era.
+    --
+    -- Note that @(st, Just slot)@ is /not enough/ to invoke
+    -- 'Ouroboros.Consensus.Ledger.Basics.applyChainTick'; that would require
+    -- completing the 'PartialLedgerConfig', which would require a
+    -- 'Cardano.Slotting.EpochInfo.EpochInfo', which is the very thing
+    -- 'singleEraTransition' is ultimately used to determine! This is the only
+    -- theoretical difference between accepting @(LedgerState blk, Maybe
+    -- SlotNo)@ here instead of @Either ('LedgerState' blk)
+    -- 'Ouroboros.Consensus.Ticked.Ticked' ('LedgerState' blk)@.
     --
     -- @Nothing@ means /not yet known/.
     --

@@ -104,6 +104,8 @@ instance CanHardFork xs => GetTip (Ticked (LedgerState (HardForkBlock xs))) wher
 
 data instance Ticked (LedgerState (HardForkBlock xs)) =
     TickedHardForkLedgerState {
+        -- | Information about when the tip era of
+        -- 'tickedHardForkLedgerStatePerEra' ends
         tickedHardForkLedgerStateTransition :: !TransitionInfo
       , tickedHardForkLedgerStatePerEra     ::
           !(HardForkState (Ticked :.: LedgerState) xs)
@@ -121,28 +123,30 @@ instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
 
   applyChainTickLedgerResult cfg@HardForkLedgerConfig{..} slot (HardForkLedgerState st) =
       sequenceHardForkState
-        (hcizipWith proxySingle (tickOne ei slot) cfgs extended) <&> \l' ->
+        (hcizipWith proxySingle (tickOne ei slot) cfgs extended) <&> \st' ->
       TickedHardForkLedgerState {
-          tickedHardForkLedgerStateTransition =
-            -- We are bundling a 'TransitionInfo' with a /ticked/ ledger state,
-            -- but /derive/ that 'TransitionInfo' from the /unticked/  (albeit
-            -- extended) state. That requires justification. Three cases:
-            --
-            -- o 'TransitionUnknown'. If the transition is unknown, then it
-            --   cannot become known due to ticking. In this case, we record
-            --   the tip of the ledger, which ticking also does not modify
-            --   (this is an explicit postcondition of 'applyChainTick').
-            -- o 'TransitionKnown'. If the transition to the next epoch is
-            --   already known, then ticking does not change that information.
-            --   It can't be the case that the 'SlotNo' we're ticking to is
-            --   /in/ that next era, because if was, then 'extendToSlot' would
-            --   have extended the telescope further.
-            --   (This does mean however that it is important to use the
-            --   /extended/ ledger state, not the original, to determine the
-            --   'TransitionInfo'.)
-            -- o 'TransitionNever'. This is an absorbing state.
-            State.mostRecentTransitionInfo cfg extended
-        , tickedHardForkLedgerStatePerEra = l'
+          tickedHardForkLedgerStatePerEra     = st'
+        , tickedHardForkLedgerStateTransition =
+            case State.match (State.tip st) st' of
+                Right{} -> State.mostRecentTransitionInfo_
+                             cfg
+                             st
+                             (State.Strong (Just slot))
+                Left{}  ->
+                    let start :: Bound
+                        start = hcollapse
+                              $ hmap (K . currentStart)
+                              $ Telescope.tip (getHardForkState st')
+
+                        start' = NotOrigin (boundSlot start)
+                    in
+                    -- ASSUMPTION a ledger state does not determine the end of
+                    -- the /next/ era, even if its start is known.
+                    State.mostRecentTransitionInfo_
+                      cfg
+                      st'
+                      (State.Weak start')
+                        -- TODO ^^^ why not @slot@ here? Perhaps only because of empty eras?
         }
     where
       cfgs = getPerEraLedgerConfig hardForkLedgerConfigPerEra

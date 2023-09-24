@@ -21,9 +21,11 @@ module Ouroboros.Consensus.HardFork.Combinator.State (
     -- * Serialisation support
   , recover
     -- * EpochInfo
+  , Strength (..)
   , epochInfoLedger
   , epochInfoPrecomputedTransitionInfo
   , mostRecentTransitionInfo
+  , mostRecentTransitionInfo_
   , reconstructSummaryLedger
     -- * Ledger specific functionality
   , extendToSlot
@@ -109,7 +111,37 @@ mostRecentTransitionInfo :: All SingleEraBlock xs
                          => HardForkLedgerConfig xs
                          -> HardForkState LedgerState xs
                          -> TransitionInfo
-mostRecentTransitionInfo HardForkLedgerConfig{..} st =
+mostRecentTransitionInfo cfg st =
+    mostRecentTransitionInfo_ cfg st (Strong Nothing)
+
+-- | See 'mostRecentTransitionInfo_'
+data Strength f =
+    -- | @f@ is 'LedgerState'
+    --
+    -- The argument is the slot the given state is about to be ticked to, if
+    -- known. In other words, the slot of the /next/ block.
+    (f ~ LedgerState) => Strong (Maybe SlotNo)
+  |
+    -- | @f@ is not 'LedgerState'
+    --
+    -- If the safezone must be invoked, it will be applied from the given
+    -- point. Therefore this point should be the slot of the most recent block
+    -- /in the same era/, or, if there has not yet been such a block, then the
+    -- first slot of the era.
+    Weak (WithOrigin SlotNo)
+
+-- | Calculate the 'TransitionInfo' for the era of the tip of the given state
+--
+-- If 'Strong', then that state can be passed to 'EventualTransition'.
+--
+-- If 'Weak', then the answer will 'TransitionUnknown' unless
+-- 'FixedTransition'.
+mostRecentTransitionInfo_ :: forall xs f. All SingleEraBlock xs
+                          => HardForkLedgerConfig xs
+                          -> HardForkState f xs
+                          -> Strength f
+                          -> TransitionInfo
+mostRecentTransitionInfo_ HardForkLedgerConfig{..} st strength =
     hcollapse $
       hczipWith3
         proxySingle
@@ -123,15 +155,17 @@ mostRecentTransitionInfo HardForkLedgerConfig{..} st =
     getTransition :: SingleEraBlock          blk
                   => WrapPartialLedgerConfig blk
                   -> K History.EraParams     blk
-                  -> Current LedgerState     blk
+                  -> Current f               blk
                   -> K TransitionInfo        blk
     getTransition cfg (K eraParams) Current{..} = K $
         case singleEraTransition' cfg eraParams currentStart of
             FixedTransition Nothing  -> TransitionNever
             FixedTransition (Just e) -> TransitionKnown e
-            EventualTransition f     -> case f currentState Nothing of
-                Nothing -> TransitionUnknown (ledgerTipSlot currentState)
-                Just e  -> TransitionKnown e
+            EventualTransition f     -> case strength of
+                Weak sno      -> TransitionUnknown sno
+                Strong mbSlot -> case f currentState mbSlot of
+                    Nothing -> TransitionUnknown (ledgerTipSlot currentState)
+                    Just e  -> TransitionKnown e
 
 reconstructSummaryLedger :: All SingleEraBlock xs
                          => HardForkLedgerConfig xs
