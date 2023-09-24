@@ -348,3 +348,79 @@ The key corresponding parts of the implementation are as follows.
 - The interpretation only depends on the eras' start and end bounds, not on the safe zone.
   The safe zone is instead used in an preceding step to safely determine the least possible value of the first unknown end bound.
   This determination is implemented by the `ouroboros-consensus:Ouroboros.Consensus.HardFork.Combinator.State.reconstructSummaryLedger` function.
+
+## The HFC and `EpochInfo`s
+
+One of the `HardForkBlock` combinator's major responsibilities is providing an `EpochInfo` to the ledger code.
+What are the constraints on that `EpochInfo`?
+
+The HFC uses the underlying blocks' ledger rules in the following ways.
+
+- within a single era
+    - via the Consensus Layer's typical interface
+        - forecasting from a nonticked ledger state to a ledger view of a slot
+        - using that ledger view to tick a chain-dependent state to the same slot
+        - applying a header to a ticked chain-dependent state
+        - ticking a ledger state to a slot
+        - applying a block/transaction to a ticked ledger state
+        - † chain selection
+    - via the additional `CanHardFork` interface (specifically via `SingleEraBlock`)
+        - † determining whether a nonticked ledger state already determines when its era will end
+- across each era transition
+    - via the additional `CanHardFork` interface
+        - forecasting from a nonticked ledger state to a ledger view of a slot in the next era
+        - translating a nonticked chain-dependent state to the next era
+        - translating a nonticked ledger state to the next era
+        - translating a transaction to the next era
+- across one or more era transitions
+    - via the additional `CanHardFork` interface
+        - † chain selection
+
+Crucially, _all_ of those ledger rules entrypoints require an `EpochInfo` (supplifed via either `ConsensusConfig` or `LedgerConfig`), except for the two prefixed with a †.
+What are the constraints on that `EpochInfo` in each entrypoint?
+
+- within a single era
+    - _forecasting from a nonticked ledger state to a ledger view of a slot_.
+      This function must already throw an exception when the given slot is more than on stability window ahead of the nonticked ledger state.
+      Thus the `EpochInfo` must be defined at least up to that horizon.
+    - _using that ledger view to tick a chain-dependent state to the same slot_
+      This function does not require anything beyond the constraint from the forecast that created the ledger view.
+    - _applying a header to a ticked chain-dependent state_
+      This function does not require anything beyond the constraint from the forecast that created the ledger view that was used to create the ticked chain-dependent state.
+    - _ticking a ledger state to a slot_.
+      This is the most involved and enlightening case; see the detailed discussion below.
+    - _applying a block/transaction to a ticked ledger state_.
+      For example, Plutus requires interpreting a transaction's slot-based validity interval as the UTC times of it two endpoints.
+      TODO If I recall corectly, the current bound on those slots is unfortunately defined as "whatever the HFC supportss"; what is the _intended_ bound on those slots?
+- across each era transition
+    - _forecasting from a nonticked ledger state to a ledger view of a slot in the next era_.
+      TODO ???
+    - _translating a nonticked chain-dependent state to the next era_.
+      TODO ???
+    - _translating a nonticked ledger state to the next era_.
+      TODO ???
+    - _translating a transaction to the next era_.
+      TODO ???
+
+Consider again the rule for _ticking a ledger state to a slot_.
+The only information the HFC has that a ledger state does not is the (static) configuration data.
+In the current architecture, though, that configuration data includes an `EpochInfo`, and so it's possible this ledger rule necessarily scrutinizes the given `EpochInfo`.
+Still, there is a minimum amount of scrunity that should suffice in the theoretical extreme.
+Specifically, it should be sufficient for this `EpochInfo` to be defined only up to the slot of the nonticked ledger state, since, given the rest of the configuration data and the entire ledger state, the rule should be able to extrapolate any `EpochInfo` beyond that.
+On the other hand, separation of concerns suggests that the ticking rule should not need to do that extrapolation, since it would overlap with the responsibility of the `SingleEraBlock` instance.
+
+Recall that this ticking rule is not responsible for the next era.
+It would therefore be reasonable for the rule to assume that the destination slot is in the same era as the nonticked ledger state.
+(TODO the tick-then-translate would directly violate that.
+Other similar assumptions would be violated by translate-then-tick, eg the destination slot is the same era as the most recent block.
+See the aside below.)
+Under that assumption, the HFC should be able to define the `EpochInfo` at least up to the destination slot.
+
+TODO conclusion: the `SingleEraBlock` rule should be able to do extrapolation when being used to prepare the `EpochInfo` for a ticking rule; ie it should be able to leverage the known-absence of subsequent blocks up to some slot
+
+*Aside*.
+Moreover, the ticking rule and the `SingleEraBlock` instance are explicitly not responsible for next era.
+However, the current HFC interface---before PR #358---forces the HFC to use this intra-era ticking rule to implement cross-era ticks.
+EG if the ticking rule did ask the `EpochInfo` about the given ledger state's slot and then extrapolate, the HFC's current "translate*-then-tick" scheme for cross-era ticks would be incoherent: the translated-but-not-ticked ledger state would be asking for information about a slot that is not in that ledger state's era!
+The "tick-then-translate*" scheme would similarly be incoherent, since the first era's tick rule would be extrapolating about slots not in the next era.
+Decomposing the cross-era ticks to end at era boundaries would avoid this incoherence, as in the "tick-then-translate-then-tick" scheme, regardless of which tick actually _crossed_ the epoch boundary.
