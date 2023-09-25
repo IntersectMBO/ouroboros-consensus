@@ -430,15 +430,17 @@ mkCdbTracer tracer =
     ChainDB.Impl.TraceAddBlockEvent event ->
       case event of
         AddedToCurrentChain _ NewTipInfo {newTipPoint} _ newFragment -> do
-          traceUnitWith tracer "ChainDB" "Added to current chain"
-          traceUnitWith tracer "ChainDB" $ "New tip: " ++ condense newTipPoint
-          traceUnitWith tracer "ChainDB" $ "New fragment: " ++ condense newFragment
+          trace "Added to current chain"
+          trace $ "New tip: " ++ condense newTipPoint
+          trace $ "New fragment: " ++ condense newFragment
         SwitchedToAFork _ NewTipInfo {newTipPoint} _ newFragment -> do
-          traceUnitWith tracer "ChainDB" "Switched to a fork"
-          traceUnitWith tracer "ChainDB" $ "New tip: " ++ condense newTipPoint
-          traceUnitWith tracer "ChainDB" $ "New fragment: " ++ condense newFragment
+          trace "Switched to a fork"
+          trace $ "New tip: " ++ condense newTipPoint
+          trace $ "New fragment: " ++ condense newFragment
         _ -> pure ()
     _ -> pure ()
+  where
+    trace = traceUnitWith tracer "ChainDB"
 
 mkChainSyncClientTracer ::
   IOLike m =>
@@ -447,10 +449,12 @@ mkChainSyncClientTracer ::
 mkChainSyncClientTracer tracer =
   Tracer $ \case
     TraceRolledBack point ->
-      traceUnitWith tracer "ChainSyncClient" $ "Rolled back to: " ++ condense point
+      trace $ "Rolled back to: " ++ condense point
     TraceFoundIntersection point _ourTip _theirTip ->
-      traceUnitWith tracer "ChainSyncClient" $ "Found intersection at: " ++ condense point
+      trace $ "Found intersection at: " ++ condense point
     _ -> pure ()
+  where
+    trace = traceUnitWith tracer "ChainSyncClient"
 
 -- | Trace using the given tracer, printing the current time (typically the time
 -- of the simulation) and the unit name.
