@@ -9,7 +9,6 @@
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree (
     BlockTree (..)
   , BlockTreeBranch (..)
-  , InvolvesRollback (..)
   , addBranch
   , addBranch'
   , allFragments
@@ -105,14 +104,25 @@ findFragment :: AF.HasHeader blk => AF.Point blk -> BlockTree blk -> Maybe (AF.A
 findFragment point blockTree =
   fst <$> firstJust (map (\fragment -> AF.splitAfterPoint fragment point) $ allFragments blockTree)
 
-newtype InvolvesRollback = InvolvesRollback Bool
-
-findPath :: AF.HasHeader blk => AF.Point blk -> AF.Point blk -> BlockTree blk -> Maybe (InvolvesRollback, AF.AnchoredFragment blk)
+-- | @findPath source target blockTree@ finds a path from the @source@ point to
+-- the @target@ point in the @blockTree@, or return @Nothing@. A path is a
+-- fragment anchored at the @source@ or an ancestor of the @source@. One can
+-- distinguish three cases:
+--
+-- - the fragment is anchored at the @source@: all the blocks are descendants of
+--   the source; serving this fragment would only require rolling forward;
+--
+-- - the fragment is not anchored at the @source@ and is empty: it is then in
+--   fact anchored at the @target@ which is an ancestor of the source;
+--
+-- - the fragment is not anchored at the @source@ and is not empty: serving this
+--   fragment would require rolling backwards to the anchor.
+findPath :: AF.HasHeader blk => AF.Point blk -> AF.Point blk -> BlockTree blk -> Maybe (AF.AnchoredFragment blk)
 findPath source target blockTree = do
   sourceFragment <- findFragment source blockTree
   targetFragment <- findFragment target blockTree
-  (_, _, sourceSuffix, targetSuffix) <- AF.intersect sourceFragment targetFragment
-  pure (InvolvesRollback (AF.length sourceSuffix /= 0), targetSuffix)
+  (_, _, _, targetSuffix) <- AF.intersect sourceFragment targetFragment
+  pure targetSuffix
 
 prettyPrint :: AF.HasHeader blk => BlockTree blk -> [String]
 prettyPrint blockTree = do

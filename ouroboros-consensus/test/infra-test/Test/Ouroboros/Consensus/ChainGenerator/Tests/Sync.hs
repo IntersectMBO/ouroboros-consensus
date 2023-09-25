@@ -182,16 +182,30 @@ serveHeader MockedChainSyncServer{..} points = do
       headerPoint = AF.castPoint $ blockPoint header'
   case BT.findPath intersection headerPoint mcssBlockTree of
     Nothing -> error "There should always be a path"
-    Just (involvesRollback, fragmentAhead) -> do
-      traceWith mcssTracer $ "  fragment ahead: " ++ condense fragmentAhead
-      case involvesRollback of
-        BT.InvolvesRollback True -> error "Rollback not supported in MockedChainSyncServer"
-        _ -> pure ()
-      case fragmentAhead of
-        AF.Empty _ -> pure Nothing
-        next AF.:< _ -> do
-          atomically $ writeTVar mcssCurrentIntersection $ blockPoint next
-          pure $ Just (coerce (tip points), getHeader next)
+    Just fragmentAhead
+      -- If the anchor is the intersection, then the fragment is purely
+      -- descendant of the intersection so we can roll forward.
+      | AF.anchorPoint fragmentAhead == intersection ->
+        case fragmentAhead of
+          AF.Empty _ -> do
+            traceWith mcssTracer "  intersection is exactly our header point"
+            pure Nothing
+          next AF.:< _ -> do
+            traceWith mcssTracer "  intersection is before our header point"
+            traceWith mcssTracer $ "  fragment ahead: " ++ condense fragmentAhead
+            atomically $ writeTVar mcssCurrentIntersection $ blockPoint next
+            pure $ Just (coerce (tip points), getHeader next)
+      -- If the anchor is not the intersection but the fragment is empty, then
+      -- the intersection is further than the tip that we can serve.
+      | AF.length fragmentAhead == 0 -> do
+          traceWith mcssTracer "  intersection is further than our header point"
+          pure Nothing
+      -- If the anchor is not the intersection and the fragment is non-empty,
+      -- then we require a rollback
+      | otherwise -> do
+          traceWith mcssTracer $ "  we will require a rollback to" ++ condense (AF.anchorPoint fragmentAhead)
+          traceWith mcssTracer $ "  fragment: " ++ condense fragmentAhead
+          error "Rollback not supported in MockedChainSyncServer"
 
 intersectWith ::
   AnchoredFragment TestBlock ->
