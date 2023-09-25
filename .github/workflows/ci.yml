@@ -25,7 +25,7 @@ jobs:
          os: [ubuntu-latest]
     env:
       # Modify this value to "invalidate" the Cabal cache.
-      CABAL_CACHE_VERSION: "2023-09-04"
+      CABAL_CACHE_VERSION: "2023-09-25"
 
     steps:
     - uses: actions/checkout@v4

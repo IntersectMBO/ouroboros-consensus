@@ -31,11 +31,3 @@ tests: true
 benchmarks: true
 
 import: ./asserts.cabal
-
--- This can be removed once this fix is released https://github.com/well-typed/cborg/pull/325
-source-repository-package
-  type: git
-  location: https://github.com/well-typed/cborg.git
-  tag: c8013b3474d876f4da56c869d57e3f3ac7f42dc6
-  --sha256: 1rahq47qm977fawkq3d3718bz7fvd7hvy0s9qnbhlzafkqhqnqzj
-  subdir: cborg
