@@ -1,7 +1,6 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest (tests) where
@@ -72,7 +71,7 @@ exampleTestSetup params seed =
              | otherwise = banalPointSchedule (Peers (Peer HonestPeer goodChain) (Map.fromList [(advId, Peer advId badChain)]))
     fast = True
     advId = PeerId "adversary"
-    HonestRecipe (Kcp k) (Scg scg) _ (Len len) = params.testRecipeH
+    HonestRecipe (Kcp k) (Scg scg) _ (Len len) = testRecipeH params
     genesisAcrossIntersection = not genesisAfterIntersection && len > scg
     -- TODO: also need: at least k+1 blocks after the intersection
     genesisAfterIntersection =
@@ -80,7 +79,8 @@ exampleTestSetup params seed =
       && advLenAfterIntersection > fromIntegral k
     advLenAfterIntersection =
       withOrigin 0 unBlockNo (AF.headBlockNo badChain) - unBlockNo prefixBlockNo
-    (goodChain, badChain, prefixBlockNo, _prefixLen, fragLenA) = genChains params.testAscA params.testRecipeA params.testRecipeA' seed
+    (goodChain, badChain, prefixBlockNo, _prefixLen, fragLenA) =
+      genChains (testAscA params) (testRecipeA params) (testRecipeA' params) seed
 
 stripBlockBodies :: TestFrag -> TestFragH
 stripBlockBodies = AF.bimap AF.castAnchor getHeader
@@ -109,8 +109,8 @@ runTest TestSetup{..} = do
       $ genesisAfterIntersection ==> not $ isHonestTestFragH frag
 
   where
-    goodChainH = stripBlockBodies $ schedule.frags.honest.value
-    badChainH = stripBlockBodies $ (fromJust (schedule.frags.others !? PeerId "adversary")).value
+    goodChainH = stripBlockBodies $ value $ honest $ frags schedule
+    badChainH = stripBlockBodies $ value $ fromJust (others (frags schedule) !? PeerId "adversary")
 
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of

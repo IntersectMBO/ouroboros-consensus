@@ -4,7 +4,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync where
 
@@ -194,7 +193,7 @@ serveHeader MockedChainSyncServer{..} points = \case
   AF.Empty _ -> pure Nothing
   next AF.:< rest -> do
     atomically (writeTVar mcssUnservedFragment rest)
-    pure $ Just (coerce points.tip, next)
+    pure $ Just (coerce $ tip points, next)
 
 intersectWith ::
   AnchoredFragment TestBlock ->
@@ -242,12 +241,12 @@ runMockedChainSyncServer server@MockedChainSyncServer{..} fullFrag =
     recvMsgFindIntersect pts = do
       (points, _) <- checkCurrent server
       trace "handling MsgFindIntersect"
-      let tip = coerce points.tip
+      let theTip = coerce $ tip points
       case intersectWith fullFrag pts of
         Nothing -> do
           trace "  no intersection found"
           trace "done handling MsgFindIntersect"
-          pure $ SendMsgIntersectNotFound tip go
+          pure $ SendMsgIntersectNotFound theTip go
         Just frag -> do
           unservedFragment <- readTVarIO mcssUnservedFragment
           trace $ "  unserved fragment is: " ++ condense unservedFragment
@@ -262,7 +261,7 @@ runMockedChainSyncServer server@MockedChainSyncServer{..} fullFrag =
               atomically $ writeTVar mcssUnservedFragment unservedFragment'
               trace $ "  unserved fragment is now: " ++ condense unservedFragment'
           trace "done handling MsgFindIntersect"
-          pure $ SendMsgIntersectFound (AF.anchorPoint frag) tip go
+          pure $ SendMsgIntersectFound (AF.anchorPoint frag) theTip go
 
     recvMsgDoneClient = do
       trace "received MsgDoneClient"
@@ -458,14 +457,14 @@ syncPeers k pointSchedule peers tracer =
     (do
       st <- get
       lift $ traceWith tracer $ "Security param k = " ++ show k
-      fragments <- lift $ traverse (readTVarIO . (.mcssUnservedFragment)) peers
+      fragments <- lift $ traverse (readTVarIO . mcssUnservedFragment) peers
       lift $ prettyPrintFragments tracer fragments
       lift $ for_ peers $ \ MockedChainSyncServer {mcssPeerId, mcssUnservedFragment} -> do
         unservedFragment <- readTVarIO mcssUnservedFragment
         traceWith tracer $ condense mcssPeerId ++ " fragment: " ++ condense unservedFragment
-      chainDb <- lift $ mkRealChainDb tracer ((.mcssCandidateFragment) <$> peers) st.topConfig st.registry
+      chainDb <- lift $ mkRealChainDb tracer (mcssCandidateFragment <$> peers) (topConfig st) (registry st)
       let chainDbView = defaultChainDbView chainDb
-      void (Map.traverseWithKey (syncWith tracer chainDbView pointSchedule.frags) peers)
+      void (Map.traverseWithKey (syncWith tracer chainDbView (frags pointSchedule)) peers)
       pure chainDb)
     (atomically . ChainDB.getCurrentChain)
 

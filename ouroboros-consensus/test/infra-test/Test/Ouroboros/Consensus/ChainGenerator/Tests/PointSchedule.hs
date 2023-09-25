@@ -1,7 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE FlexibleContexts #-}
 
@@ -128,13 +126,13 @@ foldHPeers adv hon Peers {honest, others} =
 
 zipPeers :: Peers a -> Peers b -> Peers (a, b)
 zipPeers a b =
-  Peers {honest = Peer HonestPeer (a.honest.value, b.honest.value), others = Map.intersectionWith zp a.others b.others}
+  Peers {honest = Peer HonestPeer (value (honest a), value (honest b)), others = Map.intersectionWith zp (others a) (others b)}
   where
-    zp p1 p2 = Peer p1.name (p1.value, p2.value)
+    zp p1 p2 = Peer (name p1) (value p1, value p2)
 
 getPeer :: PeerId -> Peers a -> Maybe a
-getPeer HonestPeer ps = Just ps.honest.value
-getPeer pid ps = (.value) <$> ps.others Map.!? pid
+getPeer HonestPeer ps = Just $ value $ honest ps
+getPeer pid ps = value <$> others ps Map.!? pid
 
 -- REVIEW: What is the purpose of having the other peers as well in a
 -- 'TickState'?
@@ -184,20 +182,20 @@ balanced frags states =
 
     updatePeer :: Peers a -> Peer a -> Peers a
     updatePeer Peers {honest, others} active =
-      case active.name of
+      case name active of
         HonestPeer -> Peers {honest = active, others}
         name -> Peers {honest, others = Map.insert name active others}
 
     -- Sequence containing the first state of all the nodes in order, then the
     -- second in order, etc.
-    activeSeq = concat (transpose (seqPeer states.honest : (seqPeer <$> Map.elems states.others)))
+    activeSeq = concat $ transpose $ seqPeer (honest states) : (seqPeer <$> Map.elems (others states))
 
     seqPeer :: Peer [a] -> [Peer a]
     seqPeer Peer {name, value} =
       Peer name <$> value
 
     -- Initial state where all the peers are offline.
-    initial = Tick {active = initialH, peers = Peers initialH ((NodeOffline <$) <$> states.others)}
+    initial = Tick {active = initialH, peers = Peers initialH ((NodeOffline <$) <$> others states)}
     initialH = Peer HonestPeer NodeOffline
 
 newtype PeerSchedule =
@@ -218,7 +216,7 @@ peer2Point ps (PeerSchedule n) =
 
     updatePeer :: Peers a -> Peer a -> Peers a
     updatePeer Peers {honest, others} active =
-      case active.name of
+      case name active of
         HonestPeer -> Peers {honest = active, others}
         name -> Peers {honest, others = Map.insert name active others}
 
@@ -252,7 +250,7 @@ fastAdversarySchedule frags =
     trans :: Peers PSTrans
     trans = Peers {
       honest = Peer HonestPeer (\ frag _ -> PeerSchedule (Peer HonestPeer <$> banalStates frag)),
-      others = transOther <$> frags.others
+      others = transOther <$> others frags
     }
     transOther :: Peer TestFrag -> Peer PSTrans
     transOther (Peer i _) =

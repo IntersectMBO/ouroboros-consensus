@@ -2,7 +2,6 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -26,8 +25,7 @@ import Test.Util.Orphans.IOLike ()
 
 import Test.Ouroboros.Consensus.ChainGenerator.Honest (HonestRecipe (HonestRecipe))
 import Test.Ouroboros.Consensus.ChainGenerator.Params (Kcp (Kcp), Len (Len), Scg (Scg))
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial (SomeTestAdversarial (..), TestAdversarial)
+import Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial (SomeTestAdversarial (..), TestAdversarial (..))
 import Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain (genChains)
 import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule (
   Peer (Peer),
@@ -74,7 +72,7 @@ exampleTestSetup params seed =
              | otherwise = banalPointSchedule (Peers (Peer HonestPeer goodChain) (Map.fromList [(advId, Peer advId badChain)]))
     fast = True
     advId = PeerId "adversary"
-    HonestRecipe (Kcp k) (Scg scg) _ (Len len) = params.testRecipeH
+    HonestRecipe (Kcp k) (Scg scg) _ (Len len) = testRecipeH params
     genesisAcrossIntersection = not genesisAfterIntersection && len > scg
     -- TODO: also need: at least k+1 blocks after the intersection
     genesisAfterIntersection =
@@ -82,7 +80,7 @@ exampleTestSetup params seed =
       && advLenAfterIntersection > fromIntegral k
     advLenAfterIntersection =
       withOrigin 0 unBlockNo (AF.headBlockNo badChain) - unSlotNo prefixLen
-    (goodChain, badChain, _, prefixLen, fragLenA) = genChains params.testAscA params.testRecipeA params.testRecipeA' seed
+    (goodChain, badChain, _, prefixLen, fragLenA) = genChains (testAscA params) (testRecipeA params) (testRecipeA' params) seed
 
 runTest ::
   IOLike m =>
