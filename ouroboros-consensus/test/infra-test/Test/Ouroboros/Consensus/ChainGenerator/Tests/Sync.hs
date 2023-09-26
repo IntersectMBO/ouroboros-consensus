@@ -183,7 +183,7 @@ waitNodeState server@MockedChainSyncServer{..} = do
       pure (advertisedPoints, unservedFragment)
 
 checkCurrent ::
-  (IOLike m, MonadTime m) =>
+  IOLike m =>
   MockedChainSyncServer m ->
   m (AdvertisedPoints, TestFragH)
 checkCurrent server@MockedChainSyncServer{..} =
