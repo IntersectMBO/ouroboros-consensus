@@ -80,8 +80,8 @@ mkSomeConsensusProtocolShelley NodeShelleyProtocolConfiguration {
                          readLeaderCredentials files
 
     return $ SomeConsensusProtocol Protocol.ShelleyBlockType $ Protocol.ProtocolInfoArgsShelley
+      genesis
       Consensus.ProtocolParamsShelleyBased {
-        shelleyBasedGenesis = genesis,
         shelleyBasedInitialNonce = genesisHashToPraosNonce genesisHash,
         shelleyBasedLeaderCredentials =
             leaderCredentials
