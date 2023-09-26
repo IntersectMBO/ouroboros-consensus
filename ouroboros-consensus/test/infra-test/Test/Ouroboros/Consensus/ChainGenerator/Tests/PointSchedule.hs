@@ -290,12 +290,14 @@ onlyHonestPointSchedule fragment@(_ :> tipBlock) =
 -- Schedule with only the honest peer advertising the honest chain immediately
 -- as it becomes available.
 onlyHonestWithMintingPointSchedule :: SlotNo -> Int -> TestFrag -> PointSchedule
-onlyHonestWithMintingPointSchedule initialSlotNo ticksPerSlot fullFragment@(_ :> finalBlock) =
+onlyHonestWithMintingPointSchedule initialSlotNo _ticksPerSlot fullFragment@(_ :> finalBlock) =
   PointSchedule (map tickAtSlotNo [initialSlotNo .. finalSlotNo]) undefined
   where
     -- If we hold a block, we are guaranteed that the slot number cannot be
     -- origin?
-    At finalSlotNo = getTipSlotNo $ tipFromHeader finalBlock
+    finalSlotNo = case getTipSlotNo $ tipFromHeader finalBlock of
+      At s -> s
+      _ -> error "unexpected alternative"
 
     advertisedPointsAtSlotNo :: SlotNo -> AdvertisedPoints
     advertisedPointsAtSlotNo slotNo =
@@ -318,6 +320,8 @@ onlyHonestWithMintingPointSchedule initialSlotNo ticksPerSlot fullFragment@(_ :>
             active = honestPeerState,
             peers = Peers honestPeerState Map.empty
           }
+onlyHonestWithMintingPointSchedule _initialSlotNo _ticksPerSlot _fullFragment =
+    error "unexpected alternative"
 
 -- onlyHonestWithMintingPointSchedule' :: SlotNo -> Int -> TestFrag -> PointSchedule
 -- onlyHonestWithMintingPointSchedule' initialSlotNo ticksPerSlot fullFragment =

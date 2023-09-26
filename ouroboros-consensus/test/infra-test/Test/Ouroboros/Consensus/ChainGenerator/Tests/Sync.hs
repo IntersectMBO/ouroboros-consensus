@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync where
 
@@ -64,7 +65,28 @@ import Test.Util.TestBlock (
   )
 import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
 import Data.Map.Strict (Map)
-import Ouroboros.Consensus.Util.IOLike
+import Ouroboros.Consensus.Util.IOLike (
+  IOLike,
+  MonadMonotonicTime,
+  StrictTVar,
+  TQueue,
+  Time(Time),
+  async,
+  atomically,
+  cancel,
+  getMonotonicTime,
+  newTQueueIO,
+  race,
+  readTQueue,
+  readTVar,
+  readTVarIO,
+  threadDelay,
+  try,
+  uncheckedNewTVarM,
+  waitCatch,
+  writeTQueue,
+  writeTVar
+  )
 import Data.Maybe (fromJust)
 import Data.Monoid (First(First, getFirst))
 import Data.Coerce (coerce)
@@ -318,7 +340,7 @@ awaitAll ::
 awaitAll SyncTest {..} =
   void $
   race (threadDelay 100) $
-  for_ peers $ \ SyncPeer {..} -> wait
+  for_ peers wait
 
 dispatchTick ::
   IOLike m =>
@@ -382,7 +404,7 @@ syncTest tracer k pointSchedule peers setup continuation =
 slotAndBlockNoFromAnchor :: AF.Anchor b -> (SlotNo, BlockNo)
 slotAndBlockNoFromAnchor = \case
   AF.AnchorGenesis -> (0, 0)
-  AF.Anchor slotNo _ blockNo -> (slotNo, blockNo)
+  AF.Anchor slotNo _ blockNumber -> (slotNo, blockNumber)
 
 prettyPrintFragments ::
   MonadMonotonicTime m =>

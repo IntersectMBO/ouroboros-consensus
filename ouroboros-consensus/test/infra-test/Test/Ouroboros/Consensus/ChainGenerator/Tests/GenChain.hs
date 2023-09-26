@@ -9,7 +9,6 @@ module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain (module Test.Ourob
 
 import           Data.List (foldl')
 import qualified Data.Vector.Unboxed as Vector
-import           Debug.Trace (trace)
 import           Ouroboros.Consensus.Block.Abstract (SlotNo (SlotNo))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
