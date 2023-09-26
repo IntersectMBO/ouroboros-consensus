@@ -552,7 +552,6 @@ test-suite infra-test
     , ouroboros-network-protocols
     , QuickCheck
     , random
-    , si-timers
     , time
     , typed-protocols-examples
 

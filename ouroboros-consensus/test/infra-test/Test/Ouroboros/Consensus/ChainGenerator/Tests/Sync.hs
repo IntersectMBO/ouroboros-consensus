@@ -15,7 +15,6 @@ import Prelude hiding (log)
 import Cardano.Crypto.DSIGN (SignKeyDSIGN (..), VerKeyDSIGN (..))
 import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import Control.Monad ( forever )
-import Control.Monad.Class.MonadTime.SI (MonadTime)
 import Control.Monad.State.Strict (StateT, evalStateT, get, gets, lift, modify')
 import Control.Tracer (nullTracer, traceWith, Tracer (Tracer))
 import Data.Foldable (for_)
@@ -225,7 +224,7 @@ intersectWith fullFrag pts =
   snd <$> getFirst (foldMap (First . AF.splitAfterPoint fullFrag) pts)
 
 runMockedChainSyncServer ::
-  (IOLike m, MonadTime m) =>
+  IOLike m =>
   MockedChainSyncServer m ->
   TestFrag ->
   ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
@@ -312,7 +311,7 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
     varCandidate
 
 syncWith ::
-  (IOLike m, MonadTime m) =>
+  IOLike m =>
   Tracer m String ->
   ChainDbView m TestBlock ->
   Peers TestFrag ->
@@ -468,7 +467,7 @@ prettyPrintFragments tracer fragments = do
         fragment
 
 syncPeers ::
-  (IOLike m, MonadTime m) =>
+  IOLike m =>
   SecurityParam ->
   PointSchedule ->
   Map PeerId (MockedChainSyncServer m) ->
