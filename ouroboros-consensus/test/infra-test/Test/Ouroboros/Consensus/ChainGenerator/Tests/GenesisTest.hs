@@ -5,7 +5,6 @@
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest (tests) where
 
-import Control.Monad.Class.MonadTime (MonadTime)
 import Control.Monad.IOSim (runSimOrThrow)
 import qualified Data.Map.Strict as Map
 import Ouroboros.Consensus.Block.Abstract hiding (Header)
@@ -87,7 +86,7 @@ stripBlockBodies = AF.bimap AF.castAnchor getHeader
 
 runTest ::
   forall m.
-  (IOLike m, MonadTime m) =>
+  IOLike m =>
   TestSetup ->
   m Property
 runTest TestSetup{..} = do

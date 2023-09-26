@@ -545,7 +545,6 @@ test-suite infra-test
     , unstable-consensus-testlib
     , containers
     , contra-tracer
-    , io-classes
     , io-sim
     , ouroboros-network-api
     , ouroboros-network-mock
