@@ -63,10 +63,13 @@ data BlockTree blk = BlockTree {
 mkTrunk :: AF.AnchoredFragment blk -> BlockTree blk
 mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 
--- | Add a branch to a block tree. The given fragment has to be anchored in
+-- | Add a branch to an existing block tree.
 --
--- PRECONDITION: The given fragment intersects with the trunk or the anchor of
--- the trunk.
+-- PRECONDITION: The given fragment intersects with the trunk or its anchor.
+--
+-- FIXME: this would be a good place to check consistency of the hashes with the
+-- current branches, that is we should use this function to ensure that no two
+-- branches leave the trunk at the same slot with the same fork number.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
 addBranch branch BlockTree{..} = do
   (_, btbPrefix, _, btbSuffix) <- AF.intersect btTrunk branch
