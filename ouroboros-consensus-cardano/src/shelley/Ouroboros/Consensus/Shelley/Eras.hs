@@ -63,6 +63,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Shelley.Core as Core
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
+import qualified Cardano.Ledger.Shelley.Transition as SL
 import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.Exception (Exception, throw)
 import           Control.Monad.Except
@@ -121,7 +122,7 @@ class ( Core.EraSegWits era
       , Core.EraGov era
       , SL.ApplyTx era
       , SL.ApplyBlock era
-      , SL.CanStartFromGenesis era
+      , SL.EraTransition era
 
         -- TODO This constraint is quite tight, since it fixes things to the
         -- original TPraos ledger view. We would like to ultimately remove it.

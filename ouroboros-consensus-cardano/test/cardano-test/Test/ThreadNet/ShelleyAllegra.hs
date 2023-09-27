@@ -18,10 +18,9 @@
 module Test.ThreadNet.ShelleyAllegra (tests) where
 
 import           Cardano.Crypto.Hash (ShortHash)
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
-import qualified Cardano.Ledger.Shelley.Translation as SL
-                     (toFromByronTranslationContext)
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.Slot (EpochSize (..), SlotNo (..))
 import           Control.Monad (replicateM)
@@ -35,8 +34,7 @@ import           Data.Word (Word64)
 import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Cardano.Condense ()
-import           Ouroboros.Consensus.Cardano.Node
-                     (ProtocolTransitionParams (..), TriggerHardFork (..))
+import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
 import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
                      (isHardForkNodeToNodeEnabled)
@@ -253,25 +251,22 @@ prop_simple_shelleyAllegra_convergence TestSetup
           nodeInfo = \(CoreNodeId nid) ->
             let protocolParamsShelleyBased =
                   ProtocolParamsShelleyBased {
-                      shelleyBasedGenesis           = genesisShelley
-                    , shelleyBasedInitialNonce      = setupInitialNonce
+                      shelleyBasedInitialNonce      = setupInitialNonce
                     , shelleyBasedLeaderCredentials =
                         [Shelley.mkLeaderCredentials
                           (coreNodes !! fromIntegral nid)]
                     }
-                protocolTransitionParamsIntraShelley =
-                  ProtocolTransitionParamsIntraShelley {
-                      transitionIntraShelleyTranslationContext = ()
-                    , transitionIntraShelleyTrigger            =
-                        TriggerHardForkAtVersion $ SL.getVersion majorVersion2
-                    }
+                hardForkTrigger =
+                  TriggerHardForkAtVersion $ SL.getVersion majorVersion2
                 (protocolInfo, blockForging) =
                   protocolInfoShelleyBasedHardFork
                     protocolParamsShelleyBased
                     (SL.ProtVer majorVersion1 0)
                     (SL.ProtVer majorVersion2 0)
-                    (SL.toFromByronTranslationContext genesisShelley)
-                    protocolTransitionParamsIntraShelley
+                    ( L.mkTransitionConfig ()
+                    $ L.mkShelleyTransitionConfig genesisShelley
+                    )
+                    hardForkTrigger
             in
             TestNodeInitialization {
                 tniCrucialTxs   =

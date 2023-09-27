@@ -146,9 +146,9 @@ mkShelleyProtocolInfo ::
   -> ProtocolInfo (ShelleyBlock (TPraos StandardCrypto) StandardShelley)
 mkShelleyProtocolInfo genesis initialNonce =
     fst $ protocolInfoShelley @IO
+      genesis
       ProtocolParamsShelleyBased {
-          shelleyBasedGenesis           = genesis
-        , shelleyBasedInitialNonce      = initialNonce
+          shelleyBasedInitialNonce      = initialNonce
         , shelleyBasedLeaderCredentials = []
         }
       ProtocolParamsShelley {

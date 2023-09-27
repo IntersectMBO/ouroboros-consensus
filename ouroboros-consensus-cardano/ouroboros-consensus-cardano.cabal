@@ -78,7 +78,6 @@ library
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Node
-    Ouroboros.Consensus.Cardano.ShelleyBased
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras
@@ -116,15 +115,14 @@ library
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
-    , cardano-data
     , cardano-ledger-allegra
     , cardano-ledger-alonzo         ^>=1.4.1
-    , cardano-ledger-api            ^>=1.5
+    , cardano-ledger-api            ^>=1.6
     , cardano-ledger-babbage        ^>=1.4.4
     , cardano-ledger-binary
     , cardano-ledger-byron
-    , cardano-ledger-conway         ^>=1.8
-    , cardano-ledger-core           ^>=1.6
+    , cardano-ledger-conway         ^>=1.9
+    , cardano-ledger-core           ^>=1.7
     , cardano-ledger-mary
     , cardano-ledger-shelley        ^>=1.6
     , cardano-prelude
@@ -359,6 +357,7 @@ library unstable-cardano-testlib
     , cardano-crypto-class
     , cardano-crypto-wrapper
     , cardano-ledger-alonzo-test
+    , cardano-ledger-api
     , cardano-ledger-byron
     , cardano-ledger-conway-test                                                                 ^>=1.2.0.5
     , cardano-ledger-core:{cardano-ledger-core, testlib}
@@ -404,6 +403,7 @@ test-suite cardano-test
     , cardano-crypto-class
     , cardano-ledger-alonzo
     , cardano-ledger-alonzo-test
+    , cardano-ledger-api
     , cardano-ledger-byron
     , cardano-ledger-core
     , cardano-ledger-shelley
@@ -484,6 +484,7 @@ library unstable-cardano-tools
     , cardano-crypto-wrapper
     , cardano-ledger-allegra
     , cardano-ledger-alonzo
+    , cardano-ledger-api
     , cardano-ledger-babbage
     , cardano-ledger-binary
     , cardano-ledger-byron

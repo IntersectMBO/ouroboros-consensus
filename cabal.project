@@ -16,7 +16,7 @@ index-state:
   -- Bump this if you need newer packages from Hackage
   , hackage.haskell.org 2023-08-02T14:18:01Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2023-09-05T08:50:43Z
+  , cardano-haskell-packages 2023-09-27T09:51:59Z
 
 packages:
   ouroboros-consensus

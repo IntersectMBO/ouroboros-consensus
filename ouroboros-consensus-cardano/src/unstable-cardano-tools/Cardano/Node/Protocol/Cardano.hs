@@ -19,9 +19,8 @@ module Cardano.Node.Protocol.Cardano (
 import           Cardano.Api.Any
 import           Cardano.Api.Protocol.Types
 import qualified Cardano.Chain.Update as Byron
+import qualified Cardano.Ledger.Api.Transition as L
 import           Cardano.Ledger.BaseTypes (natVersion)
-import           Cardano.Ledger.Shelley.Translation
-                     (toFromByronTranslationContext)
 import qualified Cardano.Node.Protocol.Alonzo as Alonzo
 import qualified Cardano.Node.Protocol.Byron as Byron
 import qualified Cardano.Node.Protocol.Conway as Conway
@@ -135,6 +134,9 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
       firstExceptT CardanoProtocolInstantiationPraosLeaderCredentialsError $
         Shelley.readLeaderCredentials files
 
+    let transitionLedgerConfig =
+          L.mkLatestTransitionConfig shelleyGenesis alonzoGenesis conwayGenesis
+
     --TODO: all these protocol versions below are confusing and unnecessary.
     -- It could and should all be automated and these config entries eliminated.
     return $!
@@ -168,7 +170,6 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
               Mempool.mkOverrides Mempool.noOverridesMeasure
           }
           Consensus.ProtocolParamsShelleyBased {
-            shelleyBasedGenesis           = shelleyGenesis,
             shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
                                               shelleyGenesisHash,
             shelleyBasedLeaderCredentials = shelleyLeaderCredentials
@@ -230,14 +231,13 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
             Consensus.conwayMaxTxCapacityOverrides =
               Mempool.mkOverrides Mempool.noOverridesMeasure
           }
-          -- 'ProtocolTransitionParams' specifies the parameters needed to
-          -- transition between two eras. The comments below also apply for the
-          -- Shelley -> Allegra and Allegra -> Mary hard forks.
+          -- The 'CardanoHardForkTriggers' specify the parameters needed to
+          -- transition between two eras. The comments below also apply for all
+          -- subsequent hard forks.
           --
           -- Byron to Shelley hard fork parameters
-          Consensus.ProtocolTransitionParamsByronToShelley {
-            transitionByronToShelleyTranslationContext = toFromByronTranslationContext shelleyGenesis,
-            transitionByronToShelleyTrigger =
+          Consensus.CardanoHardForkTriggers' {
+            triggerHardForkShelley =
               -- What will trigger the Byron -> Shelley hard fork?
               case npcTestShelleyHardForkAtEpoch of
 
@@ -264,54 +264,38 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
                 -- Alternatively, for testing we can transition at a specific epoch.
                 --
                 Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-          }
-          -- Shelley to Allegra hard fork parameters
-          Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = (),
-            transitionIntraShelleyTrigger =
+            -- Shelley to Allegra hard fork parameters
+          , triggerHardForkAllegra =
               case npcTestAllegraHardForkAtEpoch of
                 Nothing -> Consensus.TriggerHardForkAtVersion
                               (maybe 3 fromIntegral npcTestAllegraHardForkAtVersion)
                 Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-          }
-          -- Allegra to Mary hard fork parameters
-          Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = (),
-            transitionIntraShelleyTrigger =
+            -- Allegra to Mary hard fork parameters
+          , triggerHardForkMary =
               case npcTestMaryHardForkAtEpoch of
                 Nothing -> Consensus.TriggerHardForkAtVersion
                               (maybe 4 fromIntegral npcTestMaryHardForkAtVersion)
                 Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-          }
-          -- Mary to Alonzo hard fork parameters
-          Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = alonzoGenesis,
-            transitionIntraShelleyTrigger =
+            -- Mary to Alonzo hard fork parameters
+          , triggerHardForkAlonzo =
               case npcTestAlonzoHardForkAtEpoch of
                 Nothing -> Consensus.TriggerHardForkAtVersion
                               (maybe 5 fromIntegral npcTestAlonzoHardForkAtVersion)
                 Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-          }
-          -- Alonzo to Babbage hard fork parameters
-          Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = (),
-            transitionIntraShelleyTrigger =
+            -- Alonzo to Babbage hard fork parameters
+          , triggerHardForkBabbage =
               case npcTestBabbageHardForkAtEpoch of
                   Nothing -> Consensus.TriggerHardForkAtVersion
                               (maybe 7 fromIntegral npcTestBabbageHardForkAtVersion)
                   Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-
-          }
-          -- Babbage to Conway hard fork parameters
-          Consensus.ProtocolTransitionParamsIntraShelley {
-            transitionIntraShelleyTranslationContext = conwayGenesis,
-            transitionIntraShelleyTrigger =
+            -- Babbage to Conway hard fork parameters
+          , triggerHardForkConway =
               case npcTestConwayHardForkAtEpoch of
                   Nothing -> Consensus.TriggerHardForkAtVersion
                               (maybe 9 fromIntegral npcTestConwayHardForkAtVersion)
                   Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-
           }
+          transitionLedgerConfig
         )
 
 ------------------------------------------------------------------------------
