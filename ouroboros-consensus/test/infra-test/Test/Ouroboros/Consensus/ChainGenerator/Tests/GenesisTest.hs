@@ -1,37 +1,39 @@
+{-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE BlockArguments #-}
-{-# LANGUAGE RecordWildCards #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest (tests) where
 
-import Control.Monad.IOSim (runSimOrThrow)
+import           Control.Monad.IOSim (runSimOrThrow)
+import           Data.Map.Strict ((!?))
 import qualified Data.Map.Strict as Map
-import Ouroboros.Consensus.Block.Abstract hiding (Header)
-import Ouroboros.Consensus.Config
-import Ouroboros.Consensus.Util.Condense
-import Ouroboros.Consensus.Util.IOLike
+import           Data.Maybe (fromJust)
+import           Ouroboros.Consensus.Block.Abstract hiding (Header)
+import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Network.AnchoredFragment (Anchor (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.AnchoredFragment (Anchor (..))
-import Test.QuickCheck
-import qualified Test.QuickCheck as QC
-import Test.QuickCheck.Random (QCGen)
-import Test.Tasty
-import Test.Tasty.QuickCheck
-import Test.Util.Orphans.IOLike ()
-
-import Test.Ouroboros.Consensus.ChainGenerator.Honest (HonestRecipe (HonestRecipe))
-import Test.Ouroboros.Consensus.ChainGenerator.Params
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial hiding (tests)
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
-import Data.Map.Strict ((!?))
-import Data.Maybe (fromJust)
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain (genChains)
-import           Test.Util.TestBlock
+import           Ouroboros.Network.AnchoredSeq (headAnchor)
 import qualified Ouroboros.Network.AnchoredSeq as AF
-import Ouroboros.Network.AnchoredSeq (headAnchor)
-import Test.Util.Tracer (recordingTracerTVar)
+import           Test.Ouroboros.Consensus.ChainGenerator.Honest
+                     (HonestRecipe (HonestRecipe))
+import           Test.Ouroboros.Consensus.ChainGenerator.Params
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial hiding
+                     (tests)
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
+                     (genChains)
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
+import qualified Test.QuickCheck as QC
+import           Test.QuickCheck
+import           Test.QuickCheck.Random (QCGen)
+import           Test.Tasty
+import           Test.Tasty.QuickCheck
+import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TestBlock
+import           Test.Util.Tracer (recordingTracerTVar)
 
 tests :: TestTree
 tests = testGroup "Genesis tests"
@@ -47,11 +49,11 @@ newtype GenesisWindow = GenesisWindow { getGenesisWindow :: SlotNo }
   deriving stock (Show)
 
 data TestSetup = TestSetup {
-    secParam :: SecurityParam
-  , genesisWindow :: GenesisWindow
-  , schedule :: PointSchedule
+    secParam                  :: SecurityParam
+  , genesisWindow             :: GenesisWindow
+  , schedule                  :: PointSchedule
   , genesisAcrossIntersection :: Bool
-  , genesisAfterIntersection :: Bool
+  , genesisAfterIntersection  :: Bool
   }
   deriving stock (Show)
 
@@ -113,7 +115,7 @@ runTest TestSetup{..} = do
 
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of
-        AnchorGenesis -> True
+        AnchorGenesis   -> True
         Anchor _ hash _ -> isHonestTestHeaderHash hash
 
     isHonestTestHeaderHash :: HeaderHash TestBlock -> Bool

@@ -2,39 +2,39 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointScheduleTest (tests) where
 
-import Control.Monad.IOSim (runSimOrThrow)
+import           Control.Monad.IOSim (runSimOrThrow)
 import qualified Data.Map.Strict as Map
-import Debug.Trace (traceM)
-import Ouroboros.Consensus.Block.Abstract (BlockNo (unBlockNo), SlotNo (unSlotNo), withOrigin)
-import Ouroboros.Consensus.Config.SecurityParam (SecurityParam (SecurityParam))
-import Ouroboros.Consensus.Util.Condense (condense)
-import Ouroboros.Consensus.Util.IOLike (IOLike)
+import           Debug.Trace (traceM)
+import           Ouroboros.Consensus.Block.Abstract (BlockNo (unBlockNo),
+                     SlotNo (unSlotNo), withOrigin)
+import           Ouroboros.Consensus.Config.SecurityParam
+                     (SecurityParam (SecurityParam))
+import           Ouroboros.Consensus.Util.Condense (condense)
+import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Test.Ouroboros.Consensus.ChainGenerator.Honest
+                     (HonestRecipe (HonestRecipe))
+import           Test.Ouroboros.Consensus.ChainGenerator.Params (Kcp (Kcp),
+                     Len (Len), Scg (Scg))
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
+                     (SomeTestAdversarial (..), TestAdversarial (..))
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
+                     (genChains)
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+                     (Peer (Peer), PeerId (HonestPeer, PeerId), Peers (Peers),
+                     PointSchedule, banalPointSchedule, fastAdversarySchedule)
 import qualified Test.QuickCheck as QC
-import Test.QuickCheck (Property, once, property)
-import Test.QuickCheck.Random (QCGen)
-import Test.Tasty (TestTree, testGroup)
-import Test.Tasty.QuickCheck (testProperty)
-import Test.Util.Orphans.IOLike ()
-
-import Test.Ouroboros.Consensus.ChainGenerator.Honest (HonestRecipe (HonestRecipe))
-import Test.Ouroboros.Consensus.ChainGenerator.Params (Kcp (Kcp), Len (Len), Scg (Scg))
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial (SomeTestAdversarial (..), TestAdversarial (..))
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain (genChains)
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule (
-  Peer (Peer),
-  PeerId (HonestPeer, PeerId),
-  Peers (Peers),
-  PointSchedule,
-  banalPointSchedule,
-  fastAdversarySchedule,
-  )
+import           Test.QuickCheck (Property, once, property)
+import           Test.QuickCheck.Random (QCGen)
+import           Test.Tasty (TestTree, testGroup)
+import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Util.Orphans.IOLike ()
 
 tests :: TestTree
 tests = testGroup "pregenerated point schedule tests"
@@ -49,11 +49,11 @@ newtype GenesisWindow = GenesisWindow { getGenesisWindow :: SlotNo }
   deriving stock (Show)
 
 data TestSetup = TestSetup {
-    secParam :: SecurityParam
-  , genesisWindow :: GenesisWindow
-  , schedule :: PointSchedule
+    secParam                  :: SecurityParam
+  , genesisWindow             :: GenesisWindow
+  , schedule                  :: PointSchedule
   , genesisAcrossIntersection :: Bool
-  , genesisAfterIntersection :: Bool
+  , genesisAfterIntersection  :: Bool
   }
   deriving stock (Show)
 

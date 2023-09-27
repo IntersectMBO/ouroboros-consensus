@@ -9,9 +9,11 @@ module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain (module Test.Ourob
 
 import           Data.List (foldl')
 import qualified Data.Vector.Unboxed as Vector
+import           Ouroboros.Consensus.Block (BlockNo)
 import           Ouroboros.Consensus.Block.Abstract (SlotNo (SlotNo))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Block (blockNo)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Adversarial as A
 import           Test.Ouroboros.Consensus.ChainGenerator.Counting
                      (Count (Count), getVector)
@@ -23,8 +25,6 @@ import           Test.QuickCheck.Random (QCGen)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, TestBlockWith (tbSlot),
                      firstBlock, forkBlock, successorBlock)
-import Ouroboros.Network.Block (blockNo)
-import Ouroboros.Consensus.Block (BlockNo)
 
 -- | Returns the good chain, bad chain, block number of the last common block,
 -- slot number of the last common block, and the total number of slots in the

@@ -14,7 +14,8 @@ module Main (main) where
 
 import qualified Ouroboros.Consensus.Util.Tests (tests)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests (tests)
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest (tests)
+import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest
+                     (tests)
 import           Test.Tasty (TestTree, testGroup)
 import qualified Test.Util.ChainUpdates.Tests (tests)
 import qualified Test.Util.Schedule.Tests (tests)

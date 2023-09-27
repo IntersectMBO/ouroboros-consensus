@@ -1,22 +1,22 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE NamedFieldPuns        #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule (
-  module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule,
-) where
+module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule (module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule) where
 
-import Data.List (mapAccumL, transpose)
+import           Data.List (mapAccumL, transpose)
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Map.Strict (Map)
-import Data.String (IsString (fromString))
-import Ouroboros.Consensus.Block.Abstract (getHeader, HasHeader)
-import Ouroboros.Consensus.Util.Condense (Condense (condense))
-import Ouroboros.Network.AnchoredFragment (AnchoredFragment, AnchoredSeq (Empty, (:>)), anchorFromBlock)
-import Ouroboros.Network.Block (Tip (Tip, TipGenesis), blockNo, blockSlot, tipFromHeader, getTipSlotNo, SlotNo)
-import Test.Util.TestBlock (Header (TestHeader), TestBlock)
-import Ouroboros.Network.Point (WithOrigin(At))
+import           Data.String (IsString (fromString))
+import           Ouroboros.Consensus.Block.Abstract (HasHeader, getHeader)
+import           Ouroboros.Consensus.Util.Condense (Condense (condense))
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
+                     AnchoredSeq (Empty, (:>)), anchorFromBlock)
+import           Ouroboros.Network.Block (SlotNo, Tip (Tip, TipGenesis),
+                     blockNo, blockSlot, getTipSlotNo, tipFromHeader)
+import           Ouroboros.Network.Point (WithOrigin (At))
+import           Test.Util.TestBlock (Header (TestHeader), TestBlock)
 
 type TestFrag = AnchoredFragment TestBlock
 
@@ -52,9 +52,9 @@ instance Condense BlockPoint where
 -- state of the (online) node, then maybe we can call it that?
 data AdvertisedPoints =
   AdvertisedPoints {
-    tip :: TipPoint,
-    header :: HeaderPoint,
-    block :: BlockPoint,
+    tip      :: TipPoint,
+    header   :: HeaderPoint,
+    block    :: BlockPoint,
     fragment :: TestFrag
   }
   deriving (Eq, Show)
@@ -85,7 +85,7 @@ data PeerId =
 
 instance IsString PeerId where
   fromString "honest" = HonestPeer
-  fromString i = PeerId i
+  fromString i        = PeerId i
 
 instance Condense PeerId where
   condense = \case
@@ -94,7 +94,7 @@ instance Condense PeerId where
 
 data Peer a =
   Peer {
-    name :: PeerId,
+    name  :: PeerId,
     value :: a
   }
   deriving (Eq, Show)
@@ -132,14 +132,14 @@ zipPeers a b =
 
 getPeer :: PeerId -> Peers a -> Maybe a
 getPeer HonestPeer ps = Just $ value $ honest ps
-getPeer pid ps = value <$> others ps Map.!? pid
+getPeer pid ps        = value <$> others ps Map.!? pid
 
 -- REVIEW: What is the purpose of having the other peers as well in a
 -- 'TickState'?
 data Tick =
   Tick {
     active :: Peer NodeState,
-    peers :: Peers NodeState
+    peers  :: Peers NodeState
   }
   deriving (Eq, Show)
 
@@ -184,7 +184,7 @@ balanced frags states =
     updatePeer Peers {honest, others} active =
       case name active of
         HonestPeer -> Peers {honest = active, others}
-        name -> Peers {honest, others = Map.insert name active others}
+        name       -> Peers {honest, others = Map.insert name active others}
 
     -- Sequence containing the first state of all the nodes in order, then the
     -- second in order, etc.
@@ -218,7 +218,7 @@ peer2Point ps (PeerSchedule n) =
     updatePeer Peers {honest, others} active =
       case name active of
         HonestPeer -> Peers {honest = active, others}
-        name -> Peers {honest, others = Map.insert name active others}
+        name       -> Peers {honest, others = Map.insert name active others}
 
 type PSTrans = TestFrag -> PeerSchedule -> PeerSchedule
 
@@ -297,7 +297,7 @@ onlyHonestWithMintingPointSchedule initialSlotNo _ticksPerSlot fullFragment@(_ :
     -- origin?
     finalSlotNo = case getTipSlotNo $ tipFromHeader finalBlock of
       At s -> s
-      _ -> error "unexpected alternative"
+      _    -> error "unexpected alternative"
 
     advertisedPointsAtSlotNo :: SlotNo -> AdvertisedPoints
     advertisedPointsAtSlotNo slotNo =

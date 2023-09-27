@@ -1,19 +1,24 @@
 {-# LANGUAGE BangPatterns #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.Tests.ChainDb (computePastLedger, computeHeaderStateHistory) where
+module Test.Ouroboros.Consensus.ChainGenerator.Tests.ChainDb (
+    computeHeaderStateHistory
+  , computePastLedger
+  ) where
 
-import Ouroboros.Consensus.Config (SecurityParam (SecurityParam), TopLevelConfig, configSecurityParam)
+import           Ouroboros.Consensus.Config (SecurityParam (SecurityParam),
+                     TopLevelConfig, configSecurityParam)
+import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
-import Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
-import Ouroboros.Consensus.Ledger.Abstract (tickThenReapply)
-import Ouroboros.Consensus.Ledger.Basics (getTip)
-import Ouroboros.Consensus.Ledger.Extended (ExtLedgerCfg (ExtLedgerCfg), ExtLedgerState)
+import           Ouroboros.Consensus.Ledger.Abstract (tickThenReapply)
+import           Ouroboros.Consensus.Ledger.Basics (getTip)
+import           Ouroboros.Consensus.Ledger.Extended
+                     (ExtLedgerCfg (ExtLedgerCfg), ExtLedgerState)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import Ouroboros.Network.Block (Point, castPoint)
+import           Ouroboros.Network.Block (Point, castPoint)
+import           Ouroboros.Network.Mock.Chain (Chain, blockPoint)
 import qualified Ouroboros.Network.Mock.Chain as Chain
-import Ouroboros.Network.Mock.Chain (Chain, blockPoint)
-import Test.Util.TestBlock (TestBlock, testInitExtLedger)
+import           Test.Util.TestBlock (TestBlock, testInitExtLedger)
 
 -- | Simulates 'ChainDB.getPastLedger'.
 computePastLedger ::
