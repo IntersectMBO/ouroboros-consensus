@@ -20,7 +20,9 @@ module Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree (
 
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
+import           Data.Foldable (asum)
 import           Data.Function ((&))
+import           Data.Functor ((<&>))
 import           Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Vector as Vector
 import           Ouroboros.Consensus.Block.Abstract (blockNo, blockSlot,
@@ -89,16 +91,14 @@ addBranch' branch blockTree =
 allFragments :: BlockTree blk -> [AF.AnchoredFragment blk]
 allFragments BlockTree{..} = btTrunk : map btbFull btBranches
 
-firstJust :: [Maybe a] -> Maybe a
-firstJust []               = Nothing
-firstJust (Nothing : rest) = firstJust rest
-firstJust (Just x : _)     = Just x
-
 -- | Look for a point in the block tree and return a fragment going from the
 -- root of the tree to the point in question.
 findFragment :: AF.HasHeader blk => AF.Point blk -> BlockTree blk -> Maybe (AF.AnchoredFragment blk)
 findFragment point blockTree =
-  fst <$> firstJust (map (\fragment -> AF.splitAfterPoint fragment point) $ allFragments blockTree)
+  allFragments blockTree
+    & map (\fragment -> AF.splitAfterPoint fragment point)
+    & asum
+    <&> fst
 
 -- | @findPath source target blockTree@ finds a path from the @source@ point to
 -- the @target@ point in the @blockTree@, or return @Nothing@. A path is a
