@@ -123,15 +123,29 @@ defaultCfg secParam = TopLevelConfig {
 
     numCoreNodes = NumCoreNodes 2
 
+-- | The mutable state of a mocked ChainSync server.
+--
+-- REVIEW: This type name is misleading and should probably be renamed
+-- 'MockedChainSyncServerState'; the other functions 'makeMocked...' and
+-- 'runMocked...' should also be renamed.
 data MockedChainSyncServer m =
   MockedChainSyncServer {
     mcssPeerId              :: PeerId,
+    -- ^ REVIEW: Not sure this is the right place for it.
     mcssStateQueue          :: TQueue m NodeState,
+    -- ^ A queue of node states coming from the scheduler.
     mcssCurrentState        :: StrictTVar m NodeState,
+    -- ^ The current node state, popped from 'mcssStateQueue'.
     mcssCandidateFragment   :: StrictTVar m TestFragH,
+    -- ^ REVIEW: Not sure why we need this.
     mcssCurrentIntersection :: StrictTVar m (AF.Point TestBlock),
+    -- ^ The current known intersection with the chain of the client.
     mcssBlockTree           :: BT.BlockTree TestBlock,
+    -- ^ The block tree in which the test is taking place. In combination to
+    -- 'mcssCurrentState' and 'mcssCurrentIntersection', it allows to define
+    -- which blocks to serve to the client.
     mcssTracer              :: Tracer m String
+    -- ^ A tracer for this specific instance of the server.
   }
 
 makeMockedChainSyncServer ::
