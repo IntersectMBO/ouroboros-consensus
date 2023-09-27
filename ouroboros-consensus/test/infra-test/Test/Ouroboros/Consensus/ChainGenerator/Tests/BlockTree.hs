@@ -101,7 +101,7 @@ findFragment point blockTree =
     <&> fst
 
 -- | @findPath source target blockTree@ finds a path from the @source@ point to
--- the @target@ point in the @blockTree@, or return @Nothing@. A path is a
+-- the @target@ point in the @blockTree@, or returns @Nothing@. A path is a
 -- fragment anchored at the @source@ or an ancestor of the @source@. One can
 -- distinguish three cases:
 --
