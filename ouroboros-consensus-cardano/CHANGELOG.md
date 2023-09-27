@@ -2,6 +2,33 @@
 
 # Changelog entries
 
+<a id='changelog-0.10.0.0'></a>
+## 0.10.0.0 — 2023-09-27
+
+### Non-Breaking
+
+ - Updated to newer `cardano-ledger-*` packages:
+    * `cardano-ledger-api-1.6`
+    * `cardano-ledger-core-1.7`
+    * `cardano-ledger-conway-1.9`
+
+ - Protocol parameters (in particular the version number) in the ledger state
+   are now updated properly on the Babbage→Conway era transition.
+
+### Breaking
+
+ - `CardanoProtocolParams` now contains a `TransitionConfig` (new Ledger
+   concept) and the `CardanoHardForkTriggers` instead of the previous per-era
+   `ProtocolTransitionParams`.
+
+ - Removed `ShelleyGenesis` from `ProtocolParamsShelleyBased` as a
+   `TransitionConfig` already contains a `ShelleyGenesis`.
+
+ - Removed `registerInitialFunds` and `registerGenesisStaking`, these now live
+   in Ledger as part of the `EraTransition` class.
+
+ - Removed now-unused `Ouroboros.Consensus.Cardano.ShelleyBased` module.
+
 <a id='changelog-0.9.0.0'></a>
 ## 0.9.0.0 — 2023-09-06
 

@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.12.0.0'></a>
+## 0.12.0.0 — 2023-09-27
+
+### Breaking
+
+- Refactorings in unstable test libraries.
+
 <a id='changelog-0.11.0.0'></a>
 ## 0.11.0.0 — 2023-09-06
 

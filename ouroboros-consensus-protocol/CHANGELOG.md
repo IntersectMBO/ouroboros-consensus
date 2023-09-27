@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.5.0.7'></a>
+## 0.5.0.7 — 2023-09-27
+
+### Patch
+
+- Update upper bound on `ouroboros-consensus`
+
 <a id='changelog-0.5.0.6'></a>
 ## 0.5.0.6 — 2023-08-21
 
