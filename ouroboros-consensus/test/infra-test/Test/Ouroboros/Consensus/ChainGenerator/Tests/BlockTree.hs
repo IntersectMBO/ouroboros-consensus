@@ -120,6 +120,13 @@ findPath source target blockTree = do
   (_, _, _, targetSuffix) <- AF.intersect sourceFragment targetFragment
   pure targetSuffix
 
+-- | Pretty prints a block tree for human readability. For instance:
+--
+--     slots:  0  1  2  3  4  5  6  7  8  9
+--     trunk:  0─────1──2──3──4─────5──6──7
+--                      ╰─────3──4─────5
+--
+-- Returns a list of strings intended to be catenated with a newline.
 prettyPrint :: AF.HasHeader blk => BlockTree blk -> [String]
 prettyPrint blockTree = do
   let honestFragment = btTrunk blockTree
