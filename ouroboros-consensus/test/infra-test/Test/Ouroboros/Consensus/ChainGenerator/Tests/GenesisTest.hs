@@ -6,17 +6,14 @@
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest (tests) where
 
 import           Control.Monad.IOSim (runSimOrThrow)
-import           Data.Map.Strict ((!?))
+import           Control.Tracer (traceWith)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromJust)
 import           Ouroboros.Consensus.Block.Abstract hiding (Header)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Network.AnchoredFragment (Anchor (..))
+import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.AnchoredSeq (headAnchor)
-import qualified Ouroboros.Network.AnchoredSeq as AF
 import           Test.Ouroboros.Consensus.ChainGenerator.Honest
                      (HonestRecipe (HonestRecipe))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params
@@ -53,6 +50,7 @@ data TestSetup = TestSetup {
     secParam                  :: SecurityParam
   , genesisWindow             :: GenesisWindow
   , schedule                  :: PointSchedule
+  , blockTree                 :: BT.BlockTree TestBlock
   , genesisAcrossIntersection :: Bool
   , genesisAfterIntersection  :: Bool
   }
@@ -87,9 +85,6 @@ exampleTestSetup params seed =
     BT.BlockTreeBranch { suffix = badChainSuffix, full = badChain } =
       head $ BT.branches blockTree
 
-stripBlockBodies :: TestFrag -> TestFragH
-stripBlockBodies = AF.bimap AF.castAnchor getHeader
-
 runTest ::
   forall m.
   IOLike m =>
@@ -98,9 +93,11 @@ runTest ::
 runTest TestSetup{..} = do
     (tracer, getTrace) <- recordingTracerTVar
 
+    mapM_ (traceWith tracer) $ BT.prettyPrint blockTree
+
     let advPeer = PeerId "adversary"
-    g <- makeMockedChainSyncServer HonestPeer goodChainH tracer
-    b <- makeMockedChainSyncServer advPeer badChainH tracer
+    g <- makeMockedChainSyncServer HonestPeer tracer blockTree
+    b <- makeMockedChainSyncServer advPeer tracer blockTree
     let servers = Map.fromList [(HonestPeer, g), (advPeer, b)]
 
     frag <- either (error . show) id <$> syncPeers secParam schedule servers tracer
@@ -114,13 +111,10 @@ runTest TestSetup{..} = do
       $ genesisAfterIntersection ==> not $ isHonestTestFragH frag
 
   where
-    goodChainH = stripBlockBodies $ value $ honest $ frags schedule
-    badChainH = stripBlockBodies $ value $ fromJust (others (frags schedule) !? PeerId "adversary")
-
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of
-        AnchorGenesis   -> True
-        Anchor _ hash _ -> isHonestTestHeaderHash hash
+        AF.AnchorGenesis   -> True
+        AF.Anchor _ hash _ -> isHonestTestHeaderHash hash
 
     isHonestTestHeaderHash :: HeaderHash TestBlock -> Bool
     isHonestTestHeaderHash = all (0 ==) . unTestHash

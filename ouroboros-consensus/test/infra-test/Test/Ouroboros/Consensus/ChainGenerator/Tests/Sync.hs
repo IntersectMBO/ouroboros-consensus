@@ -9,26 +9,24 @@
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync where
 
 import           Cardano.Crypto.DSIGN (SignKeyDSIGN (..), VerKeyDSIGN (..))
-import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
-import           Control.Monad (forever)
 import           Control.Monad.State.Strict (StateT, evalStateT, get, gets,
                      lift, modify')
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Coerce (coerce)
-import           Data.Foldable (for_)
-import           Data.Function ((&))
+import           Data.Foldable (for_, traverse_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           Data.Monoid (First (First, getFirst))
 import           Data.Time.Clock (diffTimeToPicoseconds)
-import qualified Data.Vector as Vector
 import           Network.TypedProtocol.Channel (createConnectedChannels)
 import           Network.TypedProtocol.Driver.Simple
                      (runConnectedPeersPipelined)
-import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.Block (WithOrigin (Origin))
+import           Ouroboros.Consensus.Block.Abstract (Header, Point (..),
+                     getHeader)
 import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
                      (EraParams, defaultEraParams)
@@ -59,11 +57,9 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      writeTQueue, writeTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     toOldestFirst)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (BlockNo (unBlockNo), Tip (..),
-                     blockHash, blockNo, blockPoint, blockSlot)
+import           Ouroboros.Network.Block (Tip (..), blockPoint, getTipPoint)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
 import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
                      (ChainSyncClientPipelined, chainSyncClientPeerPipelined)
@@ -76,13 +72,14 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
                      ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
                      ServerStNext (SendMsgRollForward), chainSyncServerPeer)
 import           Prelude hiding (log)
+import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
                      CodecConfig (TestBlockCodecConfig), Header (..),
                      StorageConfig (TestBlockStorageConfig), TestBlock,
-                     testInitExtLedger, unTestHash)
+                     testInitExtLedger)
 import           Text.Printf (printf)
 
 data SyncPeer m =
@@ -128,91 +125,86 @@ defaultCfg secParam = TopLevelConfig {
 
 data MockedChainSyncServer m =
   MockedChainSyncServer {
-    mcssPeerId            :: PeerId,
-    mcssStateQueue        :: TQueue m NodeState,
-    mcssCurrentState      :: StrictTVar m NodeState,
-    mcssCandidateFragment :: StrictTVar m TestFragH,
-    mcssUnservedFragment  :: StrictTVar m TestFragH,
-    mcssTracer            :: Tracer m String
+    mcssPeerId              :: PeerId,
+    mcssStateQueue          :: TQueue m NodeState,
+    mcssCurrentState        :: StrictTVar m NodeState,
+    mcssCandidateFragment   :: StrictTVar m TestFragH,
+    mcssCurrentIntersection :: StrictTVar m (AF.Point TestBlock),
+    mcssBlockTree           :: BT.BlockTree TestBlock,
+    mcssTracer              :: Tracer m String
   }
 
 makeMockedChainSyncServer ::
   IOLike m =>
   PeerId ->
-  TestFragH ->
   Tracer m String ->
+  BT.BlockTree TestBlock ->
   m (MockedChainSyncServer m)
-makeMockedChainSyncServer mcssPeerId unservedFragment tracer = do
+makeMockedChainSyncServer mcssPeerId tracer mcssBlockTree = do
   mcssStateQueue <- newTQueueIO
   mcssCurrentState <- uncheckedNewTVarM NodeOffline
   mcssCandidateFragment <- uncheckedNewTVarM $ AF.Empty AF.AnchorGenesis
-  mcssUnservedFragment <- uncheckedNewTVarM unservedFragment
+  mcssCurrentIntersection <- uncheckedNewTVarM $ AF.Point Origin
   let mcssTracer = Tracer $ traceUnitWith tracer ("MockedChainSyncServer " ++ condense mcssPeerId)
   pure MockedChainSyncServer {..}
 
 waitNodeState ::
   IOLike m =>
   MockedChainSyncServer m ->
-  m (AdvertisedPoints, TestFragH)
+  m AdvertisedPoints
 waitNodeState server@MockedChainSyncServer{..} = do
   newState <- atomically $ do
     newState <- readTQueue mcssStateQueue
     writeTVar mcssCurrentState newState
     pure newState
   case newState of
-    NodeOffline -> waitNodeState server
-    NodeOnline advertisedPoints -> do
-      unservedFragment <- readTVarIO mcssUnservedFragment
-      pure (advertisedPoints, unservedFragment)
+    NodeOffline                 -> waitNodeState server
+    NodeOnline advertisedPoints -> pure advertisedPoints
 
 checkCurrent ::
   IOLike m =>
   MockedChainSyncServer m ->
-  m (AdvertisedPoints, TestFragH)
+  m AdvertisedPoints
 checkCurrent server@MockedChainSyncServer{..} =
   readTVarIO mcssCurrentState >>= \case
     NodeOffline -> waitNodeState server
-    NodeOnline s -> do
-      frag <- readTVarIO mcssUnservedFragment
-      pure (s, frag)
-
--- | Whether the advertised points allow serving at least one header in the
--- fragment.
---
--- FIXME: `HeaderPoint` in `PointSchedule` is a header and not a point; what the
--- hell?
-canServeHeader ::
-  AdvertisedPoints ->
-  TestFragH ->
-  Bool
-canServeHeader AdvertisedPoints{header = HeaderPoint point} fragment =
-  AF.pointOnFragment (blockPoint point) fragment
+    NodeOnline advertisedPoints -> pure advertisedPoints
 
 serveHeader ::
   IOLike m =>
   MockedChainSyncServer m ->
   AdvertisedPoints ->
-  TestFragH ->
   m (Maybe (Tip TestBlock, Header TestBlock))
-serveHeader MockedChainSyncServer{..} points = \case
-  AF.Empty _ -> pure Nothing
-  next AF.:< rest -> do
-    atomically (writeTVar mcssUnservedFragment rest)
-    pure $ Just (coerce $ tip points, next)
+serveHeader MockedChainSyncServer{..} points = do
+  intersection <- readTVarIO mcssCurrentIntersection
+  traceWith mcssTracer $ "  last intersection is " ++ condense intersection
+  let HeaderPoint header' = header points
+      headerPoint = AF.castPoint $ blockPoint header'
+  case BT.findPath intersection headerPoint mcssBlockTree of
+    Nothing -> error "There should always be a path"
+    Just (involvesRollback, fragmentAhead) -> do
+      traceWith mcssTracer $ "  fragment ahead: " ++ condense fragmentAhead
+      case involvesRollback of
+        BT.InvolvesRollback True -> error "Rollback not supported in MockedChainSyncServer"
+        _ -> pure ()
+      case fragmentAhead of
+        AF.Empty _ -> pure Nothing
+        next AF.:< _ -> do
+          atomically $ writeTVar mcssCurrentIntersection $ blockPoint next
+          pure $ Just (coerce (tip points), getHeader next)
 
 intersectWith ::
   AnchoredFragment TestBlock ->
   [Point TestBlock] ->
-  Maybe (AnchoredFragment TestBlock)
+  Maybe (Point TestBlock)
 intersectWith fullFrag pts =
-  snd <$> getFirst (foldMap (First . AF.splitAfterPoint fullFrag) pts)
+  AF.anchorPoint . snd <$> getFirst (foldMap (First . AF.splitAfterPoint fullFrag) pts)
 
 runMockedChainSyncServer ::
   IOLike m =>
   MockedChainSyncServer m ->
-  TestFrag ->
   ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
-runMockedChainSyncServer server@MockedChainSyncServer{..} fullFrag =
+runMockedChainSyncServer server@MockedChainSyncServer{..} =
   go
   where
     go =
@@ -223,56 +215,40 @@ runMockedChainSyncServer server@MockedChainSyncServer{..} fullFrag =
       }
 
     recvMsgRequestNext = do
-      (advertisedPoints, fragment) <- checkCurrent server
-      () <- if canServeHeader advertisedPoints fragment
-        then pure ()
-        else do
-          trace "waiting for node state..."
-          void $ waitNodeState server
+      advertisedPoints <- checkCurrent server
       trace "handling MsgRequestNext"
       trace $ "  points are " ++ condense advertisedPoints
-      trace $ "  fragment is " ++ condense fragment
-      serveHeader server advertisedPoints fragment >>= \case
-        Just (tip, h) -> do
-          trace $ "  gotta serve " ++ condense h
+      serveHeader server advertisedPoints >>= \case
+        Just (tip, headerToServe) -> do
+          trace $ "  gotta serve " ++ condense headerToServe
           trace $ "  tip is      " ++ condense tip
           trace "done handling MsgRequestNext"
-          pure $ Left $ SendMsgRollForward h tip go
+          pure $ Left $ SendMsgRollForward headerToServe tip go
         Nothing -> do
-          trace "  no more blocks to serve; done forever!"
-          trace "done handling MsgRequestNext"
-          pure $ Right stall
+          trace "  cannot serve at this point; waiting for node state and starting again"
+          void $ waitNodeState server
+          recvMsgRequestNext
 
     recvMsgFindIntersect pts = do
-      (points, _) <- checkCurrent server
+      points <- checkCurrent server
       trace "handling MsgFindIntersect"
-      let theTip = coerce $ tip points
-      case intersectWith fullFrag pts of
+      let TipPoint tip' = tip points
+          tipPoint = Ouroboros.Network.Block.getTipPoint tip'
+          fragment = fromJust $ BT.findFragment tipPoint mcssBlockTree
+      case intersectWith fragment pts of
         Nothing -> do
           trace "  no intersection found"
           trace "done handling MsgFindIntersect"
-          pure $ SendMsgIntersectNotFound theTip go
-        Just frag -> do
-          unservedFragment <- readTVarIO mcssUnservedFragment
-          trace $ "  unserved fragment is: " ++ condense unservedFragment
-          let intersection = AF.anchorPoint frag
+          pure $ SendMsgIntersectNotFound tip' go
+        Just intersection -> do
           trace $ "  intersection found: " ++ condense intersection
-          case AF.splitAfterPoint unservedFragment intersection of
-            Nothing -> do
-              trace "  intersection is not in the unserved fragment"
-              pure ()
-            Just (_dropped, unservedFragment') -> do
-              trace "  intersection was in the unserved fragment"
-              atomically $ writeTVar mcssUnservedFragment unservedFragment'
-              trace $ "  unserved fragment is now: " ++ condense unservedFragment'
+          atomically $ writeTVar mcssCurrentIntersection intersection
           trace "done handling MsgFindIntersect"
-          pure $ SendMsgIntersectFound (AF.anchorPoint frag) theTip go
+          pure $ SendMsgIntersectFound intersection tip' go
 
     recvMsgDoneClient = do
       trace "received MsgDoneClient"
       pure ()
-
-    stall = forever $ threadDelay 1000
 
     trace = traceWith mcssTracer
 
@@ -298,14 +274,12 @@ syncWith ::
   IOLike m =>
   Tracer m String ->
   ChainDbView m TestBlock ->
-  Peers TestFrag ->
-  PeerId ->
   MockedChainSyncServer m ->
   StateT (SyncTest m) m ()
-syncWith tracer chainDbView frags pid server@MockedChainSyncServer{..} = do
+syncWith tracer chainDbView server@MockedChainSyncServer{..} = do
   cfg <- gets topConfig
   handle <- lift $ async $ do
-    let s = runMockedChainSyncServer server (fromJust (getPeer pid frags))
+    let s = runMockedChainSyncServer server
     runConnectedPeersPipelined
       createConnectedChannels
       nullTracer
@@ -384,72 +358,6 @@ syncTest tracer k pointSchedule peers setup continuation =
       b <- lift $ continuation a
       pure (b <$ res)
 
-slotAndBlockNoFromAnchor :: AF.Anchor b -> (SlotNo, BlockNo)
-slotAndBlockNoFromAnchor = \case
-  AF.AnchorGenesis -> (0, 0)
-  AF.Anchor slotNo _ blockNumber -> (slotNo, blockNumber)
-
-prettyPrintFragments ::
-  MonadMonotonicTime m =>
-  Tracer m String ->
-  Map PeerId TestFragH ->
-  m ()
-prettyPrintFragments tracer fragments = do
-  let honestFragment = fromJust $ fragments Map.!? HonestPeer
-  let advFragment = reanchorAdversary $ fromJust $ fragments Map.!? PeerId "adversary"
-
-  let (oSlotNo, oBlockNo) = slotAndBlockNoFromAnchor $ AF.anchor honestFragment
-  let (hSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor honestFragment
-
-  let (aoSlotNo, _) = slotAndBlockNoFromAnchor $ AF.anchor advFragment
-  let (ahSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor advFragment
-
-  let firstSlotNo = min oSlotNo aoSlotNo
-  let lastSlotNo = max hSlotNo ahSlotNo
-
-  traceWith tracer "Fragments:"
-
-  [firstSlotNo .. lastSlotNo]
-    & map (printf "%2d" . unSlotNo)
-    & unwords
-    & ("  slots:  " ++)
-    & traceWith tracer
-
-  honestFragment
-    & toOldestFirst
-    & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - 1), Just (unBlockNo (blockNo block))))
-    & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo hSlotNo - unSlotNo oSlotNo)) Nothing Vector.//)
-    & map (maybe "  " (printf "%2d"))
-    & unwords
-    & map (\c -> if c == ' ' then '─' else c)
-    & ("─" ++)
-    & (printf "%2d" (unBlockNo oBlockNo) ++)
-    & ("  honest: " ++)
-    & traceWith tracer
-
-  advFragment
-    & toOldestFirst
-    & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo aoSlotNo - 1), Just (unBlockNo (blockNo block))))
-    & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo ahSlotNo - unSlotNo aoSlotNo)) Nothing Vector.//)
-    & map (maybe "  " (printf "%2d"))
-    & unwords
-    & map (\c -> if c == ' ' then '─' else c)
-    & (" ╰─" ++)
-    & (replicate (3 * fromIntegral (unSlotNo (aoSlotNo - oSlotNo))) ' ' ++)
-    & ("  advers: " ++)
-    & traceWith tracer
-
-  pure ()
-
-  where
-    reanchorAdversary :: TestFragH -> TestFragH
-    reanchorAdversary fragment@(AF.Empty _) = fragment
-    reanchorAdversary fragment@(block AF.:< restFragment) =
-      if all (0 ==) $ unTestHash $ blockHash block then
-        reanchorAdversary restFragment
-      else
-        fragment
-
 syncPeers ::
   IOLike m =>
   SecurityParam ->
@@ -462,14 +370,9 @@ syncPeers k pointSchedule peers tracer =
     (do
       st <- get
       lift $ traceWith tracer $ "Security param k = " ++ show k
-      fragments <- lift $ traverse (readTVarIO . mcssUnservedFragment) peers
-      lift $ prettyPrintFragments tracer fragments
-      lift $ for_ peers $ \ MockedChainSyncServer {mcssPeerId, mcssUnservedFragment} -> do
-        unservedFragment <- readTVarIO mcssUnservedFragment
-        traceWith tracer $ condense mcssPeerId ++ " fragment: " ++ condense unservedFragment
       chainDb <- lift $ mkRealChainDb tracer (mcssCandidateFragment <$> peers) (topConfig st) (registry st)
       let chainDbView = defaultChainDbView chainDb
-      void (Map.traverseWithKey (syncWith tracer chainDbView (frags pointSchedule)) peers)
+      traverse_ (syncWith tracer chainDbView) peers
       pure chainDb)
     (atomically . ChainDB.getCurrentChain)
 

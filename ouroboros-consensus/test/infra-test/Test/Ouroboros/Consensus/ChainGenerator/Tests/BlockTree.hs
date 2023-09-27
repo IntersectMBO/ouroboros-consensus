@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE RecordWildCards #-}
 
@@ -8,15 +9,26 @@
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree (
     BlockTree (..)
   , BlockTreeBranch (..)
+  , InvolvesRollback (..)
   , addBranch
   , addBranch'
+  , allFragments
+  , findFragment
+  , findPath
   , mkTrunk
+  , prettyPrint
   , slotLength
   ) where
 
+import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo), withOrigin)
+import           Data.Function ((&))
 import           Data.Maybe (fromJust, fromMaybe)
+import qualified Data.Vector as Vector
+import           Ouroboros.Consensus.Block.Abstract (blockNo, blockSlot,
+                     unBlockNo)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Text.Printf (printf)
 
 -- | Represent a branch of a block tree. We provide:
 --
@@ -31,6 +43,7 @@ data BlockTreeBranch blk = BlockTreeBranch {
     suffix :: AF.AnchoredFragment blk,
     full   :: AF.AnchoredFragment blk
   }
+  deriving (Show)
 
 -- | Represent a block tree with a main trunk and branches leaving from the
 -- trunk in question. All the branches are represented by their prefix to and
@@ -45,6 +58,7 @@ data BlockTree blk = BlockTree {
     trunk    :: AF.AnchoredFragment blk,
     branches :: [BlockTreeBranch blk]
   }
+  deriving (Show)
 
 -- | Make a block tree made of only a trunk.
 mkTrunk :: AF.AnchoredFragment blk -> BlockTree blk
@@ -75,3 +89,84 @@ slotLength fragment =
   fromIntegral $ unSlotNo $
     withOrigin 0 id (AF.anchorToSlotNo $ AF.headAnchor fragment)
     - withOrigin 0 id (AF.anchorToSlotNo $ AF.anchor fragment)
+
+-- | Return all the full fragments from the root of the tree.
+allFragments :: BlockTree blk -> [AF.AnchoredFragment blk]
+allFragments BlockTree{..} = trunk : map full branches
+
+firstJust :: [Maybe a] -> Maybe a
+firstJust []               = Nothing
+firstJust (Nothing : rest) = firstJust rest
+firstJust (Just x : _)     = Just x
+
+-- | Look for a point in the block tree and return a fragment going from the
+-- root of the tree to the point in question.
+findFragment :: AF.HasHeader blk => AF.Point blk -> BlockTree blk -> Maybe (AF.AnchoredFragment blk)
+findFragment point blockTree =
+  fst <$> firstJust (map (\fragment -> AF.splitAfterPoint fragment point) $ allFragments blockTree)
+
+newtype InvolvesRollback = InvolvesRollback Bool
+
+findPath :: AF.HasHeader blk => AF.Point blk -> AF.Point blk -> BlockTree blk -> Maybe (InvolvesRollback, AF.AnchoredFragment blk)
+findPath source target blockTree = do
+  sourceFragment <- findFragment source blockTree
+  targetFragment <- findFragment target blockTree
+  (_, _, sourceSuffix, targetSuffix) <- AF.intersect sourceFragment targetFragment
+  pure (InvolvesRollback (AF.length sourceSuffix /= 0), targetSuffix)
+
+prettyPrint :: AF.HasHeader blk => BlockTree blk -> [String]
+prettyPrint blockTree = do
+  let honestFragment = trunk blockTree
+  let advFragment = suffix $ head $ branches blockTree
+
+  let (oSlotNo, oBlockNo) = slotAndBlockNoFromAnchor $ AF.anchor honestFragment
+  let (hSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor honestFragment
+
+  let (aoSlotNo, _) = slotAndBlockNoFromAnchor $ AF.anchor advFragment
+  let (ahSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor advFragment
+
+  let firstSlotNo = min oSlotNo aoSlotNo
+  let lastSlotNo = max hSlotNo ahSlotNo
+
+  -- FIXME: only handles two fragments at this point. not very hard to make it
+  -- handle all of them. Some work needed to make it handle all of them _in a
+  -- clean way_.
+
+  [ "Block tree:"
+    ,
+
+    [firstSlotNo .. lastSlotNo]
+      & map (printf "%2d" . unSlotNo)
+      & unwords
+      & ("  slots: " ++)
+    ,
+
+    honestFragment
+      & AF.toOldestFirst
+      & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - 1), Just (unBlockNo (blockNo block))))
+      & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo hSlotNo - unSlotNo oSlotNo)) Nothing Vector.//)
+      & map (maybe "  " (printf "%2d"))
+      & unwords
+      & map (\c -> if c == ' ' then '─' else c)
+      & ("─" ++)
+      & (printf "%2d" (unBlockNo oBlockNo) ++)
+      & ("  trunk: " ++)
+    ,
+
+    advFragment
+      & AF.toOldestFirst
+      & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo aoSlotNo - 1), Just (unBlockNo (blockNo block))))
+      & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo ahSlotNo - unSlotNo aoSlotNo)) Nothing Vector.//)
+      & map (maybe "  " (printf "%2d"))
+      & unwords
+      & map (\c -> if c == ' ' then '─' else c)
+      & (" ╰─" ++)
+      & (replicate (3 * fromIntegral (unSlotNo (aoSlotNo - oSlotNo))) ' ' ++)
+      & ("         " ++)
+    ]
+
+  where
+    slotAndBlockNoFromAnchor :: AF.Anchor b -> (SlotNo, BlockNo)
+    slotAndBlockNoFromAnchor = \case
+      AF.AnchorGenesis -> (0, 0)
+      AF.Anchor slotNo _ blockNo' -> (slotNo, blockNo')
