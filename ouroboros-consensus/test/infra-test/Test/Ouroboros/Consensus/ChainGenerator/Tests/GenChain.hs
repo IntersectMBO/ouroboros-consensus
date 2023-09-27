@@ -25,6 +25,14 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, TestBlockWith (tbSlot),
                      firstBlock, forkBlock, successorBlock)
 
+-- | Generates a block tree randomly from an adversarial recipe. The block tree
+-- contains one trunk (the “good chain”) and one branch (the “bad chain”). For
+-- instance, one such tree could be graphically represented as:
+--
+--     slots:    1  2  3  4  5  6  7  8  9
+--     good:  O─────1──2──3──4─────5──6──7
+--     bad:            ╰─────3──4─────5
+--
 genChains ::
   Asc ->
   A.AdversarialRecipe base hon ->
