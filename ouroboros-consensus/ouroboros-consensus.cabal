@@ -519,40 +519,38 @@ test-suite infra-test
     Test.Ouroboros.Consensus.ChainGenerator.Tests
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.PointScheduleTest
     Test.Ouroboros.Consensus.ChainGenerator.Tests.ChainDb
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.PointScheduleTest
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
     Test.Util.ChainUpdates.Tests
     Test.Util.Schedule.Tests
     Test.Util.Split.Tests
 
   build-depends:
     , base
-    , mtl
-    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
-    , QuickCheck
-    , random
-    , tasty
-    , tasty-quickcheck
-    , vector
     , cardano-crypto-class
     , cardano-slotting
-    , unstable-consensus-testlib
     , containers
     , contra-tracer
     , io-sim
+    , mtl
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-api
     , ouroboros-network-mock
     , ouroboros-network-protocols
     , QuickCheck
     , random
+    , tasty
+    , tasty-quickcheck
     , time
     , typed-protocols-examples
+    , unstable-consensus-testlib
+    , vector
 
 test-suite storage-test
   import:         common-test
