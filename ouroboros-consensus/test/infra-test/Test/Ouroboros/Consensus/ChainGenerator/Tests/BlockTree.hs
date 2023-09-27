@@ -102,8 +102,8 @@ findFragment point blockTree =
 
 -- | @findPath source target blockTree@ finds a path from the @source@ point to
 -- the @target@ point in the @blockTree@, or returns @Nothing@. A path is a
--- fragment anchored at the @source@ or an ancestor of the @source@. One can
--- distinguish three cases:
+-- fragment anchored at the youngest common ancestor of both @source@ and
+-- @target@. One can distinguish three cases:
 --
 -- - the fragment is anchored at the @source@: all the blocks are descendants of
 --   the source; serving this fragment would only require rolling forward;
