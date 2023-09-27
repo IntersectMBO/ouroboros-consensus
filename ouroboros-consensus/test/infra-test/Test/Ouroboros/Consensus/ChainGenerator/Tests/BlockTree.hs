@@ -54,14 +54,14 @@ data BlockTreeBranch blk = BlockTreeBranch {
 -- INVARIANT: The branches do not contain any block (beside the anchor) that is
 -- present in the trunk.
 data BlockTree blk = BlockTree {
-    trunk    :: AF.AnchoredFragment blk,
-    branches :: [BlockTreeBranch blk]
+    btTrunk    :: AF.AnchoredFragment blk,
+    btBranches :: [BlockTreeBranch blk]
   }
   deriving (Show)
 
 -- | Make a block tree made of only a trunk.
 mkTrunk :: AF.AnchoredFragment blk -> BlockTree blk
-mkTrunk trunk = BlockTree { trunk, branches = [] }
+mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 
 -- | Add a branch to a block tree. The given fragment has to be anchored in
 --
@@ -69,11 +69,11 @@ mkTrunk trunk = BlockTree { trunk, branches = [] }
 -- the trunk.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
 addBranch branch BlockTree{..} = do
-  (_, btbPrefix, _, btbSuffix) <- AF.intersect trunk branch
+  (_, btbPrefix, _, btbSuffix) <- AF.intersect btTrunk branch
   -- NOTE: We could use the monadic bind for @Maybe@ here but we would rather
   -- catch bugs quicker.
   let btbFull = fromJust $ AF.join btbPrefix btbSuffix
-  pure $ BlockTree { trunk, branches = BlockTreeBranch { .. } : branches }
+  pure $ BlockTree { btTrunk, btBranches = BlockTreeBranch { .. } : btBranches }
 
 -- | Same as @addBranch@ but assumes that the precondition holds.
 addBranch' :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> BlockTree blk
@@ -91,7 +91,7 @@ slotLength fragment =
 
 -- | Return all the full fragments from the root of the tree.
 allFragments :: BlockTree blk -> [AF.AnchoredFragment blk]
-allFragments BlockTree{..} = trunk : map btbFull branches
+allFragments BlockTree{..} = btTrunk : map btbFull btBranches
 
 firstJust :: [Maybe a] -> Maybe a
 firstJust []               = Nothing
@@ -126,8 +126,8 @@ findPath source target blockTree = do
 
 prettyPrint :: AF.HasHeader blk => BlockTree blk -> [String]
 prettyPrint blockTree = do
-  let honestFragment = trunk blockTree
-  let advFragment = btbSuffix $ head $ branches blockTree
+  let honestFragment = btTrunk blockTree
+  let advFragment = btbSuffix $ head $ btBranches blockTree
 
   let (oSlotNo, oBlockNo) = slotAndBlockNoFromAnchor $ AF.anchor honestFragment
   let (hSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor honestFragment

@@ -82,10 +82,10 @@ exampleTestSetup params seed =
     advLenAfterIntersection = AF.length badChainSuffix
 
     blockTree = genChains (testAscA params) (testRecipeA params) (testRecipeA' params) seed
-    goodChain = BT.trunk blockTree
+    goodChain = BT.btTrunk blockTree
 
     BT.BlockTreeBranch { btbSuffix = badChainSuffix, btbFull = badChain } =
-      head $ BT.branches blockTree
+      head $ BT.btBranches blockTree
 
 runTest ::
   forall m.
