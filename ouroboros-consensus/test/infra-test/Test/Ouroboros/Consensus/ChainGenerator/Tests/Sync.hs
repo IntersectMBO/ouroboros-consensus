@@ -196,29 +196,31 @@ serveHeader MockedChainSyncServer{..} points = do
       headerPoint = AF.castPoint $ blockPoint header'
   case BT.findPath intersection headerPoint mcssBlockTree of
     Nothing -> error "There should always be a path"
-    Just fragmentAhead
-      -- If the anchor is the intersection, then the fragment is purely
-      -- descendant of the intersection so we can roll forward.
-      | AF.anchorPoint fragmentAhead == intersection ->
-        case fragmentAhead of
-          AF.Empty _ -> do
-            trace "  intersection is exactly our header point"
-            pure Nothing
-          next AF.:< _ -> do
-            trace "  intersection is before our header point"
-            trace $ "  fragment ahead: " ++ condense fragmentAhead
-            atomically $ writeTVar mcssCurrentIntersection $ blockPoint next
-            pure $ Just (coerce (tip points), getHeader next)
-      -- If the anchor is not the intersection but the fragment is empty, then
-      -- the intersection is further than the tip that we can serve.
-      | AF.length fragmentAhead == 0 -> do
+    Just findPathResult ->
+      case findPathResult of
+        -- If the anchor is the intersection (the source of the path-finding)
+        -- but the fragment is empty, then the intersection is exactly our
+        -- header point and there is nothing to do.
+        (BT.PathAnchoredAtSource True, AF.Empty _) -> do
+          trace "  intersection is exactly our header point"
+          pure Nothing
+        -- If the anchor is the intersection and the fragment is non-empty, then
+        -- we have something to serve.
+        (BT.PathAnchoredAtSource True, fragmentAhead@(next AF.:< _)) -> do
+          trace "  intersection is before our header point"
+          trace $ "  fragment ahead: " ++ condense fragmentAhead
+          atomically $ writeTVar mcssCurrentIntersection $ blockPoint next
+          pure $ Just (coerce (tip points), getHeader next)
+        -- If the anchor is not the intersection but the fragment is empty, then
+        -- the intersection is further than the tip that we can serve.
+        (BT.PathAnchoredAtSource False, AF.Empty _) -> do
           trace "  intersection is further than our header point"
           pure Nothing
-      -- If the anchor is not the intersection and the fragment is non-empty,
-      -- then we require a rollback
-      | otherwise -> do
-          trace $ "  we will require a rollback to" ++ condense (AF.anchorPoint fragmentAhead)
-          trace $ "  fragment: " ++ condense fragmentAhead
+        -- If the anchor is not the intersection and the fragment is non-empty,
+        -- then we require a rollback
+        (BT.PathAnchoredAtSource False, fragment) -> do
+          trace $ "  we will require a rollback to" ++ condense (AF.anchorPoint fragment)
+          trace $ "  fragment: " ++ condense fragment
           error "Rollback not supported in MockedChainSyncServer"
   where
     trace = traceWith mcssTracer

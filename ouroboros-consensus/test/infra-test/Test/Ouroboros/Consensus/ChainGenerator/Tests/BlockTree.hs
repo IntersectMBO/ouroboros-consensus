@@ -9,6 +9,7 @@
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree (
     BlockTree (..)
   , BlockTreeBranch (..)
+  , PathAnchoredAtSource (..)
   , addBranch
   , addBranch'
   , allFragments
@@ -100,25 +101,45 @@ findFragment point blockTree =
     & asum
     <&> fst
 
+-- | See 'findPath'.
+newtype PathAnchoredAtSource = PathAnchoredAtSource Bool
+
 -- | @findPath source target blockTree@ finds a path from the @source@ point to
--- the @target@ point in the @blockTree@, or returns @Nothing@. A path is a
--- fragment anchored at the youngest common ancestor of both @source@ and
--- @target@. One can distinguish three cases:
+-- the @target@ point in the @blockTree@ and returns it as an anchored fragment
+-- or returns @Nothing@. There are two interesting properties on this fragment:
 --
--- - the fragment is anchored at the @source@: all the blocks are descendants of
---   the source; serving this fragment would only require rolling forward;
+--   1. Whether the returned fragment is anchored at the @source@.
+--   2. Whether the returned fragment is empty.
 --
--- - the fragment is not anchored at the @source@ and is empty: it is then in
---   fact anchored at the @target@ which is an ancestor of the source;
+-- Together, those two properties form four interesting cases:
 --
--- - the fragment is not anchored at the @source@ and is not empty: serving this
---   fragment would require rolling backwards to the anchor.
-findPath :: AF.HasHeader blk => AF.Point blk -> AF.Point blk -> BlockTree blk -> Maybe (AF.AnchoredFragment blk)
+--   a. If the fragment is anchored at the @source@ and is empty, then @source
+--      == target@.
+--
+--   b. If the fragment is anchored at the @source@ and is not empty, then
+--      @source@ is an ancestor of @target@ and the fragment contains all the
+--      blocks between them, @target@ included.
+--
+--   c. If the fragment is not anchored at the @source@ and is empty, then
+--      @target@ is an ancestor of @source@.
+--
+--   d. If the fragment is not anchored at the @source@ and is not empty, then
+--      it is anchored at the youngest common ancestor of both @source@ and
+--      @target@ and contains all the blocks between that ancestor and @target@.
+findPath ::
+  AF.HasHeader blk =>
+  AF.Point blk ->
+  AF.Point blk ->
+  BlockTree blk ->
+  Maybe (PathAnchoredAtSource, AF.AnchoredFragment blk)
 findPath source target blockTree = do
   sourceFragment <- findFragment source blockTree
   targetFragment <- findFragment target blockTree
   (_, _, _, targetSuffix) <- AF.intersect sourceFragment targetFragment
-  pure targetSuffix
+  pure (
+    PathAnchoredAtSource (AF.anchorPoint targetSuffix == source),
+    targetSuffix
+    )
 
 -- | Pretty prints a block tree for human readability. For instance:
 --
