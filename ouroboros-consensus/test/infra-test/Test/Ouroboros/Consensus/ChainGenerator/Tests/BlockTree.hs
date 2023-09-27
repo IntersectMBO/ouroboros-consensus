@@ -29,14 +29,12 @@ import           Ouroboros.Consensus.Block.Abstract (blockNo, blockSlot,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Text.Printf (printf)
 
--- | Represent a branch of a block tree. We provide:
+-- | Represent a branch of a block tree by a prefix and a suffix. The full
+-- fragment (the prefix and suffix catenated) is provided for practicality.
 --
--- - its prefix, whose anchor is the same as the trunk and whose head is the
---   intersection point for this specific branch.
+-- INVARIANT: the head of @btbPrefix@ is the anchor of @btbSuffix@.
 --
--- - its suffix, whose anchor is the intersection point.
---
--- - the full fragment, that is the prefix and suffix catenated.
+-- INVARIANT: @btbFull == fromJust $ AF.join btbPrefix btbSuffix@
 data BlockTreeBranch blk = BlockTreeBranch {
     btbPrefix :: AF.AnchoredFragment blk,
     btbSuffix :: AF.AnchoredFragment blk,
@@ -48,11 +46,14 @@ data BlockTreeBranch blk = BlockTreeBranch {
 -- trunk in question. All the branches are represented by their prefix to and
 -- suffix from the intersection point.
 --
--- INVARIANT: The branches are anchored in a block of the trunk or have the same
--- anchor as the trunk.
+-- INVARIANT: The branches' prefixes share the same anchor as the trunk and are
+-- fully contained in the trunk.
 --
--- INVARIANT: The branches do not contain any block (beside the anchor) that is
--- present in the trunk.
+-- INVARIANT: The branches' suffixes are anchored in the trunk and do not
+-- contain any blocks in common with the trunk.
+--
+-- INVARIANT: The branches' suffixes do not contain any block in common with one
+-- another.
 data BlockTree blk = BlockTree {
     btTrunk    :: AF.AnchoredFragment blk,
     btBranches :: [BlockTreeBranch blk]
@@ -67,9 +68,11 @@ mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 --
 -- PRECONDITION: The given fragment intersects with the trunk or its anchor.
 --
--- FIXME: this would be a good place to check consistency of the hashes with the
--- current branches, that is we should use this function to ensure that no two
--- branches leave the trunk at the same slot with the same fork number.
+-- FIXME: we should enforce that the branch's prefix shares the same anchor as
+-- the trunk.
+--
+-- FIXME: we should enforce that the new branch' suffix does not contain any
+-- block in common with an existingbranch.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
 addBranch branch BlockTree{..} = do
   (_, btbPrefix, _, btbSuffix) <- AF.intersect btTrunk branch
