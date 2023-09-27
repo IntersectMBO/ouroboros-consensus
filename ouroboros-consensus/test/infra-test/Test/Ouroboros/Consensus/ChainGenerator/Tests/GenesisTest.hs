@@ -20,6 +20,8 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Params
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial hiding
                      (tests)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
+                     (BlockTreeBranch (btbFull))
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
                      (genChains)
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
@@ -82,7 +84,7 @@ exampleTestSetup params seed =
     blockTree = genChains (testAscA params) (testRecipeA params) (testRecipeA' params) seed
     goodChain = BT.trunk blockTree
 
-    BT.BlockTreeBranch { suffix = badChainSuffix, full = badChain } =
+    BT.BlockTreeBranch { btbSuffix = badChainSuffix, btbFull = badChain } =
       head $ BT.branches blockTree
 
 runTest ::

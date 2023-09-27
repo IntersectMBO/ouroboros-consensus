@@ -38,9 +38,9 @@ import           Text.Printf (printf)
 --
 -- - the full fragment, that is the prefix and suffix catenated.
 data BlockTreeBranch blk = BlockTreeBranch {
-    prefix :: AF.AnchoredFragment blk,
-    suffix :: AF.AnchoredFragment blk,
-    full   :: AF.AnchoredFragment blk
+    btbPrefix :: AF.AnchoredFragment blk,
+    btbSuffix :: AF.AnchoredFragment blk,
+    btbFull   :: AF.AnchoredFragment blk
   }
   deriving (Show)
 
@@ -69,10 +69,10 @@ mkTrunk trunk = BlockTree { trunk, branches = [] }
 -- the trunk.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
 addBranch branch BlockTree{..} = do
-  (_, prefix, _, suffix) <- AF.intersect trunk branch
+  (_, btbPrefix, _, btbSuffix) <- AF.intersect trunk branch
   -- NOTE: We could use the monadic bind for @Maybe@ here but we would rather
   -- catch bugs quicker.
-  let full = fromJust $ AF.join prefix suffix
+  let btbFull = fromJust $ AF.join btbPrefix btbSuffix
   pure $ BlockTree { trunk, branches = BlockTreeBranch { .. } : branches }
 
 -- | Same as @addBranch@ but assumes that the precondition holds.
@@ -91,7 +91,7 @@ slotLength fragment =
 
 -- | Return all the full fragments from the root of the tree.
 allFragments :: BlockTree blk -> [AF.AnchoredFragment blk]
-allFragments BlockTree{..} = trunk : map full branches
+allFragments BlockTree{..} = trunk : map btbFull branches
 
 firstJust :: [Maybe a] -> Maybe a
 firstJust []               = Nothing
@@ -127,7 +127,7 @@ findPath source target blockTree = do
 prettyPrint :: AF.HasHeader blk => BlockTree blk -> [String]
 prettyPrint blockTree = do
   let honestFragment = trunk blockTree
-  let advFragment = suffix $ head $ branches blockTree
+  let advFragment = btbSuffix $ head $ branches blockTree
 
   let (oSlotNo, oBlockNo) = slotAndBlockNoFromAnchor $ AF.anchor honestFragment
   let (hSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor honestFragment
