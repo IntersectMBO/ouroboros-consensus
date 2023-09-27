@@ -10,7 +10,7 @@ Boundary(chain_db, "Chain DB") {
 
 
 Component(mempool, "Mempool", "", "Holds new transactions past the current tip of the chain", $link="https://input-output-hk.github.io/ouroboros-consensus/haddocks/ouroboros-consensus/Ouroboros-Consensus-Mempool.html")
-Component(syncer, "Mempool Syncer", "", "Synchronizes the mempool with latest state of the chain", $link="https://input-output-hk.github.io/ouroboros-consensus/haddocks/ouroboros-consensus/Ouroboros-Consensus-Mempool-Impl.html")
+Component(syncer, "Mempool Syncer", "", "Synchronizes the mempool with latest state of the chain", $link="https://input-output-hk.github.io/ouroboros-consensus/haddocks/ouroboros-consensus/Ouroboros-Consensus-Mempool-Init.html")
 Component(block_creation, "Block Creator", "", "Creates new block out of txs in the mempool", $link = "https://input-output-hk.github.io/ouroboros-consensus/haddocks/ouroboros-consensus/Ouroboros-Consensus-Block-Forging.html")
 Component(candidates, "Chain Candidates", "", "Maintains candidate chains from peers")
 Component(selection, "Chain Selection", "", "Selects best chain and updates ledger tip", $link = "https://input-output-hk.github.io/ouroboros-consensus/haddocks/ouroboros-consensus/Ouroboros-Consensus-Storage-ChainDB-Impl-ChainSel.html")
