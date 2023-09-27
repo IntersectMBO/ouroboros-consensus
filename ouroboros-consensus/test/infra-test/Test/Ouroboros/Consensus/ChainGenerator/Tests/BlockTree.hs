@@ -16,11 +16,10 @@ module Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree (
   , findPath
   , mkTrunk
   , prettyPrint
-  , slotLength
   ) where
 
 import           Cardano.Slotting.Block (BlockNo)
-import           Cardano.Slotting.Slot (SlotNo (unSlotNo), withOrigin)
+import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
 import           Data.Function ((&))
 import           Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Vector as Vector
@@ -85,15 +84,6 @@ addBranch branch BlockTree{..} = do
 addBranch' :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> BlockTree blk
 addBranch' branch blockTree =
   fromMaybe (error "addBranch': precondition does not hold") $ addBranch branch blockTree
-
--- | Number of slots on which the fragment span.
---
--- REVIEW: Should be put somewhere else but is here in lack of a better place.
-slotLength :: AF.HasHeader blk => AF.AnchoredFragment blk -> Int
-slotLength fragment =
-  fromIntegral $ unSlotNo $
-    withOrigin 0 id (AF.anchorToSlotNo $ AF.headAnchor fragment)
-    - withOrigin 0 id (AF.anchorToSlotNo $ AF.anchor fragment)
 
 -- | Return all the full fragments from the root of the tree.
 allFragments :: BlockTree blk -> [AF.AnchoredFragment blk]

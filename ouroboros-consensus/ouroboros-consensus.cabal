@@ -516,6 +516,7 @@ test-suite infra-test
   main-is:        Main.hs
   other-modules:
     Ouroboros.Consensus.Util.Tests
+    Ouroboros.Network.AnchoredFragment.Extras
     Test.Ouroboros.Consensus.ChainGenerator.Tests
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector

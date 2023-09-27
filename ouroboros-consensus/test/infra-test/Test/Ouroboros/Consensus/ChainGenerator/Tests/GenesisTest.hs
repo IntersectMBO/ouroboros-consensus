@@ -14,6 +14,7 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import qualified Ouroboros.Network.AnchoredFragment.Extras as AF
 import           Test.Ouroboros.Consensus.ChainGenerator.Honest
                      (HonestRecipe (HonestRecipe))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params
@@ -78,7 +79,7 @@ exampleTestSetup params seed =
     genesisAcrossIntersection = not genesisAfterIntersection && len > scg
     genesisAfterIntersection = fragLenA > scg && advLenAfterIntersection > k
 
-    fragLenA = BT.slotLength badChain
+    fragLenA = AF.slotLength badChain
     advLenAfterIntersection = AF.length badChainSuffix
 
     blockTree = genChains (testAscA params) (testRecipeA params) (testRecipeA' params) seed
