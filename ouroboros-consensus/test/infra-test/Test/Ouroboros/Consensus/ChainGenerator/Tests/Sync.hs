@@ -1,105 +1,89 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RankNTypes #-}
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync where
 
-import Data.Function ((&))
-import qualified Data.Vector as Vector
-import Text.Printf (printf)
-import Prelude hiding (log)
-import Cardano.Crypto.DSIGN (SignKeyDSIGN (..), VerKeyDSIGN (..))
-import Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
-import Control.Monad ( forever )
-import Control.Monad.State.Strict (StateT, evalStateT, get, gets, lift, modify')
-import Control.Tracer (nullTracer, traceWith, Tracer (Tracer))
-import Data.Foldable (for_)
-import Data.Functor (void)
-import Data.Time.Clock (diffTimeToPicoseconds)
+import           Cardano.Crypto.DSIGN (SignKeyDSIGN (..), VerKeyDSIGN (..))
+import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
+import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
+import           Control.Monad (forever)
+import           Control.Monad.State.Strict (StateT, evalStateT, get, gets,
+                     lift, modify')
+import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
+import           Data.Coerce (coerce)
+import           Data.Foldable (for_)
+import           Data.Function ((&))
+import           Data.Functor (void)
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Network.TypedProtocol.Channel (createConnectedChannels)
-import Network.TypedProtocol.Driver.Simple (runConnectedPeersPipelined)
-import Ouroboros.Consensus.Block.Abstract (Header, Point (..))
-import Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
-import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork (EraParams, defaultEraParams)
-import Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
-  ChainDbView,
-  ChainSyncClientException,
-  Consensus,
-  chainSyncClient,
-  defaultChainDbView,
-  TraceChainSyncClientEvent (..),
-  )
-import Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (NumCoreNodes))
-import Ouroboros.Consensus.NodeId (CoreNodeId (CoreNodeId), NodeId (CoreId))
-import Ouroboros.Consensus.Protocol.BFT (
-  BftParams (BftParams, bftNumNodes, bftSecurityParam),
-  ConsensusConfig (BftConfig, bftParams, bftSignKey, bftVerKeys),
-  )
-import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.AnchoredFragment (AnchoredFragment, toOldestFirst)
-import Ouroboros.Network.Block (Tip (..), blockPoint, BlockNo(unBlockNo), blockNo, blockSlot, blockHash)
-import Ouroboros.Network.ControlMessage (ControlMessage (..))
-import Ouroboros.Network.Protocol.ChainSync.ClientPipelined (ChainSyncClientPipelined, chainSyncClientPeerPipelined)
-import Ouroboros.Network.Protocol.ChainSync.Codec (codecChainSyncId)
-import Ouroboros.Network.Protocol.ChainSync.PipelineDecision (pipelineDecisionLowHighMark)
-import Ouroboros.Network.Protocol.ChainSync.Server (
-  ChainSyncServer (..),
-  ServerStIdle (ServerStIdle, recvMsgDoneClient, recvMsgFindIntersect, recvMsgRequestNext),
-  ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
-  ServerStNext (SendMsgRollForward),
-  chainSyncServerPeer,
-  )
-import Test.Util.Orphans.IOLike ()
-import Test.Util.TestBlock (
-  BlockConfig (TestBlockConfig),
-  CodecConfig (TestBlockCodecConfig),
-  StorageConfig (TestBlockStorageConfig),
-  TestBlock, testInitExtLedger, Header (..),
-  unTestHash
-  )
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-import Data.Map.Strict (Map)
-import Ouroboros.Consensus.Util.IOLike (
-  IOLike,
-  MonadMonotonicTime,
-  StrictTVar,
-  TQueue,
-  Time(Time),
-  async,
-  atomically,
-  cancel,
-  getMonotonicTime,
-  newTQueueIO,
-  race,
-  readTQueue,
-  readTVar,
-  readTVarIO,
-  threadDelay,
-  try,
-  uncheckedNewTVarM,
-  waitCatch,
-  writeTQueue,
-  writeTVar
-  )
-import Data.Maybe (fromJust)
-import Data.Monoid (First(First, getFirst))
-import Data.Coerce (coerce)
-import Ouroboros.Consensus.Util.STM (blockUntilChanged)
-import Ouroboros.Consensus.Util.Condense (Condense(..))
-import Ouroboros.Consensus.Util.ResourceRegistry
-import Ouroboros.Consensus.Storage.ChainDB.API
-import Test.Util.ChainDB
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
+import           Data.Maybe (fromJust)
+import           Data.Monoid (First (First, getFirst))
+import           Data.Time.Clock (diffTimeToPicoseconds)
+import qualified Data.Vector as Vector
+import           Network.TypedProtocol.Channel (createConnectedChannels)
+import           Network.TypedProtocol.Driver.Simple
+                     (runConnectedPeersPipelined)
+import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
+import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
+                     (EraParams, defaultEraParams)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
+                     ChainSyncClientException, Consensus,
+                     TraceChainSyncClientEvent (..), chainSyncClient,
+                     defaultChainDbView)
+import           Ouroboros.Consensus.Node.ProtocolInfo
+                     (NumCoreNodes (NumCoreNodes))
+import           Ouroboros.Consensus.NodeId (CoreNodeId (CoreNodeId),
+                     NodeId (CoreId))
+import           Ouroboros.Consensus.Protocol.BFT
+                     (BftParams (BftParams, bftNumNodes, bftSecurityParam),
+                     ConsensusConfig (BftConfig, bftParams, bftSignKey, bftVerKeys))
+import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
-import Cardano.Slotting.Slot (SlotNo(unSlotNo))
-import Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs(cdbTracer))
-import Ouroboros.Consensus.Storage.ChainDB.Impl.Types (TraceAddBlockEvent(..), NewTipInfo (..))
+import           Ouroboros.Consensus.Storage.ChainDB.Impl
+                     (ChainDbArgs (cdbTracer))
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
+                     (NewTipInfo (..), TraceAddBlockEvent (..))
+import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
+                     StrictTVar, TQueue, Time (Time), async, atomically, cancel,
+                     getMonotonicTime, newTQueueIO, race, readTQueue, readTVar,
+                     readTVarIO, threadDelay, try, uncheckedNewTVarM, waitCatch,
+                     writeTQueue, writeTVar)
+import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
+                     toOldestFirst)
+import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Block (BlockNo (unBlockNo), Tip (..),
+                     blockHash, blockNo, blockPoint, blockSlot)
+import           Ouroboros.Network.ControlMessage (ControlMessage (..))
+import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
+                     (ChainSyncClientPipelined, chainSyncClientPeerPipelined)
+import           Ouroboros.Network.Protocol.ChainSync.Codec (codecChainSyncId)
+import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
+                     (pipelineDecisionLowHighMark)
+import           Ouroboros.Network.Protocol.ChainSync.Server
+                     (ChainSyncServer (..),
+                     ServerStIdle (ServerStIdle, recvMsgDoneClient, recvMsgFindIntersect, recvMsgRequestNext),
+                     ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
+                     ServerStNext (SendMsgRollForward), chainSyncServerPeer)
+import           Prelude hiding (log)
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Util.ChainDB
+import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
+                     CodecConfig (TestBlockCodecConfig), Header (..),
+                     StorageConfig (TestBlockStorageConfig), TestBlock,
+                     testInitExtLedger, unTestHash)
+import           Text.Printf (printf)
 
 data SyncPeer m =
   SyncPeer {
@@ -109,10 +93,10 @@ data SyncPeer m =
 
 data SyncTest m =
   SyncTest {
-    topConfig :: TopLevelConfig TestBlock,
-    peers :: [SyncPeer m],
+    topConfig     :: TopLevelConfig TestBlock,
+    peers         :: [SyncPeer m],
     pointSchedule :: PointSchedule,
-    registry :: ResourceRegistry m
+    registry      :: ResourceRegistry m
   }
 
 defaultCfg :: SecurityParam -> TopLevelConfig TestBlock
@@ -144,12 +128,12 @@ defaultCfg secParam = TopLevelConfig {
 
 data MockedChainSyncServer m =
   MockedChainSyncServer {
-    mcssPeerId :: PeerId,
-    mcssStateQueue :: TQueue m NodeState,
-    mcssCurrentState :: StrictTVar m NodeState,
+    mcssPeerId            :: PeerId,
+    mcssStateQueue        :: TQueue m NodeState,
+    mcssCurrentState      :: StrictTVar m NodeState,
     mcssCandidateFragment :: StrictTVar m TestFragH,
-    mcssUnservedFragment :: StrictTVar m TestFragH,
-    mcssTracer :: Tracer m String
+    mcssUnservedFragment  :: StrictTVar m TestFragH,
+    mcssTracer            :: Tracer m String
   }
 
 makeMockedChainSyncServer ::

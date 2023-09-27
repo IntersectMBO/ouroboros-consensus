@@ -5,9 +5,9 @@
 {-# LANGUAGE TypeApplications          #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial (
-  tests,
-  SomeTestAdversarial(..),
-  TestAdversarial(..)
+    SomeTestAdversarial (..)
+  , TestAdversarial (..)
+  , tests
   ) where
 
 import           Control.Applicative ((<|>))
