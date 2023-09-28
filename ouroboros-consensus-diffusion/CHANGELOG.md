@@ -2,6 +2,14 @@
 
 # Changelog entries
 
+<a id='changelog-0.8.0.1'></a>
+## 0.8.0.1 — 2023-09-27
+
+### Patch
+
+- Update bound on `ouroboros-consensus` to account for changes in unstable test
+  libraries.
+
 <a id='changelog-0.8.0.0'></a>
 ## 0.8.0.0 — 2023-09-06
 

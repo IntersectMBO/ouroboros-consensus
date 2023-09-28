@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-for x in $(find . -name '*.cabal' | grep -v dist-newstyle | cut -c 3-); do
+for x in $(find . -name '*.cabal' | grep -vE 'dist-newstyle|asserts\.cabal' | cut -c 3-); do
   (
     d=$(dirname $x)
     echo "== $d =="
