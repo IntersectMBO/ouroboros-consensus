@@ -516,16 +516,17 @@ test-suite infra-test
   main-is:        Main.hs
   other-modules:
     Ouroboros.Consensus.Util.Tests
+    Ouroboros.Network.AnchoredFragment.Extras
     Test.Ouroboros.Consensus.ChainGenerator.Tests
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector
+    Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
     Test.Ouroboros.Consensus.ChainGenerator.Tests.ChainDb
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
     Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
     Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
     Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.PointScheduleTest
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
     Test.Util.ChainUpdates.Tests
     Test.Util.Schedule.Tests
