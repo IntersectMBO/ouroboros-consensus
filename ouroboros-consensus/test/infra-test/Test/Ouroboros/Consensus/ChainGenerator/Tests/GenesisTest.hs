@@ -22,6 +22,7 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Honest
 import           Test.Ouroboros.Consensus.ChainGenerator.Params
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial hiding
                      (tests)
+import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
                      (genChains)
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
@@ -32,7 +33,7 @@ import           Test.QuickCheck.Random (QCGen)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestBlock
+import           Test.Util.TestBlock hiding (blockTree)
 import           Test.Util.Tracer (recordingTracerTVar)
 
 tests :: TestTree
@@ -77,11 +78,21 @@ exampleTestSetup params seed =
     -- TODO: also need: at least k+1 blocks after the intersection
     genesisAfterIntersection =
          fragLenA > fromIntegral scg
-      && advLenAfterIntersection > fromIntegral k
+      && advLenAfterIntersection >= fromIntegral k
     advLenAfterIntersection =
-      withOrigin 0 unBlockNo (AF.headBlockNo badChain) - unBlockNo prefixBlockNo
-    (goodChain, badChain, prefixBlockNo, _prefixLen, fragLenA) =
-      genChains (testAscA params) (testRecipeA params) (testRecipeA' params) seed
+      withOrigin 0 unBlockNo (AF.headBlockNo badChain)
+        - withOrigin 0 unBlockNo prefixBlockNo
+
+    blockTree = genChains (testAscA params) (testRecipeA params) (testRecipeA' params) seed
+    goodChain = BT.trunk blockTree
+
+    BT.BlockTreeBranch { prefix = badChainPrefix, full = badChain } =
+      head $ BT.branches blockTree
+
+    prefixBlockNo = AF.anchorToBlockNo $ AF.headAnchor badChainPrefix
+    fragLenA =
+      withOrigin 0 id (AF.anchorToSlotNo $ AF.headAnchor badChain)
+        - withOrigin 0 id (AF.anchorToSlotNo $ AF.anchor badChain)
 
 stripBlockBodies :: TestFrag -> TestFragH
 stripBlockBodies = AF.bimap AF.castAnchor getHeader
