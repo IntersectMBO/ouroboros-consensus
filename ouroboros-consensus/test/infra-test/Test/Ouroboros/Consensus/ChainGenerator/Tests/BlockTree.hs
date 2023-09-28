@@ -106,7 +106,8 @@ newtype PathAnchoredAtSource = PathAnchoredAtSource Bool
 
 -- | @findPath source target blockTree@ finds a path from the @source@ point to
 -- the @target@ point in the @blockTree@ and returns it as an anchored fragment
--- or returns @Nothing@. There are two interesting properties on this fragment:
+-- It returns @Nothing@ when either of @source@ are @target@ are not in the
+-- 'BlockTree'. There are two interesting properties on this fragment:
 --
 --   1. Whether the returned fragment is anchored at the @source@.
 --   2. Whether the returned fragment is empty.

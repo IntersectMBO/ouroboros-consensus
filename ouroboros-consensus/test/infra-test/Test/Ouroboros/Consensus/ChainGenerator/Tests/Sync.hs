@@ -195,7 +195,7 @@ serveHeader MockedChainSyncServer{..} points = do
   let HeaderPoint header' = header points
       headerPoint = AF.castPoint $ blockPoint header'
   case BT.findPath intersection headerPoint mcssBlockTree of
-    Nothing -> error "There should always be a path"
+    Nothing -> error "serveHeader: intersection and and headerPoint should always be in the block tree"
     Just findPathResult ->
       case findPathResult of
         -- If the anchor is the intersection (the source of the path-finding)
