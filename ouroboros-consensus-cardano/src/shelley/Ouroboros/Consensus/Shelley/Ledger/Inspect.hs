@@ -19,6 +19,7 @@ import           Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
 import           Cardano.Ledger.Core (ppuProtocolVersionL)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
+import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.PParams as SL
 import           Control.Monad
 import           Data.Map.Strict (Map)
@@ -27,6 +28,7 @@ import           Data.Maybe (fromMaybe)
 import           Data.Void
 import           Data.Word (Word64)
 import           Lens.Micro ((^.))
+import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -130,10 +132,7 @@ protocolUpdates genesis st = [
     SL.ProposedPPUpdates proposals =
           fromMaybe SL.emptyPPPUpdates
         . Core.getProposedPPUpdates
-        . SL.utxosGovState
-        . SL.lsUTxOState
-        . SL.esLState
-        . SL.nesEs
+        . view SL.newEpochStateGovStateL
         . shelleyLedgerState
         $ st
 

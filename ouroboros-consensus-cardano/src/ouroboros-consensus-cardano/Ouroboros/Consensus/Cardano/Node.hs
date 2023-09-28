@@ -25,10 +25,10 @@
 
 module Ouroboros.Consensus.Cardano.Node (
     CardanoHardForkConstraints
+  , CardanoHardForkTriggers (.., CardanoHardForkTriggers', triggerHardForkShelley, triggerHardForkAllegra, triggerHardForkMary, triggerHardForkAlonzo, triggerHardForkBabbage, triggerHardForkConway)
   , CardanoProtocolParams
   , MaxMajorProtVer (..)
-  , ProtocolParams (.., CardanoProtocolParams, paramsByron, paramsShelleyBased, paramsShelley, paramsAllegra, paramsMary, paramsAlonzo, paramsBabbage, paramsConway, transitionParamsByronToShelley, transitionParamsShelleyToAllegra, transitionParamsAllegraToMary, transitionParamsMaryToAlonzo, transitionParamsAlonzoToBabbage, transitionParamsBabbageToConway)
-  , ProtocolTransitionParams (..)
+  , ProtocolParams (.., CardanoProtocolParams, paramsByron, paramsShelleyBased, paramsShelley, paramsAllegra, paramsMary, paramsAlonzo, paramsBabbage, paramsConway, hardForkTriggers, ledgerTransitionConfig)
   , TriggerHardFork (..)
   , protocolClientInfoCardano
   , protocolInfoCardano
@@ -56,8 +56,9 @@ module Ouroboros.Consensus.Cardano.Node (
 
 import           Cardano.Binary (DecoderError (..), enforceSize)
 import           Cardano.Chain.Slotting (EpochSlots)
+import qualified Cardano.Ledger.Api.Era as L
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
-import qualified Cardano.Ledger.Era as Core
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
@@ -69,8 +70,6 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Exception (assert)
 import qualified Data.ByteString.Short as Short
 import           Data.Functor.These (These1 (..))
-import           Data.Kind (Type)
-import qualified Data.ListMap as ListMap
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
@@ -80,6 +79,7 @@ import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
 import           Data.Word (Word16, Word64)
+import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import qualified Ouroboros.Consensus.Byron.Ledger as Byron
@@ -88,7 +88,6 @@ import           Ouroboros.Consensus.Byron.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
-import           Ouroboros.Consensus.Cardano.ShelleyBased
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -108,6 +107,7 @@ import           Ouroboros.Consensus.Protocol.Praos.Common
                      (praosCanBeLeaderOpCert)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
+import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
@@ -119,7 +119,6 @@ import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.IOLike
-
 {-------------------------------------------------------------------------------
   SerialiseHFC
 -------------------------------------------------------------------------------}
@@ -564,48 +563,58 @@ instance CardanoHardForkConstraints c
   ProtocolInfo
 -------------------------------------------------------------------------------}
 
--- | Parameters needed to transition from one era to the next.
-type ProtocolTransitionParams :: Type -> Type -> Type
-data family ProtocolTransitionParams x y
+newtype CardanoHardForkTriggers = CardanoHardForkTriggers {
+    getCardanoHardForkTriggers :: NP (K TriggerHardFork) (CardanoShelleyEras StandardCrypto)
+  }
 
--- | Parameters needed to transition from Byron to Shelley.
-data instance ProtocolTransitionParams ByronBlock (ShelleyBlock proto era) =
-    ProtocolTransitionParamsByronToShelley {
-        transitionByronToShelleyTranslationContext :: Core.TranslationContext era
-      , transitionByronToShelleyTrigger            :: TriggerHardFork
-      }
-
--- | Parameters needed to transition from a Shelley era to the next.
-data instance ProtocolTransitionParams (ShelleyBlock proto era) (ShelleyBlock proto' era') =
-    ProtocolTransitionParamsIntraShelley {
-        transitionIntraShelleyTranslationContext :: Core.TranslationContext era'
-      , transitionIntraShelleyTrigger            :: TriggerHardFork
-      }
+pattern CardanoHardForkTriggers' ::
+     TriggerHardFork
+  -> TriggerHardFork
+  -> TriggerHardFork
+  -> TriggerHardFork
+  -> TriggerHardFork
+  -> TriggerHardFork
+  -> CardanoHardForkTriggers
+pattern CardanoHardForkTriggers' {
+        triggerHardForkShelley
+      , triggerHardForkAllegra
+      , triggerHardForkMary
+      , triggerHardForkAlonzo
+      , triggerHardForkBabbage
+      , triggerHardForkConway
+      } =
+    CardanoHardForkTriggers
+      (  K triggerHardForkShelley
+      :* K triggerHardForkAllegra
+      :* K triggerHardForkMary
+      :* K triggerHardForkAlonzo
+      :* K triggerHardForkBabbage
+      :* K triggerHardForkConway
+      :* Nil
+      )
+{-# COMPLETE CardanoHardForkTriggers' #-}
 
 -- | Parameters needed to run Cardano.
 data instance ProtocolParams (CardanoBlock c) = ProtocolParamsCardano {
-    cardanoProtocolParamsPerEra     :: PerEraProtocolParams (CardanoEras c)
-  , shelleyBasedProtocolParams      :: ProtocolParamsShelleyBased (ShelleyEra c)
-  , cardanoProtocolTransitionParams :: InPairs ProtocolTransitionParams (CardanoEras c)
+    cardanoProtocolParamsPerEra   :: PerEraProtocolParams (CardanoEras c)
+  , shelleyBasedProtocolParams    :: ProtocolParamsShelleyBased c
+  , cardanoHardForkTriggers       :: CardanoHardForkTriggers
+  , cardanoLedgerTransitionConfig :: L.TransitionConfig (L.LatestKnownEra c)
   }
 
 type CardanoProtocolParams c = ProtocolParams (CardanoBlock c)
 
 pattern CardanoProtocolParams ::
      ProtocolParams ByronBlock
-  -> ProtocolParamsShelleyBased (ShelleyEra c)
+  -> ProtocolParamsShelleyBased c
   -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
   -> ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c))
   -> ProtocolParams (ShelleyBlock (TPraos c) (MaryEra    c))
   -> ProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra  c))
   -> ProtocolParams (ShelleyBlock (Praos  c) (BabbageEra c))
   -> ProtocolParams (ShelleyBlock (Praos  c) (ConwayEra  c))
-  -> ProtocolTransitionParams ByronBlock (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> ProtocolTransitionParams (ShelleyBlock (TPraos c) (ShelleyEra c)) (ShelleyBlock (TPraos c) (AllegraEra c))
-  -> ProtocolTransitionParams (ShelleyBlock (TPraos c) (AllegraEra c)) (ShelleyBlock (TPraos c) (MaryEra    c))
-  -> ProtocolTransitionParams (ShelleyBlock (TPraos c) (MaryEra    c)) (ShelleyBlock (TPraos c) (AlonzoEra  c))
-  -> ProtocolTransitionParams (ShelleyBlock (TPraos c) (AlonzoEra  c)) (ShelleyBlock (Praos c ) (BabbageEra c))
-  -> ProtocolTransitionParams (ShelleyBlock (Praos c ) (BabbageEra c)) (ShelleyBlock (Praos c ) (ConwayEra  c))
+  -> CardanoHardForkTriggers
+  -> L.TransitionConfig (L.LatestKnownEra c)
   -> CardanoProtocolParams c
 pattern CardanoProtocolParams {
         paramsByron
@@ -616,12 +625,8 @@ pattern CardanoProtocolParams {
       , paramsAlonzo
       , paramsBabbage
       , paramsConway
-      , transitionParamsByronToShelley
-      , transitionParamsShelleyToAllegra
-      , transitionParamsAllegraToMary
-      , transitionParamsMaryToAlonzo
-      , transitionParamsAlonzoToBabbage
-      , transitionParamsBabbageToConway
+      , hardForkTriggers
+      , ledgerTransitionConfig
       } =
     ProtocolParamsCardano {
         cardanoProtocolParamsPerEra = PerEraProtocolParams
@@ -635,26 +640,23 @@ pattern CardanoProtocolParams {
           :* Nil
           )
       , shelleyBasedProtocolParams = paramsShelleyBased
-      , cardanoProtocolTransitionParams =
-            PCons transitionParamsByronToShelley
-          ( PCons transitionParamsShelleyToAllegra
-          ( PCons transitionParamsAllegraToMary
-          ( PCons transitionParamsMaryToAlonzo
-          ( PCons transitionParamsAlonzoToBabbage
-          ( PCons transitionParamsBabbageToConway
-            PNil)))))
+      , cardanoHardForkTriggers = hardForkTriggers
+      , cardanoLedgerTransitionConfig = ledgerTransitionConfig
       }
 
 {-# COMPLETE CardanoProtocolParams #-}
 
 -- | Create a 'ProtocolInfo' for 'CardanoBlock'
 --
--- NOTE: the initial staking and funds in the 'ShelleyGenesis' are ignored,
--- /unless/ configured to skip the Byron era and hard fork to Shelley or a later
--- era from the start using @TriggerHardForkAtEpoch 0@ for testing purposes.
+-- NOTE: For testing and benchmarking purposes, the 'ShelleyGenesis' can contain
+-- initial staking and funds. These are registered in the initial ledger state
+-- /only if/ the given 'CardanoHardForkTriggers' tell us to skip the Byron era
+-- and hard fork directly to Shelley or a later era by using
+-- @TestXHardForkAtEpoch 0@. When @'SL.gNetworkId' == 'SL.Mainnet'@, the initial
+-- staking and funds /must/ be empty.
 --
 -- PRECONDITION: only a single set of Shelley credentials is allowed when used
--- for mainnet (check against @'SL.gNetworkId' 'shelleyBasedGenesis'@).
+-- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
 protocolInfoCardano ::
      forall c m. (IOLike m, CardanoHardForkConstraints c)
   => CardanoProtocolParams c
@@ -683,13 +685,18 @@ protocolInfoCardano paramsCardano
       , paramsAlonzo
       , paramsBabbage
       , paramsConway
-      , transitionParamsByronToShelley
-      , transitionParamsShelleyToAllegra
-      , transitionParamsAllegraToMary
-      , transitionParamsMaryToAlonzo
-      , transitionParamsAlonzoToBabbage
-      , transitionParamsBabbageToConway
+      , hardForkTriggers = CardanoHardForkTriggers' {
+          triggerHardForkShelley
+        , triggerHardForkAllegra
+        , triggerHardForkMary
+        , triggerHardForkAlonzo
+        , triggerHardForkBabbage
+        , triggerHardForkConway
+        }
+      , ledgerTransitionConfig
       } = paramsCardano
+
+    genesisShelley = ledgerTransitionConfig ^. L.tcShelleyGenesisL
 
     ProtocolParamsByron {
           byronGenesis                = genesisByron
@@ -697,8 +704,7 @@ protocolInfoCardano paramsCardano
         , byronMaxTxCapacityOverrides = maxTxCapacityOverridesByron
         } = paramsByron
     ProtocolParamsShelleyBased {
-          shelleyBasedGenesis           = genesisShelley
-        , shelleyBasedInitialNonce      = initialNonceShelley
+          shelleyBasedInitialNonce      = initialNonceShelley
         , shelleyBasedLeaderCredentials = credssShelleyBased
         } = paramsShelleyBased
     ProtocolParamsShelley {
@@ -726,30 +732,12 @@ protocolInfoCardano paramsCardano
         , conwayMaxTxCapacityOverrides = maxTxCapacityOverridesConway
         } = paramsConway
 
-    ProtocolTransitionParamsByronToShelley {
-          transitionByronToShelleyTranslationContext = transCtxtShelley
-        , transitionByronToShelleyTrigger            = triggerHardForkShelley
-        } = transitionParamsByronToShelley
-    ProtocolTransitionParamsIntraShelley {
-          transitionIntraShelleyTranslationContext = ()
-        , transitionIntraShelleyTrigger            = triggerHardForkAllegra
-        } = transitionParamsShelleyToAllegra
-    ProtocolTransitionParamsIntraShelley {
-          transitionIntraShelleyTranslationContext = ()
-        , transitionIntraShelleyTrigger            = triggerHardForkMary
-        } = transitionParamsAllegraToMary
-    ProtocolTransitionParamsIntraShelley {
-          transitionIntraShelleyTranslationContext = transCtxtAlonzo
-        , transitionIntraShelleyTrigger            = triggerHardForkAlonzo
-        } = transitionParamsMaryToAlonzo
-    ProtocolTransitionParamsIntraShelley {
-          transitionIntraShelleyTranslationContext = transCtxtBabbage
-        , transitionIntraShelleyTrigger            = triggerHardForkBabbage
-        } = transitionParamsAlonzoToBabbage
-    ProtocolTransitionParamsIntraShelley {
-          transitionIntraShelleyTranslationContext = transCtxtConway
-        , transitionIntraShelleyTrigger            = triggerHardForkConway
-        } = transitionParamsBabbageToConway
+    transitionConfigShelley = transitionConfigAllegra ^. L.tcPreviousEraConfigL
+    transitionConfigAllegra = transitionConfigMary    ^. L.tcPreviousEraConfigL
+    transitionConfigMary    = transitionConfigAlonzo  ^. L.tcPreviousEraConfigL
+    transitionConfigAlonzo  = transitionConfigBabbage ^. L.tcPreviousEraConfigL
+    transitionConfigBabbage = transitionConfigConway  ^. L.tcPreviousEraConfigL
+    transitionConfigConway  = ledgerTransitionConfig
 
     -- The major protocol version of the last era is the maximum major protocol
     -- version we support.
@@ -837,8 +825,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigShelley :: PartialLedgerConfig (ShelleyBlock (TPraos c) (ShelleyEra c))
     partialLedgerConfigShelley =
         mkPartialLedgerConfigShelley
-          genesisShelley
-          transCtxtShelley
+          transitionConfigShelley
           maxMajorProtVer
           triggerHardForkAllegra
 
@@ -861,8 +848,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigAllegra :: PartialLedgerConfig (ShelleyBlock (TPraos c) (AllegraEra c))
     partialLedgerConfigAllegra =
         mkPartialLedgerConfigShelley
-          genesisShelley
-          ()  -- trivial translation context
+          transitionConfigAllegra
           maxMajorProtVer
           triggerHardForkMary
 
@@ -882,8 +868,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigMary :: PartialLedgerConfig (ShelleyBlock (TPraos c) (MaryEra c))
     partialLedgerConfigMary =
         mkPartialLedgerConfigShelley
-          genesisShelley
-          ()  -- trivial translation context
+          transitionConfigMary
           maxMajorProtVer
           triggerHardForkAlonzo
 
@@ -903,8 +888,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigAlonzo :: PartialLedgerConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
     partialLedgerConfigAlonzo =
         mkPartialLedgerConfigShelley
-          genesisShelley
-          transCtxtAlonzo
+          transitionConfigAlonzo
           maxMajorProtVer
           triggerHardForkBabbage
 
@@ -924,8 +908,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigBabbage :: PartialLedgerConfig (ShelleyBlock (Praos c) (BabbageEra c))
     partialLedgerConfigBabbage =
         mkPartialLedgerConfigShelley
-          genesisShelley
-          transCtxtBabbage
+          transitionConfigBabbage
           maxMajorProtVer
           triggerHardForkConway
 
@@ -945,8 +928,7 @@ protocolInfoCardano paramsCardano
     partialLedgerConfigConway :: PartialLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))
     partialLedgerConfigConway =
         mkPartialLedgerConfigShelley
-          genesisShelley
-          transCtxtConway
+          transitionConfigConway
           maxMajorProtVer
           TriggerHardForkNever
 
@@ -1030,7 +1012,10 @@ protocolInfoCardano paramsCardano
     initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c)
     initExtLedgerStateCardano = ExtLedgerState {
           headerState = initHeaderState
-        , ledgerState = overShelleyBasedLedgerState register initLedgerState
+        , ledgerState =
+              HardForkLedgerState
+            . hap (fn id :* registerAny)
+            $ hardForkLedgerStatePerEra initLedgerState
         }
       where
         initHeaderState :: HeaderState (CardanoBlock c)
@@ -1038,20 +1023,28 @@ protocolInfoCardano paramsCardano
         ExtLedgerState initLedgerState initHeaderState =
           injectInitialExtLedgerState cfg initExtLedgerStateByron
 
+        registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
+        registerAny =
+             register transitionConfigShelley
+          :* register transitionConfigAllegra
+          :* register transitionConfigMary
+          :* register transitionConfigAlonzo
+          :* register transitionConfigBabbage
+          :* register transitionConfigConway
+          :* Nil
+
         register ::
-             (EraCrypto era ~ c, ShelleyBasedEra era)
-          => LedgerState (ShelleyBlock proto era)
-          -> LedgerState (ShelleyBlock proto era)
-        register st = st {
-              Shelley.shelleyLedgerState =
-                -- We must first register the initial funds, because the stake
-                -- information depends on it.
-                  registerGenesisStaking
-                    (SL.sgStaking genesisShelley)
-                . registerInitialFunds
-                    (ListMap.toMap (SL.sgInitialFunds genesisShelley))
-                $ Shelley.shelleyLedgerState st
-            }
+             L.EraTransition era
+          => L.TransitionConfig era
+          -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
+        register cfg = fn $ \st -> st {
+            Shelley.shelleyLedgerState =
+              -- We must first register the initial funds, because the stake
+              -- information depends on it.
+                L.registerInitialStaking cfg
+              . L.registerInitialFunds cfg
+              $ Shelley.shelleyLedgerState st
+          }
 
     -- | For each element in the list, a block forging thread will be started.
     --
@@ -1161,21 +1154,17 @@ protocolClientInfoCardano epochSlots = ProtocolClientInfo {
 -------------------------------------------------------------------------------}
 
 mkPartialLedgerConfigShelley ::
-     ShelleyGenesis (EraCrypto era)
-  -> Core.TranslationContext era
+     L.EraTransition era
+  => L.TransitionConfig era
   -> MaxMajorProtVer
   -> TriggerHardFork
   -> PartialLedgerConfig (ShelleyBlock proto era)
-mkPartialLedgerConfigShelley
-  genesisShelley
-  transCtxt
-  maxMajorProtVer
-  shelleyTriggerHardFork =
+mkPartialLedgerConfigShelley transitionConfig maxMajorProtVer shelleyTriggerHardFork =
     ShelleyPartialLedgerConfig {
           shelleyLedgerConfig =
             Shelley.mkShelleyLedgerConfig
-              genesisShelley
-              transCtxt
+              (transitionConfig ^. L.tcShelleyGenesisL)
+              (transitionConfig ^. L.tcTranslationContextL)
               -- 'completeLedgerConfig' will replace the 'History.dummyEpochInfo'
               -- in the partial ledger config with the correct one.
               History.dummyEpochInfo

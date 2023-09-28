@@ -25,8 +25,6 @@ module Ouroboros.Consensus.Shelley.Node (
   , protocolClientInfoShelley
   , protocolInfoShelley
   , protocolInfoTPraosShelleyBased
-  , registerGenesisStaking
-  , registerInitialFunds
   , validateGenesis
   ) where
 

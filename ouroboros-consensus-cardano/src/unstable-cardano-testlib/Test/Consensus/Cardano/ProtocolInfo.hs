@@ -23,8 +23,8 @@ module Test.Consensus.Cardano.ProtocolInfo (
 
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
-import qualified Cardano.Ledger.Shelley.Translation as SL
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import qualified Cardano.Slotting.Time as Time
 import           Data.Proxy (Proxy (..))
@@ -37,7 +37,7 @@ import           Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials,
                      byronSoftwareVersion)
 import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
 import           Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints,
-                     ProtocolParams (..), ProtocolTransitionParams (..),
+                     CardanoHardForkTriggers (..), ProtocolParams (..),
                      TriggerHardFork (TriggerHardForkAtEpoch, TriggerHardForkNever),
                      protocolInfoCardano)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
@@ -279,8 +279,7 @@ mkTestProtocolInfo
             , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
             }
           ProtocolParamsShelleyBased {
-              shelleyBasedGenesis           = shelleyGenesis
-            , shelleyBasedInitialNonce      = initialNonce
+              shelleyBasedInitialNonce      = initialNonce
             , shelleyBasedLeaderCredentials = [leaderCredentialsShelley]
             }
           ProtocolParamsShelley {
@@ -307,34 +306,26 @@ mkTestProtocolInfo
               conwayProtVer                 = hfSpecProtVer Conway hardForkSpec
             , conwayMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
             }
-          ProtocolTransitionParamsByronToShelley {
-            transitionByronToShelleyTranslationContext = SL.toFromByronTranslationContext shelleyGenesis
-          , transitionByronToShelleyTrigger            = hfSpecTransitionTrigger Shelley hardForkSpec
-          }
-          ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext = ()
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Allegra hardForkSpec
+          CardanoHardForkTriggers' {
+              triggerHardForkShelley = hfSpecTransitionTrigger Shelley hardForkSpec
+            , triggerHardForkAllegra = hfSpecTransitionTrigger Allegra hardForkSpec
+            , triggerHardForkMary    = hfSpecTransitionTrigger Mary    hardForkSpec
+            , triggerHardForkAlonzo  = hfSpecTransitionTrigger Alonzo  hardForkSpec
+            , triggerHardForkBabbage = hfSpecTransitionTrigger Babbage hardForkSpec
+            , triggerHardForkConway  = hfSpecTransitionTrigger Conway  hardForkSpec
             }
-          ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext = ()
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Mary hardForkSpec
-            }
-          ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext =
-                -- tests using this ProtocolInfo do not even reach Allegra
-                SL.exampleAlonzoGenesis
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Alonzo hardForkSpec
-            }
-          ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext = ()
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Babbage hardForkSpec
-            }
-          ProtocolTransitionParamsIntraShelley {
-              transitionIntraShelleyTranslationContext =
-                -- tests using this ProtocolInfo do not even reach Allegra
-                SL.exampleConwayGenesis
-            , transitionIntraShelleyTrigger            = hfSpecTransitionTrigger Conway hardForkSpec
-            }
+          ( L.mkLatestTransitionConfig
+              shelleyGenesis
+              -- These example genesis objects might need to become more
+              -- realistic in the future, but they are fine for now:
+              --
+              --  * The current ThreadNet tests only involve pre-Alonzo eras.
+              --
+              --  * The LocalTxSubmissionServer does not (yet) rely on any
+              --    details of these.
+              SL.exampleAlonzoGenesis
+              SL.exampleConwayGenesis
+          )
         )
 
   where

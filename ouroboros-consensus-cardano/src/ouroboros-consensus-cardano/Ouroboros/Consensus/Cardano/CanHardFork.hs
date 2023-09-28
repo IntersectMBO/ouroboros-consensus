@@ -36,7 +36,6 @@ import qualified Cardano.Ledger.Era as SL
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
 import           Cardano.Ledger.Keys (DSignable, Hash)
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Ledger.Shelley.Governance as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import           Cardano.Ledger.Shelley.Translation
                      (toFromByronTranslationContext)
@@ -61,7 +60,7 @@ import qualified Data.SOP.Tails as Tails
 import           Data.Void
 import           Data.Word
 import           GHC.Generics (Generic)
-import           Lens.Micro (Lens', (.~))
+import           Lens.Micro ((.~))
 import           Lens.Micro.Extras (view)
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
@@ -727,17 +726,11 @@ translateLedgerStateBabbageToConwayWrapper =
               -> LedgerState (ShelleyBlock proto (BabbageEra c))
             patchGovState st =
                 st { shelleyLedgerState = shelleyLedgerState st
-                       & newEpochStateGovStateL .~ newGovState
+                       & SL.newEpochStateGovStateL .~ newGovState
                    }
               where
-                -- next ledger release already provides this
-                newEpochStateGovStateL ::
-                     Lens' (SL.NewEpochState era) (SL.GovState era)
-                newEpochStateGovStateL =
-                  SL.nesEsL . SL.esLStateL . SL.lsUTxOStateL . SL.utxosGovStateL
-
                 newGovState =
-                    view newEpochStateGovStateL
+                    view SL.newEpochStateGovStateL
                   . tickedShelleyLedgerState
                   . applyChainTick
                       (unwrapLedgerConfig cfgBabbage)

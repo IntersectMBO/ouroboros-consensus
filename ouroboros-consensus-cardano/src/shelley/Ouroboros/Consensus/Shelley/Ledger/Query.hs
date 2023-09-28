@@ -44,7 +44,8 @@ import qualified Cardano.Ledger.EpochBoundary as SL
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
-import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts)
+import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts,
+                     newEpochStateGovStateL)
 import qualified Cardano.Ledger.Shelley.PParams as SL (emptyPPPUpdates)
 import qualified Cardano.Ledger.Shelley.RewardProvenance as SL
                      (RewardProvenance)
@@ -66,6 +67,7 @@ import           Data.Type.Equality (apply)
 import           Data.Typeable (Typeable)
 import qualified Data.VMap as VMap
 import           GHC.Generics (Generic)
+import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
@@ -632,9 +634,10 @@ querySupportedVersion = \case
 getProposedPPUpdates ::
      ShelleyBasedEra era
   => SL.NewEpochState era -> SL.ProposedPPUpdates era
-getProposedPPUpdates = fromMaybe SL.emptyPPPUpdates
-                     . LC.getProposedPPUpdates . SL.utxosGovState
-                     . SL.lsUTxOState . SL.esLState . SL.nesEs
+getProposedPPUpdates =
+      fromMaybe SL.emptyPPPUpdates
+    . LC.getProposedPPUpdates
+    . view SL.newEpochStateGovStateL
 
 -- Get the current 'EpochState.' This is mainly for debugging.
 getEpochState :: SL.NewEpochState era -> SL.EpochState era
@@ -828,7 +831,7 @@ decodeShelleyResult v query = case query of
     GetGovState                                -> fromCBOR
     GetDRepState {}                            -> LC.fromEraCBOR @era
     GetDRepStakeDistr {}                       -> LC.fromEraCBOR @era
-    GetCommitteeState                          -> fromCBOR
+    GetCommitteeState                          -> LC.fromEraCBOR @era
 
 currentPParamsEnDecoding ::
      forall era s.

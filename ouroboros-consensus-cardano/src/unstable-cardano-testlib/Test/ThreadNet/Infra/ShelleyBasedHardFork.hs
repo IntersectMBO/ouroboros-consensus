@@ -25,6 +25,7 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
   , protocolInfoShelleyBasedHardFork
   ) where
 
+import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (runExcept)
@@ -34,12 +35,12 @@ import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
 import           Data.Void (Void)
+import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block.Forging (BlockForging)
 import           Ouroboros.Consensus.Cardano.CanHardFork
                      (ShelleyPartialLedgerConfig (..), forecastAcrossShelley,
                      translateChainDepStateAcrossShelley)
-import           Ouroboros.Consensus.Cardano.Node
-                     (ProtocolTransitionParams (..), TriggerHardFork (..))
+import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..))
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Embed.Binary
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
@@ -130,8 +131,6 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
 
   , SL.TranslationError   era2 SL.NewEpochState ~ Void
 
-  , SL.AdditionalGenesisConfig era1 ~ ()
-  , SL.AdditionalGenesisConfig era2 ~ SL.TranslationContext era2
     -- At the moment, fix the protocols together
   , EraCrypto era1 ~ EraCrypto era2
   , PraosCrypto (EraCrypto era1)
@@ -224,19 +223,19 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
 protocolInfoShelleyBasedHardFork ::
      forall m proto1 era1 proto2 era2.
      (IOLike m, ShelleyBasedHardForkConstraints proto1 era1 proto2 era2)
-  => ProtocolParamsShelleyBased era1
+  => ProtocolParamsShelleyBased (EraCrypto era1)
   -> SL.ProtVer
   -> SL.ProtVer
-  -> SL.TranslationContext era1
-  -> ProtocolTransitionParams (ShelleyBlock proto1 era1) (ShelleyBlock proto2 era2)
+  -> L.TransitionConfig era2
+  -> TriggerHardFork
   -> ( ProtocolInfo      (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)
      , m [BlockForging m (ShelleyBasedHardForkBlock proto1 era1 proto2 era2)]
      )
 protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
                                  protVer1
                                  protVer2
-                                 transCtx1
-                                 protocolTransitionParams =
+                                 transCfg2
+                                 hardForkTrigger =
     protocolInfoBinary
       -- Era 1
       protocolInfo1
@@ -252,39 +251,33 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
       toPartialLedgerConfig2
   where
     ProtocolParamsShelleyBased {
-        shelleyBasedGenesis
-      , shelleyBasedInitialNonce
+        shelleyBasedInitialNonce
       , shelleyBasedLeaderCredentials
       } = protocolParamsShelleyBased
 
     -- Era 1
 
     genesis :: SL.ShelleyGenesis (EraCrypto era1)
-    genesis = shelleyBasedGenesis
+    genesis = transCfg2 ^. L.tcShelleyGenesisL
 
     protocolInfo1 :: ProtocolInfo (ShelleyBlock proto1 era1)
     blockForging1 :: m [BlockForging m (ShelleyBlock proto1 era1)]
     (protocolInfo1, blockForging1) =
         protocolInfoTPraosShelleyBased
           protocolParamsShelleyBased
-          ((), transCtx1)
+          (transCfg2 ^. L.tcPreviousEraConfigL)
           protVer1
           (Mempool.mkOverrides Mempool.noOverridesMeasure)
 
     eraParams1 :: History.EraParams
     eraParams1 = shelleyEraParams genesis
 
-    ProtocolTransitionParamsIntraShelley {
-        transitionIntraShelleyTranslationContext = transCtxt2
-      , transitionIntraShelleyTrigger
-      } = protocolTransitionParams
-
     toPartialLedgerConfig1 ::
          LedgerConfig (ShelleyBlock proto1 era1)
       -> PartialLedgerConfig (ShelleyBlock proto1 era1)
     toPartialLedgerConfig1 cfg = ShelleyPartialLedgerConfig {
           shelleyLedgerConfig    = cfg
-        , shelleyTriggerHardFork = transitionIntraShelleyTrigger
+        , shelleyTriggerHardFork = hardForkTrigger
         }
 
     -- Era 2
@@ -294,11 +287,10 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
     (protocolInfo2, blockForging2) =
         protocolInfoTPraosShelleyBased
           ProtocolParamsShelleyBased {
-              shelleyBasedGenesis = genesis
-            , shelleyBasedInitialNonce
+              shelleyBasedInitialNonce
             , shelleyBasedLeaderCredentials
             }
-          (transCtxt2, transCtxt2)
+          transCfg2
           protVer2
           (Mempool.mkOverrides Mempool.noOverridesMeasure)
 

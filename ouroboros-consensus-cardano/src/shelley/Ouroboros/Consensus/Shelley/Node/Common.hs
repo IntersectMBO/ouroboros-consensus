@@ -120,16 +120,12 @@ instance ShelleyCompatible proto era => NodeInitStorage (ShelleyBlock proto era)
 -- When running a chain with multiple Shelley-based eras, in addition to the
 -- per-era protocol parameters, one value of 'ProtocolParamsShelleyBased' will
 -- be needed, which is shared among all Shelley-based eras.
---
--- The @era@ parameter determines from which era the genesis config will be
--- used.
-data ProtocolParamsShelleyBased era = ProtocolParamsShelleyBased
-  { shelleyBasedGenesis           :: SL.ShelleyGenesis (EraCrypto era),
-    -- | The initial nonce, typically derived from the hash of Genesis
+data ProtocolParamsShelleyBased c = ProtocolParamsShelleyBased
+  { -- | The initial nonce, typically derived from the hash of Genesis
     -- config JSON file.
     --
     -- WARNING: chains using different values of this parameter will be
     -- mutually incompatible.
     shelleyBasedInitialNonce      :: SL.Nonce,
-    shelleyBasedLeaderCredentials :: [ShelleyLeaderCredentials (EraCrypto era)]
+    shelleyBasedLeaderCredentials :: [ShelleyLeaderCredentials c]
   }
