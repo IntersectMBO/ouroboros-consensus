@@ -353,3 +353,165 @@ The key corresponding parts of the implementation are as follows.
 - The interpretation only depends on the eras' start and end bounds, not on the safe zone.
   The safe zone is instead used in an preceding step to safely determine the least possible value of the first unknown end bound.
   This determination is implemented by the `ouroboros-consensus:Ouroboros.Consensus.HardFork.Combinator.State.reconstructSummaryLedger` function.
+
+## The hard fork combinator interface
+
+To run the Consensus Layer on a block type `blk` requires the following (whether or not it's a `HardForkBlock`).
+
+- Values for various tracers, ChainDB options, etc, as required by `Ouroboros.Consensus.Node.run`.
+- A `ProtocolInfo blk` value, which is `TopLevelConfig blk` as well as initial state of the ledger and protocol.
+- Instances of `ConsensusProtocol (BlockProtocol blk)`, `LedgerSupportsProtocol blk`, and so on (see the `RunNode blk` class).
+
+Suppose there are two blocks types `F` and `G` for which the above is already available (everything will generalize to cases with more than two eras via simple replication).
+To run the Consensus Layer instead on the hard fork combinator that sequences `F` into `G` requires the following additional information about `F` and `G`.
+
+- A value of `EraParams` for `F` and for `G` (ie `Shape [F, G]`), which decomposes as the following for `F` and `G` individually.
+    - The duration of every slot in the era as a [`NominalDiffTime`](https://hackage.haskell.org/package/time-1.12.2/docs/Data-Time-Clock.html#t:NominalDiffTime).
+    - The duration of every epoch in the era as a number of slots.
+    - The era's _safe zone_ is intimately related to the `singleEraTransition` function introduced below, as explained in the next subsection.
+      The safe zone cannot be 0 because---as discussed elsewhere---that would imply a stability window of 0, which is impossible.
+- An instance of `CanHardFork [F, G]`, which decomposes as follows.
+    - A function `LedgerConfig F -> LedgerConfig G -> LedgerState F -> Bound {- starting slot&epoch&time-since-genesis of G -} -> SlotNo -> Except OutsideForecastRange (LedgerView G)`.
+      This function will be used for forecasting the ledger view across the era transition; see "How does cross-era forecasting work?" above.
+    - A function `ConsensusConfig F -> ConsensusConfig G -> EpochNo {- start of G -} -> ChainDepState F -> ChainDepState G`.
+      This function will be applied to the chain-dependent state immediately after the last `F` header.
+      Then the protocol rules for `G` will be used to tick that state to the slot of the first `G` header.
+      This use of `G`'s ticking rules instead of `F`'s to cross the end of the last epoch of `F` is subtle and somewhat counter-intuitive.
+      (We haven't yet had any concrete issues here, unlike with the `LedgerState` issue linked just below.
+      However, we did only realize recently that the extra entropy parameter of Transitional Praos should have been considered when translating to Praos at the Alonzo->Babbage transition.)
+    - A function `LedgerConfig F -> LedgerConfig G -> EpochNo {- start of G -} -> LedgerState F -> LedgerState G`.
+      This function will be applied to the ledger state immediately after the last `F` block.
+      Then the ledger rules for `G` will be used to tick that state to the slot of the first `G` block.
+      This use of `G`'s ticking rules instead of `F`'s to cross the end of the last epoch of `F` is subtle and somewhat counter-intuitive (eg see Issue <https://github.com/input-output-hk/cardano-ledger/issues/3491>).
+    - Instances of `SingleEraBlock` for `F` and `G`, which decomposes as the following for `F` and `G` individually.
+        - Types that represent the ledger and protocol configuration _without_ any `EpochInfo` (see `HasPartialLedgerConfig` and `HasPartialConsensusConfig`).
+        - A function `singleEraTransition :: PartialLedgerConfig blk -> EraParams -> Bound {- era's start -} -> LedgerState blk -> Maybe EpochNo` which must return `Just e` if any extension of this ledger state will end between epoch `e` and its predecessor (ie epoch `e-1` when `0<e` and "genesis" otherwise).
+            - As an immediate observation: note that this function is monotonic along the ledger states of an era on a single chain.
+              It cannot return `Just` for some ledger state on a chain and then `Nothing` for a later ledger state in the same era on the same chain.
+            - Similarly: it must not return an epoch `e` which is less than the epoch in which the era started.
+              (See the third subsection for the corner case in which it may return the starting epoch.)
+            - The logic used in this function must be invariant with respect to ticking.
+              In other words, if the end of the era is unknown or uncertain after the application of a block, then it cannot become certainly known before the next block.
+                - This constraint justifies that the function's type signature does not support applying it to a ticked ledger state; if it hypothetically did, then its output would exactly agree with the pre-image of that ticked ledger state.
+                  (Implementation detail: a ticked HFC ledger state must include `TransitionInfo` derived from the non-ticked ledger state only because the signature of `singleEraTransition` would not otherwise allow a ticked HFC ledger state's contents to determine the `TransitionInfo`.)
+                - Notably, this constraint is trivially true if the function is actually counting blocks in order to achieve its monotonicity with respect to maximum rollbacks without relying on a Chain Growth property.
+            - Recall that an era's `singleEraTransition` is intimately related to its safe zone; see the next subsection.
+
+Some notable components are not listed above because they are determined by existing data about `F` and `G`.
+
+- The content of `TopLevelConfig (HardForkBlock [F, G])` other than the `EraParams` values can be completely determined from the `TopLevelConfig F` and `TopLevelConfig G`.
+- The initial state of the ledger and protocol can be completely determined from the same for `F`.
+
+### The Safe Zone Semantics
+
+An era's safe zone constrains how its `singleEraTransition` can vary as the chain is extended in that era.
+The precisely-worded high-level rule for an era whose safe zone is the positive integer `d` is as follows.
+
+> If a chain's configuration data and blocks so far together determine when the era starts but not when it ends, then at least `d` slots after the latest block (non-EBB) will be in that era.
+> (If the latest block is from an earlier era, then those `d` slots begin with the first of the era.
+> Otherwise, the latest block is in the era and the `d` slots begin immediately after it.)
+
+Consider an arbitrary `[F, G]` chain with 200 `F` blocks followed by 30 `G` blocks (these counts are only real blocks, excluding any EBBs).
+Each block on that chain results in a ledger state in the same era as the block.
+In addition, however, there is also a `LedgerState` at the beginning of each era that is not the result of a block from that era.
+For `F`, it's the initial ledger state (resulting from the genesis "block") and for `G` it's the translation of the last `F` ledger state to `G`.
+Thus, this chain will induce a sequence of 201 `F` ledger states and a sequence of 31 `G` ledger states.
+The `F` safe zone constrains the output of `singleEraTransition @F` when it is applied to that each `LedgerState F` in that sequence, and similarly for `G`.
+(Note that those sequences _exclude_ ledger states that arise from any EBBs interspersed among the real blocks.)
+
+Specifically, for the sequence of ledger states within an era, if the era has a safe zone of `d`, then its `singleEraTransition` function cannot return `Nothing` for a ledger state in that era and `Just e` for the next ledger state in that era unless the epoch `e` is still far enough in the future.
+Note that the second ledger state in that specification necessarily arises from a block in the era, since only the first ledger state in an era does not arise from a block in that era.
+Let `y` be that block; the exact safe zone constraint is `slot(y) + d < firstSlot(e)`.
+(Lastly, recall once more that the ledger state sequence in question is intentionally excluding any arising from EBBs.)
+
+That interpretation of the safe zone constraint explicitly only considers the evolution of `singleEraTransition` _within a single era_.
+In particular, it did not at all constrain the output of `singleEraTransition` for the initial ledger state of the era.
+The rest of this subsection discusses that, including notably that that initial output is always `Nothing` in the fundamental use case, in which the end of an era cannot be known before any of its block exist.
+
+In the fundamental motivating use case of the HFC, `singleEraTransition` will return `Nothing` for the first ledger state of each era, and subsequent governance events within that era on the chain will cause it to return `Just` for the remaining suffix of that chain's ledger states in this era.
+However, there are a total of three possible trajectories of the `singleEraTransition` within an era on some chain.
+
+- EXTENSIBLE trajectory.
+  It starts with `Nothing` and ends with `Just`, as in the fundamental motivating use case.
+  Note that once it becomes `Just` it will always remain `Just` (with the same epoch number `e`) for the rest of this chain, by the monotonicity of `singleEraTransition` within an era of some chain.
+  This is the only case in which the above single-era interpretation of the safe zone applies, because it's the only case that involves both `Nothing` and `Just` in the same era.
+- NEVER trajectory.
+  It starts a `Nothing` and will necessarily remain `Nothing` on the entire chain.
+  For example, `singleEraTransition _cfg _params _start _st = Nothing` is a compatible definition.
+  In this case, any safe zone value would satisfy the high-level rule, because the era never ends---the implementation names this an _indefinite_ safe zone.
+- IMMEDIATE trajectory.
+  It starts as `Just e`.
+  Note that it will always remain `Just e` for the rest of this chain, by the monotonicity of `singleEraTransition` within an era of some chain.
+  The IMMEDIATE trajectory can arise in two ways.
+    - Case IMMEDIATE-INDEPENDENT.
+      It's possible that the configuration data determines the end of the era, entirely independent of the preceding chain.
+      For example, `singleEraTransition cfg _params _start _st = Just $ foo cfg + 42` is a valid definition.
+      In this case, any safe zone value would satisfy the high-level rule, because the end of the era is determined even before the start is.
+      (TODO the HFC is "technically incorrect" because it assumes the safe zone applies even in this IMMEDIATE-INDEPENDENT trajectory, but only in the corner case when the era does not contain even one safe zone of sots, eg it contains no slots, as in the next subsection.)
+    - Case IMMEDIATE-DEPENDENT.
+      It's possible that the preceding chain before the era determines its end.
+      No known chain does this.
+      It is technically allowed by today's HFC, but only by accident.
+      There are two notable subcases; see the next subsection.
+        - Subcase IMMEDIATE-DEPENDENT-BOUND.
+          The determination instead depends only when the previous era ended.
+          This is less obviously exotic.
+          For example, the era could specify that it lasts exactly 10 epochs, regardless of when it starts.
+          In this case, any safe zone value would satisfy the high-level rule, because the end of the era is determined exactly when the start is.
+          (TODO the HFC is "technically incorrect" because it assumes the safe zone applies even in this IMMEDIATE-DEPENDENT-BOUND trajectory, but only in the corner case when the era does not contain even one safe zone of sots, eg it contains no slots, as in the next subsection.)
+        - Subcase IMMEDIATE-DEPENDENT-TRANSLATION.
+          If the determination depends on the result of translating some parts of the last ledger state in the previous era, then the blocks of one era are directly determining the end of a later era.
+          This seems incompatible with the fundamental motivation of the HFC.
+          This case has an intricate relationship with the safe zone.
+          Either the output epoch is at least a safe zone after the start of the era, or else this era starts in epoch 0 and all previous eras both start and end in epoch 0, since that guarantees that the initial ledger state is immediately available, so that the era's end will be determined when the start is, thereby trivially satisfying the high-level safe zone rule.
+          Note that this prefix of eras therefore contains no slots, which is the topic of the next subsection.
+
+Every era of Cardano mainnet today uses the EXTENSIBLE trajectory.
+However, other Cardano chains used for testing and/or benchmarking instead use the IMMEDIATE era for some prefix of eras in order to "skip" them, starting the chain in a later era (see the next subsection).
+Lastly, due to bugs, some mainnet eras were previously using the NEVER trajectory by accident (eg see PR <https://github.com/input-output-hk/ouroboros-network/pull/3754>).
+
+The intended use of each trajectory is as follows.
+
+- Use EXTENSIBLE for eras that are expected to end on the chain, even if they could not actually end today (eg even if their current `singleEraTransition` implementation will never return `Just`).
+  For example, this could be `F` and `G` in `[F, G]`, if the plan is for this chain to later transition out of `G` into an `H` era that doesn't exist _yet_.
+  In this way the HFC combinator enables today's chain to eventually transition seamlessly into eras that do not yet exist.
+  The core idea is that an `[F, G]` chain should still specify a finite safe zone for `G` despite it currently being the last era in the sequence, since the blocks created by nodes running `[F, G]` will eventually be validated by future nodes running `[F, G, H ...]`.
+- Use IMMEDIATE only for eras that ended in the past or could end on the chain today (ie next era's implementation is already deployed).
+  For example this could be `F` in `[F, G]` but not `G`, since there's not yet a next era in the implementation.
+- Use NEVER only for what is known to be the final era the chain will ever have.
+  For example this could be `G` in `[F, G]` but not `F`, but only if the plan is for this chain to never transition out of `G`.
+  It's always safe to use the EXTENSIBLE trajectory instead of the NEVER trajectory, but the NEVER trajectory will allow the HFC to predict eg slot-and-time translations into the indefinite future.
+
+The HFC interface currently requires the user to specify the `EraParams`'s safe zone and the `singleEraTransition` function separately.
+As such, it is possible to accidentally specify an indefinite safe zone alongside a `singleEraTransition` that sometimes returns `Just`.
+It's also possible to accidentally use the NEVER trajectory for what is not actually the final era.
+These violations do not necessarily lead to irrevocable disaster, but they are likely to cause confusion and/or require eg some patches to the the ledger rules of preceding eras when releasing a new one (eg see PR <https://github.com/input-output-hk/cardano-ledger/pull/2785>).
+
+### Eras that contain no slots
+
+The HFC interface and contract together permit `singleEraTransition cfg eraParams start st` to return `Just (boundEpoch start)`.
+In that case, the era contains no slots on the chain.
+Since it therefore contains no blocks, `st` must be the era's initial ledger state, and so this equality rules out the EXTENSIBLE trajectory.
+It also cannot be the NEVER trajectory, since `singleEraTransition` is returning a `Just` at all.
+Therefore this equality is only possible for an era using the IMMEDIATE trajectory.
+
+As explained above, the constraint induced by any safe zone value is trivially satisfied for the IMMEDIATE-INDEPENDENT and IMMEDIATE-DEPENDENT-BOUND cases.
+In the IMMEDIATE-DEPENDENT-TRANSLATION case, however, `singleEraTransition` cannot be applied without the initial ledger state of the era, and so the end can't be determined before that initial ledger state is.
+Since in general some chains in the preceding non-empty era will determine the start of this era before they determine its initial ledger state, the IMMEDIATE-DEPENDENT-TRANSLATION case only necessarily satisfies the safe zone when some prefix of the era sequence contains no slots.
+That's when the era's initial ledger state is necessarily available as soon as its start is determined (since it's just a sequence of translations starting from the chain's genesis "block").
+Therefore that's the only circumstance in which the IMMEDIATE-DEPENDENT-TRANSLATION case is allowed to return `Just (boundEpoch start)`.
+
+In summary, `singleEraTransition cfg eraParams start st` can only return `Just (boundEpoch start)` either if `singleEraTransition cfg eraParams start undefined` would also (ie in the IMMEDIATE-DEPENDENT-BOUND case) or for a prefix of the eras, since that ensures each era's initial ledger state is also determined (ie in the IMMEDIATE-DEPENDENT-TRANSLATION case).
+
+It's unclear if it's even desirable for the HFC to allow eras that contain no slots, with one exception: the Cardano system-level benchmarks already rely on this behavior in order to skip a prefix of the chain's eras.
+Indeed, skipping a prefix of eras seems like the most natural use case, since the "genesis block" itself is already not an actual block.
+Moreover, this is the exact case in which the era's initial ledger state is definitely also determined when its start is determined.
+
+But there is likely a more direct way to support this "skipping" use case.
+Specifically, it seems possible and desirable to remove the IMMEDIATE trajectory from the HFC interface, so that the HFC only ever applies `singleEraTransition` when there is a block in the era.
+Something along the lines of "if an era's end is determined before its first block exists, then the era must end before slot 0".
+Or more directly: require that `singleEraTransition` returns `Nothing` for the initial ledger state of every era and also provided a separate and isolated means of constructing an initial hard fork `LedgerState` that is in a later era (instead of only the first era).
+
+TODO The current code, Edsko's chapter in the report, and the "the precisely-worded high-level rule" for the safe zone semantics sometimes applies the safe zone from the first slot of the era.
+Perhaps this suggests that the translated-but-not-actually-ticked state is indeed kind of summary of everything that came before, a la the "genesis block"?
+In which case it does in some sense require ticking at least parts of the last ledger state of the previous era across the epoch boundary (as in the minimal Babbage->Conway bugfix PR <https://github.com/input-output-hk/ouroboros-consensus/pull/366>).
