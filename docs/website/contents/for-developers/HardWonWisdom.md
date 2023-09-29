@@ -322,8 +322,13 @@ For example, [Shelley the `PPUP` ledger rule](https://github.com/input-output-hk
 
 ### Answer to the Question
 
-The ultimate answer to the Office Hours question is that the query will fail if and only if its argument is beyond the conservative estimate for the end of the first era without a known end time.
-That estimate will usually be the start of the least epoch that begins more than `6k/f` slots after the tip of ledger state that was used to answer the query.
+The ultimate answer to the Office Hours question is that the query will fail if and only if its argument is beyond the HFC's current lower bound for the next unknown era end (whether that's the current era or the next).
+On Cardano, that lower bound is the end of the ledger state's current epoch UNLESS
+
+- the ledger state is within 3k/f slots of the end of its epoch
+- and/or the ledger state has already determined that its era ends at the end of its epoch (ie the necssary votes are in by the `4k/f`th slot, and there are `k` subsequent blocks after that slot, which tends to happen shortly after the `5k/f`th slot)
+
+in which case the lower bound is instead the subsequent epoch boundary.
 
 ### Implementation Pointers
 
