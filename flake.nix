@@ -60,18 +60,15 @@
       in
       {
         devShells = {
-          default = hydraJobs.native.haskell.devShell;
+          default = hydraJobs.native.haskell92.devShell;
           ghc96 = hydraJobs.native.haskell96.devShell;
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];
           };
         };
         inherit hydraJobs;
-        legacyPackages = pkgs;
-        packages = {
-          inherit (pkgs.hsPkgsNoAsserts.hsPkgs.ouroboros-consensus-cardano.components.exes)
-            db-analyser;
-        };
+        packages =
+          hydraJobs.native.haskell92.exesNoAsserts.ouroboros-consensus-cardano;
       }
     );
 }

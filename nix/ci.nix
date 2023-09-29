@@ -7,7 +7,10 @@ let
 
   mkHaskellJobsFor = hsPkgs:
     let
-      projectHsPkgs = haskellLib.selectProjectPackages hsPkgs.hsPkgs;
+      projectHsPkgs =
+        haskellLib.selectProjectPackages hsPkgs.hsPkgs;
+      projectHsPkgsNoAsserts =
+        haskellLib.selectProjectPackages hsPkgs.projectVariants.noAsserts.hsPkgs;
       noCross = buildSystem == hsPkgs.pkgs.stdenv.hostPlatform.system;
     in
     {
@@ -15,6 +18,8 @@ let
         haskellLib.collectComponents' "library" projectHsPkgs;
       exes =
         haskellLib.collectComponents' "exes" projectHsPkgs;
+      exesNoAsserts =
+        haskellLib.collectComponents' "exes" projectHsPkgsNoAsserts;
       benchmarks =
         haskellLib.collectComponents' "benchmarks" projectHsPkgs;
       tests =
@@ -26,30 +31,26 @@ let
         import ./shell.nix { inherit pkgs hsPkgs; };
     };
 
-  hsPkgsForGhc = ghcVer:
-    pkgs.hsPkgs.appendModule { compiler-nix-name = lib.mkForce ghcVer; };
-
   jobs = lib.filterAttrsRecursive (n: v: n != "recurseForDerivations") ({
     native = {
-      haskell = mkHaskellJobsFor pkgs.hsPkgs;
-      haskellNoAsserts = (mkHaskellJobsFor pkgs.hsPkgsNoAsserts).exes;
+      haskell92 = mkHaskellJobsFor pkgs.hsPkgs;
     } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
       formatting = import ./formatting.nix pkgs;
       inherit (pkgs) consensus-pdfs;
 
       # ensure we can still build on 8.10, can be removed soon
       haskell810 = builtins.removeAttrs
-        (mkHaskellJobsFor (hsPkgsForGhc "ghc8107"))
+        (mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc810)
         [ "checks" "devShell" ];
 
       # ensure we can already build with 9.6, but do not yet run tests to reduce CI load
       haskell96 = builtins.removeAttrs
-        (mkHaskellJobsFor (hsPkgsForGhc "ghc962"))
+        (mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc96)
         [ "checks" ];
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
-      haskell = mkHaskellJobsFor pkgs.hsPkgs.projectCross.mingwW64;
+      haskell92 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.mingwW64;
     };
   });
 
