@@ -20,9 +20,23 @@ This package also contains a few executables:
 
 * `app/immdb-server.hs`: serve an immutable DB via ChainSync and BlockFetch.
 
-NB: our top level `cabal.project` enables assertions in both our local packages
-and the ones we depend on. If you build these tools from this repository, it is
-recommended that you override this locally by means of a `cabal.project.local`.
+### Assertions
+
+Our top level `cabal.project` enables assertions in both our local packages
+and the ones we depend on. If you build these tools from this repository in
+order to do performance-sensitive measurements, it is recommended that you
+override this locally by means of a `cabal.project.local`.
+
+You can also build the tools without assertions via Nix. For the default GHC version (see `compiler-nix-name` in `nix/haskell.nix`), you can run
+```sh
+nix build .#db-analyser
+```
+For more GHC versions, use one of
+```sh
+nix build .#hydraJobs.x86_64-linux.native.haskell810.exesNoAsserts.ouroboros-consensus-cardano.db-analyser
+nix build .#hydraJobs.x86_64-linux.native.haskell92.exesNoAsserts.ouroboros-consensus-cardano.db-analyser
+nix build .#hydraJobs.x86_64-linux.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano.db-analyser
+```
 
 ## db-analyser
 

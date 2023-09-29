@@ -15,6 +15,10 @@ let
   hsPkgs = haskell-nix.cabalProject {
     src = ./..;
     compiler-nix-name = "ghc928";
+    flake.variants = {
+      ghc810 = { compiler-nix-name = lib.mkForce "ghc8107"; };
+      ghc96 = { compiler-nix-name = lib.mkForce "ghc962"; };
+    };
     inputMap = {
       "https://input-output-hk.github.io/cardano-haskell-packages" = inputs.CHaP;
     };
@@ -36,18 +40,15 @@ let
             }) [ "byron" "shelley" "cardano" ]);
       }
     ];
+    flake.variants.noAsserts = {
+      src = lib.mkForce (final.applyPatches {
+        name = "consensus-src-no-asserts";
+        src = ./..;
+        postPatch = ''echo > asserts.cabal'';
+      });
+    };
   };
 in
 {
   inherit hsPkgs;
-  hsPkgsNoAsserts = hsPkgs.appendModule {
-    src = lib.mkForce (final.symlinkJoin {
-      name = "consensus-src-no-asserts";
-      paths = [ ./.. ];
-      postBuild = ''
-        rm $out/asserts.cabal
-        touch $out/asserts.cabal
-      '';
-    });
-  };
 }
