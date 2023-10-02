@@ -373,27 +373,6 @@ runScheduler tracer peers = do
     traceWith tracer "» Can't put the puppet bowing"
     traceWith tracer "» That just now dangled still -"
 
--- TODO: inline in syncPeers
-syncTest ::
-  IOLike m =>
-  Tracer m String ->
-  SecurityParam ->
-  PointSchedule ->
-  Map PeerId (MockedChainSyncServer m) ->
-  StateT (TestResources m) m b ->
-  (b -> m a) ->
-  m (Either ChainSyncClientException a)
-syncTest tracer k pointSchedule peers setup continuation =
-  withRegistry $ \registry -> do
-    flip evalStateT TestResources {topConfig = defaultCfg k, connectionThreads = [], pointSchedule, registry} $ do
-      a <- setup
-      s <- get
-      runScheduler tracer peers
-      res <- lift (try (awaitAll s))
-      b <- lift $ continuation a
-      pure (b <$ res)
-
--- TODO: Consider if SecurityParam is needed
 runPointSchedule ::
   IOLike m =>
   SecurityParam ->
@@ -402,15 +381,22 @@ runPointSchedule ::
   Tracer m String ->
   m (Either ChainSyncClientException TestFragH)
 runPointSchedule k pointSchedule peers tracer =
-  syncTest tracer k pointSchedule peers
-    (do
+  withRegistry $ \registry -> do
+    flip evalStateT TestResources {topConfig = defaultCfg k, connectionThreads = [], pointSchedule, registry} $ do
+      a <- setup
+      s <- get
+      runScheduler tracer peers
+      res <- lift (try (awaitAll s))
+      b <- lift $ atomically $ ChainDB.getCurrentChain a
+      pure (b <$ res)
+  where
+    setup = do
       st <- get
       lift $ traceWith tracer $ "Security param k = " ++ show k
       chainDb <- lift $ mkChainDb tracer (mcssCandidateFragment <$> peers) (topConfig st) (registry st)
       let chainDbView = defaultChainDbView chainDb
       traverse_ (startChainSyncConnectionThread tracer chainDbView) peers
-      pure chainDb)
-    (atomically . ChainDB.getCurrentChain)
+      pure chainDb
 
 mkChainDb ::
   IOLike m =>
