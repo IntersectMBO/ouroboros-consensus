@@ -51,7 +51,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (NewTipInfo (..), TraceAddBlockEvent (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
-                     StrictTVar, TQueue, Time (Time), async, atomically, cancel,
+                     StrictTVar, TQueue, Time (Time), async, atomically,
                      getMonotonicTime, newTQueueIO, race, readTQueue, readTVar,
                      readTVarIO, threadDelay, try, uncheckedNewTVarM, waitCatch,
                      writeTQueue, writeTVar)
@@ -86,8 +86,7 @@ import           Text.Printf (printf)
 -- typed-protocols peers
 data ConnectionThread m =
   ConnectionThread {
-    wait :: m (),
-    kill :: m ()
+    wait :: m ()
   }
 
 data TestResources m =
@@ -323,7 +322,6 @@ startChainSyncConnectionThread tracer chainDbView server@MockedChainSyncServer{.
       (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView mcssCandidateFragment))
       (chainSyncServerPeer s)
   let wait = void (waitCatch handle)
-      kill = cancel handle
   modify' $ \ TestResources {..} -> TestResources {connectionThreads = ConnectionThread {..} : connectionThreads, ..}
 
 awaitAll ::
