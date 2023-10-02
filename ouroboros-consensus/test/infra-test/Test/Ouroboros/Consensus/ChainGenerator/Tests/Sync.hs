@@ -82,7 +82,8 @@ import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
                      testInitExtLedger)
 import           Text.Printf (printf)
 
--- | A handle to a connection between typed-protocols peers
+-- | A handle to a thread running a connection between
+-- typed-protocols peers
 data ConnectionThread m =
   ConnectionThread {
     wait :: m (),
@@ -92,7 +93,9 @@ data ConnectionThread m =
 data TestResources m =
   TestResources {
     topConfig     :: TopLevelConfig TestBlock,
-    peers         :: [SyncPeer m],
+    -- | Threads running connections between typed-protocols peers
+    -- e.g. SyncClient-SyncServer or BlockFetchClient-BlockFetchServer
+    connectionThreads :: [ConnectionThread m],
     pointSchedule :: PointSchedule,
     registry      :: ResourceRegistry m
   }
@@ -321,7 +324,7 @@ startChainSyncConnectionThread tracer chainDbView server@MockedChainSyncServer{.
       (chainSyncServerPeer s)
   let wait = void (waitCatch handle)
       kill = cancel handle
-  modify' $ \ TestResources {..} -> TestResources {peers = ConnectionThread {..} : peers, ..}
+  modify' $ \ TestResources {..} -> TestResources {connectionThreads = ConnectionThread {..} : connectionThreads, ..}
 
 awaitAll ::
   IOLike m =>
@@ -330,7 +333,7 @@ awaitAll ::
 awaitAll TestResources {..} =
   void $
   race (threadDelay 100) $
-  for_ peers wait
+  for_ connectionThreads wait
 
 dispatchTick ::
   IOLike m =>
@@ -384,7 +387,7 @@ syncTest ::
   m (Either ChainSyncClientException a)
 syncTest tracer k pointSchedule peers setup continuation =
   withRegistry $ \registry -> do
-    flip evalStateT TestResources {topConfig = defaultCfg k, peers = [], pointSchedule, registry} $ do
+    flip evalStateT TestResources {topConfig = defaultCfg k, connectionThreads = [], pointSchedule, registry} $ do
       a <- setup
       s <- get
       runScheduler tracer peers
