@@ -190,7 +190,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='8.10.7'
+        && matrix.ghc=='9.2.8'
       run: |
         cabal build --dry-run --enable-tests all
         ./scripts/docs/haddocks.sh
@@ -200,7 +200,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='8.10.7'
+        && matrix.ghc=='9.2.8'
       uses: actions/upload-artifact@v3
       with:
         name: haddocks
