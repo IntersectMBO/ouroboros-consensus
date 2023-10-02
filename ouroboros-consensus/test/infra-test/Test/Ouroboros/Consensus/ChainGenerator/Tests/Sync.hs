@@ -91,12 +91,12 @@ data ConnectionThread m =
 
 data TestResources m =
   TestResources {
-    topConfig     :: TopLevelConfig TestBlock,
+    topConfig         :: TopLevelConfig TestBlock,
     -- | Threads running connections between typed-protocols peers
     -- e.g. SyncClient-SyncServer or BlockFetchClient-BlockFetchServer
     connectionThreads :: [ConnectionThread m],
-    pointSchedule :: PointSchedule,
-    registry      :: ResourceRegistry m
+    pointSchedule     :: PointSchedule,
+    registry          :: ResourceRegistry m
   }
 
 defaultCfg :: SecurityParam -> TopLevelConfig TestBlock
