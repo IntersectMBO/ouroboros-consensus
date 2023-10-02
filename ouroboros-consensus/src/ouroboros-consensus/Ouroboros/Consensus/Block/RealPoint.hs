@@ -15,6 +15,7 @@ module Ouroboros.Consensus.Block.RealPoint (
   , encodeRealPoint
     -- * Derived
   , blockRealPoint
+  , castRealPoint
   , headerRealPoint
   , pointToWithOriginRealPoint
   , realPointHash
@@ -27,6 +28,7 @@ import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Codec.Serialise (decode, encode)
+import           Data.Coerce
 import           Data.Proxy
 import           Data.Typeable (Typeable, typeRep)
 import           GHC.Generics
@@ -104,3 +106,9 @@ withOriginRealPointToPoint (NotOrigin p) = realPointToPoint p
 pointToWithOriginRealPoint :: Point blk -> WithOrigin (RealPoint blk)
 pointToWithOriginRealPoint GenesisPoint     = Origin
 pointToWithOriginRealPoint (BlockPoint s h) = NotOrigin $ RealPoint s h
+
+castRealPoint ::
+     forall blk blk'. Coercible (HeaderHash blk) (HeaderHash blk')
+  => RealPoint blk
+  -> RealPoint blk'
+castRealPoint (RealPoint s h) = RealPoint s (coerce h)

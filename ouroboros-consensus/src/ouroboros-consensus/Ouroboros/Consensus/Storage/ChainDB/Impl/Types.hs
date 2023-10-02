@@ -48,7 +48,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , getBlockToAdd
   , newBlocksToAdd
     -- * Trace types
-  , NewTipInfo (..)
+  , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
@@ -78,6 +78,7 @@ import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
 import           Ouroboros.Consensus.Ledger.Extended (ExtValidationError)
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), ChainDbError (..), ChainType,
                      InvalidBlockReason, StreamFrom, StreamTo, UnknownRange)
@@ -565,13 +566,14 @@ data TraceOpenEvent blk =
   | OpenedLgrDB
   deriving (Generic, Eq, Show)
 
--- | Information about the new tip of the current chain.
+-- | Information on having changed our selection to a chain with a (necessarily)
+-- new tip.
 --
 -- NOTE: the fields of this record are intentionally lazy to prevent the
 -- forcing of this information in case it doesn't have to be traced. However,
 -- this means that the tracer processing this message /must not/ hold on to
 -- it, otherwise it leaks memory.
-data NewTipInfo blk = NewTipInfo {
+data SelectionChangedInfo blk = SelectionChangedInfo {
       newTipPoint       :: RealPoint blk
       -- ^ The new tip of the current chain.
     , newTipEpoch       :: EpochNo
@@ -589,8 +591,19 @@ data NewTipInfo blk = NewTipInfo {
       -- chain being A and having a disconnected C lying around, adding B will
       -- result in A -> B -> C as the new chain. The trigger B /= the new tip
       -- C.
+    , newTipSelectView  :: SelectView (BlockProtocol blk)
+      -- ^ The 'SelectView' of the new tip. It is guaranteed that
+      --
+      -- >>> Just newTipSelectView > oldTipSelectView
+      -- True
+    , oldTipSelectView  :: Maybe (SelectView (BlockProtocol blk))
+      -- ^ The 'SelectView' of the old, previous tip. This can be 'Nothing' when
+      -- the previous chain/tip was Genesis.
     }
-  deriving (Eq, Show, Generic)
+  deriving (Generic)
+
+deriving stock instance (Show (SelectView (BlockProtocol blk)), StandardHash blk) => Show (SelectionChangedInfo blk)
+deriving stock instance (Eq   (SelectView (BlockProtocol blk)), StandardHash blk) => Eq   (SelectionChangedInfo blk)
 
 -- | Trace type for the various events that occur when adding a block.
 data TraceAddBlockEvent blk =
@@ -636,7 +649,7 @@ data TraceAddBlockEvent blk =
     -- chain (second fragment).
   | AddedToCurrentChain
       [LedgerEvent blk]
-      (NewTipInfo blk)
+      (SelectionChangedInfo blk)
       (AnchoredFragment (Header blk))
       (AnchoredFragment (Header blk))
 
@@ -645,7 +658,7 @@ data TraceAddBlockEvent blk =
     -- (first fragment).
   | SwitchedToAFork
       [LedgerEvent blk]
-      (NewTipInfo blk)
+      (SelectionChangedInfo blk)
       (AnchoredFragment (Header blk))
       (AnchoredFragment (Header blk))
 
