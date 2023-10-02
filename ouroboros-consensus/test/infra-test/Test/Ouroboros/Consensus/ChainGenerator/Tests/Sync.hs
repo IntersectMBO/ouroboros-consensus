@@ -82,14 +82,15 @@ import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
                      testInitExtLedger)
 import           Text.Printf (printf)
 
-data SyncPeer m =
-  SyncPeer {
+-- | A handle to a connection between typed-protocols peers
+data ConnectionThread m =
+  ConnectionThread {
     wait :: m (),
     kill :: m ()
   }
 
-data SyncTest m =
-  SyncTest {
+data TestResources m =
+  TestResources {
     topConfig     :: TopLevelConfig TestBlock,
     peers         :: [SyncPeer m],
     pointSchedule :: PointSchedule,
@@ -302,13 +303,13 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
     nullTracer
     varCandidate
 
-syncWith ::
+startChainSyncConnectionThread ::
   IOLike m =>
   Tracer m String ->
   ChainDbView m TestBlock ->
   MockedChainSyncServer m ->
-  StateT (SyncTest m) m ()
-syncWith tracer chainDbView server@MockedChainSyncServer{..} = do
+  StateT (TestResources m) m ()
+startChainSyncConnectionThread tracer chainDbView server@MockedChainSyncServer{..} = do
   cfg <- gets topConfig
   handle <- lift $ async $ do
     let s = runMockedChainSyncServer server
@@ -320,13 +321,13 @@ syncWith tracer chainDbView server@MockedChainSyncServer{..} = do
       (chainSyncServerPeer s)
   let wait = void (waitCatch handle)
       kill = cancel handle
-  modify' $ \ SyncTest {..} -> SyncTest {peers = SyncPeer {..} : peers, ..}
+  modify' $ \ TestResources {..} -> TestResources {peers = ConnectionThread {..} : peers, ..}
 
 awaitAll ::
   IOLike m =>
-  SyncTest m ->
+  TestResources m ->
   m ()
-awaitAll SyncTest {..} =
+awaitAll TestResources {..} =
   void $
   race (threadDelay 100) $
   for_ peers wait
@@ -351,9 +352,9 @@ runScheduler ::
   IOLike m =>
   Tracer m String ->
   Map PeerId (MockedChainSyncServer m) ->
-  StateT (SyncTest m) m ()
+  StateT (TestResources m) m ()
 runScheduler tracer peers = do
-  SyncTest {pointSchedule = PointSchedule ps _} <- get
+  TestResources {pointSchedule = PointSchedule ps _} <- get
   lift $ do
     traceWith tracer "Schedule is:"
     for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
@@ -371,18 +372,19 @@ runScheduler tracer peers = do
     traceWith tracer "» Can't put the puppet bowing"
     traceWith tracer "» That just now dangled still -"
 
+-- TODO: inline in syncPeers
 syncTest ::
   IOLike m =>
   Tracer m String ->
   SecurityParam ->
   PointSchedule ->
   Map PeerId (MockedChainSyncServer m) ->
-  StateT (SyncTest m) m b ->
+  StateT (TestResources m) m b ->
   (b -> m a) ->
   m (Either ChainSyncClientException a)
 syncTest tracer k pointSchedule peers setup continuation =
   withRegistry $ \registry -> do
-    flip evalStateT SyncTest {topConfig = defaultCfg k, peers = [], pointSchedule, registry} $ do
+    flip evalStateT TestResources {topConfig = defaultCfg k, peers = [], pointSchedule, registry} $ do
       a <- setup
       s <- get
       runScheduler tracer peers
@@ -390,32 +392,33 @@ syncTest tracer k pointSchedule peers setup continuation =
       b <- lift $ continuation a
       pure (b <$ res)
 
-syncPeers ::
+-- TODO: Consider if SecurityParam is needed
+runPointSchedule ::
   IOLike m =>
   SecurityParam ->
   PointSchedule ->
   Map PeerId (MockedChainSyncServer m) ->
   Tracer m String ->
   m (Either ChainSyncClientException TestFragH)
-syncPeers k pointSchedule peers tracer =
+runPointSchedule k pointSchedule peers tracer =
   syncTest tracer k pointSchedule peers
     (do
       st <- get
       lift $ traceWith tracer $ "Security param k = " ++ show k
-      chainDb <- lift $ mkRealChainDb tracer (mcssCandidateFragment <$> peers) (topConfig st) (registry st)
+      chainDb <- lift $ mkChainDb tracer (mcssCandidateFragment <$> peers) (topConfig st) (registry st)
       let chainDbView = defaultChainDbView chainDb
-      traverse_ (syncWith tracer chainDbView) peers
+      traverse_ (startChainSyncConnectionThread tracer chainDbView) peers
       pure chainDb)
     (atomically . ChainDB.getCurrentChain)
 
-mkRealChainDb ::
+mkChainDb ::
   IOLike m =>
   Tracer m String ->
   Map PeerId (StrictTVar m TestFragH) ->
   TopLevelConfig TestBlock ->
   ResourceRegistry m ->
   m (ChainDB m TestBlock)
-mkRealChainDb tracer candidateVars nodeCfg registry = do
+mkChainDb tracer candidateVars nodeCfg registry = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
       pure $ (

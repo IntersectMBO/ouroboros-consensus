@@ -103,7 +103,7 @@ runTest TestSetup{..} = do
     b <- makeMockedChainSyncServer advPeer tracer blockTree
     let servers = Map.fromList [(HonestPeer, g), (advPeer, b)]
 
-    frag <- either (error . show) id <$> syncPeers secParam schedule servers tracer
+    frag <- either (error . show) id <$> runPointSchedule secParam schedule servers tracer
     trace <- unlines <$> getTrace
 
     pure
