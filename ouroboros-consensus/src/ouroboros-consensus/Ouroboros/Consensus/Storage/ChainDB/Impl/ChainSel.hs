@@ -78,7 +78,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util (whenJust)
+import           Ouroboros.Consensus.Util (eitherToMaybe, whenJust)
 import           Ouroboros.Consensus.Util.AnchoredFragment
 import           Ouroboros.Consensus.Util.Enclose (encloseWith)
 import           Ouroboros.Consensus.Util.IOLike
@@ -673,14 +673,21 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         curChain    = VF.validatedFragment curChainAndLedger
         curTip      = castPoint $ AF.headPoint curChain
 
-    -- | Create a 'NewTipInfo' corresponding to the tip of the given ledger.
-    mkNewTipInfo :: LedgerDB' blk -> NewTipInfo blk
-    mkNewTipInfo newLedgerDB =
-        NewTipInfo {
-            newTipPoint       = tipPoint
+    mkSelectionChangedInfo ::
+         AnchoredFragment (Header blk) -- ^ old chain
+      -> AnchoredFragment (Header blk) -- ^ new chain
+      -> LedgerDB' blk                 -- ^ new LedgerDB
+      -> SelectionChangedInfo blk
+    mkSelectionChangedInfo oldChain newChain newLedgerDB =
+        SelectionChangedInfo {
+            newTipPoint       = castRealPoint tipPoint
           , newTipEpoch       = tipEpoch
           , newTipSlotInEpoch = tipSlotInEpoch
           , newTipTrigger     = p
+          , newTipSelectView
+          , oldTipSelectView  =
+                  selectView (configBlock cfg)
+              <$> eitherToMaybe (AF.head oldChain)
           }
       where
         cfg :: TopLevelConfig blk
@@ -694,13 +701,14 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
                     (configLedger cfg)
                     ledger
 
-        (tipPoint, (tipEpoch, tipSlotInEpoch)) =
-          case pointToWithOriginRealPoint
-                 (ledgerTipPoint ledger) of
-            Origin        -> error "cannot have switched to an empty chain"
-            NotOrigin tip ->
-              let query = History.slotToEpoch' (realPointSlot tip)
-              in (tip, History.runQueryPure query summary)
+        (tipPoint, (tipEpoch, tipSlotInEpoch), newTipSelectView) =
+          case AF.head newChain of
+            Left _anchor -> error "cannot have switched to an empty chain"
+            Right tipHdr ->
+              let query        = History.slotToEpoch' (blockSlot tipHdr)
+                  tipEpochData = History.runQueryPure query summary
+                  sv           = selectView (configBlock cfg) tipHdr
+              in (blockRealPoint tipHdr, tipEpochData, sv)
 
     -- | Try to apply the given 'ChainDiff' on the current chain fragment. The
     -- 'LgrDB.LedgerDB' is updated in the same transaction.
@@ -770,8 +778,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         let mkTraceEvent = case chainSwitchType of
               AddingBlocks     -> AddedToCurrentChain
               SwitchingToAFork -> SwitchedToAFork
+            selChangedInfo = mkSelectionChangedInfo curChain newChain newLedger
         traceWith addBlockTracer $
-          mkTraceEvent events (mkNewTipInfo newLedger) curChain newChain
+          mkTraceEvent events selChangedInfo curChain newChain
         whenJust (strictMaybeToMaybe prevTentativeHeader) $ traceWith $
           PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
         traceWith cdbTraceLedger newLedger

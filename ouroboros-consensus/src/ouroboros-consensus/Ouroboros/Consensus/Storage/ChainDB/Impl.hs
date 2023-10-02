@@ -14,7 +14,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
   , withDB
     -- * Trace types
   , LgrDB.TraceReplayEvent
-  , NewTipInfo (..)
+  , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
   , TraceCopyToImmutableDBEvent (..)
   , TraceEvent (..)
