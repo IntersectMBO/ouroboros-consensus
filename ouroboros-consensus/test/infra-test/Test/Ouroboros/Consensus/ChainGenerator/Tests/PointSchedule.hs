@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE LambdaCase            #-}
@@ -5,10 +6,12 @@
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule (module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule) where
 
+import           Data.Hashable (Hashable)
 import           Data.List (mapAccumL, transpose)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String (IsString (fromString))
+import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block.Abstract (HasHeader, getHeader)
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
@@ -81,7 +84,7 @@ data PeerId =
   HonestPeer
   |
   PeerId String
-  deriving (Eq, Show, Ord)
+  deriving (Eq, Generic, Show, Ord)
 
 instance IsString PeerId where
   fromString "honest" = HonestPeer
@@ -91,6 +94,8 @@ instance Condense PeerId where
   condense = \case
     HonestPeer -> "honest"
     PeerId name -> name
+
+instance Hashable PeerId
 
 data Peer a =
   Peer {

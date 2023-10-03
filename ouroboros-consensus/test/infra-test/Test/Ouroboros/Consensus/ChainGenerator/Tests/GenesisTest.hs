@@ -6,6 +6,7 @@
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest (tests) where
 
+import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (traceWith)
@@ -91,8 +92,7 @@ exampleTestSetup params seed =
       head $ BT.btBranches blockTree
 
 runTest ::
-  forall m base hon.
-  (IOLike m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m) =>
   TestAdversarial base hon ->
   TestSetup ->
   m Property

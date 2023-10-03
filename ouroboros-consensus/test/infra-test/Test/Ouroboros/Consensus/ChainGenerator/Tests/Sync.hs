@@ -16,6 +16,7 @@ import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Exception (Exception (fromException, toException))
 import           Control.Monad.Class.MonadAsync
                      (AsyncCancelled (AsyncCancelled))
+import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.State.Strict (StateT, evalStateT, get, gets,
                      lift, modify')
@@ -49,7 +50,6 @@ import           Ouroboros.Consensus.Protocol.BFT
                      ConsensusConfig (BftConfig, bftParams, bftSignKey, bftVerKeys))
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
                      (ChainDbArgs (cdbTracer))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
@@ -61,15 +61,17 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike,
                      MonadMonotonicTime, MonadThrow (throwIO), SomeException,
                      StrictTVar, TQueue, Time (Time), async, atomically, cancel,
                      getMonotonicTime, newTQueueIO, readTQueue, readTVar,
-                     readTVarIO, threadDelay, uncheckedNewTVarM, writeTQueue,
-                     writeTVar)
+                     readTVarIO, retry, threadDelay, uncheckedNewTVarM,
+                     writeTQueue, writeTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..), blockPoint, getTipPoint)
+import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
+                     bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.Channel (createConnectedChannels)
-import           Ouroboros.Network.ControlMessage (ControlMessage (..))
+import           Ouroboros.Network.ControlMessage (ControlMessage (..),
+                     ControlMessageSTM)
 import           Ouroboros.Network.Driver (TraceSendRecv (TraceSendMsg))
 import           Ouroboros.Network.Driver.Limits
                      (ProtocolLimitFailure (ExceededSizeLimit, ExceededTimeLimit))
@@ -89,11 +91,12 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
                      ServerStNext (SendMsgRollForward), chainSyncServerPeer)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule as Tests.PointSchedule
+import qualified Test.Ouroboros.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
-                     CodecConfig (TestBlockCodecConfig), Header (..),
+                     CodecConfig (TestBlockCodecConfig),
                      StorageConfig (TestBlockStorageConfig), TestBlock,
                      testInitExtLedger)
 import           Text.Printf (printf)
@@ -326,9 +329,10 @@ startChainSyncConnectionThread ::
   Tracer m String ->
   Asc ->
   ChainDbView m TestBlock ->
+  FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
   MockedChainSyncServer m ->
   StateT (TestResources m) m ()
-startChainSyncConnectionThread tracer activeSlotCoefficient chainDbView server@MockedChainSyncServer{..} = do
+startChainSyncConnectionThread tracer activeSlotCoefficient chainDbView fetchClientRegistry server@MockedChainSyncServer{..} = do
   cfg <- gets topConfig
   let slotLength = HardFork.eraSlotLength . topLevelConfigLedger $ cfg
   let timeouts = chainSyncTimeouts slotLength activeSlotCoefficient
@@ -337,7 +341,8 @@ startChainSyncConnectionThread tracer activeSlotCoefficient chainDbView server@M
     traceWith tracer $ "  canAwait = " ++ show (canAwaitTimeout timeouts)
     traceWith tracer $ "  intersect = " ++ show (intersectTimeout timeouts)
     traceWith tracer $ "  mustReply = " ++ show (mustReplyTimeout timeouts)
-  handle <- lift $ async $ do
+  handle <- lift $ async $
+    bracketSyncWithFetchClient fetchClientRegistry mcssPeerId $ do
     let s = runMockedChainSyncServer server
     res <- try $ runConnectedPeersPipelinedWithLimits
       createConnectedChannels
@@ -385,6 +390,27 @@ cancelPoll a = do
       -- Thread hasn't terminated yet.
       cancel a
       pure $ Left $ toException AsyncCancelled
+
+startBlockFetchConnectionThread ::
+  (IOLike m, MonadTime m) =>
+  ResourceRegistry m ->
+  FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
+  ControlMessageSTM m ->
+  MockedChainSyncServer m ->
+  m ()
+startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM MockedChainSyncServer{..} =
+    void $ forkLinkedThread registry ("BlockFetchClient" <> condense mcssPeerId) $
+      PeerSimulator.BlockFetch.runBlockFetchClient mcssPeerId fetchClientRegistry controlMsgSTM getCurrentChain
+  where
+    getCurrentChain = atomically $ do
+        nodeState <- readTVar mcssCurrentState
+        case nodeState of
+          NodeOffline -> retry
+          NodeOnline aps -> do
+            let Tests.PointSchedule.BlockPoint b = block aps
+            case BT.findFragment (blockPoint b) mcssBlockTree of
+              Just f  -> pure f
+              Nothing -> error "block tip is not in the block tree"
 
 killAll ::
   IOLike m =>
@@ -440,7 +466,7 @@ runScheduler tracer peers = do
     traceWith tracer "» That just now dangled still -"
 
 runPointSchedule ::
-  (IOLike m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m) =>
   SecurityParam ->
   Asc ->
   PointSchedule ->
@@ -450,20 +476,30 @@ runPointSchedule ::
 runPointSchedule k asc pointSchedule peers tracer =
   withRegistry $ \registry -> do
     flip evalStateT TestResources {topConfig = defaultCfg k, connectionThreads = [], pointSchedule, registry} $ do
-      a <- setup
+      a <- setup registry
       s <- get
       runScheduler tracer peers
       res <- lift (killAll s)
       b <- lift $ atomically $ ChainDB.getCurrentChain a
       pure $ maybe (Right b) Left res
   where
-    setup = do
+    setup reg = do
       st <- get
       lift $ traceWith tracer $ "Security param k = " ++ show k
       chainDb <- lift $ mkChainDb tracer (mcssCandidateFragment <$> peers) (topConfig st) (registry st)
+      fetchClientRegistry <- lift newFetchClientRegistry
       let chainDbView = defaultChainDbView chainDb
-      traverse_ (startChainSyncConnectionThread tracer asc chainDbView) peers
+      for_ peers $ \peer -> do
+        startChainSyncConnectionThread tracer asc chainDbView fetchClientRegistry peer
+        lift $ PeerSimulator.BlockFetch.startKeepAliveThread reg fetchClientRegistry (mcssPeerId peer)
+      lift $ traverse_ (startBlockFetchConnectionThread reg fetchClientRegistry (pure Continue)) peers
+      -- The block fetch logic needs to be started after the block fetch clients
+      -- otherwise, an internal assertion fails because getCandidates yields more
+      -- peer fragments than registered clients.
+      lift $ PeerSimulator.BlockFetch.startBlockFetchLogic reg chainDb fetchClientRegistry getCandidates
       pure chainDb
+
+    getCandidates = for peers (readTVar . mcssCandidateFragment)
 
 mkChainDb ::
   IOLike m =>
@@ -472,7 +508,7 @@ mkChainDb ::
   TopLevelConfig TestBlock ->
   ResourceRegistry m ->
   m (ChainDB m TestBlock)
-mkChainDb tracer candidateVars nodeCfg registry = do
+mkChainDb tracer _candidateVars nodeCfg registry = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
       pure $ (
@@ -492,23 +528,7 @@ mkChainDb tracer candidateVars nodeCfg registry = do
         (\_ -> ChainDB.Impl.openDBInternal chainDbArgs False)
         (ChainDB.closeDB . fst)
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
-    void $ flip Map.traverseWithKey candidateVars $ \ pid varCandidate ->
-      forkLinkedThread registry (condense pid) $ monitorCandidate chainDB varCandidate
     pure chainDB
-  where
-    monitorCandidate chainDB varCandidate =
-        go GenesisPoint
-      where
-        go candidateTip = do
-          ((frag, candidateTip'), isFetched) <- atomically $
-            (,)
-              <$> blockUntilChanged AF.headPoint candidateTip (readTVar varCandidate)
-              <*> ChainDB.getIsFetched chainDB
-          let blks =
-                  filter (not . isFetched . blockPoint)
-                $ testHeader <$> AF.toOldestFirst frag
-          for_ blks $ ChainDB.addBlock_ chainDB InvalidBlockPunishment.noPunishment
-          go candidateTip'
 
 mkCdbTracer ::
   IOLike m =>
