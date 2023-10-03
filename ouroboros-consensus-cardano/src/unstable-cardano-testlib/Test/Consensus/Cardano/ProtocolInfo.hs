@@ -38,7 +38,7 @@ import           Ouroboros.Consensus.Byron.Node (ByronLeaderCredentials,
 import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
 import           Ouroboros.Consensus.Cardano.Node (CardanoHardForkConstraints,
                      CardanoHardForkTriggers (..), ProtocolParams (..),
-                     TriggerHardFork (TriggerHardForkAtEpoch, TriggerHardForkNever),
+                     TriggerHardFork (TriggerHardForkAtEpoch, TriggerHardForkNotDuringThisExecution),
                      protocolInfoCardano)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import qualified Ouroboros.Consensus.Mempool as Mempool
@@ -115,12 +115,12 @@ hfSpecTransitionTrigger era = snd . selectEra era
 stayInByron :: HardForkSpec
 stayInByron =
     HardForkSpec {
-      shelleyHardForkSpec = (SL.ProtVer versionZero 0, TriggerHardForkNever)
-    , allegraHardForkSpec = (SL.ProtVer versionZero 0, TriggerHardForkNever)
-    , maryHardForkSpec    = (SL.ProtVer versionZero 0, TriggerHardForkNever)
-    , alonzoHardForkSpec  = (SL.ProtVer versionZero 0, TriggerHardForkNever)
-    , babbageHardForkSpec = (SL.ProtVer versionZero 0, TriggerHardForkNever)
-    , conwayHardForkSpec  = (SL.ProtVer versionZero 0, TriggerHardForkNever)
+      shelleyHardForkSpec = (SL.ProtVer versionZero 0, TriggerHardForkNotDuringThisExecution)
+    , allegraHardForkSpec = (SL.ProtVer versionZero 0, TriggerHardForkNotDuringThisExecution)
+    , maryHardForkSpec    = (SL.ProtVer versionZero 0, TriggerHardForkNotDuringThisExecution)
+    , alonzoHardForkSpec  = (SL.ProtVer versionZero 0, TriggerHardForkNotDuringThisExecution)
+    , babbageHardForkSpec = (SL.ProtVer versionZero 0, TriggerHardForkNotDuringThisExecution)
+    , conwayHardForkSpec  = (SL.ProtVer versionZero 0, TriggerHardForkNotDuringThisExecution)
     }
 
 versionZero :: SL.Version
