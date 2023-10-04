@@ -16,8 +16,9 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.HardFork.Combinator.Protocol (
+    HardForkSelectView (..)
     -- * Re-exports to keep 'Protocol.State' an internal module
-    HardForkCanBeLeader
+  , HardForkCanBeLeader
   , HardForkChainDepState
   , HardForkIsLeader
   , HardForkValidationErr (..)
