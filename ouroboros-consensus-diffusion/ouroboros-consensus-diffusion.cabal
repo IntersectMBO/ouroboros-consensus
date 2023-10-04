@@ -112,7 +112,7 @@ library
     , io-classes                   ^>=1.1
     , mtl                          ^>=2.2
     , ouroboros-consensus          ^>=0.7
-    , ouroboros-network            ^>=0.8
+    , ouroboros-network            ^>=0.7
     , ouroboros-network-api        ^>=0.5
     , ouroboros-network-framework  ^>=0.6
     , ouroboros-network-protocols  ^>=0.5
