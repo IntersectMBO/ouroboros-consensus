@@ -147,13 +147,26 @@ Lastly the user can provide the analysis that should be run on the chain:
 * `--count-blocks` prints out the number of blocks it saw on the chain
 
 * `--benchmark-ledger-ops` applies the main ledger calculations to each block in
-  the chain database, and collect different metrics such as total time spent,
-  time spent doing garbage collection, etc. The ledger operations that this
+  the chain database, and collects different metrics (see below).
+  The ledger operations this
   command benchmarks are: forecasting, ticking and applying the header, and
   ticking and applying a block. The benchmarking results are stored in the file
   specified by the `out-file` option. In the [`scripts`](./scripts) directory we
   provide a `plot-ledger-ops-cost.gp` script that can be used to plot the
   benchmarking results. See this file for usage information.
+  The metrics collected by each block application are:
+  - Block slot.
+  - Gap since slot of previous block.
+  - Total time spent applying the block, in microseconds (using [`RTSStats.elapsed_ns`](https://hackage.haskell.org/package/base-4.18.1.0/docs/GHC-Stats.html#t:RTSStats)).
+  - Total time spent in the mutator when applying the block, in microseconds (using [`RTSStats.mutator_elapsed_ns`](https://hackage.haskell.org/package/base-4.18.1.0/docs/GHC-Stats.html#t:RTSStats)).
+  - Total time spent in garbage collection when applying the block, in microseconds (using [`RTSStats.gc_elapsed_ns`](https://hackage.haskell.org/package/base-4.18.1.0/docs/GHC-Stats.html#t:RTSStats)).
+  - Total number of major (oldest generation) garbage collections that took place when applying the block (using [`RTSStats.major_gcs`](https://hackage.haskell.org/package/base-4.18.1.0/docs/GHC-Stats.html#t:RTSStats)).
+  - Total time spent in the mutator, in microseconds, when:
+      - Forecasting.
+      - Ticking the [chain dependent state](https://github.com/input-output-hk/ouroboros-consensus/blob/51da3876c01edc2eec250fdc998f6cb33cdc4367/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L55).
+      - Applying a header.
+      - Ticking the [ledger state](https://github.com/input-output-hk/ouroboros-consensus/blob/51da3876c01edc2eec250fdc998f6cb33cdc4367/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs#L174).
+      - Applying a block.
 
 If no analysis flag is provided, then the ChainDB will be opened, all the chunks
 in the immutable and volatile databases will be validated (see
