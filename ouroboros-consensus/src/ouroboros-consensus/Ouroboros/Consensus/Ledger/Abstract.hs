@@ -75,6 +75,7 @@ class ( IsLedger l
       , HeaderHash l ~ HeaderHash blk
       , HasHeader blk
       , HasHeader (Header blk)
+      , GetPrevHash blk
       ) => ApplyBlock l blk where
 
   -- | Apply a block to the ledger state.

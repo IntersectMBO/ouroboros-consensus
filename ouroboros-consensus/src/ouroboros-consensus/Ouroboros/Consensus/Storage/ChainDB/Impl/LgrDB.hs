@@ -332,7 +332,7 @@ validate :: forall m blk. (IOLike m, LedgerSupportsProtocol blk, HasCallStack)
          -> LedgerDB' blk
             -- ^ This is used as the starting point for validation, not the one
             -- in the 'LgrDB'.
-         -> LedgerEventHandler m (ExtLedgerState blk)
+         -> LedgerEventHandler m (ExtLedgerState blk) blk
          -> BlockCache blk
          -> Word64  -- ^ How many blocks to roll back
          -> (LedgerDB.UpdateLedgerDbTraceEvent blk -> m ())

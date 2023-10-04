@@ -261,7 +261,7 @@ addBlockSync
      , HasHardForkHistory blk
      , HasCallStack
      )
-  => LedgerEventHandler m (ExtLedgerState blk)
+  => LedgerEventHandler m (ExtLedgerState blk) blk
   -> ChainDbEnv m blk
   -> BlockToAdd m blk
   -> m ()
@@ -448,7 +448,7 @@ chainSelectionForBlock
      , HasHardForkHistory blk
      , HasCallStack
      )
-  => LedgerEventHandler m (ExtLedgerState blk)
+  => LedgerEventHandler m (ExtLedgerState blk) blk
   -> ChainDbEnv m blk
   -> BlockCache blk
   -> Header blk
@@ -881,7 +881,7 @@ chainSelection
      , LedgerSupportsProtocol blk
      , HasCallStack
      )
-  => LedgerEventHandler m (ExtLedgerState blk)
+  => LedgerEventHandler m (ExtLedgerState blk) blk
   -> ChainSelEnv m blk
   -> NonEmpty (ChainDiff (Header blk))
   -> m (Maybe (ValidatedChainDiff (Header blk) (LedgerDB' blk)))
@@ -1061,7 +1061,7 @@ ledgerValidateCandidate
      , LedgerSupportsProtocol blk
      , HasCallStack
      )
-  => LedgerEventHandler m (ExtLedgerState blk)
+  => LedgerEventHandler m (ExtLedgerState blk) blk
   -> ChainSelEnv m blk
   -> ChainDiff (Header blk)
   -> m (ValidatedChainDiff (Header blk) (LedgerDB' blk))
@@ -1223,7 +1223,7 @@ validateCandidate
      , LedgerSupportsProtocol blk
      , HasCallStack
      )
-  => LedgerEventHandler m (ExtLedgerState blk)
+  => LedgerEventHandler m (ExtLedgerState blk) blk
   -> ChainSelEnv m blk
   -> ChainDiff (Header blk)
   -> m (ValidationResult blk)

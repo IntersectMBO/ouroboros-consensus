@@ -169,16 +169,23 @@ class ( -- Requirements on the ledger state itself
 applyChainTick :: IsLedger l => LedgerCfg l -> SlotNo -> l -> Ticked l
 applyChainTick = lrResult ..: applyChainTickLedgerResult
 
-
 -- | Handler for ledger events
-newtype LedgerEventHandler m l =
-  LedgerEventHandler { handleLedgerEvent :: ChainHash l -> HeaderHash l -> SlotNo -> AuxLedgerEvent l -> m () }
+newtype LedgerEventHandler m l blk =
+  LedgerEventHandler
+    { handleLedgerEvent
+        :: ChainHash blk -- Previous block header hash
+        -> HeaderHash l -- Block header hash of the applied block
+        -> SlotNo -- Slot number of the applied block
+        -> BlockNo -- Applied block number
+        -> AuxLedgerEvent l -- Resulting 'AuxLedgerEvent' after applying `applyBlock`.
+        -> m ()
+    }
 
-natHandler :: (m () -> n ()) -> LedgerEventHandler m l -> LedgerEventHandler n l
-natHandler nat LedgerEventHandler{handleLedgerEvent} = LedgerEventHandler (\ph h s -> nat . handleLedgerEvent ph h s)
+natHandler :: (m () -> n ()) -> LedgerEventHandler m l blk -> LedgerEventHandler n l blk
+natHandler nat LedgerEventHandler{handleLedgerEvent} = LedgerEventHandler (\ph h s bn -> nat . handleLedgerEvent ph h s bn)
 
-discardEvent :: Applicative m => LedgerEventHandler m l
-discardEvent = LedgerEventHandler { handleLedgerEvent = \_ _ _ _ -> pure () }
+discardEvent :: Applicative m => LedgerEventHandler m l blk
+discardEvent = LedgerEventHandler { handleLedgerEvent = \_ _ _ _ _ -> pure () }
 
 {-------------------------------------------------------------------------------
   Link block to its ledger
