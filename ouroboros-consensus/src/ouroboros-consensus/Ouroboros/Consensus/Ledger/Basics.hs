@@ -177,7 +177,7 @@ newtype LedgerEventHandler m l blk =
         -> HeaderHash l -- Block header hash of the applied block
         -> SlotNo -- Slot number of the applied block
         -> BlockNo -- Applied block number
-        -> AuxLedgerEvent l -- Resulting 'AuxLedgerEvent' after applying `applyBlock`.
+        -> [AuxLedgerEvent l] -- Resulting 'AuxLedgerEvent's after applying `applyBlock`.
         -> m ()
     }
 
