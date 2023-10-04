@@ -1,10 +1,12 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest (tests) where
 
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (traceWith)
 import qualified Data.Map.Strict as Map
@@ -44,7 +46,7 @@ tests = testGroup "Genesis tests"
 prop_syncGenesis :: SomeTestAdversarial -> QCGen -> QC.Property
 prop_syncGenesis (SomeTestAdversarial _ _ params) seed =
   withMaxSuccess 10 $
-    runSimOrThrow $ runTest (exampleTestSetup params seed)
+    runSimOrThrow $ runTest params (exampleTestSetup params seed)
 
 newtype GenesisWindow = GenesisWindow { getGenesisWindow :: SlotNo }
   deriving stock (Show)
@@ -89,12 +91,17 @@ exampleTestSetup params seed =
       head $ BT.btBranches blockTree
 
 runTest ::
-  forall m.
-  IOLike m =>
+  forall m base hon.
+  (IOLike m, MonadTimer m) =>
+  TestAdversarial base hon ->
   TestSetup ->
   m Property
-runTest TestSetup{..} = do
+runTest TestAdversarial{testAscH, testAscA} TestSetup{..} = do
     (tracer, getTrace) <- recordingTracerTVar
+
+    traceWith tracer $ "Active slot coefficient: "
+    traceWith tracer $ "  honest: "++ show testAscH
+    traceWith tracer $ "  adversary: "++ show testAscA
 
     mapM_ (traceWith tracer) $ BT.prettyPrint blockTree
 
@@ -103,15 +110,19 @@ runTest TestSetup{..} = do
     b <- makeMockedChainSyncServer advPeer tracer blockTree
     let servers = Map.fromList [(HonestPeer, g), (advPeer, b)]
 
-    frag <- either (error . show) id <$> runPointSchedule secParam schedule servers tracer
+    result <- runPointSchedule secParam testAscH schedule servers tracer
     trace <- unlines <$> getTrace
 
     pure
       $ classify genesisAfterIntersection "Long range attack"
       $ classify genesisAcrossIntersection "Genesis potential"
-      $ counterexample ("result: " <> condense frag)
       $ counterexample trace
-      $ genesisAfterIntersection ==> not $ isHonestTestFragH frag
+      $ case result of
+          Left exn ->
+            counterexample ("exception: " <> show exn) False
+          Right frag ->
+            counterexample ("result: " <> condense frag)
+            $ genesisAfterIntersection ==> not $ isHonestTestFragH frag
 
   where
     isHonestTestFragH :: TestFragH -> Bool

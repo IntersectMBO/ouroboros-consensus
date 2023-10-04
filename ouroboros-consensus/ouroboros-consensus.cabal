@@ -517,6 +517,7 @@ test-suite infra-test
   other-modules:
     Ouroboros.Consensus.Util.Tests
     Ouroboros.Network.AnchoredFragment.Extras
+    Ouroboros.Network.Driver.Limits.Extras
     Test.Ouroboros.Consensus.ChainGenerator.Tests
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector
@@ -538,18 +539,21 @@ test-suite infra-test
     , cardano-slotting
     , containers
     , contra-tracer
+    , io-classes
     , io-sim
     , mtl
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-api
+    , ouroboros-network-framework
     , ouroboros-network-mock
     , ouroboros-network-protocols
     , QuickCheck
     , random
+    , si-timers
     , tasty
     , tasty-quickcheck
     , time
-    , typed-protocols-examples
+    , typed-protocols
     , unstable-consensus-testlib
     , vector
 
