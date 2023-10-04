@@ -29,7 +29,7 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
                      (genChains)
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
+import           Test.Ouroboros.Consensus.PeerSimulator.Run
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.QuickCheck.Random (QCGen)
@@ -106,11 +106,9 @@ runTest TestAdversarial{testAscH, testAscA} TestSetup{..} = do
     mapM_ (traceWith tracer) $ BT.prettyPrint blockTree
 
     let advPeer = PeerId "adversary"
-    g <- makeMockedChainSyncServer HonestPeer tracer blockTree
-    b <- makeMockedChainSyncServer advPeer tracer blockTree
-    let servers = Map.fromList [(HonestPeer, g), (advPeer, b)]
+    let peers = [HonestPeer, advPeer]
 
-    result <- runPointSchedule secParam testAscH schedule servers tracer
+    result <- runPointSchedule secParam testAscH schedule tracer blockTree peers
     trace <- unlines <$> getTrace
 
     pure

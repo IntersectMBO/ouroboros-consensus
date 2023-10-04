@@ -530,6 +530,11 @@ test-suite infra-test
     Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
     Test.Ouroboros.Consensus.PeerSimulator.BlockFetch
+    Test.Ouroboros.Consensus.PeerSimulator.Handlers
+    Test.Ouroboros.Consensus.PeerSimulator.Resources
+    Test.Ouroboros.Consensus.PeerSimulator.Run
+    Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
+    Test.Ouroboros.Consensus.PeerSimulator.Trace
     Test.Util.ChainUpdates.Tests
     Test.Util.Schedule.Tests
     Test.Util.Split.Tests
@@ -553,6 +558,7 @@ test-suite infra-test
     , QuickCheck
     , random
     , si-timers
+    , strict-stm
     , tasty
     , tasty-quickcheck
     , time
