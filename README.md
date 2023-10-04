@@ -172,5 +172,5 @@ We have several sources of documentation:
   non-trivial lemmas or properties of the Consensus algorithms that have
   perspired to the implementation. Although incomplete in some sections, it is a
   mandatory reading for anyone looking to understand why Consensus does what it
-  does.
+  does. ([rendered](https://input-output-hk.github.io/ouroboros-consensus/pdfs/report.pdf))
 
