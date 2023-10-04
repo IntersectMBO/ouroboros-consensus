@@ -67,6 +67,7 @@
           };
         };
         inherit hydraJobs;
+        legacyPackages = pkgs;
         packages =
           hydraJobs.native.haskell92.exesNoAsserts.ouroboros-consensus-cardano;
       }
