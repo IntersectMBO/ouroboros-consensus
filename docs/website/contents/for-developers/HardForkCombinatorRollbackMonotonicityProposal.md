@@ -1,3 +1,89 @@
+# DRAFT NUMBER 2
+
+# Introduction
+
+The Babbage->Conway transition on an earlier iteration of SanchoNet revealed a bug in the Consensus layer by which the Hard Fork Combinator transitioned to Conway because the relevant Babbage protocol parameter update proposal received sufficient votes but then that same proposal wasn't actually enacted: the major protocol version remained unchanged even after Conway started.
+
+Troubleshooting this bug and moreover determining how to fix it in such a way that makes similar mistakes less likely in the future has lead to the following mini-framework for understanding the HFC's behavior on a particular chain.
+
+So many dimensions arose from investiating such a relatively simple misbehavior for two reasons.
+First, the mechanisms implementing these policies are---at least in the current implementation---somewhat interdependent.
+Second, the HFC (including its instantiation for Cardano) remains underdocumented since back when it was originaly developed under time-pressure, and our team no longer includes its inventor.
+The Consensus Team learns new things and unfortunately re-learns some old things every time they dive in to alter it.
+(Optimistically, Nicolas Frisby feels they currently understand it now better than they have ever before.)
+
+## Dimensions
+
+The following discrete variables characterize dimensions of the HFC design space.
+In this context, the _determination_ is the `singleEraTransition` method: it's how an era's ledger state determines when the era ends.
+
+- DST - Determination is Sensitive to Ticks  - whether ticking the ledger state can change its determination of the end of its era: Sensitive vs Insensitive
+
+- CCT - Criss-Crossed Ticks - whether an era's tick rules might be used to tick across slots that are in _other_ eras: Allowed vs Disallowed
+
+- PIL - Potential to Ignore the Ledger - whether the HFC can ignore the ledger's hard fork-related governance: Possible vs Impossible
+
+- DSR - Determination is Sensitive to Rollback - for chains C and D where C < D and len(C) <= len(C /\ D) + k, whether the current era of C can have a determined end on C but an undetermined or different end on D: Sensitive vs Insensitive
+
+- ZEE - Zero Epoch Eras - whether an era (in its entirety) can contain zero epochs: Allowed vs Disallowed
+
+- ZBE - Zero Block Eras - whether an era (in its entirety) can contain zero blocks: Allowed vs Disallowed
+
+- QSR - Queries are Sensitivity to Rollback - same as DSR but for HFC-related Node-To-Client queries instead of for validity of blocks: Sensitive vs Insensitive
+
+Note the following relations.
+
+- ZEE=Allowed implies ZBE=Allowed.
+- DSR=Insensitive implies QSR=Insensitive.
+
+## Table for the Current Cardano HFC
+
+The following table and associated notes classifies the current HFC implementation in terms of these dimensions.
+
+| DST | CCT | PIL | DSR | ZEE | ZBE | QSR |
+| --- | --- | --- | --- | --- | --- | --- |
+| I   | A   | P 1 | I   | 2   | 3   | I   |
+
+- (1) It's Possible, but only if there's a Chain Growth violation at a particular time during the epoch.
+
+- (2) The current HFC's behavior is inconsistent without making further assumptions.
+  Overall, ZEE is allowed, but it might cause some unexpected behavior.
+  In particular, forecasts always anticipate that there is at least one safe zone of slots in an era (which is not true for eras with zero epochs).
+  That mismatch could manifest as incorrect time-slot translations eg (within ledger rules execution, but not within Node-To-Client query reponses).
+
+- (3) ZBE is allowed when ticking a ledger state; the HFC will invoke multiple translation functions in sequence.
+  But cross-era forecasting cannot skip eras, so no headers after an epoch with zero blocks could be validated, and so blocks could not progatate in the net.
+  Moreover, today's node would not even mint blocks, since the leadership check (at least currently) relies on forecasting.
+
+## Table for an Particular Hypothetical Cardano HFC
+
+The following table and associated notes classifies an hypothetical HFC implementation in terms of these dimensions.
+Nicolas Frisby anticipates this implementation would be easier to understand, less likely to surprise users, more general (ie place fewer requirements on the block types), and not require excessive code changes.
+
+| DST | CCT | PIL | DSR | ZSE | ZBE | QSR |
+| --- | --- | --- | --- | --- | --- | --- |
+| S   | D   | I   | S 2 | D   | D 1 | I 3 |
+
+- (1) ZBE would be achievable for a prefix of eras when constructing the initial HFC ledger state (in the `ProtocolInfo` passed to the Consensus layer), but otherwise the HFC as a block type does not need to support ZBE at all.
+
+- (2) Esgen points out that perhaps DSR could/should still be Insensitive, and that wouldn't obviously lose too much simplicity.
+
+- (3) Having QSR=Insensitive despite DSR=Sensitive requires an additional mechanism.
+  In this design point, that is anticipated to be constraining these queries to only be answered via an immutable ledger state.
+
+## Disclaimer
+
+There may be other points in the design space worth considering.
+(Or even other dimensions, of course.)
+In particular, DST=Insensitive and PIL=Impossible could be achieved by changing the Cardano ledger's governance to match the existing Cardano HFC logic.
+Specifically, if the ledger did not enact governance actions unless there have actually been k+1 blocks since they were ratified even despite possible Chain Growth violations, then the Cardano HFC would never override the Cardano ledger.
+
+However, Frisby thinks such block counting (and the related "double-stability" in the existing ledger rules) is strictly undue complexity that should be removed instead of propagated even deeper.
+
+---
+
+# DRAFT NUMBER 1
+
 ## Introduction
 
 This document motivates a simplification of the HFC, that would also alleviate the "double stability" constraint on the ledger's governance rules.
@@ -173,7 +259,7 @@ Consider the following alteration of the hard fork combinator.
 - Only answer `GetEraStart` and `GetInterpreter` queries using an immutable ledger state.
 - (The ledger rules could then return the voting deadline to 7k/f; one stability window before the epoch transition would be sufficient again.)
 
-This would have the exact same answers to Question 1 and Question 2 as does the simplified node, and the note-to-client time translation queries would still exhibit k-rollback-monotonicity.
+This would have the exact same answers to Question 1 and Question 2 as does the simplified node, and the Note-To-Client time translation queries would still exhibit k-rollback-monotonicity.
 
 There are three main benefits for the Consensus Team.
 
