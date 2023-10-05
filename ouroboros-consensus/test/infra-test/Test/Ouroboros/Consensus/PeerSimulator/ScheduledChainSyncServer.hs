@@ -12,6 +12,7 @@ module Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer (
   ) where
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
+import           Data.Foldable (traverse_)
 import           Data.Functor (void)
 import           Ouroboros.Consensus.Block.Abstract (Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -23,10 +24,8 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
                      ServerStIdle (ServerStIdle, recvMsgDoneClient, recvMsgFindIntersect, recvMsgRequestNext),
                      ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
                      ServerStNext (SendMsgRollBackward, SendMsgRollForward))
+import           Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
 import           Test.Util.TestBlock (Header (..), TestBlock)
-import Data.Foldable (traverse_)
-
-import Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
 
 data RequestNext =
   RollForward (Header TestBlock) (Tip TestBlock)

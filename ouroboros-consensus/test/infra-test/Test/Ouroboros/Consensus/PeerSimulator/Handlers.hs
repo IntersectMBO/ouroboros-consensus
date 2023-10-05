@@ -3,12 +3,15 @@ module Test.Ouroboros.Consensus.PeerSimulator.Handlers (
   , handlerRequestNext
   ) where
 
+import           Control.Monad.Trans (lift)
+import           Control.Monad.Writer.Strict (MonadWriter (tell),
+                     WriterT (runWriterT))
 import           Data.Coerce (coerce)
 import           Data.Maybe (fromJust)
-import           Ouroboros.Consensus.Block.Abstract (Point (..),
-                     getHeader)
+import           Ouroboros.Consensus.Block.Abstract (Point (..), getHeader)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
-import           Ouroboros.Consensus.Util.IOLike (IOLike, StrictTVar, writeTVar, STM, readTVar)
+import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
+                     readTVar, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockPoint, getTipPoint)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
@@ -20,11 +23,10 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
                      (intersectWith)
 import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
-                     (FindIntersect (..), RequestNext (RollForward, RollBackward))
+                     (FindIntersect (..),
+                     RequestNext (RollBackward, RollForward))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
-import Control.Monad.Writer.Strict (WriterT (runWriterT), MonadWriter (tell))
-import Control.Monad.Trans (lift)
 
 handlerFindIntersection ::
   IOLike m =>
