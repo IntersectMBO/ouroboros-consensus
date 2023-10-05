@@ -81,17 +81,17 @@ startChainSyncConnectionThread ::
   IOLike m =>
   Tracer m String ->
   ChainDbView m TestBlock ->
-  ChainSyncServerResources m ->
+  ChainSyncResources m ->
   StateT (TestResources m) m ()
-startChainSyncConnectionThread tracer chainDbView ChainSyncServerResources {cssrCandidateFragment, cssrServer} = do
+startChainSyncConnectionThread tracer chainDbView ChainSyncResources {csrCandidateFragment, csrServer} = do
   cfg <- gets topConfig
   handle <- lift $ async $ do
     runConnectedPeersPipelined
       createConnectedChannels
       nullTracer
       codecChainSyncId
-      (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView cssrCandidateFragment))
-      (chainSyncServerPeer cssrServer)
+      (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView csrCandidateFragment))
+      (chainSyncServerPeer csrServer)
   let wait = void (waitCatch handle)
   modify' $ \ TestResources {..} -> TestResources {connectionThreads = ConnectionThread {..} : connectionThreads, ..}
 
@@ -107,14 +107,14 @@ awaitAll TestResources {..} =
 dispatchTick ::
   IOLike m =>
   Tracer m String ->
-  Map PeerId (ChainSyncServerResources m) ->
+  Map PeerId (ChainSyncResources m) ->
   Tick ->
   m ()
 dispatchTick tracer peers Tick {active = Peer pid state} =
   case peers Map.!? pid of
-    Just ChainSyncServerResources {cssrQueue} -> do
+    Just ChainSyncResources {csrQueue} -> do
       trace $ "Writing state " ++ condense state
-      atomically $ writeTQueue cssrQueue state
+      atomically $ writeTQueue csrQueue state
       trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
       threadDelay 0.100
       trace $ condense pid ++ "'s tick is now done."
@@ -125,7 +125,7 @@ dispatchTick tracer peers Tick {active = Peer pid state} =
 runScheduler ::
   IOLike m =>
   Tracer m String ->
-  Map PeerId (ChainSyncServerResources m) ->
+  Map PeerId (ChainSyncResources m) ->
   StateT (TestResources m) m ()
 runScheduler tracer peers = do
   TestResources {pointSchedule = PointSchedule ps _} <- get
@@ -167,7 +167,7 @@ runPointSchedule k pointSchedule peers tracer =
     setup stuffs = do
       st <- get
       lift $ traceWith tracer $ "Security param k = " ++ show k
-      chainDb <- lift $ mkChainDb tracer (cssrCandidateFragment <$> stuffs) (topConfig st) (registry st)
+      chainDb <- lift $ mkChainDb tracer (csrCandidateFragment <$> stuffs) (topConfig st) (registry st)
       let chainDbView = defaultChainDbView chainDb
       traverse_ (startChainSyncConnectionThread tracer chainDbView) stuffs
       pure chainDb
