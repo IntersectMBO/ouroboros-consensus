@@ -113,12 +113,14 @@ dispatchTick ::
 dispatchTick tracer peers Tick {active = Peer pid state} =
   case peers Map.!? pid of
     Just ChainSyncServerResources {cssrQueue} -> do
-      traceUnitWith tracer "Scheduler" $ "Writing state " ++ condense state
+      trace $ "Writing state " ++ condense state
       atomically $ writeTQueue cssrQueue state
-      traceUnitWith tracer "Scheduler" $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
+      trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
       threadDelay 0.100
-      traceUnitWith tracer "Scheduler" $ condense pid ++ "'s tick is now done."
+      trace $ condense pid ++ "'s tick is now done."
     Nothing -> error "“The impossible happened,” as GHC would say."
+  where
+    trace = traceUnitWith tracer "Scheduler"
 
 runScheduler ::
   IOLike m =>

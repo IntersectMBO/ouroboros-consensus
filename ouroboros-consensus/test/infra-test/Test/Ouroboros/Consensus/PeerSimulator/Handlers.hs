@@ -81,11 +81,11 @@ serveHeader currentIntersection blockTree tracer points = do
         (BT.PathAnchoredAtSource False, fragment) -> do
           trace $ "  we will require a rollback to" ++ condense (AF.anchorPoint fragment)
           trace $ "  fragment: " ++ condense fragment
-          error "Rollback not supported in MockedChainSyncServer"
+          error "Rollback not supported in PeerSimulator"
   where
     trace = traceWith tracer
 
--- TODO this could all be STM if it weren't for tracing.
+-- REVIEW: this could all be STM if it weren't for tracing.
 -- Does it matter?
 handlerRequestNext ::
   IOLike m =>

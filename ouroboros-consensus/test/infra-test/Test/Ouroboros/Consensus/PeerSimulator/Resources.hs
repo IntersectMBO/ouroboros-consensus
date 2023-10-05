@@ -37,24 +37,27 @@ import Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
 -- | The data used by the handler implementation in "Test.Ouroboros.Consensus.PeerSimulator.Handlers".
 data ChainSyncServerState m =
   ChainSyncServerState {
+    -- | The current known intersection with the chain of the client.
     csssCurrentIntersection :: StrictTVar m (Point TestBlock),
-    -- ^ The current known intersection with the chain of the client.
+
+    -- | The block tree in which the test is taking place. In combination to
+    -- 'csssCurrentIntersection' and the current point schedule tick, it allows
+    -- to define which blocks to serve to the client.
     csssTree :: BlockTree TestBlock
-    -- ^ The block tree in which the test is taking place. In combination to
-    -- 'mcssCurrentState' and 'mcssCurrentIntersection', it allows to define
-    -- which blocks to serve to the client.
   }
 
 -- | The data used by the point scheduler to interact with the mocked protocol handler in
 -- "Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer".
 data ChainSyncServerResources m =
   ChainSyncServerResources {
+    -- | A queue of node states coming from the scheduler.
     cssrQueue :: TQueue m NodeState,
-    -- ^ A queue of node states coming from the scheduler.
+
+    -- | REVIEW: Not sure why we need this.
     cssrCandidateFragment :: StrictTVar m TestFragH,
-    -- ^ REVIEW: Not sure why we need this.
+
+    -- | The final server passed to typed-protocols.
     cssrServer :: ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
-    -- ^ The final server passed to typed-protocols.
   }
 
 makeChainSyncServerState ::
@@ -92,5 +95,6 @@ makeChainSyncServerResources tracer peerId state = do
   cssrServer <- runScheduledChainSyncServer wait serverTracer handlers
   pure ChainSyncServerResources {..}
   where
-    handlers = makeChainSyncServerHandlers serverTracer state
-    serverTracer = Tracer $ traceUnitWith tracer ("MockedChainSyncServer " ++ condense peerId)
+    handlers = makeChainSyncServerHandlers handlersTracer state
+    handlersTracer = Tracer $ traceUnitWith tracer ("ChainSyncServerHandlers " ++ condense peerId)
+    serverTracer = Tracer $ traceUnitWith tracer ("ScheduledChainSyncServer " ++ condense peerId)
