@@ -8,18 +8,14 @@ module Test.Ouroboros.Consensus.PeerSimulator.Resources (
   , makeChainSyncServerState
   ) where
 
-import           Control.Concurrent.Class.MonadSTM
-                     (MonadSTM (TMVar, newTMVarIO))
 import           Control.Concurrent.Class.MonadSTM.Strict (newEmptyTMVarIO,
-                     readTMVar, takeTMVar)
-import           Control.Tracer (Tracer (Tracer))
+                     takeTMVar)
+import           Control.Tracer (Tracer)
 import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
-import           Ouroboros.Consensus.Util.IOLike (IOLike,
-                     MonadSTM (TQueue, readTQueue), StrictTMVar, StrictTVar,
-                     TQueue, newTQueueIO, readTQueue, readTVar,
-                     uncheckedNewTVarM, writeTVar)
+import           Ouroboros.Consensus.Util.IOLike (IOLike, StrictTMVar,
+                     StrictTVar, readTVar, uncheckedNewTVarM, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
@@ -29,7 +25,6 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
 import           Test.Ouroboros.Consensus.PeerSimulator.Handlers
 import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
-import           Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 
