@@ -1,28 +1,27 @@
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE LambdaCase      #-}
+{-# LANGUAGE NamedFieldPuns  #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeFamilies    #-}
 
 module Test.Ouroboros.Consensus.PeerSimulator.Run (
   runPointSchedule,
 ) where
 
+import Control.Monad.Class.MonadAsync (AsyncCancelled (AsyncCancelled))
+import Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import Control.Monad.State.Strict (StateT, evalStateT, get, gets, lift, modify')
-import Control.Tracer (nullTracer, traceWith, Tracer)
-import Data.Foldable (for_, traverse_)
+import Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
+import Data.Foldable (for_)
 import Data.Functor (void)
+import Data.List.NonEmpty (NonEmpty, nonEmpty)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
-import Network.TypedProtocol.Channel (createConnectedChannels)
-import Network.TypedProtocol.Driver.Simple (runConnectedPeersPipelined)
+import Data.Maybe (mapMaybe)
+import Data.Traversable (for)
 import Ouroboros.Consensus.Block.Abstract (Point (..))
 import Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
-import Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
-  ChainDbView,
-  ChainSyncClientException,
-  Consensus,
-  chainSyncClient,
-  defaultChainDbView,
-  )
+import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
+import Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView, Consensus, chainSyncClient, defaultChainDbView)
 import Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -30,30 +29,35 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (cdbTracer))
 import Ouroboros.Consensus.Util.Condense (Condense (..))
 import Ouroboros.Consensus.Util.IOLike (
+  Exception (fromException, toException),
   IOLike,
+  MonadAsync (Async, async, cancel, poll),
+  MonadCatch (try),
+  MonadDelay (threadDelay),
+  MonadSTM (atomically, writeTQueue),
+  MonadThrow (throwIO),
+  SomeException,
   StrictTVar,
-  async,
-  atomically,
-  race,
   readTVar,
-  threadDelay,
-  try,
-  waitCatch,
-  writeTQueue,
   )
 import Ouroboros.Consensus.Util.ResourceRegistry
 import Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import Ouroboros.Network.Block (blockPoint)
+import Ouroboros.Network.Channel (createConnectedChannels)
 import Ouroboros.Network.ControlMessage (ControlMessage (..))
+import Ouroboros.Network.Driver.Limits
+import Ouroboros.Network.Driver.Limits.Extras
+import Ouroboros.Network.Driver.Simple (Role (Client, Server))
 import Ouroboros.Network.Protocol.ChainSync.ClientPipelined (ChainSyncClientPipelined, chainSyncClientPeerPipelined)
-import Ouroboros.Network.Protocol.ChainSync.Codec (codecChainSyncId)
+import Ouroboros.Network.Protocol.ChainSync.Codec
 import Ouroboros.Network.Protocol.ChainSync.PipelineDecision (pipelineDecisionLowHighMark)
 import Ouroboros.Network.Protocol.ChainSync.Server (chainSyncServerPeer)
 import Test.Util.ChainDB
 import Test.Util.Orphans.IOLike ()
 import Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
 
+import Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
 import Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync (ConnectionThread (..), TestResources (..), defaultCfg)
 import Test.Ouroboros.Consensus.PeerSimulator.Resources
@@ -78,31 +82,82 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
     varCandidate
 
 startChainSyncConnectionThread ::
-  IOLike m =>
+  (IOLike m, MonadTimer m) =>
   Tracer m String ->
+  Asc ->
   ChainDbView m TestBlock ->
+  PeerId ->
   ChainSyncResources m ->
   StateT (TestResources m) m ()
-startChainSyncConnectionThread tracer chainDbView ChainSyncResources {csrCandidateFragment, csrServer} = do
+startChainSyncConnectionThread tracer activeSlotCoefficient chainDbView peerId ChainSyncResources {csrCandidateFragment, csrServer} = do
   cfg <- gets topConfig
+  let slotLength = HardFork.eraSlotLength . topLevelConfigLedger $ cfg
+  let timeouts = chainSyncTimeouts slotLength activeSlotCoefficient
+  lift $ do
+    traceWith tracer $ "timeouts:"
+    traceWith tracer $ "  canAwait = " ++ show (canAwaitTimeout timeouts)
+    traceWith tracer $ "  intersect = " ++ show (intersectTimeout timeouts)
+    traceWith tracer $ "  mustReply = " ++ show (mustReplyTimeout timeouts)
   handle <- lift $ async $ do
-    runConnectedPeersPipelined
+    res <- try $ runConnectedPeersPipelinedWithLimits
       createConnectedChannels
-      nullTracer
+      protocolTracer
       codecChainSyncId
+      chainSyncNoSizeLimits
+      (timeLimitsChainSync timeouts)
       (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView csrCandidateFragment))
       (chainSyncServerPeer csrServer)
-  let wait = void (waitCatch handle)
-  modify' $ \ TestResources {..} -> TestResources {connectionThreads = ConnectionThread {..} : connectionThreads, ..}
+    case res of
+      Left exn -> do
+        case fromException exn of
+          Just (ExceededSizeLimit _) ->
+            traceUnitWith tracer ("ChainSyncClient " ++ condense peerId) "Terminating because of size limit exceeded."
+          Just (ExceededTimeLimit _) ->
+            traceUnitWith tracer ("ChainSyncClient " ++ condense peerId) "Terminating because of time limit exceeded."
+          Nothing ->
+            pure ()
+        throwIO exn
+      Right res' -> pure res'
 
-awaitAll ::
+  let kill = cancelPoll handle
+  modify' $ \ TestResources {..} -> TestResources {connectionThreads = ConnectionThread {..} : connectionThreads, ..}
+  where
+    protocolTracer = Tracer $ \case
+      (clientOrServer, TraceSendMsg payload) ->
+        traceUnitWith
+          tracer
+          ("Protocol ChainSync " ++ condense peerId)
+          (case clientOrServer of
+             Client -> "Client -> Server"
+             Server -> "Server -> Client"
+           ++ ": " ++ show payload)
+      _ -> pure ()
+
+-- | NOTE: io-sim provides 'cancel' which does not propagate already existing
+-- exceptions from the thread.
+cancelPoll :: MonadAsync m => Async m a -> m (Either SomeException a)
+cancelPoll a = do
+  poll a >>= \case
+    Just result ->
+      -- Thread is already terminated (with either an exception or a value)
+      pure result
+    Nothing -> do
+      -- Thread hasn't terminated yet.
+      cancel a
+      pure $ Left $ toException AsyncCancelled
+
+killAll ::
   IOLike m =>
   TestResources m ->
-  m ()
-awaitAll TestResources {..} =
-  void $
-  race (threadDelay 100) $
-  for_ connectionThreads wait
+  m (Maybe (NonEmpty SomeException))
+killAll TestResources {..} = do
+  results <- for connectionThreads kill
+  pure $ nonEmpty $ flip mapMaybe results $ \case
+    Left exn ->
+      case fromException exn of
+        Just AsyncCancelled -> Nothing
+        Nothing             -> Just exn
+    Right _ -> Nothing
 
 dispatchTick ::
   IOLike m =>
@@ -147,29 +202,30 @@ runScheduler tracer peers = do
     traceWith tracer "» That just now dangled still -"
 
 runPointSchedule ::
-  IOLike m =>
+  (IOLike m, MonadTimer m) =>
   SecurityParam ->
+  Asc ->
   PointSchedule ->
   Map PeerId (ChainSyncServerState m) ->
   Tracer m String ->
-  m (Either ChainSyncClientException TestFragH)
-runPointSchedule k pointSchedule peers tracer =
+  m (Either (NonEmpty SomeException) TestFragH)
+runPointSchedule k asc pointSchedule peers tracer =
   withRegistry $ \registry -> do
-    stuffs <- Map.traverseWithKey (makeChainSyncServerResources tracer) peers
+    resources <- Map.traverseWithKey (makeChainSyncResources tracer) peers
     flip evalStateT TestResources {topConfig = defaultCfg k, connectionThreads = [], pointSchedule, registry} $ do
-      a <- setup stuffs
+      a <- setup resources
       s <- get
-      runScheduler tracer stuffs
-      res <- lift (try (awaitAll s))
+      runScheduler tracer resources
+      res <- lift (killAll s)
       b <- lift $ atomically $ ChainDB.getCurrentChain a
-      pure (b <$ res)
+      pure $ maybe (Right b) Left res
   where
-    setup stuffs = do
+    setup resources = do
       st <- get
       lift $ traceWith tracer $ "Security param k = " ++ show k
-      chainDb <- lift $ mkChainDb tracer (csrCandidateFragment <$> stuffs) (topConfig st) (registry st)
+      chainDb <- lift $ mkChainDb tracer (csrCandidateFragment <$> resources) (topConfig st) (registry st)
       let chainDbView = defaultChainDbView chainDb
-      traverse_ (startChainSyncConnectionThread tracer chainDbView) stuffs
+      void $ Map.traverseWithKey (startChainSyncConnectionThread tracer asc chainDbView) resources
       pure chainDb
 
 mkChainDb ::

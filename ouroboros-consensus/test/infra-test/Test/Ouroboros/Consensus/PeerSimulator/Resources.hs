@@ -4,7 +4,7 @@
 module Test.Ouroboros.Consensus.PeerSimulator.Resources (
   ChainSyncResources (..),
   ChainSyncServerState (..),
-  makeChainSyncServerResources,
+  makeChainSyncResources,
   makeChainSyncServerState,
 ) where
 
@@ -79,13 +79,13 @@ makeChainSyncServerHandlers tracer ChainSyncServerState {..} =
     csshRequestNext = handlerRequestNext csssCurrentIntersection csssTree tracer
   }
 
-makeChainSyncServerResources ::
+makeChainSyncResources ::
   IOLike m =>
   Tracer m String ->
   PeerId ->
   ChainSyncServerState m ->
   m (ChainSyncResources m)
-makeChainSyncServerResources tracer peerId state = do
+makeChainSyncResources tracer peerId state = do
   csrQueue <- newTQueueIO
   csrCandidateFragment <- uncheckedNewTVarM $ AF.Empty AF.AnchorGenesis
   let
