@@ -9,13 +9,12 @@ module Test.Ouroboros.Consensus.PeerSimulator.Resources (
   ) where
 
 import           Control.Tracer (Tracer (Tracer))
-import           Data.Functor ((<&>))
 import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike,
                      MonadSTM (TQueue, readTQueue), StrictTVar, TQueue,
-                     newTQueueIO, readTQueue, uncheckedNewTVarM, writeTVar)
+                     newTQueueIO, readTQueue, uncheckedNewTVarM, writeTVar, readTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
@@ -47,6 +46,10 @@ data ChainSyncResources m =
   ChainSyncResources {
     -- | A queue of node states coming from the scheduler.
     csrQueue :: TQueue m NodeState,
+
+    -- | The current schedule point that is updated by the scheduler in the peer's active tick,
+    -- waking up the chain sync server.
+    csrCurrentState :: StrictTVar m (Maybe AdvertisedPoints),
 
     -- | REVIEW: Not sure why we need this.
     csrCandidateFragment :: StrictTVar m TestFragH,
@@ -83,11 +86,17 @@ makeChainSyncResources ::
 makeChainSyncResources tracer peerId state = do
   csrQueue <- newTQueueIO
   csrCandidateFragment <- uncheckedNewTVarM $ AF.Empty AF.AnchorGenesis
+  csrCurrentState <- uncheckedNewTVarM Nothing
   let
-    wait = readTQueue csrQueue <&> \case
-      NodeOffline -> Nothing
-      NodeOnline tick -> Just tick
-  csrServer <- runScheduledChainSyncServer wait serverTracer handlers
+    wait =
+      readTQueue csrQueue >>= \ newState -> do
+        let
+          a = case newState of
+            NodeOffline -> Nothing
+            NodeOnline tick -> Just tick
+        writeTVar csrCurrentState a
+        pure a
+  csrServer <- runScheduledChainSyncServer wait (readTVar csrCurrentState) serverTracer handlers
   pure ChainSyncResources {..}
   where
     handlers = makeChainSyncServerHandlers handlersTracer state

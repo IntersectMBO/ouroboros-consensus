@@ -15,9 +15,7 @@ import           Control.Tracer (Tracer, traceWith)
 import           Data.Functor (void)
 import           Ouroboros.Consensus.Block.Abstract (Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
-import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
-                     StrictTVar, atomically, readTVarIO, uncheckedNewTVarM,
-                     writeTVar)
+import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM), atomically)
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (ChainSyncServer (..),
@@ -46,7 +44,7 @@ data ChainSyncServerHandlers m a =
 
 data ScheduledChainSyncServer m a =
   ScheduledChainSyncServer {
-    scssCurrentState   :: StrictTVar m (Maybe a),
+    scssCurrentState   :: STM m (Maybe a),
     scssAwaitNextState :: STM m (Maybe a),
     scssHandlers       :: ChainSyncServerHandlers m a,
     scssTracer         :: Tracer m String
@@ -57,11 +55,7 @@ awaitNextState ::
   ScheduledChainSyncServer m a ->
   m a
 awaitNextState server@ScheduledChainSyncServer{..} = do
-  newState <- atomically $ do
-    newState <- scssAwaitNextState
-    writeTVar scssCurrentState newState
-    pure newState
-  case newState of
+  atomically scssAwaitNextState >>= \case
     Nothing       -> awaitNextState server
     Just resource -> pure resource
 
@@ -70,7 +64,7 @@ ensureCurrentState ::
   ScheduledChainSyncServer m a ->
   m a
 ensureCurrentState server@ScheduledChainSyncServer{..} =
-  readTVarIO scssCurrentState >>= \case
+  atomically scssCurrentState >>= \case
     Nothing -> awaitNextState server
     Just resource -> pure resource
 
@@ -130,11 +124,11 @@ runScheduledChainSyncServer ::
   Condense a =>
   IOLike m =>
   STM m (Maybe a) ->
+  STM m (Maybe a) ->
   Tracer m String ->
   ChainSyncServerHandlers m a ->
   m (ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ())
-runScheduledChainSyncServer scssAwaitNextState scssTracer handlers = do
-  scssCurrentState <- uncheckedNewTVarM Nothing
+runScheduledChainSyncServer scssAwaitNextState scssCurrentState scssTracer handlers = do
   pure $ scheduledChainSyncServer ScheduledChainSyncServer {
     scssHandlers = handlers,
     ..
