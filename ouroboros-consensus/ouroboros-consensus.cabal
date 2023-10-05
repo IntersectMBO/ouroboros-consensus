@@ -558,6 +558,7 @@ test-suite infra-test
     , QuickCheck
     , random
     , si-timers
+    , strict-stm
     , tasty
     , tasty-quickcheck
     , time

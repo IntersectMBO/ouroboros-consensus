@@ -14,7 +14,7 @@ import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike,
                      MonadSTM (TQueue, readTQueue), StrictTVar, TQueue,
-                     newTQueueIO, readTQueue, uncheckedNewTVarM, writeTVar, readTVar)
+                     newTQueueIO, readTQueue, uncheckedNewTVarM, writeTVar, readTVar, StrictTMVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
@@ -27,6 +27,8 @@ import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
 import           Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
+import Control.Concurrent.Class.MonadSTM (MonadSTM(TMVar, newTMVarIO))
+import Control.Concurrent.Class.MonadSTM.Strict (newEmptyTMVarIO, readTMVar, takeTMVar)
 
 -- | The data used by the handler implementation in "Test.Ouroboros.Consensus.PeerSimulator.Handlers".
 data ChainSyncServerState m =
@@ -44,8 +46,8 @@ data ChainSyncServerState m =
 -- "Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer".
 data ChainSyncResources m =
   ChainSyncResources {
-    -- | A queue of node states coming from the scheduler.
-    csrQueue :: TQueue m NodeState,
+    -- | A mailbox of node states coming from the scheduler.
+    csrNextState :: StrictTMVar m NodeState,
 
     -- | The current schedule point that is updated by the scheduler in the peer's active tick,
     -- waking up the chain sync server.
@@ -84,12 +86,12 @@ makeChainSyncResources ::
   ChainSyncServerState m ->
   m (ChainSyncResources m)
 makeChainSyncResources tracer peerId state = do
-  csrQueue <- newTQueueIO
+  csrNextState <- newEmptyTMVarIO
   csrCandidateFragment <- uncheckedNewTVarM $ AF.Empty AF.AnchorGenesis
   csrCurrentState <- uncheckedNewTVarM Nothing
   let
     wait =
-      readTQueue csrQueue >>= \ newState -> do
+      takeTMVar csrNextState >>= \ newState -> do
         let
           a = case newState of
             NodeOffline -> Nothing

@@ -35,7 +35,7 @@ import           Ouroboros.Consensus.Util.IOLike
                      MonadAsync (Async, async, cancel, poll), MonadCatch (try),
                      MonadDelay (threadDelay),
                      MonadSTM (atomically, writeTQueue), MonadThrow (throwIO),
-                     SomeException, StrictTVar, readTVar)
+                     SomeException, StrictTVar, readTVar, putTMVar, tryPutTMVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -166,10 +166,11 @@ dispatchTick ::
   m ()
 dispatchTick tracer peers Tick {active = Peer pid state} =
   case peers Map.!? pid of
-    Just ChainSyncResources {csrQueue} -> do
+    Just ChainSyncResources {csrNextState} -> do
       trace $ "Writing state " ++ condense state
-      atomically $ writeTQueue csrQueue state
-      trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
+      atomically (tryPutTMVar csrNextState state) >>= \case
+        True -> trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
+        False -> trace $ "Client for " ++ condense pid ++ " has ceased operation."
       threadDelay 0.100
       trace $ condense pid ++ "'s tick is now done."
     Nothing -> error "“The impossible happened,” as GHC would say."
