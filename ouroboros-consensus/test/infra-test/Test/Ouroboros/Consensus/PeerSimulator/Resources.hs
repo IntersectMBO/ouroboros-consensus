@@ -1,38 +1,33 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Test.Ouroboros.Consensus.PeerSimulator.Resources (
-  ChainSyncResources (..),
-  ChainSyncServerState (..),
-  makeChainSyncResources,
-  makeChainSyncServerState,
-) where
+    ChainSyncResources (..)
+  , ChainSyncServerState (..)
+  , makeChainSyncResources
+  , makeChainSyncServerState
+  ) where
 
-import Control.Tracer (Tracer (Tracer))
-import Data.Functor ((<&>))
-import Ouroboros.Consensus.Block (WithOrigin (Origin))
-import Ouroboros.Consensus.Block.Abstract (Header, Point (..))
-import Ouroboros.Consensus.Util.Condense (Condense (..))
-import Ouroboros.Consensus.Util.IOLike (
-  IOLike,
-  MonadSTM (TQueue, readTQueue),
-  StrictTVar,
-  TQueue,
-  newTQueueIO,
-  readTQueue,
-  uncheckedNewTVarM,
-  )
+import           Control.Tracer (Tracer (Tracer))
+import           Data.Functor ((<&>))
+import           Ouroboros.Consensus.Block (WithOrigin (Origin))
+import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import           Ouroboros.Consensus.Util.IOLike (IOLike,
+                     MonadSTM (TQueue, readTQueue), StrictTVar, TQueue,
+                     newTQueueIO, readTQueue, uncheckedNewTVarM, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Block (Tip (..))
-import Ouroboros.Network.Protocol.ChainSync.Server (ChainSyncServer (..))
-import Test.Util.Orphans.IOLike ()
-import Test.Util.TestBlock (TestBlock)
-
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree (BlockTree)
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-import Test.Ouroboros.Consensus.PeerSimulator.Handlers
-import Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
-import Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
+import           Ouroboros.Network.Block (Tip (..))
+import           Ouroboros.Network.Protocol.ChainSync.Server
+                     (ChainSyncServer (..))
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
+                     (BlockTree)
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Ouroboros.Consensus.PeerSimulator.Handlers
+import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
+import           Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
+import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TestBlock (TestBlock)
 
 -- | The data used by the handler implementation in "Test.Ouroboros.Consensus.PeerSimulator.Handlers".
 data ChainSyncServerState m =
@@ -43,7 +38,7 @@ data ChainSyncServerState m =
     -- | The block tree in which the test is taking place. In combination to
     -- 'csssCurrentIntersection' and the current point schedule tick, it allows
     -- to define which blocks to serve to the client.
-    csssTree :: BlockTree TestBlock
+    csssTree                :: BlockTree TestBlock
   }
 
 -- | The data used by the point scheduler to interact with the mocked protocol handler in

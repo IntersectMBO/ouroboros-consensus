@@ -1,21 +1,24 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Ouroboros.Consensus.PeerSimulator.Trace (
-  traceUnitWith,
-  mkCdbTracer,
-  mkChainSyncClientTracer,
-) where
+    mkCdbTracer
+  , mkChainSyncClientTracer
+  , traceUnitWith
+  ) where
 
-import Control.Tracer (Tracer (Tracer), traceWith)
-import Data.Time.Clock (diffTimeToPicoseconds)
-import Ouroboros.Consensus.MiniProtocol.ChainSync.Client (TraceChainSyncClientEvent (..))
+import           Control.Tracer (Tracer (Tracer), traceWith)
+import           Data.Time.Clock (diffTimeToPicoseconds)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (TraceChainSyncClientEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
-import Ouroboros.Consensus.Storage.ChainDB.Impl.Types (NewTipInfo (..), TraceAddBlockEvent (..))
-import Ouroboros.Consensus.Util.Condense (Condense (..))
-import Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime, Time (Time), getMonotonicTime)
-import Test.Util.TestBlock (TestBlock)
-import Text.Printf (printf)
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
+                     (NewTipInfo (..), TraceAddBlockEvent (..))
+import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
+                     Time (Time), getMonotonicTime)
+import           Test.Util.TestBlock (TestBlock)
+import           Text.Printf (printf)
 
 mkCdbTracer ::
   IOLike m =>

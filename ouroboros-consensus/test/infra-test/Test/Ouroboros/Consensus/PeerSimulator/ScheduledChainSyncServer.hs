@@ -1,37 +1,30 @@
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE LambdaCase      #-}
+{-# LANGUAGE NamedFieldPuns  #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer (
-  RequestNext (..),
-  FindIntersect (..),
-  ChainSyncServerHandlers (..),
-  ScheduledChainSyncServer (..),
-  scheduledChainSyncServer,
-  runScheduledChainSyncServer,
-) where
+    ChainSyncServerHandlers (..)
+  , FindIntersect (..)
+  , RequestNext (..)
+  , ScheduledChainSyncServer (..)
+  , runScheduledChainSyncServer
+  , scheduledChainSyncServer
+  ) where
 
-import Control.Tracer (Tracer, traceWith)
-import Data.Functor (void)
-import Ouroboros.Consensus.Block.Abstract (Point (..))
-import Ouroboros.Consensus.Util.Condense (Condense (..))
-import Ouroboros.Consensus.Util.IOLike (
-  IOLike,
-  MonadSTM (STM),
-  StrictTVar,
-  atomically,
-  readTVarIO,
-  uncheckedNewTVarM,
-  writeTVar,
-  )
-import Ouroboros.Network.Block (Tip (..))
-import Ouroboros.Network.Protocol.ChainSync.Server (
-  ChainSyncServer (..),
-  ServerStIdle (ServerStIdle, recvMsgDoneClient, recvMsgFindIntersect, recvMsgRequestNext),
-  ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
-  ServerStNext (SendMsgRollBackward, SendMsgRollForward),
-  )
-import Test.Util.TestBlock (Header (..), TestBlock)
+import           Control.Tracer (Tracer, traceWith)
+import           Data.Functor (void)
+import           Ouroboros.Consensus.Block.Abstract (Point (..))
+import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
+                     StrictTVar, atomically, readTVarIO, uncheckedNewTVarM,
+                     writeTVar)
+import           Ouroboros.Network.Block (Tip (..))
+import           Ouroboros.Network.Protocol.ChainSync.Server
+                     (ChainSyncServer (..),
+                     ServerStIdle (ServerStIdle, recvMsgDoneClient, recvMsgFindIntersect, recvMsgRequestNext),
+                     ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
+                     ServerStNext (SendMsgRollBackward, SendMsgRollForward))
+import           Test.Util.TestBlock (Header (..), TestBlock)
 
 data RequestNext =
   RollForward (Header TestBlock) (Tip TestBlock)
@@ -47,16 +40,16 @@ data FindIntersect =
 
 data ChainSyncServerHandlers m a =
   ChainSyncServerHandlers {
-    csshRequestNext :: a -> m (Maybe RequestNext),
+    csshRequestNext      :: a -> m (Maybe RequestNext),
     csshFindIntersection :: a -> [Point TestBlock] -> m FindIntersect
   }
 
 data ScheduledChainSyncServer m a =
   ScheduledChainSyncServer {
-    scssCurrentState :: StrictTVar m (Maybe a),
+    scssCurrentState   :: StrictTVar m (Maybe a),
     scssAwaitNextState :: STM m (Maybe a),
-    scssHandlers :: ChainSyncServerHandlers m a,
-    scssTracer :: Tracer m String
+    scssHandlers       :: ChainSyncServerHandlers m a,
+    scssTracer         :: Tracer m String
   }
 
 awaitNextState ::
@@ -69,7 +62,7 @@ awaitNextState server@ScheduledChainSyncServer{..} = do
     writeTVar scssCurrentState newState
     pure newState
   case newState of
-    Nothing -> awaitNextState server
+    Nothing       -> awaitNextState server
     Just resource -> pure resource
 
 ensureCurrentState ::

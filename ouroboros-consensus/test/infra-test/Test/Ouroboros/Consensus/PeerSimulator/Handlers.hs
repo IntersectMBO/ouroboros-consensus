@@ -1,28 +1,30 @@
 module Test.Ouroboros.Consensus.PeerSimulator.Handlers (
-  handlerFindIntersection,
-  handlerRequestNext,
-) where
+    handlerFindIntersection
+  , handlerRequestNext
+  ) where
 
-import Control.Tracer (Tracer, traceWith)
-import Data.Coerce (coerce)
-import Data.Maybe (fromJust)
-import Ouroboros.Consensus.Block.Abstract (Header, Point (..), getHeader)
-import Ouroboros.Consensus.Util.Condense (Condense (..))
-import Ouroboros.Consensus.Util.IOLike (IOLike, StrictTVar, atomically, readTVarIO, writeTVar)
+import           Control.Tracer (Tracer, traceWith)
+import           Data.Coerce (coerce)
+import           Data.Maybe (fromJust)
+import           Ouroboros.Consensus.Block.Abstract (Header, Point (..),
+                     getHeader)
+import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import           Ouroboros.Consensus.Util.IOLike (IOLike, StrictTVar,
+                     atomically, readTVarIO, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Block (Tip (..), blockPoint, getTipPoint)
-import Test.Util.Orphans.IOLike ()
-import Test.Util.TestBlock (TestBlock)
-
+import           Ouroboros.Network.Block (Tip (..), blockPoint, getTipPoint)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree (BlockTree)
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule (
-  AdvertisedPoints (header, tip),
-  HeaderPoint (HeaderPoint),
-  TipPoint (TipPoint),
-  )
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync (intersectWith)
-import Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer (FindIntersect (..), RequestNext (RollForward))
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
+                     (BlockTree)
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+                     (AdvertisedPoints (header, tip), HeaderPoint (HeaderPoint),
+                     TipPoint (TipPoint))
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
+                     (intersectWith)
+import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
+                     (FindIntersect (..), RequestNext (RollForward))
+import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TestBlock (TestBlock)
 
 handlerFindIntersection ::
   IOLike m =>

@@ -3,65 +3,64 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies    #-}
 
-module Test.Ouroboros.Consensus.PeerSimulator.Run (
-  runPointSchedule,
-) where
+module Test.Ouroboros.Consensus.PeerSimulator.Run (runPointSchedule) where
 
-import Control.Monad.Class.MonadAsync (AsyncCancelled (AsyncCancelled))
-import Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import Control.Monad.State.Strict (StateT, evalStateT, get, gets, lift, modify')
-import Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
-import Data.Foldable (for_)
-import Data.Functor (void)
-import Data.List.NonEmpty (NonEmpty, nonEmpty)
+import           Control.Monad.Class.MonadAsync
+                     (AsyncCancelled (AsyncCancelled))
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import           Control.Monad.State.Strict (StateT, evalStateT, get, gets,
+                     lift, modify')
+import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
+import           Data.Foldable (for_)
+import           Data.Functor (void)
+import           Data.List.NonEmpty (NonEmpty, nonEmpty)
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Map.Strict (Map)
-import Data.Maybe (mapMaybe)
-import Data.Traversable (for)
-import Ouroboros.Consensus.Block.Abstract (Point (..))
-import Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
+import           Data.Maybe (mapMaybe)
+import           Data.Traversable (for)
+import           Ouroboros.Consensus.Block.Abstract (Point (..))
+import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
-import Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView, Consensus, chainSyncClient, defaultChainDbView)
-import Ouroboros.Consensus.Storage.ChainDB.API
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
+                     Consensus, chainSyncClient, defaultChainDbView)
+import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
+import           Ouroboros.Consensus.Storage.ChainDB.Impl
+                     (ChainDbArgs (cdbTracer))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
-import Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (cdbTracer))
-import Ouroboros.Consensus.Util.Condense (Condense (..))
-import Ouroboros.Consensus.Util.IOLike (
-  Exception (fromException, toException),
-  IOLike,
-  MonadAsync (Async, async, cancel, poll),
-  MonadCatch (try),
-  MonadDelay (threadDelay),
-  MonadSTM (atomically, writeTQueue),
-  MonadThrow (throwIO),
-  SomeException,
-  StrictTVar,
-  readTVar,
-  )
-import Ouroboros.Consensus.Util.ResourceRegistry
-import Ouroboros.Consensus.Util.STM (blockUntilChanged)
+import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import           Ouroboros.Consensus.Util.IOLike
+                     (Exception (fromException, toException), IOLike,
+                     MonadAsync (Async, async, cancel, poll), MonadCatch (try),
+                     MonadDelay (threadDelay),
+                     MonadSTM (atomically, writeTQueue), MonadThrow (throwIO),
+                     SomeException, StrictTVar, readTVar)
+import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Block (blockPoint)
-import Ouroboros.Network.Channel (createConnectedChannels)
-import Ouroboros.Network.ControlMessage (ControlMessage (..))
-import Ouroboros.Network.Driver.Limits
-import Ouroboros.Network.Driver.Limits.Extras
-import Ouroboros.Network.Driver.Simple (Role (Client, Server))
-import Ouroboros.Network.Protocol.ChainSync.ClientPipelined (ChainSyncClientPipelined, chainSyncClientPeerPipelined)
-import Ouroboros.Network.Protocol.ChainSync.Codec
-import Ouroboros.Network.Protocol.ChainSync.PipelineDecision (pipelineDecisionLowHighMark)
-import Ouroboros.Network.Protocol.ChainSync.Server (chainSyncServerPeer)
-import Test.Util.ChainDB
-import Test.Util.Orphans.IOLike ()
-import Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
-
-import Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync (ConnectionThread (..), TestResources (..), defaultCfg)
-import Test.Ouroboros.Consensus.PeerSimulator.Resources
-import Test.Ouroboros.Consensus.PeerSimulator.Trace
+import           Ouroboros.Network.Block (blockPoint)
+import           Ouroboros.Network.Channel (createConnectedChannels)
+import           Ouroboros.Network.ControlMessage (ControlMessage (..))
+import           Ouroboros.Network.Driver.Limits
+import           Ouroboros.Network.Driver.Limits.Extras
+import           Ouroboros.Network.Driver.Simple (Role (Client, Server))
+import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
+                     (ChainSyncClientPipelined, chainSyncClientPeerPipelined)
+import           Ouroboros.Network.Protocol.ChainSync.Codec
+import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
+                     (pipelineDecisionLowHighMark)
+import           Ouroboros.Network.Protocol.ChainSync.Server
+                     (chainSyncServerPeer)
+import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
+                     (ConnectionThread (..), TestResources (..), defaultCfg)
+import           Test.Ouroboros.Consensus.PeerSimulator.Resources
+import           Test.Ouroboros.Consensus.PeerSimulator.Trace
+import           Test.Util.ChainDB
+import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
 
 basicChainSyncClient ::
   IOLike m =>

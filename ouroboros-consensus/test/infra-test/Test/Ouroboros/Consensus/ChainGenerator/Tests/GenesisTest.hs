@@ -29,6 +29,9 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
                      (genChains)
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Ouroboros.Consensus.PeerSimulator.Resources
+                     (makeChainSyncServerState)
+import           Test.Ouroboros.Consensus.PeerSimulator.Run
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.QuickCheck.Random (QCGen)
@@ -37,8 +40,6 @@ import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock hiding (blockTree)
 import           Test.Util.Tracer (recordingTracerTVar)
-import Test.Ouroboros.Consensus.PeerSimulator.Run
-import Test.Ouroboros.Consensus.PeerSimulator.Resources (makeChainSyncServerState)
 
 tests :: TestTree
 tests = testGroup "Genesis tests"
