@@ -302,7 +302,7 @@ protocolInfoShelleyBasedHardFork protocolParamsShelleyBased
       -> PartialLedgerConfig (ShelleyBlock proto2 era2)
     toPartialLedgerConfig2 cfg = ShelleyPartialLedgerConfig {
           shelleyLedgerConfig    = cfg
-        , shelleyTriggerHardFork = TriggerHardForkNever
+        , shelleyTriggerHardFork = TriggerHardForkNotDuringThisExecution
         }
 
 {-------------------------------------------------------------------------------

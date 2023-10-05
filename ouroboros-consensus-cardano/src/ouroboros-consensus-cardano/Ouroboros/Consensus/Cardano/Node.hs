@@ -930,7 +930,7 @@ protocolInfoCardano paramsCardano
         mkPartialLedgerConfigShelley
           transitionConfigConway
           maxMajorProtVer
-          TriggerHardForkNever
+          TriggerHardForkNotDuringThisExecution
 
     -- Cardano
 

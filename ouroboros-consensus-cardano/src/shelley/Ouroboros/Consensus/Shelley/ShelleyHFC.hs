@@ -83,7 +83,7 @@ instance
       . configLedger
   toPartialLedgerConfig _ cfg = ShelleyPartialLedgerConfig {
         shelleyLedgerConfig    = cfg
-      , shelleyTriggerHardFork = TriggerHardForkNever
+      , shelleyTriggerHardFork = TriggerHardForkNotDuringThisExecution
       }
 
 {-------------------------------------------------------------------------------
@@ -183,7 +183,7 @@ instance
       -- For evidence of this behaviour, replace the cased-on expression by:
       -- > @traceShowId $ shelleyTriggerHardFork pcf@
       case shelleyTriggerHardFork pcfg of
-        TriggerHardForkNever                         -> Nothing
+        TriggerHardForkNotDuringThisExecution        -> Nothing
         TriggerHardForkAtEpoch   epoch               -> Just epoch
         TriggerHardForkAtVersion shelleyMajorVersion ->
             shelleyTransition

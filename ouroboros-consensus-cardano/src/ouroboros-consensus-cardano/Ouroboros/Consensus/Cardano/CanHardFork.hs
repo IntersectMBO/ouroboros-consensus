@@ -219,7 +219,7 @@ byronTransition ByronPartialLedgerConfig{..} shelleyMajorVersion state =
 instance SingleEraBlock ByronBlock where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
       case byronTriggerHardFork pcfg of
-        TriggerHardForkNever                         -> Nothing
+        TriggerHardForkNotDuringThisExecution        -> Nothing
         TriggerHardForkAtEpoch   epoch               -> Just epoch
         TriggerHardForkAtVersion shelleyMajorVersion ->
             byronTransition

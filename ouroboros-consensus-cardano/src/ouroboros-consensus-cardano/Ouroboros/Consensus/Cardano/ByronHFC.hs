@@ -33,7 +33,7 @@ instance NoHardForks ByronBlock where
       byronEraParamsNeverHardForks (byronGenesisConfig (configBlock cfg))
   toPartialLedgerConfig _ cfg = ByronPartialLedgerConfig {
         byronLedgerConfig    = cfg
-      , byronTriggerHardFork = TriggerHardForkNever
+      , byronTriggerHardFork = TriggerHardForkNotDuringThisExecution
       }
 
 {-------------------------------------------------------------------------------
