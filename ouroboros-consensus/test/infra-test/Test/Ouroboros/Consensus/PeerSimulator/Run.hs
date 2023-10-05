@@ -33,9 +33,9 @@ import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
                      (Exception (fromException, toException), IOLike,
                      MonadAsync (Async, async, cancel, poll), MonadCatch (try),
-                     MonadDelay (threadDelay),
-                     MonadSTM (atomically, writeTQueue), MonadThrow (throwIO),
-                     SomeException, StrictTVar, readTVar, putTMVar, tryPutTMVar)
+                     MonadDelay (threadDelay), MonadSTM (atomically),
+                     MonadThrow (throwIO), SomeException, StrictTVar, readTVar,
+                     tryPutTMVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import qualified Ouroboros.Network.AnchoredFragment as AF

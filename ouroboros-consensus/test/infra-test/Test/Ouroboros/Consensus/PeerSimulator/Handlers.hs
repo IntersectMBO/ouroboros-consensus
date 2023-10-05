@@ -3,16 +3,14 @@ module Test.Ouroboros.Consensus.PeerSimulator.Handlers (
   , handlerRequestNext
   ) where
 
-import           Control.Tracer (Tracer, traceWith)
 import           Data.Coerce (coerce)
 import           Data.Maybe (fromJust)
-import           Ouroboros.Consensus.Block.Abstract (Header, Point (..),
+import           Ouroboros.Consensus.Block.Abstract (Point (..),
                      getHeader)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
-import           Ouroboros.Consensus.Util.IOLike (IOLike, StrictTVar,
-                     atomically, readTVarIO, writeTVar)
+import           Ouroboros.Consensus.Util.IOLike (IOLike, StrictTVar, writeTVar, STM, readTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip (..), blockPoint, getTipPoint)
+import           Ouroboros.Network.Block (blockPoint, getTipPoint)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
                      (BlockTree)
@@ -22,9 +20,11 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
                      (intersectWith)
 import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
-                     (FindIntersect (..), RequestNext (RollForward))
+                     (FindIntersect (..), RequestNext (RollForward, RollBackward))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
+import Control.Monad.Writer.Strict (WriterT (runWriterT), MonadWriter (tell))
+import Control.Monad.Trans (lift)
 
 handlerFindIntersection ::
   IOLike m =>
@@ -32,27 +32,26 @@ handlerFindIntersection ::
   BlockTree TestBlock ->
   AdvertisedPoints ->
   [Point TestBlock] ->
-  m FindIntersect
+  STM m (FindIntersect, [String])
 handlerFindIntersection currentIntersection blockTree points pts = do
   let TipPoint tip' = tip points
       tipPoint = Ouroboros.Network.Block.getTipPoint tip'
       fragment = fromJust $ BT.findFragment tipPoint blockTree
   case intersectWith fragment pts of
     Nothing ->
-      pure $ IntersectNotFound tip'
+      pure (IntersectNotFound tip', [])
     Just intersection -> do
-      atomically $ writeTVar currentIntersection intersection
-      pure $ IntersectFound intersection tip'
+      writeTVar currentIntersection intersection
+      pure (IntersectFound intersection tip', [])
 
 serveHeader ::
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
-  Tracer m String ->
   AdvertisedPoints ->
-  m (Maybe (Header TestBlock, Tip TestBlock))
-serveHeader currentIntersection blockTree tracer points = do
-  intersection <- readTVarIO currentIntersection
+  WriterT [String] (STM m) (Maybe RequestNext)
+serveHeader currentIntersection blockTree points = do
+  intersection <- lift $ readTVar currentIntersection
   trace $ "  last intersection is " ++ condense intersection
   let HeaderPoint header' = header points
       headerPoint = AF.castPoint $ blockPoint header'
@@ -71,8 +70,8 @@ serveHeader currentIntersection blockTree tracer points = do
         (BT.PathAnchoredAtSource True, fragmentAhead@(next AF.:< _)) -> do
           trace "  intersection is before our header point"
           trace $ "  fragment ahead: " ++ condense fragmentAhead
-          atomically $ writeTVar currentIntersection $ blockPoint next
-          pure $ Just (getHeader next, coerce (tip points))
+          lift $ writeTVar currentIntersection $ blockPoint next
+          pure $ Just (RollForward (getHeader next) (coerce (tip points)))
         -- If the anchor is not the intersection but the fragment is empty, then
         -- the intersection is further than the tip that we can serve.
         (BT.PathAnchoredAtSource False, AF.Empty _) -> do
@@ -83,18 +82,19 @@ serveHeader currentIntersection blockTree tracer points = do
         (BT.PathAnchoredAtSource False, fragment) -> do
           trace $ "  we will require a rollback to" ++ condense (AF.anchorPoint fragment)
           trace $ "  fragment: " ++ condense fragment
-          error "Rollback not supported in PeerSimulator"
+          let
+            tip' = coerce (tip points)
+            point = AF.anchorPoint fragment
+          lift $ writeTVar currentIntersection point
+          pure $ Just (RollBackward point tip')
   where
-    trace = traceWith tracer
+    trace = tell . pure
 
--- REVIEW: this could all be STM if it weren't for tracing.
--- Does it matter?
 handlerRequestNext ::
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
-  Tracer m String ->
   AdvertisedPoints ->
-  m (Maybe RequestNext)
-handlerRequestNext currentIntersection blockTree tracer advertisedPoints =
-  fmap (uncurry RollForward) <$> serveHeader currentIntersection blockTree tracer advertisedPoints
+  STM m (Maybe RequestNext, [String])
+handlerRequestNext currentIntersection blockTree advertisedPoints =
+  runWriterT (serveHeader currentIntersection blockTree advertisedPoints)

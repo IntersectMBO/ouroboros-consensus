@@ -8,13 +8,18 @@ module Test.Ouroboros.Consensus.PeerSimulator.Resources (
   , makeChainSyncServerState
   ) where
 
+import           Control.Concurrent.Class.MonadSTM
+                     (MonadSTM (TMVar, newTMVarIO))
+import           Control.Concurrent.Class.MonadSTM.Strict (newEmptyTMVarIO,
+                     readTMVar, takeTMVar)
 import           Control.Tracer (Tracer (Tracer))
 import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike,
-                     MonadSTM (TQueue, readTQueue), StrictTVar, TQueue,
-                     newTQueueIO, readTQueue, uncheckedNewTVarM, writeTVar, readTVar, StrictTMVar)
+                     MonadSTM (TQueue, readTQueue), StrictTMVar, StrictTVar,
+                     TQueue, newTQueueIO, readTQueue, readTVar,
+                     uncheckedNewTVarM, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
@@ -27,8 +32,6 @@ import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
 import           Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
-import Control.Concurrent.Class.MonadSTM (MonadSTM(TMVar, newTMVarIO))
-import Control.Concurrent.Class.MonadSTM.Strict (newEmptyTMVarIO, readTMVar, takeTMVar)
 
 -- | The data used by the handler implementation in "Test.Ouroboros.Consensus.PeerSimulator.Handlers".
 data ChainSyncServerState m =
@@ -70,13 +73,12 @@ makeChainSyncServerState csssTree = do
 
 makeChainSyncServerHandlers ::
   IOLike m =>
-  Tracer m String ->
   ChainSyncServerState m ->
   ChainSyncServerHandlers m AdvertisedPoints
-makeChainSyncServerHandlers tracer ChainSyncServerState {..} =
+makeChainSyncServerHandlers ChainSyncServerState {..} =
   ChainSyncServerHandlers {
     csshFindIntersection = handlerFindIntersection csssCurrentIntersection csssTree,
-    csshRequestNext = handlerRequestNext csssCurrentIntersection csssTree tracer
+    csshRequestNext = handlerRequestNext csssCurrentIntersection csssTree
   }
 
 makeChainSyncResources ::
@@ -94,13 +96,11 @@ makeChainSyncResources tracer peerId state = do
       takeTMVar csrNextState >>= \ newState -> do
         let
           a = case newState of
-            NodeOffline -> Nothing
+            NodeOffline     -> Nothing
             NodeOnline tick -> Just tick
         writeTVar csrCurrentState a
         pure a
-  csrServer <- runScheduledChainSyncServer wait (readTVar csrCurrentState) serverTracer handlers
+    csrServer = runScheduledChainSyncServer (condense peerId) wait (readTVar csrCurrentState) tracer handlers
   pure ChainSyncResources {..}
   where
-    handlers = makeChainSyncServerHandlers handlersTracer state
-    handlersTracer = Tracer $ traceUnitWith tracer ("ChainSyncServerHandlers " ++ condense peerId)
-    serverTracer = Tracer $ traceUnitWith tracer ("ScheduledChainSyncServer " ++ condense peerId)
+    handlers = makeChainSyncServerHandlers state

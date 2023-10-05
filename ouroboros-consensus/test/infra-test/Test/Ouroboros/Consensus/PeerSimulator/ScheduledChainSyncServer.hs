@@ -11,11 +11,12 @@ module Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer (
   , scheduledChainSyncServer
   ) where
 
-import           Control.Tracer (Tracer, traceWith)
+import           Control.Tracer (Tracer (Tracer), traceWith)
 import           Data.Functor (void)
 import           Ouroboros.Consensus.Block.Abstract (Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
-import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM), atomically)
+import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
+                     atomically)
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (ChainSyncServer (..),
@@ -23,6 +24,9 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
                      ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
                      ServerStNext (SendMsgRollBackward, SendMsgRollForward))
 import           Test.Util.TestBlock (Header (..), TestBlock)
+import Data.Foldable (traverse_)
+
+import Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
 
 data RequestNext =
   RollForward (Header TestBlock) (Tip TestBlock)
@@ -38,12 +42,13 @@ data FindIntersect =
 
 data ChainSyncServerHandlers m a =
   ChainSyncServerHandlers {
-    csshRequestNext      :: a -> m (Maybe RequestNext),
-    csshFindIntersection :: a -> [Point TestBlock] -> m FindIntersect
+    csshRequestNext      :: a -> STM m (Maybe RequestNext, [String]),
+    csshFindIntersection :: a -> [Point TestBlock] -> STM m (FindIntersect, [String])
   }
 
 data ScheduledChainSyncServer m a =
   ScheduledChainSyncServer {
+    scssName           :: String,
     scssCurrentState   :: STM m (Maybe a),
     scssAwaitNextState :: STM m (Maybe a),
     scssHandlers       :: ChainSyncServerHandlers m a,
@@ -68,6 +73,16 @@ ensureCurrentState server@ScheduledChainSyncServer{..} =
     Nothing -> awaitNextState server
     Just resource -> pure resource
 
+runHandlerWithTrace ::
+  IOLike m =>
+  Tracer m String ->
+  STM m (a, [String]) ->
+  m a
+runHandlerWithTrace tracer handler = do
+  (result, handlerMessages) <- atomically handler
+  traverse_ (traceWith tracer) handlerMessages
+  pure result
+
 scheduledChainSyncServer ::
   Condense a =>
   IOLike m =>
@@ -87,7 +102,7 @@ scheduledChainSyncServer server@ScheduledChainSyncServer{scssHandlers = ChainSyn
       currentState <- ensureCurrentState server
       trace "handling MsgRequestNext"
       trace $ "  state is " ++ condense currentState
-      csshRequestNext currentState >>= \case
+      runHandlerWithTrace requestNextTracer (csshRequestNext currentState) >>= \case
         Just (RollForward header tip) -> do
           trace $ "  gotta serve " ++ condense header
           trace $ "  tip is      " ++ condense tip
@@ -104,7 +119,7 @@ scheduledChainSyncServer server@ScheduledChainSyncServer{scssHandlers = ChainSyn
     recvMsgFindIntersect pts = do
       currentState <- ensureCurrentState server
       trace "handling MsgFindIntersect"
-      csshFindIntersection currentState pts >>= \case
+      runHandlerWithTrace findIntersectTracer (csshFindIntersection currentState pts) >>= \case
         IntersectNotFound tip -> do
           trace "  no intersection found"
           trace "done handling MsgFindIntersect"
@@ -118,18 +133,19 @@ scheduledChainSyncServer server@ScheduledChainSyncServer{scssHandlers = ChainSyn
       trace "received MsgDoneClient"
       pure ()
 
-    trace = traceWith scssTracer
+    trace = traceWith mainTracer
+    requestNextTracer = Tracer $ traceUnitWith scssTracer ("RequestNext handler for " ++ scssName)
+    findIntersectTracer = Tracer $ traceUnitWith scssTracer ("FindIntersect handler for " ++ scssName)
+    mainTracer = Tracer $ traceUnitWith scssTracer ("ScheduledChainSyncServer " ++ scssName)
 
 runScheduledChainSyncServer ::
   Condense a =>
   IOLike m =>
+  String ->
   STM m (Maybe a) ->
   STM m (Maybe a) ->
   Tracer m String ->
   ChainSyncServerHandlers m a ->
-  m (ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ())
-runScheduledChainSyncServer scssAwaitNextState scssCurrentState scssTracer handlers = do
-  pure $ scheduledChainSyncServer ScheduledChainSyncServer {
-    scssHandlers = handlers,
-    ..
-  }
+  ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
+runScheduledChainSyncServer scssName scssAwaitNextState scssCurrentState scssTracer scssHandlers =
+  scheduledChainSyncServer ScheduledChainSyncServer {..}
