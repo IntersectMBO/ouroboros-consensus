@@ -105,7 +105,7 @@ import           Text.Printf (printf)
 -- typed-protocols peers
 newtype ConnectionThread m =
   ConnectionThread {
-    kill :: m (Either SomeException (ChainSyncClientResult, ()))
+    kill :: m (Either SomeException ChainSyncClientResult)
   }
 
 data TestResources m =
@@ -364,7 +364,7 @@ startChainSyncConnectionThread tracer activeSlotCoefficient chainDbView fetchCli
         throwIO exn
       Right res' -> pure res'
 
-  let kill = cancelPoll handle
+  let kill = fmap fst <$> cancelPoll handle
   modify' $ \ TestResources {..} -> TestResources {connectionThreads = ConnectionThread {..} : connectionThreads, ..}
   where
     protocolTracer = Tracer $ \case
