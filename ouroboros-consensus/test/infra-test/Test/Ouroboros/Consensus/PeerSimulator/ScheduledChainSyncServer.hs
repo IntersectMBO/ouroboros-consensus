@@ -2,13 +2,15 @@
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE RecordWildCards #-}
 
+-- | A ChainSync protocol server that allows external scheduling of its
+-- operations, while deferring the implementation of the message handler
+-- logic to a simplified, abstract interface provided as a parameter.
 module Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer (
     ChainSyncServerHandlers (..)
   , FindIntersect (..)
   , RequestNext (..)
   , ScheduledChainSyncServer (..)
   , runScheduledChainSyncServer
-  , scheduledChainSyncServer
   ) where
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
@@ -27,24 +29,34 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
 import           Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
 import           Test.Util.TestBlock (Header (..), TestBlock)
 
+-- | Pure representation of the messages produced by the handler for the @StNext@
+-- protocol state of a ChainSync server.
 data RequestNext =
   RollForward (Header TestBlock) (Tip TestBlock)
   |
   RollBackward (Point TestBlock) (Tip TestBlock)
   deriving (Eq, Show)
 
+-- | Pure representation of the messages produced by the handler for the @StIntersect@
+-- protocol state of a ChainSync server.
 data FindIntersect =
   IntersectFound (Point TestBlock) (Tip TestBlock)
   |
   IntersectNotFound (Tip TestBlock)
   deriving (Eq, Show)
 
+-- | Handlers for the request a ChainSync server might receive from a client.
+-- These take an abstract argument that corresponds to the state of a point
+-- schedule tick and return the simplified protocol message types.
+--
+-- See 'runHandlerWithTrace' for the meaning of @[String]@.
 data ChainSyncServerHandlers m a =
   ChainSyncServerHandlers {
     csshRequestNext      :: a -> STM m (Maybe RequestNext, [String]),
     csshFindIntersection :: a -> [Point TestBlock] -> STM m (FindIntersect, [String])
   }
 
+-- | Resources used by a ChainSync server mock.
 data ScheduledChainSyncServer m a =
   ScheduledChainSyncServer {
     scssName           :: String,
@@ -54,6 +66,11 @@ data ScheduledChainSyncServer m a =
     scssTracer         :: Tracer m String
   }
 
+-- | Block until the peer simulator has updated the concurrency primitive that
+-- indicates that it's this peer's server's turn in the point schedule.
+-- If the new state is 'Nothing', the point schedule has declared this peer as
+-- offline for the current tick, so it will not resume operation and wait for
+-- the next update.
 awaitNextState ::
   IOLike m =>
   ScheduledChainSyncServer m a ->
@@ -63,6 +80,12 @@ awaitNextState server@ScheduledChainSyncServer{..} = do
     Nothing       -> awaitNextState server
     Just resource -> pure resource
 
+-- | Fetch the current state from the STM action, and if it is 'Nothing',
+-- wait for the next tick to be triggered in 'awaitNextState'.
+--
+-- Since processing of a tick always ends when the RequestNext handler finishes
+-- after serving the last header, this function is only relevant for the
+-- initial state update.
 ensureCurrentState ::
   IOLike m =>
   ScheduledChainSyncServer m a ->
@@ -72,6 +95,11 @@ ensureCurrentState server@ScheduledChainSyncServer{..} =
     Nothing -> awaitNextState server
     Just resource -> pure resource
 
+-- | Handler functions are STM actions for the usual race condition reasons,
+-- which means that they cannot emit trace messages.
+--
+-- For that reason, we allow them to return their messages alongside the
+-- protocol result and emit them here.
 runHandlerWithTrace ::
   IOLike m =>
   Tracer m String ->
@@ -82,6 +110,17 @@ runHandlerWithTrace tracer handler = do
   traverse_ (traceWith tracer) handlerMessages
   pure result
 
+-- | Declare a mock ChainSync protocol server in its typed-protocols encoding
+-- that halts and resumes operation in response to an external scheduler,
+-- signalling via a blocking STM action that is sequenced by calling
+-- 'awaitNextState' in 'recvMsgRequestNext' after the current state has been
+-- fully processed, which is indicated by the handler for this message.
+--
+-- Handlers are supplied as a record of STM callbacks ('ChainSyncServerHandlers')
+-- by the caller.
+--
+-- This architecture allows the server's behavior to be defined with a simple
+-- interface separated from the scheduling and protocol plumbing infrastructure.
 scheduledChainSyncServer ::
   Condense a =>
   IOLike m =>
@@ -137,6 +176,9 @@ scheduledChainSyncServer server@ScheduledChainSyncServer{scssHandlers = ChainSyn
     findIntersectTracer = Tracer $ traceUnitWith scssTracer ("FindIntersect handler for " ++ scssName)
     mainTracer = Tracer $ traceUnitWith scssTracer ("ScheduledChainSyncServer " ++ scssName)
 
+-- | Construct a ChainSync server for the peer simulator.
+--
+-- See 'scheduledChainSyncServer'.
 runScheduledChainSyncServer ::
   Condense a =>
   IOLike m =>

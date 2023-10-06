@@ -1,61 +1,62 @@
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
 
+-- | Data types and resource allocating constructors for the concurrency
+-- primitives used by ChainSync and BlockFetch in the handlers that implement
+-- the block tree analysis specific to our peer simulator.
 module Test.Ouroboros.Consensus.PeerSimulator.Resources (
     ChainSyncResources (..)
-  , SharedResources (..)
   , PeerResources (..)
+  , SharedResources (..)
+  , makeChainSyncResources
   , makePeerResources
   , makePeersResources
-  , makeChainSyncResources
   ) where
 
-import Control.Concurrent.Class.MonadSTM.Strict (newEmptyTMVarIO, takeTMVar)
-import Control.Tracer (Tracer)
+import           Control.Concurrent.Class.MonadSTM.Strict (newEmptyTMVarIO,
+                     takeTMVar)
+import           Control.Tracer (Tracer)
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Map.Strict (Map)
-import Data.Traversable (for)
-import Ouroboros.Consensus.Block (WithOrigin (Origin))
-import Ouroboros.Consensus.Block.Abstract (Header, Point (..))
-import Ouroboros.Consensus.Util.Condense (Condense (..))
-import Ouroboros.Consensus.Util.IOLike (
-  IOLike,
-  MonadSTM (STM),
-  StrictTMVar,
-  StrictTVar,
-  readTVar,
-  uncheckedNewTVarM,
-  writeTVar,
-  )
+import           Data.Traversable (for)
+import           Ouroboros.Consensus.Block (WithOrigin (Origin))
+import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.Util.Condense (Condense (..))
+import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
+                     StrictTMVar, StrictTVar, readTVar, uncheckedNewTVarM,
+                     writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import Ouroboros.Network.Block (Tip (..))
-import Ouroboros.Network.Protocol.ChainSync.Server (ChainSyncServer (..))
-import Test.Util.Orphans.IOLike ()
-import Test.Util.TestBlock (TestBlock)
-
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree (BlockTree)
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-import Test.Ouroboros.Consensus.PeerSimulator.Handlers
-import Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
+import           Ouroboros.Network.Block (Tip (..))
+import           Ouroboros.Network.Protocol.ChainSync.Server
+                     (ChainSyncServer (..))
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
+                     (BlockTree)
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Ouroboros.Consensus.PeerSimulator.Handlers
+import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
+import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TestBlock (TestBlock)
 
 -- | Resources used by both ChainSync and BlockFetch for a single peer.
 data SharedResources m =
   SharedResources {
     -- | The name of the peer.
-    srPeerId :: PeerId,
+    srPeerId            :: PeerId,
 
     -- | The block tree in which the test is taking place. In combination to
     -- 'csssCurrentIntersection' and the current point schedule tick, it allows
     -- to define which blocks to serve to the client.
-    srBlockTree :: BlockTree TestBlock,
+    srBlockTree         :: BlockTree TestBlock,
 
     -- | The currently active schedule point.
-    srCurrentState :: StrictTVar m (Maybe AdvertisedPoints),
+    --
+    -- This is 'Maybe' because we cannot wait for the initial state otherwise.
+    srCurrentState      :: StrictTVar m (Maybe AdvertisedPoints),
 
     -- | The candidate fragment for a peer is shared by ChainSync, BlockFetch and the ChainDB.
     srCandidateFragment :: StrictTVar m TestFragH,
 
-    srTracer :: Tracer m String
+    srTracer            :: Tracer m String
   }
 
 -- | The data used by the point scheduler to interact with the mocked protocol handler in
@@ -77,7 +78,7 @@ data ChainSyncResources m =
 data PeerResources m =
   PeerResources {
     -- | Resources used by ChainSync and BlockFetch.
-    prShared :: SharedResources m,
+    prShared    :: SharedResources m,
 
     -- | Resources used by ChainSync only.
     prChainSync :: ChainSyncResources m

@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
+-- | Helpers for tracing used by the peer simulator.
 module Test.Ouroboros.Consensus.PeerSimulator.Trace (
     mkCdbTracer
   , mkChainSyncClientTracer

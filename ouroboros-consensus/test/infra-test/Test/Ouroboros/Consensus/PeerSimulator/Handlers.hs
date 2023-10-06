@@ -1,3 +1,9 @@
+-- | Business logic of the SyncChain protocol handlers that operates
+-- on the 'AdvertisedPoints' of a point schedule.
+--
+-- These are separated from the scheduling related mechanics of the
+-- ChainSync server mock that the peer simulator uses, in
+-- "Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer".
 module Test.Ouroboros.Consensus.PeerSimulator.Handlers (
     handlerFindIntersection
   , handlerRequestNext

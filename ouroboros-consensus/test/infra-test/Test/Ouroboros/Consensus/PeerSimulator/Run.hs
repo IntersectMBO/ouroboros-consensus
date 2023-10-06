@@ -7,6 +7,7 @@ module Test.Ouroboros.Consensus.PeerSimulator.Run (runPointSchedule) where
 
 import           Control.Monad.Class.MonadAsync
                      (AsyncCancelled (AsyncCancelled))
+import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Foldable (for_)
@@ -34,8 +35,11 @@ import           Ouroboros.Consensus.Util.IOLike
                      tryPutTMVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (blockPoint)
+import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
+                     bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.Channel (createConnectedChannels)
-import           Ouroboros.Network.ControlMessage (ControlMessage (..), ControlMessageSTM)
+import           Ouroboros.Network.ControlMessage (ControlMessage (..),
+                     ControlMessageSTM)
 import           Ouroboros.Network.Driver.Limits
 import           Ouroboros.Network.Driver.Limits.Extras
 import           Ouroboros.Network.Driver.Simple (Role (Client, Server))
@@ -47,19 +51,19 @@ import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (chainSyncServerPeer)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
+import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
+                     (BlockTree)
+import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule as Tests.PointSchedule
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync (defaultCfg, ConnectionThread (..))
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
+                     (ConnectionThread (..), defaultCfg)
+import qualified Test.Ouroboros.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
 import           Test.Ouroboros.Consensus.PeerSimulator.Resources
 import           Test.Ouroboros.Consensus.PeerSimulator.Trace
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
-import Control.Monad.Class.MonadTime (MonadTime)
-import Ouroboros.Network.BlockFetch (FetchClientRegistry, newFetchClientRegistry, bracketSyncWithFetchClient)
-import qualified Test.Ouroboros.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule as Tests.PointSchedule
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
-import Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree (BlockTree)
 
 basicChainSyncClient ::
   IOLike m =>
@@ -79,6 +83,16 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
     nullTracer
     varCandidate
 
+-- | Run a ChainSync protocol for one peer, consisting of a server and client.
+--
+-- The connection uses timeouts based on the ASC.
+--
+-- The client is synchronized with BlockFetch using the supplied 'FetchClientRegistry'.
+--
+-- Execution is started asynchronously, returning an action that kills the thread,
+-- to allow extraction of a potential exception.
+--
+-- TODO this should use 'forkLinkedThread' instead of 'async'.
 startChainSyncConnectionThread ::
   (IOLike m, MonadTimer m) =>
   Tracer m String ->
@@ -133,6 +147,8 @@ startChainSyncConnectionThread tracer cfg activeSlotCoefficient chainDbView fetc
            ++ ": " ++ show payload)
       _ -> pure ()
 
+-- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
+-- register it for synchronization with the ChainSync client.
 startBlockFetchConnectionThread ::
   (IOLike m, MonadTime m) =>
   ResourceRegistry m ->
@@ -154,7 +170,9 @@ startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM Share
             Just f  -> pure f
             Nothing -> error "block tip is not in the block tree"
 
--- | NOTE: io-sim provides 'cancel' which does not propagate already existing
+-- | Check whether the supplied thread has terminated and kill it otherwise.
+--
+-- NOTE: io-sim provides 'cancel' which does not propagate already existing
 -- exceptions from the thread.
 cancelPoll :: MonadAsync m => Async m a -> m (Either SomeException a)
 cancelPoll a =
@@ -167,6 +185,7 @@ cancelPoll a =
       cancel a
       pure $ Left $ toException AsyncCancelled
 
+-- | Kill all supplied threads and collect all exceptions that have occurred.
 killAll ::
   IOLike m =>
   [ConnectionThread m] ->
@@ -180,6 +199,10 @@ killAll connectionThreads = do
         Nothing             -> Just exn
     Right _ -> Nothing
 
+-- | The 'Tick' contains a state update for a specific peer.
+-- If the peer has not terminated by protocol rules, this will update its TMVar
+-- with the new state, thereby unblocking the handler that's currently waiting
+-- for new instructions.
 dispatchTick ::
   IOLike m =>
   Tracer m String ->
@@ -199,6 +222,11 @@ dispatchTick tracer peers Tick {active = Peer pid state} =
   where
     trace = traceUnitWith tracer "Scheduler"
 
+-- | Iterate over a 'PointSchedule', sending each tick to the associated peer in turn,
+-- giving each peer a chunk of computation time, sequentially, until it satisfies the
+-- conditions given by the tick.
+-- This usually means for the ChainSync server to have sent the target header to the
+-- client.
 runScheduler ::
   IOLike m =>
   Tracer m String ->
@@ -222,6 +250,13 @@ runScheduler tracer (PointSchedule ps _) peers = do
   traceWith tracer "» Can't put the puppet bowing"
   traceWith tracer "» That just now dangled still -"
 
+-- | Construct STM resources, set up ChainSync and BlockFetch threads, and
+-- send all ticks in a 'PointSchedule' to all given peers in turn.
+--
+-- REVIEW: We could extract the PeerIds from the point schedule.
+-- As it is, we could run protocols for only a subset of peers, but that
+-- would cause dispatchTick to crash.
+-- Is this a potential use case?
 runPointSchedule ::
   (IOLike m, MonadTime m, MonadTimer m) =>
   SecurityParam ->
@@ -257,6 +292,8 @@ runPointSchedule k asc pointSchedule tracer blockTree peers =
   where
     config = defaultCfg k
 
+-- | Create a ChainDB and start a BlockRunner that operate on the peers'
+-- candidate fragments.
 mkChainDb ::
   IOLike m =>
   Tracer m String ->
