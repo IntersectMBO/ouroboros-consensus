@@ -17,18 +17,14 @@ let
     compiler-nix-name = "ghc928";
     flake.variants = {
       ghc810 = { compiler-nix-name = lib.mkForce "ghc8107"; };
-      ghc96 = { compiler-nix-name = lib.mkForce "ghc962"; };
+      ghc96 = { compiler-nix-name = lib.mkForce "ghc963"; };
     };
     inputMap = {
       "https://input-output-hk.github.io/cardano-haskell-packages" = inputs.CHaP;
     };
     modules = [
-      (forAllProjectPackages ({ config, lib, ... }: {
-        ghcOptions = [ "-Werror" ] ++
-          lib.optional
-            # waiting for a new 9.6.x release to fix https://gitlab.haskell.org/ghc/ghc/-/issues/23323
-            (lib.hasPrefix "ghc96" config.compiler.nix-name)
-            "-Wno-error=redundant-constraints";
+      (forAllProjectPackages ({ ... }: {
+        ghcOptions = [ "-Werror" ];
       }))
       {
         # Options related to tasty-golden:
