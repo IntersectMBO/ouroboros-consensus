@@ -75,7 +75,7 @@ awaitNextState ::
   IOLike m =>
   ScheduledChainSyncServer m a ->
   m a
-awaitNextState server@ScheduledChainSyncServer{..} = do
+awaitNextState server@ScheduledChainSyncServer{scssAwaitNextState} = do
   atomically scssAwaitNextState >>= \case
     Nothing       -> awaitNextState server
     Just resource -> pure resource
@@ -90,7 +90,7 @@ ensureCurrentState ::
   IOLike m =>
   ScheduledChainSyncServer m a ->
   m a
-ensureCurrentState server@ScheduledChainSyncServer{..} =
+ensureCurrentState server@ScheduledChainSyncServer{scssCurrentState} =
   atomically scssCurrentState >>= \case
     Nothing -> awaitNextState server
     Just resource -> pure resource
@@ -126,9 +126,11 @@ scheduledChainSyncServer ::
   IOLike m =>
   ScheduledChainSyncServer m a ->
   ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
-scheduledChainSyncServer server@ScheduledChainSyncServer{scssHandlers = ChainSyncServerHandlers {..}, ..} =
+scheduledChainSyncServer server@ScheduledChainSyncServer {scssHandlers, scssTracer, scssName} =
   go
   where
+    ChainSyncServerHandlers {csshRequestNext, csshFindIntersection} = scssHandlers
+
     go =
       ChainSyncServer $ pure ServerStIdle {
           recvMsgRequestNext
@@ -189,4 +191,10 @@ runScheduledChainSyncServer ::
   ChainSyncServerHandlers m a ->
   ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
 runScheduledChainSyncServer scssName scssAwaitNextState scssCurrentState scssTracer scssHandlers =
-  scheduledChainSyncServer ScheduledChainSyncServer {..}
+  scheduledChainSyncServer ScheduledChainSyncServer {
+    scssName,
+    scssAwaitNextState,
+    scssCurrentState,
+    scssTracer,
+    scssHandlers
+  }

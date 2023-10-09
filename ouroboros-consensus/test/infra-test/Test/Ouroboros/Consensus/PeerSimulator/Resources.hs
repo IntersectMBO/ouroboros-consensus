@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NamedFieldPuns  #-}
 
 -- | Data types and resource allocating constructors for the concurrency
 -- primitives used by ChainSync and BlockFetch in the handlers that implement
@@ -123,14 +124,14 @@ makeChainSyncResources ::
   IOLike m =>
   SharedResources m ->
   m (ChainSyncResources m)
-makeChainSyncResources SharedResources {..} = do
+makeChainSyncResources SharedResources {srPeerId, srTracer, srBlockTree, srCurrentState} = do
   csrNextState <- newEmptyTMVarIO
   csrCurrentIntersection <- uncheckedNewTVarM $ AF.Point Origin
   let
     wait = waitForNextState csrNextState srCurrentState
     handlers = makeChainSyncServerHandlers csrCurrentIntersection srBlockTree
     csrServer = runScheduledChainSyncServer (condense srPeerId) wait (readTVar srCurrentState) srTracer handlers
-  pure ChainSyncResources {..}
+  pure ChainSyncResources {csrServer, csrNextState, csrCurrentIntersection}
 
 -- | Create all concurrency resources and the ChainSync protocol server used
 -- for a single peer.
@@ -148,9 +149,9 @@ makePeerResources ::
 makePeerResources srTracer srBlockTree srPeerId = do
   srCandidateFragment <- uncheckedNewTVarM $ AF.Empty AF.AnchorGenesis
   srCurrentState <- uncheckedNewTVarM Nothing
-  let prShared = SharedResources {..}
+  let prShared = SharedResources {srTracer, srBlockTree, srPeerId, srCandidateFragment, srCurrentState}
   prChainSync <- makeChainSyncResources prShared
-  pure PeerResources {..}
+  pure PeerResources {prChainSync, prShared}
 
 -- | Create resources for all given peers operating on the given block tree.
 makePeersResources ::

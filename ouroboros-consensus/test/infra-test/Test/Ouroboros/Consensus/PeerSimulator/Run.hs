@@ -156,7 +156,7 @@ startBlockFetchConnectionThread ::
   ControlMessageSTM m ->
   SharedResources m ->
   m ()
-startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM SharedResources {..} =
+startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM SharedResources {srPeerId, srBlockTree, srCurrentState} =
   void $ forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
     PeerSimulator.BlockFetch.runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM getCurrentChain
   where
@@ -274,11 +274,11 @@ runPointSchedule k asc pointSchedule tracer blockTree peers =
     chainDb <- mkChainDb tracer candidates config registry
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = defaultChainDbView chainDb
-    chainSyncThreads <- for resources $ \PeerResources {..} -> do
+    chainSyncThreads <- for resources $ \PeerResources {prShared, prChainSync} -> do
       thread <- startChainSyncConnectionThread tracer config asc chainDbView fetchClientRegistry prShared prChainSync
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
       pure thread
-    for_ resources $ \PeerResources {..} ->
+    for_ resources $ \PeerResources {prShared} ->
       startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared
     -- The block fetch logic needs to be started after the block fetch clients
     -- otherwise, an internal assertion fails because getCandidates yields more
