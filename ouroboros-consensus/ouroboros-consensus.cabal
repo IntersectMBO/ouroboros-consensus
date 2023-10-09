@@ -525,10 +525,11 @@ test-suite infra-test
     Test.Ouroboros.Consensus.ChainGenerator.Tests.ChainDb
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
     Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
     Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
+    Test.Ouroboros.Consensus.Genesis.Tests
+    Test.Ouroboros.Consensus.Genesis.Tests.LongRangeAttack
     Test.Ouroboros.Consensus.PeerSimulator.BlockFetch
     Test.Ouroboros.Consensus.PeerSimulator.Handlers
     Test.Ouroboros.Consensus.PeerSimulator.Resources

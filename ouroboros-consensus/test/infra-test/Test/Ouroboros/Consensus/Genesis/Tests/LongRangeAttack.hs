@@ -4,7 +4,7 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenesisTest (tests) where
+module Test.Ouroboros.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -40,9 +40,7 @@ import           Test.Util.TestBlock hiding (blockTree)
 import           Test.Util.Tracer (recordingTracerTVar)
 
 tests :: TestTree
-tests = testGroup "Genesis tests"
-    [ testProperty "blargh" prop_syncGenesis
-    ]
+tests = testProperty "long range attack" prop_syncGenesis
 
 prop_syncGenesis :: SomeTestAdversarial -> QCGen -> QC.Property
 prop_syncGenesis (SomeTestAdversarial _ _ params) seed =
@@ -99,7 +97,7 @@ runTest ::
 runTest TestAdversarial{testAscH, testAscA} TestSetup{..} = do
     (tracer, getTrace) <- recordingTracerTVar
 
-    traceWith tracer $ "Active slot coefficient: "
+    traceWith tracer "Active slot coefficient: "
     traceWith tracer $ "  honest: "++ show testAscH
     traceWith tracer $ "  adversary: "++ show testAscA
 
