@@ -37,13 +37,8 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query hiding
-                     (tip)
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
-import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding (tip)
 import           Ouroboros.Consensus.Util
 import           Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary ()
 import           Test.QuickCheck
@@ -154,7 +149,7 @@ prop_pushExpectedLedger setup@ChainSetup{..} =
     expectedChain o = take (fromIntegral (csNumBlocks - o)) csChain
 
     cfg :: LedgerConfig TestBlock
-    cfg = ledgerDbCfg (csBlockConfig setup)
+    cfg = dbChangelogCfg (csBlockConfig setup)
 
 prop_pastLedger :: ChainSetup -> Property
 prop_pastLedger setup@ChainSetup{..} =
@@ -220,7 +215,7 @@ prop_switchExpectedLedger setup@SwitchSetup{..} =
     expectedChain o = take (fromIntegral (ssNumBlocks - o)) ssChain
 
     cfg :: LedgerConfig TestBlock
-    cfg = ledgerDbCfg (csBlockConfig ssChainSetup)
+    cfg = dbChangelogCfg (csBlockConfig ssChainSetup)
 
 -- | Check 'prop_pastLedger' still holds after switching to a fork
 prop_pastAfterSwitch :: SwitchSetup -> Property
@@ -275,13 +270,13 @@ data ChainSetup = ChainSetup {
     }
   deriving (Show)
 
-csBlockConfig :: ChainSetup -> LedgerDbCfg (LedgerState TestBlock)
+csBlockConfig :: ChainSetup -> DbChangelogCfg (LedgerState TestBlock)
 csBlockConfig = csBlockConfig' . csSecParam
 
-csBlockConfig' :: SecurityParam -> LedgerDbCfg (LedgerState TestBlock)
-csBlockConfig' secParam = LedgerDbCfg {
-      ledgerDbCfgSecParam = secParam
-    , ledgerDbCfg         = HardFork.defaultEraParams secParam slotLength
+csBlockConfig' :: SecurityParam -> DbChangelogCfg (LedgerState TestBlock)
+csBlockConfig' secParam = DbChangelogCfg {
+      dbChangelogCfgSecParam = secParam
+    , dbChangelogCfg         = HardFork.defaultEraParams secParam slotLength
     }
   where
     slotLength = slotLengthFromSec 20

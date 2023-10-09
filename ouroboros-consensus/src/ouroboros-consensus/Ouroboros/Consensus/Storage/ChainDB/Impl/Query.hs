@@ -9,10 +9,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
     -- * Queries
     getBlockComponent
   , getCurrentChain
+  , getDbChangelog
   , getIsFetched
   , getIsInvalidBlock
   , getIsValid
-  , getLedgerDB
   , getLedgerDBViewAtPoint
   , getMaxSlotNo
   , getTipBlock
@@ -34,7 +34,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
@@ -74,8 +74,8 @@ getCurrentChain CDB{..} =
   where
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 
-getLedgerDB :: ChainDbEnv m blk -> STM m (DbChangelog' blk)
-getLedgerDB CDB{..} = LedgerDB.getCurrent cdbLedgerDB
+getDbChangelog :: ChainDbEnv m blk -> STM m (DbChangelog' blk)
+getDbChangelog CDB{..} = LedgerDB.getCurrent cdbLedgerDB
 
 getTipBlock
   :: forall m blk.
@@ -103,8 +103,8 @@ getTipHeader CDB{..} = do
     anchorOrHdr <- AF.head <$> atomically (readTVar cdbChain)
     case anchorOrHdr of
       Right hdr   -> return $ Just hdr
-      Left anchor ->
-        case pointToWithOriginRealPoint (castPoint (AF.anchorToPoint anchor)) of
+      Left anch ->
+        case pointToWithOriginRealPoint (castPoint (AF.anchorToPoint anch)) of
           Origin      -> return Nothing
           NotOrigin p ->
             -- In this case, the fragment is empty but the anchor point is not

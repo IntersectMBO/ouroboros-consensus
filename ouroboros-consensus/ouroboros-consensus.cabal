@@ -13,7 +13,9 @@ author:          IOHK Engineering Team
 maintainer:      operations@iohk.io
 category:        Network
 build-type:      Simple
-extra-doc-files: CHANGELOG.md
+extra-doc-files:
+  CHANGELOG.md
+  docs/haddocks/*.svg
 
 source-repository head
   type:     git
@@ -163,8 +165,8 @@ library
     Ouroboros.Consensus.Ledger.SupportsPeerSelection
     Ouroboros.Consensus.Ledger.SupportsProtocol
     Ouroboros.Consensus.Ledger.Tables
+    Ouroboros.Consensus.Ledger.Tables.Basics
     Ouroboros.Consensus.Ledger.Tables.Combinators
-    Ouroboros.Consensus.Ledger.Tables.Common
     Ouroboros.Consensus.Ledger.Tables.DiffSeq
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
@@ -231,26 +233,13 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
     Ouroboros.Consensus.Storage.LedgerDB
-    Ouroboros.Consensus.Storage.LedgerDB.API
-    Ouroboros.Consensus.Storage.LedgerDB.Args
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Bridge
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB.Status
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Trivial
-    Ouroboros.Consensus.Storage.LedgerDB.Config
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Bridge
+    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Status
     Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-    Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
-    Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
-    Ouroboros.Consensus.Storage.LedgerDB.Impl
-    Ouroboros.Consensus.Storage.LedgerDB.Lock
-    Ouroboros.Consensus.Storage.LedgerDB.Query
-    Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
-    Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-    Ouroboros.Consensus.Storage.LedgerDB.Types
-    Ouroboros.Consensus.Storage.LedgerDB.Update
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
     Ouroboros.Consensus.Storage.VolatileDB.API
@@ -367,6 +356,12 @@ library
     , transformers
     , typed-protocols
     , vector                       >=0.12     && <0.13
+
+  -- documentation
+  ghc-options:      -Wno-unused-packages
+  build-depends:
+    , directory
+    , latex-svg-image
 
 library consensus-testlib
   import:          common-lib

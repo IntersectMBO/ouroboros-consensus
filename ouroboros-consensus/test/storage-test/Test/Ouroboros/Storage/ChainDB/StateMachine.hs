@@ -122,8 +122,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (split)
 import           Ouroboros.Consensus.Util.CallStack
@@ -398,7 +396,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       AddBlock blk             -> Point               <$> advanceAndAdd st (blockSlot blk) blk
       AddFutureBlock blk s     -> Point               <$> advanceAndAdd st s               blk
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
-      GetLedgerDB              -> LedgerDB . flush    <$> atomically getLedgerDB
+      GetLedgerDB              -> LedgerDB . flush    <$> atomically getDbChangelog
       GetTipBlock              -> MbBlock             <$> getTipBlock
       GetTipHeader             -> MbHeader            <$> getTipHeader
       GetTipPoint              -> Point               <$> atomically getTipPoint
@@ -660,7 +658,7 @@ runPure cfg = \case
     AddBlock blk             -> ok  Point               $ update  (advanceAndAdd (blockSlot blk) blk)
     AddFutureBlock blk s     -> ok  Point               $ update  (advanceAndAdd s               blk)
     GetCurrentChain          -> ok  Chain               $ query   (Model.volatileChain k getHeader)
-    GetLedgerDB              -> ok  LedgerDB            $ query   (flush . Model.getLedgerDB cfg)
+    GetLedgerDB              -> ok  LedgerDB            $ query   (flush . Model.getDbChangelog cfg)
     GetTipBlock              -> ok  MbBlock             $ query    Model.tipBlock
     GetTipHeader             -> ok  MbHeader            $ query   (fmap getHeader . Model.tipBlock)
     GetTipPoint              -> ok  Point               $ query    Model.tipPoint

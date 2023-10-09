@@ -7,10 +7,11 @@ module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryS
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query (BlockSupportsLedgerQuery,
-                     DiskLedgerView (..), Query)
+                     Query)
 import qualified Ouroboros.Consensus.Ledger.Query as Query
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
@@ -24,10 +25,10 @@ localStateQueryServer ::
      )
   => ExtLedgerCfg blk
   -> (   Maybe (Point blk)
-      -> m (Either (Point blk) (DiskLedgerView m (ExtLedgerState blk)))
+      -> m (Either (Point blk) (LedgerDBView' m blk))
      )
   -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
-localStateQueryServer cfg getDLV =
+localStateQueryServer cfg getView =
     LocalStateQueryServer $ return idle
   where
     idle :: ServerStIdle blk (Point blk) (Query blk) m ()
@@ -39,7 +40,7 @@ localStateQueryServer cfg getDLV =
     handleAcquire :: Maybe (Point blk)
                   -> m (ServerStAcquiring blk (Point blk) (Query blk) m ())
     handleAcquire mpt = do
-        getDLV mpt >>= \case
+        getView mpt >>= \case
           Left immP
             | maybe False ((< pointSlot immP) . pointSlot) mpt
             -> return $ SendMsgFailure AcquireFailurePointTooOld idle
@@ -47,7 +48,7 @@ localStateQueryServer cfg getDLV =
             -> return $ SendMsgFailure AcquireFailurePointNotOnChain idle
           Right dlv -> return $ SendMsgAcquired $ acquired dlv
 
-    acquired :: DiskLedgerView m (ExtLedgerState blk)
+    acquired :: LedgerDBView' m blk
              -> ServerStAcquired blk (Point blk) (Query blk) m ()
     acquired dlv = ServerStAcquired {
           recvMsgQuery     = handleQuery dlv
@@ -55,10 +56,10 @@ localStateQueryServer cfg getDLV =
         , recvMsgRelease   =        do close; return idle
         }
       where
-        close = dlvClose dlv
+        close = closeLedgerDBView dlv
 
     handleQuery ::
-         DiskLedgerView m (ExtLedgerState blk)
+         LedgerDBView' m blk
       -> Query blk result
       -> m (ServerStQuerying blk (Point blk) (Query blk) m () result)
     handleQuery dlv query = do

@@ -29,8 +29,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args (fromChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..))
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.IOLike
@@ -86,11 +85,11 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
           -- how to do it.
           eInitLedger <- runExceptT $ case initializeFrom of
             Nothing       -> do
-              bstore <- lift $ newBackingStore (newBackingStoreInitialiser nullTracer InMemoryBackingStore) ledgerDbFS (projectLedgerTables genesisLedger)
+              bstore <- lift $ newBackingStore nullTracer InMemoryBackingStore ledgerDbFS (projectLedgerTables genesisLedger)
               pure (forgetLedgerTables genesisLedger, bstore)
             Just snapshot -> do
               st <- readSnapshot ledgerDbFS (decodeExtLedgerState' cfg) decode snapshot
-              bstore <- lift $ restoreBackingStore (newBackingStoreInitialiser nullTracer InMemoryBackingStore) ledgerDbFS snapshot
+              bstore <- lift $ restoreBackingStore nullTracer InMemoryBackingStore ledgerDbFS (snapshotToTablesPath snapshot)
               pure (st, bstore)
               -- TODO @readSnapshot@ has type @ExceptT ReadIncrementalErr m
               -- (ExtLedgerState blk)@ but it also throws exceptions! This makes
@@ -122,7 +121,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
             putStrLn $ "ImmutableDB tip: " ++ show tipPoint
             pure result
         SelectChainDB -> do
-          bs <- newBackingStore (newBackingStoreInitialiser nullTracer InMemoryBackingStore) ledgerDbFS (projectLedgerTables genesisLedger)
+          bs <- newBackingStore nullTracer InMemoryBackingStore ledgerDbFS (projectLedgerTables genesisLedger)
           ChainDB.withDB chainDbArgs $ \chainDB -> do
             result <- runAnalysis analysis $ AnalysisEnv {
                 cfg

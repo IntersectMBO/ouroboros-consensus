@@ -34,7 +34,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (TraceChainSyncServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl
+import           Ouroboros.Consensus.Storage.LedgerDB
                      (BackingStoreTraceByBackend)
 import           Ouroboros.Network.BlockFetch (FetchDecision,
                      TraceFetchClientState, TraceLabelPeer)

@@ -20,10 +20,8 @@ import           Ouroboros.Consensus.Ledger.Tables (DiffMK (..), KeysMK (..),
                      LedgerTables (..), ValuesMK)
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (BackingStorePath (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
                      (BackingStoreSelector (..), newBackingStoreInitialiser)
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB
                      (LMDBLimits (..))
 import qualified System.Directory as Dir
 import           System.FS.API (HasFS (..), SomeHasFS (..))
@@ -166,7 +164,7 @@ oneWritePer100Reads n = concat [
 simpleCopy :: [Cmd K V D]
 simpleCopy = [
     BSInitFromValues Origin emptyLedgerTables
-  , BSCopy (BackingStorePath $ mkFsPath ["copies", "somecopy"])
+  , BSCopy (mkFsPath ["copies", "somecopy"])
   , BSClose
   ]
 

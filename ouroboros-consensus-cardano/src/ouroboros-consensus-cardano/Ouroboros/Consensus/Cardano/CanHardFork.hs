@@ -283,6 +283,16 @@ type CardanoHardForkConstraints c =
   , DSIGN    c ~ Ed25519DSIGN
   )
 
+-- | When performing era translations, two eras have special behaviours on the
+-- ledger tables:
+--
+-- * Byron to Shelley: as Byron has no tables, the whole UTxO set is computed as
+--     insertions, note that it uses 'calculateAdditions'
+--
+-- * Shelley to Allegra: some special addresses (the so called /AVVM/
+--     addresses), were deleted in this transition, which influenced things like
+--     the calculation of later rewards. In this transition, we consume the
+--     'shelleyToAllegraAVVMsToDelete' as deletions in the ledger tables.
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   hardForkEraTranslation = EraTranslation {
       translateLedgerState   =

@@ -9,7 +9,7 @@ import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
                      picosecondsToDiffTime, secondsToDiffTime)
 import           Data.Word
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Config (DiskPolicy (..),
+import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicy (..),
                      FlushFrequency (..), QueryBatchSize (..),
                      SnapshotInterval (..), defaultDiskPolicy)
 import           Test.QuickCheck

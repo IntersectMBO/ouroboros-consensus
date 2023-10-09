@@ -3,6 +3,7 @@
 *~
 /docs/website/.docusaurus/
 /docs/website/build/
+/ouroboros-consensus/docs/haddocks/
 
 # GHC
 .ghcid

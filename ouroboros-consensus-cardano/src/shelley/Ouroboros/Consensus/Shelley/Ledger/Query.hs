@@ -71,7 +71,6 @@ import           Data.Maybe (fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.SOP.Index
-import           Data.SOP.Strict
 import           Data.Typeable (Typeable)
 import qualified Data.VMap as VMap
 import           GHC.Generics (Generic)
@@ -96,8 +95,9 @@ import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
                      (ShelleyNodeToClientVersion (..))
 import           Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util (ShowProxy (..))
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
                      encodePoint, mkSerialised)
@@ -396,13 +396,13 @@ instance ( ShelleyCompatible proto era
 
   answerBlockQueryLookup cfg qry dlv = case qry of
     GetUTxOByTxIn ks -> do
-      values <- dlvRead dlv $ LedgerTables $ KeysMK ks
+      values <- ledgerDBViewRead dlv $ LedgerTables $ KeysMK ks
       pure
         . flip SL.getUTxOSubset ks
         . shelleyLedgerState
         . ledgerState
         . stowLedgerTables
-        $ dlvCurrent dlv `withLedgerTables` values
+        $ current (viewChangelog dlv) `withLedgerTables` values
     GetCBOR qry'     ->
       mkSerialised (encodeShelleyResult maxBound qry') <$>
             answerBlockQueryLookup cfg qry' dlv
@@ -414,8 +414,8 @@ instance ( ShelleyCompatible proto era
       mkSerialised (encodeShelleyResult maxBound q') <$>
        answerBlockQueryTraverse cfg q' dlv
    where
-    dbReadRange    = dlvRangeRead dlv
-    queryBatchSize = dlvQueryBatchSize dlv
+    dbReadRange    = ledgerDBViewRangeRead dlv
+    queryBatchSize = viewQueryBatchSize dlv
 
     emptyUtxo               = SL.UTxO Map.empty
 
@@ -927,7 +927,7 @@ answerShelleyLookupQueries ::
   => Index xs (ShelleyBlock proto era)
   -> ExtLedgerCfg (ShelleyBlock proto era)
   -> BlockQuery (ShelleyBlock proto era) QFLookupTables result
-  -> DiskLedgerView m (ExtLedgerState (HardForkBlock xs))
+  -> LedgerDBView' m (HardForkBlock xs)
   -> m result
 answerShelleyLookupQueries idx cfg q dlv =
     case q of
@@ -942,7 +942,7 @@ answerShelleyLookupQueries idx cfg q dlv =
       -> m (SL.UTxO era)
     answerGetUtxOByTxIn txins = do
       LedgerTables (ValuesMK values) <-
-        dlvRead
+        ledgerDBViewRead
           dlv
           (castLedgerTables $ injectLedgerTables idx (LedgerTables $ KeysMK txins))
       pure
@@ -973,7 +973,6 @@ filterGetUTxOByAddressOne addrs =
 answerShelleyTraversingQueries ::
      forall xs proto era m result.
      ( ShelleyCompatible proto era
-     , All (Compose Eq WrapTxOut) xs
      , BlockSupportsHFLedgerQuery xs
      , HasCanonicalTxIn xs
      , CanHardFork xs
@@ -982,7 +981,7 @@ answerShelleyTraversingQueries ::
   => Index xs (ShelleyBlock proto era)
   -> ExtLedgerCfg (ShelleyBlock proto era)
   -> BlockQuery (ShelleyBlock proto era) QFTraverseTables result
-  -> DiskLedgerView m (ExtLedgerState (HardForkBlock xs))
+  -> LedgerDBView' m (HardForkBlock xs)
   -> m result
 answerShelleyTraversingQueries idx cfg q dlv = case q of
     GetUTxOByAddress{} -> loop (queryLedgerGetTraversingFilter idx q) Nothing emptyUtxo
@@ -991,8 +990,8 @@ answerShelleyTraversingQueries idx cfg q dlv = case q of
       mkSerialised (encodeShelleyResult maxBound q') <$>
        answerBlockQueryHFTraverse idx cfg q' dlv
   where
-    dbReadRange    = dlvRangeRead dlv
-    queryBatchSize = dlvQueryBatchSize dlv
+    dbReadRange    = ledgerDBViewRangeRead dlv
+    queryBatchSize = viewQueryBatchSize dlv
 
     emptyUtxo               = SL.UTxO Map.empty
 

@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , getHeaderStateHistory
   , getImmutableLedger
   , getPastLedger
-  , getStatistics
   , getTipBlockNo
     -- * Adding a block
   , AddBlockPromise (..)
@@ -72,20 +71,12 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
-                     (InvalidBlockPunishment)
-import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.Common
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDBView',
-                     closeLedgerDBView)
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDBView')
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-                     (anchorlessChangelog)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Query as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
-                     (PointNotFound)
+                     (PointNotFound, anchorlessChangelog)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as LedgerDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
@@ -170,8 +161,8 @@ data ChainDB m blk = ChainDB {
       -- fragment will move as the chain grows.
     , getCurrentChain    :: STM m (AnchoredFragment (Header blk))
 
-      -- | Return the LedgerDB containing the last @k@ ledger states.
-    , getLedgerDB        :: STM m (LedgerDB.DbChangelog' blk)
+      -- | Return the DbChangelog containing the last @k@ ledger states.
+    , getDbChangelog        :: STM m (LedgerDB.DbChangelog' blk)
 
       -- | Acquire a value handle and ledger DB, both anchored at the same slot
       -- and truncated to the specified point if the provided point exists on
@@ -362,6 +353,10 @@ data ChainDB m blk = ChainDB {
                 (PointNotFound blk)
                 (LedgerTables (ExtLedgerState blk) ValuesMK))
 
+      -- | Get statistics from the LedgerDB, in particular the number of entries
+      -- in the tables.
+    , getStatistics      :: m Statistics
+
       -- | Close the ChainDB
       --
       -- Idempotent.
@@ -387,24 +382,13 @@ getTipBlockNo = fmap Network.getTipBlockNo . getCurrentTip
 getCurrentLedger ::
      (Monad (STM m), IsLedger (LedgerState blk))
   => ChainDB m blk -> STM m (ExtLedgerState blk EmptyMK)
-getCurrentLedger = fmap (LedgerDB.current . anchorlessChangelog) . getLedgerDB
+getCurrentLedger = fmap (LedgerDB.current . anchorlessChangelog) . getDbChangelog
 
 -- | Get the immutable ledger, i.e., typically @k@ blocks back.
 getImmutableLedger ::
      Monad (STM m)
   => ChainDB m blk -> STM m (ExtLedgerState blk EmptyMK)
-getImmutableLedger = fmap (LedgerDB.anchor . anchorlessChangelog) . getLedgerDB
-
-getStatistics ::
-  (Monad m, LedgerSupportsProtocol blk)
-  => ChainDB m blk -> m Statistics
-getStatistics cdb = do
-  getLedgerDBViewAtPoint cdb Nothing >>=  \case
-    Left{} -> error "Impossible, we are asking for a view at the tip"
-    Right view -> do
-      stats <- LedgerDB.getStatistics view
-      closeLedgerDBView view
-      pure stats
+getImmutableLedger = fmap (LedgerDB.anchor . anchorlessChangelog) . getDbChangelog
 
 -- | Get the ledger for the given point.
 --
@@ -414,14 +398,14 @@ getStatistics cdb = do
 getPastLedger ::
      (Monad (STM m), LedgerSupportsProtocol blk, StandardHash (ExtLedgerState blk))
   => ChainDB m blk -> Point blk -> STM m (Maybe (ExtLedgerState blk EmptyMK))
-getPastLedger db pt = LedgerDB.getPastLedgerAt pt . anchorlessChangelog <$> getLedgerDB db
+getPastLedger db pt = LedgerDB.getPastLedgerAt pt . anchorlessChangelog <$> getDbChangelog db
 
 -- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
 -- last @k@ blocks of the current chain.
 getHeaderStateHistory ::
      Monad (STM m)
   => ChainDB m blk -> STM m (HeaderStateHistory blk)
-getHeaderStateHistory = fmap toHeaderStateHistory . getLedgerDB
+getHeaderStateHistory = fmap toHeaderStateHistory . getDbChangelog
   where
     toHeaderStateHistory ::
          LedgerDB.DbChangelog' blk
@@ -566,7 +550,7 @@ fromChain ::
   -> m (ChainDB m blk)
 fromChain openDB chain = do
     chainDB <- openDB
-    mapM_ (addBlock_ chainDB InvalidBlockPunishment.noPunishment) $ Chain.toOldestFirst chain
+    mapM_ (addBlock_ chainDB noPunishment) $ Chain.toOldestFirst chain
     return chainDB
 
 {-------------------------------------------------------------------------------
