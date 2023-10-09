@@ -15,7 +15,7 @@ category:        Network
 build-type:      Simple
 extra-doc-files:
   CHANGELOG.md
-  docs/haddocks/Ouroboros/Consensus/Storage/LedgerDB/*.svg
+  docs/haddocks/*.svg
 
 source-repository head
   type:     git

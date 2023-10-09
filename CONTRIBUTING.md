@@ -121,6 +121,43 @@ cabal test ouroboros-consensus:test:consensus-test --test-show-details=direct
 Note the second one cannot be used when we want to provide CLI arguments to the
 test-suite.
 
+# Generating documentation and setting up hoogle
+
+Documentation contains some tikz figures that require some preprocessing for
+them to be displayed. In order to do this, one can just invoke the `make` rules:
+
+```bash
+make haddocks
+
+# optionally provide a specific package or component
+make haddocks pkg=ouroboros-consensus
+```
+
+This will install `latex-svg-image` from [a
+fork](https://github.com/jasagredo/latex-svg/tree/jasagredo/draw-tikz/latex-svg-image),
+and `cabal-docspec` from a binary (do inspect the `Makefile` to see what it
+does), then building the haddocks for your package.
+
+Often times, it is useful to have a `hoogle` server at hand, with the packages
+and its dependencies. For this, one needs to first modify the global cabal
+configuration:
+
+```bash
+cabal user-config update -a "documentation: True
+haddock
+  html: True
+  hoogle: True"
+```
+
+and then invoke the `make` rules again:
+
+```bash
+make hoogle
+```
+
+This will fire a `hoogle` server at https://localhost:8080/ with the local
+packages and their dependencies.
+
 # Contributing to the code
 
 The following sections contain some guidelines that should be followed when
@@ -318,10 +355,6 @@ The core contributors to consensus codebase are:
 -   [Alexander Esgen](https://github.com/amesgen)
 
 -   [Joris Dral](https://github.com/jorisdral)
-
--   [Bart Frenk](https://github.com/bartfrenk)
-
--   [Arnaud Bailly](https://github.com/abailly-iohk)
 
 -   [Fraser Murray](https://github.com/fraser-iohk)
 
