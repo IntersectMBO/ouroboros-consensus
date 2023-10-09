@@ -114,11 +114,7 @@ runTest TestSetup{..} makeProperty = do
 
     mapM_ (traceWith tracer) $ BT.prettyPrint blockTree
 
-    -- REVIEW: Extract the peers from the point schedule.
-    let advPeer = PeerId "adversary"
-    let peers = [HonestPeer, advPeer]
-
-    result <- runPointSchedule secParam honestAsc schedule tracer blockTree peers
+    result <- runPointSchedule secParam honestAsc schedule tracer blockTree
     trace <- unlines <$> getTrace
 
     case result of

@@ -7,6 +7,7 @@ module Test.Ouroboros.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
 import           Control.Monad.IOSim (runSimOrThrow)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromJust)
 import           Ouroboros.Consensus.Block.Abstract hiding (Header)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
@@ -61,6 +62,7 @@ exampleTestSetup params seed =
   TestSetup {
     secParam      = SecurityParam (fromIntegral k)
   , genesisWindow = GenesisWindow (fromIntegral scg)
+  , schedule      = fromJust schedule -- FIXME: discard such test cases in QuickCheck
   , ..
   }
   where

@@ -55,7 +55,10 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
                      (BlockTree)
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule as Tests.PointSchedule
+import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule as PointSchedule
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+                     (Peer (Peer), PeerId, PointSchedule (PointSchedule),
+                     TestFragH, Tick (Tick), pointSchedulePeers)
 import qualified Test.Ouroboros.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
 import           Test.Ouroboros.Consensus.PeerSimulator.Config
 import           Test.Ouroboros.Consensus.PeerSimulator.Resources
@@ -171,7 +174,7 @@ startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM Share
       case nodeState of
         Nothing -> retry
         Just aps -> do
-          let Tests.PointSchedule.BlockPoint b = block aps
+          let PointSchedule.BlockPoint b = PointSchedule.block aps
           case BT.findFragment (blockPoint b) srBlockTree of
             Just f  -> pure f
             Nothing -> error "block tip is not in the block tree"
@@ -239,7 +242,7 @@ runScheduler ::
   PointSchedule ->
   Map PeerId (PeerResources m) ->
   m ()
-runScheduler tracer (PointSchedule ps _) peers = do
+runScheduler tracer (PointSchedule ps) peers = do
   traceWith tracer "Schedule is:"
   for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
   traceWith tracer "--------------------------------------------------------------------------------"
@@ -258,11 +261,6 @@ runScheduler tracer (PointSchedule ps _) peers = do
 
 -- | Construct STM resources, set up ChainSync and BlockFetch threads, and
 -- send all ticks in a 'PointSchedule' to all given peers in turn.
---
--- REVIEW: We could extract the PeerIds from the point schedule.
--- As it is, we could run protocols for only a subset of peers, but that
--- would cause dispatchTick to crash.
--- Is this a potential use case?
 runPointSchedule ::
   (IOLike m, MonadTime m, MonadTimer m) =>
   SecurityParam ->
@@ -270,11 +268,10 @@ runPointSchedule ::
   PointSchedule ->
   Tracer m String ->
   BlockTree TestBlock ->
-  [PeerId] ->
   m (Either (NonEmpty SomeException) TestFragH)
-runPointSchedule k asc pointSchedule tracer blockTree peers =
+runPointSchedule k asc pointSchedule tracer blockTree =
   withRegistry $ \registry -> do
-    resources <- makePeersResources tracer blockTree peers
+    resources <- makePeersResources tracer blockTree (pointSchedulePeers pointSchedule)
     let candidates = srCandidateFragment . prShared <$> resources
     traceWith tracer $ "Security param k = " ++ show k
     chainDb <- mkChainDb tracer candidates config registry
