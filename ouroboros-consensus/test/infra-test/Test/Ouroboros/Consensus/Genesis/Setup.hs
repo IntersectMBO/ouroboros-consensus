@@ -1,29 +1,40 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain (module Test.Ouroboros.Consensus.ChainGenerator.Tests.GenChain) where
+module Test.Ouroboros.Consensus.Genesis.Setup
+  ( module Test.Ouroboros.Consensus.Genesis.Setup,
+  )
+where
 
-import           Cardano.Slotting.Slot (SlotNo)
+import           Control.Monad.Class.MonadTime (MonadTime)
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import           Control.Tracer (traceWith)
+import           Ouroboros.Consensus.Block.Abstract hiding (Header)
+import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Util.Condense
+import           Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Test.Ouroboros.Consensus.ChainGenerator.Params
+import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Ouroboros.Consensus.PeerSimulator.Run
+import           Test.QuickCheck
+import           Test.QuickCheck.Random (QCGen)
+import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TestBlock hiding (blockTree)
+import           Test.Util.Tracer (recordingTracerTVar)
 import           Data.List (foldl')
 import qualified Data.Vector.Unboxed as Vector
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Adversarial as A
 import           Test.Ouroboros.Consensus.ChainGenerator.Counting
                      (Count (Count), getVector)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Honest as H
-import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (S)
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
-import           Test.QuickCheck.Random (QCGen)
-import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestBlock (TestBlock, TestBlockWith (tbSlot),
-                     firstBlock, forkBlock, successorBlock)
 
 -- | Generates a block tree randomly from an adversarial recipe. The block tree
 -- contains one trunk (the “good chain”) and one branch (the “bad chain”). For
@@ -33,6 +44,7 @@ import           Test.Util.TestBlock (TestBlock, TestBlockWith (tbSlot),
 --     good:  O─────1──2──3──4─────5──6──7
 --     bad:            ╰─────3──4─────5
 --
+-- REVIEW: Generate more alternative chains?
 genChains ::
   Asc ->
   A.AdversarialRecipe base hon ->
@@ -75,3 +87,46 @@ genChains ascA A.AdversarialRecipe {A.arHonest, A.arPrefix = Count prefixCount} 
 
     H.ChainSchema _ vH = arHonest
     H.ChainSchema _ vA = A.uniformAdversarialChain (Just ascA) recipeA' seed
+
+newtype GenesisWindow = GenesisWindow { getGenesisWindow :: SlotNo }
+  deriving stock (Show)
+
+data TestSetup = TestSetup {
+    secParam                  :: SecurityParam
+  , genesisWindow             :: GenesisWindow
+  , honestAsc                 :: Asc
+  , schedule                  :: PointSchedule
+  , blockTree                 :: BT.BlockTree TestBlock
+  , genesisAcrossIntersection :: Bool
+  , genesisAfterIntersection  :: Bool
+  }
+  deriving stock (Show)
+
+runTest ::
+  (IOLike m, MonadTime m, MonadTimer m) =>
+  TestSetup ->
+  (TestFragH -> m Property) ->
+  m Property
+runTest TestSetup{..} makeProperty = do
+    (tracer, getTrace) <- recordingTracerTVar
+
+    traceWith tracer $ "Honest active slot coefficient: " ++ show honestAsc
+
+    mapM_ (traceWith tracer) $ BT.prettyPrint blockTree
+
+    -- REVIEW: Extract the peers from the point schedule.
+    let advPeer = PeerId "adversary"
+    let peers = [HonestPeer, advPeer]
+
+    result <- runPointSchedule secParam honestAsc schedule tracer blockTree peers
+    trace <- unlines <$> getTrace
+
+    case result of
+      Left exn ->
+        pure $ counterexample ("exception: " <> show exn) False
+      Right fragment -> do
+        prop <- makeProperty fragment
+        pure
+          $ counterexample ("result: " <> condense fragment)
+          $ counterexample trace
+          $ prop
