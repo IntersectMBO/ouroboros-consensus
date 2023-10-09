@@ -20,7 +20,8 @@ import           Data.Traversable (for)
 import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     Consensus, chainSyncClient, defaultChainDbView)
+                     ChainSyncClientResult, Consensus, chainSyncClient,
+                     defaultChainDbView)
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
@@ -54,16 +55,21 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
                      (BlockTree)
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule as Tests.PointSchedule
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Sync
-                     (ConnectionThread (..), defaultCfg)
+import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule as Tests.PointSchedule
 import qualified Test.Ouroboros.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
+import           Test.Ouroboros.Consensus.PeerSimulator.Config
 import           Test.Ouroboros.Consensus.PeerSimulator.Resources
 import           Test.Ouroboros.Consensus.PeerSimulator.Trace
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
+
+-- | A handle to a thread running a connection between
+-- typed-protocols peers
+newtype ConnectionThread m =
+  ConnectionThread {
+    kill :: m (Either SomeException ChainSyncClientResult)
+  }
 
 basicChainSyncClient ::
   IOLike m =>
