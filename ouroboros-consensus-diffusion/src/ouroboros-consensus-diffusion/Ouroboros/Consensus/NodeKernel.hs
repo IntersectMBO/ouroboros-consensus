@@ -64,10 +64,10 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding (tip)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as LedgerDB
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
@@ -307,7 +307,7 @@ forkBlockForging IS{..} blockForging =
       -- 'getPastLedger', we switched to a fork where 'bcPrevPoint' is no longer
       -- on our chain. When that happens, we simply give up on the chance to
       -- produce a block.
-      eLedgerDBView <- lift $ ChainDB.getLedgerDBViewAtPoint chainDB (Just bcPrevPoint)
+      eLedgerDBView <- lift $ ChainDB.getDbChangelogViewAtPoint chainDB (Just bcPrevPoint)
       -- before 'earlyExit' we need to 'lbsvhClose' this value handle. Once we get
       -- a snapshot we can just close it.
       (vh, chdiffs, unticked) <- case eLedgerDBView of

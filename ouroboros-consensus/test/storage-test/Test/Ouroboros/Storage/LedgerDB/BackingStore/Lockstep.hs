@@ -39,11 +39,13 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory as BS
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as LMDB
-                     (DbErr (..))
+import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory as BS
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB as LMDB
+                     (LMDBErr (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..), handle)
 import           System.FS.API hiding (Handle)
+import qualified System.FS.API.Types as FS
+import           System.FS.API.Types hiding (Handle)
 import qualified Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock as Mock
 import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock (Err (..),
                      Mock (..), ValueHandle (..), runMockState)
@@ -178,10 +180,10 @@ instance ( Show ks, Show vs, Show d
                      -> Values vs
                      -> BSAct ks vs d ()
     -- Reopen a backing store by initialising from a copy.
-    BSInitFromCopy   :: BS.BackingStorePath
+    BSInitFromCopy   :: FS.FsPath
                      -> BSAct ks vs d ()
     BSClose          :: BSAct ks vs d ()
-    BSCopy           :: BS.BackingStorePath
+    BSCopy           :: FS.FsPath
                      -> BSAct ks vs d ()
     BSValueHandle    :: BSAct ks vs d Handle
     BSWrite          :: SlotNo
@@ -498,10 +500,10 @@ arbitraryBackingStoreAction findVars (BackingStoreState mock _stats) =
           -> GVar Op Handle
         fhandle = mapGVar (\op -> OpRight `OpComp` op)
 
-    genBackingStorePath :: Gen BS.BackingStorePath
+    genBackingStorePath :: Gen FS.FsPath
     genBackingStorePath = do
       file <- genBSPFile
-      pure . BS.BackingStorePath . mkFsPath $ ["copies", file]
+      pure . mkFsPath $ ["copies", file]
 
     -- Generate a file name for a copy of the backing store contents. We keep
     -- the set of possible file names small, such that errors (i.e., file alread
@@ -587,7 +589,7 @@ runIO action lookUp = ReaderT $ \renv ->
         BSClose            -> catchErr $
           readMVar bsVar >>= BS.bsClose
         BSCopy bsp         -> catchErr $
-          readMVar bsVar >>= \bs -> BS.bsCopy bs sfhs bsp
+          readMVar bsVar >>= \bs -> BS.bsCopy bs bsp
         BSValueHandle      -> catchErr $
           readMVar bsVar >>= (BS.bsValueHandle >=> registerHandle rr)
         BSWrite sl d       -> catchErr $
@@ -780,32 +782,32 @@ mkHandler fhandler = Handler $
   \e -> maybe (throwIO e) (return . Left) (fhandler e)
 
 -- | Map LMDB errors to mock errors.
-fromDbErr :: LMDB.DbErr -> Maybe Err
+fromDbErr :: LMDB.LMDBErr -> Maybe Err
 fromDbErr = \case
-  DbErrNoDbState                   -> Nothing
-  DbErrNonMonotonicSeq wo wo'      -> Just $ ErrNonMonotonicSeqNo wo wo'
-  DbErrInitialisingNonEmpty _      -> Nothing
-  DbErrNoValueHandle _             -> Just ErrBackingStoreValueHandleClosed
-  DbErrBadRead                     -> Nothing
-  DbErrBadRangeRead                -> Nothing
-  DbErrDirExists _                 -> Just ErrCopyPathAlreadyExists
-  DbErrDirDoesntExist _            -> Just ErrCopyPathDoesNotExist
-  DbErrDirIsNotLMDB _              -> Nothing
-  DbErrClosed                      -> Just ErrBackingStoreClosed
-  DbErrInitialisingAlreadyHasState -> Nothing
-  DbErrUnableToReadSeqNo           -> Nothing
-  DbErrNotADir _                   -> Nothing
+  LMDBErrNoDbState                   -> Nothing
+  LMDBErrNonMonotonicSeq wo wo'      -> Just $ ErrNonMonotonicSeqNo wo wo'
+  LMDBErrInitialisingNonEmpty _      -> Nothing
+  LMDBErrNoValueHandle _             -> Just ErrBackingStoreValueHandleClosed
+  LMDBErrBadRead                     -> Nothing
+  LMDBErrBadRangeRead                -> Nothing
+  LMDBErrDirExists _                 -> Just ErrCopyPathAlreadyExists
+  LMDBErrDirDoesntExist _            -> Just ErrCopyPathDoesNotExist
+  LMDBErrDirIsNotLMDB _              -> Nothing
+  LMDBErrClosed                      -> Just ErrBackingStoreClosed
+  LMDBErrInitialisingAlreadyHasState -> Nothing
+  LMDBErrUnableToReadSeqNo           -> Nothing
+  LMDBErrNotADir _                   -> Nothing
 
 -- | Map InMemory (i.e., @TVarBackingStore@) errors to mock errors.
-fromTVarExn :: BS.TVarBackingStoreExn -> Maybe Err
+fromTVarExn :: BS.InMemoryBackingStoreExn -> Maybe Err
 fromTVarExn = \case
-  BS.TVarBackingStoreClosedExn              -> Just ErrBackingStoreClosed
-  BS.TVarBackingStoreValueHandleClosedExn   -> Just ErrBackingStoreValueHandleClosed
-  BS.TVarBackingStoreDirectoryExists        -> Just ErrCopyPathAlreadyExists
-  BS.TVarBackingStoreNonMonotonicSeq wo wo' -> Just $ ErrNonMonotonicSeqNo wo wo'
-  BS.TVarBackingStoreDeserialiseExn _       -> Nothing
-  BS.TVarIncompleteDeserialiseExn           -> Nothing
+  BS.InMemoryBackingStoreClosedExn              -> Just ErrBackingStoreClosed
+  BS.InMemoryBackingStoreValueHandleClosedExn   -> Just ErrBackingStoreValueHandleClosed
+  BS.InMemoryBackingStoreDirectoryExists        -> Just ErrCopyPathAlreadyExists
+  BS.InMemoryBackingStoreNonMonotonicSeq wo wo' -> Just $ ErrNonMonotonicSeqNo wo wo'
+  BS.InMemoryBackingStoreDeserialiseExn _       -> Nothing
+  BS.InMemoryIncompleteDeserialiseExn           -> Nothing
 
-fromTVarExn' :: BS.StoreDirIsIncompatible -> Maybe Err
+fromTVarExn' :: BS.InMemoryBackingStoreInitExn -> Maybe Err
 fromTVarExn' = \case
   BS.StoreDirIsIncompatible _ -> Just ErrCopyPathDoesNotExist

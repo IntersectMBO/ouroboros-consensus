@@ -74,19 +74,13 @@ import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream hiding
                      (streamAPI)
+import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as HD
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as LMDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB as LMDB
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
-import           Ouroboros.Consensus.Storage.LedgerDB.Impl
-import           Ouroboros.Consensus.Storage.LedgerDB.Lock
-import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
                      (KeySetsReader, PointNotFound (..), getLedgerTablesFor,
                      readKeySets)
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Update as Update
+import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -438,10 +432,10 @@ genBlock pt =
 genBlockFromLedgerState :: ExtLedgerState TestBlock mk -> Gen TestBlock
 genBlockFromLedgerState = pure . genBlock . lastAppliedPoint . ledgerState
 
-extLedgerDbConfig :: SecurityParam -> LedgerDbCfg (ExtLedgerState TestBlock)
-extLedgerDbConfig secParam = LedgerDbCfg {
-      ledgerDbCfgSecParam = secParam
-    , ledgerDbCfg         = ExtLedgerCfg $ singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig secParam
+extLedgerDbConfig :: SecurityParam -> DbChangelog.DbChangelogCfg (ExtLedgerState TestBlock)
+extLedgerDbConfig secParam = DbChangelog.DbChangelogCfg {
+      dbChangelogCfgSecParam = secParam
+    , dbChangelogCfg         = ExtLedgerCfg $ singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig secParam
     }
 
 
@@ -718,7 +712,7 @@ runMock :: Cmd MockSnap -> Mock -> (Resp MockSnap, Mock)
 runMock cmd initMock =
     first Resp $ go cmd initMock
   where
-    cfg :: LedgerDbCfg (ExtLedgerState TestBlock)
+    cfg :: DbChangelog.DbChangelogCfg (ExtLedgerState TestBlock)
     cfg = extLedgerDbConfig (mockSecParam initMock)
 
     go :: Cmd MockSnap -> Mock -> (Success MockSnap, Mock)
@@ -819,7 +813,7 @@ runMock cmd initMock =
     push :: TestBlock -> StateT MockLedger (Except (ExtValidationError TestBlock)) ()
     push b = do
         ls <- State.get
-        l' <- State.lift $ tickThenApply (ledgerDbCfg cfg) b (cur ls)
+        l' <- State.lift $ tickThenApply (DbChangelog.dbChangelogCfg cfg) b (cur ls)
         State.put ((b, applyDiffs (cur ls) l'):ls)
 
     switch :: Word64
@@ -867,7 +861,7 @@ data StandaloneDB m = DB {
       -- track of a current chain and keep the ledger DB in sync with it.
       --
       -- Invariant: all references @r@ here must be present in 'dbBlocks'.
-    , dbChlog       :: StrictTVar m (DbChangelog' TestBlock)
+    , dbChlog       :: StrictTVar m (DbChangelog.DbChangelog' TestBlock)
 
     , dbChain       :: StrictTVar m [RealPoint TestBlock]
 
@@ -875,7 +869,7 @@ data StandaloneDB m = DB {
     , dbResolve     :: DbChangelog.ResolveBlock m TestBlock
 
       -- | LedgerDB config
-    , dbLedgerDbCfg :: LedgerDbCfg (ExtLedgerState TestBlock)
+    , dbLedgerDbCfg :: DbChangelog.DbChangelogCfg (ExtLedgerState TestBlock)
 
     , dbBackingStore :: StrictTVar m (HD.LedgerBackingStore m (ExtLedgerState TestBlock))
 
@@ -906,20 +900,18 @@ initStandaloneDB dbEnv@DbEnv{..} dbRegistry dbSecParam = do
     dbChain  <- uncheckedNewTVarM initChain
     dbChlog  <- uncheckedNewTVarM initDB
     dbLock   <- mkLedgerDBLock
-    let bsi = newBackingStoreInitialiser
-                nullTracer
-                dbBackingStoreSelector
+
     dbBackingStore <- uncheckedNewTVarM
-                      =<< bsi
-                             dbHasFS
-                             (HD.InitFromValues
-                              Origin
-                              initTables -- TODO we could consider adapting the test generator to generate an initial ledger with non-empty tables.
-                             )
+                      =<< HD.newBackingStore
+                            nullTracer
+                            dbBackingStoreSelector
+                            dbHasFS
+                            initTables -- TODO we could consider adapting the test generator to generate an initial ledger with non-empty tables.
+
     let dbResolve :: DbChangelog.ResolveBlock m TestBlock
         dbResolve r = atomically $ getBlock r <$> readTVar dbBlocks
 
-        dbLedgerDbCfg :: LedgerDbCfg (ExtLedgerState TestBlock)
+        dbLedgerDbCfg :: DbChangelog.DbChangelogCfg (ExtLedgerState TestBlock)
         dbLedgerDbCfg = extLedgerDbConfig dbSecParam
 
     return DB{..}
@@ -927,10 +919,10 @@ initStandaloneDB dbEnv@DbEnv{..} dbRegistry dbSecParam = do
     initChain :: [RealPoint TestBlock]
     initChain = []
 
-    initDB     :: DbChangelog' TestBlock
+    initDB     :: DbChangelog.DbChangelog' TestBlock
     initTables :: LedgerTables (ExtLedgerState TestBlock) ValuesMK
     (initDB, initTables) =
-        ( empty
+        ( DbChangelog.empty
             (forgetLedgerTables initialState)
         , projectLedgerTables initialState
         )
@@ -1022,14 +1014,14 @@ runDB standalone@DB{..} cmd =
 
     go :: SomeHasFS m -> Cmd DiskSnapshot -> m (Success DiskSnapshot)
     go _ Current =
-        atomically $ Ledger . DbChangelog.current . anchorlessChangelog <$> readTVar dbChlog
+        atomically $ Ledger . DbChangelog.current . DbChangelog.anchorlessChangelog <$> readTVar dbChlog
     go _ (Push b) = do
         atomically $ modifyTVar dbBlocks $
           uncurry Map.insert (refValPair b)
         upd (push b) $ \db ->
           fmap (first annLedgerErr') $
             DbChangelog.defaultThrowLedgerErrors $
-               onChangelogM (
+               DbChangelog.onChangelogM (
                 DbChangelog.applyThenPush
                 dbLedgerDbCfg
                 (DbChangelog.ApplyVal b)
@@ -1041,7 +1033,7 @@ runDB standalone@DB{..} cmd =
         upd (switch n bs) $ \db ->
           fmap (first annLedgerErr') $
             DbChangelog.defaultResolveWithErrors dbResolve $
-             onChangelogM (
+             DbChangelog.onChangelogM (
                 fmap ignoreExceedRollback .
                 DbChangelog.switch
                   dbLedgerDbCfg
@@ -1062,7 +1054,7 @@ runDB standalone@DB{..} cmd =
             Just _ -> do
               modifyTVar dbChlog (const db')
               pure (toFlush, bs)
-        mapM_ (Update.flushIntoBackingStore bs) toFlush
+        mapM_ (flushIntoBackingStore bs) toFlush
         pure Flushed
     go hasFS Snap = do
         bs <- atomically $ readTVar dbBackingStore
@@ -1097,7 +1089,7 @@ runDB standalone@DB{..} cmd =
         atomically $ do
           modifyTVar dbChlog (const db)
           writeTVar dbBackingStore backingStore
-        return $ Restored (fromInitLog initLog, DbChangelog.current $ anchorlessChangelog db)
+        return $ Restored (fromInitLog initLog, DbChangelog.current $ DbChangelog.anchorlessChangelog db)
     go hasFS (Corrupt c ss) =
         catch
           (case c of
@@ -1113,7 +1105,7 @@ runDB standalone@DB{..} cmd =
         go hasFS Restore
     go hasFS g@(GetTablesAtFor pt keys) = do
         (bstore, lgrDb) <- atomically $ do
-          db :: AnchorlessDbChangelog' TestBlock <- anchorlessChangelog <$> readTVar dbChlog
+          db :: DbChangelog.AnchorlessDbChangelog' TestBlock <- DbChangelog.anchorlessChangelog <$> readTVar dbChlog
           bstore <- readTVar dbBackingStore
           pure (bstore, db)
         case DbChangelog.rollback pt lgrDb of
@@ -1144,8 +1136,8 @@ runDB standalone@DB{..} cmd =
     ignoreExceedRollback (Right a) = a
 
     upd :: ( [RealPoint TestBlock] -> [RealPoint TestBlock] )
-        -> (   DbChangelog' TestBlock
-            -> m (Either (ExtValidationError TestBlock) (DbChangelog' TestBlock))
+        -> (   DbChangelog.DbChangelog' TestBlock
+            -> m (Either (ExtValidationError TestBlock) (DbChangelog.DbChangelog' TestBlock))
            )
         -> m (Success DiskSnapshot)
     upd f g = do

@@ -22,17 +22,18 @@ import           Control.DeepSeq
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Reader (MonadReader (ask), MonadTrans (..),
-                     ReaderT (..), asks)
+                     ReaderT (..))
 import           Control.Monad.State.Strict (MonadState, StateT, evalStateT,
                      gets, modify)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (BackingStore, BackingStorePath, BackingStoreValueHandle,
-                     InitFrom (..), RangeQuery)
+                     (BackingStore, BackingStoreValueHandle, InitFrom (..),
+                     RangeQuery)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
 import           System.FS.API (SomeHasFS)
+import           System.FS.API.Types (FsPath)
 
 {-------------------------------------------------------------------------------
   Command types
@@ -40,9 +41,9 @@ import           System.FS.API (SomeHasFS)
 
 data Cmd ks vs d =
     BSInitFromValues !(WithOrigin SlotNo) !vs
-  | BSInitFromCopy   !BackingStorePath
+  | BSInitFromCopy   !FsPath
   | BSClose
-  | BSCopy           !BackingStorePath
+  | BSCopy           !FsPath
   | BSValueHandle    !VHID
   | BSWrite          !SlotNo !d
   | BSVHClose        !VHID
@@ -181,13 +182,12 @@ runCmd = \case
           })
 
     bsClose = do
-      bs <- fromJust <$> gets stBackingStore
-      lift $ BS.bsClose bs
+        bs <- fromJust <$> gets stBackingStore
+        lift $ BS.bsClose bs
 
     bsCopy bsp = do
-        shfs <- asks envSomeHasFS
         bs <- fromJust <$> gets stBackingStore
-        lift $ BS.bsCopy bs shfs bsp
+        lift $ BS.bsCopy bs bsp
 
     bsValueHandle i = do
         bs <- fromJust <$> gets stBackingStore

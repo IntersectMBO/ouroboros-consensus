@@ -35,7 +35,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
                      (BackingStoreSelector (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.Enclose

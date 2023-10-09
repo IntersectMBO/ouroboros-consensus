@@ -10,8 +10,11 @@
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
-module Ouroboros.Consensus.Ledger.Tables.Common (
+module Ouroboros.Consensus.Ledger.Tables.Basics (
     -- * Kinds
+    --
+    -- | For comfort we define these kinds which convey the intended
+    -- instantiation for the type variables.
     LedgerStateKind
   , MapKind
     -- * Ledger tables
@@ -32,6 +35,8 @@ import           Ouroboros.Consensus.Ticked (Ticked1)
   Kinds
 -------------------------------------------------------------------------------}
 
+-- | Something that holds two types, which intend to represent /keys/ and
+-- /values/.
 type MapKind         = {- key -} Type -> {- value -} Type -> Type
 type LedgerStateKind = MapKind -> Type
 
@@ -43,14 +48,18 @@ type LedgerStateKind = MapKind -> Type
 -- pulled from disk and attached to the in-memory Ledger State or that will
 -- eventually be written to disk.
 --
--- With UTxO-HD and the split of the Ledger State into the in-memory part and
--- the on-disk part, this splitting was reflected in the new type parameter
--- added to the Ledger State, to which we refer as "the MapKind" or @mk@.
+-- With UTxO-HD and the split of the Ledger /ledger state/ into the in-memory
+-- part and the on-disk part, this splitting was reflected in the new type
+-- parameter added to the (Consensus)
+-- 'Ouroboros.Consensus.Ledger.Basics.LedgerState', to which we refer as "the
+-- MapKind" or @mk@.
 --
--- Every @'LedgerState'@ is associated with a @'LedgerTables'@ and they both
--- share the @mk@. They both are of kind @'LedgerStateKind'@. @'LedgerTables'@
--- is just a way to refer /only/ to a partial view of the on-disk data without
--- having the rest of the in-memory Ledger State in scope.
+-- Every 'Ouroboros.Consensus.Ledger.Basics.LedgerState' (or @LedgerState@-like
+-- type, such as the 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState') is
+-- associated with a 'LedgerTables' and they both share the @mk@. They both are
+-- of kind 'LedgerStateKind'. 'LedgerTables' is just a way to refer /only/ to a
+-- partial view of the on-disk data without having the rest of the in-memory
+-- 'LedgerState' in scope.
 --
 -- The @mk@ can be instantiated to anything that is map-like, i.e. that expects
 -- two type parameters, the key and the value.
@@ -67,9 +76,15 @@ deriving stock instance Eq (mk (Key l) (Value l))
 deriving newtype instance NoThunks (mk (Key l) (Value l))
                        => NoThunks (LedgerTables l mk)
 
+-- | Each @LedgerState@ like will have the notion of a @Key@ for the tables. On
+-- the current version that only pulled the UTxO set, this will be the @TxIn@.
+-- See "Ouroboros.Consensus.HardFork.Combinator.Ledger.CanonicalTxIn".
 type Key :: LedgerStateKind -> Type
 type family Key l
 
+-- | Each @LedgerState@ like will have the notion of a @Value@ for the tables.
+-- On the current version that only pulled the UTxO set, this will be @TxOut@ or
+-- some @NS@ of those.
 type Value :: LedgerStateKind -> Type
 type family Value l
 

@@ -39,3 +39,11 @@ source-repository-package
   location: https://github.com/well-typed/quickcheck-lockstep
   tag: 1cb529ac1d130c1d1bfd4e85aa7ff50d49d1afd1
   --sha256: 0r9031q5gvzqvhqzsh53v5886s0r0hm3n5vyb1sjx73c39vj5i2d
+
+source-repository-package
+  type: git
+  location: https://github.com/jasagredo/latex-svg
+  tag: 361d8976f88a6ba38f0d57eeeb10948c60046087
+  --sha256: 1725rmk1i7g3qpm8kvdrn4xifxbvcnnbc30rl45jp2262cw15h49
+  subdir:
+    latex-svg-image

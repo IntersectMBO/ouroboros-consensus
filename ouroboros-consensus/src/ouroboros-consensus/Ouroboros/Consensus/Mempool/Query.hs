@@ -18,7 +18,7 @@ import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util.IOLike
 
 implGetSnapshotFor ::
@@ -30,7 +30,7 @@ implGetSnapshotFor ::
   -> SlotNo -- ^ Get snapshot for this slot number (usually the current slot)
   -> TickedLedgerState blk DiffMK -- ^ The ledger state at 'pt' ticked to 'slot'
   -> LedgerTables (ExtLedgerState blk) SeqDiffMK
-  -> LedgerBackingStoreValueHandle' m blk
+  -> BackingStoreValueHandle' m blk
   -> m (MempoolSnapshot blk)
 implGetSnapshotFor mpEnv slot ticked extChlog extLbsvh = do
   is <- atomically $ readTMVar istate

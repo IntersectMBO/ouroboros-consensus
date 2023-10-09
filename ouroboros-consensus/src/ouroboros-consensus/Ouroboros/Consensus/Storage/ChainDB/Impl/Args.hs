@@ -24,10 +24,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceEvent (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Args as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
                      (BackingStoreSelector (..), BackingStoreTraceByBackend)
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
@@ -53,7 +52,7 @@ data ChainDbArgs f m blk = ChainDbArgs {
     -- ^ Should the parser for the VolatileDB fail when it encounters a
     -- corrupt/invalid block?
     , cdbMaxBlocksPerFile       :: VolatileDB.BlocksPerFile
-    , cdbDiskPolicy             :: DiskPolicy
+    , cdbDiskPolicy             :: LedgerDB.DiskPolicy
 
       -- Integration
     , cdbTopLevelConfig         :: HKD f (TopLevelConfig blk)
@@ -144,7 +143,7 @@ defaultArgs ::
      forall m blk.
      Monad m
   => (RelativeMountPoint -> SomeHasFS m)
-  -> DiskPolicy
+  -> LedgerDB.DiskPolicy
   -> BackingStoreSelector m
   -> ChainDbArgs Defaults m blk
 defaultArgs mkFS diskPolicy bss =
