@@ -14,17 +14,18 @@
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
--- | Ledger tables are barbie-types.
---
--- Ledger tables are barbie-types (see @barbies@ package), though unfortunately
+-- | Ledger tables are barbie-types (see @barbies@ package), though unfortunately
 -- we can not implement classes like 'FunctorB' for ledger tables because the
 -- class expects a type that is indexed over a /(uni-)functor/. Ledger tables
 -- are indexed over /bifunctors/ (mapkinds), so the kinds do not match. To cut
 -- on boilerplate, we do not define variants of 'FunctorB' (and similar classes)
 -- for types that are indexed over bifunctors. Instead, we define specialised
 -- variants of class functions and utility functions. For example:
+--
 -- * 'ltmap' instead of 'bmap' or 'bmapC'
+--
 -- * 'lttraverse' instead of 'btraverse' or 'btraverseC'
+--
 -- * 'ltsequence' instead of 'bsequence'.
 module Ouroboros.Consensus.Ledger.Tables.Combinators (
     -- * Common constraints
@@ -66,7 +67,7 @@ module Ouroboros.Consensus.Ledger.Tables.Combinators (
 import           Data.Bifunctor
 import           Data.Kind
 import           Data.SOP.Functors
-import           Ouroboros.Consensus.Ledger.Tables.Common
+import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Util ((...:), (..:), (.:))
 
 {-------------------------------------------------------------------------------

@@ -54,6 +54,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block.Abstract (SlotNo, WithOrigin (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
+import qualified System.FS.API.Types as FS
 
 {-------------------------------------------------------------------------------
   Types
@@ -62,7 +63,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
 data Mock vs = Mock {
     backingValues :: vs
   , backingSeqNo  :: WithOrigin SlotNo
-  , copies        :: Map BS.BackingStorePath (WithOrigin SlotNo, vs)
+  , copies        :: Map FS.FsPath (WithOrigin SlotNo, vs)
   , isClosed      :: Bool
     -- | Track whether value handles have been closed.
   , valueHandles  :: Map ID ValueHandleStatus
@@ -182,8 +183,8 @@ mBSInitFromValues sl vs = modify (\m -> m {
 
 mBSInitFromCopy ::
      forall vs m. (MonadState (Mock vs) m, MonadError Err m)
-  => BS.BackingStorePath
-  ->  m ()
+  => FS.FsPath
+  -> m ()
 mBSInitFromCopy bsp = do
   cps <- gets copies
   case Map.lookup bsp cps of
@@ -216,7 +217,7 @@ mBSClose = (mGuardBSClosed >> close) `catchError` handler
       e                     -> throwError e
 
 -- | Copy the contents of the backing store to the given path.
-mBSCopy :: (MonadState (Mock vs) m, MonadError Err m) => BS.BackingStorePath ->  m ()
+mBSCopy :: (MonadState (Mock vs) m, MonadError Err m) => FS.FsPath ->  m ()
 mBSCopy bsp = do
   mGuardBSClosed
   cps <- gets copies

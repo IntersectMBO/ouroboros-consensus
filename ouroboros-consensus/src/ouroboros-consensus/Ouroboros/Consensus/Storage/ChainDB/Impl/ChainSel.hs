@@ -70,13 +70,10 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB.API
-import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbChangelog
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
-import           Ouroboros.Consensus.Storage.LedgerDB.Update
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbCh
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util
@@ -187,7 +184,7 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
       => ChainAndLedger blk
          -- ^ The current chain and ledger, corresponding to
          -- @i@.
-      -> LedgerBackingStoreValueHandle' m blk
+      -> BackingStoreValueHandle' m blk
       -> NonEmpty (AnchoredFragment (Header blk))
          -- ^ Candidates anchored at @i@
       -> m (Maybe (ValidatedChainDiff (Header blk) (ExtLedgerState blk)))
@@ -542,7 +539,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
     addBlockTracer = TraceAddBlockEvent >$< cdbTracer
 
-    mkChainSelEnv :: ChainAndLedger blk -> LedgerBackingStoreValueHandle' m blk -> ChainSelEnv m blk
+    mkChainSelEnv :: ChainAndLedger blk -> BackingStoreValueHandle' m blk -> ChainSelEnv m blk
     mkChainSelEnv curChainAndLedger vh = ChainSelEnv
       { lgrDB                 = cdbLedgerDB
       , bcfg                  = configBlock cdbTopLevelConfig
@@ -571,7 +568,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
-      -> LedgerBackingStoreValueHandle' m blk
+      -> BackingStoreValueHandle' m blk
       -> m (Point blk)
     addToCurrentChain succsOf curChainAndLedger vh = do
         let suffixesAfterB = Paths.maximalCandidates succsOf (realPointToPoint p)
@@ -641,7 +638,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
          -- ^ The current chain (anchored at @i@) and ledger
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
-      -> LedgerBackingStoreValueHandle' m blk
+      -> BackingStoreValueHandle' m blk
       -> m (Point blk)
     switchToAFork succsOf lookupBlockInfo curChainAndLedger diff vh = do
         -- We use a cache to avoid reading the headers from disk multiple
@@ -702,7 +699,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         cfg = cdbTopLevelConfig
 
         ledger :: LedgerState blk EmptyMK
-        ledger = ledgerState (DbChangelog.current newLedgerDB)
+        ledger = ledgerState (DbCh.current newLedgerDB)
 
         summary :: History.Summary (HardForkIndices blk)
         summary = hardForkSummary
@@ -760,8 +757,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
                   let events :: [LedgerEvent blk]
                       events = inspectLedger
                                  cdbTopLevelConfig
-                                 (ledgerState $ DbChangelog.current curLedger)
-                                 (ledgerState $ DbChangelog.current newLedger)
+                                 (ledgerState $ DbCh.current curLedger)
+                                 (ledgerState $ DbCh.current newLedger)
 
                   -- Clear the tentative header
                   prevTentativeHeader <- swapTVar varTentativeHeader SNothing
@@ -884,7 +881,7 @@ data ChainSelEnv m blk = ChainSelEnv
     , punish                :: Maybe (RealPoint blk, InvalidBlockPunishment m)
       -- | The value handle that has to be used through this Chain selection,
       -- acquired at the beginning of the Chain selection process.
-    , vh                    :: LedgerBackingStoreValueHandle' m blk
+    , vh                    :: BackingStoreValueHandle' m blk
     }
 
 -- | Perform chain selection with the given candidates. If a validated
@@ -1086,9 +1083,9 @@ ledgerValidateCandidate
 ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rb suffix) =
     LedgerDB.validate lgrDB vh curLedger blockCache rb traceUpdate newBlocks >>= \case
       ValidateExceededRollBack {} ->
-        -- Impossible: we asked the LgrDB to roll back past the immutable tip,
-        -- which is impossible, since the candidates we construct must connect
-        -- to the immutable tip.
+        -- Impossible: we asked the LedgerDB to roll back past the immutable
+        -- tip, which is impossible, since the candidates we construct must
+        -- connect to the immutable tip.
         error "found candidate requiring rolling back past the immutable tip"
 
       ValidateLedgerError (AnnLedgerError ledger' pt e) -> do

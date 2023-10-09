@@ -66,7 +66,6 @@ import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
-import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
@@ -86,10 +85,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
-                     (BackingStoreSelector (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.Condense
@@ -605,8 +602,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> LedgerConfig blk
       -> STM m (Point blk)
       -> m ( AnchorlessDbChangelog' blk
-           , LedgerBackingStoreValueHandle' m blk
-           , DiskLedgerView m (ExtLedgerState blk)
+           , BackingStoreValueHandle' m blk
+           , LedgerDBView' m blk
            )
       -> Mempool m blk
       -> [GenTx blk]
@@ -636,8 +633,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
         let loop (slot, mempFp) = do
               (ldb, vh, dlv) <- mdlv
-              let ledger       = ledgerState $ dlvCurrent dlv
-                  doRangeQuery = dlvRangeRead dlv
+              let ledger       = ledgerState $ current $ viewChangelog dlv
+                  doRangeQuery = ledgerDBViewRangeRead dlv
               -- This node would include these crucial txs if it leads in
               -- this slot.
               let ledger' = applyChainTick lcfg slot ledger
@@ -700,15 +697,15 @@ runThreadNetwork systemTime ThreadNetworkArgs
                    -> OracularClock m
                    -> TopLevelConfig blk
                    -> Seed
-                   -> m (a, b, DiskLedgerView m (ExtLedgerState blk))
+                   -> m (a, b, LedgerDBView' m blk)
                       -- ^ How to get the current ledger state
                    -> Mempool m blk
                    -> m ()
     forkTxProducer coreNodeId registry clock cfg nodeSeed mdlv mempool =
         void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
           (_, _, dlv) <- mdlv
-          let emptySt      = dlvCurrent dlv
-              doRangeQuery = dlvRangeRead dlv
+          let emptySt      = current $ viewChangelog dlv
+              doRangeQuery = ledgerDBViewRangeRead dlv
           fullLedgerSt <- fmap ledgerState $ do
                 -- FIXME: we know that the range query implemetation will add at
                 -- most 1 to the number of requested keys, hence the
@@ -1065,10 +1062,10 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -- needs the 'DiskLedgerView' to elaborate a complete UTxO set to generate
       -- transactions.
       let getValueHandle = do
-            eLDBView <- ChainDB.getLedgerDBViewAtPoint chainDB Nothing
+            eLDBView <- ChainDB.getDbChangelogViewAtPoint chainDB Nothing
             case eLDBView of
               Left e          -> error $ show e
-              Right l@(LedgerDBView { viewHandle, viewChangelog }) -> pure (viewChangelog, viewHandle, mkDiskLedgerView l)
+              Right l@(LedgerDBView { viewHandle, viewChangelog }) -> pure (viewChangelog, viewHandle, l)
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the

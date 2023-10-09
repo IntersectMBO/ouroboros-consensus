@@ -39,9 +39,8 @@ import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init as BS
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.InMemory as BS
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB as LMDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB as LMDB
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..))
 import qualified System.Directory as Dir
 import           System.FS.API hiding (Handle)
@@ -198,10 +197,10 @@ setupBSEnv bss mkSfhs cleanup = do
 closeHandlers :: IOLike m => [Handler m ()]
 closeHandlers = [
     Handler $ \case
-      BS.TVarBackingStoreClosedExn -> pure ()
-      e                            -> throwIO e
+      InMemory.InMemoryBackingStoreClosedExn -> pure ()
+      e                                  -> throwIO e
   , Handler $ \case
-      LMDB.DbErrClosed -> pure ()
+      LMDB.LMDBErrClosed -> pure ()
       e                -> throwIO e
   ]
 

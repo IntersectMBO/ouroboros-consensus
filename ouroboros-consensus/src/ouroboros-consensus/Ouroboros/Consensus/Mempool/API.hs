@@ -207,7 +207,7 @@ data Mempool m blk = Mempool {
            -- ^ The ledger state ticked to the given slot number
 #endif
         -> LedgerTables (ExtLedgerState blk) SeqDiffMK
-        -> LedgerBackingStoreValueHandle' m blk
+        -> BackingStoreValueHandle' m blk
         -> m (MempoolSnapshot blk)
 
       -- | Get the mempool's capacity in bytes.

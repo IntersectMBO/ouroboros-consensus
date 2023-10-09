@@ -129,10 +129,7 @@ mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
       , hStateQueryServer =
           localStateQueryServer
             (ExtLedgerCfg cfg)
-            (  fmap (fmap mkDiskLedgerView)
-             . ChainDB.getLedgerDBViewAtPoint getChainDB
-            )
-
+            (ChainDB.getDbChangelogViewAtPoint getChainDB)
       , hTxMonitorServer =
           localTxMonitorServer
             getMempool

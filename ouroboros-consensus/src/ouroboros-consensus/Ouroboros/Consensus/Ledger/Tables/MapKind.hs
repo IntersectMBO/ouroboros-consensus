@@ -38,7 +38,7 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           GHC.Generics (Generic)
 import           NoThunks.Class
-import           Ouroboros.Consensus.Ledger.Tables.Common
+import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 
 {-------------------------------------------------------------------------------
@@ -195,6 +195,8 @@ instance ZeroableMK SeqDiffMK where
 --
 -- Ledger will provide more efficient encoders than CBOR, which will produce a
 -- @'ShortByteString'@ directly.
+--
+-- See also "Ouroboros.Consensus.HardFork.Combinator.Ledger.CanonicalTxIn".
 data CodecMK k v = CodecMK {
     encodeKey   :: !(k -> CBOR.Encoding)
   , encodeValue :: !(v -> CBOR.Encoding)

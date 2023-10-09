@@ -33,8 +33,6 @@ import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
                      (DbChangelog (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (HeaderHash, Point (..), SlotNo (..),
                      StandardHash, castPoint, pattern GenesisPoint)
@@ -174,7 +172,7 @@ resultingDbChangelog setup = applyOperations (operations setup) originalDbChange
 applyOperations :: (HasLedgerTables l, GetTip l)
   => [Operation l] -> DbChangelog l -> DbChangelog l
 applyOperations ops dblog = foldr' apply' dblog ops
-  where apply' (Extend newState) dblog' = DbChangelog.onChangelog (DbChangelog.extend newState) dblog'
+  where apply' (Extend newState) dblog' = DbChangelog.onChangelog (DbChangelog.extend (DbChangelog.ValidLedgerState newState)) dblog'
         apply' (Prune sp) dblog'        = DbChangelog.onChangelog (DbChangelog.prune sp) dblog'
 
 {-------------------------------------------------------------------------------
@@ -205,7 +203,7 @@ prop_extendingAdvancesTipOfVolatileStates setup =
   where
     dblog  = resultingDbChangelog setup
     state  = nextState dblog
-    dblog' = DbChangelog.onChangelog (DbChangelog.extend state) dblog
+    dblog' = DbChangelog.onChangelog (DbChangelog.extend (DbChangelog.ValidLedgerState state)) dblog
     new    = AS.headAnchor (DbChangelog.adcStates $ anchorlessChangelog dblog')
 
 -- | Rolling back n extensions is the same as doing nothing.
@@ -245,7 +243,7 @@ prop_rollBackToVolatileTipIsNoop (Positive n) setup = property $ Just dblog == d
 
 nExtensions :: Int -> DbChangelog TestLedger -> DbChangelog TestLedger
 nExtensions n dblog = iterate ext dblog !! n
-  where ext dblog' = DbChangelog.onChangelog (DbChangelog.extend (nextState dblog')) dblog'
+  where ext dblog' = DbChangelog.onChangelog (DbChangelog.extend (DbChangelog.ValidLedgerState $ nextState dblog')) dblog'
 
 {-------------------------------------------------------------------------------
   Generators

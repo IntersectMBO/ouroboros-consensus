@@ -30,12 +30,7 @@ import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf,
                      MempoolAddTxResult)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Query as Query
 import           System.Directory (getTemporaryDirectory)
 import           System.FS.API (SomeHasFS (SomeHasFS))
 import           System.FS.API.Types (MountPoint (MountPoint))
@@ -43,10 +38,10 @@ import           System.FS.IO (ioHasFS)
 import           System.IO.Temp (createTempDirectory)
 
 data MockedMempool m blk = MockedMempool {
-      getLedgerInterface    :: !(Mempool.LedgerInterface m blk)
-    , getLedgerDB           :: !(DbChangelog (LedgerState blk))
-    , getLedgerBackingStore :: !(LedgerBackingStore m (LedgerState blk))
-    , getMempool            :: !(Mempool m blk)
+      getLedgerInterface :: !(Mempool.LedgerInterface m blk)
+    , getDbChangelog     :: !(DbChangelog (LedgerState blk))
+    , getBackingStore    :: !(LedgerBackingStore m (LedgerState blk))
+    , getMempool         :: !(Mempool m blk)
     }
 
 instance NFData (MockedMempool m blk) where
@@ -76,10 +71,9 @@ openMockedMempool capacityOverride tracer txSizeImpl params = do
     -- Set up a backing store with initial values
     sysTmpDir <- getTemporaryDirectory
     tmpDir <- createTempDirectory sysTmpDir "mempool-bench"
-    let lbsi = newBackingStoreInitialiser nullTracer bss
-        sfhs = SomeHasFS $ ioHasFS $ MountPoint tmpDir
+    let sfhs = SomeHasFS $ ioHasFS $ MountPoint tmpDir
         values = Ledger.projectLedgerTables backingState
-    lbs <- newBackingStore lbsi sfhs values
+    lbs <- newBackingStore nullTracer bss sfhs values
 
     -- Set up an empty changelog and populate it by applying blocks
     let ldb0 = empty $ Ledger.forgetLedgerTables backingState
@@ -87,8 +81,9 @@ openMockedMempool capacityOverride tracer txSizeImpl params = do
               (const $ pure ())
               ldbcfg
               (fmap ReapplyVal blks)
-              (LedgerDB.readKeySets lbs))
+              (readKeySets lbs))
               ldb0
+
     dbVar <- newTVarIO ldb
     -- Create a ledger interface, mimicking @getLedgerTablesAtFor@ from the
     -- @ChainDB.Impl.LgrDB@ module.
@@ -96,7 +91,7 @@ openMockedMempool capacityOverride tracer txSizeImpl params = do
             Mempool.getCurrentLedgerState = pure $ current $ anchorlessChangelog ldb
           , Mempool.getLedgerTablesAtFor = \pt txs -> do
               let keys = foldMap' Ledger.getTransactionKeySets txs
-              Query.getLedgerTablesAtFor pt keys dbVar lbs
+              LedgerDB.getLedgerTablesAtFor' pt keys dbVar lbs
           }
 
     mempool <- Mempool.openMempoolWithoutSyncThread
@@ -106,10 +101,10 @@ openMockedMempool capacityOverride tracer txSizeImpl params = do
                    tracer
                    txSizeImpl
     pure MockedMempool {
-        getLedgerInterface    = ledgerItf
-      , getLedgerDB           = ldb
-      , getLedgerBackingStore = lbs
-      , getMempool            = mempool
+        getLedgerInterface = ledgerItf
+      , getDbChangelog     = ldb
+      , getBackingStore    = lbs
+      , getMempool         = mempool
     }
   where
     InitialMempoolAndModelParams {
@@ -119,7 +114,7 @@ openMockedMempool capacityOverride tracer txSizeImpl params = do
       , immpChangelogBlocks      = blks
       } = params
 
-    lcfg = ledgerDbCfg ldbcfg
+    lcfg = dbChangelogCfg ldbcfg
 
 addTx ::
      MockedMempool m blk

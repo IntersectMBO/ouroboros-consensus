@@ -15,6 +15,7 @@
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE UndecidableInstances     #-}
+{-# LANGUAGE UndecidableSuperClasses  #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -52,6 +53,7 @@ import           Data.SOP.Match (Mismatch (..), mustMatchNS)
 import           Data.SOP.Strict
 import           Data.Type.Equality
 import           Data.Typeable (Typeable)
+import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Abstract (hardForkSummary)
@@ -74,6 +76,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Node.Serialisation (Some (..))
+import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding (tip)
 import           Ouroboros.Consensus.TypeFamilyWrappers (WrapChainDepState (..),
                      WrapTxOut)
 import           Ouroboros.Consensus.Util (ShowProxy)
@@ -110,14 +114,19 @@ data instance BlockQuery (HardForkBlock xs) footprint result where
 -- appropriate era before we process the query. This class should be used to
 -- implement how these queries that have a footprint which is not @QFNoTables@
 -- are answered.
-class BlockSupportsHFLedgerQuery xs where
+class ( All (Compose NoThunks WrapTxOut) xs
+      , All (Compose Show WrapTxOut) xs
+      , All (Compose Eq WrapTxOut) xs
+      , All (Compose HasTickedLedgerTables LedgerState) xs
+      , All (Compose HasLedgerTables LedgerState) xs
+      ) => BlockSupportsHFLedgerQuery xs where
   answerBlockQueryHFLookup ::
        All SingleEraBlock xs
     => Monad m
     => Index xs x
     -> ExtLedgerCfg x
     -> BlockQuery x QFLookupTables result
-    -> DiskLedgerView m (ExtLedgerState (HardForkBlock xs))
+    -> LedgerDBView m (ExtLedgerState (HardForkBlock xs))
     -> m result
 
   answerBlockQueryHFTraverse ::
@@ -126,7 +135,7 @@ class BlockSupportsHFLedgerQuery xs where
     => Index xs x
     -> ExtLedgerCfg x
     -> BlockQuery x QFTraverseTables result
-    -> DiskLedgerView m (ExtLedgerState (HardForkBlock xs))
+    -> LedgerDBView m (ExtLedgerState (HardForkBlock xs))
     -> m result
 
   -- | The @QFTraverseTables@ queries consist of some filter on the @TxOut@. This class
@@ -231,7 +240,7 @@ instance ( All SingleEraBlock xs
       cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
       lcfg = configLedger cfg
       ei   = State.epochInfoLedger lcfg hardForkState
-      hardForkState = hardForkLedgerStatePerEra $ ledgerState $ dlvCurrent dlv
+      hardForkState = hardForkLedgerStatePerEra $ ledgerState $ current $ viewChangelog dlv
 
   answerBlockQueryTraverse
     (ExtLedgerCfg cfg)
@@ -247,7 +256,7 @@ instance ( All SingleEraBlock xs
       cfgs = hmap ExtLedgerCfg $ distribTopLevelConfig ei cfg
       lcfg = configLedger cfg
       ei   = State.epochInfoLedger lcfg hardForkState
-      hardForkState = hardForkLedgerStatePerEra $ ledgerState $ dlvCurrent dlv
+      hardForkState = hardForkLedgerStatePerEra $ ledgerState $ current $ viewChangelog dlv
 
 -- | Precondition: the 'ledgerState' and 'headerState' should be from the same
 -- era. In practice, this is _always_ the case, unless the 'ExtLedgerState' was
@@ -342,13 +351,13 @@ interpretQueryIfCurrent = go
         Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 interpretQueryIfCurrentOne ::
-     forall result xs m. (Monad m, BlockSupportsHFLedgerQuery xs, All SingleEraBlock xs)
+     forall result xs m. (Monad m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
   => NP ExtLedgerCfg xs
   -> QueryIfCurrent xs QFLookupTables result
-  -> DiskLedgerView m (ExtLedgerState (HardForkBlock xs))
+  -> LedgerDBView m (ExtLedgerState (HardForkBlock xs))
   -> m (HardForkQueryResult xs result)
 interpretQueryIfCurrentOne cfg q dlv =
-    go indices cfg q (distribExtLedgerState $ dlvCurrent dlv)
+    go indices cfg q (distribExtLedgerState $ current $ viewChangelog dlv)
   where
     go :: All SingleEraBlock xs'
        => NP (Index xs) xs'
@@ -364,13 +373,13 @@ interpretQueryIfCurrentOne cfg q dlv =
         pure $ Left $ MismatchEraInfo $ MR (hardForkQueryInfo qry) (ledgerInfo st)
 
 interpretQueryIfCurrentAll ::
-     forall result xs m. (Monad m, BlockSupportsHFLedgerQuery xs, All SingleEraBlock xs)
+     forall result xs m. (Monad m, BlockSupportsHFLedgerQuery xs, CanHardFork xs)
   => NP ExtLedgerCfg xs
   -> QueryIfCurrent xs QFTraverseTables result
-  -> DiskLedgerView m (ExtLedgerState (HardForkBlock xs))
+  -> LedgerDBView m (ExtLedgerState (HardForkBlock xs))
   -> m (HardForkQueryResult xs result)
 interpretQueryIfCurrentAll cfg q dlv =
-    go indices cfg q (distribExtLedgerState $ dlvCurrent dlv)
+    go indices cfg q (distribExtLedgerState $ current $ viewChangelog dlv)
   where
     go :: All SingleEraBlock xs'
        => NP (Index xs) xs'

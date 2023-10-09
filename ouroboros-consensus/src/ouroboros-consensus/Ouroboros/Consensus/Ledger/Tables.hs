@@ -8,12 +8,26 @@
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE UndecidableInstances     #-}
 
--- | See @'LedgerTables'@
+-- | This module defines the 'LedgerTables', a portion of the Ledger notion of a
+-- /ledger state/ (not to confuse with our
+-- 'Ouroboros.Consensus.Ledger.Basics.LedgerState') that together with it,
+-- conforms a complete Ledger /ledger state/.
+--
+-- In particular, 'LedgerTables' contain maps from keys to values. For now,
+-- their only current instantiation is to hold the UTxO set, but future features
+-- will extend this to hold some other data structures.
+--
+-- The overall goal this type achieves is to extract and inject these parts of
+-- the /ledger state/, and once extracted, be able to dump them in some disk
+-- backend, such that the memory usage of the process is smaller. See
+-- 'Ouroboros.Consensus.Storage.LedgerDB.BackingStore' and
+-- 'Ouroboros.Consensus.Storage.LedgerDB.DbChangelog' for usages of this notion.
 module Ouroboros.Consensus.Ledger.Tables (
-    -- * Re-exports
-    module Ouroboros.Consensus.Ledger.Tables.Combinators
-  , module Ouroboros.Consensus.Ledger.Tables.Common
+    -- * Core
+    module Ouroboros.Consensus.Ledger.Tables.Basics
   , module Ouroboros.Consensus.Ledger.Tables.MapKind
+    -- * Utilities
+  , module Ouroboros.Consensus.Ledger.Tables.Combinators
     -- * Basic LedgerState classes
   , CanStowLedgerTables (..)
   , HasLedgerTables (..)
@@ -38,8 +52,8 @@ import           Data.Kind (Constraint)
 import qualified Data.Map.Strict as Map
 import           Data.Void (Void)
 import           NoThunks.Class (NoThunks (..))
+import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Combinators
-import           Ouroboros.Consensus.Ledger.Tables.Common
 import           Ouroboros.Consensus.Ledger.Tables.MapKind
 import           Ouroboros.Consensus.Ticked
 
@@ -47,9 +61,8 @@ import           Ouroboros.Consensus.Ticked
   Basic LedgerState classes
 -------------------------------------------------------------------------------}
 
--- | Manipulating the @mk@ on the @'LedgerTables'@, extracting @'LedgerTables'@
--- from a @'LedgerState'@ (which will share the same @mk@), or replacing the
--- @'LedgerTables'@ associated to a particular in-memory @'LedgerState'@.
+-- | Extracting @'LedgerTables'@ from @l mk@ (which will share the same @mk@),
+-- or replacing the @'LedgerTables'@ associated to a particular @l@.
 type HasLedgerTables :: LedgerStateKind -> Constraint
 class ( Ord (Key l)
       , Eq (Value l)
