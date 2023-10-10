@@ -522,7 +522,6 @@ test-suite infra-test
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector
     Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
-    Test.Ouroboros.Consensus.ChainGenerator.Tests.ChainDb
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
     Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
@@ -554,7 +553,6 @@ test-suite infra-test
     , ouroboros-network
     , ouroboros-network-api
     , ouroboros-network-framework
-    , ouroboros-network-mock
     , ouroboros-network-protocols
     , QuickCheck
     , random
