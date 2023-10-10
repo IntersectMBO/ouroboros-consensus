@@ -1023,27 +1023,13 @@ protocolInfoCardano paramsCardano
             $ hardForkLedgerStatePerEra initLedgerState
         }
       where
-        overShelleyBasedLedgerState (HardForkLedgerState st) =
-          HardForkLedgerState $ hap fs st
-
-        fs :: NP (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK)
-              (CardanoEras c)
-        fs = fn id
-          :* fn register
-          :* fn register
-          :* fn register
-          :* fn register
-          :* fn register
-          :* fn register
-          :* Nil
-
         initHeaderState :: HeaderState (CardanoBlock c)
         initLedgerState :: LedgerState (CardanoBlock c) ValuesMK
         ExtLedgerState initLedgerState initHeaderState =
             injectInitialExtLedgerState cfg
           $ initExtLedgerStateByron
 
-        registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
+        registerAny :: NP (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (CardanoShelleyEras c)
         registerAny =
              register transitionConfigShelley
           :* register transitionConfigAllegra
@@ -1054,9 +1040,9 @@ protocolInfoCardano paramsCardano
           :* Nil
 
         register ::
-             L.EraTransition era
+             ShelleyBasedEra era
           => L.TransitionConfig era
-          -> NP (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (CardanoShelleyEras c)
+          -> (Flip LedgerState ValuesMK -.-> Flip LedgerState ValuesMK) (ShelleyBlock proto era)
         -- Due to UTxO-HD there is a subtlety here. The functions that register
         -- the initial funds work on the UTxO inside the LedgerState instead of
         -- on the tables. This implies that we have to first stow the tables,
@@ -1068,7 +1054,7 @@ protocolInfoCardano paramsCardano
         -- accept any 'mk' as now we get the guarantee that whenever we are
         -- unstowing, we are doing it on an EmptyMK and only in this case (which
         -- must happen only on tests) we do this trickery.
-        register cfg = fs $ \(Flip st) -> Flip $ unstowLedgerTables $ forgetLedgerTables $ st {
+        register cfg = fn $ \(Flip st) -> Flip $ unstowLedgerTables $ forgetLedgerTables $ st {
               Shelley.shelleyLedgerState =
                 -- We must first register the initial funds, because the stake
                 -- information depends on it.

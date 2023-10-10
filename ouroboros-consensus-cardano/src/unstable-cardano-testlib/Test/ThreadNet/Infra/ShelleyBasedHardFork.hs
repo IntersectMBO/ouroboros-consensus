@@ -32,7 +32,6 @@ module Test.ThreadNet.Infra.ShelleyBasedHardFork (
   ) where
 
 import qualified Cardano.Ledger.Api.Transition as L
-import           Cardano.Binary (fromCBOR, toCBOR)
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Era as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -143,8 +142,6 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
 
   , SL.TranslationError   era2 SL.NewEpochState ~ Void
 
-  , SL.AdditionalGenesisConfig era1 ~ ()
-  , SL.AdditionalGenesisConfig era2 ~ SL.TranslationContext era2
     -- At the moment, fix the protocols together
   , EraCrypto era1 ~ EraCrypto era2
   , PraosCrypto (EraCrypto era1)

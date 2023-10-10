@@ -180,6 +180,7 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , TraceBackingStoreInitEvent (..)
   , TraceLedgerDBEvent (..)
   , TraceReplayEvent (..)
+  , TraceSnapshotEvent (..)
   , decorateReplayTracerWithGoal
     -- * 🧪 Testing
   , DiffsToFlush (..)
@@ -266,7 +267,7 @@ import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as Lock
 import           Ouroboros.Consensus.Util.Versioned
 import           Ouroboros.Network.Block (Point (Point))
 import           System.FS.API
-import           System.FS.API.Types
+import           System.FS.API.Lazy (hPut)
 import           Text.Read (readMaybe)
 import           Util.CallStack
 

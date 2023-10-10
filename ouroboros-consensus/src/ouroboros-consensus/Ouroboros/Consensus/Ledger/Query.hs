@@ -48,7 +48,7 @@ import           Codec.Serialise.Class (decode, encode)
 import           Control.Exception (throw)
 import           Data.Kind (Type)
 import           Data.Maybe (isJust)
-import           Data.SOP.Strict ((:.:) (..))
+import           Data.SOP ((:.:) (..))
 import           Ouroboros.Consensus.Block.Abstract (CodecConfig)
 import           Ouroboros.Consensus.BlockchainTime (SystemStart)
 import           Ouroboros.Consensus.Config

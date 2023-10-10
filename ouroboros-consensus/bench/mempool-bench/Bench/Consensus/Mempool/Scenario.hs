@@ -37,6 +37,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
                      (BackingStoreSelector (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
                      (DbChangelogCfg (..))
+import           Test.Consensus.Mempool.Mocked
 
 {-------------------------------------------------------------------------------
   Scenario

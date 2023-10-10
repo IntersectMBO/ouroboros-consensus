@@ -791,8 +791,7 @@ translateLedgerStateBabbageToConwayWrapper ::
        (ShelleyBlock (Praos c) (ConwayEra c))
 translateLedgerStateBabbageToConwayWrapper =
     RequireBoth $ \cfgBabbage cfgConway ->
-      TranslateLedgerState {
-         translateLedgerStateWith = \epochNo ->
+      TranslateLedgerState $ \epochNo ->
             let -- It would be cleaner to just pass in the entire 'Bound' instead of
                 -- just the 'EpochNo'.
                 firstSlotNewEra = runIdentity $ epochInfoFirst ei epochNo
@@ -819,8 +818,8 @@ translateLedgerStateBabbageToConwayWrapper =
                 -- era/epoch boundary using Babbage logic, and set the governance
                 -- state to the updated one /before/ translating.
                 patchGovState ::
-                     LedgerState (ShelleyBlock proto (BabbageEra c))
-                  -> LedgerState (ShelleyBlock proto (BabbageEra c))
+                     LedgerState (ShelleyBlock proto (BabbageEra c)) EmptyMK
+                  -> LedgerState (ShelleyBlock proto (BabbageEra c)) EmptyMK
                 patchGovState st =
                     st { shelleyLedgerState = shelleyLedgerState st
                            & SL.newEpochStateGovStateL .~ newGovState
@@ -847,10 +846,6 @@ translateLedgerStateBabbageToConwayWrapper =
                 . Comp
                 . Flip
                 . patchGovState
-        , translateLedgerTablesWith =
-            \(LedgerTables diffMK)  ->
-             LedgerTables $ fmap Conway.translateTxOut diffMK
-        }
 
 getConwayTranslationContext ::
      WrapLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))

@@ -307,12 +307,12 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
     initLedgerState :: LedgerState (ShelleyBlock (TPraos c) era) ValuesMK
     initLedgerState = ShelleyLedgerState {
         shelleyLedgerTip        = Origin
-      , shelleyLedgerState      =
-            ( L.registerInitialStaking transitionCfg
-            $ L.createInitialState transitionCfg) `withUtxoSL` emptyMK
+      , shelleyLedgerState      = st `withUtxoSL` emptyMK
       , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
       , shelleyLedgerTables     = LedgerTables $ projectUtxoSL st
       }
+      where st = L.registerInitialStaking transitionCfg
+               $ L.createInitialState transitionCfg
 
     initChainDepState :: TPraosState c
     initChainDepState = TPraosState Origin $

@@ -186,6 +186,6 @@ data InitialMempoolAndModelParams m blk = InitialMempoolAndModelParams {
       immpBackingState         :: !(LedgerState blk Ledger.ValuesMK)
       -- | Blocks that will be used to populate a changelog.
     , immpChangelogBlocks      :: ![blk]
-    , immpLedgerConfig         :: !(LedgerDbCfg (LedgerState blk))
+    , immpLedgerConfig         :: !(DbChangelogCfg (LedgerState blk))
     , immpBackingStoreSelector :: !(BackingStoreSelector m)
     }
