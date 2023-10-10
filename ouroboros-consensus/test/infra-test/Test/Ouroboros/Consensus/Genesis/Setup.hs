@@ -18,8 +18,8 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Ouroboros.Consensus.ChainGenerator.Params
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import qualified Test.Ouroboros.Consensus.BlockTree as BT
+import           Test.Ouroboros.Consensus.PointSchedule
 import           Test.Ouroboros.Consensus.PeerSimulator.Run
 import           Test.QuickCheck
 import           Test.QuickCheck.Random (QCGen)

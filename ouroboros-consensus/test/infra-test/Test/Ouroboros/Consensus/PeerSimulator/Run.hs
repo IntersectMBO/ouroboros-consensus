@@ -51,18 +51,17 @@ import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
                      (pipelineDecisionLowHighMark)
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (chainSyncServerPeer)
+import qualified Test.Ouroboros.Consensus.BlockTree as BT
+import           Test.Ouroboros.Consensus.BlockTree (BlockTree)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
-                     (BlockTree)
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule as PointSchedule
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-                     (Peer (Peer), PeerId, PointSchedule (PointSchedule),
-                     TestFragH, Tick (Tick), pointSchedulePeers)
 import qualified Test.Ouroboros.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
 import           Test.Ouroboros.Consensus.PeerSimulator.Config
 import           Test.Ouroboros.Consensus.PeerSimulator.Resources
 import           Test.Ouroboros.Consensus.PeerSimulator.Trace
+import qualified Test.Ouroboros.Consensus.PointSchedule as PointSchedule
+import           Test.Ouroboros.Consensus.PointSchedule (Peer (Peer), PeerId,
+                     PointSchedule (PointSchedule), TestFragH, Tick (Tick),
+                     pointSchedulePeers)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)

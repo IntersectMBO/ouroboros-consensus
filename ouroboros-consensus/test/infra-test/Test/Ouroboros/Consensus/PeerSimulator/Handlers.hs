@@ -24,15 +24,14 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockPoint, getTipPoint)
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
-                     (BlockTree)
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
-                     (AdvertisedPoints (header, tip), HeaderPoint (HeaderPoint),
-                     TipPoint (TipPoint))
+import qualified Test.Ouroboros.Consensus.BlockTree as BT
+import           Test.Ouroboros.Consensus.BlockTree (BlockTree)
 import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
                      (FindIntersect (..),
                      RequestNext (RollBackward, RollForward))
+import           Test.Ouroboros.Consensus.PointSchedule
+                     (AdvertisedPoints (header, tip), HeaderPoint (HeaderPoint),
+                     TipPoint (TipPoint))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 

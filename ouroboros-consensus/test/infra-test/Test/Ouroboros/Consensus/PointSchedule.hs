@@ -4,7 +4,7 @@
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule (module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule) where
+module Test.Ouroboros.Consensus.PointSchedule (module Test.Ouroboros.Consensus.PointSchedule) where
 
 import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)

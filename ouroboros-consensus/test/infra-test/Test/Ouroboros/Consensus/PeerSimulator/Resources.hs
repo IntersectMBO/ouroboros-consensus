@@ -32,11 +32,10 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (ChainSyncServer (..))
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
-                     (BlockTree)
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Ouroboros.Consensus.BlockTree (BlockTree)
 import           Test.Ouroboros.Consensus.PeerSimulator.Handlers
 import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
+import           Test.Ouroboros.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 

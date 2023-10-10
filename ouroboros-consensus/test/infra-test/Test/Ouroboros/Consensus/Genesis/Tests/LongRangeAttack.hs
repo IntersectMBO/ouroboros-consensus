@@ -13,16 +13,15 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Ouroboros.Network.AnchoredFragment.Extras as AF
+import qualified Test.Ouroboros.Consensus.BlockTree as BT
+import           Test.Ouroboros.Consensus.BlockTree (BlockTreeBranch (btbFull))
 import           Test.Ouroboros.Consensus.ChainGenerator.Honest
                      (HonestRecipe (HonestRecipe))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params
 import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial hiding
                      (tests)
-import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree as BT
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
-                     (BlockTreeBranch (btbFull))
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
 import           Test.Ouroboros.Consensus.Genesis.Setup
+import           Test.Ouroboros.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.QuickCheck.Random (QCGen)
