@@ -38,7 +38,6 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB as LMDB
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
-import           System.FS.API.Types
 
 type BackingStoreInitializer m l =
      SomeHasFS m

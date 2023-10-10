@@ -27,9 +27,8 @@ import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent,
                      localTxSubmissionServer)
 import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
-                     (BackingStoreSelector (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Client
                      (SubmitResult, localTxSubmissionClientPeer)
 import           Ouroboros.Network.Protocol.LocalTxSubmission.Examples
@@ -83,9 +82,9 @@ tests =
               , Mocked.immpBackingStoreSelector = InMemoryBackingStore
               , Mocked.immpBackingState =
                   ledgerState $ pInfoInitLedger pInfo
-              , Mocked.immpLedgerConfig = LedgerDbCfg {
-                    ledgerDbCfgSecParam = SecurityParam 10
-                  , ledgerDbCfg = topLevelConfigLedger $ pInfoConfig pInfo
+              , Mocked.immpLedgerConfig = DbChangelogCfg {
+                    dbChangelogCfgSecParam = SecurityParam 10
+                  , dbChangelogCfg = topLevelConfigLedger $ pInfoConfig pInfo
                   }
               }
 

@@ -2,15 +2,11 @@
 
 -- | Functions related to initial parameters for the mempool. See
 -- 'InitialMempoolAndModelParams'.
-module Bench.Consensus.Mempool.Params (
-    -- * Types
-    InitialMempoolAndModelParams (..)
-  , mkParams
+module Bench.Consensus.Mempool.Defaults (
     -- * Defaults
-  , defaultInMemoryBSS
+    defaultInMemoryBSS
   , defaultLMDB_BSS
   , defaultLedgerDbCfg
-  , defaultParams
     -- * Construction of configurations
   , sampleLedgerConfig
   , sampleLedgerDbCfg
@@ -34,68 +30,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB
                      (LMDBLimits (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
                      (DbChangelogCfg (..))
-import qualified Test.Util.TestBlock as TestBlock
-import           Test.Util.TestBlock (LedgerState (..))
-
-{-------------------------------------------------------------------------------
-  Types
--------------------------------------------------------------------------------}
-
--- | Initial parameters for the mempool.
---
--- === Parameters for the ledger interface
---
--- One goal of the mempool parameters is to provide enough information to set up
--- an interface to the ledger database. Setting up a ledger interface requires
--- two main parts of the ledger database: a backing store, and a changelog.
---
--- Which backing store implementation we use is determined by
--- 'immpBackingStoreSelector'. The backing store will be initialised using
--- values from 'immpBackingState'. The changelog keeps track of differences on
--- values that are induced by applying blocks. Each diff in the changelog
--- corresponds to a block. As such, the changelog will be populated by applying
--- blocks from 'immpChangelogBlocks' in sequence to 'immpBackingState'.
---
--- INVARIANT: applying the blocks in 'immpChangelogBlocks' in sequence to
--- 'immpBackingState' should not fail.
---
--- ==== Effect on performance
---
--- How we populate the ledger database with values and differences could affect
--- the performance of mempool operations. To be precise, each time we need a
--- partial ledger state to apply transactions to, we /rewind-read-forward/.
---
--- * Rewind: Rewind keys by determining which slot the tip of the backing store
---   points to.
--- * Read: Read values from the backing store for the rewound keys.
--- * Forward: Forward the read values through the changelog.
---
--- How expensive these steps are depends on how we populate the backing store
--- and changelog. We are not sure if we can estimate the cost of mempool
--- operations on these parameters only, but in general, we suspect that:
---
--- * Reading values succesfully from the backing store incurs extra costs (e.g.,
---   deserialisation and I/O costs), compared to when a value is not found in
---   the backing store.
--- * Forwarding becomes more expensive as the following increase: (i) the number
---   of blocks, and (ii) the size of the diffs induced by blocks.
---
-data InitialMempoolAndModelParams m blk = MempoolAndModelParams {
-      -- | The values that will be used to initialise a backing store.
-      immpBackingState         :: !(LedgerState blk ValuesMK)
-      -- | Blocks that will be used to populate a changelog.
-    , immpChangelogBlocks      :: ![blk]
-    , immpLedgerConfig         :: !(DbChangelogCfg (LedgerState blk))
-    , immpBackingStoreSelector :: !(BackingStoreSelector m)
-    }
-
-mkParams ::
-     LedgerState blk ValuesMK
-  -> [blk]
-  -> DbChangelogCfg (LedgerState blk)
-  -> BackingStoreSelector m
-  -> InitialMempoolAndModelParams m blk
-mkParams = MempoolAndModelParams
 
 {-------------------------------------------------------------------------------
   Defaults
@@ -113,15 +47,6 @@ defaultLMDB_BSS = LMDBBackingStore LMDBLimits {
     , lmdbMaxDatabases = 3
     , lmdbMaxReaders = 16
     }
-
--- | Default parameters: empty in-memory backing store, empty changelog.
-defaultParams :: InitialMempoolAndModelParams m TestBlock
-defaultParams =
-    InitialMempoolAndModelParams
-      (ledgerStateFromTokens [])
-      []
-      defaultLedgerDbCfg
-      defaultInMemoryBSS
 
 {-------------------------------------------------------------------------------
   Construction of configurations

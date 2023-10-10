@@ -32,7 +32,7 @@
 --     up to \(k\) blocks when switching to a more preferable fork. Consider the
 --     example below:
 --
---     <<docs/haddocks/Ouroboros/Consensus/Storage/LedgerDB/1.svg>>
+--     <<docs/haddocks/ledgerdb-switch.svg>>
 --
 --     Our current chain's tip is \(C_2\), but the fork containing blocks
 --     \(F_1\), \(F_2\), and \(F_3\) is more preferable. We roll back our chain
@@ -87,10 +87,10 @@
 -- >>> import Control.Monad
 -- >>> import System.Directory
 -- >>>
--- >>> createDirectoryIfMissing True "docs/haddocks/Ouroboros/Consensus/Storage/LedgerDB/"
+-- >>> createDirectoryIfMissing True "docs/haddocks/"
 -- >>> :{
 -- >>> either (error . show) pure =<<
--- >>>  renderToFile "docs/haddocks/Ouroboros/Consensus/Storage/LedgerDB/1.svg" defaultEnv (tikz ["positioning", "arrows"]) "\
+-- >>>  renderToFile "docs/haddocks/ledgerdb-switch.svg" defaultEnv (tikz ["positioning", "arrows"]) "\
 -- >>> \ \\draw (0, 0) -- (50pt, 0) coordinate (I);\
 -- >>> \  \\draw (I) -- ++(20pt,  20pt) coordinate (C1) -- ++(20pt, 0) coordinate (C2);\
 -- >>> \  \\draw (I) -- ++(20pt, -20pt) coordinate (F1) -- ++(20pt, 0) coordinate (F2) -- ++(20pt, 0) coordinate (F3);\
@@ -267,7 +267,7 @@ import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as Lock
 import           Ouroboros.Consensus.Util.Versioned
 import           Ouroboros.Network.Block (Point (Point))
 import           System.FS.API
-import           System.FS.API.Types
+import           System.FS.API.Lazy (hPut)
 import           Text.Read (readMaybe)
 import           Util.CallStack
 
