@@ -1,10 +1,10 @@
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
-
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 -- | Utilities that avoid repetition when declaring instances for types
 -- that are not amenable to @deriving@, and in particular, types with
@@ -33,11 +33,11 @@ module Test.Ouroboros.Consensus.ChainGenerator.Some (
   ) where
 
 import           Data.Kind (Constraint, Type)
-import           Data.Proxy (Proxy (Proxy))
 import           Data.Void (Void)
 import qualified GHC.Read as Read
 import           GHC.TypeLits (Symbol)
 import qualified GHC.TypeLits as TE
+import           Ouroboros.Consensus.Util.RedundantConstraints
 import qualified Text.ParserCombinators.ReadPrec as Read
 import qualified Text.Read.Lex as Read
 
@@ -67,8 +67,12 @@ newtype ShowBuilder a = ShowBuilder ShowS
 infixl 1 `showArg`
 
 -- | The context is satisfied by any type @a@ that is manifestly apart from @->@
-runShowsPrec :: NoFun "runShowsPrec" a (AbsError "runShowsPrec" a) => Int -> ShowBuilder a -> ShowS
+runShowsPrec ::
+     forall a. NoFun "runShowsPrec" a (AbsError "runShowsPrec" a)
+  => Int -> ShowBuilder a -> ShowS
 runShowsPrec p (ShowBuilder x) = showParen (p >= 11) x
+  where
+    _ = keepRedundantConstraint (Proxy @(NoFun "runShowsPrec" a (AbsError "runShowsPrec" a)))
 
 showCtor :: a -> String -> ShowBuilder a
 showCtor a s =
@@ -89,8 +93,12 @@ newtype ReadBuilder a = ReadBuilder (Read.ReadPrec a)
   deriving (Applicative, Functor)
 
 -- | The context is satisfied by any type @a@ that is manifestly apart from @->@
-runReadPrec :: NoFun "runReadPrec" a (AbsError "runReadPrec" a) => ReadBuilder a -> Read.ReadPrec a
+runReadPrec ::
+     forall a. NoFun "runReadPrec" a (AbsError "runReadPrec" a)
+  => ReadBuilder a -> Read.ReadPrec a
 runReadPrec (ReadBuilder x) = Read.parens $ Read.prec 10 x
+  where
+    _ = keepRedundantConstraint (Proxy @(NoFun "runReadPrec" a (AbsError "runReadPrec" a)))
 
 readCtor :: a -> String -> ReadBuilder a
 readCtor a s = ReadBuilder $ a <$ Read.expectP (Read.Ident s)

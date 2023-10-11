@@ -1,7 +1,7 @@
 inputs: final: prev:
 
 let
-  tool-index-state = "2023-09-04T00:00:00Z";
+  tool-index-state = "2023-10-06T00:00:00Z";
   tool = name: version: other:
     final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
       version = version;

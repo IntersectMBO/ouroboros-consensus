@@ -3,7 +3,3 @@ package cardano-crypto-praos
 
 program-options
   ghc-options: -Werror
-
-if impl(ghc >= 9.6)
-  program-options
-    ghc-options: -Wno-error=redundant-constraints
