@@ -4,10 +4,12 @@
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 
-module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule (module Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule) where
+module Test.Ouroboros.Consensus.PointSchedule (module Test.Ouroboros.Consensus.PointSchedule) where
 
+import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)
 import           Data.List (mapAccumL, transpose)
+import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String (IsString (fromString))
@@ -55,10 +57,9 @@ instance Condense BlockPoint where
 -- state of the (online) node, then maybe we can call it that?
 data AdvertisedPoints =
   AdvertisedPoints {
-    tip      :: TipPoint,
-    header   :: HeaderPoint,
-    block    :: BlockPoint,
-    fragment :: TestFrag
+    tip    :: TipPoint,
+    header :: HeaderPoint,
+    block  :: BlockPoint
   }
   deriving (Eq, Show)
 
@@ -139,6 +140,9 @@ getPeer :: PeerId -> Peers a -> Maybe a
 getPeer HonestPeer ps = Just $ value $ honest ps
 getPeer pid ps        = value <$> others ps Map.!? pid
 
+getPeerIds :: Peers a -> NonEmpty PeerId
+getPeerIds peers = HonestPeer :| Map.keys (others peers)
+
 -- REVIEW: What is the purpose of having the other peers as well in a
 -- 'TickState'?
 data Tick =
@@ -151,12 +155,19 @@ data Tick =
 instance Condense Tick where
   condense Tick {active} = condense active
 
-data PointSchedule =
-  PointSchedule { ticks :: [Tick], frags :: Peers TestFrag }
+newtype PointSchedule =
+  PointSchedule {ticks :: NonEmpty Tick}
   deriving (Eq, Show)
 
 instance Condense PointSchedule where
-  condense (PointSchedule ticks _) = unlines (condense <$> ticks)
+  condense (PointSchedule ticks) = unlines (condense <$> toList ticks)
+
+pointSchedule :: [Tick] -> Maybe PointSchedule
+pointSchedule ticks = PointSchedule <$> nonEmpty ticks
+
+pointSchedulePeers :: PointSchedule -> NonEmpty PeerId
+pointSchedulePeers PointSchedule{ticks = Tick {peers} :| _} =
+  getPeerIds peers
 
 banalStates :: TestFrag -> [NodeState]
 banalStates (Empty _) = []
@@ -164,21 +175,20 @@ banalStates frag@(_ :> tipBlock) =
   spin [] frag
   where
     spin z (Empty _) = z
-    spin z fragment@(pre :> block) =
+    spin z (pre :> block) =
       let header = HeaderPoint $ getHeader block
        in spin
-            (NodeOnline AdvertisedPoints {tip, header, block = BlockPoint block, fragment} : z)
+            (NodeOnline AdvertisedPoints {tip, header, block = BlockPoint block} : z)
             pre
     tip = TipPoint $ tipFromHeader tipBlock
 
 -- REVIEW: I see the point of this point schedule as an exercice to manipulate
 -- them but I otherwise find it rather useless.
 balanced ::
-  Peers TestFrag ->
   Peers [NodeState] ->
-  PointSchedule
-balanced frags states =
-  PointSchedule (snd (mapAccumL step initial activeSeq)) frags
+  Maybe PointSchedule
+balanced states =
+  pointSchedule (snd (mapAccumL step initial activeSeq))
   where
     step :: Tick -> Peer NodeState -> (Tick, Tick)
     step Tick {peers} active =
@@ -207,9 +217,9 @@ newtype PeerSchedule =
   PeerSchedule [Peer NodeState]
   deriving (Eq, Show)
 
-peer2Point :: Peers TestFrag -> PeerSchedule -> PointSchedule
+peer2Point :: Peers TestFrag -> PeerSchedule -> Maybe PointSchedule
 peer2Point ps (PeerSchedule n) =
-  PointSchedule (snd (mapAccumL folder initial n)) ps
+  pointSchedule (snd (mapAccumL folder initial n))
   where
     initial = NodeOffline <$ ps
 
@@ -242,13 +252,13 @@ foldGenPeers frags gen =
 
 banalPointSchedule ::
   Peers TestFrag ->
-  PointSchedule
+  Maybe PointSchedule
 banalPointSchedule frags =
-  balanced frags (banalStates <$> frags)
+  balanced (banalStates <$> frags)
 
 fastAdversarySchedule ::
   Peers TestFrag ->
-  PointSchedule
+  Maybe PointSchedule
 fastAdversarySchedule frags =
   peer2Point frags (foldGenPeers frags trans)
   where
@@ -273,20 +283,20 @@ fastAdversarySchedule frags =
             f rest p = (rest, [p])
 
 -- Schedule with only the honest peer advertising their whole fragment immediately.
-onlyHonestPointSchedule :: TestFrag -> PointSchedule
-onlyHonestPointSchedule (Empty _) = PointSchedule [] undefined
-onlyHonestPointSchedule fragment@(_ :> tipBlock) =
+onlyHonestPointSchedule :: TestFrag -> Maybe PointSchedule
+onlyHonestPointSchedule (Empty _) = Nothing
+onlyHonestPointSchedule (_ :> tipBlock) =
   let honestPeerState =
         Peer HonestPeer $
           NodeOnline $
-          AdvertisedPoints tipPoint headerPoint blockPoint fragment
+          AdvertisedPoints tipPoint headerPoint blockPoint
   in
-  PointSchedule [
-    Tick {
+  Just $ PointSchedule (
+    pure $ Tick {
       active = honestPeerState,
       peers = Peers honestPeerState Map.empty
     }
-  ] undefined
+  )
   where
     tipPoint = TipPoint $ tipFromHeader tipBlock
     headerPoint = HeaderPoint $ getHeader tipBlock
@@ -294,9 +304,9 @@ onlyHonestPointSchedule fragment@(_ :> tipBlock) =
 
 -- Schedule with only the honest peer advertising the honest chain immediately
 -- as it becomes available.
-onlyHonestWithMintingPointSchedule :: SlotNo -> Int -> TestFrag -> PointSchedule
+onlyHonestWithMintingPointSchedule :: SlotNo -> Int -> TestFrag -> Maybe PointSchedule
 onlyHonestWithMintingPointSchedule initialSlotNo _ticksPerSlot fullFragment@(_ :> finalBlock) =
-  PointSchedule (map tickAtSlotNo [initialSlotNo .. finalSlotNo]) undefined
+  pointSchedule (map tickAtSlotNo [initialSlotNo .. finalSlotNo])
   where
     -- If we hold a block, we are guaranteed that the slot number cannot be
     -- origin?
@@ -307,12 +317,12 @@ onlyHonestWithMintingPointSchedule initialSlotNo _ticksPerSlot fullFragment@(_ :
     advertisedPointsAtSlotNo :: SlotNo -> AdvertisedPoints
     advertisedPointsAtSlotNo slotNo =
       case fst $ splitFragmentAtSlotNo (At slotNo) fullFragment of
-        Empty _ -> undefined
-        fragment@(_ :> tipBlock) ->
+        Empty _ -> error "onlyHonestWithMintingPointSchedule: there should be a block at that slot"
+        (_ :> tipBlock) ->
           let tipPoint = TipPoint $ tipFromHeader tipBlock
               headerPoint = HeaderPoint $ getHeader tipBlock
               blockPoint = BlockPoint tipBlock
-           in AdvertisedPoints tipPoint headerPoint blockPoint fragment
+           in AdvertisedPoints tipPoint headerPoint blockPoint
 
     tickAtSlotNo :: SlotNo -> Tick
     tickAtSlotNo slotNo =

@@ -17,6 +17,8 @@ module Test.Ouroboros.Consensus.PeerSimulator.Resources (
 import           Control.Concurrent.Class.MonadSTM.Strict (newEmptyTMVarIO,
                      takeTMVar)
 import           Control.Tracer (Tracer)
+import           Data.Foldable (toList)
+import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
@@ -30,11 +32,10 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (ChainSyncServer (..))
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.BlockTree
-                     (BlockTree)
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.PointSchedule
+import           Test.Ouroboros.Consensus.BlockTree (BlockTree)
 import           Test.Ouroboros.Consensus.PeerSimulator.Handlers
 import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
+import           Test.Ouroboros.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 
@@ -158,10 +159,10 @@ makePeersResources ::
   IOLike m =>
   Tracer m String ->
   BlockTree TestBlock ->
-  [PeerId] ->
+  NonEmpty PeerId ->
   m (Map PeerId (PeerResources m))
 makePeersResources tracer blockTree peers = do
   resources <- for peers $ \ peerId -> do
     peerResources <- makePeerResources tracer blockTree peerId
     pure (peerId, peerResources)
-  pure (Map.fromList resources)
+  pure (Map.fromList $ toList resources)
