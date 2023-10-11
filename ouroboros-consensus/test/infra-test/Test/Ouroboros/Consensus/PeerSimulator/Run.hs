@@ -4,7 +4,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 
-module Test.Ouroboros.Consensus.PeerSimulator.Run (runPointSchedule) where
+module Test.Ouroboros.Consensus.PeerSimulator.Run (
+    ChainSyncException (..)
+  , runPointSchedule
+  ) where
 
 import           Control.Monad.Class.MonadAsync
                      (AsyncCancelled (AsyncCancelled))
@@ -83,6 +86,14 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
     nullTracer
     varCandidate
 
+-- | A record to associate an exception thrown by the ChainSync
+-- thread with the peer that it was running for.
+data ChainSyncException = ChainSyncException
+       { csePeerId    :: PeerId
+       , cseException :: SomeException
+       }
+    deriving Show
+
 -- | Run a ChainSync protocol for one peer, consisting of a server and client.
 --
 -- The connection uses timeouts based on the ASC.
@@ -101,7 +112,7 @@ startChainSyncConnectionThread ::
   FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
   SharedResources m ->
   ChainSyncResources m ->
-  m (StrictTVar m (Maybe SomeException))
+  m (StrictTVar m (Maybe ChainSyncException))
 startChainSyncConnectionThread registry tracer cfg activeSlotCoefficient chainDbView fetchClientRegistry SharedResources {srPeerId, srCandidateFragment} ChainSyncResources {csrServer} = do
   let
     slotLength = HardFork.eraSlotLength . topLevelConfigLedger $ cfg
@@ -110,7 +121,7 @@ startChainSyncConnectionThread registry tracer cfg activeSlotCoefficient chainDb
   traceWith tracer $ "  canAwait = " ++ show (canAwaitTimeout timeouts)
   traceWith tracer $ "  intersect = " ++ show (intersectTimeout timeouts)
   traceWith tracer $ "  mustReply = " ++ show (mustReplyTimeout timeouts)
-  chainSyncExit <- uncheckedNewTVarM Nothing
+  chainSyncException <- uncheckedNewTVarM Nothing
   _ <- forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $ do
       res <- try $ runConnectedPeersPipelinedWithLimits
@@ -123,7 +134,7 @@ startChainSyncConnectionThread registry tracer cfg activeSlotCoefficient chainDb
         (chainSyncServerPeer csrServer)
       case res of
         Left exn -> do
-          atomically $ writeTVar chainSyncExit (Just exn)
+          atomically $ writeTVar chainSyncException $ Just $ ChainSyncException srPeerId exn
           case fromException exn of
             Just (ExceededSizeLimit _) ->
               traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of size limit exceeded."
@@ -133,7 +144,7 @@ startChainSyncConnectionThread registry tracer cfg activeSlotCoefficient chainDb
               pure ()
           throwIO exn
         Right res' -> pure res'
-  pure chainSyncExit
+  pure chainSyncException
 
   where
     protocolTracer = Tracer $ \case
@@ -231,7 +242,7 @@ runPointSchedule ::
   PointSchedule ->
   Tracer m String ->
   BlockTree TestBlock ->
-  m (Either (NonEmpty SomeException) TestFragH)
+  m (Either (NonEmpty ChainSyncException) TestFragH)
 runPointSchedule k asc pointSchedule tracer blockTree =
   withRegistry $ \registry -> do
     resources <- makePeersResources tracer blockTree (pointSchedulePeers pointSchedule)
@@ -258,13 +269,13 @@ runPointSchedule k asc pointSchedule tracer blockTree =
   where
     config = defaultCfg k
 
-    collectExceptions :: [StrictTVar m (Maybe SomeException)] -> m (Maybe (NonEmpty SomeException))
+    collectExceptions :: [StrictTVar m (Maybe ChainSyncException)] -> m (Maybe (NonEmpty ChainSyncException))
     collectExceptions vars = do
       res <- mapM readTVarIO vars
       pure $ nonEmpty [ e | Just e <- res, not (isAsyncCancelled e) ]
 
-    isAsyncCancelled :: SomeException -> Bool
-    isAsyncCancelled e = case fromException e of
+    isAsyncCancelled :: ChainSyncException -> Bool
+    isAsyncCancelled e = case fromException $ cseException e of
       Just AsyncCancelled -> True
       _                   -> False
 
