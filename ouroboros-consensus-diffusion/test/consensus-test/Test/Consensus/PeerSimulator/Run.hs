@@ -126,7 +126,7 @@ startChainSyncConnectionThread registry tracer cfg activeSlotCoefficient chainDb
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $ do
       res <- try $ runConnectedPeersPipelinedWithLimits
         createConnectedChannels
-        protocolTracer
+        nullTracer
         codecChainSyncId
         chainSyncNoSizeLimits
         (timeLimitsChainSync timeouts)
@@ -145,18 +145,6 @@ startChainSyncConnectionThread registry tracer cfg activeSlotCoefficient chainDb
           throwIO exn
         Right res' -> pure res'
   pure chainSyncException
-
-  where
-    protocolTracer = Tracer $ \case
-      (clientOrServer, TraceSendMsg payload) ->
-        traceUnitWith
-          tracer
-          ("Protocol ChainSync " ++ condense srPeerId)
-          (case clientOrServer of
-             Client -> "Client -> Server"
-             Server -> "Server -> Client"
-           ++ ": " ++ show payload)
-      _ -> pure ()
 
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
 -- register it for synchronization with the ChainSync client.

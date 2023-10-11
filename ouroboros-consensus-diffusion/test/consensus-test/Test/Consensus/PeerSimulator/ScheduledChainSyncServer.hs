@@ -35,6 +35,8 @@ data RequestNext =
   RollForward (Header TestBlock) (Tip TestBlock)
   |
   RollBackward (Point TestBlock) (Tip TestBlock)
+  |
+  AwaitReply
   deriving (Eq, Show)
 
 -- | Pure representation of the messages produced by the handler for the @StIntersect@
@@ -150,7 +152,14 @@ scheduledChainSyncServer server@ScheduledChainSyncServer {scssHandlers, scssTrac
           pure $ Left $ SendMsgRollForward header tip go
         Just (RollBackward point tip) -> do
           trace "done handling MsgRequestNext"
-          pure $ Left $ (SendMsgRollBackward point tip) go
+          pure $ Left $ SendMsgRollBackward point tip go
+        Just AwaitReply -> do
+          trace "done handling MsgRequestNext"
+          pure $ Right $ do
+            void $ awaitNextState server
+            recvMsgRequestNext >>= \case
+              Right a -> a
+              Left a -> pure a
         Nothing -> do
           trace "  cannot serve at this point; waiting for node state and starting again"
           void $ awaitNextState server

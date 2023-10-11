@@ -29,10 +29,9 @@ mkCdbTracer tracer =
   Tracer $ \case
     ChainDB.Impl.TraceAddBlockEvent event ->
       case event of
-        AddedToCurrentChain _ NewTipInfo {newTipPoint} _ newFragment -> do
+        AddedToCurrentChain _ NewTipInfo {newTipPoint} _ _ -> do
           trace "Added to current chain"
           trace $ "New tip: " ++ condense newTipPoint
-          trace $ "New fragment: " ++ condense newFragment
         SwitchedToAFork _ NewTipInfo {newTipPoint} _ newFragment -> do
           trace "Switched to a fork"
           trace $ "New tip: " ++ condense newTipPoint
