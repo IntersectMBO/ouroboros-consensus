@@ -77,10 +77,10 @@ library
     , io-classes                   ^>=1.2
     , mtl
     , ouroboros-consensus          ^>=0.13
-    , ouroboros-network            ^>=0.9.1
-    , ouroboros-network-api        ^>=0.5.1
-    , ouroboros-network-framework  ^>=0.9
-    , ouroboros-network-protocols  ^>=0.5.2
+    , ouroboros-network            ^>=0.10.0
+    , ouroboros-network-api        ^>=0.6.0
+    , ouroboros-network-framework  ^>=0.10
+    , ouroboros-network-protocols  ^>=0.6.0
     , random
     , serialise                    ^>=0.2
     , si-timers                    ^>=1.2
