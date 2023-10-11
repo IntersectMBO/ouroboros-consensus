@@ -1,7 +1,8 @@
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE NamedFieldPuns  #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TypeFamilies    #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 module Test.Ouroboros.Consensus.PeerSimulator.Run (runPointSchedule) where
 
@@ -15,25 +16,22 @@ import           Data.Functor (void)
 import           Data.List.NonEmpty (NonEmpty, nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     ChainSyncClientResult, Consensus, chainSyncClient,
-                     defaultChainDbView)
+                     Consensus, chainSyncClient, defaultChainDbView)
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
                      (ChainDbArgs (cdbTracer))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
-import           Ouroboros.Consensus.Util.IOLike
-                     (Exception (fromException, toException), IOLike,
-                     MonadAsync (Async, async, cancel, poll), MonadCatch (try),
-                     MonadDelay (threadDelay), MonadSTM (atomically, retry),
-                     MonadThrow (throwIO), SomeException, StrictTVar, readTVar,
-                     tryPutTMVar)
+import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
+                     IOLike, MonadCatch (try), MonadDelay (threadDelay),
+                     MonadSTM (atomically, retry), MonadThrow (throwIO),
+                     SomeException, StrictTVar, readTVar, readTVarIO,
+                     tryPutTMVar, uncheckedNewTVarM, writeTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (blockPoint)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
@@ -66,12 +64,6 @@ import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
 
--- | A handle to a thread running a connection between
--- typed-protocols peers
-newtype ConnectionThread m =
-  ConnectionThread {
-    kill :: m (Either SomeException ChainSyncClientResult)
-  }
 
 basicChainSyncClient ::
   IOLike m =>
@@ -99,10 +91,9 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
 --
 -- Execution is started asynchronously, returning an action that kills the thread,
 -- to allow extraction of a potential exception.
---
--- TODO this should use 'forkLinkedThread' instead of 'async'.
 startChainSyncConnectionThread ::
   (IOLike m, MonadTimer m) =>
+  ResourceRegistry m ->
   Tracer m String ->
   TopLevelConfig TestBlock ->
   Asc ->
@@ -110,8 +101,8 @@ startChainSyncConnectionThread ::
   FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
   SharedResources m ->
   ChainSyncResources m ->
-  m (ConnectionThread m)
-startChainSyncConnectionThread tracer cfg activeSlotCoefficient chainDbView fetchClientRegistry SharedResources {srPeerId, srCandidateFragment} ChainSyncResources {csrServer} = do
+  m (StrictTVar m (Maybe SomeException))
+startChainSyncConnectionThread registry tracer cfg activeSlotCoefficient chainDbView fetchClientRegistry SharedResources {srPeerId, srCandidateFragment} ChainSyncResources {csrServer} = do
   let
     slotLength = HardFork.eraSlotLength . topLevelConfigLedger $ cfg
     timeouts = chainSyncTimeouts slotLength activeSlotCoefficient
@@ -119,7 +110,8 @@ startChainSyncConnectionThread tracer cfg activeSlotCoefficient chainDbView fetc
   traceWith tracer $ "  canAwait = " ++ show (canAwaitTimeout timeouts)
   traceWith tracer $ "  intersect = " ++ show (intersectTimeout timeouts)
   traceWith tracer $ "  mustReply = " ++ show (mustReplyTimeout timeouts)
-  handle <- async $ do
+  chainSyncExit <- uncheckedNewTVarM Nothing
+  _ <- forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $ do
       res <- try $ runConnectedPeersPipelinedWithLimits
         createConnectedChannels
@@ -131,6 +123,7 @@ startChainSyncConnectionThread tracer cfg activeSlotCoefficient chainDbView fetc
         (chainSyncServerPeer csrServer)
       case res of
         Left exn -> do
+          atomically $ writeTVar chainSyncExit (Just exn)
           case fromException exn of
             Just (ExceededSizeLimit _) ->
               traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of size limit exceeded."
@@ -140,9 +133,8 @@ startChainSyncConnectionThread tracer cfg activeSlotCoefficient chainDbView fetc
               pure ()
           throwIO exn
         Right res' -> pure res'
+  pure chainSyncExit
 
-  let kill = fmap fst <$> cancelPoll handle
-  pure (ConnectionThread kill)
   where
     protocolTracer = Tracer $ \case
       (clientOrServer, TraceSendMsg payload) ->
@@ -177,35 +169,6 @@ startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM Share
           case BT.findFragment (blockPoint b) srBlockTree of
             Just f  -> pure f
             Nothing -> error "block tip is not in the block tree"
-
--- | Check whether the supplied thread has terminated and kill it otherwise.
---
--- NOTE: io-sim provides 'cancel' which does not propagate already existing
--- exceptions from the thread.
-cancelPoll :: MonadAsync m => Async m a -> m (Either SomeException a)
-cancelPoll a =
-  poll a >>= \case
-    Just result ->
-      -- Thread is already terminated (with either an exception or a value)
-      pure result
-    Nothing -> do
-      -- Thread hasn't terminated yet.
-      cancel a
-      pure $ Left $ toException AsyncCancelled
-
--- | Kill all supplied threads and collect all exceptions that have occurred.
-killAll ::
-  IOLike m =>
-  [ConnectionThread m] ->
-  m (Maybe (NonEmpty SomeException))
-killAll connectionThreads = do
-  results <- for connectionThreads kill
-  pure $ nonEmpty $ flip mapMaybe results $ \case
-    Left exn ->
-      case fromException exn of
-        Just AsyncCancelled -> Nothing
-        Nothing             -> Just exn
-    Right _ -> Nothing
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -261,6 +224,7 @@ runScheduler tracer (PointSchedule ps) peers = do
 -- | Construct STM resources, set up ChainSync and BlockFetch threads, and
 -- send all ticks in a 'PointSchedule' to all given peers in turn.
 runPointSchedule ::
+  forall m.
   (IOLike m, MonadTime m, MonadTimer m) =>
   SecurityParam ->
   Asc ->
@@ -276,10 +240,10 @@ runPointSchedule k asc pointSchedule tracer blockTree =
     chainDb <- mkChainDb tracer candidates config registry
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = defaultChainDbView chainDb
-    chainSyncThreads <- for resources $ \PeerResources {prShared, prChainSync} -> do
-      thread <- startChainSyncConnectionThread tracer config asc chainDbView fetchClientRegistry prShared prChainSync
+    chainSyncRess <- for resources $ \PeerResources {prShared, prChainSync} -> do
+      chainSyncRes <- startChainSyncConnectionThread registry tracer config asc chainDbView fetchClientRegistry prShared prChainSync
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
-      pure thread
+      pure chainSyncRes
     for_ resources $ \PeerResources {prShared} ->
       startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared
     -- The block fetch logic needs to be started after the block fetch clients
@@ -288,11 +252,21 @@ runPointSchedule k asc pointSchedule tracer blockTree =
     let getCandidates = traverse readTVar candidates
     PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
     runScheduler tracer pointSchedule resources
-    res <- killAll (Map.elems chainSyncThreads)
+    chainSyncExceptions <- collectExceptions (Map.elems chainSyncRess)
     b <- atomically $ ChainDB.getCurrentChain chainDb
-    pure $ maybe (Right b) Left res
+    pure $ maybe (Right b) Left chainSyncExceptions
   where
     config = defaultCfg k
+
+    collectExceptions :: [StrictTVar m (Maybe SomeException)] -> m (Maybe (NonEmpty SomeException))
+    collectExceptions vars = do
+      res <- mapM readTVarIO vars
+      pure $ nonEmpty [ e | Just e <- res, not (isAsyncCancelled e) ]
+
+    isAsyncCancelled :: SomeException -> Bool
+    isAsyncCancelled e = case fromException e of
+      Just AsyncCancelled -> True
+      _                   -> False
 
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.
