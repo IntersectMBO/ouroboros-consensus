@@ -86,9 +86,12 @@ handlerRequestNext currentIntersection blockTree points =
     noPathError = error "serveHeader: intersection and and headerPoint should always be in the block tree"
 
     analysePath = \case
-      -- If the anchor is the intersection (the source of the path-finding)
-      -- but the fragment is empty, then the intersection is exactly our
-      -- header point and there is nothing to do.
+      -- If the anchor is the intersection (the source of the path-finding) but
+      -- the fragment is empty, then the intersection is exactly our header
+      -- point and there is nothing to do. If additionally the header point is
+      -- also the tip point (because we served our whole chain, or we are
+      -- stalling as an adversarial behaviour), then we ask the client to wait;
+      -- otherwise we just do nothing.
       (BT.PathAnchoredAtSource True, AF.Empty _) | getTipPoint tip' == headerPoint -> do
         trace "  chain has been fully served"
         pure (Just AwaitReply)
@@ -106,6 +109,9 @@ handlerRequestNext currentIntersection blockTree points =
       -- the intersection is further than the tip that we can serve.
       (BT.PathAnchoredAtSource False, AF.Empty _) -> do
         trace "  intersection is further than our header point"
+        -- REVIEW: The following is a hack that allows the honest peer to not
+        -- get disconnected when it falls behind. Why does a peer doing that not
+        -- get disconnected from?
         pure (Just AwaitReply)
       -- If the anchor is not the intersection and the fragment is non-empty,
       -- then we require a rollback
