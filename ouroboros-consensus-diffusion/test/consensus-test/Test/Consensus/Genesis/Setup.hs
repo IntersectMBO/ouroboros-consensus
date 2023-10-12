@@ -4,10 +4,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Test.Consensus.Genesis.Setup
-  ( module Test.Consensus.Genesis.Setup,
-    module Test.Consensus.Genesis.Setup.GenChains
+  (module Test.Consensus.Genesis.Setup.GenChains
+  , runTest
+  , runTest'
   )
 where
 
@@ -23,6 +25,7 @@ import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Tracer (recordingTracerTVar)
 import Test.Consensus.Genesis.Setup.GenChains
+import Data.List.NonEmpty (NonEmpty)
 
 runTest ::
   (IOLike m, MonadTime m, MonadTimer m) =>
@@ -30,7 +33,20 @@ runTest ::
   PointSchedule ->
   (TestFragH -> Property) ->
   m Property
-runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty = do
+runTest genesisTest schedule makeProperty =
+  runTest' genesisTest schedule $ \case
+    Left exn -> counterexample ("exception: " <> show exn) False
+    Right fragment -> counterexample ("result: " <> condense fragment) $ makeProperty fragment
+
+-- | Same as 'runTest' except the predicate also gives access to the case where
+-- exceptions were risen.
+runTest' ::
+  (IOLike m, MonadTime m, MonadTimer m) =>
+  GenesisTest ->
+  PointSchedule ->
+  (Either (NonEmpty ChainSyncException) TestFragH -> Property) ->
+  m Property
+runTest' genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty = do
     (tracer, getTrace) <- recordingTracerTVar
     -- let tracer = debugTracer
 
@@ -41,11 +57,4 @@ runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty
     result <- runPointSchedule genesisTest schedule tracer
     trace <- unlines <$> getTrace
 
-    let
-      prop = case result of
-        Left exn ->
-          counterexample ("exception: " <> show exn) False
-        Right fragment ->
-          counterexample ("result: " <> condense fragment) (makeProperty fragment)
-
-    pure $ counterexample trace prop
+    pure $ counterexample trace $ makeProperty result
