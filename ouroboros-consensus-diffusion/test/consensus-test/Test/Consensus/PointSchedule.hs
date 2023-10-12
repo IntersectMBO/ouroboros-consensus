@@ -277,10 +277,10 @@ blockTreePeers BlockTree {btTrunk, btBranches} =
 
     peer pid BlockTreeBranch {btbFull} = (pid, Peer pid btbFull)
 
-fastAdversarySchedule ::
+fastAdversaryPointSchedule ::
   BlockTree TestBlock ->
   Maybe PointSchedule
-fastAdversarySchedule blockTree =
+fastAdversaryPointSchedule blockTree =
   peer2Point frags (foldGenPeers frags trans)
   where
     frags = blockTreePeers blockTree
@@ -412,5 +412,5 @@ data GenesisTest = GenesisTest {
 
 genSchedule :: ScheduleType -> BlockTree TestBlock -> Maybe PointSchedule
 genSchedule = \case
-  FastAdversary -> fastAdversarySchedule
+  FastAdversary -> fastAdversaryPointSchedule
   Banal -> banalPointSchedule
