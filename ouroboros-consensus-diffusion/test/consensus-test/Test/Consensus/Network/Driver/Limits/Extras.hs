@@ -6,7 +6,11 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeFamilies          #-}
 
-module Ouroboros.Network.Driver.Limits.Extras (module Ouroboros.Network.Driver.Limits.Extras) where
+module Test.Consensus.Network.Driver.Limits.Extras (
+    chainSyncNoSizeLimits
+  , chainSyncTimeouts
+  , runConnectedPeersPipelinedWithLimits
+  ) where
 
 import           Cardano.Slotting.Time (SlotLength, getSlotLength)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)

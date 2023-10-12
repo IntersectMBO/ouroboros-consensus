@@ -1,4 +1,4 @@
-module Ouroboros.Network.AnchoredFragment.Extras (slotLength) where
+module Test.Consensus.Network.AnchoredFragment.Extras (slotLength) where
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo), withOrigin)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,

@@ -5,8 +5,8 @@
 --
 -- These are separated from the scheduling related mechanics of the
 -- ChainSync server mock that the peer simulator uses, in
--- "Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer".
-module Test.Ouroboros.Consensus.PeerSimulator.Handlers (
+-- "Test.Consensus.PeerSimulator.ScheduledChainSyncServer".
+module Test.Consensus.PeerSimulator.Handlers (
     handlerFindIntersection
   , handlerRequestNext
   ) where
@@ -24,14 +24,13 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockPoint, getTipPoint)
-import qualified Test.Ouroboros.Consensus.BlockTree as BT
-import           Test.Ouroboros.Consensus.BlockTree (BlockTree)
-import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
+import qualified Test.Consensus.BlockTree as BT
+import           Test.Consensus.BlockTree (BlockTree)
+import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
                      (FindIntersect (..),
                      RequestNext (RollBackward, RollForward))
-import           Test.Ouroboros.Consensus.PointSchedule
-                     (AdvertisedPoints (header, tip), HeaderPoint (HeaderPoint),
-                     TipPoint (TipPoint))
+import           Test.Consensus.PointSchedule (AdvertisedPoints (header, tip),
+                     HeaderPoint (HeaderPoint), TipPoint (TipPoint))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 

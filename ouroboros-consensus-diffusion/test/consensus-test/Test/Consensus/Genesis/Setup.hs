@@ -5,9 +5,9 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Test.Ouroboros.Consensus.Genesis.Setup
-  ( module Test.Ouroboros.Consensus.Genesis.Setup,
-    module Test.Ouroboros.Consensus.Genesis.Setup.GenChains
+module Test.Consensus.Genesis.Setup
+  ( module Test.Consensus.Genesis.Setup,
+    module Test.Consensus.Genesis.Setup.GenChains
   )
 where
 
@@ -16,13 +16,13 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (traceWith)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
-import qualified Test.Ouroboros.Consensus.BlockTree as BT
-import           Test.Ouroboros.Consensus.PointSchedule
-import           Test.Ouroboros.Consensus.PeerSimulator.Run
+import qualified Test.Consensus.BlockTree as BT
+import           Test.Consensus.PointSchedule
+import           Test.Consensus.PeerSimulator.Run
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Tracer (recordingTracerTVar)
-import Test.Ouroboros.Consensus.Genesis.Setup.GenChains
+import Test.Consensus.Genesis.Setup.GenChains
 
 runTest ::
   (IOLike m, MonadTime m, MonadTimer m) =>

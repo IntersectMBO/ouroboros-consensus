@@ -5,7 +5,7 @@
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE OverloadedStrings     #-}
 
-module Test.Ouroboros.Consensus.PointSchedule (module Test.Ouroboros.Consensus.PointSchedule) where
+module Test.Consensus.PointSchedule (module Test.Consensus.PointSchedule) where
 
 import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)
@@ -24,8 +24,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import           Ouroboros.Network.Block (SlotNo, Tip (Tip, TipGenesis),
                      blockNo, blockSlot, getTipSlotNo, tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
-import           Test.Ouroboros.Consensus.BlockTree (BlockTree (..),
-                     BlockTreeBranch (..))
+import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.TestBlock (Header (TestHeader), TestBlock)
 

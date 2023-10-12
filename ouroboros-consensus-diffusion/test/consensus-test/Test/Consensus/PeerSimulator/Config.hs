@@ -1,6 +1,6 @@
 {-# LANGUAGE TypeFamilies #-}
 
-module Test.Ouroboros.Consensus.PeerSimulator.Config (defaultCfg) where
+module Test.Consensus.PeerSimulator.Config (defaultCfg) where
 
 import           Cardano.Crypto.DSIGN (SignKeyDSIGN (..), VerKeyDSIGN (..))
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)

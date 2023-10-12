@@ -5,7 +5,7 @@
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 
-module Test.Ouroboros.Consensus.Genesis.Setup.GenChains (
+module Test.Consensus.Genesis.Setup.GenChains (
     GenesisTest (..)
   , genChains
   ) where
@@ -21,7 +21,8 @@ import           Ouroboros.Consensus.Protocol.Abstract
                      (SecurityParam (SecurityParam))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import qualified Test.Ouroboros.Consensus.BlockTree as BT
+import qualified Test.Consensus.BlockTree as BT
+import           Test.Consensus.PointSchedule
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Adversarial as A
 import           Test.Ouroboros.Consensus.ChainGenerator.Adversarial
                      (genPrefixBlockCount)
@@ -33,7 +34,6 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Honest
 import           Test.Ouroboros.Consensus.ChainGenerator.Params
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (S)
-import           Test.Ouroboros.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)

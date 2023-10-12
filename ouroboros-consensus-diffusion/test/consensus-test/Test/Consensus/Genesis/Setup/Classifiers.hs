@@ -1,7 +1,7 @@
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE RecordWildCards #-}
 
-module Test.Ouroboros.Consensus.Genesis.Setup.Classifiers (
+module Test.Consensus.Genesis.Setup.Classifiers (
     Classifiers (..)
   , classifiers
   ) where
@@ -12,10 +12,9 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Network.AnchoredFragment (anchor, anchorToSlotNo,
                      headSlot)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.AnchoredFragment.Extras (slotLength)
-import           Test.Ouroboros.Consensus.BlockTree (BlockTree (..),
-                     BlockTreeBranch (..))
-import           Test.Ouroboros.Consensus.PointSchedule
+import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
+import           Test.Consensus.Network.AnchoredFragment.Extras (slotLength)
+import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
 
 {- | Interesting classification predicates used by the test:

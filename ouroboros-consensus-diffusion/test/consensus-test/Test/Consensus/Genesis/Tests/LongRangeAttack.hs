@@ -5,15 +5,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 
-module Test.Ouroboros.Consensus.Genesis.Tests.LongRangeAttack (tests) where
+module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Test.Ouroboros.Consensus.Genesis.Setup
-import           Test.Ouroboros.Consensus.Genesis.Setup.Classifiers
-import           Test.Ouroboros.Consensus.PointSchedule
+import           Test.Consensus.Genesis.Setup
+import           Test.Consensus.Genesis.Setup.Classifiers
+import           Test.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
