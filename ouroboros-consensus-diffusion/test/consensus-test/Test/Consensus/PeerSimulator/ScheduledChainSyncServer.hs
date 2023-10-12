@@ -155,15 +155,22 @@ scheduledChainSyncServer server@ScheduledChainSyncServer {scssHandlers, scssTrac
           pure $ Left $ SendMsgRollBackward point tip go
         Just AwaitReply -> do
           trace "done handling MsgRequestNext"
-          pure $ Right $ do
-            void $ awaitNextState server
-            recvMsgRequestNext >>= \case
-              Right a -> a
-              Left a -> pure a
+          pure $ Right $ do -- beginning of the continuation
+            restart >>= \case
+              -- If we get 'Right', then we still do not have anything to serve
+              -- and we loop; what 'Right' contains is the continuation starting
+              -- at 'do' above; by unwrapping the 'Right', we do not send
+              -- another AwaitReply message (which Typed Protocols does not
+              -- allow anyway).
+              Right cont -> cont
+              Left msg -> pure msg
         Nothing -> do
           trace "  cannot serve at this point; waiting for node state and starting again"
-          void $ awaitNextState server
-          recvMsgRequestNext
+          restart
+      where
+        -- Yield control back to the scheduler, then wait for the next state and
+        -- continue processing the client's current 'MsgRequestNext'.
+        restart = awaitNextState server *> recvMsgRequestNext
 
     recvMsgFindIntersect pts = do
       currentState <- ensureCurrentState server
