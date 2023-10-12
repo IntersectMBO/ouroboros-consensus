@@ -38,7 +38,7 @@ prop_longRangeAttack = do
 
   pure $ withMaxSuccess 10 $ runSimOrThrow $
     runTest genesisTest schedule $ \fragment ->
-        classify genesisAfterIntersection "Full genesis window after intersection"
+        classify genesisWindowAfterIntersection "Full genesis window after intersection"
         $ existsSelectableAdversary ==> not $ isHonestTestFragH fragment
         -- TODO
         -- $ not existsSelectableAdversary ==> immutableTipBeforeFork fragment

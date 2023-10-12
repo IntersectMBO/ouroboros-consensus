@@ -43,17 +43,17 @@ whose tip is the block in slot 8.
 data Classifiers =
   Classifiers {
     -- | There are more than k blocks in the alternative chain after the intersection
-    existsSelectableAdversary :: Bool,
+    existsSelectableAdversary      :: Bool,
     -- | There are at least scg slots after the intesection on both the honest
     -- and the alternative chain
-    genesisAfterIntersection  :: Bool
+    genesisWindowAfterIntersection :: Bool
   }
 
 classifiers :: GenesisTest -> Classifiers
 classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenesisWindow = GenesisWindow scg} =
-  Classifiers {existsSelectableAdversary, genesisAfterIntersection}
+  Classifiers {existsSelectableAdversary, genesisWindowAfterIntersection}
   where
-    genesisAfterIntersection =
+    genesisWindowAfterIntersection =
       any fragmentHasGenesis branches
 
     fragmentHasGenesis btb =
