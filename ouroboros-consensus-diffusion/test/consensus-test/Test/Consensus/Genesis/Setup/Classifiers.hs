@@ -17,38 +17,35 @@ import           Test.Consensus.Network.AnchoredFragment.Extras (slotLength)
 import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
 
-{- | Interesting classification predicates used by the test:
+{- | Interesting categories to classify test inputs
 
-1. the immutable tip should ALWAYS be honest
-2. the selection should be honest IF there is at least a Genesis window after the intersection.
+Knowing if there is a Genesis window after the intersection is important because
+otherwise the Genesis node has no chance to advance the immutable tip past
+the Limit on Eagerness.
 
 It is possible that, at the end of a test, the selection might be dishonest.
 Consider the following example, where k = 5 and scg = 12:
 
     slots:  0  1  2  3  4  5  6  7  8  9  10  11  12
     trunk:  0──1──2──3──4──5──6──7──8──────9──10──11
-                     ╰──4──5──6──7──8──9──────────10
+                     ╰──4──5──6──7─────────8───9──10
 
 Because of the Limit on Eagerness, the selection is stuck at slot 8 (k-th
 block after the intersection).
-Since the test chains only have 7 and 8 blocks after the intersection, Genesis
+Since the test chains only have 7 and 8 blocks after the intersection, the Genesis node
 will not be able to make a final decision, since it needs to have enough information
-to determine that one of the fragments is definitely denser within 12 slots, and here
-both fragments have the potential to win the race.
+to determine that one of the fragments is definitely denser within the 12 slots after
+the intersection (at slot 16), and here both chains still have the chance to be
+the densest.
 This means that a test will terminate while the selection contains an arbitrary fragment
 whose tip is the block in slot 8.
-
-Without Genesis, if the blocks are sent so that the N+1st slot's blocks arrive after all
-blocks in slot N have arrived, the adversarial fragment will be selected every time because
-it will have k+1 blocks first.
-
-So in our test we classify the input data according to the presence of an entire Genesis
-window after the intersection of at least one adversarial chain with the honest chain,
-on both chains.
 -}
 data Classifiers =
   Classifiers {
+    -- | There are more than k blocks in the alternative chain after the intersection
     existsSelectableAdversary :: Bool,
+    -- | There are at least scg slots after the intesection on both the honest
+    -- and the alternative chain
     genesisAfterIntersection  :: Bool
   }
 
