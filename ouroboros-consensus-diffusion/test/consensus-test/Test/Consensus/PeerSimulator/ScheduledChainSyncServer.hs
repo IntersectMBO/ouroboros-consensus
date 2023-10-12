@@ -1,6 +1,5 @@
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE NamedFieldPuns  #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE LambdaCase     #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 -- | A ChainSync protocol server that allows external scheduling of its
 -- operations, while deferring the implementation of the message handler
@@ -15,7 +14,6 @@ module Test.Consensus.PeerSimulator.ScheduledChainSyncServer (
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
 import           Data.Foldable (traverse_)
-import           Data.Functor (void)
 import           Ouroboros.Consensus.Block.Abstract (Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
