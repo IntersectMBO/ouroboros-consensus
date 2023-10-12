@@ -102,7 +102,6 @@ data NoSuchHonestChainSchema =
     BadLen
   deriving (Eq, Read, Show)
 
--- REVIEW: Should `0`, `1`, `5`, `9` be made parameters?
 genHonestRecipe :: QC.Gen HonestRecipe
 genHonestRecipe = sized1 $ \sz -> do
   (kcp, Scg s, delta) <- genKSD
