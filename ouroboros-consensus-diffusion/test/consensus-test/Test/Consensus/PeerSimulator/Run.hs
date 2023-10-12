@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 
-module Test.Ouroboros.Consensus.PeerSimulator.Run (
+module Test.Consensus.PeerSimulator.Run (
     ChainSyncException (..)
   , runPointSchedule
   ) where
@@ -52,17 +52,17 @@ import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
                      (pipelineDecisionLowHighMark)
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (chainSyncServerPeer)
-import qualified Test.Ouroboros.Consensus.BlockTree as BT
-import           Test.Ouroboros.Consensus.BlockTree (BlockTree)
-import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
-import qualified Test.Ouroboros.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
-import           Test.Ouroboros.Consensus.PeerSimulator.Config
-import           Test.Ouroboros.Consensus.PeerSimulator.Resources
-import           Test.Ouroboros.Consensus.PeerSimulator.Trace
-import qualified Test.Ouroboros.Consensus.PointSchedule as PointSchedule
-import           Test.Ouroboros.Consensus.PointSchedule (Peer (Peer), PeerId,
+import qualified Test.Consensus.BlockTree as BT
+import           Test.Consensus.BlockTree (BlockTree)
+import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
+import           Test.Consensus.PeerSimulator.Config
+import           Test.Consensus.PeerSimulator.Resources
+import           Test.Consensus.PeerSimulator.Trace
+import qualified Test.Consensus.PointSchedule as PointSchedule
+import           Test.Consensus.PointSchedule (Peer (Peer), PeerId,
                      PointSchedule (PointSchedule), TestFragH, Tick (Tick),
                      pointSchedulePeers)
+import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)

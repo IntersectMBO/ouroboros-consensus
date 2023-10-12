@@ -5,7 +5,7 @@
 -- | Data types and resource allocating constructors for the concurrency
 -- primitives used by ChainSync and BlockFetch in the handlers that implement
 -- the block tree analysis specific to our peer simulator.
-module Test.Ouroboros.Consensus.PeerSimulator.Resources (
+module Test.Consensus.PeerSimulator.Resources (
     ChainSyncResources (..)
   , PeerResources (..)
   , SharedResources (..)
@@ -32,10 +32,10 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (ChainSyncServer (..))
-import           Test.Ouroboros.Consensus.BlockTree (BlockTree)
-import           Test.Ouroboros.Consensus.PeerSimulator.Handlers
-import           Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer
-import           Test.Ouroboros.Consensus.PointSchedule
+import           Test.Consensus.BlockTree (BlockTree)
+import           Test.Consensus.PeerSimulator.Handlers
+import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
+import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 

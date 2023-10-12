@@ -7,7 +7,7 @@
 {-# OPTIONS_GHC -Wno-missing-export-lists #-}
 
 -- | Functions that call to the BlockFetch API to start clients and servers
-module Test.Ouroboros.Consensus.PeerSimulator.BlockFetch (
+module Test.Consensus.PeerSimulator.BlockFetch (
     runBlockFetchClient
   , startBlockFetchLogic
   , startKeepAliveThread

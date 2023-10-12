@@ -4,8 +4,8 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module Test.Ouroboros.Consensus.Genesis.Setup
-  ( module Test.Ouroboros.Consensus.Genesis.Setup,
+module Test.Consensus.Genesis.Setup
+  ( module Test.Consensus.Genesis.Setup,
   )
 where
 
@@ -18,9 +18,9 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Ouroboros.Consensus.ChainGenerator.Params
-import qualified Test.Ouroboros.Consensus.BlockTree as BT
-import           Test.Ouroboros.Consensus.PointSchedule
-import           Test.Ouroboros.Consensus.PeerSimulator.Run
+import qualified Test.Consensus.BlockTree as BT
+import           Test.Consensus.PointSchedule
+import           Test.Consensus.PeerSimulator.Run
 import           Test.QuickCheck
 import           Test.QuickCheck.Random (QCGen)
 import           Test.Util.Orphans.IOLike ()

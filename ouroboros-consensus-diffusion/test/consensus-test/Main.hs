@@ -1,5 +1,6 @@
 module Main (main) where
 
+import qualified Test.Consensus.Genesis.Tests (tests)
 import qualified Test.Consensus.HardFork.Combinator (tests)
 import qualified Test.Consensus.Node (tests)
 import           Test.Tasty
@@ -18,4 +19,5 @@ tests =
             Test.Consensus.HardFork.Combinator.tests
           ]
       ]
+  , Test.Consensus.Genesis.Tests (tests)
   ]

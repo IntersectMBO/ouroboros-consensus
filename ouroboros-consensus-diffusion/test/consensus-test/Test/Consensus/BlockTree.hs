@@ -6,7 +6,7 @@
 -- different mechanisms but maybe we should rely on that instead to avoid
 -- duplication.
 
-module Test.Ouroboros.Consensus.BlockTree (
+module Test.Consensus.BlockTree (
     BlockTree (..)
   , BlockTreeBranch (..)
   , PathAnchoredAtSource (..)

@@ -5,7 +5,7 @@
 -- | A ChainSync protocol server that allows external scheduling of its
 -- operations, while deferring the implementation of the message handler
 -- logic to a simplified, abstract interface provided as a parameter.
-module Test.Ouroboros.Consensus.PeerSimulator.ScheduledChainSyncServer (
+module Test.Consensus.PeerSimulator.ScheduledChainSyncServer (
     ChainSyncServerHandlers (..)
   , FindIntersect (..)
   , RequestNext (..)
@@ -26,7 +26,7 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
                      ServerStIdle (ServerStIdle, recvMsgDoneClient, recvMsgFindIntersect, recvMsgRequestNext),
                      ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
                      ServerStNext (SendMsgRollBackward, SendMsgRollForward))
-import           Test.Ouroboros.Consensus.PeerSimulator.Trace (traceUnitWith)
+import           Test.Consensus.PeerSimulator.Trace (traceUnitWith)
 import           Test.Util.TestBlock (Header (..), TestBlock)
 
 -- | Pure representation of the messages produced by the handler for the @StNext@
