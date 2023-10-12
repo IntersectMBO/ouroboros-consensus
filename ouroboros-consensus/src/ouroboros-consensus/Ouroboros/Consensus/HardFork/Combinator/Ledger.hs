@@ -113,6 +113,42 @@ deriving anyclass instance
      CanHardFork xs
   => NoThunks (Ticked (LedgerState (HardForkBlock xs)))
 
+-- | = HFC ticking
+--
+-- This is the place where era transitions happen, ie when we have @st ::
+-- 'LedgerState' ('HardForkBlock' xs)@ and, for a valid @slotNo@,
+--
+-- @
+-- tickedSt :: 'Ticked' ('LedgerState' ('HardForkBlock' xs))
+-- tickedSt = 'applyChainTick' cfg slotNo st
+-- @
+--
+-- we have the corresponding era indices
+--
+-- @
+-- ixSt, ixTickedSt :: 'EraIndex' xs
+-- ixSt =
+--     'eraIndexFromNS' . State.'State.tip' . 'hardForkLedgerStatePerEra' $ st
+-- ixTickedState =
+--     'eraIndexFromNS' . State.'State.tip' . 'tickedHardForkLedgerStatePerEra' $ tickedSt
+-- @
+--
+-- and we always have
+--
+-- >>> ixSt <= ixTickedSt
+-- True
+--
+-- with inequality exactly if we ticked across an era boundary.
+--
+-- == Ticking alone can't reveal era transitions
+--
+-- Note however that if we performed an era transition (ie @ixSt < ixTickedSt@),
+-- it must have already been known via 'singleEraTransition' for @st@; or more
+-- concretely, @'mostRecentTransitionInfo' cfg st@ must have already returned
+-- 'TransitionKnown'. This is a reflection of the fact that ticking alone
+-- currently can't make a transition become known. Also see
+-- <https://github.com/input-output-hk/ouroboros-consensus/issues/413> for
+-- future work to reconsider this fact.
 instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
   type LedgerErr (LedgerState (HardForkBlock xs)) = HardForkLedgerError  xs
 
