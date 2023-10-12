@@ -16,24 +16,24 @@ import           Data.Functor ((<&>))
 import           Data.Functor.Identity (runIdentity)
 import           Data.IORef (modifyIORef', newIORef, readIORef, writeIORef)
 import           Data.Proxy (Proxy (Proxy))
-import           Data.Word (Word8)
 import qualified System.Random as R
-import qualified System.Random.Stateful as R
 import qualified System.Timeout as IO (timeout)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Adversarial as A
+import           Test.Ouroboros.Consensus.ChainGenerator.Adversarial
+                     (genPrefixBlockCount)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Honest as H
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg),
-                     ascFromBits)
+                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genAsc,
+                     genKSD)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.RaceIterator as RI
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
-import           Test.Ouroboros.Consensus.ChainGenerator.Slot
-                     (E (ActiveSlotE, SlotE))
+import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest as H
 import qualified Test.QuickCheck as QC
+import           Test.QuickCheck.Extras (sized1, unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
@@ -89,21 +89,8 @@ data TestAdversarial base hon = TestAdversarial {
   }
   deriving (Read, Show)
 
-genArPrefix :: H.ChainSchema base hon -> QC.Gen (C.Var hon ActiveSlotE)
-genArPrefix schedH =
-    if C.toVar numChoices < 2 then pure (C.Count 0) {- can always pick genesis -} else do
-        g <- QC.arbitrary
-        pure $ C.toVar $ R.runSTGen_ (g :: QCGen) $ C.uniformIndex numChoices
-  where
-    H.ChainSchema _slots v = schedH
-
-    numChoices = pc C.- 1   -- can't pick the last active slot
-
-    -- 'H.uniformTheHonestChain' ensures 0 < pc
-    pc = BV.countActivesInV S.notInverted v
-
 instance QC.Arbitrary SomeTestAdversarial where
-    arbitrary = H.unsafeMapSuchThatJust $ do
+    arbitrary = unsafeMapSuchThatJust $ do
         H.TestHonest {
             H.testAsc     = testAscH
           ,
@@ -118,7 +105,9 @@ instance QC.Arbitrary SomeTestAdversarial where
 
         let arHonest = H.uniformTheHonestChain (Just testAscH) testRecipeH' testSeedH
 
-        arPrefix <- genArPrefix arHonest
+        testSeedPrefix <- QC.arbitrary @QCGen
+
+        let arPrefix = genPrefixBlockCount testSeedPrefix arHonest
 
         let H.HonestRecipe kcp scg delta _len = testRecipeH
 
@@ -130,7 +119,7 @@ instance QC.Arbitrary SomeTestAdversarial where
                 A.arHonest
               }
 
-        testAscA <- ascFromBits <$> QC.choose (1 :: Word8, maxBound - 1)
+        testAscA <- genAsc
 
         case Exn.runExcept $ A.checkAdversarialRecipe testRecipeA of
             Left e -> case e of
@@ -300,9 +289,9 @@ mutateAdversarial recipe mut =
 instance QC.Arbitrary SomeTestAdversarialMutation where
     arbitrary = do
         mut <- QC.elements [minBound .. maxBound :: AdversarialMutation]
-        H.unsafeMapSuchThatJust $ do
-            (kcp, scg, delta, len) <- H.sized1 $ \sz -> do
-                (kcp, Scg s, delta) <- H.genKSD
+        unsafeMapSuchThatJust $ do
+            (kcp, scg, delta, len) <- sized1 $ \sz -> do
+                (kcp, Scg s, delta) <- genKSD
 
                 l <- (+ s) <$> QC.choose (0, 5 * sz)
 
@@ -320,7 +309,9 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
 
             let arHonest = H.uniformTheHonestChain Nothing recipeH' seedH
 
-            arPrefix <- genArPrefix arHonest
+            testSeedPrefix <- QC.arbitrary @QCGen
+
+            let arPrefix = genPrefixBlockCount testSeedPrefix arHonest
 
             let recipeA = A.AdversarialRecipe {
                     A.arPrefix

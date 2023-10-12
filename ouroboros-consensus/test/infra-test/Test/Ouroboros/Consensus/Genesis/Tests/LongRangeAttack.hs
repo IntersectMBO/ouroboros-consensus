@@ -1,50 +1,48 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 
 module Test.Ouroboros.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
 import           Control.Monad.IOSim (runSimOrThrow)
-import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromJust)
-import           Ouroboros.Consensus.Block.Abstract hiding (Header)
-import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import qualified Ouroboros.Network.AnchoredFragment.Extras as AF
-import qualified Test.Ouroboros.Consensus.BlockTree as BT
-import           Test.Ouroboros.Consensus.BlockTree (BlockTreeBranch (btbFull))
-import           Test.Ouroboros.Consensus.ChainGenerator.Honest
-                     (HonestRecipe (HonestRecipe))
-import           Test.Ouroboros.Consensus.ChainGenerator.Params
-import           Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial hiding
-                     (tests)
 import           Test.Ouroboros.Consensus.Genesis.Setup
+import           Test.Ouroboros.Consensus.Genesis.Setup.Classifiers
 import           Test.Ouroboros.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
-import           Test.QuickCheck.Random (QCGen)
+import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestBlock hiding (blockTree)
+import           Test.Util.TestBlock (TestBlock, unTestHash)
 
 tests :: TestTree
 tests = testProperty "long range attack" prop_longRangeAttack
 
-prop_longRangeAttack :: SomeTestAdversarial -> QCGen -> QC.Property
-prop_longRangeAttack (SomeTestAdversarial _ _ params) seed =
-  withMaxSuccess 10 $
-    runSimOrThrow $ runTest setup $ \fragment ->
-      pure
-        $ classify genesisAfterIntersection "Long range attack"
-        $ classify genesisAcrossIntersection "Genesis potential"
-        $ genesisAfterIntersection ==> not $ isHonestTestFragH fragment
+genChainsAndSchedule :: Word -> ScheduleType -> QC.Gen (GenesisTest, PointSchedule)
+genChainsAndSchedule numAdversaries scheduleType =
+  unsafeMapSuchThatJust do
+    gt <- genChains numAdversaries
+    pure $ ((gt,) <$> genSchedule scheduleType (gtBlockTree gt))
 
+prop_longRangeAttack :: QC.Gen QC.Property
+prop_longRangeAttack = do
+  (genesisTest, schedule) <- genChainsAndSchedule 1 FastAdversary
+  let Classifiers {..} = classifiers genesisTest
+
+  pure $ withMaxSuccess 10 $ runSimOrThrow $
+    runTest genesisTest schedule $ \fragment ->
+        classify genesisAfterIntersection "Full genesis window after intersection"
+        $ existsSelectableAdversary ==> not $ isHonestTestFragH fragment
+        -- TODO
+        -- $ not existsSelectableAdversary ==> immutableTipBeforeFork fragment
   where
-    setup@TestSetup{..} = exampleTestSetup params seed
-
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of
         AF.AnchorGenesis   -> True
@@ -52,35 +50,3 @@ prop_longRangeAttack (SomeTestAdversarial _ _ params) seed =
 
     isHonestTestHeaderHash :: HeaderHash TestBlock -> Bool
     isHonestTestHeaderHash = all (0 ==) . unTestHash
-
-exampleTestSetup ::
-  TestAdversarial base hon ->
-  QCGen ->
-  TestSetup
-exampleTestSetup params seed =
-  TestSetup {
-    secParam      = SecurityParam (fromIntegral k)
-  , genesisWindow = GenesisWindow (fromIntegral scg)
-  , schedule      = fromJust schedule -- FIXME: discard such test cases in QuickCheck
-  , ..
-  }
-  where
-    schedule | fast = fastAdversarySchedule (Peers (Peer HonestPeer goodChain) (Map.fromList [(advId, Peer advId badChain)]))
-             | otherwise = banalPointSchedule (Peers (Peer HonestPeer goodChain) (Map.fromList [(advId, Peer advId badChain)]))
-    fast = True
-    advId = PeerId "adversary"
-    HonestRecipe (Kcp k) (Scg scg) _ (Len len) = testRecipeH params
-
-    genesisAcrossIntersection = not genesisAfterIntersection && len > scg
-    genesisAfterIntersection = fragLenA > scg && advLenAfterIntersection > k
-
-    fragLenA = AF.slotLength badChain
-    advLenAfterIntersection = AF.length badChainSuffix
-
-    honestAsc = testAscH params
-
-    blockTree = genChains (testAscA params) (testRecipeA params) (testRecipeA' params) seed
-    goodChain = BT.btTrunk blockTree
-
-    BT.BlockTreeBranch { btbSuffix = badChainSuffix, btbFull = badChain } =
-      head $ BT.btBranches blockTree

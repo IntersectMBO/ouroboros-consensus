@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE OverloadedStrings     #-}
 
 module Test.Ouroboros.Consensus.PointSchedule (module Test.Ouroboros.Consensus.PointSchedule) where
 
@@ -13,14 +14,19 @@ import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String (IsString (fromString))
+import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block.Abstract (HasHeader, getHeader)
+import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam)
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)), anchorFromBlock)
 import           Ouroboros.Network.Block (SlotNo, Tip (Tip, TipGenesis),
                      blockNo, blockSlot, getTipSlotNo, tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
+import           Test.Ouroboros.Consensus.BlockTree (BlockTree (..),
+                     BlockTreeBranch (..))
+import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.TestBlock (Header (TestHeader), TestBlock)
 
 type TestFrag = AnchoredFragment TestBlock
@@ -251,17 +257,35 @@ foldGenPeers frags gen =
     apA z (Peer _ (frag, f)) = f frag z
 
 banalPointSchedule ::
-  Peers TestFrag ->
+  BlockTree TestBlock ->
   Maybe PointSchedule
-banalPointSchedule frags =
-  balanced (banalStates <$> frags)
+banalPointSchedule blockTree =
+  balanced (banalStates <$> blockTreePeers blockTree)
+
+blockTreePeers :: BlockTree TestBlock -> Peers TestFrag
+blockTreePeers BlockTree {btTrunk, btBranches} =
+  Peers {
+    honest = Peer HonestPeer btTrunk,
+    others = Map.fromList (branches btBranches)
+  }
+  where
+    branches = \case
+      [b] -> [peer "adversary" b]
+      bs -> uncurry branch <$> zip [1 :: Int ..] bs
+
+    branch num =
+      peer (PeerId ("adversary " <> show num))
+
+    peer pid BlockTreeBranch {btbFull} = (pid, Peer pid btbFull)
 
 fastAdversarySchedule ::
-  Peers TestFrag ->
+  BlockTree TestBlock ->
   Maybe PointSchedule
-fastAdversarySchedule frags =
+fastAdversarySchedule blockTree =
   peer2Point frags (foldGenPeers frags trans)
   where
+    frags = blockTreePeers blockTree
+
     trans :: Peers PSTrans
     trans = Peers {
       honest = Peer HonestPeer (\ frag _ -> PeerSchedule (Peer HonestPeer <$> banalStates frag)),
@@ -366,6 +390,28 @@ splitFragmentAtSlotNo _ (Empty anchor) =
   (Empty anchor, Empty anchor)
 
 -- | Returns the block number of the given slot.
--- REVIEW: might just be 'blockSlot'?
+-- REVIEW: might just be 'blockSlot'? yes!
 blockSlotNo :: HasHeader b => b -> WithOrigin SlotNo
 blockSlotNo = getTipSlotNo . tipFromHeader
+
+data ScheduleType =
+  FastAdversary
+  |
+  Banal
+  deriving (Eq, Show)
+
+newtype GenesisWindow = GenesisWindow { getGenesisWindow :: Word64 }
+  deriving (Show)
+
+-- | See 'genChains'.
+data GenesisTest = GenesisTest {
+  gtHonestAsc     :: Asc,
+  gtSecurityParam :: SecurityParam,
+  gtGenesisWindow :: GenesisWindow,
+  gtBlockTree     :: BlockTree TestBlock
+  }
+
+genSchedule :: ScheduleType -> BlockTree TestBlock -> Maybe PointSchedule
+genSchedule = \case
+  FastAdversary -> fastAdversarySchedule
+  Banal -> banalPointSchedule

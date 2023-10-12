@@ -20,7 +20,7 @@ import           Data.List.NonEmpty (NonEmpty, nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
-import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
+import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      Consensus, chainSyncClient, defaultChainDbView)
@@ -53,14 +53,15 @@ import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (chainSyncServerPeer)
 import qualified Test.Ouroboros.Consensus.BlockTree as BT
-import           Test.Ouroboros.Consensus.BlockTree (BlockTree)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
+import           Test.Ouroboros.Consensus.Genesis.Setup.GenChains (GenesisTest)
 import qualified Test.Ouroboros.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
 import           Test.Ouroboros.Consensus.PeerSimulator.Config
 import           Test.Ouroboros.Consensus.PeerSimulator.Resources
 import           Test.Ouroboros.Consensus.PeerSimulator.Trace
 import qualified Test.Ouroboros.Consensus.PointSchedule as PointSchedule
-import           Test.Ouroboros.Consensus.PointSchedule (Peer (Peer), PeerId,
+import           Test.Ouroboros.Consensus.PointSchedule
+                     (GenesisTest (GenesisTest), Peer (Peer), PeerId,
                      PointSchedule (PointSchedule), TestFragH, Tick (Tick),
                      pointSchedulePeers)
 import           Test.Util.ChainDB
@@ -237,15 +238,13 @@ runScheduler tracer (PointSchedule ps) peers = do
 runPointSchedule ::
   forall m.
   (IOLike m, MonadTime m, MonadTimer m) =>
-  SecurityParam ->
-  Asc ->
+  GenesisTest ->
   PointSchedule ->
   Tracer m String ->
-  BlockTree TestBlock ->
   m (Either (NonEmpty ChainSyncException) TestFragH)
-runPointSchedule k asc pointSchedule tracer blockTree =
+runPointSchedule GenesisTest {gtSecurityParam = k, gtHonestAsc = asc, gtBlockTree} pointSchedule tracer =
   withRegistry $ \registry -> do
-    resources <- makePeersResources tracer blockTree (pointSchedulePeers pointSchedule)
+    resources <- makePeersResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
     let candidates = srCandidateFragment . prShared <$> resources
     traceWith tracer $ "Security param k = " ++ show k
     chainDb <- mkChainDb tracer candidates config registry

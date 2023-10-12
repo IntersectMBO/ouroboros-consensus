@@ -19,6 +19,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Honest (
   , SomeHonestChainSchema (SomeHonestChainSchema)
   , checkHonestRecipe
   , countChainSchema
+  , genHonestRecipe
   , uniformTheHonestChain
     -- * Testing
   , HonestChainViolation (BadCount, BadScgWindow, BadLength)
@@ -40,11 +41,13 @@ import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg))
+                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genKSD)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot
                      (E (ActiveSlotE, SlotE), S)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
+import qualified Test.QuickCheck as QC
+import           Test.QuickCheck.Extras (sized1)
 
 -----
 
@@ -98,6 +101,14 @@ data NoSuchHonestChainSchema =
     -- | 'Len' must be positive
     BadLen
   deriving (Eq, Read, Show)
+
+-- REVIEW: Should `0`, `1`, `5`, `9` be made parameters?
+genHonestRecipe :: QC.Gen HonestRecipe
+genHonestRecipe = sized1 $ \sz -> do
+  (kcp, Scg s, delta) <- genKSD
+  -- s <= l, most of the time
+  l <- QC.frequency [(9, (+ s) <$> QC.choose (0, 5 * sz)), (1, QC.choose (1, s))]
+  pure $ HonestRecipe kcp (Scg s) delta (Len l)
 
 -- | Checks whether the given 'HonestRecipe' determines a valid input to
 -- 'uniformTheHonestChain'

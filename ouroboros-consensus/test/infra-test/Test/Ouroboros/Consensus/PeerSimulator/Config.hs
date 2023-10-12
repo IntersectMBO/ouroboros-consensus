@@ -19,6 +19,7 @@ import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
                      CodecConfig (TestBlockCodecConfig),
                      StorageConfig (TestBlockStorageConfig), TestBlock)
 
+-- REVIEW: this has not been deliberately chosen
 defaultCfg :: SecurityParam -> TopLevelConfig TestBlock
 defaultCfg secParam = TopLevelConfig {
     topLevelConfigProtocol = BftConfig {

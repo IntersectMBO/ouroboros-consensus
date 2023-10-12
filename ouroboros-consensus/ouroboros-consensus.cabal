@@ -294,6 +294,7 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.ChainGenerator.RaceIterator
     Test.Ouroboros.Consensus.ChainGenerator.Slot
     Test.Ouroboros.Consensus.ChainGenerator.Some
+    Test.QuickCheck.Extras
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
@@ -525,6 +526,8 @@ test-suite infra-test
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
     Test.Ouroboros.Consensus.Genesis.Setup
+    Test.Ouroboros.Consensus.Genesis.Setup.Classifiers
+    Test.Ouroboros.Consensus.Genesis.Setup.GenChains
     Test.Ouroboros.Consensus.Genesis.Tests
     Test.Ouroboros.Consensus.Genesis.Tests.LongRangeAttack
     Test.Ouroboros.Consensus.PeerSimulator.BlockFetch

@@ -9,9 +9,14 @@ module Test.Ouroboros.Consensus.ChainGenerator.Params (
   , ascFromBits
   , ascFromDouble
   , ascVal
+  , genAsc
+  , genKSD
   ) where
 
 import qualified Data.Bits as B
+import           Data.Word (Word8)
+import qualified Test.QuickCheck as QC
+import           Test.QuickCheck.Extras (sized1)
 
 -----
 
@@ -87,3 +92,13 @@ ascFromBits w = ascFromDouble $ toEnum (fromEnum w) / (2 ^ B.finiteBitSize w)
 -- | Interpret 'Asc' as a 'Double'
 ascVal :: Asc -> Double
 ascVal (Asc x) = x
+
+genAsc :: QC.Gen Asc
+genAsc = ascFromBits <$> QC.choose (1 :: Word8, maxBound - 1)
+
+genKSD :: QC.Gen (Kcp, Scg, Delta)
+genKSD = sized1 $ \sz -> do
+    d <- QC.choose (0, div sz 4)
+    k <- QC.choose (1, 2 * sz)
+    s <- (+ k) <$> QC.choose (0, 3 * sz)   -- ensures @k / s <= 1@
+    pure (Kcp k, Scg s, Delta d)
