@@ -13,7 +13,7 @@ import           Control.Monad.Class.MonadAsync
                      (AsyncCancelled (AsyncCancelled))
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
+import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.List.NonEmpty (NonEmpty, nonEmpty)
@@ -43,7 +43,6 @@ import           Ouroboros.Network.Channel (createConnectedChannels)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
                      ControlMessageSTM)
 import           Ouroboros.Network.Driver.Limits
-import           Ouroboros.Network.Driver.Simple (Role (Client, Server))
 import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
                      (ChainSyncClientPipelined, chainSyncClientPeerPipelined)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
