@@ -25,7 +25,7 @@
 -- and once it fulfills the state's criteria, it yields control back to the scheduler,
 -- who then activates the next tick's peer.
 --
--- /Note/: This is a prototype implementation, to be rewritten in a later work package.
+-- /Note/: At the moment this implementation is experimental.
 module Test.Consensus.PointSchedule (
     AdvertisedPoints (..)
   , BlockPoint (..)
