@@ -1,17 +1,14 @@
-# References 
+# References
 
 The following artifacts influence and/or describe the Consensus implementation.
 
-* [The Cardano Consensus and Storage Layer][consensus-report].
-* [Introduction to the design of Data Diffusion and Networking of Cardano
-  Shelley][network-report].
+* [Technical reports](../for-developers/TechnicalReports)
 * From the IOG researchers:
-    * [Ouroboros BFT][ouroboros-bft] 
-    * [Ouroboros Praos][ouroboros-praos] 
-    * [Ouroboros Genesis][ouroboros-genesis] 
+    * [Ouroboros BFT][ouroboros-bft]
+    * [Ouroboros Praos][ouroboros-praos]
+    * [Ouroboros Genesis][ouroboros-genesis]
 * [Ledger specifications][cardano-ledger].
 * [Quick reference table for all Cardano features](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0059/feature-table.md).
-
   This includes the dates and first slot numbers of all eras and hard forks.
 * IOG media:
     * [The abstract nature of the consensus layer](https://iohk.io/en/blog/posts/2020/05/28/the-abstract-nature-of-the-consensus-layer/).

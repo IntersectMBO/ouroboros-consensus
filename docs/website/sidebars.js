@@ -46,6 +46,7 @@ const sidebars = {
         'for-developers/SanityChecks',
         'for-developers/QueryVersioning',
         'for-developers/BootstrapPeersIER',
+        'for-developers/TechnicalReports',
       ]
     },
   ]
