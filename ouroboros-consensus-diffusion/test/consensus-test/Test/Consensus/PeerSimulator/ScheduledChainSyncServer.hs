@@ -1,6 +1,5 @@
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE NamedFieldPuns  #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE LambdaCase     #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 -- | A ChainSync protocol server that allows external scheduling of its
 -- operations, while deferring the implementation of the message handler
@@ -15,7 +14,6 @@ module Test.Consensus.PeerSimulator.ScheduledChainSyncServer (
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
 import           Data.Foldable (traverse_)
-import           Data.Functor (void)
 import           Ouroboros.Consensus.Block.Abstract (Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
@@ -35,6 +33,8 @@ data RequestNext =
   RollForward (Header TestBlock) (Tip TestBlock)
   |
   RollBackward (Point TestBlock) (Tip TestBlock)
+  |
+  AwaitReply
   deriving (Eq, Show)
 
 -- | Pure representation of the messages produced by the handler for the @StIntersect@
@@ -150,11 +150,25 @@ scheduledChainSyncServer server@ScheduledChainSyncServer {scssHandlers, scssTrac
           pure $ Left $ SendMsgRollForward header tip go
         Just (RollBackward point tip) -> do
           trace "done handling MsgRequestNext"
-          pure $ Left $ (SendMsgRollBackward point tip) go
+          pure $ Left $ SendMsgRollBackward point tip go
+        Just AwaitReply -> do
+          trace "done handling MsgRequestNext"
+          pure $ Right $ do -- beginning of the continuation
+            restart >>= \case
+              -- If we get 'Right', then we still do not have anything to serve
+              -- and we loop; what 'Right' contains is the continuation starting
+              -- at 'do' above; by unwrapping the 'Right', we do not send
+              -- another AwaitReply message (which Typed Protocols does not
+              -- allow anyway).
+              Right cont -> cont
+              Left msg -> pure msg
         Nothing -> do
           trace "  cannot serve at this point; waiting for node state and starting again"
-          void $ awaitNextState server
-          recvMsgRequestNext
+          restart
+      where
+        -- Yield control back to the scheduler, then wait for the next state and
+        -- continue processing the client's current 'MsgRequestNext'.
+        restart = awaitNextState server *> recvMsgRequestNext
 
     recvMsgFindIntersect pts = do
       currentState <- ensureCurrentState server

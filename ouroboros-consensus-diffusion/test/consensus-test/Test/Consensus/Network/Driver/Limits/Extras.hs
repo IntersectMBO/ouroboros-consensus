@@ -8,6 +8,7 @@
 
 module Test.Consensus.Network.Driver.Limits.Extras (
     chainSyncNoSizeLimits
+  , chainSyncNoTimeouts
   , chainSyncTimeouts
   , runConnectedPeersPipelinedWithLimits
   ) where
@@ -95,3 +96,11 @@ chainSyncTimeouts t f =
     mustReplyTimeout = Just $ secondsToDiffTime $ round $
       realToFrac (getSlotLength t)
         * log (1 - 0.999) / log (1 - ascVal f)
+
+chainSyncNoTimeouts :: ChainSyncTimeout
+chainSyncNoTimeouts =
+  ChainSyncTimeout {
+      canAwaitTimeout = Nothing
+    , intersectTimeout = Nothing
+    , mustReplyTimeout = Nothing
+  }

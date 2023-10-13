@@ -28,7 +28,7 @@ import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.BlockTree (BlockTree)
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
                      (FindIntersect (..),
-                     RequestNext (RollBackward, RollForward))
+                     RequestNext (AwaitReply, RollBackward, RollForward))
 import           Test.Consensus.PointSchedule (AdvertisedPoints (header, tip),
                      HeaderPoint (HeaderPoint), TipPoint (TipPoint))
 import           Test.Util.Orphans.IOLike ()
@@ -52,7 +52,7 @@ handlerFindIntersection ::
   STM m (FindIntersect, [String])
 handlerFindIntersection currentIntersection blockTree points clientPoints = do
   let TipPoint tip' = tip points
-      tipPoint = Ouroboros.Network.Block.getTipPoint tip'
+      tipPoint = getTipPoint tip'
       fragment = fromJust $ BT.findFragment tipPoint blockTree
   case intersectWith fragment clientPoints of
     Nothing ->
@@ -81,16 +81,20 @@ handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
     trace $ "  last intersection is " ++ condense intersection
-    let HeaderPoint header' = header points
-        headerPoint = AF.castPoint $ blockPoint header'
     maybe noPathError analysePath (BT.findPath intersection headerPoint blockTree)
   where
     noPathError = error "serveHeader: intersection and and headerPoint should always be in the block tree"
 
     analysePath = \case
-      -- If the anchor is the intersection (the source of the path-finding)
-      -- but the fragment is empty, then the intersection is exactly our
-      -- header point and there is nothing to do.
+      -- If the anchor is the intersection (the source of the path-finding) but
+      -- the fragment is empty, then the intersection is exactly our header
+      -- point and there is nothing to do. If additionally the header point is
+      -- also the tip point (because we served our whole chain, or we are
+      -- stalling as an adversarial behaviour), then we ask the client to wait;
+      -- otherwise we just do nothing.
+      (BT.PathAnchoredAtSource True, AF.Empty _) | getTipPoint tip' == headerPoint -> do
+        trace "  chain has been fully served"
+        pure (Just AwaitReply)
       (BT.PathAnchoredAtSource True, AF.Empty _) -> do
         trace "  intersection is exactly our header point"
         pure Nothing
@@ -105,6 +109,15 @@ handlerRequestNext currentIntersection blockTree points =
       -- the intersection is further than the tip that we can serve.
       (BT.PathAnchoredAtSource False, AF.Empty _) -> do
         trace "  intersection is further than our header point"
+        -- REVIEW: The following is a hack that allows the honest peer to not
+        -- get disconnected when it falls behind. Why does a peer doing that not
+        -- get disconnected from?
+        --
+        -- We decided to hold off on making this work with timeouts, so we'll return
+        -- Nothing here for now.
+        -- The consequence of this is that a slow peer will just block until it reaches
+        -- the fork intersection in its schedule.
+        -- pure (Just AwaitReply)
         pure Nothing
       -- If the anchor is not the intersection and the fragment is non-empty,
       -- then we require a rollback
@@ -112,9 +125,12 @@ handlerRequestNext currentIntersection blockTree points =
         trace $ "  we will require a rollback to" ++ condense (AF.anchorPoint fragment)
         trace $ "  fragment: " ++ condense fragment
         let
-          tip' = coerce (tip points)
           point = AF.anchorPoint fragment
         lift $ writeTVar currentIntersection point
         pure $ Just (RollBackward point tip')
+
+    HeaderPoint header' = header points
+    headerPoint = AF.castPoint $ blockPoint header'
+    TipPoint tip' = tip points
 
     trace = tell . pure

@@ -38,7 +38,7 @@ runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty
 
     mapM_ (traceWith tracer) $ BT.prettyPrint gtBlockTree
 
-    result <- runPointSchedule genesisTest schedule tracer
+    result <- runPointSchedule schedulerConfig genesisTest schedule tracer
     trace <- unlines <$> getTrace
 
     let
@@ -49,3 +49,5 @@ runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty
           counterexample ("result: " <> condense fragment) (makeProperty fragment)
 
     pure $ counterexample trace prop
+    where
+      schedulerConfig = SchedulerConfig {enableTimeouts = False}
