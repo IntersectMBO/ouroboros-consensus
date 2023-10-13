@@ -112,7 +112,13 @@ handlerRequestNext currentIntersection blockTree points =
         -- REVIEW: The following is a hack that allows the honest peer to not
         -- get disconnected when it falls behind. Why does a peer doing that not
         -- get disconnected from?
-        pure (Just AwaitReply)
+        --
+        -- We decided to hold off on making this work with timeouts, so we'll return
+        -- Nothing here for now.
+        -- The consequence of this is that a slow peer will just block until it reaches
+        -- the fork intersection in its schedule.
+        -- pure (Just AwaitReply)
+        pure Nothing
       -- If the anchor is not the intersection and the fragment is non-empty,
       -- then we require a rollback
       (BT.PathAnchoredAtSource False, fragment) -> do
