@@ -15,8 +15,6 @@ module Ouroboros.Consensus.Shelley.Ledger.Inspect (
   , protocolUpdates
   ) where
 
-import           Cardano.Ledger.BaseTypes (strictMaybeToMaybe)
-import           Cardano.Ledger.Core (ppuProtocolVersionL)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as Core
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
@@ -27,13 +25,13 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Void
 import           Data.Word (Word64)
-import           Lens.Micro ((^.))
 import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Inspect
-import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
+import           Ouroboros.Consensus.Shelley.Eras (EraCrypto,
+                     ShelleyBasedEra (..))
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
 import           Ouroboros.Consensus.Util.Condense
@@ -111,8 +109,7 @@ protocolUpdates genesis st = [
           protocolUpdateProposal = UpdateProposal {
               proposalParams  = proposal
             , proposalEpoch   = succ currentEpoch
-            , proposalVersion = strictMaybeToMaybe $
-                                  proposal ^. ppuProtocolVersionL
+            , proposalVersion = getProposedProtocolVersion proposal
             }
         , protocolUpdateState = UpdateState {
               proposalVotes         = votes

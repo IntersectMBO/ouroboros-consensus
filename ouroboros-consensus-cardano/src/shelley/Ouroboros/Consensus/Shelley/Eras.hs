@@ -1,5 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes     #-}
 {-# LANGUAGE DataKinds               #-}
+{-# LANGUAGE DefaultSignatures       #-}
 {-# LANGUAGE DeriveAnyClass          #-}
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}
@@ -71,6 +72,7 @@ import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
 import qualified Data.Set as Set
 import           Data.Text (Text)
+import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
                      (WhetherToIntervene (..))
@@ -161,6 +163,18 @@ class ( Core.EraSegWits era
          , SL.Validated (Core.Tx era)
          )
 
+  -- | Get the protocol version out of a 'Core.PParamsUpdate', used to detect
+  -- whether we should perform a HF. This will likely be removed/changed once we
+  -- implement HF enactment in Conway (see
+  -- <https://github.com/input-output-hk/ouroboros-consensus/issues/61>).
+  --
+  -- For now, this always returns 'Nothing' for Conway (see the instance below).
+  getProposedProtocolVersion :: Core.PParamsUpdate era -> Maybe ProtVer
+  default getProposedProtocolVersion ::
+      ProtVerAtMost era 8 => Core.PParamsUpdate era -> Maybe ProtVer
+  getProposedProtocolVersion proposal =
+      strictMaybeToMaybe $ proposal ^. ppuProtocolVersionL
+
 -- | The default implementation of 'applyShelleyBasedTx', a thin wrapper around
 -- 'SL.applyTx'
 defaultApplyShelleyBasedTx ::
@@ -213,6 +227,7 @@ instance (Praos.PraosCrypto c) => ShelleyBasedEra (BabbageEra c) where
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (ConwayEra c) where
   shelleyBasedEraName _ = "Conway"
   applyShelleyBasedTx = applyAlonzoBasedTx
+  getProposedProtocolVersion _ = Nothing
 
 applyAlonzoBasedTx :: forall era.
   ( ShelleyBasedEra era,
