@@ -27,7 +27,6 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History (Bound)
-import           Ouroboros.Consensus.Ticked
 import           Prelude
 
 {-------------------------------------------------------------------------------
@@ -116,8 +115,7 @@ newtype Translate f x y = Translate {
       translateWith :: EpochNo -> f x -> f y
     }
 
--- | Forecast a @'Ticked' (view y)@ from a @state x@ across an
--- era transition.
+-- | Forecast a @view y@ from a @state x@ across an era transition.
 --
 -- In addition to the 'Bound' of the transition, this is also told the
 -- 'SlotNo' we're constructing a forecast for. This enables the translation
@@ -128,7 +126,7 @@ newtype CrossEraForecaster state view x y = CrossEraForecaster {
            Bound    -- 'Bound' of the transition (start of the new era)
         -> SlotNo   -- 'SlotNo' we're constructing a forecast for
         -> state x
-        -> Except OutsideForecastRange (Ticked (view y))
+        -> Except OutsideForecastRange (view y)
     }
 
 -- | Knowledge in a particular era of the transition to the next era

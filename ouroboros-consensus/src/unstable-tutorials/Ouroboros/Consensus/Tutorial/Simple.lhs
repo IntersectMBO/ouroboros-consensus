@@ -667,14 +667,13 @@ Note that since a block is associated with one and only one protocol, we can use
 the block to index both the ledger and the protocol.
 
 > instance LedgerSupportsProtocol BlockC where
->   protocolLedgerView _lcfg  _tl = TickedTrivial
+>   protocolLedgerView _lcfg  _tl = ()
 >   ledgerViewForecastAt _lccf = trivialForecast
 
 The `protocolLedgerView` function describes how to project the
 consensus-specific `LedgerView` out of `LedgerState` and `LedgerCfg` together -
 however `SP` does not use any information from the ledger to make any decisions
-and since `LedgerView SP` is simply `()` - we use `TickedTrivial` here for the
-implementation of protocolLedgerView which constructs a `Ticked ()` value.
+and since `LedgerView SP` is simply `()`.
 
 `ledgerViewForecastAt` returns a `Forecast` (defined in
 `Ouroboros.Consensus.Forecast`) of a `LedgerView` - where a `Forecast` is a

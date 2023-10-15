@@ -230,7 +230,7 @@ getProtocolParameters =
 
 instance LedgerSupportsProtocol ByronBlock where
   protocolLedgerView _cfg =
-        toTickedPBftLedgerView
+        toPBftLedgerView
       . CC.getDelegationMap
       . tickedByronLedgerState
 
@@ -250,7 +250,7 @@ instance LedgerSupportsProtocol ByronBlock where
   -- To create a forecast, take the delegation state from the given ledger
   -- state, and apply the updates that should be applied by the given slot.
   ledgerViewForecastAt cfg (ByronLedgerState _tipBlkNo st _) = Forecast at $ \for ->
-      toTickedPBftLedgerView <$> if
+      toPBftLedgerView <$> if
         | for == lastSlot ->
           return $ CC.getDelegationMap st
         | for < maxFor ->

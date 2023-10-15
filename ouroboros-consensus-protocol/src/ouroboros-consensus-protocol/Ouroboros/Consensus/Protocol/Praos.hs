@@ -236,10 +236,6 @@ type PraosValidateView c = Views.HeaderView c
   ConsensusProtocol
 -------------------------------------------------------------------------------}
 
--- | Ledger view at a particular slot
-newtype instance Ticked (Views.LedgerView c) = TickedPraosLedgerView
-  { getTickedPraosLedgerView :: Views.LedgerView c }
-
 -- | Praos consensus state.
 --
 -- We track the last slot and the counters for operational certificates, as well
@@ -309,10 +305,9 @@ instance PraosCrypto c => Serialise (PraosState c) where
           <*> fromCBOR
           <*> fromCBOR
 
--- | Ticked 'PraosState'
 data instance Ticked (PraosState c) = TickedPraosState
   { tickedPraosStateChainDepState :: PraosState c,
-    tickedPraosStateLedgerView :: Ticked (Views.LedgerView c)
+    tickedPraosStateLedgerView :: Views.LedgerView c
   }
 
 -- | Errors which we might encounter
@@ -389,7 +384,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
         else Nothing
       where
         chainState = tickedPraosStateChainDepState cs
-        lv = getTickedPraosLedgerView $ tickedPraosStateLedgerView cs
+        lv = tickedPraosStateLedgerView cs
         eta0 = praosStateEpochNonce chainState
         vkhCold = SL.hashKey praosCanBeLeaderColdVerKey
         rho' = mkInputVRF slot eta0
@@ -406,12 +401,12 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   --   the last applied block.
   tickChainDepState
     PraosConfig {praosEpochInfo}
-    (TickedPraosLedgerView lv)
+    lv
     slot
     st =
       TickedPraosState
         { tickedPraosStateChainDepState = st',
-          tickedPraosStateLedgerView = TickedPraosLedgerView lv
+          tickedPraosStateLedgerView = lv
         }
       where
         newEpoch =
@@ -455,7 +450,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
       -- Finally, we apply the changes from this header to the chain state.
       pure $ reupdateChainDepState cfg b slot tcs
       where
-        lv = getTickedPraosLedgerView (tickedPraosStateLedgerView tcs)
+        lv = tickedPraosStateLedgerView tcs
         cs = tickedPraosStateChainDepState tcs
 
   -- Re-update the chain dependent state as a result of processing a header.

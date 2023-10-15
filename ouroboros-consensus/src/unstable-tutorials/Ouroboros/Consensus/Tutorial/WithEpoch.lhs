@@ -475,12 +475,6 @@ just as easily used a `Bool` representing the parity):
 >   deriving stock (Show, Eq, Generic)
 >   deriving newtype (Serialise, NoThunks)
 
-We also define a trivial `Ticked LedgerViewD` instance:
-
-> newtype instance Ticked LedgerViewD = TickedLedgerViewD LedgerViewD
->   deriving stock (Show, Eq, Generic)
->   deriving newtype (Serialise, NoThunks)
-
 The parity of the epoch snapshot and the slot are together _sufficient_ to
 determine the leadership schedule.  As such, we do not need any notion of state
 specific to `PrtclD`:
@@ -547,9 +541,7 @@ functions defined above:
 >
 >   protocolSecurityParam = ccpd_securityParam
 >
->   tickChainDepState _cfg tlv _slot _cds = TickedChainDepStateD lv
->     where
->       TickedLedgerViewD lv = tlv
+>   tickChainDepState _cfg lv _slot _cds = TickedChainDepStateD lv
 >
 >   -- | apply the header (hdrView) and do a header check.
 >   --
@@ -596,7 +588,7 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 
 > instance LedgerSupportsProtocol BlockD where
 >   protocolLedgerView _ldgrCfg (TickedLedgerStateD ldgrSt) =
->     TickedLedgerViewD (LVD $ lsbd_snapshot2 ldgrSt)
+>     LVD $ lsbd_snapshot2 ldgrSt
 >       -- note that we use the snapshot from 2 epochs ago.
 >
 >   -- | Borrowing somewhat from Ouroboros/Consensus/Byron/Ledger/Ledger.hs
@@ -614,7 +606,7 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 >                         }
 >                  else
 >                    return
->                      $ TickedLedgerViewD $ LVD
+>                      $ LVD
 >                      $ if for < nextEpochStartSlot at then
 >                          lsbd_snapshot2 ldgrSt
 >                            -- for the rest of the current epoch,

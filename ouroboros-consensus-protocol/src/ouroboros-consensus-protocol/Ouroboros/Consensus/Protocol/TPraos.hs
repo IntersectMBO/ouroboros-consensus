@@ -241,12 +241,6 @@ data instance ConsensusConfig (TPraos c) = TPraosConfig {
 
 instance SL.PraosCrypto c => NoThunks (ConsensusConfig (TPraos c))
 
--- | Ledger view at a particular slot
-newtype instance Ticked (SL.LedgerView c) = TickedPraosLedgerView {
-      -- TODO: Perhaps it would be cleaner to define this as a separate type
-      getTickedPraosLedgerView :: SL.LedgerView c
-    }
-
 -- | Transitional Praos consensus state.
 --
 -- In addition to the 'ChainDepState' provided by the ledger, we track the slot
@@ -284,10 +278,9 @@ instance SL.PraosCrypto c => Serialise (TPraosState c) where
         enforceSize "TPraosState" 2
         TPraosState <$> fromCBOR <*> fromCBOR
 
--- | Ticked 'TPraosState'
 data instance Ticked (TPraosState c) = TickedChainDepState {
       tickedTPraosStateChainDepState :: SL.ChainDepState c
-    , tickedTPraosStateLedgerView    :: Ticked (LedgerView (TPraos c))
+    , tickedTPraosStateLedgerView    :: LedgerView (TPraos c)
     }
 
 instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
@@ -337,7 +330,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
               -> Nothing
     where
       chainState = tickedTPraosStateChainDepState cs
-      lv         = getTickedPraosLedgerView $ tickedTPraosStateLedgerView cs
+      lv         = tickedTPraosStateLedgerView    cs
       d          = SL.lvD lv
       asc        = tpraosLeaderF $ tpraosParams cfg
       firstSlot  =
@@ -356,16 +349,16 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
       SL.GenDelegs dlgMap = SL.lvGenDelegs lv
 
   tickChainDepState cfg@TPraosConfig{..}
-                    (TickedPraosLedgerView lv)
+                    lv
                     slot
                     (TPraosState lastSlot st) =
       TickedChainDepState {
           tickedTPraosStateChainDepState = st'
-        , tickedTPraosStateLedgerView    = TickedPraosLedgerView lv
+        , tickedTPraosStateLedgerView    = lv
         }
     where
       st' = SL.tickChainDepState
-              shelleyGlobals
+              (mkShelleyGlobals cfg)
               lv
               ( isNewEpoch
                   (History.toPureEpochInfo tpraosEpochInfo)
@@ -373,29 +366,22 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
                   slot
               )
               st
-      shelleyGlobals = mkShelleyGlobals cfg
 
   updateChainDepState cfg b slot cs =
       TPraosState (NotOrigin slot) <$>
         SL.updateChainDepState
-          shelleyGlobals
-          lv
+          (mkShelleyGlobals cfg)
+          (tickedTPraosStateLedgerView cs)
           b
           (tickedTPraosStateChainDepState cs)
-    where
-      shelleyGlobals = mkShelleyGlobals cfg
-      lv = getTickedPraosLedgerView (tickedTPraosStateLedgerView cs)
 
   reupdateChainDepState cfg b slot cs =
       TPraosState (NotOrigin slot) $
         SL.reupdateChainDepState
-          shelleyGlobals
-          lv
+          (mkShelleyGlobals cfg)
+          (tickedTPraosStateLedgerView cs)
           b
           (tickedTPraosStateChainDepState cs)
-    where
-      shelleyGlobals = mkShelleyGlobals cfg
-      lv = getTickedPraosLedgerView (tickedTPraosStateLedgerView cs)
 
 mkShelleyGlobals :: ConsensusConfig (TPraos c) -> SL.Globals
 mkShelleyGlobals TPraosConfig{..} = SL.Globals {

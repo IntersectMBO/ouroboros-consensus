@@ -35,12 +35,10 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol (..))
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
-import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto,
-                     translateTickedLedgerView)
+                     translateLedgerView)
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -53,17 +51,14 @@ instance
   (ShelleyCompatible (TPraos crypto) era, crypto ~ EraCrypto era) =>
   LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era)
   where
-  protocolLedgerView _cfg =
-    TPraos.TickedPraosLedgerView
-      . SL.currentLedgerView
-      . tickedShelleyLedgerState
+  protocolLedgerView _cfg = SL.currentLedgerView . tickedShelleyLedgerState
 
   -- Extra context available in
   -- https://github.com/input-output-hk/ouroboros-network/blob/master/ouroboros-consensus/docs/HardWonWisdom.md#why-doesnt-ledger-code-ever-return-pasthorizonexception
   ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
     if
         | NotOrigin for == at ->
-          return $ TPraos.TickedPraosLedgerView $ SL.currentLedgerView shelleyLedgerState
+          return $ SL.currentLedgerView shelleyLedgerState
         | for < maxFor ->
           return $ futureLedgerView for
         | otherwise ->
@@ -79,11 +74,11 @@ instance
       swindow = SL.stabilityWindow globals
       at = ledgerTipSlot ledgerState
 
-      futureLedgerView :: SlotNo -> Ticked (SL.LedgerView (EraCrypto era))
+      futureLedgerView :: SlotNo -> SL.LedgerView (EraCrypto era)
       futureLedgerView =
         either
           (\e -> error ("futureLedgerView failed: " <> show e))
-          TPraos.TickedPraosLedgerView
+          id
           . SL.futureLedgerView globals shelleyLedgerState
 
       -- Exclusive upper bound
@@ -106,20 +101,19 @@ instance
         pparam :: forall a. Lens.Micro.Lens' (LedgerCore.PParams era) a -> a
         pparam lens = getPParams nes Lens.Micro.^. lens
 
-     in Praos.TickedPraosLedgerView $
-          Praos.LedgerView
-            { Praos.lvPoolDistr       = nesPd,
-              Praos.lvMaxBodySize     = pparam LedgerCore.ppMaxBBSizeL,
-              Praos.lvMaxHeaderSize   = pparam LedgerCore.ppMaxBHSizeL,
-              Praos.lvProtocolVersion = pparam LedgerCore.ppProtocolVersionL
-            }
+     in Praos.LedgerView
+          { Praos.lvPoolDistr       = nesPd,
+            Praos.lvMaxBodySize     = pparam LedgerCore.ppMaxBBSizeL,
+            Praos.lvMaxHeaderSize   = pparam LedgerCore.ppMaxBHSizeL,
+            Praos.lvProtocolVersion = pparam LedgerCore.ppProtocolVersionL
+          }
 
   -- | Currently the Shelley+ ledger is hard-coded to produce a TPraos ledger
   -- view. Since we can convert them, we piggy-back on this to get a Praos
   -- ledger view. Ultimately, we will want to liberalise the ledger code
   -- slightly.
   ledgerViewForecastAt cfg st =
-    mapForecast (translateTickedLedgerView @(TPraos crypto) @(Praos crypto)) $
+    mapForecast (translateLedgerView @(TPraos crypto) @(Praos crypto)) $
       ledgerViewForecastAt @(ShelleyBlock (TPraos crypto) era) cfg st'
     where
       st' :: LedgerState (ShelleyBlock (TPraos crypto) era)

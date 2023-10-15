@@ -482,11 +482,11 @@ crossEraForecastByronToShelleyWrapper =
       -> LedgerState ByronBlock
       -> Except
            OutsideForecastRange
-           (Ticked (WrapLedgerView (ShelleyBlock (TPraos c) (ShelleyEra c))))
+           (WrapLedgerView (ShelleyBlock (TPraos c) (ShelleyEra c)))
     forecast cfgShelley bound forecastFor currentByronState
         | forecastFor < maxFor
         = return $
-            WrapTickedLedgerView $ TickedPraosLedgerView $
+            WrapLedgerView $
               SL.mkInitialShelleyLedgerView
                 (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
         | otherwise

@@ -188,7 +188,7 @@ data instance Ticked (HeaderState blk) = TickedHeaderState {
 -- | Tick the 'ChainDepState' inside the 'HeaderState'
 tickHeaderState :: ConsensusProtocol (BlockProtocol blk)
                 => ConsensusConfig (BlockProtocol blk)
-                -> Ticked (LedgerView (BlockProtocol blk))
+                -> LedgerView (BlockProtocol blk)
                 -> SlotNo
                 -> HeaderState blk -> Ticked (HeaderState blk)
 tickHeaderState cfg ledgerView slot HeaderState {..} = TickedHeaderState {
@@ -291,7 +291,7 @@ class ( BasicEnvelopeValidation blk
 
   -- | Do additional envelope checks
   additionalEnvelopeChecks :: TopLevelConfig blk
-                           -> Ticked (LedgerView (BlockProtocol blk))
+                           -> LedgerView (BlockProtocol blk)
                            -> Header blk
                            -> Except (OtherHeaderEnvelopeError blk) ()
   additionalEnvelopeChecks _ _ _ = return ()
@@ -299,7 +299,7 @@ class ( BasicEnvelopeValidation blk
 -- | Validate the header envelope
 validateEnvelope :: forall blk. (ValidateEnvelope blk)
                  => TopLevelConfig blk
-                 -> Ticked (LedgerView (BlockProtocol blk))
+                 -> LedgerView (BlockProtocol blk)
                  -> WithOrigin (AnnTip blk) -- ^ Old tip
                  -> Header blk
                  -> Except (HeaderEnvelopeError blk) ()
@@ -415,7 +415,7 @@ castHeaderError (HeaderEnvelopeError e) = HeaderEnvelopeError $
 -- entire block (not just the block body).
 validateHeader :: (BlockSupportsProtocol blk, ValidateEnvelope blk)
                => TopLevelConfig blk
-               -> Ticked (LedgerView (BlockProtocol blk))
+               -> LedgerView (BlockProtocol blk)
                -> Header blk
                -> Ticked (HeaderState blk)
                -> Except (HeaderError blk) (HeaderState blk)
@@ -444,7 +444,7 @@ validateHeader cfg ledgerView hdr st = do
 revalidateHeader ::
      forall blk. (BlockSupportsProtocol blk, ValidateEnvelope blk, HasCallStack)
   => TopLevelConfig blk
-  -> Ticked (LedgerView (BlockProtocol blk))
+  -> LedgerView (BlockProtocol blk)
   -> Header blk
   -> Ticked (HeaderState blk)
   -> HeaderState blk

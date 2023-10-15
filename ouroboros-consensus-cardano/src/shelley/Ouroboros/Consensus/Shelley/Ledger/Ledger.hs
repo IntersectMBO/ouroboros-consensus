@@ -84,8 +84,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Ledger.Util (isNewEpoch)
-import           Ouroboros.Consensus.Protocol.TPraos (MaxMajorProtVer (..),
-                     Ticked (TickedPraosLedgerView))
+import           Ouroboros.Consensus.Protocol.TPraos (MaxMajorProtVer (..))
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
@@ -474,8 +473,8 @@ instance ShelleyCompatible proto era => ValidateEnvelope (ShelleyBlock proto era
   type OtherHeaderEnvelopeError (ShelleyBlock proto era) =
     EnvelopeCheckError proto
 
-  additionalEnvelopeChecks cfg tlv hdr =
-    envelopeChecks (configConsensus cfg) tlv (shelleyHeaderRaw hdr)
+  additionalEnvelopeChecks cfg lv hdr =
+    envelopeChecks (configConsensus cfg) lv (shelleyHeaderRaw hdr)
 
 {-------------------------------------------------------------------------------
   Auxiliary

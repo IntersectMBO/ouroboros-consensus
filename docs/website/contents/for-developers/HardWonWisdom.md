@@ -44,9 +44,7 @@ instance ... => LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era) where
   ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
     if
         | NotOrigin for == at ->
-              return
-            $ TPraos.TickedPraosLedgerView
-            $ SL.currentLedgerView shelleyLedgerState
+            return $ SL.currentLedgerView shelleyLedgerState
         | for < maxFor        -> return $ futureLedgerView for
         | otherwise           -> throwError OutsideForecastRange { ... }
     where
@@ -56,11 +54,11 @@ instance ... => LedgerSupportsProtocol (ShelleyBlock (TPraos crypto) era) where
       swindow = SL.stabilityWindow globals
       at      = ledgerTipSlot ledgerState
 
-      futureLedgerView :: SlotNo -> Ticked (SL.LedgerView (EraCrypto era))
+      futureLedgerView :: SlotNo -> SL.LedgerView (EraCrypto era)
       futureLedgerView =
         either
           (\e -> error ("futureLedgerView failed: " <> show e))
-          TPraos.TickedPraosLedgerView
+          id
           . SL.futureLedgerView globals shelleyLedgerState
 
       maxFor :: SlotNo   -- Exclusive upper bound
@@ -115,13 +113,13 @@ Thus using HCG window as Stability Window ensures that forecasting can't disrupt
 
 ## How does cross-era forecasting work?
 
-When we talk about forecasting, we mean about the process of trying to get a ticked ledger view from a ledger state for a given slot. This ledger view can then be used to verify the validity of headers in that slot that live on the same chain as the original ledger state.
+When we talk about forecasting, we mean about the process of trying to get a ledger view from a ledger state for a given slot. This ledger view can then be used to verify the validity of headers in that slot that live on the same chain as the original ledger state.
 
 Hence, in the context of the HFC which has to support forecasts across era boundaries, forecasting can be thought of to have type
 ```haskell
    SlotNo
 -> LedgerState blk
--> Either OutsideForecastRange (Ticked (LedgerView (BlockProtocol blk')))
+-> Either OutsideForecastRange (LedgerView (BlockProtocol blk'))
 ```
 (in reality, there is an intermediate `Forecast` type, see `ledgerViewForecastAt`).
 
@@ -148,7 +146,7 @@ Hence, the HFC fully offloads the task to work out a safe way to do cross-era fo
 In our case, there are two cases of era transitions:
 
  - **Intra-Shelley:** These are trivial to support, as there are almost no changes regarding forecasting, so we can simply forecast starting in the old era and then convert the resulting `LedgerView` to the new era.
-    - The `LedgerView` actually only depends on the `ConsensusProtocol`, which only changed from Alonzo/TPraos to Babbage/Praos (Vasil HF), and even there, the translation only consists of un- and rewrapping (see `translateTickedLedgerView`).
+    - The `LedgerView` actually only depends on the `ConsensusProtocol`, which only changed from Alonzo/TPraos to Babbage/Praos (Vasil HF), and even there, the translation only consists of un- and rewrapping (see `translateLedgerView`).
     - The stability window/forecasting range also stayed the same so far, but there already is existing logic to handle changes there, see the usage of the very conservative `crossEraForecastBound` in `forecastAcrossShelley`. (We definitely will want to revisit that in case we actually ever do a change here.)
 
  - **Byron-to-Shelley:** This is implemented in `crossEraForecastByronToShelleyWrapper`, and exploits the fact that the ledger view for the first Shelley epoch is independent of the Byron ledger state, and can be constructed just using the static Shelley ledger config.

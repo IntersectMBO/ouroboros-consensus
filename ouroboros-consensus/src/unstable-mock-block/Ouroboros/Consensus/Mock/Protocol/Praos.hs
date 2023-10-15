@@ -434,8 +434,7 @@ infosEta l@PraosConfig{praosParams = PraosParams{..}} xs e =
 --
 -- We do however need access to the ticked stake distribution.
 data instance Ticked (PraosChainDepState c) = TickedPraosChainDepState {
-      tickedPraosLedgerView      :: Ticked (LedgerView (Praos c))
-      -- ^ The ticked ledger view.
+      praosLedgerView            :: LedgerView (Praos c)
     , untickedPraosChainDepState :: PraosChainDepState c
       -- ^ The unticked chain dependent state, containing the full history.
     }
@@ -471,7 +470,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   updateChainDepState cfg@PraosConfig{..}
                       (PraosValidateView PraosFields{..} toSign)
                       slot
-                      (TickedPraosChainDepState TickedTrivial cds) = do
+                      (TickedPraosChainDepState () cds) = do
     let PraosExtraFields {..} = praosExtraFields
         nid = praosCreator
 
@@ -534,7 +533,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   reupdateChainDepState _
                         (PraosValidateView PraosFields{..} _)
                         slot
-                        (TickedPraosChainDepState TickedTrivial cds) =
+                        (TickedPraosChainDepState () cds) =
     let PraosExtraFields{..} = praosExtraFields
         !bi = BlockInfo
             { biSlot  = slot

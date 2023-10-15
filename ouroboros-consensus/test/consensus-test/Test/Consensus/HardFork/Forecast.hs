@@ -97,8 +97,6 @@ data instance Ticked LedgerState = TickedLedgerState {
 
 newtype LedgerView = LedgerView LedgerValue
 
-newtype instance Ticked LedgerView = TickedView LedgerValue
-
 initLedgerState :: LedgerState
 initLedgerState = LedgerState {
       ledgerValue     = 0
@@ -199,7 +197,7 @@ withinEraForecast maxLookAhead st = Forecast{
     , forecastFor = go
     }
   where
-    go :: SlotNo -> Except OutsideForecastRange (Ticked LedgerView)
+    go :: SlotNo -> Except OutsideForecastRange LedgerView
     go for = do
         when (for >= upperBound) $
           throwError OutsideForecastRange {
@@ -208,7 +206,7 @@ withinEraForecast maxLookAhead st = Forecast{
                 , outsideForecastFor    = for
                 }
 
-        return $ TickedView . tickedValue $ tickLedgerState for st
+        return $ LedgerView . tickedValue $ tickLedgerState for st
       where
         -- Exclusive upper bound
         upperBound :: SlotNo
@@ -261,7 +259,7 @@ translations TestSetup{..} =
 
             -- We set things up so that we don't have to be too careful with
             -- the ordering of the operations here: @3x + 3y = 3(x + y)@.
-            return $ TickedK $ TickedView $
+            return $ K $ LedgerView $
                 inflate $ tickedValue $ tickLedgerState sno st
 
 acrossErasForecast :: forall xs.
@@ -274,11 +272,10 @@ acrossErasForecast setup@TestSetup{..} ledgerStates =
   where
     TestForecastParams{..} = testForecastParams
 
-    aux :: Ticked (HardForkLedgerView_ (K LedgerView) xs)
-        -> Ticked LedgerView
+    aux :: HardForkLedgerView_ (K LedgerView) xs
+        -> LedgerView
     aux = hcollapse
-        . hmap (K . getTickedK . unComp)
-        . tickedHardForkLedgerViewPerEra
+        . hardForkLedgerViewPerEra
 
     go :: NonEmpty xs' TestEra
        -> Telescope (K Past) (Current (AnnForecast (K LedgerState) (K LedgerView))) xs'
@@ -287,7 +284,7 @@ acrossErasForecast setup@TestSetup{..} ledgerStates =
         TZ $ Current {
             currentStart = eraStart (testEraSummary era)
           , currentState = AnnForecast {
-                annForecast      = mapForecast TickedK $
+                annForecast      = mapForecast K $
                                      withinEraForecast
                                        (testEraMaxLookahead era)
                                        st
@@ -304,7 +301,7 @@ acrossErasForecast setup@TestSetup{..} ledgerStates =
           TZ $ Current {
               currentStart = start
             , currentState = AnnForecast {
-                  annForecast      = mapForecast TickedK $
+                  annForecast      = mapForecast K $
                                        withinEraForecast
                                          (testEraMaxLookahead era)
                                          st
@@ -329,11 +326,11 @@ acrossErasForecast setup@TestSetup{..} ledgerStates =
   Forecast validity
 -------------------------------------------------------------------------------}
 
-correctForecastOf :: Ticked LedgerView -> LedgerState -> Property
-TickedView forecast `correctForecastOf` actual =
-      counterexample ("forecast: " ++ show forecast)
+correctForecastOf :: LedgerView -> LedgerState -> Property
+LedgerView forecasted `correctForecastOf` actual =
+      counterexample ("forecasted: " ++ show forecasted)
     $ counterexample ("actual: " ++ show actual)
-    $ forecast === ledgerValue actual
+    $ forecasted === ledgerValue actual
 
 {-------------------------------------------------------------------------------
   Sanity checks
@@ -393,7 +390,7 @@ prop_forecast useWithinEra (Some setup@TestSetup{..}) =
     isWithinEra :: Bool
     isWithinEra = slotSameEra setup testForecastAt (NotOrigin for)
 
-    mForecastLedger :: Either OutsideForecastRange (Ticked LedgerView)
+    mForecastLedger :: Either OutsideForecastRange LedgerView
     mForecastLedger = runExcept $ forecastFor forecast for
 
     actualLedger :: LedgerState

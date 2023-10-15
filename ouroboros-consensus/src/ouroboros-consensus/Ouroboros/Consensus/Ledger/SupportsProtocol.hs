@@ -16,13 +16,13 @@ class ( BlockSupportsProtocol blk
       , UpdateLedger          blk
       , ValidateEnvelope      blk
       ) => LedgerSupportsProtocol blk where
-  -- | Extract ticked ledger view from ticked ledger state
+  -- | Extract the ledger view from the given ticked ledger state
   --
   -- See 'ledgerViewForecastAt' for a discussion and precise definition of the
   -- relation between this and forecasting.
   protocolLedgerView :: LedgerConfig blk
                      -> Ticked (LedgerState blk)
-                     -> Ticked (LedgerView (BlockProtocol blk))
+                     -> LedgerView (BlockProtocol blk)
 
   -- | Get a forecast at the given ledger state.
   --
@@ -68,8 +68,7 @@ class ( BlockSupportsProtocol blk
 -- | Relation between 'ledgerViewForecastAt' and 'applyChainTick'
 _lemma_ledgerViewForecastAt_applyChainTick
   :: ( LedgerSupportsProtocol blk
-     , Eq   (Ticked (LedgerView (BlockProtocol blk)))
-     , Show (Ticked (LedgerView (BlockProtocol blk)))
+     , Eq (LedgerView (BlockProtocol blk))
      )
   => LedgerConfig blk
   -> LedgerState blk

@@ -16,11 +16,22 @@ import           NoThunks.Class (NoThunks)
   Ticked state
 -------------------------------------------------------------------------------}
 
--- | " Ticked " piece of state ('LedgerState', 'LedgerView', 'ChainIndepState')
+-- | " Ticked " piece of state, either 'LedgerState' or 'ChainDepState'
 --
 -- Ticking refers to the passage of time (the ticking of the clock). When a
--- piece of state is marked as ticked, it means that time-related
--- changes have been applied to the state (or forecast).
+-- piece of state is marked as ticked, it means that time-related changes have
+-- been applied to the state. There are exactly two methods in the interface
+-- that do that: 'Ouroboros.Consensus.Protocol.Abstract.tickChainDepState' and
+-- 'Ouroboros.Consensus.Ledger.Basics.applyChainTickLedgerResult'.
+--
+-- Also note that a successful forecast
+-- @'Ouroboros.Consensus.Forecast.forecastFor'
+-- ('Ouroboros.Consensus.Ledger.SupportsProtocol.ledgerViewForecastAt' cfg st)
+-- slot@ must equal
+-- @'Ouroboros.Consensus.Ledger.SupportsProtocol.protocolLedgerView' cfg
+-- ('Ouroboros.Consensus.Ledger.Basics.applyChainTick' cfg slot st)@. Thus a
+-- 'Ouroboros.Consensus.Protocol.Abstract.LedgerView' can only be projected
+-- from a 'Ticked' state, but cannot itself be ticked.
 --
 -- Some examples of time related changes:
 --
@@ -35,15 +46,9 @@ data family Ticked st :: Type
 data instance Ticked () = TickedTrivial
   deriving (Show)
 
-newtype instance Ticked (K a x) = TickedK { getTickedK :: Ticked a }
-
 {-------------------------------------------------------------------------------
   Forwarding type class instances
 -------------------------------------------------------------------------------}
-
-deriving instance
-     Show (Ticked a)
-  => Show (Ticked (K a x))
 
 deriving newtype instance {-# OVERLAPPING #-}
      Show (Ticked (f a))

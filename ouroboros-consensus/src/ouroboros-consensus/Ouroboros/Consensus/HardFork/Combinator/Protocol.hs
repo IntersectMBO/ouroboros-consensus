@@ -50,7 +50,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
-                     (HardForkLedgerView, HardForkLedgerView_ (..), Ticked (..))
+                     (HardForkLedgerView, HardForkLedgerView_ (..))
 import           Ouroboros.Consensus.HardFork.Combinator.State (HardForkState,
                      Translate (..))
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
@@ -142,19 +142,19 @@ data instance Ticked (HardForkChainDepState xs) =
         tickedHardForkChainDepStatePerEra ::
              HardForkState (Ticked :.: WrapChainDepState) xs
 
-        -- | 'EpochInfo' constructed from the ticked 'LedgerView'
+        -- | 'EpochInfo' constructed from the 'LedgerView'
       , tickedHardForkChainDepStateEpochInfo ::
              EpochInfo (Except PastHorizonException)
       }
 
 tick :: CanHardFork xs
      => ConsensusConfig (HardForkProtocol xs)
-     -> Ticked (HardForkLedgerView xs)
+     -> HardForkLedgerView xs
      -> SlotNo
      -> HardForkChainDepState xs
      -> Ticked (HardForkChainDepState xs)
 tick cfg@HardForkConsensusConfig{..}
-     (TickedHardForkLedgerView transition ledgerView)
+     (HardForkLedgerView transition ledgerView)
      slot
      chainDepState = TickedHardForkChainDepState {
       tickedHardForkChainDepStateEpochInfo = ei
@@ -174,14 +174,14 @@ tick cfg@HardForkConsensusConfig{..}
 
     tickOne :: SingleEraBlock                 blk
             => WrapPartialConsensusConfig     blk
-            -> (Ticked :.: WrapLedgerView)    blk
+            -> WrapLedgerView                 blk
             -> WrapChainDepState              blk
             -> (Ticked :.: WrapChainDepState) blk
-    tickOne cfg' (Comp ledgerView') chainDepState' = Comp $
+    tickOne cfg' ledgerView' chainDepState' = Comp $
         WrapTickedChainDepState $
           tickChainDepState
             (completeConsensusConfig' ei cfg')
-            (unwrapTickedLedgerView ledgerView')
+            (unwrapLedgerView ledgerView')
             slot
             (unwrapChainDepState chainDepState')
 

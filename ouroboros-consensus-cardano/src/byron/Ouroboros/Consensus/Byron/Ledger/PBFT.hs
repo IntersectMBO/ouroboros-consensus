@@ -12,7 +12,6 @@ module Ouroboros.Consensus.Byron.Ledger.PBFT (
   , fromPBftLedgerView
   , mkByronContextDSIGN
   , toPBftLedgerView
-  , toTickedPBftLedgerView
   ) where
 
 import qualified Cardano.Chain.Block as CC
@@ -74,9 +73,6 @@ instance BlockSupportsProtocol ByronBlock where
 
 toPBftLedgerView :: Delegation.Map -> PBftLedgerView PBftByronCrypto
 toPBftLedgerView = PBftLedgerView . Delegation.unMap
-
-toTickedPBftLedgerView :: Delegation.Map -> Ticked (PBftLedgerView PBftByronCrypto)
-toTickedPBftLedgerView = TickedPBftLedgerView . Delegation.unMap
 
 fromPBftLedgerView :: PBftLedgerView PBftByronCrypto -> Delegation.Map
 fromPBftLedgerView = Delegation.Map . pbftDelegates
