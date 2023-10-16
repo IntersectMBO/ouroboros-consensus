@@ -170,10 +170,6 @@ class ( Core.EraSegWits era
   --
   -- For now, this always returns 'Nothing' for Conway (see the instance below).
   getProposedProtocolVersion :: Core.PParamsUpdate era -> Maybe ProtVer
-  default getProposedProtocolVersion ::
-      ProtVerAtMost era 8 => Core.PParamsUpdate era -> Maybe ProtVer
-  getProposedProtocolVersion proposal =
-      strictMaybeToMaybe $ proposal ^. ppuProtocolVersionL
 
 -- | The default implementation of 'applyShelleyBasedTx', a thin wrapper around
 -- 'SL.applyTx'
@@ -196,11 +192,20 @@ defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
       mempoolState
       tx
 
+defaultGetProposedProtocolVersion ::
+     (EraPParams era, ProtVerAtMost era 8)
+  => Core.PParamsUpdate era
+  -> Maybe ProtVer
+defaultGetProposedProtocolVersion proposal =
+    strictMaybeToMaybe $ proposal ^. ppuProtocolVersionL
+
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (ShelleyEra c) where
   shelleyBasedEraName _ = "Shelley"
 
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
+
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AllegraEra c) where
@@ -208,11 +213,15 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
 
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
+
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (MaryEra c) where
   shelleyBasedEraName _ = "Mary"
 
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
+
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AlonzoEra c) where
@@ -220,9 +229,13 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
 
   applyShelleyBasedTx = applyAlonzoBasedTx
 
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
+
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (BabbageEra c) where
   shelleyBasedEraName _ = "Babbage"
   applyShelleyBasedTx = applyAlonzoBasedTx
+
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (ConwayEra c) where
   shelleyBasedEraName _ = "Conway"
