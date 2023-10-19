@@ -17,6 +17,7 @@ module Test.Util.Serialisation.Roundtrip (
     -- * Basic test helpers
     roundtrip
   , roundtrip'
+  , roundtripAnd
     -- * Test skeleton
   , Arbitrary'
   , Coherent (..)
@@ -27,28 +28,43 @@ module Test.Util.Serialisation.Roundtrip (
   , roundtrip_SerialiseNodeToClient
   , roundtrip_SerialiseNodeToNode
   , roundtrip_all
+  , roundtrip_all_skipping
   , roundtrip_envelopes
+    -- ** Exclusion of CBOR validity tests
+  , ShouldCheckCBORValidity (CheckCBORValidity, DoNotCheckCBORValidity)
+    -- * Roundtrip tests for 'Example's
+  , examplesRoundtrip
   ) where
 
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
-import           Codec.CBOR.Read (deserialiseFromBytes)
+import           Codec.CBOR.FlatTerm (toFlatTerm, validFlatTerm)
+import           Codec.CBOR.Read (DeserialiseFailure, deserialiseFromBytes)
 import           Codec.CBOR.Write (toLazyByteString)
+import           Codec.Serialise (decode, encode)
+import           Control.Arrow (left)
+import           Control.Monad (unless, when)
 import qualified Data.ByteString.Base16.Lazy as Base16
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Lazy.Char8 as Char8
 import qualified Data.ByteString.Short as Short
 import           Data.Function (on)
+import           Data.Maybe (fromMaybe)
+import qualified Data.Text.Lazy as T
 import           Data.Typeable
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
 import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
+                     decodeExtLedgerState, encodeExtLedgerState)
 import           Ouroboros.Consensus.Ledger.Query (BlockQuery, Query (..),
                      QueryVersion)
 import qualified Ouroboros.Consensus.Ledger.Query as Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx,
                      GenTxId)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run (SerialiseNodeToClientConstraints,
                      SerialiseNodeToNodeConstraints (..))
@@ -61,9 +77,12 @@ import           Ouroboros.Network.Block (Serialised (..), fromSerialised,
                      mkSerialised)
 import           Quiet (Quiet (..))
 import           Test.Tasty
+import           Test.Tasty.ExpectedFailure (expectFailBecause)
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
+import           Test.Util.Serialisation.Examples (Examples (..), Labelled)
 import           Test.Util.Serialisation.SomeResult (SomeResult (..))
+import           Text.Pretty.Simple (pShow)
 
 {------------------------------------------------------------------------------
   Basic test helpers
@@ -76,32 +95,78 @@ roundtrip :: (Eq a, Show a)
           -> Property
 roundtrip enc dec = roundtrip' enc (const <$> dec)
 
+-- | Perform roundtrip tests, checking the validity of the encoded CBOR.
+--
+-- See 'roundtripAnd'
+--
+roundtrip' :: forall a.
+              (Eq a, Show a)
+           => (a -> Encoding)  -- ^ @enc@
+           -> (forall s. Decoder s (Lazy.ByteString -> a))
+           -> a
+           -> Property
+roundtrip' = roundtripAnd CheckCBORValidity
+
+data ShouldCheckCBORValidity = CheckCBORValidity | DoNotCheckCBORValidity
+  deriving (Eq, Show)
+
 -- | Roundtrip property for values annotated with their serialized form
+--
+-- If 'CheckCBORValidity' is passed, then we check that the encoded
+-- CBOR is valid using 'validFlatTerm'. In general we want to check
+-- this, however there are cases where legacy encoders do not produce
+-- valid CBOR but we need to keep them for backwards compatibility. In
+-- such cases, the option to skip this check
+-- ('DoNotCheckCBORValidity') can be used.
 --
 -- NOTE: Suppose @a@ consists of a pair of the unannotated value @a'@ and some
 -- 'Lazy.ByteString'. The roundtrip property will fail if that
 -- 'Lazy.ByteString' encoding is not equal to @enc a'@. One way in which this
 -- might happen is if the annotation is not canonical CBOR, but @enc@ does
 -- produce canonical CBOR.
-roundtrip' :: (Eq a, Show a)
-           => (a -> Encoding)  -- ^ @enc@
+roundtripAnd :: forall a.
+              (Eq a, Show a)
+           => ShouldCheckCBORValidity
+           -> (a -> Encoding)  -- ^ @enc@
            -> (forall s. Decoder s (Lazy.ByteString -> a))
            -> a
            -> Property
-roundtrip' enc dec a = case deserialiseFromBytes dec bs of
-    Right (bs', a')
-      | Lazy.null bs'
-      -> a === a' bs
-      | otherwise
-      -> counterexample ("left-over bytes: " <> toBase16 bs') False
-    Left e
-      -> counterexample (show e) $
-         counterexample (toBase16 bs) False
+roundtripAnd check enc dec a = checkRoundtripResult $ do
+    let enc_a = enc a
+        bs    = toLazyByteString enc_a
+
+    when (check == CheckCBORValidity) $
+      (validFlatTerm (toFlatTerm enc_a)          ?!       "Encoded flat term is not valid: " <> show enc_a)
+    (bsRem, a' ) <- deserialiseFromBytes dec bs `onError` showByteString bs
+    Lazy.null bsRem                              ?!       "Left-over bytes: " <> toBase16 bsRem
+    a == a' bs                                   ?!        pShowNeq a (a' bs)
   where
-    bs = toLazyByteString (enc a)
+    (?!) :: Bool -> String -> Either String ()
+    cond ?! msg = unless cond $ Left msg
+    infix 1 ?!
+
+    pShowNeq x y = T.unpack (pShow x) <> "\n \t/= \n"  <> T.unpack (pShow y)
+
+    onError ::
+          Either DeserialiseFailure (Char8.ByteString, Char8.ByteString -> a)
+      -> (DeserialiseFailure -> String)
+      -> Either String (Char8.ByteString, Char8.ByteString -> a)
+    onError result showDeserialiseFailure =
+      left showDeserialiseFailure result
+
+    showByteString ::
+         Char8.ByteString
+      -> DeserialiseFailure
+      -> String
+    showByteString bs deserialiseFailure =
+      show deserialiseFailure <> "\n" <> "When deserialising " <> toBase16 bs
 
     toBase16 :: Lazy.ByteString -> String
     toBase16 = Char8.unpack . Base16.encode
+
+    checkRoundtripResult :: Either String () -> Property
+    checkRoundtripResult (Left str) = counterexample str False
+    checkRoundtripResult (Right ()) = property ()
 
 {------------------------------------------------------------------------------
   Test skeleton
@@ -148,11 +213,61 @@ roundtrip_all
   => CodecConfig blk
   -> (forall a. NestedCtxt_ blk Header a -> Dict (Eq a, Show a))
   -> TestTree
-roundtrip_all ccfg dictNestedHdr =
+roundtrip_all = roundtrip_all_skipping (const CheckCBORValidity)
+
+-- | All roundtrip tests, skipping the specified CBOR validity tests.
+--
+-- TODO: the exclusion rule should only be considered for blocks __before__ Conway!
+--
+-- The 'TestName' corresponds to the name of the roundtrip property
+-- being tested. At the moment we consider for exclusion:
+--
+-- - Node to client tests due to
+--   [this issue](https://github.com/input-output-hk/cardano-ledger/issues/3800).
+--
+roundtrip_all_skipping
+  :: forall blk.
+     ( SerialiseDiskConstraints         blk
+     , SerialiseNodeToNodeConstraints   blk
+     , SerialiseNodeToClientConstraints blk
+
+     , Show (BlockNodeToNodeVersion   blk)
+     , Show (BlockNodeToClientVersion blk)
+
+     , StandardHash blk
+     , GetHeader    blk
+
+     , Arbitrary' blk
+     , Arbitrary' (Header blk)
+     , Arbitrary' (HeaderHash blk)
+     , Arbitrary' (LedgerState blk)
+     , Arbitrary' (AnnTip blk)
+     , Arbitrary' (ChainDepState (BlockProtocol blk))
+
+     , ArbitraryWithVersion (BlockNodeToNodeVersion blk) blk
+     , ArbitraryWithVersion (BlockNodeToNodeVersion blk) (Coherent blk)
+     , ArbitraryWithVersion (BlockNodeToNodeVersion blk) (Header blk)
+     , ArbitraryWithVersion (BlockNodeToNodeVersion blk) (GenTx blk)
+     , ArbitraryWithVersion (BlockNodeToNodeVersion blk) (GenTxId blk)
+     , ArbitraryWithVersion (BlockNodeToNodeVersion blk) (SomeSecond (NestedCtxt Header) blk)
+
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
+     , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
+     )
+  => (TestName -> ShouldCheckCBORValidity)
+  -> CodecConfig blk
+  -> (forall a. NestedCtxt_ blk Header a -> Dict (Eq a, Show a))
+  -> TestTree
+roundtrip_all_skipping shouldCheckCBORvalidity ccfg dictNestedHdr =
     testGroup "Roundtrip" [
         testGroup "SerialiseDisk"         $ roundtrip_SerialiseDisk         ccfg dictNestedHdr
       , testGroup "SerialiseNodeToNode"   $ roundtrip_SerialiseNodeToNode   ccfg
-      , testGroup "SerialiseNodeToClient" $ roundtrip_SerialiseNodeToClient ccfg
+      , testGroup "SerialiseNodeToClient" $ roundtrip_SerialiseNodeToClient
+                                                    shouldCheckCBORvalidity ccfg
       , testProperty "envelopes"          $ roundtrip_envelopes             ccfg
       , testProperty "ConvertRawHash"     $ roundtrip_ConvertRawHash        (Proxy @blk)
       , testProperty "hashSize"           $ prop_hashSize                   (Proxy @blk)
@@ -388,9 +503,10 @@ roundtrip_SerialiseNodeToClient
      , EncodeDisk blk blk
      , DecodeDisk blk (Lazy.ByteString -> blk)
      )
-  => CodecConfig blk
+  => (TestName -> ShouldCheckCBORValidity)
+  -> CodecConfig blk
   -> [TestTree]
-roundtrip_SerialiseNodeToClient ccfg =
+roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
     [ rt (Proxy @blk)                         "blk"
     , rt (Proxy @(GenTx blk))                 "GenTx"
     , rt (Proxy @(ApplyTxErr blk))            "ApplyTxErr"
@@ -411,25 +527,31 @@ roundtrip_SerialiseNodeToClient ccfg =
         )
         "Query"
       -- See roundtrip_SerialiseNodeToNode for more info
-    , testProperty "roundtrip Serialised blk" $
-        \(WithVersion version blk) ->
-          roundtrip @blk
-            (encodeThroughSerialised (encodeDisk ccfg) (enc version))
-            (decodeThroughSerialised (decodeDisk ccfg) (dec version))
-            blk
+    , let testLabel = "roundtrip Serialised blk" in
+        testProperty testLabel $
+          \(WithVersion version blk) ->
+            roundtripAnd @blk
+              (shouldCheckCBORvalidity testLabel)
+              (encodeThroughSerialised (encodeDisk ccfg) (enc version))
+              (const <$> decodeThroughSerialised (decodeDisk ccfg) (dec version))
+              blk
       -- See roundtrip_SerialiseNodeToNode for more info
-    , testProperty "roundtrip Serialised blk compat" $
-        \(WithVersion version blk) ->
-          roundtrip @blk
-            (encodeThroughSerialised (encodeDisk ccfg) (enc version))
-            (dec version)
-            blk
-    , testProperty "roundtrip Result" $
-        \(WithVersion version (SomeResult query result :: SomeResult blk)) ->
-          roundtrip
-            (encodeResult ccfg version query)
-            (decodeResult ccfg version query)
-            result
+    , let testLabel = "roundtrip Serialised blk compat" in
+        testProperty testLabel $
+          \(WithVersion version blk) ->
+            roundtripAnd @blk
+              (shouldCheckCBORvalidity testLabel)
+              (encodeThroughSerialised (encodeDisk ccfg) (enc version))
+              (const <$> dec version)
+              blk
+    , let testLabel = "roundtrip Result" in
+        testProperty testLabel $
+          \(WithVersion version (SomeResult query result :: SomeResult blk)) ->
+            roundtripAnd
+              (shouldCheckCBORvalidity testLabel)
+              (encodeResult ccfg version query)
+              (const <$> decodeResult ccfg version query)
+              result
     ]
   where
     enc :: SerialiseNodeToClient blk a
@@ -462,9 +584,14 @@ roundtrip_SerialiseNodeToClient ccfg =
        -> String
        -> TestTree
     rtWith enc' dec' name =
-      testProperty ("roundtrip " <> name) $
-        \(WithVersion version a) ->
-          roundtrip @a (enc' version) (dec' version) a
+        testProperty ("roundtrip " <> name) $
+          \(WithVersion version a) ->
+            roundtripAnd @a (shouldCheckCBORvalidity testLabel)
+                            (enc' version)
+                            (const <$> dec' version)
+                            a
+      where
+        testLabel = "roundtrip " <> name
 
 {-------------------------------------------------------------------------------
   Checking envelopes
@@ -592,3 +719,61 @@ decodeThroughSerialised
 decodeThroughSerialised dec decSerialised = do
     serialised <- decSerialised
     fromSerialised dec serialised
+
+{------------------------------------------------------------------------------
+  Roundtrip tests for examples
+------------------------------------------------------------------------------}
+
+examplesRoundtrip ::
+     forall blk . (SerialiseDiskConstraints blk, Eq blk, Show blk, LedgerSupportsProtocol blk)
+  => CodecConfig blk
+  -> Examples blk
+  -> [TestTree]
+examplesRoundtrip codecConfig examples =
+    [ testRoundtripFor "Block"                 (encodeDisk codecConfig) (decodeDisk codecConfig)           exampleBlock
+    , testRoundtripFor "Header hash"           encode                   (const <$> decode)                 exampleHeaderHash
+    , testRoundtripFor "Ledger state"          (encodeDisk codecConfig) (const <$> decodeDisk codecConfig) exampleLedgerState
+    , testRoundtripFor "Annotated tip"         (encodeDisk codecConfig) (const <$> decodeDisk codecConfig) exampleAnnTip
+    , testRoundtripFor "Chain dependent state" (encodeDisk codecConfig) (const <$> decodeDisk codecConfig) exampleChainDepState
+    , testRoundtripFor "Extended ledger state" encodeExt                (const <$> decodeExt)              exampleExtLedgerState
+    ]
+  where
+    testRoundtripFor ::
+         forall a . (Eq a, Show a)
+      => String
+      -> (a -> Encoding)
+      -> (forall s . Decoder s (Char8.ByteString -> a))
+      -> (Examples blk -> Labelled a)
+      -> TestTree
+    testRoundtripFor testLabel enc dec field =
+        testGroup testLabel
+          [ mkTest exampleName example
+          | (exampleName, example) <- field examples
+          ]
+      where
+        mkTest exampleName example =
+          let
+            runTest =
+                testProperty (fromMaybe "" exampleName)
+              $ once
+              $ roundtrip' enc dec example
+            _3740 = "https://github.com/input-output-hk/cardano-ledger/issues/3740"
+          in
+          case (testLabel, exampleName) of
+            -- We case on Cardano specific test names here to avoid introducing parameters to 'examplesRoundtrip' that will be removed once #3740 is fixed. This is a temporary workaround.
+            ("Ledger state"         , Just "Conway") -> expectFailBecause _3740 $ runTest
+            ("Extended ledger state", Just "Conway") -> expectFailBecause _3740 $ runTest
+            _                                        ->                           runTest
+
+    encodeExt =
+      encodeExtLedgerState
+        (encodeDisk codecConfig)
+        (encodeDisk codecConfig)
+        (encodeDisk codecConfig)
+
+    decodeExt :: forall s. Decoder s (ExtLedgerState blk)
+    decodeExt =
+      decodeExtLedgerState
+        (decodeDisk codecConfig)
+        (decodeDisk codecConfig)
+        (decodeDisk codecConfig)

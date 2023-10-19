@@ -61,7 +61,7 @@ tests = adjustOption reduceTests $
             , testGroup "SerialiseNodeToNode" $
                 roundtrip_SerialiseNodeToNode   byronToCardanoCodeConfig
             , testGroup "SerialiseNodeToClient" $
-                roundtrip_SerialiseNodeToClient byronToCardanoCodeConfig
+                roundtrip_SerialiseNodeToClient (const CheckCBORValidity) byronToCardanoCodeConfig
             ]
       , testGroup "Cardano to Byron" [
               testProperty "roundtrip block" $
@@ -71,7 +71,7 @@ tests = adjustOption reduceTests $
             , testGroup "SerialiseNodeToNode" $
                 roundtrip_SerialiseNodeToNode   cardanoToByronCodeConfig
             , testGroup "SerialiseNodeToClient" $
-                roundtrip_SerialiseNodeToClient cardanoToByronCodeConfig
+                roundtrip_SerialiseNodeToClient (const CheckCBORValidity) cardanoToByronCodeConfig
             ]
       ]
   where
