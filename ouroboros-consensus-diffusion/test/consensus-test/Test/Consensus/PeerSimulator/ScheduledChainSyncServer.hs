@@ -24,7 +24,7 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
                      ServerStIdle (ServerStIdle, recvMsgDoneClient, recvMsgFindIntersect, recvMsgRequestNext),
                      ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
                      ServerStNext (SendMsgRollBackward, SendMsgRollForward))
-import           Test.Consensus.PeerSimulator.Trace (traceUnitWith)
+import           Test.Consensus.PeerSimulator.Trace (terseHeader, traceUnitWith)
 import           Test.Util.TestBlock (Header (..), TestBlock)
 
 -- | Pure representation of the messages produced by the handler for the @StNext@
@@ -144,7 +144,7 @@ scheduledChainSyncServer server@ScheduledChainSyncServer {scssHandlers, scssTrac
       trace $ "  state is " ++ condense currentState
       runHandlerWithTrace requestNextTracer (csshRequestNext currentState) >>= \case
         Just (RollForward header tip) -> do
-          trace $ "  gotta serve " ++ condense header
+          trace $ "  gotta serve " ++ terseHeader header
           trace $ "  tip is      " ++ condense tip
           trace "done handling MsgRequestNext"
           pure $ Left $ SendMsgRollForward header tip go

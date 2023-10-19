@@ -1,55 +1,86 @@
-{-# LANGUAGE BlockArguments      #-}
-{-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BlockArguments            #-}
+{-# LANGUAGE DerivingStrategies        #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE LambdaCase                #-}
+{-# LANGUAGE NamedFieldPuns            #-}
+{-# LANGUAGE RankNTypes                #-}
+{-# LANGUAGE RecordWildCards           #-}
+{-# LANGUAGE ScopedTypeVariables       #-}
 
-module Test.Consensus.Genesis.Setup
-  ( module Test.Consensus.Genesis.Setup,
+module Test.Consensus.Genesis.Setup (
     module Test.Consensus.Genesis.Setup.GenChains
-  )
-where
+  , exceptionCounterexample
+  , runTest
+  ) where
 
+import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (traceWith)
+import           Control.Tracer (debugTracer, traceWith)
+import           Data.Either (partitionEithers)
+import           Data.Foldable (for_)
+import           Ouroboros.Consensus.Config (maxRollbacks)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Network.Protocol.ChainSync.Codec
+                     (ChainSyncTimeout (..))
 import qualified Test.Consensus.BlockTree as BT
-import           Test.Consensus.PointSchedule
+import           Test.Consensus.BlockTree (allFragments)
+import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
+import           Test.Consensus.PeerSimulator.StateView
+import           Test.Consensus.PeerSimulator.Trace (traceLinesWith, terseFrag)
+import           Test.Consensus.PointSchedule
+import           Test.Ouroboros.Consensus.ChainGenerator.Params (ascVal)
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Tracer (recordingTracerTVar)
-import Test.Consensus.Genesis.Setup.GenChains
 
 -- | Runs the given point schedule and evaluates the given property on the final
 -- state view.
 runTest ::
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m, Testable a) =>
+  SchedulerConfig ->
   GenesisTest ->
   PointSchedule ->
-  (TestFragH -> Property) ->
+  (StateView -> a) ->
   m Property
-runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty = do
-    (tracer, getTrace) <- recordingTracerTVar
-    -- let tracer = debugTracer
+runTest schedulerConfig genesisTest schedule makeProperty = do
+    (recordingTracer, getTrace) <- recordingTracerTVar
+    let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
+    for_ (allFragments gtBlockTree) \ bt -> traceWith tracer (terseFrag bt)
 
-    traceWith tracer $ "Honest active slot coefficient: " ++ show gtHonestAsc
+    traceLinesWith tracer [
+      "SchedulerConfig:",
+      "  ChainSyncTimeouts:",
+      "    canAwait = " ++ show (canAwaitTimeout scChainSyncTimeouts),
+      "    intersect = " ++ show (intersectTimeout scChainSyncTimeouts),
+      "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts),
+      "Security param k = " ++ show (maxRollbacks gtSecurityParam),
+      "Honest active slot coefficient asc = " ++ show (ascVal gtHonestAsc),
+      "Genesis window scg = " ++ show (getGenesisWindow gtGenesisWindow)
+      ]
 
     mapM_ (traceWith tracer) $ BT.prettyPrint gtBlockTree
 
-    result <- runPointSchedule schedulerConfig genesisTest schedule tracer
+    finalStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
+    traceWith tracer (condense finalStateView)
     trace <- unlines <$> getTrace
 
-    let
-      prop = case result of
-        Left exn ->
-          counterexample ("exception: " <> show exn) False
-        Right fragment ->
-          counterexample ("result: " <> condense fragment) (makeProperty fragment)
+    pure $ counterexample trace $ makeProperty finalStateView
+  where
+    SchedulerConfig {scChainSyncTimeouts} = schedulerConfig
+    GenesisTest {gtSecurityParam, gtHonestAsc, gtGenesisWindow, gtBlockTree} = genesisTest
 
-    pure $ counterexample trace prop
-    where
-      schedulerConfig = SchedulerConfig {enableTimeouts = False}
+-- | Print counterexamples if the test result contains exceptions.
+exceptionCounterexample :: Testable a => (StateView -> [PeerId] -> a) -> StateView -> Property
+exceptionCounterexample makeProperty stateView =
+  case svChainSyncExceptions stateView of
+    exns | ([], killed) <- partitionEithers (genesisException <$> exns) ->
+      property $ makeProperty stateView killed
+    exns ->
+      counterexample ("exceptions: " <> show exns) False
+  where
+    genesisException = \case
+      (ChainSyncException peer e) | Just ThreadKilled <- fromException e -> Right peer
+      exc -> Left exc

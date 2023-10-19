@@ -24,7 +24,6 @@ module Test.Consensus.BlockTree (
   , prettyPrint
   ) where
 
-import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
 import           Data.Foldable (asum)
 import           Data.Function ((&))
@@ -32,16 +31,17 @@ import           Data.Functor ((<&>))
 import           Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Vector as Vector
 import           Ouroboros.Consensus.Block.Abstract (blockNo, blockSlot,
-                     unBlockNo)
+                     fromWithOrigin, unBlockNo)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Text.Printf (printf)
 
 -- | Represent a branch of a block tree by a prefix and a suffix. The full
--- fragment (the prefix and suffix catenated) is provided for practicality.
+-- fragment (the prefix and suffix catenated) and the trunk suffix (the rest of
+-- the trunk after the branch forks off) are provided for practicality.
 --
 -- INVARIANT: the head of @btbPrefix@ is the anchor of @btbSuffix@.
 --
--- INVARIANT: @btbFull == fromJust $ AF.join btbPrefix btbSuffix@
+-- INVARIANT: @btbFull == fromJust $ AF.join btbPrefix btbSuffix@.
 data BlockTreeBranch blk = BlockTreeBranch {
     btbPrefix :: AF.AnchoredFragment blk,
     btbSuffix :: AF.AnchoredFragment blk,
@@ -61,6 +61,12 @@ data BlockTreeBranch blk = BlockTreeBranch {
 --
 -- INVARIANT: The branches' suffixes do not contain any block in common with one
 -- another.
+--
+-- INVARIANT: for all @BlockTreeBranch{..}@ in the tree, @btTrunk == fromJust $
+-- AF.join btbPrefix btbTrunkSuffix@.
+--
+-- REVIEW: Find another name so as not to clash with 'BlockTree' from
+-- `unstable-consensus-testlib/Test/Util/TestBlock.hs`.
 data BlockTree blk = BlockTree {
     btTrunk    :: AF.AnchoredFragment blk,
     btBranches :: [BlockTreeBranch blk]
@@ -79,7 +85,7 @@ mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 -- the trunk.
 --
 -- FIXME: we should enforce that the new branch' suffix does not contain any
--- block in common with an existingbranch.
+-- block in common with an existing branch.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
 addBranch branch bt = do
   (_, btbPrefix, _, btbSuffix) <- AF.intersect (btTrunk bt) branch
@@ -156,57 +162,56 @@ findPath source target blockTree = do
 -- Returns a list of strings intended to be catenated with a newline.
 prettyPrint :: AF.HasHeader blk => BlockTree blk -> [String]
 prettyPrint blockTree = do
-  let honestFragment = btTrunk blockTree
-  let advFragment = btbSuffix $ head $ btBranches blockTree
-
-  let (oSlotNo, oBlockNo) = slotAndBlockNoFromAnchor $ AF.anchor honestFragment
-  let (hSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor honestFragment
-
-  let (aoSlotNo, _) = slotAndBlockNoFromAnchor $ AF.anchor advFragment
-  let (ahSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor advFragment
-
-  let firstSlotNo = min oSlotNo aoSlotNo
-  let lastSlotNo = max hSlotNo ahSlotNo
-
-  -- FIXME: only handles two fragments at this point. not very hard to make it
-  -- handle all of them. Some work needed to make it handle all of them _in a
-  -- clean way_.
-
-  [ "Block tree:"
-    ,
-
-    [firstSlotNo .. lastSlotNo]
-      & map (printf "%2d" . unSlotNo)
-      & unwords
-      & ("  slots: " ++)
-    ,
-
-    honestFragment
-      & AF.toOldestFirst
-      & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - 1), Just (unBlockNo (blockNo block))))
-      & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo hSlotNo - unSlotNo oSlotNo)) Nothing Vector.//)
-      & map (maybe "  " (printf "%2d"))
-      & unwords
-      & map (\c -> if c == ' ' then '─' else c)
-      & ("─" ++)
-      & (printf "%2d" (unBlockNo oBlockNo) ++)
-      & ("  trunk: " ++)
-    ,
-
-    advFragment
-      & AF.toOldestFirst
-      & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo aoSlotNo - 1), Just (unBlockNo (blockNo block))))
-      & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo ahSlotNo - unSlotNo aoSlotNo)) Nothing Vector.//)
-      & map (maybe "  " (printf "%2d"))
-      & unwords
-      & map (\c -> if c == ' ' then '─' else c)
-      & (" ╰─" ++)
-      & (replicate (3 * fromIntegral (unSlotNo (aoSlotNo - oSlotNo))) ' ' ++)
-      & ("         " ++)
-    ]
+  ["Block tree:"]
+    ++ ["  slots:   " ++ unwords (map (printf "%2d" . unSlotNo) [veryFirstSlot .. veryLastSlot])]
+    ++ [printTrunk honestFragment]
+    ++ (map printBranch adversarialFragments)
 
   where
-    slotAndBlockNoFromAnchor :: AF.Anchor b -> (SlotNo, BlockNo)
-    slotAndBlockNoFromAnchor = \case
-      AF.AnchorGenesis -> (0, 0)
-      AF.Anchor slotNo _ blockNo' -> (slotNo, blockNo')
+    honestFragment = btTrunk blockTree
+    adversarialFragments = map btbSuffix (btBranches blockTree)
+
+    veryFirstSlot = firstNo $ honestFragment
+
+    veryLastSlot =
+      foldl max 0 $
+        map
+          lastNo
+          (honestFragment : adversarialFragments)
+
+    printTrunk :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
+    printTrunk = printLine (\_ -> "  trunk:  ─")
+
+    printBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
+    printBranch = printLine $ \firstSlot ->
+      "        " ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " ╰─"
+
+    printLine :: AF.HasHeader blk => (SlotNo -> String) -> AF.AnchoredFragment blk -> String
+    printLine printHeader fragment =
+      let firstSlot = firstNo fragment
+          lastSlot = lastNo fragment
+      in printHeader firstSlot ++ printFragment firstSlot lastSlot fragment
+
+    printFragment :: AF.HasHeader blk => SlotNo -> SlotNo -> AF.AnchoredFragment blk -> String
+    printFragment firstSlot lastSlot fragment =
+      fragment
+        & AF.toOldestFirst
+        -- Turn the fragment into a list of (SlotNo, Just BlockNo)
+        & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo firstSlot), Just (unBlockNo (blockNo block))))
+        -- Update only the Vector elements that have blocks in them
+        & Vector.toList . (slotRange Vector.//)
+        & map (maybe "  " (printf "%2d"))
+        & unwords
+        & map (\c -> if c == ' ' then '─' else c)
+      where
+        -- Initialize a Vector with the length of the fragment containing only Nothings
+        slotRange = Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot + 1)) Nothing
+
+    lastNo ::  AF.HasHeader blk => AF.AnchoredFragment blk -> SlotNo
+    lastNo = fromWithOrigin 0 . AF.headSlot
+
+    firstNo :: AF.AnchoredFragment blk -> SlotNo
+    firstNo frag =
+      case AF.anchor frag of
+        AF.AnchorGenesis     -> 0
+        AF.Anchor slotNo _ _ -> slotNo + 1
