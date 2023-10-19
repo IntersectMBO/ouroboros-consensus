@@ -8,10 +8,11 @@
 module Test.Consensus.PeerSimulator.Resources (
     ChainSyncResources (..)
   , PeerResources (..)
+  , PeerSimulatorResources (..)
   , SharedResources (..)
   , makeChainSyncResources
   , makePeerResources
-  , makePeersResources
+  , makePeerSimulatorResources
   ) where
 
 import           Control.Concurrent.Class.MonadSTM.Strict (newEmptyTMVarIO,
@@ -43,22 +44,19 @@ import           Test.Util.TestBlock (TestBlock)
 data SharedResources m =
   SharedResources {
     -- | The name of the peer.
-    srPeerId            :: PeerId,
+    srPeerId       :: PeerId,
 
     -- | The block tree in which the test is taking place. In combination to
     -- 'csssCurrentIntersection' and the current point schedule tick, it allows
     -- to define which blocks to serve to the client.
-    srBlockTree         :: BlockTree TestBlock,
+    srBlockTree    :: BlockTree TestBlock,
 
     -- | The currently active schedule point.
     --
     -- This is 'Maybe' because we cannot wait for the initial state otherwise.
-    srCurrentState      :: StrictTVar m (Maybe AdvertisedPoints),
+    srCurrentState :: StrictTVar m (Maybe AdvertisedPoints),
 
-    -- | The candidate fragment for a peer is shared by ChainSync, BlockFetch and the ChainDB.
-    srCandidateFragment :: StrictTVar m TestFragH,
-
-    srTracer            :: Tracer m String
+    srTracer       :: Tracer m String
   }
 
 -- | The data used by the point scheduler to interact with the mocked protocol handler in
@@ -84,6 +82,16 @@ data PeerResources m =
 
     -- | Resources used by ChainSync only.
     prChainSync :: ChainSyncResources m
+  }
+
+-- | Resources for the peer simulator.
+data PeerSimulatorResources m =
+  PeerSimulatorResources {
+    -- | Resources for individual peers.
+    psrPeers      :: Map PeerId (PeerResources m),
+
+    -- | The shared candidate fragments used by ChainDB, ChainSync and BlockFetch.
+    psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m TestFragH))
   }
 
 -- | Create 'ChainSyncServerHandlers' for our default implementation using 'AdvertisedPoints'.
@@ -148,21 +156,21 @@ makePeerResources ::
   PeerId ->
   m (PeerResources m)
 makePeerResources srTracer srBlockTree srPeerId = do
-  srCandidateFragment <- uncheckedNewTVarM $ AF.Empty AF.AnchorGenesis
   srCurrentState <- uncheckedNewTVarM Nothing
-  let prShared = SharedResources {srTracer, srBlockTree, srPeerId, srCandidateFragment, srCurrentState}
+  let prShared = SharedResources {srTracer, srBlockTree, srPeerId, srCurrentState}
   prChainSync <- makeChainSyncResources prShared
   pure PeerResources {prChainSync, prShared}
 
 -- | Create resources for all given peers operating on the given block tree.
-makePeersResources ::
+makePeerSimulatorResources ::
   IOLike m =>
   Tracer m String ->
   BlockTree TestBlock ->
   NonEmpty PeerId ->
-  m (Map PeerId (PeerResources m))
-makePeersResources tracer blockTree peers = do
+  m (PeerSimulatorResources m)
+makePeerSimulatorResources tracer blockTree peers = do
   resources <- for peers $ \ peerId -> do
     peerResources <- makePeerResources tracer blockTree peerId
     pure (peerId, peerResources)
-  pure (Map.fromList $ toList resources)
+  psrCandidates <- uncheckedNewTVarM mempty
+  pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources}

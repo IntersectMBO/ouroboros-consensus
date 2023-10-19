@@ -20,8 +20,10 @@ import           Test.Util.Orphans.IOLike ()
 -- | Interesting categories to classify test inputs
 data Classifiers =
   Classifiers {
-    -- | There are more than k blocks in the alternative chain after the intersection
+    -- | There are more than k blocks in at least one alternative chain after the intersection
     existsSelectableAdversary      :: Bool,
+    -- | There are more than k blocks in all alternative chains after the intersection
+    allAdversariesSelectable       :: Bool,
     -- | There are at least scg slots after the intesection on both the honest
     -- and the alternative chain
     --
@@ -34,7 +36,7 @@ data Classifiers =
 
 classifiers :: GenesisTest -> Classifiers
 classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenesisWindow = GenesisWindow scg} =
-  Classifiers {existsSelectableAdversary, genesisWindowAfterIntersection}
+  Classifiers {existsSelectableAdversary, allAdversariesSelectable, genesisWindowAfterIntersection}
   where
     genesisWindowAfterIntersection =
       any fragmentHasGenesis branches
@@ -47,6 +49,9 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
 
     existsSelectableAdversary =
       any isSelectable branches
+
+    allAdversariesSelectable =
+      all isSelectable branches
 
     isSelectable bt = AF.length (btbSuffix bt) > fromIntegral k
 
