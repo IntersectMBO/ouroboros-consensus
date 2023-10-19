@@ -105,7 +105,7 @@ genChains numForks = do
   let ChainSchema _ vH = honestChainSchema
       goodChain = mkTestFragment goodBlocks
       -- blocks for the good chain in reversed order
-      goodBlocks = mkTestBlocks True [] slotsH
+      goodBlocks = mkTestBlocks [] slotsH 0
       slotsH = Vector.toList (getVector vH)
       HonestRecipe (Kcp kcp) (Scg scg) _delta _len = honestRecipe
 
@@ -114,14 +114,13 @@ genChains numForks = do
     gtHonestAsc = asc,
     gtSecurityParam = SecurityParam (fromIntegral kcp),
     gtGenesisWindow = GenesisWindow (fromIntegral scg),
-    gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ map (genAdversarialFragment goodBlocks) alternativeChainSchemas
+    gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas
     }
 
   where
-    genAdversarialFragment :: [TestBlock] -> (Int, [S]) -> TestFrag
-    genAdversarialFragment goodBlocks (prefixCount, slotsA)
-      =
-      mkTestFragment (mkTestBlocks False prefix slotsA)
+    genAdversarialFragment :: [TestBlock] -> Int -> (Int, [S]) -> TestFrag
+    genAdversarialFragment goodBlocks forkNo (prefixCount, slotsA)
+      = mkTestFragment (mkTestBlocks prefix slotsA forkNo)
       where
         -- blocks in the common prefix in reversed order
         prefix = drop (length goodBlocks - prefixCount) goodBlocks
@@ -130,15 +129,15 @@ genChains numForks = do
     mkTestFragment =
       AF.fromNewestFirst AF.AnchorGenesis
 
-    mkTestBlocks :: Bool -> [TestBlock] -> [S] -> [TestBlock]
-    mkTestBlocks honest pre active =
+    mkTestBlocks :: [TestBlock] -> [S] -> Int -> [TestBlock]
+    mkTestBlocks pre active forkNo =
       fst (foldl' folder ([], 0) active)
       where
         folder (chain, inc) s | S.test S.notInverted s = (issue inc chain, 0)
                               | otherwise = (chain, inc + 1)
         issue inc (h : t) = incSlot inc (successorBlock h) : h : t
-        issue inc [] | [] <- pre = [ incSlot inc (firstBlock (if honest then 0 else 1)) ]
-                     | h : t <- pre = incSlot inc (forkBlock (successorBlock h)) : h : t
+        issue inc [] | [] <- pre = [incSlot inc ((firstBlock (fromIntegral forkNo)) {tbSlot = 0})]
+                     | h : t <- pre = incSlot inc (modifyFork (const (fromIntegral forkNo)) (successorBlock h)) : h : t
 
     incSlot :: SlotNo -> TestBlock -> TestBlock
     incSlot n b = b { tbSlot = tbSlot b + n }
