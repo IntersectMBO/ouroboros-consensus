@@ -8,12 +8,173 @@
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE UndecidableInstances     #-}
 
--- | See @'LedgerTables'@
+-- | This module defines the 'LedgerTables', a portion of the Ledger notion of a
+-- /ledger state/ (not to confuse with our
+-- 'Ouroboros.Consensus.Ledger.Basics.LedgerState') that together with it,
+-- conforms a complete Ledger /ledger state/.
+--
+-- 'LedgerTables' are parametrized by two types: keys and values. For now, their
+-- only current instantiation is to hold the UTxO set, but future features will
+-- extend this to hold other parts of the ledger state that now live in memory.
+-- However, 'LedgerTables' don't necessarily have to contain maps from keys to
+-- values, and the particular instantiation might choose to ignore some of those
+-- types (as phantom types). See 'KeysMK' for an example.
+--
+-- This type is used for two main purposes. Firstly, we use ledger tables to
+-- /extract/ data from the /ledger state/ and store it on secondary storage (eg
+-- a solid-state hard-drive). Secondly, when we load data from disk onto memory,
+-- we use ledger tables to /inject/ data into the /ledger state/. This mechanism
+-- allows us to keep most of the data on disk, which is rarely used, reducing
+-- the memory usage of the Consensus layer. Ledger tables are used in the
+-- 'Ouroboros.Consensus.Storage.LedgerDB.BackingStore' and
+-- 'Ouroboros.Consensus.Storage.LedgerDB.DbChangelog' modules.
+--
+-- = __Example__
+--
+-- As an example, consider a LedgerState that contains a Ledger /ledger state/
+-- (such as the @NewEpochState@) and a UTxO set:
+--
+-- @
+-- data instance t'Ouroboros.Consensus.Ledger.Basics.LedgerState' (Block era) mk = LedgerState {
+--     theLedgerLedgerState :: NewEpochState era
+--   , theTables            :: 'LedgerTables' (Block era) mk
+-- }
+-- @
+--
+-- The Ledger /ledger state/ contains a UTxO set as well, and with
+-- @stowLedgerTables@ and @unstowLedgerTables@ we move those between the Ledger
+-- /ledger state/ and the 'LedgerTables', for example:
+--
+-- @
+-- 'unstowLedgerTables' (LedgerState {
+--                         theLedgerLedgerState = NewEpochState {
+--                             ...
+--                           , utxoSet = Map.fromList [(\'a\', 100), (\'b\', 100), ...]
+--                         }
+--                       , theTables = 'EmptyMK'
+--                     })
+--  ==
+--  LedgerState {
+--      theLedgerLedgerState = NewEpochState {
+--          ...
+--        , utxoSet = Map.empty
+--        }
+--    , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100), ...])
+--    })
+-- @
+--
+-- @
+-- 'stowLedgerTables' (LedgerState {
+--                       theLedgerLedgerState = NewEpochState {
+--                           ...
+--                         , utxoSet = Map.empty
+--                       }
+--                     , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100), ...])
+--                   })
+--  ==
+--  LedgerState {
+--      theLedgerLedgerState = NewEpochState {
+--          ...
+--        , utxoSet = Map.fromList [(\'a\', 100), (\'b\', 100), ...]
+--        }
+--    , theTables = 'EmptyMK'
+--    })
+-- @
+--
+-- Using these functions we can extract the data from the Ledger /ledger state/
+-- for us Consensus to manipulate, and we can then inject it back so that we
+-- provide the expected data to the ledger. Note that the Ledger rules for
+-- applying a block are defined in a way that it only needs the subset of the
+-- UTxO set that the block being applied will consume. See [the @DbChangelog@
+-- documentation for block
+-- application](Ouroboros-Consensus-Storage-LedgerDB-DbChangelog.html#g:applying).
+--
+-- Now using 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference', we
+-- can compare two (successive) t'Ouroboros.Consensus.Ledger.Basics.LedgerState's
+-- to produce differences:
+--
+-- @
+-- 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference'
+--   (LedgerState {
+--       ...
+--     , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100)])
+--     })
+--   (LedgerState {
+--       ...
+--     , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'c\', 200)])
+--     })
+-- ==
+--  'TrackingMK'
+--    (Map.fromList [(\'a\', 100),      (\'c\', 200)])
+--    (Map.fromList [(\'b\', [Delete]), (\'c\', [Insert 200])])
+-- @
+--
+-- This operation provided a 'TrackingMK' which is in fact just a 'ValuesMK' and
+-- 'DiffMK' put together.
+--
+-- We can then use those differences to /forward/ a set of values, so for
+-- example (taking the example above):
+--
+-- @
+-- let state1 = LedgerState {
+--                 ...
+--               , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'b\', 100)])
+--              }
+--     state2 = LedgerState {
+--                ...
+--              , theTables = 'ValuesMK' (Map.fromList [(\'a\', 100), (\'c\', 200)])
+--              }
+--     state3 = LedgerState {
+--                ...
+--              , theTables = 'ValuesMK' (Map.fromList [])
+--              }
+-- in
+--   'Ouroboros.Consensus.Ledger.Tables.Utils.applyDiffs' state3 ('Ouroboros.Consensus.Ledger.Tables.Utils.forgetTrackingValues' $ 'Ouroboros.Consensus.Ledger.Tables.Utils.calculateDifference' state1 state2)
+-- ==
+--  LedgerState {
+--      ...
+--    , theTables = 'ValuesMK' (Map.fromList [(\'c\', 200)])
+--    }
+-- @
+--
+-- Notice that we produced differences for @\'b\'@ and @\'c\'@, but as the input
+-- state (@state3@) didn't contain @\'b\'@ the only difference that was applied
+-- was the one of @\'c\'@.
+--
+-- Also when applying a block that contains some transactions, we can produce
+-- 'LedgerTable's of @KeysMK@, by gathering the txins required by the
+-- transactions:
+--
+-- @
+-- 'Ouroboros.Consensus.Ledger.Abstract.getBlockKeySets' (Block {..., txs = [Tx { input = [\'a\', \'b\'], outputs = [\'c\', \'d\'] }]})
+--  == 'KeysMK' (Set.fromList [\'a\', \'b\'])
+-- @
+--
+-- We shall use those later on to read the txouts from some storage (which will
+-- be the 'Ouroboros.Consensus.Storage.LedgerDB.BackingStore.BackingStore') and
+-- forward the resulting txouts through a sequence of differences (which will be
+-- 'Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.adcDiffs').
+--
+-- This example already covered most of the standard mapkinds, in particular:
+--
+--   ['EmptyMK']: A nullary data constructor, an empty table.
+--
+--   ['ValuesMK']: Contains a @Data.Map@ from txin to txouts.
+--
+--   ['DiffMK']: Contains a @Data.Map@ from txin to history of changes (see
+--     "Data.Map.Diff.Strict").
+--
+--   ['TrackingMK']: Contains both a 'ValuesMK' and 'DiffMK'.
+--
+--   ['KeysMK']: Contains a @Data.Set@ of txins.
+--
+--   ['SeqDiffMK']: A fingertree of 'DiffMK's.
 module Ouroboros.Consensus.Ledger.Tables (
-    -- * Re-exports
-    module Ouroboros.Consensus.Ledger.Tables.Combinators
-  , module Ouroboros.Consensus.Ledger.Tables.Common
+    -- * Core
+    module Ouroboros.Consensus.Ledger.Tables.Basics
   , module Ouroboros.Consensus.Ledger.Tables.MapKind
+    -- * Utilities
+  , module Ouroboros.Consensus.Ledger.Tables.Combinators
     -- * Basic LedgerState classes
   , CanStowLedgerTables (..)
   , HasLedgerTables (..)
@@ -38,8 +199,8 @@ import           Data.Kind (Constraint)
 import qualified Data.Map.Strict as Map
 import           Data.Void (Void)
 import           NoThunks.Class (NoThunks (..))
+import           Ouroboros.Consensus.Ledger.Tables.Basics
 import           Ouroboros.Consensus.Ledger.Tables.Combinators
-import           Ouroboros.Consensus.Ledger.Tables.Common
 import           Ouroboros.Consensus.Ledger.Tables.MapKind
 import           Ouroboros.Consensus.Ticked
 
@@ -47,9 +208,8 @@ import           Ouroboros.Consensus.Ticked
   Basic LedgerState classes
 -------------------------------------------------------------------------------}
 
--- | Manipulating the @mk@ on the @'LedgerTables'@, extracting @'LedgerTables'@
--- from a @'LedgerState'@ (which will share the same @mk@), or replacing the
--- @'LedgerTables'@ associated to a particular in-memory @'LedgerState'@.
+-- | Extracting @'LedgerTables'@ from @l mk@ (which will share the same @mk@),
+-- or replacing the @'LedgerTables'@ associated to a particular @l@.
 type HasLedgerTables :: LedgerStateKind -> Constraint
 class ( Ord (Key l)
       , Eq (Value l)
@@ -201,12 +361,12 @@ valuesMKDecoder = do
   Special classes of ledger states
 -------------------------------------------------------------------------------}
 
-type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
 -- | For some ledger states we won't be defining 'LedgerTables' and instead the
 -- ledger state will be fully stored in memory, as before UTxO-HD. The ledger
 -- states that are defined this way can be made instances of this class which
 -- allows for easy manipulation of the types of @mk@ required at any step of the
 -- program.
+type LedgerTablesAreTrivial :: LedgerStateKind -> Constraint
 class (Key l ~ Void, Value l ~ Void) => LedgerTablesAreTrivial l where
   -- | If the ledger state is always in memory, then @l mk@ will be isomorphic
   -- to @l mk'@ for all @mk@, @mk'@. As a result, we can convert between ledgers

@@ -33,9 +33,10 @@ import           Control.Monad.State.Strict (MonadState, State, StateT (StateT),
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables (ValuesMK)
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
                      (BackingStoreSelector (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Config (LedgerDbCfg (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+                     (DbChangelogCfg (..))
 
 {-------------------------------------------------------------------------------
   Scenario
@@ -61,7 +62,7 @@ data Scenario = Scenario {
 -- | Convert a 'Scenario' into mempool parameters and a benchmark workload
 -- (commands).
 fromScenario ::
-     LedgerDbCfg (LedgerState TestBlock)
+     DbChangelogCfg (LedgerState TestBlock)
   -> BackingStoreSelector m
   -> Scenario
   -> (InitialMempoolAndModelParams m TestBlock, [MempoolCmd TestBlock])

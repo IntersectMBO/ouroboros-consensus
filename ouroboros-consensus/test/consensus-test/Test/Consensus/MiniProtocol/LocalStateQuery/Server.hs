@@ -28,28 +28,17 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
-import           Ouroboros.Consensus.Ledger.Basics (getTip)
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Query (DiskLedgerView (..),
-                     Query (..))
+import           Ouroboros.Consensus.Ledger.Query (Query (..))
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.LedgerDB.API (LedgerDB (..),
-                     LedgerDBView (viewHandle))
-import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Args as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Config as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Lock as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Update as LedgerDB
-                     (ValidateResult (..))
 import           Ouroboros.Consensus.Util (StaticEither (..), fromStaticLeft)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Mock.Chain (Chain (..))
@@ -186,24 +175,18 @@ mkServer k chain = do
     return $
       localStateQueryServer
         cfg
-        (\mpt -> do
-           ldb0 <- LedgerDB.anchorlessChangelog <$> atomically (LedgerDB.getCurrent lgrDB)
-           pure $ case mpt of
-             Nothing -> Right $ mkDLV ldb0
-             Just pt -> case LedgerDB.rollback pt ldb0 of
-               Nothing  -> Left  $ castPoint $ getTip $ LedgerDB.anchor ldb0
-               Just ldb -> Right $ mkDLV ldb
+        (\case
+            Nothing -> do
+              eview <- LedgerDB.acquireLDBReadView lgrDB (StaticLeft ()) (pure ())
+              case eview of
+                (_, StaticLeft x) -> pure $ Right x
+            Just pt -> do
+              eview <- LedgerDB.acquireLDBReadView lgrDB (StaticRight pt) (pure ())
+              case eview of
+                (_, StaticRight x) -> pure x
         )
   where
     cfg = ExtLedgerCfg $ testCfg k
-
-    mkDLV ldb =
-      DiskLedgerView
-        (LedgerDB.current ldb)
-        (\_ -> pure trivialLedgerTables)
-        (\_rq -> pure trivialLedgerTables)
-        (pure ())
-        1
 
 -- | Initialise a 'LedgerDB' with the given chain.
 initLedgerDB
@@ -214,16 +197,12 @@ initLedgerDB
 initLedgerDB k chain = do
     varDB          <- newTVarIO genesisLedgerDB
     varPrevApplied <- newTVarIO mempty
-    let
-      backingStoreInitialiser =
-        LedgerDB.newBackingStoreInitialiser
-        mempty
-        LedgerDB.InMemoryBackingStore
-    rawLock <- LedgerDB.mkLedgerDBLock
+    rawLock        <- LedgerDB.mkLedgerDBLock
     ledgerDB <- do
       v <- uncheckedNewTVarM Mock.empty
       bstore <- LedgerDB.newBackingStore
-        backingStoreInitialiser
+        mempty
+        LedgerDB.InMemoryBackingStore
         (SomeHasFS (simHasFS v))
         trivialLedgerTables
       let st = LedgerDB.LedgerDBState varDB bstore rawLock varPrevApplied
@@ -231,7 +210,7 @@ initLedgerDB k chain = do
 
     ((), seP) <- LedgerDB.acquireLDBReadView ledgerDB (StaticLeft ()) (pure ())
     let vh = fromStaticLeft seP
-    LedgerDB.validate ledgerDB (viewHandle vh) (LedgerDB.anchorlessChangelog $ genesisLedgerDB) BlockCache.empty 0 (traceWith nullTracer)
+    LedgerDB.validate ledgerDB (LedgerDB.viewHandle vh) (LedgerDB.anchorlessChangelog $ genesisLedgerDB) BlockCache.empty 0 (traceWith nullTracer)
       (map getHeader (Chain.toOldestFirst chain)) >>= \case
         LedgerDB.ValidateExceededRollBack _ ->
           error "impossible: rollback was 0"
@@ -239,7 +218,7 @@ initLedgerDB k chain = do
           error "impossible: there were no invalid blocks"
         LedgerDB.ValidateSuccessful ledgerDB' -> do
           atomically $ LedgerDB.setCurrent ledgerDB ledgerDB'
-          tryFlush ledgerDB
+          LedgerDB.tryFlush ledgerDB
           return ledgerDB
   where
     resolve :: RealPoint TestBlock -> m TestBlock

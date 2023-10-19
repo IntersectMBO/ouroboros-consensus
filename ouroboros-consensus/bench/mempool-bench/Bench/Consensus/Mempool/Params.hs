@@ -1,8 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TupleSections    #-}
 
-{- HLINT ignore "Use camelCase" -}
-
 -- | Functions related to initial parameters for the mempool. See
 -- 'InitialMempoolAndModelParams'.
 module Bench.Consensus.Mempool.Params (
@@ -32,11 +30,12 @@ import           Ouroboros.Consensus.Config.SecurityParam
                      (SecurityParam (SecurityParam))
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, ValuesMK (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
                      (BackingStoreSelector (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.LMDB
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB
                      (LMDBLimits (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.Config (LedgerDbCfg (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+                     (DbChangelogCfg (..))
 import qualified Test.Util.TestBlock as TestBlock
 import           Test.Util.TestBlock (LedgerState (..))
 
@@ -88,14 +87,14 @@ data InitialMempoolAndModelParams m blk = MempoolAndModelParams {
       immpBackingState         :: !(LedgerState blk ValuesMK)
       -- | Blocks that will be used to populate a changelog.
     , immpChangelogBlocks      :: ![blk]
-    , immpLedgerConfig         :: !(LedgerDbCfg (LedgerState blk))
+    , immpLedgerConfig         :: !(DbChangelogCfg (LedgerState blk))
     , immpBackingStoreSelector :: !(BackingStoreSelector m)
     }
 
 mkParams ::
      LedgerState blk ValuesMK
   -> [blk]
-  -> LedgerDbCfg (LedgerState blk)
+  -> DbChangelogCfg (LedgerState blk)
   -> BackingStoreSelector m
   -> InitialMempoolAndModelParams m blk
 mkParams = MempoolAndModelParams
@@ -104,7 +103,7 @@ mkParams = MempoolAndModelParams
   Defaults
 -------------------------------------------------------------------------------}
 
-defaultLedgerDbCfg :: LedgerDbCfg (LedgerState TestBlock)
+defaultLedgerDbCfg ::DbChangelogCfg (LedgerState TestBlock)
 defaultLedgerDbCfg = sampleLedgerDbCfg (SecurityParam 10)
 
 defaultInMemoryBSS :: BackingStoreSelector m
@@ -134,10 +133,10 @@ sampleLedgerConfig :: SecurityParam -> LedgerConfig TestBlock
 sampleLedgerConfig secparam =
   HardFork.defaultEraParams secparam (Time.slotLengthFromSec 2)
 
-sampleLedgerDbCfg :: SecurityParam -> LedgerDbCfg (LedgerState TestBlock)
-sampleLedgerDbCfg secparam = LedgerDbCfg {
-    ledgerDbCfgSecParam = secparam
-  , ledgerDbCfg        = sampleLedgerConfig secparam
+sampleLedgerDbCfg :: SecurityParam -> DbChangelogCfg (LedgerState TestBlock)
+sampleLedgerDbCfg secparam = DbChangelogCfg {
+    dbChangelogCfgSecParam = secparam
+  , dbChangelogCfg         = sampleLedgerConfig secparam
   }
 
 {-------------------------------------------------------------------------------

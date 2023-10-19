@@ -1,0 +1,4 @@
+This file is a bogus file just to make 'cabal' happy as this directory is
+included as 'extra-doc-files' and cabal will fail if this is empty. However,
+this directory shall be populated by images used all over the
+ouroboros-consensus documentation.

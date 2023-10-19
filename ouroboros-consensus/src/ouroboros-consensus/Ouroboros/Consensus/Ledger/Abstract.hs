@@ -3,13 +3,15 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE StandaloneDeriving    #-}
-{-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
 
 -- | Interface to the ledger layer
+--
+-- This module defines how to apply blocks to a ledger state, and re-exports
+-- (from "Ouroboros.Consensus.Ledger.Basics") how to tick ledger states. These
+-- are the two main operations we can do with a 'LedgerState'.
 module Ouroboros.Consensus.Ledger.Abstract (
     -- * Type-level validation marker
     Validated
@@ -82,7 +84,7 @@ class ( IsLedger l
 
   -- | Apply a block to the ledger state.
   --
-  -- This is passed the ledger state ticked with the slot of the given block, so
+  -- This is passed the ledger state ticked to the slot of the given block, so
   -- 'applyChainTickLedgerResult' has already been called.
   applyBlockLedgerResult ::
        HasCallStack
@@ -183,7 +185,7 @@ tickThenReapply = lrResult ..: tickThenReapplyLedgerResult
 foldLedger ::
      ApplyBlock l blk
   => LedgerCfg l -> [blk] -> l ValuesMK -> Except (LedgerErr l) (l ValuesMK)
-foldLedger cfg = repeatedlyM (\blk state -> fmap (applyDiffs state) $ tickThenApply cfg blk state)
+foldLedger cfg = repeatedlyM (\blk state -> applyDiffs state <$> tickThenApply cfg blk state)
 
 refoldLedger ::
      ApplyBlock l blk

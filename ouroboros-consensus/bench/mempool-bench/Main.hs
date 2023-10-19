@@ -22,7 +22,7 @@ import           Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
                      (BackingStoreSelector (..))
 import           System.Exit (die, exitFailure)
 import           Test.Tasty (withResource)

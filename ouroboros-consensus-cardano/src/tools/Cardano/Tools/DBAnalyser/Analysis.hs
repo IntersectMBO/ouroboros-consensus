@@ -55,16 +55,10 @@ import           Ouroboros.Consensus.Storage.Common (BlockComponent (..),
                      StreamFrom (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Query as DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
-import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
-import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import           Ouroboros.Consensus.Storage.LedgerDB.Update
 import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes,
                      encodeDisk)
 import           Ouroboros.Consensus.Ticked
@@ -139,7 +133,7 @@ data AnalysisEnv m blk = AnalysisEnv {
     , ledgerDbFS :: SomeHasFS IO
     , limit      :: Limit
     , tracer     :: Tracer m (TraceEvent blk)
-    , bstore     :: LedgerBackingStore' m blk
+    , bstore     :: BackingStore' m blk
     }
 
 data TraceEvent blk =
@@ -348,7 +342,7 @@ storeLedgerStateAt ::
      )
   => SlotNo -> Analysis blk
 storeLedgerStateAt slotNo aenv = do
-    void $ processAllUntil db registry GetBlock initLedger limit (LedgerDB.empty initLedger) process
+    void $ processAllUntil db registry GetBlock initLedger limit (DbChangelog.empty initLedger) process
     pure Nothing
   where
     AnalysisEnv { db
@@ -363,7 +357,7 @@ storeLedgerStateAt slotNo aenv = do
 
     process :: DbChangelog' blk -> blk -> IO (NextStep, DbChangelog' blk)
     process ldb blk = do
-      ldb' <- onChangelogM (DbChangelog.applyThenPush (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
+      ldb' <- onChangelogM (DbChangelog.applyThenPush (configDbChangelog cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
       ldb'' <-
         if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
         then do
@@ -445,8 +439,8 @@ checkNoThunksEvery
       let newLedger     = either (error . show) lrResult $ runExcept $ appliedResult
           bn            = blockNo blk
       when (unBlockNo bn `mod` nBlocks == 0 ) $ IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
-      let intermediateLedgerDB = onChangelog (DbChangelog.prune (ledgerDbCfgSecParam $ configLedgerDb cfg)
-                               . DbChangelog.extend newLedger) oldLedgerDB
+      let intermediateLedgerDB = onChangelog (DbChangelog.prune (dbChangelogCfgSecParam $ configDbChangelog cfg)
+                               . DbChangelog.extend (ValidLedgerState newLedger)) oldLedgerDB
       if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog intermediateLedgerDB
       then do
         let (toFlush, toKeep) = DbChangelog.splitForFlushing intermediateLedgerDB
@@ -483,7 +477,7 @@ traceLedgerProcessing
       -> blk
       -> IO (DbChangelog' blk)
     process oldLedger blk = do
-      ldb' <- onChangelogM (DbChangelog.applyThenPush (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) oldLedger
+      ldb' <- onChangelogM (DbChangelog.applyThenPush (configDbChangelog cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) oldLedger
       let traces        =
             HasAnalysis.emitTraces $
               HasAnalysis.WithLedgerState blk (ledgerState (DbChangelog.current $ anchorlessChangelog oldLedger)) (ledgerState (DbChangelog.current $ anchorlessChangelog ldb'))
@@ -570,8 +564,8 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, p
 
         -- this is an inline of DbChangelog.Update.pushLedgerState
         let st   = ExtLedgerState (prependDiffs tkLdgrSt ldgrSt') hdrSt'
-            ldb' = onChangelog (DbChangelog.prune (ledgerDbCfgSecParam $ configLedgerDb cfg)
-                 . DbChangelog.extend st) ldb
+            ldb' = onChangelog (DbChangelog.prune (dbChangelogCfgSecParam $ configDbChangelog cfg)
+                 . DbChangelog.extend (ValidLedgerState st)) ldb
 
         (ldb'', tFlush) <-
           if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
@@ -802,7 +796,7 @@ reproMempoolForge numBlks env = do
           -- since it currently matches the call in the forging thread, which is
           -- the primary intention of this Analysis. Maybe GHC's CSE is already
           -- doing this sharing optimization?
-          ldb' <- onChangelogM (DbChangelog.applyThenPush (configLedgerDb cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
+          ldb' <- onChangelogM (DbChangelog.applyThenPush (configDbChangelog cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
           ldb'' <-
             if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
             then do

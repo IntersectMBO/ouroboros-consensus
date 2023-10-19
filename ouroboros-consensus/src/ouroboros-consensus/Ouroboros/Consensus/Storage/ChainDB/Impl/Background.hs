@@ -61,8 +61,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
                      (addBlockSync)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.Condense
@@ -205,25 +204,26 @@ copyToImmutableDB CDB{..} = withCopyLock $ do
 -------------------------------------------------------------------------------}
 
 -- | Copy blocks from the VolatileDB to ImmutableDB and take snapshots of the
--- LgrDB
+-- LedgerDB
 --
 -- We watch the chain for changes. Whenever the chain is longer than @k@, then
 -- the headers older than @k@ are copied from the VolatileDB to the ImmutableDB
 -- (using 'copyToImmutableDB'). Once that is complete,
 --
--- * We periodically take a snapshot of the LgrDB (depending on its config).
+-- * We periodically take a snapshot of the LedgerDB (depending on its config).
 --   When enough blocks (depending on its config) have been replayed during
---   startup, a snapshot of the replayed LgrDB will be written to disk at the
---   start of this function.
---   NOTE: After this initial snapshot we do not take a snapshot of the LgrDB
---   until the chain has changed again, irrespective of the LgrDB policy.
+--   startup, a snapshot of the replayed LedgerDB will be written to disk at the
+--   start of this function. NOTE: After this initial snapshot we do not take a
+--   snapshot of the LedgerDB until the chain has changed again, irrespective of
+--   the LedgerDB policy.
+--
 -- * Schedule GC of the VolatileDB ('scheduleGC') for the 'SlotNo' of the most
 --   recent block that was copied.
 --
--- It is important that we only take LgrDB snapshots when are are /sure/ they
--- have been copied to the ImmutableDB, since the LgrDB assumes that all
+-- It is important that we only take LedgerDB snapshots when are are /sure/ they
+-- have been copied to the ImmutableDB, since the LedgerDB assumes that all
 -- snapshots correspond to immutable blocks. (Of course, data corruption can
--- occur and we can handle it by reverting to an older LgrDB snapshot, but we
+-- occur and we can handle it by reverting to an older LedgerDB snapshot, but we
 -- should need this only in exceptional circumstances.)
 --
 -- We do not store any state of the VolatileDB GC. If the node shuts down before
@@ -245,9 +245,9 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed = do
   where
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 
-    loop :: SnapCounters -> m Void
+    loop :: LedgerDB.SnapCounters -> m Void
     loop counters = do
-      let SnapCounters {
+      let LedgerDB.SnapCounters {
               prevSnapshotTime
             , ntBlocksSinceLastSnap
             } = counters

@@ -57,7 +57,7 @@ import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool
 import           Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Mock.Ledger hiding (TxId)
-import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
                      (PointNotFound (..))
 import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM)
 import           Ouroboros.Consensus.Util.Condense (condense)

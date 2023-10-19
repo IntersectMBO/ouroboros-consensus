@@ -34,8 +34,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (defaultArgs,
                      getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (cdbTracer,
                      withDB)
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Init
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import           Ouroboros.Consensus.Storage.LedgerDB hiding (initialize)
 import           Ouroboros.Consensus.Util.IOLike (atomically)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block

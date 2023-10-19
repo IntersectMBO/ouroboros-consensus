@@ -92,6 +92,13 @@ import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Condense
 
+-- $setup
+-- >>> import Image.LaTeX.Render
+-- >>> import Control.Monad
+-- >>> import System.Directory
+-- >>>
+-- >>> createDirectoryIfMissing True "docs/haddocks/"
+
 {-------------------------------------------------------------------------------
   Errors
 -------------------------------------------------------------------------------}
@@ -821,6 +828,80 @@ injectLedgerEvent index =
 -- | Defaults to a 'CannonicalTxIn' type, but this will probably change in the
 -- future to @NS 'WrapTxIn' xs@. See 'HasCanonicalTxIn'.
 type instance Key   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
+
+-- | This choice for 'Value' imposes some complications on the code.
+--
+-- We deliberately chose not to have all values in the tables be
+-- @'Cardano.Ledger.Core.TxOut' era@ because this would require us to traverse
+-- and translate the whole UTxO set on era boundaries. To avoid this, we are
+-- holding a @'NS' 'WrapTxOut' xs@ instead.
+--
+-- Whenever we are carrying a @'LedgerState' ('HardForkBlock' xs) mk@ (or
+-- 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState'), the implied tables are
+-- the ones inside the particular ledger state in the 'Telescope' of the
+-- 'HardForkState'.
+--
+-- <<docs/haddocks/hard-fork-tables-per-block.svg>>
+--
+-- However, when we are carrying @'LedgerTables' ('HardForkBlock' xs) mk@ we are
+-- instead carrying these tables, where the 'Value' is an 'NS'. This means that
+-- whenever we are extracting these tables, we are effectively duplicating the
+-- UTxO set ('Data.Map.Map') inside, to create an identical one where every
+-- element has been translated to the most recent era and unwrapped from the
+-- 'NS'.
+--
+-- <<docs/haddocks/hard-fork-tables.svg>>
+--
+-- To prevent memory explosion, try to only perform one of this transformations,
+-- for example:
+--
+-- * when applying blocks, inject the tables for the transactions only once, and
+--     extract them only once.
+--
+-- * when performing queries on the tables (that use
+--     'Ouroboros.Consensus.Ledger.Query.QFTraverseTables'), operate with the
+--     tables at the hard fork level until the very end, when you have to
+--     promote them to some specific era.
+--
+-- = __(image code)__
+--
+-- >>> :{
+-- >>> either (error . show) pure =<<
+-- >>>  renderToFile "docs/haddocks/hard-fork-tables.svg" defaultEnv (tikz ["positioning", "arrows"]) "\\node at (4.5,4.8) {\\small{LedgerTables (LedgerState (HardForkBlock xs))}};\
+-- >>> \ \\draw (0,0) rectangle (9,5);\
+-- >>> \ \\node (rect) at (1.5,4) [draw,minimum width=1cm,minimum height=0.5cm] {TxIn};\
+-- >>> \ \\node (oneOf) at (3.5,4) [draw=none] {NS};\
+-- >>> \ \\draw (rect) -> (oneOf);\
+-- >>> \ \\node (sh) at (6.5,4) [draw,minimum width=1cm,minimum height=0.5cm] {BlockATxOut};\
+-- >>> \ \\node (al) at (6.5,3) [draw,minimum width=1cm,minimum height=0.5cm] {BlockBTxOut};\
+-- >>> \ \\node (my) at (6.5,2) [draw=none,minimum width=1cm,minimum height=0.5cm] {...};\
+-- >>> \ \\node (ba) at (6.5,1) [draw,minimum width=1cm,minimum height=0.5cm] {BlockNTxOut};\
+-- >>> \ \\draw (oneOf) -> (sh);\
+-- >>> \ \\draw (oneOf) -> (al);\
+-- >>> \ \\draw (oneOf) -> (ba);\
+-- >>> \ \\draw (3,0.5) rectangle (8,4.5);"
+-- >>> :}
+--
+-- >>> :{
+-- >>> either (error . show) pure =<<
+-- >>>  renderToFile "docs/haddocks/hard-fork-tables-per-block.svg" defaultEnv (tikz ["positioning", "arrows"]) "\\node at (5,4.8) {\\small{LedgerState (HardForkBlock xs)}};\
+-- >>> \ \\draw (0,0) rectangle (10,5);\
+-- >>> \ \\node (oneOf2) at (2,4) [draw=none] {HardForkState};\
+-- >>> \ \\node (bb) at (5,4) [draw,minimum width=1cm,minimum height=0.5cm] {BlockAState};\
+-- >>> \ \\node (bt) at (8,4) [draw,minimum width=1cm,minimum height=0.5cm] {BlockATables};\
+-- >>> \ \\node (sb) at (5,3) [draw,minimum width=1cm,minimum height=0.5cm] {BlockBState};\
+-- >>> \ \\node (st) at (8,3) [draw,minimum width=1cm,minimum height=0.5cm] {BlockBTables};\
+-- >>> \ \\node (db) at (5,2) [draw=none,minimum width=1cm,minimum height=0.5cm] {...};\
+-- >>> \ \\node (dt) at (8,2) [draw=none,minimum width=1cm,minimum height=0.5cm] {...};\
+-- >>> \ \\node (bab) at (5,1) [draw,minimum width=1cm,minimum height=0.5cm] {BlockNState};\
+-- >>> \ \\node (bat) at (8,1) [draw,minimum width=1cm,minimum height=0.5cm] {BlockNTables};\
+-- >>> \ \\draw (oneOf2) -> (bb);\
+-- >>> \ \\draw (bb) -> (bt);\
+-- >>> \ \\draw (oneOf2) -> (sb);\
+-- >>> \ \\draw (sb) -> (st);\
+-- >>> \ \\draw (oneOf2) -> (bab);\
+-- >>> \ \\draw (bab) -> (bat);"
+-- >>> :}
 type instance Value (LedgerState (HardForkBlock xs)) = NS WrapTxOut xs
 
 type HardForkHasLedgerTables :: [Type] -> Constraint
@@ -887,6 +968,9 @@ instance ( All (Compose CanSerializeLedgerTables LedgerState) xs
                         each
                         (indices @xs)
 
+-- | Warning: 'projectLedgerTables' and 'withLedgerTables' are prohibitively
+-- expensive when using big tables or when used multiple times. See the 'Value'
+-- instance for the 'HardForkBlock' for more information.
 instance ( HardForkHasLedgerTables xs
          , CanHardFork xs
          , HasCanonicalTxIn xs

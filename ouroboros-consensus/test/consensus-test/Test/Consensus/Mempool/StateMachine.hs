@@ -49,7 +49,7 @@ import           Ouroboros.Consensus.Mock.Ledger.Address
 import           Ouroboros.Consensus.Mock.Ledger.Block
 import           Ouroboros.Consensus.Mock.Ledger.State
 import           Ouroboros.Consensus.Mock.Ledger.UTxO (Expiry, Tx, TxIn, TxOut)
-import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike hiding (bracket)
 import           Test.Consensus.Mempool.Util (TestBlock, applyTxToLedger,

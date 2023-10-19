@@ -33,8 +33,8 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , getBlock
   , getBlockByPoint
   , getBlockComponentByPoint
+  , getDbChangelog
   , getIsValid
-  , getLedgerDB
   , getMaxSlotNo
   , hasBlock
   , hasBlockByPoint
@@ -105,10 +105,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      IteratorResult (..), StreamFrom (..), StreamTo (..),
                      UnknownRange (..), validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
-import           Ouroboros.Consensus.Storage.LedgerDB.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding
+                     (anchor, empty)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog.Update as DbChangelog
-import           Ouroboros.Consensus.Storage.LedgerDB.ReadsKeySets
 import           Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
 import           Ouroboros.Consensus.Util.IOLike (MonadSTM)
@@ -322,15 +321,15 @@ isValid :: forall blk. LedgerSupportsProtocol blk
         -> Maybe Bool
 isValid = flip getIsValid
 
-getLedgerDB ::
+getDbChangelog ::
      (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk))
   => TopLevelConfig blk
   -> Model blk
   -> DbChangelog.DbChangelog' blk
-getLedgerDB cfg m@Model{..} =
+getDbChangelog cfg m@Model{..} =
       DbChangelog.onChangelog
       ( DbChangelog.prune (SecurityParam (maxActualRollback k m))
-      . DbChangelog.applyThenPushMany' ledgerDbCfg blks trivialKeySetsReader
+      . DbChangelog.applyThenPushMany' dbChangelogCfg blks trivialKeySetsReader
       )
     $ DbChangelog.empty initLedger
   where
@@ -338,9 +337,9 @@ getLedgerDB cfg m@Model{..} =
 
     k = configSecurityParam cfg
 
-    ledgerDbCfg = LedgerDbCfg {
-          ledgerDbCfgSecParam = k
-        , ledgerDbCfg         = ExtLedgerCfg cfg
+    dbChangelogCfg = DbChangelogCfg {
+          dbChangelogCfgSecParam = k
+        , dbChangelogCfg         = ExtLedgerCfg cfg
         }
 
 {-------------------------------------------------------------------------------

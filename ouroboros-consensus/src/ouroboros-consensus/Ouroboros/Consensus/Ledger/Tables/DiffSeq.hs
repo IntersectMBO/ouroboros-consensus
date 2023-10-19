@@ -34,7 +34,7 @@
    measure of the sequence to be the total sum of these numbers, @rmxs = sum
    [1..n]@ (we assume @rmxs@ is fully evaluated). Say we split this sequence of
    integer numbers at the index @2@, then we get /left/ and /right/ parts of the
-   split @ys@ and @zs respectively.
+   split @ys@ and @zs@ respectively.
 
    > splitAt 2 xs = (ys, zs) = ([1..2], [3..n])
 
@@ -46,7 +46,7 @@
    in this case @O(1)@.
 
    === Why not store sums of diffs in the internal measure instead of the root
-   measure?
+       measure?
 
    We could also have used the interal measure of the strict finger tree to
    store intermediate sums of diffs for all subtrees of the node. The subtree

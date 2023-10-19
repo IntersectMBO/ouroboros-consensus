@@ -59,10 +59,10 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator as Iterator
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util (whenJust)
+import           Ouroboros.Consensus.Util (StaticEither (..), fromStaticLeft,
+                     whenJust)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
                      allocate, runInnerWithTempRegistry, runWithTempRegistry)
@@ -208,7 +208,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       let chainDB = API.ChainDB
             { addBlockAsync          = getEnv2    h ChainSel.addBlockAsync
             , getCurrentChain        = getEnvSTM  h Query.getCurrentChain
-            , getLedgerDB            = getEnvSTM  h Query.getLedgerDB
+            , getDbChangelog         = getEnvSTM  h Query.getDbChangelog
             , getTipBlock            = getEnv     h Query.getTipBlock
             , getTipHeader           = getEnv     h Query.getTipHeader
             , getTipPoint            = getEnvSTM  h Query.getTipPoint
@@ -223,6 +223,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , isOpen                 = isOpen  h
             , getLedgerTablesAtFor   = getEnv2 h $ LedgerDB.getLedgerTablesAtFor . cdbLedgerDB
             , getLedgerDBViewAtPoint = getEnv1 h Query.getLedgerDBViewAtPoint
+            , getStatistics          =
+                getEnv h $ \env' -> fromStaticLeft <$> LedgerDB.getStatistics (cdbLedgerDB env') (StaticLeft ())
             }
           testing = Internal
             { intCopyToImmutableDB = getEnv  h Background.copyToImmutableDB
