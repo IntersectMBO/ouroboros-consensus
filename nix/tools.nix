@@ -35,6 +35,16 @@ in
     }];
   }).cabal-install.components.exes.cabal;
 
+  cabal-hoogle = tool "cabal-hoogle" "git" {
+    src = final.fetchFromGitHub {
+      owner = "kokobd";
+      repo = "cabal-hoogle";
+      rev = "7452c2b1dbdae4eb675d280ed99ec135293adc13";
+      hash = "sha256-w7PkNZfHJw1291c2nfviENSXykYpNV+4i3FmbMJqSMs=";
+    };
+    index-state = null; # use upstream cabal.project
+  };
+
   stylish-haskell = tool "stylish-haskell" "0.14.4.0" { };
 
   cabal-fmt = tool "cabal-fmt" "0.1.7" { };
