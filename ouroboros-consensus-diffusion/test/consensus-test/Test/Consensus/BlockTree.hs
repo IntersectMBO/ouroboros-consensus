@@ -19,7 +19,6 @@ module Test.Consensus.BlockTree (
   , prettyPrint
   ) where
 
-import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
 import           Data.Foldable (asum)
 import           Data.Function ((&))
@@ -151,57 +150,47 @@ findPath source target blockTree = do
 -- Returns a list of strings intended to be catenated with a newline.
 prettyPrint :: AF.HasHeader blk => BlockTree blk -> [String]
 prettyPrint blockTree = do
-  let honestFragment = btTrunk blockTree
-  let advFragment = btbSuffix $ head $ btBranches blockTree
-
-  let (oSlotNo, oBlockNo) = slotAndBlockNoFromAnchor $ AF.anchor honestFragment
-  let (hSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor honestFragment
-
-  let (aoSlotNo, _) = slotAndBlockNoFromAnchor $ AF.anchor advFragment
-  let (ahSlotNo, _) = slotAndBlockNoFromAnchor $ AF.headAnchor advFragment
-
-  let firstSlotNo = min oSlotNo aoSlotNo
-  let lastSlotNo = max hSlotNo ahSlotNo
-
-  -- FIXME: only handles two fragments at this point. not very hard to make it
-  -- handle all of them. Some work needed to make it handle all of them _in a
-  -- clean way_.
-
-  [ "Block tree:"
-    ,
-
-    [firstSlotNo .. lastSlotNo]
-      & map (printf "%2d" . unSlotNo)
-      & unwords
-      & ("  slots: " ++)
-    ,
-
-    honestFragment
-      & AF.toOldestFirst
-      & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - 1), Just (unBlockNo (blockNo block))))
-      & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo hSlotNo - unSlotNo oSlotNo)) Nothing Vector.//)
-      & map (maybe "  " (printf "%2d"))
-      & unwords
-      & map (\c -> if c == ' ' then '─' else c)
-      & ("─" ++)
-      & (printf "%2d" (unBlockNo oBlockNo) ++)
-      & ("  trunk: " ++)
-    ,
-
-    advFragment
-      & AF.toOldestFirst
-      & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo aoSlotNo - 1), Just (unBlockNo (blockNo block))))
-      & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo ahSlotNo - unSlotNo aoSlotNo)) Nothing Vector.//)
-      & map (maybe "  " (printf "%2d"))
-      & unwords
-      & map (\c -> if c == ' ' then '─' else c)
-      & (" ╰─" ++)
-      & (replicate (3 * fromIntegral (unSlotNo (aoSlotNo - oSlotNo))) ' ' ++)
-      & ("         " ++)
-    ]
+  ["Block tree:"]
+    ++ ["  slots:   " ++ unwords (map (printf "%2d" . unSlotNo) [veryFirstSlot + 1 .. veryLastSlot])]
+    ++ [printTrunk honestFragment]
+    ++ (map printBranch adversarialFragments)
 
   where
-    slotAndBlockNoFromAnchor :: AF.Anchor b -> (SlotNo, BlockNo)
-    slotAndBlockNoFromAnchor = \case
-      AF.AnchorGenesis -> (0, 0)
-      AF.Anchor slotNo _ blockNo' -> (slotNo, blockNo')
+    honestFragment = btTrunk blockTree
+    adversarialFragments = map btbSuffix (btBranches blockTree)
+
+    veryFirstSlot = slotNoFromAnchor . AF.anchor $ honestFragment
+
+    veryLastSlot =
+      foldl max 0 $
+        map
+          (slotNoFromAnchor . AF.headAnchor)
+          (honestFragment : adversarialFragments)
+
+    printTrunk :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
+    printTrunk = printLine (\_ -> "  trunk:  ─")
+
+    printBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
+    printBranch = printLine $ \firstSlot ->
+      "        " ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " ╰─"
+
+    printLine :: AF.HasHeader blk => (SlotNo -> String) -> AF.AnchoredFragment blk -> String
+    printLine printHeader fragment =
+      let firstSlot = slotNoFromAnchor $ AF.anchor fragment
+          lastSlot = slotNoFromAnchor $ AF.headAnchor fragment
+      in printHeader firstSlot ++ printFragment firstSlot lastSlot fragment
+
+    printFragment :: AF.HasHeader blk => SlotNo -> SlotNo -> AF.AnchoredFragment blk -> String
+    printFragment firstSlot lastSlot fragment =
+      fragment
+        & AF.toOldestFirst
+        & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo firstSlot - 1), Just (unBlockNo (blockNo block))))
+        & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot)) Nothing Vector.//)
+        & map (maybe "  " (printf "%2d"))
+        & unwords
+        & map (\c -> if c == ' ' then '─' else c)
+
+    slotNoFromAnchor :: AF.Anchor b -> SlotNo
+    slotNoFromAnchor = \case
+      AF.AnchorGenesis -> 0
+      AF.Anchor slotNo _ _ -> slotNo
