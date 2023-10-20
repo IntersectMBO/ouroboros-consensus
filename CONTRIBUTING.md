@@ -168,6 +168,29 @@ the right version of `stylish-haskell`.
 nix develop -c ./scripts/ci/run-stylish.sh
 ```
 
+# Generating documentation and setting up hoogle
+
+To generate the documentation, use the documentation script:
+
+```bash
+./scripts/docs/haddocks.sh
+```
+
+Often times, it is useful to have a
+[`hoogle`](https://github.com/ndmitchell/hoogle) server at hand, with the
+packages and its dependencies. Our suggestion is to use
+[`cabal-hoogle`](https://github.com/kokobd/cabal-hoogle) which is included in
+the `nix` shell:
+
+```bash
+nix develop
+$ cabal-hoogle generate
+$ cabal-hoogle run -- server --local
+```
+
+This will fire a `hoogle` server at https://localhost:8080/ with the local
+packages and their dependencies.
+
 ## Making and reviewing changes
 
 If you are working on changing a **substantial** part of Consensus, it is
@@ -318,10 +341,6 @@ The core contributors to consensus codebase are:
 -   [Alexander Esgen](https://github.com/amesgen)
 
 -   [Joris Dral](https://github.com/jorisdral)
-
--   [Bart Frenk](https://github.com/bartfrenk)
-
--   [Arnaud Bailly](https://github.com/abailly-iohk)
 
 -   [Fraser Murray](https://github.com/fraser-iohk)
 
