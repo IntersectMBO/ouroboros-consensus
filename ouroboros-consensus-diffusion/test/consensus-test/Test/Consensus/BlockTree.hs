@@ -55,6 +55,9 @@ data BlockTreeBranch blk = BlockTreeBranch {
 --
 -- INVARIANT: The branches' suffixes do not contain any block in common with one
 -- another.
+--
+-- REVIEW: Find another name so as not to clash with 'BlockTree' from
+-- `unstable-consensus-testlib/Test/Util/TestBlock.hs`.
 data BlockTree blk = BlockTree {
     btTrunk    :: AF.AnchoredFragment blk,
     btBranches :: [BlockTreeBranch blk]
