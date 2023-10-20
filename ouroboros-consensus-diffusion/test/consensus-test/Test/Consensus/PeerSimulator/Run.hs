@@ -210,6 +210,9 @@ dispatchTick config tracer peers Tick {active = Peer pid state} =
       atomically (tryPutTMVar csrNextState state) >>= \case
         True -> trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
         False -> trace $ "Client for " ++ condense pid ++ " has ceased operation."
+      -- REVIEW: It would be worth sanity-checking that our understanding of
+      -- `threadDelay` is correct; and maybe getting explicit information from
+      -- both ChainSync & BlockFetch servers that they are done.
       threadDelay (realToFrac (getSlotLength (scSlotLength config)))
       trace $ condense pid ++ "'s tick is now done."
     Nothing -> error "“The impossible happened,” as GHC would say."
