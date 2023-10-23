@@ -26,12 +26,6 @@ SCRIPTS_DIR=$(realpath "$(dirname "$(realpath "$0")")")
 GHC_VERSION=$(ghc --numeric-version)
 
 # pre-requisites
-if ! command -v cabal-hoogle &> /dev/null
-then
-  # cabal-hoogle. Install from hackage
-  cabal install cabal-hoogle --allow-newer --ignore-project
-fi
-
 if ! command -v cabal-docspec &> /dev/null
 then
   # cabal-docspec. Download binary
