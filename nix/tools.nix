@@ -17,6 +17,13 @@ in
 
   cabal-fmt = tool "cabal-fmt" "0.1.6" { };
 
+  cabal-docspec = tool "cabal-docspec" "git" {
+    src = inputs.cabal-extras;
+    cabalProject = ''
+      packages: peura cabal-docspec ${inputs.gentle-introduction}
+    '';
+  };
+
   scriv = prev.scriv.overrideAttrs (_: {
     version = "1.2.0-custom-iog";
     src = final.fetchFromGitHub {
