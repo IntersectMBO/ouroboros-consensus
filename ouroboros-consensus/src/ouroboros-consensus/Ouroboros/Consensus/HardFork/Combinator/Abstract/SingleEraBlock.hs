@@ -22,12 +22,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock (
   ) where
 
 import           Codec.Serialise
-import           Data.Either (isRight)
+import           Data.Function (on)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Index
-import           Data.SOP.Match
 import           Data.SOP.Strict
 import qualified Data.Text as Text
 import           Data.Void
@@ -117,7 +116,10 @@ newtype EraIndex xs = EraIndex {
     }
 
 instance Eq (EraIndex xs) where
-  EraIndex era == EraIndex era' = isRight (matchNS era era')
+  (==) = (==) `on` eraIndexToInt
+
+instance Ord (EraIndex xs) where
+  compare = compare `on` eraIndexToInt
 
 instance All SingleEraBlock xs => Show (EraIndex xs) where
   show = hcollapse . hcmap proxySingle getEraName . getEraIndex

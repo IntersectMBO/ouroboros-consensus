@@ -1,5 +1,8 @@
-# Revision history for sop-extras
+# sop-extras Changelog
 
-## 0.1.0.0 -- YYYY-mm-dd
+# Changelog entries
+
+<a id='changelog-0.1.0.0'></a>
+## 0.1.0.0 — 2023-09-07
 
 * First version. Released on an unsuspecting world.

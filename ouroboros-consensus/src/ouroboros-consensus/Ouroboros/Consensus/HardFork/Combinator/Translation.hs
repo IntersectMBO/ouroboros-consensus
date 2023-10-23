@@ -17,7 +17,25 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 -------------------------------------------------------------------------------}
 
 data EraTranslation xs = EraTranslation {
+      -- | For each pair @(x, y)@ of subsequent eras, describe how to construct
+      -- the initial ledger state for @y@ from the ledger state resulting from the last block in @x@.
+      --
+      -- When ticking across an era boundary, the HFC will first invoke this and
+      -- then tick the resulting ledger state (in @y@) to the requested slot.
+      --
+      -- The resulting ledger state must summarize every relevant aspect of what
+      -- came before the new era. This is intentionally vague; for example,
+      -- ticking in @y@ might work rather differently than in @x@, and so certain
+      -- aspects of the ticking logic of @x@ might need to happen as part of
+      -- 'translateLedgerState'. For a concrete example in Cardano, see
+      -- 'translateLedgerStateBabbageToConwayWrapper'.
       translateLedgerState   :: InPairs (RequiringBoth WrapLedgerConfig    (Translate LedgerState))       xs
+      -- | For each pair @(x, y)@ of subsequent eras, describe how to construct
+      -- the initial chain-dependent state for @y@ from the chain-dep state after the last header
+      -- in @x@.
+      --
+      -- When ticking across an era boundary, the HFC will first invoke this and
+      -- then tick the resulting chain-dep state (in @y@) to the requested slot.
     , translateChainDepState :: InPairs (RequiringBoth WrapConsensusConfig (Translate WrapChainDepState)) xs
     , crossEraForecast       :: InPairs (RequiringBoth WrapLedgerConfig    (CrossEraForecaster LedgerState WrapLedgerView)) xs
     }
