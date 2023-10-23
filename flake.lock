@@ -101,6 +101,23 @@
         "type": "github"
       }
     },
+    "cabal-extras": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1684316556,
+        "narHash": "sha256-3ZPjS6rbH50MSJcJ+bTUZNoMc3zkqYaK7rz2cTT1NTQ=",
+        "owner": "phadej",
+        "repo": "cabal-extras",
+        "rev": "7040a52f5bad5c28d74475191504c89b2ff88cc7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "phadej",
+        "ref": "cabal-docspec-0.0.0.20230517",
+        "repo": "cabal-extras",
+        "type": "github"
+      }
+    },
     "cardano-shell": {
       "flake": false,
       "locked": {
@@ -163,6 +180,22 @@
         "owner": "hamishmack",
         "ref": "hkm/nested-hydraJobs",
         "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "gentle-introduction": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1680620559,
+        "narHash": "sha256-5J1rYWyoTp5ssHKv39zHqfS5Jc1/71vNVSZZle40HV4=",
+        "owner": "phadej",
+        "repo": "gentle-introduction",
+        "rev": "fb336ff2f7a394ebbf71be04af199926f868a87c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "phadej",
+        "repo": "gentle-introduction",
         "type": "github"
       }
     },
@@ -559,11 +592,13 @@
     "root": {
       "inputs": {
         "CHaP": "CHaP",
+        "cabal-extras": "cabal-extras",
         "flake-compat": "flake-compat",
         "flake-utils": [
           "haskellNix",
           "flake-utils"
         ],
+        "gentle-introduction": "gentle-introduction",
         "hackageNix": "hackageNix",
         "haskellNix": "haskellNix",
         "iohkNix": "iohkNix",

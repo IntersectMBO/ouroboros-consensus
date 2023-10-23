@@ -131,9 +131,9 @@ script:
 ./scripts/docs/haddocks.sh
 ```
 
-This will install
+If not already in your `PATH` (eg when in a Nix shell), this will install
 [`cabal-docspec`](https://github.com/phadej/cabal-extras/tree/master/cabal-docspec)
-from a binary and then building the haddocks for the project.
+from a binary, and then build the haddocks for the project.
 
 Often times, it is useful to have a
 [`hoogle`](https://github.com/ndmitchell/hoogle) server at hand, with the
