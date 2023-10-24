@@ -20,7 +20,8 @@ import           Ouroboros.Network.Protocol.ChainSync.Codec (mustReplyTimeout)
 import           Test.Consensus.BlockTree (btTrunk)
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Network.Driver.Limits.Extras (chainSyncTimeouts)
-import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..))
+import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
+                     defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
@@ -36,12 +37,15 @@ prop_timeouts :: QC.Gen QC.Property
 prop_timeouts = do
   genesisTest <- genChains 0
 
-  let scChainSyncTimeouts = chainSyncTimeouts scSlotLength (gtHonestAsc genesisTest)
-      schedulerConfig = SchedulerConfig {scChainSyncTimeouts, scSlotLength, scSchedule}
+  -- Use higher tick duration to avoid the test taking really long
+  let scSchedule = PointScheduleConfig {pscTickDuration = 1}
 
-  let schedule =
+      schedulerConfig = defaultSchedulerConfig scSchedule (gtHonestAsc genesisTest)
+
+      schedule =
         dullSchedule
-          (fromJust $ mustReplyTimeout scChainSyncTimeouts)
+          scSchedule
+          (fromJust $ mustReplyTimeout (scChainSyncTimeouts schedulerConfig))
           (btTrunk $ gtBlockTree genesisTest)
 
   pure $ withMaxSuccess 10 $ runSimOrThrow $
@@ -58,24 +62,16 @@ prop_timeouts = do
 
   where
 
-    scSlotLength :: SlotLength
-    scSlotLength = slotLengthFromSec 20
-
     -- A schedule that advertises all the points of the chain from the start but
     -- contains just one too many ticks, therefore reaching the timeouts.
-    dullSchedule :: DiffTime -> TestFrag -> PointSchedule
-    dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
-    dullSchedule timeout (_ AF.:> tipBlock) =
+    dullSchedule :: PointScheduleConfig -> DiffTime -> TestFrag -> PointSchedule
+    dullSchedule _ _ (AF.Empty _) = error "requires a non-empty block tree"
+    dullSchedule scheduleConfig timeout (_ AF.:> tipBlock) =
       let tipPoint = TipPoint $ tipFromHeader tipBlock
           headerPoint = HeaderPoint $ getHeader tipBlock
           blockPoint = BlockPoint tipBlock
           state = Peer HonestPeer $ NodeOnline $ AdvertisedPoints tipPoint headerPoint blockPoint
           tick = Tick { active = state, peers = Peers state Map.empty }
-          maximumNumberOfTicks = fromIntegral $ roundDiffTimeToSeconds $ timeout / pscTickDuration scSchedule
+          maximumNumberOfTicks = fromIntegral $ round $ timeout / pscTickDuration scheduleConfig
       in
       PointSchedule (tick :| replicate maximumNumberOfTicks tick)
-
-    roundDiffTimeToSeconds :: DiffTime -> Integer
-    roundDiffTimeToSeconds = (`div` 1000000000000) . (+ 500000000000) . diffTimeToPicoseconds
-
-    scSchedule = defaultPointScheduleConfig
