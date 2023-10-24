@@ -9,6 +9,7 @@ module Test.Consensus.PeerSimulator.Run (
   , defaultSchedulerConfig
   , noTimeoutsSchedulerConfig
   , runPointSchedule
+  , debugScheduler
   ) where
 
 import           Cardano.Slotting.Time (SlotLength (getSlotLength),
@@ -85,6 +86,7 @@ data SchedulerConfig =
 
     -- | Config shared with point schedule generators.
     , scSchedule        :: PointScheduleConfig
+    , scDebug :: Bool
   }
 
 defaultSchedulerConfig :: PointScheduleConfig -> Asc -> SchedulerConfig
@@ -92,7 +94,8 @@ defaultSchedulerConfig scSchedule asc =
   SchedulerConfig {
     scChainSyncTimeouts = chainSyncTimeouts scSlotLength asc,
     scSlotLength,
-    scSchedule
+    scSchedule,
+    scDebug = False
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -102,10 +105,15 @@ noTimeoutsSchedulerConfig scSchedule =
   SchedulerConfig {
     scChainSyncTimeouts = chainSyncNoTimeouts,
     scSlotLength,
-    scSchedule
+    scSchedule,
+    scDebug = False
   }
   where
     scSlotLength = slotLengthFromSec 20
+
+debugScheduler :: SchedulerConfig -> SchedulerConfig
+
+debugScheduler conf = conf {scDebug = True  }
 
 basicChainSyncClient ::
   IOLike m =>

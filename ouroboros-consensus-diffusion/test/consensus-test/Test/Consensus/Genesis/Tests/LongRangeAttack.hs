@@ -13,7 +13,7 @@ import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
+import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig, debugScheduler)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
@@ -25,7 +25,11 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, unTestHash)
 
 tests :: TestTree
-tests = testProperty "long range attack" prop_longRangeAttack
+tests =
+  testGroup "long range attack" [
+    testProperty "one adversary" (prop_longRangeAttack 1 [10]),
+    testProperty "three adversaries" (prop_longRangeAttack 1 [2, 5, 10])
+  ]
 
 genChainsAndSchedule :: PointScheduleConfig -> Word -> ScheduleType -> QC.Gen (GenesisTest, PointSchedule)
 genChainsAndSchedule scheduleConfig numAdversaries scheduleType =
@@ -33,9 +37,9 @@ genChainsAndSchedule scheduleConfig numAdversaries scheduleType =
     gt <- genChains numAdversaries
     pure $ ((gt,) <$> genSchedule scheduleConfig scheduleType (gtBlockTree gt))
 
-prop_longRangeAttack :: QC.Gen QC.Property
-prop_longRangeAttack = do
-  (genesisTest, schedule) <- genChainsAndSchedule scheduleConfig 1 FastAdversary
+prop_longRangeAttack :: Int -> [Int] -> QC.Gen QC.Property
+prop_longRangeAttack honestFreq advFreqs = do
+  (genesisTest, schedule) <- genChainsAndSchedule scheduleConfig (fromIntegral (length advFreqs)) (Frequencies freqs)
   let Classifiers {..} = classifiers genesisTest
 
   -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
@@ -53,6 +57,8 @@ prop_longRangeAttack = do
             not $ isHonestTestFragH svSelectedChain
 
   where
+    freqs = mkPeers honestFreq advFreqs
+
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of
         AF.AnchorGenesis   -> True

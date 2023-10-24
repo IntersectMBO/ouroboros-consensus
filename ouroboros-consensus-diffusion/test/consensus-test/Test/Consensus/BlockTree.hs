@@ -192,11 +192,16 @@ prettyPrint blockTree = do
     printFragment firstSlot lastSlot fragment =
       fragment
         & AF.toOldestFirst
+        -- Turn the fragment into a list of (SlotNo, Just BlockNo)
         & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo firstSlot - 1), Just (unBlockNo (blockNo block))))
-        & Vector.toList . (Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot)) Nothing Vector.//)
+        -- Update only the Vector elements that have blocks in them
+        & Vector.toList . (slotRange Vector.//)
         & map (maybe "  " (printf "%2d"))
         & unwords
         & map (\c -> if c == ' ' then '─' else c)
+      where
+        -- Initialize a Vector with the length of the fragment containing only Nothings
+        slotRange = Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot)) Nothing
 
     slotNoFromAnchor :: AF.Anchor b -> SlotNo
     slotNoFromAnchor = \case
