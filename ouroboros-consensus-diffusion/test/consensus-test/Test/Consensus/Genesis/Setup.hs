@@ -4,10 +4,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Test.Consensus.Genesis.Setup
-  ( module Test.Consensus.Genesis.Setup,
-    module Test.Consensus.Genesis.Setup.GenChains
+  ( module Test.Consensus.Genesis.Setup.GenChains,
+    runTest,
+    exceptionCounterexample,
   )
 where
 
@@ -23,31 +25,47 @@ import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Tracer (recordingTracerTVar)
 import Test.Consensus.Genesis.Setup.GenChains
+import Test.Consensus.PeerSimulator.StateView
+import Ouroboros.Network.Protocol.ChainSync.Codec (ChainSyncTimeout(..))
+import Test.Consensus.PeerSimulator.Trace (traceLinesWith)
 
 runTest ::
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m, Testable a) =>
+  SchedulerConfig ->
   GenesisTest ->
   PointSchedule ->
-  (TestFragH -> Property) ->
+  (StateView -> a) ->
   m Property
-runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty = do
+runTest schedulerConfig genesisTest schedule makeProperty = do
     (tracer, getTrace) <- recordingTracerTVar
-    -- let tracer = debugTracer
 
-    traceWith tracer $ "Honest active slot coefficient: " ++ show gtHonestAsc
+    traceLinesWith tracer [
+      "Security param k = " ++ show gtSecurityParam,
+      "Honest active slot coefficient asc = " ++ show gtHonestAsc,
+      "Genesis window scg = " ++ show gtGenesisWindow,
+      "SchedulerConfig:",
+      "  ChainSyncTimeouts:",
+      "    canAwait = " ++ show (canAwaitTimeout scChainSyncTimeouts),
+      "    intersect = " ++ show (intersectTimeout scChainSyncTimeouts),
+      "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts)
+      ]
 
     mapM_ (traceWith tracer) $ BT.prettyPrint gtBlockTree
 
-    result <- runPointSchedule schedulerConfig genesisTest schedule tracer
+    finalStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
     trace <- unlines <$> getTrace
 
-    let
-      prop = case result of
-        Left exn ->
-          counterexample ("exception: " <> show exn) False
-        Right fragment ->
-          counterexample ("result: " <> condense fragment) (makeProperty fragment)
+    pure $ counterexample trace $ makeProperty finalStateView
+  where
+    SchedulerConfig {scChainSyncTimeouts} = schedulerConfig
+    GenesisTest {gtSecurityParam, gtHonestAsc, gtGenesisWindow, gtBlockTree} = genesisTest
 
-    pure $ counterexample trace prop
-    where
-      schedulerConfig = SchedulerConfig {enableTimeouts = False}
+-- | Print counterexamples if the test result contains exceptions.
+exceptionCounterexample :: Testable a => (StateView -> a) -> StateView -> Property
+exceptionCounterexample makeProperty stateView =
+  case svChainSyncExceptions stateView of
+    [] ->
+      counterexample ("result: " <> condense (svSelectedChain stateView)) $
+        makeProperty stateView
+    exns ->
+      counterexample ("exceptions: " <> show exns) False

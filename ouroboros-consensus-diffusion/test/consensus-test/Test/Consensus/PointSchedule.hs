@@ -35,12 +35,15 @@ module Test.Consensus.PointSchedule (
   , NodeState (..)
   , Peer (..)
   , PeerId (..)
+  , Peers (..)
   , PointSchedule (..)
+  , PointScheduleConfig (..)
   , ScheduleType (..)
   , TestFrag
   , TestFragH
   , Tick (..)
   , TipPoint (..)
+  , defaultPointScheduleConfig
   , genSchedule
   , onlyHonestWithMintingPointSchedule
   , pointSchedulePeers
@@ -53,6 +56,7 @@ import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String (IsString (fromString))
+import           Data.Time (DiffTime)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block.Abstract (HasHeader, getHeader)
@@ -226,6 +230,19 @@ newtype PointSchedule =
 
 instance Condense PointSchedule where
   condense (PointSchedule ticks) = unlines (condense <$> toList ticks)
+
+-- | Parameters that are significant for components outside of generators, like the peer
+-- simulator.
+data PointScheduleConfig =
+  PointScheduleConfig {
+    -- | Duration of a tick, for timeouts in the scheduler.
+    pscTickDuration :: DiffTime
+  }
+  deriving (Eq, Show)
+
+defaultPointScheduleConfig :: PointScheduleConfig
+defaultPointScheduleConfig =
+  PointScheduleConfig {pscTickDuration = 0.1}
 
 ----------------------------------------------------------------------------------------------------
 -- Accessors
@@ -558,8 +575,8 @@ data GenesisTest = GenesisTest {
 -- | Create a point schedule from the given block tree.
 --
 -- The first argument determines the scheduling style.
-genSchedule :: ScheduleType -> BlockTree TestBlock -> Maybe PointSchedule
-genSchedule = \case
+genSchedule :: PointScheduleConfig -> ScheduleType -> BlockTree TestBlock -> Maybe PointSchedule
+genSchedule _ = \case
   FastAdversary -> fastAdversaryPointSchedule
   Banal -> banalPointSchedule
   OnlyHonest -> onlyHonestPointSchedule
