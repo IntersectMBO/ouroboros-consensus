@@ -1204,4 +1204,4 @@ There are more general guidelines on how we write and structure code.
    use that shared code in a test suite defined in another package. To avoid
    this problem, we avoid sharing source directories in `cabal` files.
 
-[stylish-config]: https://github.com/input-output-hk/ouroboros-network/blob/master/.stylish-haskell.yaml
+[stylish-config]: https://github.com/input-output-hk/ouroboros-consensus/blob/master/.stylish-haskell.yaml

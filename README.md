@@ -1,4 +1,4 @@
-# [Ouroboros Consensus](https://input-output-hk.github.io/ouroboros-consensus/)
+# Ouroboros Consensus
 
 [![consensus](https://img.shields.io/badge/ouroboros--consensus-0.12.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-0.12.0.0/)
 [![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.8.0.1-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-diffusion-0.8.0.1/)
@@ -7,10 +7,9 @@
 [![sop-extras](https://img.shields.io/badge/sop--extras-0.1.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/sop-extras-0.1.0.0/)
 [![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/strict-sop-core-0.1.0.0/)
 
-[![docs](https://img.shields.io/badge/Documentation-yellow)](https://input-output-hk.github.io/ouroboros-consensus/)
+[![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
 
-Implementation of the [Ouroboros-family](docs/website/README.md) of consensus
-algorithms.
+Implementation of the Ouroboros family of consensus algorithms.
 
 ## Libraries and executables
 
@@ -48,15 +47,9 @@ because unfortunately, `cabal` doesn't have a command to list the [available
 targets](https://github.com/haskell/cabal/issues/4070):
 
 ``` bash
-for f in $(find ouroboros-consensus* -type f -name "*.cabal"); do
+for f in $(find ouroboros-consensus* *sop* -type f -name "*.cabal"); do
     printf "Components of package %s:\n" $f;
-    cat $f | grep -E "^(library|test-suite|executable|benchmark)" \
-      | sed 's/library /⬇️📦 /g' \
-      | sed 's/test-suite /🧪   /g' \
-      | sed 's/benchmark /🏁   /g' \
-      | sed 's/executable /⚙️    /g' \
-      | sed "s/library/📦   $(echo $f | cut -d\/ -f2 | cut -d\. -f1)/g"
-    printf "\n\n"
+    grep -E "^(library|test-suite|executable|benchmark)" $f --color=never | column -t | sort | sed 's/^/\t/'
 done
 ```
 
@@ -164,15 +157,18 @@ We have several sources of documentation:
   expected behaviors and subtleties. Reading through the code should provide
   most of the information on how is Consensus implemented.
 
-- [Website](https://input-output-hk.github.io/ouroboros-consensus/): this website
-  provides access to the markdown documentation to which step by step we want to
-  move the bulk of the "higher level documentation" as well as achitectural
-  documentation.
+- [Website](https://input-output-hk.github.io/ouroboros-consensus/): this
+  website provides access to the markdown documentation to which step by step we
+  want to move the bulk of the "higher level documentation" as well as
+  achitectural documentation.
 
-- [Report](./docs/report/): this in-depth technical report describes many of the
+- [Report](./docs/tech-reports/report/): this in-depth technical report describes many of the
   deep choices made in the implementation of the Consensus layer, as well as
   non-trivial lemmas or properties of the Consensus algorithms that have
   perspired to the implementation. Although incomplete in some sections, it is a
   mandatory reading for anyone looking to understand why Consensus does what it
-  does. ([rendered](https://input-output-hk.github.io/ouroboros-consensus/pdfs/report.pdf))
+  does.
+  ([rendered](https://input-output-hk.github.io/ouroboros-consensus/pdfs/report.pdf))
 
+
+[webpage]: https://input-output-hk.github.io/ouroboros-consensus/
