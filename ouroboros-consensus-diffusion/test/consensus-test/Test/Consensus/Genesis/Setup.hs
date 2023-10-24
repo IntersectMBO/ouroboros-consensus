@@ -25,6 +25,8 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Tracer (recordingTracerTVar)
 import Test.Consensus.Genesis.Setup.GenChains
 import Test.Consensus.PeerSimulator.StateView
+import Test.Consensus.Network.Driver.Limits.Extras (chainSyncNoTimeouts)
+import Ouroboros.Network.Protocol.ChainSync.Codec (ChainSyncTimeout(..))
 
 runTest ::
   (IOLike m, MonadTime m, MonadTimer m) =>
@@ -32,10 +34,18 @@ runTest ::
   PointSchedule ->
   (StateView -> Property) ->
   m Property
-runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty = do
+runTest genesisTest@GenesisTest {..} schedule makeProperty = do
     (tracer, getTrace) <- recordingTracerTVar
 
-    traceWith tracer $ "Honest active slot coefficient: " ++ show gtHonestAsc
+    traceWith tracer $ "Security param k = " ++ show gtSecurityParam
+    traceWith tracer $ "Honest active slot coefficient asc = " ++ show gtHonestAsc
+    traceWith tracer $ "Genesis window scg = " ++ show gtGenesisWindow
+
+    traceWith tracer $ "SchedulerConfig:"
+    traceWith tracer $ "  ChainSyncTimeouts:"
+    traceWith tracer $ "    canAwait = " ++ show (canAwaitTimeout scChainSyncTimeouts)
+    traceWith tracer $ "    intersect = " ++ show (intersectTimeout scChainSyncTimeouts)
+    traceWith tracer $ "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts)
 
     mapM_ (traceWith tracer) $ BT.prettyPrint gtBlockTree
 
@@ -44,8 +54,9 @@ runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty
 
     pure $ counterexample trace $ makeProperty finalStateView
 
-    where
-      schedulerConfig = SchedulerConfig {enableTimeouts = False}
+  where
+    scChainSyncTimeouts = chainSyncNoTimeouts
+    schedulerConfig = SchedulerConfig {scChainSyncTimeouts}
 
 -- | Same as 'runTest' except it fails the test in case of exception.
 runTest' ::

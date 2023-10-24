@@ -20,7 +20,6 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      Consensus, chainSyncClient, defaultChainDbView)
 import           Ouroboros.Consensus.Storage.ChainDB.API
@@ -61,7 +60,6 @@ import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
                      Peer (Peer), PeerId, PointSchedule (PointSchedule),
                      TestFragH, Tick (Tick), pointSchedulePeers)
-import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
@@ -69,14 +67,13 @@ import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
 -- | Behavior config for the scheduler.
 data SchedulerConfig =
   SchedulerConfig {
-    -- | Whether to use timouts for the ChainSync protocol.
-    -- These apply when the client sends a MsgRequestNext and the server doesn't reply.
-    -- Because the point schedule cannot yet handle the case where a slow peer has a
-    -- header point that's behind the latest header that another peer has sent, we need
-    -- to be able to disable them.
-    enableTimeouts :: Bool
+    -- | Timeouts for the ChainSync protocol. These apply when the client sends
+    -- a 'MsgRequestNext' or a 'MsgFindIntersect' and the server doesn't reply.
+    -- Because the point schedule cannot yet handle the case where a slow peer
+    -- has a header point that's behind the latest header that another peer has
+    -- sent, we need to be able to control or disable them.
+    scChainSyncTimeouts :: ChainSyncTimeout
   }
-  deriving (Show)
 
 basicChainSyncClient ::
   IOLike m =>
@@ -109,22 +106,13 @@ startChainSyncConnectionThread ::
   ResourceRegistry m ->
   Tracer m String ->
   TopLevelConfig TestBlock ->
-  Asc ->
   ChainDbView m TestBlock ->
   FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
   SharedResources m ->
   ChainSyncResources m ->
   SchedulerConfig ->
   m (StrictTVar m (Maybe ChainSyncException))
-startChainSyncConnectionThread registry tracer cfg activeSlotCoefficient chainDbView fetchClientRegistry SharedResources {srPeerId, srCandidateFragment} ChainSyncResources {csrServer} SchedulerConfig {enableTimeouts} = do
-  let
-    slotLength = HardFork.eraSlotLength . topLevelConfigLedger $ cfg
-    timeouts | enableTimeouts = chainSyncTimeouts slotLength activeSlotCoefficient
-             | otherwise = chainSyncNoTimeouts
-  traceWith tracer $ "timeouts:"
-  traceWith tracer $ "  canAwait = " ++ show (canAwaitTimeout timeouts)
-  traceWith tracer $ "  intersect = " ++ show (intersectTimeout timeouts)
-  traceWith tracer $ "  mustReply = " ++ show (mustReplyTimeout timeouts)
+startChainSyncConnectionThread registry tracer cfg chainDbView fetchClientRegistry SharedResources {srPeerId, srCandidateFragment} ChainSyncResources {csrServer} SchedulerConfig {scChainSyncTimeouts} = do
   chainSyncException <- uncheckedNewTVarM Nothing
   _ <- forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $ do
@@ -133,7 +121,7 @@ startChainSyncConnectionThread registry tracer cfg activeSlotCoefficient chainDb
         nullTracer
         codecChainSyncId
         chainSyncNoSizeLimits
-        (timeLimitsChainSync timeouts)
+        (timeLimitsChainSync scChainSyncTimeouts)
         (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView srCandidateFragment))
         (chainSyncServerPeer csrServer)
       case res of
@@ -241,16 +229,15 @@ runPointSchedule ::
   PointSchedule ->
   Tracer m String ->
   m StateView
-runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtHonestAsc = asc, gtBlockTree} pointSchedule tracer =
+runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} pointSchedule tracer =
   withRegistry $ \registry -> do
     resources <- makePeersResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
     let candidates = srCandidateFragment . prShared <$> resources
-    traceWith tracer $ "Security param k = " ++ show k
     chainDb <- mkChainDb tracer candidates config registry
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = defaultChainDbView chainDb
     chainSyncRess <- for resources $ \PeerResources {prShared, prChainSync} -> do
-      chainSyncRes <- startChainSyncConnectionThread registry tracer config asc chainDbView fetchClientRegistry prShared prChainSync schedulerConfig
+      chainSyncRes <- startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
       pure chainSyncRes
     for_ resources $ \PeerResources {prShared} ->
