@@ -3,12 +3,10 @@
 
 module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
 
-import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map as Map
 import           Data.Maybe (fromJust)
-import           Data.Time.Clock (diffTimeToPicoseconds)
 import           Ouroboros.Consensus.Block (getHeader)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike (DiffTime, fromException)
@@ -19,7 +17,6 @@ import           Ouroboros.Network.Driver.Limits
 import           Ouroboros.Network.Protocol.ChainSync.Codec (mustReplyTimeout)
 import           Test.Consensus.BlockTree (btTrunk)
 import           Test.Consensus.Genesis.Setup
-import           Test.Consensus.Network.Driver.Limits.Extras (chainSyncTimeouts)
 import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
@@ -72,6 +69,6 @@ prop_timeouts = do
           blockPoint = BlockPoint tipBlock
           state = Peer HonestPeer $ NodeOnline $ AdvertisedPoints tipPoint headerPoint blockPoint
           tick = Tick { active = state, peers = Peers state Map.empty }
-          maximumNumberOfTicks = fromIntegral $ round $ timeout / pscTickDuration scheduleConfig
+          maximumNumberOfTicks = round $ timeout / pscTickDuration scheduleConfig
       in
       PointSchedule (tick :| replicate maximumNumberOfTicks tick)
