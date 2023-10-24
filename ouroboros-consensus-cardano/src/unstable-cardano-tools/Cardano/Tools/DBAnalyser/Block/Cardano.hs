@@ -322,6 +322,7 @@ mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNo
           }
         triggers
         transitionConfig
+        mempty
       )
   where
 

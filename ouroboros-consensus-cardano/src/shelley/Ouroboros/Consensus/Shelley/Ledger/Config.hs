@@ -48,6 +48,7 @@ data instance BlockConfig (ShelleyBlock proto era) = ShelleyConfig {
       -- block producing nodes, this can be set to the empty map.
     , shelleyBlockIssuerVKeys :: !(Map (SL.KeyHash 'SL.BlockIssuer (EraCrypto era))
                                        (SL.VKey 'SL.BlockIssuer (EraCrypto era)))
+    , shelleyCheckpoints      :: !(Map BlockNo (HeaderHash (ShelleyBlock proto era)))
     }
   deriving stock (Generic)
 
@@ -59,8 +60,9 @@ mkShelleyBlockConfig ::
   => SL.ProtVer
   -> SL.ShelleyGenesis (EraCrypto era)
   -> [SL.VKey 'SL.BlockIssuer (EraCrypto era)]
+  -> Map BlockNo (HeaderHash (ShelleyBlock proto era))
   -> BlockConfig (ShelleyBlock proto era)
-mkShelleyBlockConfig protVer genesis blockIssuerVKeys = ShelleyConfig {
+mkShelleyBlockConfig protVer genesis blockIssuerVKeys checkpoints = ShelleyConfig {
       shelleyProtocolVersion  = protVer
     , shelleySystemStart      = SystemStart  $ SL.sgSystemStart  genesis
     , shelleyNetworkMagic     = NetworkMagic $ SL.sgNetworkMagic genesis
@@ -68,6 +70,7 @@ mkShelleyBlockConfig protVer genesis blockIssuerVKeys = ShelleyConfig {
         [ (SL.hashKey k, k)
         | k <- blockIssuerVKeys
         ]
+    , shelleyCheckpoints      = checkpoints
     }
 
 {-------------------------------------------------------------------------------

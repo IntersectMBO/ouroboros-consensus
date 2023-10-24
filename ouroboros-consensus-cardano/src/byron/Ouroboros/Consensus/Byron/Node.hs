@@ -31,6 +31,7 @@ import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Crypto as Crypto
 import           Control.Monad (guard)
 import           Data.Coerce (coerce)
+import           Data.Map.Strict (Map)
 import           Data.Maybe
 import           Data.Text (Text)
 import           Data.Void (Void)
@@ -180,13 +181,15 @@ data instance ProtocolParams ByronBlock = ProtocolParamsByron {
     }
 
 protocolInfoByron :: ProtocolParams ByronBlock
+                  -> Map BlockNo ByronHash -- ^ Checkpoints.
                   -> ProtocolInfo ByronBlock
 protocolInfoByron ProtocolParamsByron {
                       byronGenesis                = genesisConfig
                     , byronPbftSignatureThreshold = mSigThresh
                     , byronProtocolVersion        = pVer
                     , byronSoftwareVersion        = sVer
-                    } =
+                    }
+                  checkpoints =
     ProtocolInfo {
         pInfoConfig = TopLevelConfig {
             topLevelConfigProtocol = PBftConfig {
@@ -208,7 +211,7 @@ protocolInfoByron ProtocolParamsByron {
   where
     compactedGenesisConfig = compactGenesisConfig genesisConfig
 
-    blockConfig = mkByronConfig compactedGenesisConfig pVer sVer
+    blockConfig = mkByronConfig compactedGenesisConfig pVer sVer checkpoints
 
 protocolClientInfoByron :: EpochSlots -> ProtocolClientInfo ByronBlock
 protocolClientInfoByron epochSlots =
@@ -228,11 +231,13 @@ byronPBftParams cfg threshold = PBftParams {
 mkByronConfig :: Genesis.Config
               -> Update.ProtocolVersion
               -> Update.SoftwareVersion
+              -> Map BlockNo ByronHash
               -> BlockConfig ByronBlock
-mkByronConfig genesisConfig pVer sVer = ByronConfig {
+mkByronConfig genesisConfig pVer sVer checkpoints = ByronConfig {
       byronGenesisConfig   = genesisConfig
     , byronProtocolVersion = pVer
     , byronSoftwareVersion = sVer
+    , byronCheckpoints     = checkpoints
     }
 
 {-------------------------------------------------------------------------------

@@ -94,7 +94,7 @@ testCfg = pInfoConfig protocolInfo
   where
     protocolInfo :: ProtocolInfo ByronBlock
     protocolInfo =
-      protocolInfoByron $ ProtocolParamsByron {
+      protocolInfoByron ProtocolParamsByron {
           byronGenesis                = CC.dummyConfig
         , byronPbftSignatureThreshold = Just (PBftSignatureThreshold 0.5)
         , byronProtocolVersion        = CC.Update.ProtocolVersion 1 0 0
@@ -102,6 +102,7 @@ testCfg = pInfoConfig protocolInfo
         , byronLeaderCredentials      = Nothing
         , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
         }
+        mempty
 
 -- | Matches the values used for the generators.
 testCodecCfg :: CodecConfig ByronBlock

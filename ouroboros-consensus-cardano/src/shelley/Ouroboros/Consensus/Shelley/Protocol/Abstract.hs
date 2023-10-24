@@ -42,6 +42,7 @@ import           Cardano.Slotting.Slot (SlotNo)
 import           Codec.Serialise (Serialise (..))
 import           Control.Monad.Except (Except)
 import           Data.Kind (Type)
+import           Data.Map.Strict (Map)
 import           Data.Typeable (Typeable)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
@@ -117,6 +118,7 @@ class
   -- check things like maximum header size.
   envelopeChecks ::
     ConsensusConfig proto ->
+    Map BlockNo (ShelleyHash (ProtoCrypto proto)) ->
     LedgerView proto ->
     ShelleyProtocolHeader proto ->
     Except (EnvelopeCheckError proto) ()

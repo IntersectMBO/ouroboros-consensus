@@ -22,6 +22,7 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Control.Monad (unless)
 import           Control.Monad.Except (throwError)
 import           Data.Either (isRight)
+import qualified Data.Map.Strict as Map
 import           Data.Word (Word16, Word32)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -36,9 +37,9 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto,
                      ProtocolHeaderSupportsEnvelope (..),
                      ProtocolHeaderSupportsKES (..),
                      ProtocolHeaderSupportsLedger (..),
-                     ProtocolHeaderSupportsProtocol (..),
-                     ShelleyHash (ShelleyHash), ShelleyProtocol,
-                     ShelleyProtocolHeader)
+                     ProtocolHeaderSupportsProtocol (..), ShelleyHash (..),
+                     ShelleyProtocol, ShelleyProtocolHeader)
+import           Ouroboros.Consensus.Util (whenJust)
 
 
 type instance ProtoCrypto (Praos c) = c
@@ -89,6 +90,7 @@ data PraosEnvelopeError
     -- <https://github.com/IntersectMBO/ouroboros-consensus/issues/325>.
   | HeaderSizeTooLarge Int Word16
   | BlockSizeTooLarge Word32 Word32
+  | InvalidCheckpoint -- TODO args
   deriving (Eq, Generic, Show)
 
 instance NoThunks PraosEnvelopeError
@@ -104,7 +106,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
 
   type EnvelopeCheckError _ = PraosEnvelopeError
 
-  envelopeChecks cfg lv hdr = do
+  envelopeChecks cfg checkpoints lv hdr = do
     unless (m <= maxpv) $ throwError (ObsoleteNode m maxpv)
     unless (bhviewHSize bhv <= fromIntegral @Word16 @Int maxHeaderSize) $
       throwError $
@@ -112,6 +114,9 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
     unless (bhviewBSize bhv <= maxBodySize) $
       throwError $
         BlockSizeTooLarge (bhviewBSize bhv) maxBodySize
+    whenJust (Map.lookup (pHeaderBlock hdr) checkpoints) $ \checkpoint ->
+      unless (checkpoint == pHeaderHash hdr) $
+        throwError InvalidCheckpoint
     where
       pp = praosParams cfg
       (MaxMajorProtVer maxpv) = praosMaxMajorPV pp

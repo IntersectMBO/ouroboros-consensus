@@ -71,6 +71,7 @@ cfg = ByronConfig {
       byronGenesisConfig   = CC.dummyConfig
     , byronProtocolVersion = CC.exampleProtocolVersion
     , byronSoftwareVersion = CC.exampleSoftwareVersion
+    , byronCheckpoints     = mempty
     }
 
 codecConfig :: CodecConfig ByronBlock

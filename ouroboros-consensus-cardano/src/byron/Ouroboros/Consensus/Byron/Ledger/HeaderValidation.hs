@@ -11,8 +11,9 @@ module Ouroboros.Consensus.Byron.Ledger.HeaderValidation (
   ) where
 
 import qualified Cardano.Chain.Slotting as CC
-import           Control.Monad (when)
+import           Control.Monad (unless, when)
 import           Control.Monad.Except (throwError)
+import qualified Data.Map.Strict as Map
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -23,6 +24,7 @@ import           Ouroboros.Consensus.Byron.Ledger.Orphans ()
 import           Ouroboros.Consensus.Byron.Ledger.PBFT ()
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Util (whenJust)
 
 {-------------------------------------------------------------------------------
   Envelope
@@ -35,6 +37,7 @@ instance HasAnnTip ByronBlock where
 
 data ByronOtherHeaderEnvelopeError =
     UnexpectedEBBInSlot !SlotNo
+  | InvalidCheckpoint -- TODO args
   deriving (Eq, Show, Generic, NoThunks)
 
 instance BasicEnvelopeValidation ByronBlock where
@@ -56,9 +59,13 @@ instance BasicEnvelopeValidation ByronBlock where
 instance ValidateEnvelope ByronBlock where
   type OtherHeaderEnvelopeError ByronBlock = ByronOtherHeaderEnvelopeError
 
-  additionalEnvelopeChecks cfg _ledgerView hdr =
+  additionalEnvelopeChecks cfg _ledgerView hdr = do
       when (fromIsEBB newIsEBB && not (canBeEBB actualSlotNo)) $
         throwError $ UnexpectedEBBInSlot actualSlotNo
+      unless (fromIsEBB newIsEBB) $ -- TODO fine to ignore EBBs?
+        whenJust (Map.lookup (blockNo hdr) checkpoints) $ \checkpoint ->
+          unless (checkpoint == blockHash hdr) $
+            throwError InvalidCheckpoint
     where
       actualSlotNo :: SlotNo
       actualSlotNo = blockSlot hdr
@@ -75,3 +82,6 @@ instance ValidateEnvelope ByronBlock where
         . byronEpochSlots
         . configBlock
         $ cfg
+
+      checkpoints =
+        byronCheckpoints . configBlock $ cfg

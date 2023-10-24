@@ -106,7 +106,7 @@ mkByronProtocolInfo :: Genesis.Config
                     -> Maybe PBftSignatureThreshold
                     -> ProtocolInfo ByronBlock
 mkByronProtocolInfo genesisConfig signatureThreshold =
-    protocolInfoByron $ ProtocolParamsByron {
+    protocolInfoByron ProtocolParamsByron {
         byronGenesis                = genesisConfig
       , byronPbftSignatureThreshold = signatureThreshold
       , byronProtocolVersion        = Update.ProtocolVersion 1 0 0
@@ -114,3 +114,4 @@ mkByronProtocolInfo genesisConfig signatureThreshold =
       , byronLeaderCredentials      = Nothing
       , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
       }
+      mempty

@@ -156,6 +156,7 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
                        concreteGenesis
                        protocolVersion
                        softwareVersion
+                       mempty
       where
         -- TODO: Take (spec) protocol version and (spec) software version
         -- as arguments instead, and then translate /those/ to Impl types.

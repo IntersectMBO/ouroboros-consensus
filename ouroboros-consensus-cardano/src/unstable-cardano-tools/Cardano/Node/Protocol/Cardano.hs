@@ -296,6 +296,7 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
                   Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
           }
           transitionLedgerConfig
+          mempty
         )
 
 ------------------------------------------------------------------------------

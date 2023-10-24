@@ -474,7 +474,9 @@ instance ShelleyCompatible proto era => ValidateEnvelope (ShelleyBlock proto era
     EnvelopeCheckError proto
 
   additionalEnvelopeChecks cfg lv hdr =
-    envelopeChecks (configConsensus cfg) lv (shelleyHeaderRaw hdr)
+      envelopeChecks (configConsensus cfg) checkpoints lv (shelleyHeaderRaw hdr)
+    where
+      checkpoints = shelleyCheckpoints (configBlock cfg)
 
 {-------------------------------------------------------------------------------
   Auxiliary

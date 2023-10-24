@@ -326,6 +326,7 @@ mkTestProtocolInfo
               SL.exampleAlonzoGenesis
               SL.exampleConwayGenesis
           )
+          mempty
         )
 
   where

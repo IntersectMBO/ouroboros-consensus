@@ -26,6 +26,7 @@ import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Slotting as CC.Slot
 import qualified Cardano.Chain.Update as CC.Update
 import qualified Cardano.Crypto as Crypto
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks (..))
@@ -52,6 +53,8 @@ data instance BlockConfig ByronBlock = ByronConfig {
       --
       -- Like 'byronProtocolVersion', this is independent from the chain.
     , byronSoftwareVersion :: !CC.Update.SoftwareVersion
+
+    , byronCheckpoints     :: !(Map BlockNo ByronHash)
     }
   deriving (Generic, NoThunks)
 

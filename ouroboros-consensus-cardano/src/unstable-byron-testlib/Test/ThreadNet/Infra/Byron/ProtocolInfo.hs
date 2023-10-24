@@ -54,7 +54,7 @@ mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
     PBftParams { pbftSignatureThreshold } = params
 
     protocolInfo :: ProtocolInfo ByronBlock
-    protocolInfo = protocolInfoByron protocolParams
+    protocolInfo = protocolInfoByron protocolParams mempty
 
     blockForging :: [BlockForging m ByronBlock]
     blockForging = blockForgingByron protocolParams

@@ -72,6 +72,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Control.Exception (assert)
 import qualified Data.ByteString.Short as Short
 import           Data.Functor.These (These1 (..))
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
@@ -524,6 +525,7 @@ data instance ProtocolParams (CardanoBlock c) = ProtocolParamsCardano {
   , shelleyBasedProtocolParams    :: ProtocolParamsShelleyBased c
   , cardanoHardForkTriggers       :: CardanoHardForkTriggers
   , cardanoLedgerTransitionConfig :: L.TransitionConfig (L.LatestKnownEra c)
+  , cardanoCheckpoints            :: Map BlockNo (HeaderHash (CardanoBlock c))
   }
 
 type CardanoProtocolParams c = ProtocolParams (CardanoBlock c)
@@ -539,6 +541,7 @@ pattern CardanoProtocolParams ::
   -> ProtocolParams (ShelleyBlock (Praos  c) (ConwayEra  c))
   -> CardanoHardForkTriggers
   -> L.TransitionConfig (L.LatestKnownEra c)
+  -> Map BlockNo (HeaderHash (CardanoBlock c))
   -> CardanoProtocolParams c
 pattern CardanoProtocolParams {
         paramsByron
@@ -551,6 +554,7 @@ pattern CardanoProtocolParams {
       , paramsConway
       , hardForkTriggers
       , ledgerTransitionConfig
+      , checkpoints
       } =
     ProtocolParamsCardano {
         cardanoProtocolParamsPerEra = PerEraProtocolParams
@@ -566,6 +570,7 @@ pattern CardanoProtocolParams {
       , shelleyBasedProtocolParams = paramsShelleyBased
       , cardanoHardForkTriggers = hardForkTriggers
       , cardanoLedgerTransitionConfig = ledgerTransitionConfig
+      , cardanoCheckpoints = checkpoints
       }
 
 {-# COMPLETE CardanoProtocolParams #-}
@@ -618,6 +623,7 @@ protocolInfoCardano paramsCardano
         , triggerHardForkConway
         }
       , ledgerTransitionConfig
+      , checkpoints
       } = paramsCardano
 
     genesisShelley = ledgerTransitionConfig ^. L.tcShelleyGenesisL
@@ -686,6 +692,9 @@ protocolInfoCardano paramsCardano
           K protVerConway :*
           Nil
 
+    checkpointsForBlock :: ConvertRawHash blk => Proxy blk -> Map BlockNo (HeaderHash blk)
+    checkpointsForBlock p = Map.map (fromShortRawHash p . getOneEraHash) checkpoints
+
     -- Byron
 
     ProtocolInfo {
@@ -695,7 +704,7 @@ protocolInfoCardano paramsCardano
           , topLevelConfigBlock    = blockConfigByron
           }
       , pInfoInitLedger = initExtLedgerStateByron
-      } = protocolInfoByron paramsByron
+      } = protocolInfoByron paramsByron (checkpointsForBlock (Proxy @ByronBlock))
 
     partialConsensusConfigByron :: PartialConsensusConfig (BlockProtocol ByronBlock)
     partialConsensusConfigByron = consensusConfigByron
@@ -741,6 +750,7 @@ protocolInfoCardano paramsCardano
           protVerShelley
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
+          (checkpointsForBlock (Proxy @(ShelleyBlock (TPraos c) (ShelleyEra c))))
 
     partialConsensusConfigShelley ::
          PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (ShelleyEra c)))
@@ -764,6 +774,7 @@ protocolInfoCardano paramsCardano
           protVerAllegra
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
+          (checkpointsForBlock (Proxy @(ShelleyBlock (TPraos c) (AllegraEra c))))
 
     partialConsensusConfigAllegra ::
          PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (AllegraEra c)))
@@ -784,6 +795,7 @@ protocolInfoCardano paramsCardano
           protVerMary
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
+          (checkpointsForBlock (Proxy @(ShelleyBlock (TPraos c) (MaryEra c))))
 
     partialConsensusConfigMary ::
          PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (MaryEra c)))
@@ -804,6 +816,7 @@ protocolInfoCardano paramsCardano
           protVerAlonzo
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
+          (checkpointsForBlock (Proxy @(ShelleyBlock (TPraos c) (AlonzoEra c))))
 
     partialConsensusConfigAlonzo ::
          PartialConsensusConfig (BlockProtocol (ShelleyBlock (TPraos c) (AlonzoEra c)))
@@ -824,6 +837,7 @@ protocolInfoCardano paramsCardano
           protVerBabbage
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
+          (checkpointsForBlock (Proxy @(ShelleyBlock (Praos c) (BabbageEra c))))
 
     partialConsensusConfigBabbage ::
          PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) (BabbageEra c)))
@@ -844,6 +858,7 @@ protocolInfoCardano paramsCardano
           protVerConway
           genesisShelley
           (shelleyBlockIssuerVKey <$> credssShelleyBased)
+          (checkpointsForBlock (Proxy @(ShelleyBlock (Praos c) (ConwayEra c))))
 
     partialConsensusConfigConway ::
          PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) (ConwayEra c)))

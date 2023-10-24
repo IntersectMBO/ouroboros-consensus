@@ -60,7 +60,7 @@ class RunNode blk => ProtocolClient blk where
 -- | Run PBFT against the Byron ledger
 instance IOLike m => Protocol m ByronBlockHFC where
   data ProtocolInfoArgs m ByronBlockHFC = ProtocolInfoArgsByron (ProtocolParams Consensus.ByronBlock)
-  protocolInfo (ProtocolInfoArgsByron params) = ( inject $ protocolInfoByron params
+  protocolInfo (ProtocolInfoArgsByron params) = ( inject $ protocolInfoByron params mempty
                                                 , pure . map inject $ blockForgingByron params
                                                 )
 
