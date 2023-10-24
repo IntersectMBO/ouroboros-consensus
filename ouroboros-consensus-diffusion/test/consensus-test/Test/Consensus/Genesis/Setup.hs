@@ -23,6 +23,7 @@ import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Tracer (recordingTracerTVar)
 import Test.Consensus.Genesis.Setup.GenChains
+import Test.Consensus.PeerSimulator.StateView
 
 runTest ::
   (IOLike m, MonadTime m, MonadTimer m) =>
@@ -38,16 +39,17 @@ runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty
 
     mapM_ (traceWith tracer) $ BT.prettyPrint gtBlockTree
 
-    result <- runPointSchedule schedulerConfig genesisTest schedule tracer
+    finalStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
     trace <- unlines <$> getTrace
 
-    let
-      prop = case result of
-        Left exn ->
-          counterexample ("exception: " <> show exn) False
-        Right fragment ->
-          counterexample ("result: " <> condense fragment) (makeProperty fragment)
+    pure
+      $ counterexample trace
+      $ case svChainSyncExceptions finalStateView of
+          [] ->
+            let fragment = svSelectedChain finalStateView
+            in counterexample ("result: " <> condense fragment) (makeProperty fragment)
+          exns ->
+            counterexample ("exceptions: " <> show exns) False
 
-    pure $ counterexample trace prop
     where
       schedulerConfig = SchedulerConfig {enableTimeouts = False}

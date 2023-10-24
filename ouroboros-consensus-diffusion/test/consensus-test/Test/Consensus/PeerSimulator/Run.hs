@@ -5,8 +5,7 @@
 {-# LANGUAGE TypeFamilies        #-}
 
 module Test.Consensus.PeerSimulator.Run (
-    ChainSyncException (..)
-  , SchedulerConfig (..)
+    SchedulerConfig (..)
   , runPointSchedule
   ) where
 
@@ -17,7 +16,6 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
-import           Data.List.NonEmpty (NonEmpty, nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
@@ -34,8 +32,8 @@ import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), MonadDelay (threadDelay),
                      MonadSTM (atomically, retry), MonadThrow (throwIO),
-                     SomeException, StrictTVar, readTVar, readTVarIO,
-                     tryPutTMVar, uncheckedNewTVarM, writeTVar)
+                     StrictTVar, readTVar, readTVarIO, tryPutTMVar,
+                     uncheckedNewTVarM, writeTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (blockPoint)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
@@ -57,6 +55,7 @@ import           Test.Consensus.Network.Driver.Limits.Extras
 import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
 import           Test.Consensus.PeerSimulator.Config
 import           Test.Consensus.PeerSimulator.Resources
+import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
@@ -96,14 +95,6 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
     (return Continue)
     nullTracer
     varCandidate
-
--- | A record to associate an exception thrown by the ChainSync
--- thread with the peer that it was running for.
-data ChainSyncException = ChainSyncException
-       { csePeerId    :: PeerId
-       , cseException :: SomeException
-       }
-    deriving Show
 
 -- | Run a ChainSync protocol for one peer, consisting of a server and client.
 --
@@ -249,7 +240,7 @@ runPointSchedule ::
   GenesisTest ->
   PointSchedule ->
   Tracer m String ->
-  m (Either (NonEmpty ChainSyncException) TestFragH)
+  m StateView
 runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtHonestAsc = asc, gtBlockTree} pointSchedule tracer =
   withRegistry $ \registry -> do
     resources <- makePeersResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
@@ -270,16 +261,19 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtHonestAsc =
     let getCandidates = traverse readTVar candidates
     PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
     runScheduler tracer pointSchedule resources
-    chainSyncExceptions <- collectExceptions (Map.elems chainSyncRess)
-    b <- atomically $ ChainDB.getCurrentChain chainDb
-    pure $ maybe (Right b) Left chainSyncExceptions
+    svChainSyncExceptions <- collectExceptions (Map.elems chainSyncRess)
+    svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
+    pure $ StateView {
+      svSelectedChain,
+      svChainSyncExceptions
+      }
   where
     config = defaultCfg k
 
-    collectExceptions :: [StrictTVar m (Maybe ChainSyncException)] -> m (Maybe (NonEmpty ChainSyncException))
+    collectExceptions :: [StrictTVar m (Maybe ChainSyncException)] -> m [ChainSyncException]
     collectExceptions vars = do
       res <- mapM readTVarIO vars
-      pure $ nonEmpty [ e | Just e <- res, not (isAsyncCancelled e) ]
+      pure $ [ e | Just e <- res, not (isAsyncCancelled e) ]
 
     isAsyncCancelled :: ChainSyncException -> Bool
     isAsyncCancelled e = case fromException $ cseException e of
