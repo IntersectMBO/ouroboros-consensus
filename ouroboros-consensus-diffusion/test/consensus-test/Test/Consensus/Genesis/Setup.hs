@@ -4,11 +4,12 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Test.Consensus.Genesis.Setup
   ( module Test.Consensus.Genesis.Setup.GenChains,
     runTest,
-    runTest'
+    exceptionCounterexample,
   )
 where
 
@@ -25,15 +26,14 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Tracer (recordingTracerTVar)
 import Test.Consensus.Genesis.Setup.GenChains
 import Test.Consensus.PeerSimulator.StateView
-import Test.Consensus.Network.Driver.Limits.Extras (chainSyncNoTimeouts)
 import Ouroboros.Network.Protocol.ChainSync.Codec (ChainSyncTimeout(..))
 
 runTest ::
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m, Testable a) =>
   SchedulerConfig ->
   GenesisTest ->
   PointSchedule ->
-  (StateView -> Property) ->
+  (StateView -> a) ->
   m Property
 runTest schedulerConfig genesisTest schedule makeProperty = do
     (tracer, getTrace) <- recordingTracerTVar
@@ -58,27 +58,12 @@ runTest schedulerConfig genesisTest schedule makeProperty = do
     SchedulerConfig {scChainSyncTimeouts} = schedulerConfig
     GenesisTest {gtSecurityParam, gtHonestAsc, gtGenesisWindow, gtBlockTree} = genesisTest
 
--- | Same as 'runTest' except it fails the test in case of exception and it does
--- not feature any timeouts.
-runTest' ::
-  (IOLike m, MonadTime m, MonadTimer m) =>
-  GenesisTest ->
-  PointSchedule ->
-  (StateView -> Property) ->
-  m Property
-runTest' genesisTest schedule makeProperty =
-  runTest
-    schedulerConfig
-    genesisTest
-    schedule
-    $ \stateView ->
-    case svChainSyncExceptions stateView of
-      [] ->
-        counterexample ("result: " <> condense (svSelectedChain stateView)) $
-          makeProperty stateView
-      exns ->
-        counterexample ("exceptions: " <> show exns) False
-  where
-    schedulerConfig = SchedulerConfig {
-      scChainSyncTimeouts = chainSyncNoTimeouts
-      }
+-- | Print counterexamples if the test result contains exceptions.
+exceptionCounterexample :: Testable a => (StateView -> a) -> StateView -> Property
+exceptionCounterexample makeProperty stateView =
+  case svChainSyncExceptions stateView of
+    [] ->
+      counterexample ("result: " <> condense (svSelectedChain stateView)) $
+        makeProperty stateView
+    exns ->
+      counterexample ("exceptions: " <> show exns) False

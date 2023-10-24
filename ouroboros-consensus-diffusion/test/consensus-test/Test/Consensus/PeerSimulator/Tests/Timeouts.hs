@@ -36,8 +36,8 @@ prop_timeouts :: QC.Gen QC.Property
 prop_timeouts = do
   genesisTest <- genChains 0
 
-  let scChainSyncTimeouts = chainSyncTimeouts slotLength (gtHonestAsc genesisTest)
-      schedulerConfig = SchedulerConfig {scChainSyncTimeouts}
+  let scChainSyncTimeouts = chainSyncTimeouts scSlotLength (gtHonestAsc genesisTest)
+      schedulerConfig = SchedulerConfig {scChainSyncTimeouts, scSlotLength, scSchedule}
 
   let schedule =
         dullSchedule
@@ -51,21 +51,15 @@ prop_timeouts = do
           counterexample ("result: " ++ condense (svSelectedChain stateView)) False
         [exn] ->
           case fromException $ cseException exn of
-            Just (ExceededTimeLimit _) -> counterexample "REVIEW" True
+            Just (ExceededTimeLimit _) -> property True
             _ -> counterexample ("exception: " ++ show exn) False
         exns ->
           counterexample ("exceptions: " ++ show exns) False
 
   where
-    -- FIXME: Should ideally not be hardcoded, especially because it is now
-    -- duplicated between here and within the PeerSimulator.
-    tickDuration :: DiffTime
-    tickDuration = 0.100 -- seconds
 
-    -- FIXME: Should ideally not be hardcoded, especially because it is now
-    -- duplicated between here and within the PeerSimulator.
-    slotLength :: SlotLength
-    slotLength = slotLengthFromSec 20
+    scSlotLength :: SlotLength
+    scSlotLength = slotLengthFromSec 20
 
     -- A schedule that advertises all the points of the chain from the start but
     -- contains just one too many ticks, therefore reaching the timeouts.
@@ -77,9 +71,11 @@ prop_timeouts = do
           blockPoint = BlockPoint tipBlock
           state = Peer HonestPeer $ NodeOnline $ AdvertisedPoints tipPoint headerPoint blockPoint
           tick = Tick { active = state, peers = Peers state Map.empty }
-          maximumNumberOfTicks = fromIntegral $ roundDiffTimeToSeconds $ timeout / tickDuration
+          maximumNumberOfTicks = fromIntegral $ roundDiffTimeToSeconds $ timeout / pscTickDuration scSchedule
       in
       PointSchedule (tick :| replicate maximumNumberOfTicks tick)
 
     roundDiffTimeToSeconds :: DiffTime -> Integer
     roundDiffTimeToSeconds = (`div` 1000000000000) . (+ 500000000000) . diffTimeToPicoseconds
+
+    scSchedule = defaultPointScheduleConfig

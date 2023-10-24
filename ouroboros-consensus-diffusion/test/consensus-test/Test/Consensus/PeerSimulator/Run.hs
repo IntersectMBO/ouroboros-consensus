@@ -6,9 +6,13 @@
 
 module Test.Consensus.PeerSimulator.Run (
     SchedulerConfig (..)
+  , defaultSchedulerConfig
+  , noTimeoutsSchedulerConfig
   , runPointSchedule
   ) where
 
+import           Cardano.Slotting.Time (SlotLength (getSlotLength),
+                     slotLengthFromSec)
 import           Control.Monad.Class.MonadAsync
                      (AsyncCancelled (AsyncCancelled))
 import           Control.Monad.Class.MonadTime (MonadTime)
@@ -58,7 +62,9 @@ import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
                      Peer (Peer), PeerId, PointSchedule (PointSchedule),
-                     TestFragH, Tick (Tick), pointSchedulePeers)
+                     PointScheduleConfig, TestFragH, Tick (Tick),
+                     pointSchedulePeers)
+import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
@@ -72,7 +78,34 @@ data SchedulerConfig =
     -- has a header point that's behind the latest header that another peer has
     -- sent, we need to be able to control or disable them.
     scChainSyncTimeouts :: ChainSyncTimeout
+
+    -- | The duration of a single slot, used by the peer simulator to wait
+    -- between ticks.
+    , scSlotLength      :: SlotLength
+
+    -- | Config shared with point schedule generators.
+    , scSchedule        :: PointScheduleConfig
   }
+
+defaultSchedulerConfig :: PointScheduleConfig -> Asc -> SchedulerConfig
+defaultSchedulerConfig scSchedule asc =
+  SchedulerConfig {
+    scChainSyncTimeouts = chainSyncTimeouts scSlotLength asc,
+    scSlotLength,
+    scSchedule
+  }
+  where
+    scSlotLength = slotLengthFromSec 20
+
+noTimeoutsSchedulerConfig :: PointScheduleConfig -> SchedulerConfig
+noTimeoutsSchedulerConfig scSchedule =
+  SchedulerConfig {
+    scChainSyncTimeouts = chainSyncNoTimeouts,
+    scSlotLength,
+    scSchedule
+  }
+  where
+    scSlotLength = slotLengthFromSec 20
 
 basicChainSyncClient ::
   IOLike m =>
@@ -165,18 +198,19 @@ startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM Share
 -- for new instructions.
 dispatchTick ::
   IOLike m =>
+  SchedulerConfig ->
   Tracer m String ->
   Map PeerId (PeerResources m) ->
   Tick ->
   m ()
-dispatchTick tracer peers Tick {active = Peer pid state} =
+dispatchTick config tracer peers Tick {active = Peer pid state} =
   case peers Map.!? pid of
     Just PeerResources {prChainSync = ChainSyncResources {csrNextState}} -> do
       trace $ "Writing state " ++ condense state
       atomically (tryPutTMVar csrNextState state) >>= \case
         True -> trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
         False -> trace $ "Client for " ++ condense pid ++ " has ceased operation."
-      threadDelay 0.100
+      threadDelay (realToFrac (getSlotLength (scSlotLength config)))
       trace $ condense pid ++ "'s tick is now done."
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
@@ -189,15 +223,16 @@ dispatchTick tracer peers Tick {active = Peer pid state} =
 -- client.
 runScheduler ::
   IOLike m =>
+  SchedulerConfig ->
   Tracer m String ->
   PointSchedule ->
   Map PeerId (PeerResources m) ->
   m ()
-runScheduler tracer (PointSchedule ps) peers = do
+runScheduler config tracer (PointSchedule ps) peers = do
   traceWith tracer "Schedule is:"
   for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
   traceStartOfTimePoetry
-  for_ ps (dispatchTick tracer peers)
+  for_ ps (dispatchTick config tracer peers)
   traceEndOfTimePoetry
   where
     traceStartOfTimePoetry = do
@@ -245,7 +280,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     -- peer fragments than registered clients.
     let getCandidates = traverse readTVar candidates
     PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
-    runScheduler tracer pointSchedule resources
+    runScheduler schedulerConfig tracer pointSchedule resources
     svChainSyncExceptions <- collectExceptions (Map.elems chainSyncRess)
     svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
     pure $ StateView {
