@@ -30,11 +30,12 @@ import Ouroboros.Network.Protocol.ChainSync.Codec (ChainSyncTimeout(..))
 
 runTest ::
   (IOLike m, MonadTime m, MonadTimer m) =>
+  SchedulerConfig ->
   GenesisTest ->
   PointSchedule ->
   (StateView -> Property) ->
   m Property
-runTest genesisTest@GenesisTest {..} schedule makeProperty = do
+runTest schedulerConfig genesisTest schedule makeProperty = do
     (tracer, getTrace) <- recordingTracerTVar
 
     traceWith tracer $ "Security param k = " ++ show gtSecurityParam
@@ -53,12 +54,12 @@ runTest genesisTest@GenesisTest {..} schedule makeProperty = do
     trace <- unlines <$> getTrace
 
     pure $ counterexample trace $ makeProperty finalStateView
-
   where
-    scChainSyncTimeouts = chainSyncNoTimeouts
-    schedulerConfig = SchedulerConfig {scChainSyncTimeouts}
+    SchedulerConfig {scChainSyncTimeouts} = schedulerConfig
+    GenesisTest {gtSecurityParam, gtHonestAsc, gtGenesisWindow, gtBlockTree} = genesisTest
 
--- | Same as 'runTest' except it fails the test in case of exception.
+-- | Same as 'runTest' except it fails the test in case of exception and it does
+-- not feature any timeouts.
 runTest' ::
   (IOLike m, MonadTime m, MonadTimer m) =>
   GenesisTest ->
@@ -67,6 +68,7 @@ runTest' ::
   m Property
 runTest' genesisTest schedule makeProperty =
   runTest
+    schedulerConfig
     genesisTest
     schedule
     $ \stateView ->
@@ -76,3 +78,7 @@ runTest' genesisTest schedule makeProperty =
           makeProperty stateView
       exns ->
         counterexample ("exceptions: " <> show exns) False
+  where
+    schedulerConfig = SchedulerConfig {
+      scChainSyncTimeouts = chainSyncNoTimeouts
+      }
