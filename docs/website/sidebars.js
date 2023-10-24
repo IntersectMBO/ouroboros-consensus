@@ -33,6 +33,7 @@ const sidebars = {
       label: 'For Developers',
       items: [
         'for-developers/index',
+        'for-developers/Glossary',
         'for-developers/ComponentDiagram',
         'for-developers/AbstractProtocol',
         'for-developers/AddingAnEra',
