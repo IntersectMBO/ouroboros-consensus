@@ -13,6 +13,7 @@ import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
+import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
@@ -37,11 +38,11 @@ prop_longRangeAttack = do
   let Classifiers {..} = classifiers genesisTest
 
   pure $ withMaxSuccess 10 $ runSimOrThrow $
-    runTest genesisTest schedule $ \fragment ->
+    runTest' genesisTest schedule $ \StateView{svSelectedChain} ->
         classify genesisWindowAfterIntersection "Full genesis window after intersection"
-        $ existsSelectableAdversary ==> not $ isHonestTestFragH fragment
+        $ existsSelectableAdversary ==> not $ isHonestTestFragH svSelectedChain
         -- TODO
-        -- $ not existsSelectableAdversary ==> immutableTipBeforeFork fragment
+        -- $ not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
   where
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of

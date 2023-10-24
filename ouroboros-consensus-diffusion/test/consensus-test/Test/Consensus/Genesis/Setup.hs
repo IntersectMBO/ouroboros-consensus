@@ -6,8 +6,9 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Consensus.Genesis.Setup
-  ( module Test.Consensus.Genesis.Setup,
-    module Test.Consensus.Genesis.Setup.GenChains
+  ( module Test.Consensus.Genesis.Setup.GenChains,
+    runTest,
+    runTest'
   )
 where
 
@@ -29,11 +30,10 @@ runTest ::
   (IOLike m, MonadTime m, MonadTimer m) =>
   GenesisTest ->
   PointSchedule ->
-  (TestFragH -> Property) ->
+  (StateView -> Property) ->
   m Property
 runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty = do
     (tracer, getTrace) <- recordingTracerTVar
-    -- let tracer = debugTracer
 
     traceWith tracer $ "Honest active slot coefficient: " ++ show gtHonestAsc
 
@@ -42,14 +42,26 @@ runTest genesisTest@GenesisTest {gtBlockTree, gtHonestAsc} schedule makeProperty
     finalStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
     trace <- unlines <$> getTrace
 
-    pure
-      $ counterexample trace
-      $ case svChainSyncExceptions finalStateView of
-          [] ->
-            let fragment = svSelectedChain finalStateView
-            in counterexample ("result: " <> condense fragment) (makeProperty fragment)
-          exns ->
-            counterexample ("exceptions: " <> show exns) False
+    pure $ counterexample trace $ makeProperty finalStateView
 
     where
       schedulerConfig = SchedulerConfig {enableTimeouts = False}
+
+-- | Same as 'runTest' except it fails the test in case of exception.
+runTest' ::
+  (IOLike m, MonadTime m, MonadTimer m) =>
+  GenesisTest ->
+  PointSchedule ->
+  (StateView -> Property) ->
+  m Property
+runTest' genesisTest schedule makeProperty =
+  runTest
+    genesisTest
+    schedule
+    $ \stateView ->
+    case svChainSyncExceptions stateView of
+      [] ->
+        counterexample ("result: " <> condense (svSelectedChain stateView)) $
+          makeProperty stateView
+      exns ->
+        counterexample ("exceptions: " <> show exns) False
