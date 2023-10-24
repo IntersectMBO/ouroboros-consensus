@@ -32,6 +32,7 @@ module Test.Consensus.PointSchedule (
   , NodeState (..)
   , Peer (..)
   , PeerId (..)
+  , Peers (..)
   , PointSchedule (..)
   , PointScheduleConfig (..)
   , ScheduleType (..)
