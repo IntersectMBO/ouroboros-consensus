@@ -35,6 +35,7 @@ module Test.Consensus.PointSchedule (
   , NodeState (..)
   , Peer (..)
   , PeerId (..)
+  , Peers (..)
   , PointSchedule (..)
   , ScheduleType (..)
   , TestFrag
