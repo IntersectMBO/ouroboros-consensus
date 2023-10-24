@@ -227,6 +227,8 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.Run
     Test.Consensus.PeerSimulator.ScheduledChainSyncServer
     Test.Consensus.PeerSimulator.StateView
+    Test.Consensus.PeerSimulator.Tests
+    Test.Consensus.PeerSimulator.Tests.Timeouts
     Test.Consensus.PeerSimulator.Trace
     Test.Consensus.PointSchedule
 
