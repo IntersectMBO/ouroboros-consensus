@@ -5,10 +5,12 @@
 module Test.Consensus.PeerSimulator.Trace (
     mkCdbTracer
   , mkChainSyncClientTracer
+  , traceLinesWith
   , traceUnitWith
   ) where
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
+import           Data.Foldable (traverse_)
 import           Data.Time.Clock (diffTimeToPicoseconds)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
@@ -69,3 +71,10 @@ traceUnitWith tracer unit msg = do
           seconds = (ps `div` 1000000000000) `rem` 60
           minutes = (ps `div` 1000000000000) `quot` 60
        in printf "%02d:%02d.%03d" minutes seconds milliseconds
+
+traceLinesWith ::
+  Applicative m =>
+  Tracer m String ->
+  [String] ->
+  m ()
+traceLinesWith = traverse_ . traceWith

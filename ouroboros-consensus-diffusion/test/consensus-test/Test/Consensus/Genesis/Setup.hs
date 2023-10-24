@@ -27,6 +27,7 @@ import           Test.Util.Tracer (recordingTracerTVar)
 import Test.Consensus.Genesis.Setup.GenChains
 import Test.Consensus.PeerSimulator.StateView
 import Ouroboros.Network.Protocol.ChainSync.Codec (ChainSyncTimeout(..))
+import Test.Consensus.PeerSimulator.Trace (traceLinesWith)
 
 runTest ::
   (IOLike m, MonadTime m, MonadTimer m, Testable a) =>
@@ -38,15 +39,16 @@ runTest ::
 runTest schedulerConfig genesisTest schedule makeProperty = do
     (tracer, getTrace) <- recordingTracerTVar
 
-    traceWith tracer $ "Security param k = " ++ show gtSecurityParam
-    traceWith tracer $ "Honest active slot coefficient asc = " ++ show gtHonestAsc
-    traceWith tracer $ "Genesis window scg = " ++ show gtGenesisWindow
-
-    traceWith tracer $ "SchedulerConfig:"
-    traceWith tracer $ "  ChainSyncTimeouts:"
-    traceWith tracer $ "    canAwait = " ++ show (canAwaitTimeout scChainSyncTimeouts)
-    traceWith tracer $ "    intersect = " ++ show (intersectTimeout scChainSyncTimeouts)
-    traceWith tracer $ "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts)
+    traceLinesWith tracer [
+      "Security param k = " ++ show gtSecurityParam,
+      "Honest active slot coefficient asc = " ++ show gtHonestAsc,
+      "Genesis window scg = " ++ show gtGenesisWindow,
+      "SchedulerConfig:",
+      "  ChainSyncTimeouts:",
+      "    canAwait = " ++ show (canAwaitTimeout scChainSyncTimeouts),
+      "    intersect = " ++ show (intersectTimeout scChainSyncTimeouts),
+      "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts)
+      ]
 
     mapM_ (traceWith tracer) $ BT.prettyPrint gtBlockTree
 
