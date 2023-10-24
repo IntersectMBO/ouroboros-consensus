@@ -30,9 +30,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), MonadDelay (threadDelay),
-                     MonadSTM (atomically, retry), MonadThrow (throwIO),
-                     StrictTVar, readTVar, readTVarIO, tryPutTMVar,
-                     uncheckedNewTVarM, writeTVar)
+                     MonadSTM (atomically, retry), StrictTVar, readTVar,
+                     readTVarIO, tryPutTMVar, uncheckedNewTVarM, writeTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (blockPoint)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
@@ -134,8 +133,7 @@ startChainSyncConnectionThread registry tracer cfg chainDbView fetchClientRegist
               traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of time limit exceeded."
             Nothing ->
               pure ()
-          throwIO exn
-        Right res' -> pure res'
+        Right _ -> pure ()
   pure chainSyncException
 
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
