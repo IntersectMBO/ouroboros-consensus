@@ -130,21 +130,15 @@ instance CanHardFork xs => GetTip (Ticked1 (LedgerState (HardForkBlock xs))) whe
 -------------------------------------------------------------------------------}
 
 newtype FlipTickedLedgerState mk blk = FlipTickedLedgerState {
-  getFlipTickedLedgerState :: (Ticked1 (LedgerState blk) mk)
-  } deriving (Generic)
-
-deriving newtype instance NoThunks (Ticked1 (LedgerState blk) mk)
-                       => NoThunks (FlipTickedLedgerState mk blk)
+    getFlipTickedLedgerState :: Ticked1 (LedgerState blk) mk
+  }
 
 data instance Ticked1 (LedgerState (HardForkBlock xs)) mk =
     TickedHardForkLedgerState {
         tickedHardForkLedgerStateTransition :: !TransitionInfo
       , tickedHardForkLedgerStatePerEra     ::
           !(HardForkState (FlipTickedLedgerState mk) xs)
-      } deriving (Generic)
-
-deriving instance All SingleEraBlock xs
-               => NoThunks (Ticked1 (LedgerState (HardForkBlock xs)) TrackingMK)
+      }
 
 instance CanHardFork xs => IsLedger (LedgerState (HardForkBlock xs)) where
   type LedgerErr (LedgerState (HardForkBlock xs)) = HardForkLedgerError  xs

@@ -28,6 +28,7 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
                      tickChainDepState)
 import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -165,7 +166,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
             cfg
             bcBlockNo
             currentSlot
-            tickedLedgerState
+            (forgetLedgerTables tickedLedgerState)
             txs
             proof
 
