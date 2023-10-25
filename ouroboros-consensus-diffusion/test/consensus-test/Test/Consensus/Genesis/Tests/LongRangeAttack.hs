@@ -38,12 +38,20 @@ prop_longRangeAttack = do
   (genesisTest, schedule) <- genChainsAndSchedule scheduleConfig 1 FastAdversary
   let Classifiers {..} = classifiers genesisTest
 
-  pure $ withMaxSuccess 10 $ runSimOrThrow $
-    runTest (noTimeoutsSchedulerConfig scheduleConfig) genesisTest schedule $ exceptionCounterexample $ \StateView{svSelectedChain} ->
-        classify genesisWindowAfterIntersection "Full genesis window after intersection"
-        $ existsSelectableAdversary ==> not $ isHonestTestFragH svSelectedChain
-        -- TODO
-        -- $ not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
+  -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
+
+  pure $ withMaxSuccess 10 $
+    classify genesisWindowAfterIntersection "Full genesis window after intersection" $
+    existsSelectableAdversary
+    ==>
+    runSimOrThrow $
+      runTest
+        (noTimeoutsSchedulerConfig scheduleConfig)
+        genesisTest
+        schedule
+        $ exceptionCounterexample $ \StateView{svSelectedChain} ->
+            not $ isHonestTestFragH svSelectedChain
+
   where
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of
