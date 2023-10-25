@@ -6,10 +6,10 @@
 
 module Test.Consensus.PeerSimulator.Run (
     SchedulerConfig (..)
+  , debugScheduler
   , defaultSchedulerConfig
   , noTimeoutsSchedulerConfig
   , runPointSchedule
-  , debugScheduler
   ) where
 
 import           Cardano.Slotting.Time (SlotLength (getSlotLength),
@@ -86,9 +86,15 @@ data SchedulerConfig =
 
     -- | Config shared with point schedule generators.
     , scSchedule        :: PointScheduleConfig
-    , scDebug :: Bool
+
+    -- | If 'True', 'Test.Consensus.Genesis.Setup.runTest' will enable full
+    -- tracing during the test.
+    --
+    -- Use 'debugScheduler' to toggle it conveniently.
+    , scDebug           :: Bool
   }
 
+-- | Determine timeouts based on the 'Asc' and a slot length of 20 seconds.
 defaultSchedulerConfig :: PointScheduleConfig -> Asc -> SchedulerConfig
 defaultSchedulerConfig scSchedule asc =
   SchedulerConfig {
@@ -100,6 +106,7 @@ defaultSchedulerConfig scSchedule asc =
   where
     scSlotLength = slotLengthFromSec 20
 
+-- | Config with no timeouts and a slot length of 20 seconds.
 noTimeoutsSchedulerConfig :: PointScheduleConfig -> SchedulerConfig
 noTimeoutsSchedulerConfig scSchedule =
   SchedulerConfig {
@@ -111,9 +118,9 @@ noTimeoutsSchedulerConfig scSchedule =
   where
     scSlotLength = slotLengthFromSec 20
 
+-- | Enable debug tracing during a scheduler test.
 debugScheduler :: SchedulerConfig -> SchedulerConfig
-
-debugScheduler conf = conf {scDebug = True  }
+debugScheduler conf = conf { scDebug = True }
 
 basicChainSyncClient ::
   IOLike m =>

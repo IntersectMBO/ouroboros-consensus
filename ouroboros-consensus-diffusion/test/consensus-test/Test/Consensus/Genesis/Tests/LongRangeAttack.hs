@@ -13,7 +13,7 @@ import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig, debugScheduler)
+import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
@@ -27,8 +27,12 @@ import           Test.Util.TestBlock (TestBlock, unTestHash)
 tests :: TestTree
 tests =
   testGroup "long range attack" [
-    testProperty "one adversary" (prop_longRangeAttack 1 [10]),
-    testProperty "three adversaries" (prop_longRangeAttack 1 [2, 5, 10])
+    testProperty "one adversary" (prop_longRangeAttack 1 [10])
+    -- TODO we don't have useful classification logic for multiple adversaries yet – if a selectable
+    -- adversary is slow, it might be discarded before it reaches critical length because the faster
+    -- ones have served k blocks off the honest chain if their fork anchor is further down the line.
+    -- ,
+    -- testProperty "three adversaries" (prop_longRangeAttack 1 [2, 5, 10])
   ]
 
 genChainsAndSchedule :: PointScheduleConfig -> Word -> ScheduleType -> QC.Gen (GenesisTest, PointSchedule)
@@ -46,7 +50,7 @@ prop_longRangeAttack honestFreq advFreqs = do
 
   pure $ withMaxSuccess 10 $
     classify genesisWindowAfterIntersection "Full genesis window after intersection" $
-    existsSelectableAdversary
+    allAdversariesSelectable
     ==>
     runSimOrThrow $
       runTest

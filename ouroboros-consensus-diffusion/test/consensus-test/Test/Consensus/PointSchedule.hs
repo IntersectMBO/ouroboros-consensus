@@ -443,7 +443,23 @@ banalPointSchedule blockTree =
 -- This is implemented by initializing each peer's schedule with 'banalStates' (which advances by
 -- one block per tick) and assigning interval lengths to each peer tick based on the frequency
 -- config in the first argument, then sorting the resulting absolute times.
-frequencyPointSchedule :: Peers Int -> BlockTree TestBlock -> Maybe PointSchedule
+frequencyPointSchedule ::
+  -- | A set of relative frequencies.
+  -- If peer A has a value of @2@ and peer B has @6@, peer B will get three turns in the schedule
+  -- for each turn of A.
+  --
+  -- Given @Peers { honest = 1, others = [("A", 2), ("B", 10)] }@, we get a schedule like
+  --
+  -- @BBBBABBBBBHAB BBBBABBBBBHAB...@
+  --
+  -- with the intermediate interval representation:
+  --
+  -- B(1/10) B(2/10) B(3/10) B(4/10) A(1/2) B(5/10) B(6/10) B(7/10) B(8/10) B(9/10) H(1/1) (2/2) B(10/10)
+  --
+  -- With the order of equal values determined by the @PeerId@s.
+  Peers Int ->
+  BlockTree TestBlock ->
+  Maybe PointSchedule
 frequencyPointSchedule freqs blockTree =
   peer2Point freqs (PeerSchedule (fmap snd <$> sortOn (fst . value) catted))
   where

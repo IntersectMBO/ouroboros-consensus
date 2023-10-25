@@ -28,6 +28,8 @@ import Test.Consensus.Genesis.Setup.GenChains
 import Test.Consensus.PeerSimulator.StateView
 import Ouroboros.Network.Protocol.ChainSync.Codec (ChainSyncTimeout(..))
 import Test.Consensus.PeerSimulator.Trace (traceLinesWith)
+import Data.Foldable (for_)
+import Test.Consensus.BlockTree (allFragments)
 
 runTest ::
   (IOLike m, MonadTime m, MonadTimer m, Testable a) =>
@@ -39,6 +41,7 @@ runTest ::
 runTest schedulerConfig genesisTest schedule makeProperty = do
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
+    for_ (allFragments gtBlockTree) \ bt -> traceWith tracer (condense bt)
 
     traceLinesWith tracer [
       "Security param k = " ++ show gtSecurityParam,
