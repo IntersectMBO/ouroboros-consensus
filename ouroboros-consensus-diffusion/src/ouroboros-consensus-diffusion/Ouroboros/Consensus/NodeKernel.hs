@@ -283,9 +283,9 @@ forkBlockForging IS{..} blockForging =
         -- Normally this will be the current block at the tip, but it may
         -- be the /previous/ block, if there were multiple slot leaders
         BlockContext{bcBlockNo, bcPrevPoint} <- do
-          eBlkCtx <- lift $ atomically $
+          eBlkCtx <- lift $
             mkCurrentBlockContext currentSlot
-                <$> ChainDB.getCurrentChain chainDB
+                <$> ChainDB.getCurrentChainIO chainDB
           case eBlkCtx of
             Right blkCtx -> return blkCtx
             Left failure -> do

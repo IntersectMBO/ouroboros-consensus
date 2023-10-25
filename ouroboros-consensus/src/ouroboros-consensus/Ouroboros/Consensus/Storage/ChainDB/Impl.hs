@@ -204,6 +204,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       let chainDB = API.ChainDB
             { addBlockAsync         = getEnv2    h ChainSel.addBlockAsync
             , getCurrentChain       = getEnvSTM  h Query.getCurrentChain
+            , getCurrentChainIO     = getEnv     h Query.getCurrentChainIO
             , getLedgerDB           = getEnvSTM  h Query.getLedgerDB
             , getTipBlock           = getEnv     h Query.getTipBlock
             , getTipHeader          = getEnv     h Query.getTipHeader

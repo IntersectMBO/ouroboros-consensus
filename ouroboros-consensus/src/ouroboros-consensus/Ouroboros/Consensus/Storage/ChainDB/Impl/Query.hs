@@ -2,6 +2,7 @@
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE MultiWayIf          #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
@@ -11,6 +12,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
     -- * Queries
     getBlockComponent
   , getCurrentChain
+  , getCurrentChainIO
   , getIsFetched
   , getIsInvalidBlock
   , getIsValid
@@ -45,6 +47,26 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin)
 
+getCurrentChain
+  :: forall m blk.
+     ( IOLike m
+     , HasHeader (Header blk)
+     , ConsensusProtocol (BlockProtocol blk)
+     )
+  => ChainDbEnv m blk
+  -> STM m (AnchoredFragment (Header blk))
+getCurrentChain = getCurrentChain' readTVar
+
+getCurrentChainIO
+  :: forall m blk.
+     ( IOLike m
+     , HasHeader (Header blk)
+     , ConsensusProtocol (BlockProtocol blk)
+     )
+  => ChainDbEnv m blk
+  -> m (AnchoredFragment (Header blk))
+getCurrentChainIO = getCurrentChain' readTVarIO
+
 -- | Return the last @k@ headers.
 --
 -- While the in-memory fragment ('cdbChain') might temporarily be longer than
@@ -60,16 +82,17 @@ import           Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin)
 -- In the latter case, we don't take blocks already in the ImmutableDB into
 -- account, as we know they /must/ have been \"immutable\" at some point, and,
 -- therefore, /must/ still be \"immutable\".
-getCurrentChain
-  :: forall m blk.
-     ( IOLike m
+getCurrentChain'
+  :: forall m n blk.
+     ( Functor n
      , HasHeader (Header blk)
      , ConsensusProtocol (BlockProtocol blk)
      )
-  => ChainDbEnv m blk
-  -> STM m (AnchoredFragment (Header blk))
-getCurrentChain CDB{..} =
-    AF.anchorNewest k <$> readTVar cdbChain
+  => (forall a. StrictTVar m a -> n a)
+  -> ChainDbEnv m blk
+  -> n (AnchoredFragment (Header blk))
+getCurrentChain' readTVar' CDB{..} =
+    AF.anchorNewest k <$> readTVar' cdbChain
   where
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 
