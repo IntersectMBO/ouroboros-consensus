@@ -712,7 +712,6 @@ To focus on the salient ideas of this document, we've put all the derivations of
 >   instance NoThunks (Header BlockC)
 > deriving via OnlyCheckWhnfNamed "LedgerC" (LedgerState BlockC mk)
 >   instance NoThunks (LedgerState BlockC mk)
-> deriving instance NoThunks (Ticked1 (LedgerState BlockC) mk)
 
 Appendix: UTxO-HD features
 ==========================

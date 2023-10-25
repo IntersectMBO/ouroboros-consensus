@@ -422,10 +422,6 @@ data instance Ticked1 (LedgerState (ShelleyBlock proto era)) mk = TickedShelleyL
     }
   deriving (Generic)
 
-deriving instance ( ShelleyBasedEra era
-                  , NoThunks (mk (SL.TxIn (EraCrypto era)) (Core.TxOut era))
-                  ) => NoThunks (Ticked1 (LedgerState (ShelleyBlock proto era)) mk)
-
 untickedShelleyLedgerTipPoint ::
      TickedLedgerState (ShelleyBlock proto era) mk
   -> Point (ShelleyBlock proto era)

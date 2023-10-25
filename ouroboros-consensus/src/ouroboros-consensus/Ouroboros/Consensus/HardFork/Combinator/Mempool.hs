@@ -110,7 +110,6 @@ type ComposedReapplyTxsResult xs =
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
-         , NoThunks (Ticked1 (LedgerState (HardForkBlock xs)) TrackingMK)
          ) => LedgerSupportsMempool (HardForkBlock xs) where
   applyTx = applyHelper ModeApply
 

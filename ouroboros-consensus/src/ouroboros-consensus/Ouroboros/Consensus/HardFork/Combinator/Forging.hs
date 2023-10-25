@@ -281,12 +281,12 @@ hardForkCheckCanForge blockForging
 -- This follows from the postcondition of 'check' and the fact that the ticked
 -- 'ChainDepState' and ticked 'LedgerState' are from the same era.
 hardForkForgeBlock ::
-     forall m xs mk empty. (CanHardFork xs, Monad m)
+     forall m xs empty. (CanHardFork xs, Monad m)
   => OptNP empty (BlockForging m) xs
   -> TopLevelConfig (HardForkBlock xs)
   -> BlockNo
   -> SlotNo
-  -> TickedLedgerState (HardForkBlock xs) mk
+  -> TickedLedgerState (HardForkBlock xs) EmptyMK
   -> [Validated (GenTx (HardForkBlock xs))]
   -> HardForkIsLeader xs
   -> m (HardForkBlock xs)
@@ -353,7 +353,7 @@ hardForkForgeBlock blockForging
       -> Product
            (Product
               WrapIsLeader
-              (FlipTickedLedgerState mk))
+              (FlipTickedLedgerState EmptyMK))
            ([] :.: WrapValidatedGenTx)
            blk
       -> m blk

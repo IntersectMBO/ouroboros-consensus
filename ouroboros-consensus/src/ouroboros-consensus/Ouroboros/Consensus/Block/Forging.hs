@@ -141,11 +141,11 @@ data BlockForging m blk = BlockForging {
       -- even when used as part of the hard fork combinator.
       --
       -- PRECONDITION: 'checkCanForge' returned @Right ()@.
-    , forgeBlock :: forall mk.
+    , forgeBlock ::
            TopLevelConfig blk
         -> BlockNo                      -- Current block number
         -> SlotNo                       -- Current slot number
-        -> TickedLedgerState blk mk     -- Current ledger state
+        -> TickedLedgerState blk EmptyMK     -- Current ledger state
         -> [Validated (GenTx blk)]      -- Contents of the mempool
         -> IsLeader (BlockProtocol blk) -- Proof we are leader
         -> m blk

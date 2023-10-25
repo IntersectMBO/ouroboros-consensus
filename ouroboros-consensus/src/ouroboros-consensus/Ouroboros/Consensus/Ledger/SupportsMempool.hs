@@ -24,7 +24,6 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.IOLike
 
 -- | Generalized transaction
@@ -65,7 +64,6 @@ data WhetherToIntervene
 class ( UpdateLedger blk
       , NoThunks (GenTx blk)
       , NoThunks (Validated (GenTx blk))
-      , NoThunks (Ticked1 (LedgerState blk) TrackingMK)
       , Show (GenTx blk)
       , Show (Validated (GenTx blk))
       , Show (ApplyTxErr blk)

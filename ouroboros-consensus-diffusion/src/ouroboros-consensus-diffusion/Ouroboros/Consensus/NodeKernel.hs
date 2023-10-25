@@ -53,6 +53,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import           Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.Run
@@ -426,7 +427,7 @@ forkBlockForging IS{..} blockForging =
                            cfg
                            bcBlockNo
                            currentSlot
-                           tickedLedgerState
+                           (forgetLedgerTables tickedLedgerState)
                            txs
                            proof
 

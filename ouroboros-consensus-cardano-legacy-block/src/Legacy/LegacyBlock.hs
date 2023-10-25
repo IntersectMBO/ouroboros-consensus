@@ -239,7 +239,6 @@ instance NodeInitStorage blk => NodeInitStorage (LegacyBlock blk) where
 
 instance ( LedgerSupportsMempool blk
          , ApplyBlock (LedgerState (LegacyBlock blk)) (LegacyBlock blk)
-         , NoThunks (Ticked1 (LedgerState blk) EmptyMK)
          ) => LedgerSupportsMempool (LegacyBlock blk) where
   txInvariant :: GenTx (LegacyBlock blk) -> Bool
   txInvariant = txInvariant . coerce
@@ -438,7 +437,6 @@ instance ( HasPartialLedgerConfig blk
 
 instance ( SingleEraBlock blk
          , ApplyBlock (LedgerState (LegacyBlock blk)) (LegacyBlock blk)
-         , NoThunks (Ticked1 (LedgerState blk) EmptyMK)
          , BlockSupportsLedgerQuery (LegacyBlock blk)
          ) => SingleEraBlock (LegacyBlock blk) where
   singleEraTransition ::
@@ -525,9 +523,6 @@ newtype instance Ticked1 (LedgerState (LegacyBlock blk)) mk = TickedLegacyLedger
     getTickedLegacyLedgerState :: Ticked1 (LedgerState blk) EmptyMK
   }
   deriving (Generic)
-
-deriving anyclass instance NoThunks (Ticked1 (LedgerState blk) EmptyMK)
-                        => NoThunks (Ticked1 (LedgerState (LegacyBlock blk)) mk)
 
 {-------------------------------------------------------------------------------
   LedgerState: instances

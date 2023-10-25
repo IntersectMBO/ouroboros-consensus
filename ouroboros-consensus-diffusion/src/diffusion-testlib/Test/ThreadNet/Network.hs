@@ -881,7 +881,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                    cfg'
                    currentBno
                    currentSlot
-                   tickedLdgSt
+                   (forgetLedgerTables tickedLdgSt)
                    txs
                    prf
               Just forgeEbbEnv -> do
@@ -918,7 +918,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                            cfg'
                            currentBno
                            currentSlot
-                           tickedLdgSt'
+                           (forgetLedgerTables tickedLdgSt')
                            txs
                            prf
 
