@@ -256,7 +256,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     :: Set (SL.Credential 'ColdCommitteeRole (EraCrypto era) )
     -> Set (SL.Credential 'HotCommitteeRole (EraCrypto era))
     -> Set SL.MemberStatus
-    -> BlockQuery (ShelleyBlock proto era) (SL.CommitteeMembersState (EraCrypto era))
+    -> BlockQuery (ShelleyBlock proto era) (Maybe (SL.CommitteeMembersState (EraCrypto era)))
 
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
