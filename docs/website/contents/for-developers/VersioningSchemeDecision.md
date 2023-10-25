@@ -574,7 +574,7 @@ TODO discuss how to maintain the extra `.0` component, including a risk assessme
   A typo in your commit message, forgetting to the annotation in your commit message, etc could all lead to surprises.
   However, its clean specification supplies good inspiration for a human-friendly checklist.
 
-- We realized the correspondence (obvious in hindsight) with the maintenance of changelogs when reviewing the process documented at https://github.com/input-output-hk/plutus/blob/master/doc/read-the-docs-site/RELEASE.adoc, especially the scripts.
+- We realized the correspondence (obvious in hindsight) with the maintenance of changelogs when reviewing the process documented at https://github.com/input-output-hk/plutus/blob/master/RELEASE.adoc, especially the scripts.
 
 
 
