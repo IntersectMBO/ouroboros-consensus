@@ -38,9 +38,10 @@ import           Text.Printf (printf)
 --
 -- INVARIANT: @btbFull == fromJust $ AF.join btbPrefix btbSuffix@.
 data BlockTreeBranch blk = BlockTreeBranch {
-    btbPrefix :: AF.AnchoredFragment blk,
-    btbSuffix :: AF.AnchoredFragment blk,
-    btbFull   :: AF.AnchoredFragment blk
+    btbPrefix      :: AF.AnchoredFragment blk,
+    btbSuffix      :: AF.AnchoredFragment blk,
+    btbTrunkSuffix :: AF.AnchoredFragment blk,
+    btbFull        :: AF.AnchoredFragment blk
   }
   deriving (Show)
 
@@ -83,7 +84,7 @@ mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 -- block in common with an existing branch.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
 addBranch branch bt = do
-  (_, btbPrefix, _, btbSuffix) <- AF.intersect (btTrunk bt) branch
+  (btbPrefix, _, btbTrunkSuffix, btbSuffix) <- AF.intersect (btTrunk bt) branch
   -- NOTE: We could use the monadic bind for @Maybe@ here but we would rather
   -- catch bugs quicker.
   let btbFull = fromJust $ AF.join btbPrefix btbSuffix
