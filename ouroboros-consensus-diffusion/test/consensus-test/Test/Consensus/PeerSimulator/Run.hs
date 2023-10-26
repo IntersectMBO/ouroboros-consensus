@@ -257,10 +257,11 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     let getCandidates = traverse readTVar candidates
     PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
 
-    -- Scheduler main loop. It runs the given point schedule It returns a final
-    -- state view.
-    let runScheduler :: PointSchedule -> m StateView
-        runScheduler pointSchedule@PointSchedule{ticks} = do
+    -- Scheduler main loop. It keeps track of the point schedule ran so far and
+    -- of the point schedule to be ran. It keeps extending the point schedule
+    -- for as long as 'scExtender' tells it to. It returns a final state view.
+    let runSchedulerExtending :: Maybe PointSchedule -> PointSchedule -> m StateView
+        runSchedulerExtending pastPointSchedule pointSchedule@PointSchedule{ticks} = do
           -- Run the given point schedule: iterate over its ticks, sending each
           -- tick to the associated peer in turn, giving each peer a chunk of
           -- computation time, sequentially, until it satisfies the conditions
@@ -269,21 +270,23 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
           traceWith tracer "Schedule is:"
           for_ ticks  $ \tick -> traceWith tracer $ "  " ++ condense tick
           for_ ticks (dispatchTick schedulerConfig tracer resources)
-          -- Build a state view. This allows inspecting the point schedule ran
-          -- as well as the state of various elements of the peer simulator.
-          -- This will be returned to the tests.
+          -- Build a state view. This allows inspecting the run so far. This
+          -- will be passed to the point schedule extender or returned to the tests.
           svChainSyncExceptions <- collectExceptions (Map.elems chainSyncRess)
           svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
-          let svPointSchedule = pointSchedule
+          let svPointSchedule = maybe pointSchedule (<> pointSchedule) pastPointSchedule
               stateView = StateView {
                 svSelectedChain,
                 svChainSyncExceptions,
                 svPointSchedule
                 }
-          pure stateView
+          -- Extend and loop or return.
+          case scExtender schedulerConfig stateView of
+            Nothing -> pure stateView
+            Just futurePointSchedule -> runSchedulerExtending (Just svPointSchedule) futurePointSchedule
 
     traceStartOfTimePoetry
-    finalStateView <- runScheduler initialPointSchedule
+    finalStateView <- runSchedulerExtending Nothing initialPointSchedule
     traceEndOfTimePoetry
     pure finalStateView
   where
