@@ -80,7 +80,7 @@ mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 -- block in common with an existing branch.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
 addBranch branch BlockTree{..} = do
-  (_, btbPrefix, btbTrunkSuffix, btbSuffix) <- AF.intersect btTrunk branch
+  (btbPrefix, _, btbTrunkSuffix, btbSuffix) <- AF.intersect btTrunk branch
   -- NOTE: We could use the monadic bind for @Maybe@ here but we would rather
   -- catch bugs quicker.
   let btbFull = fromJust $ AF.join btbPrefix btbSuffix
