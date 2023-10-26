@@ -77,7 +77,7 @@ mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 -- the trunk.
 --
 -- FIXME: we should enforce that the new branch' suffix does not contain any
--- block in common with an existingbranch.
+-- block in common with an existing branch.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
 addBranch branch BlockTree{..} = do
   (_, btbPrefix, btbTrunkSuffix, btbSuffix) <- AF.intersect btTrunk branch
