@@ -68,7 +68,7 @@ prop_rollback wantRollback = do
 
     -- | Whether it is possible to roll back from the trunk after having served
     -- it fully, that is whether there is an alternative chain that forks of the
-    -- trunk less than 'k' blocks from the tip and that is longer than the
+    -- trunk no more than 'k' blocks from the tip and that is longer than the
     -- trunk.
     --
     -- PRECONDITION: Block tree with exactly one alternative chain, otherwise
