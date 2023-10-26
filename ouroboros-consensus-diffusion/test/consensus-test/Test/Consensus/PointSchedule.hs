@@ -47,6 +47,7 @@ module Test.Consensus.PointSchedule (
   , banalStates
   , defaultPointScheduleConfig
   , genSchedule
+  , mkPeers
   , onlyHonestWithMintingPointSchedule
   , peersOnlyHonest
   , pointSchedulePeers
@@ -54,7 +55,7 @@ module Test.Consensus.PointSchedule (
 
 import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)
-import           Data.List (mapAccumL, transpose)
+import           Data.List (mapAccumL, sortOn, transpose)
 import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -140,7 +141,7 @@ instance Condense AdvertisedPoints where
 --
 -- REVIEW: Is that necessary/useful?
 data NodeState =
-  -- | The peer is online and advertise the given points.
+  -- | The peer is online and advertises the given points.
   NodeOnline AdvertisedPoints
   |
   -- | The peer should not respond to messages.
@@ -180,6 +181,13 @@ data Peer a =
 
 instance Functor Peer where
   fmap f Peer {name, value} = Peer {name, value = f value}
+
+instance Foldable Peer where
+  foldr step z (Peer _ a) = step a z
+
+instance Traversable Peer where
+  sequenceA (Peer name fa) =
+    Peer name <$> fa
 
 instance Condense a => Condense (Peer a) where
   condense Peer {name, value} = condense name ++ ": " ++ condense value
@@ -289,6 +297,22 @@ pointSchedulePeers :: PointSchedule -> NonEmpty PeerId
 pointSchedulePeers PointSchedule{ticks = Tick {peers} :| _} =
   getPeerIds peers
 
+-- | Convert 'Peers' to a list of 'Peer'.
+peersList :: Peers a -> NonEmpty (Peer a)
+peersList Peers {honest, others} =
+  honest :| Map.elems others
+
+-- | Construct 'Peers' from values, adding adversary names based on the default schema.
+-- A single adversary gets the ID @adversary@, multiple get enumerated as @adversary N@.
+mkPeers :: a -> [a] -> Peers a
+mkPeers h as =
+  Peers (Peer HonestPeer h) (Map.fromList (mkPeer <$> advs as))
+  where
+    mkPeer (pid, a) = (pid, Peer pid a)
+    advs [a] = [("adversary", a)]
+    advs _   = zip enumAdvs as
+    enumAdvs = (\ n -> PeerId ("adversary " ++ show n)) <$> [1 :: Int ..]
+
 ----------------------------------------------------------------------------------------------------
 -- Conversion to 'PointSchedule'
 ----------------------------------------------------------------------------------------------------
@@ -312,7 +336,7 @@ pointSchedule ticks = PointSchedule <$> nonEmpty ticks
 --   'Tick' as a new list.
 --   We discard the final accumulator and pass the new list of 'Tick's to 'pointSchedule', which
 --   ensures that the schedule is nonempty, and returns 'Nothing' otherwise.
-peer2Point :: Peers TestFrag -> PeerSchedule -> Maybe PointSchedule
+peer2Point :: Peers a -> PeerSchedule -> Maybe PointSchedule
 peer2Point ps (PeerSchedule n) =
   pointSchedule (snd (mapAccumL step initial n))
   where
@@ -336,13 +360,6 @@ peer2Point ps (PeerSchedule n) =
 -- Folding functions
 ----------------------------------------------------------------------------------------------------
 
--- | Fold a 'Peers' by applying the second argument to the honest 'Peer' as the initial
--- accumulator and applying the first argument to the accumulator and each 'Peer' in the
--- 'others' 'Map'.
-foldHPeers :: (b -> Peer a -> b) -> (Peer a -> b) -> Peers a -> b
-foldHPeers adv hon Peers {honest, others} =
-  Map.foldl' adv (hon honest) others
-
 -- | Combine two 'Peers' by creating tuples of the two honest 'Peer's and of each pair
 -- of 'others' with the same 'PeerId', dropping any 'Peer' that is present in only one
 -- of the 'Map's.
@@ -354,28 +371,6 @@ zipPeers a b =
   }
   where
     zp p1 p2 = Peer (name p1) (value p1, value p2)
-
-type PSTrans = PeerId -> TestFrag -> PeerSchedule -> PeerSchedule
-
--- | Generate a 'PeerSchedule' from a set of fragments and a set of transformations.
---
--- The schedule is initialized by applying the transformation for the honest peer to the honest
--- fragment.
--- Then, it folds over all adversarial peers and applies each peer's transformation to the
--- accumulator and the peer's fragment.
-foldGenPeers ::
-  Peers TestFrag ->
-  Peers PSTrans ->
-  PeerSchedule
-foldGenPeers frags gen =
-  foldHPeers apA apH zp
-  where
-    zp = zipPeers frags gen
-
-    apH :: Peer (TestFrag, PSTrans) -> PeerSchedule
-    apH (Peer i (frag, f)) = f i frag (PeerSchedule [])
-
-    apA z (Peer i (frag, f)) = f i frag z
 
 ----------------------------------------------------------------------------------------------------
 -- Schedule generators
@@ -421,11 +416,7 @@ balanced states =
 
     -- Sequence containing the first state of all the nodes in order, then the
     -- second in order, etc.
-    activeSeq = concat $ transpose $ seqPeer (honest states) : (seqPeer <$> Map.elems (others states))
-
-    seqPeer :: Peer [a] -> [Peer a]
-    seqPeer Peer {name, value} =
-      Peer name <$> value
+    activeSeq = concat $ transpose $ sequenceA (honest states) : (sequenceA <$> Map.elems (others states))
 
     -- Initial state where all the peers are offline.
     initial = Tick {active = initialH, peers = Peers initialH ((NodeOffline <$) <$> others states)}
@@ -449,41 +440,44 @@ banalPointSchedule blockTree =
 -- The LoE is only resolved when all peers with forks at that block have been disconnected from,
 -- in particular due to a decision based on the Genesis density criterion.
 --
--- This is implemented by initializing the schedule to contain only the honest chain, then folding
--- over the adversaries and inserting ten ticks before each honest tick.
--- It only makes sense when there's a single adversary – otherwise, each subsequent adversary will
--- be ten times as fast as the previous one.
---
--- It uses 'banalStates' to convert each fragment to a schedule (which advances by one block per
--- tick).
-fastAdversaryPointSchedule ::
+-- This is implemented by initializing each peer's schedule with 'banalStates' (which advances by
+-- one block per tick) and assigning interval lengths to each peer tick based on the frequency
+-- config in the first argument, then sorting the resulting absolute times.
+frequencyPointSchedule ::
+  -- | A set of relative frequencies.
+  -- If peer A has a value of @2@ and peer B has @6@, peer B will get three turns in the schedule
+  -- for each turn of A.
+  --
+  -- Given @Peers { honest = 1, others = [("A", 2), ("B", 10)] }@, we get a schedule like
+  --
+  -- @BBBBABBBBBHAB BBBBABBBBBHAB...@
+  --
+  -- with the intermediate interval representation:
+  --
+  -- B(1/10) B(2/10) B(3/10) B(4/10) A(1/2) B(5/10) B(6/10) B(7/10) B(8/10) B(9/10) H(1/1) (2/2) B(10/10)
+  --
+  -- With the order of equal values determined by the @PeerId@s.
+  Peers Int ->
   BlockTree TestBlock ->
   Maybe PointSchedule
-fastAdversaryPointSchedule blockTree =
-  peer2Point frags (foldGenPeers frags trans)
+frequencyPointSchedule freqs blockTree =
+  peer2Point freqs (PeerSchedule (fmap snd <$> sortOn (fst . value) catted))
   where
+    catted = sequenceA =<< toList (peersList intvals)
+
+    intvals = uncurry mkIntvals <$> zipPeers freqs states
+
+    mkIntvals freq ss = zip (peerIntervals (length ss) freq) ss
+
+    states = banalStates <$> frags
+
     frags = blockTreePeers blockTree
 
-    -- These transformations are applied to the initial empty schedule in turn (first the honest
-    -- one, then the adversaries in order of their names.) by 'foldGenPeers'.
-    trans :: Peers PSTrans
-    trans = Peers {
-      honest = Peer HonestPeer (\ _ frag _ -> PeerSchedule (Peer HonestPeer <$> banalStates frag)),
-      others = (transOther <$) <$> others frags
-    }
-
-    transOther :: PSTrans
-    transOther i frag (PeerSchedule z) =
-      PeerSchedule (concat (snd (mapAccumL step states z)))
+    peerIntervals :: Int -> Int -> [Double]
+    peerIntervals count freq =
+      (* intvalLen) <$> [1 .. fromIntegral count]
       where
-        states :: [NodeState]
-        states = banalStates frag
-
-        step :: [NodeState] -> Peer NodeState -> ([NodeState], [Peer NodeState])
-        step rest p@(Peer HonestPeer _)
-          | let (pre, post) = splitAt 10 rest
-          = (post, p : (Peer i <$> pre))
-        step rest p = (rest, [p])
+        intvalLen = 1 / fromIntegral freq
 
 -- | Generate a point schedule that consist of a single tick in which the honest peer advertises
 -- its entire chain immediately.
@@ -566,7 +560,7 @@ splitFragmentAtSlotNo _ (Empty anchor) =
 
 -- | Encodes the different scheduling styles for use with quickcheck generators.
 data ScheduleType =
-  FastAdversary
+  Frequencies (Peers Int)
   |
   Banal
   |
@@ -589,6 +583,6 @@ data GenesisTest = GenesisTest {
 -- The first argument determines the scheduling style.
 genSchedule :: PointScheduleConfig -> ScheduleType -> BlockTree TestBlock -> Maybe PointSchedule
 genSchedule _ = \case
-  FastAdversary -> fastAdversaryPointSchedule
+  Frequencies fs -> frequencyPointSchedule fs
   Banal -> banalPointSchedule
   OnlyHonest -> onlyHonestPointSchedule

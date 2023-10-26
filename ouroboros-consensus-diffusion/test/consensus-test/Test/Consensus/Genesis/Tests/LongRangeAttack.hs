@@ -25,7 +25,15 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, unTestHash)
 
 tests :: TestTree
-tests = testProperty "long range attack" prop_longRangeAttack
+tests =
+  testGroup "long range attack" [
+    testProperty "one adversary" (prop_longRangeAttack 1 [10])
+    -- TODO we don't have useful classification logic for multiple adversaries yet – if a selectable
+    -- adversary is slow, it might be discarded before it reaches critical length because the faster
+    -- ones have served k blocks off the honest chain if their fork anchor is further down the line.
+    -- ,
+    -- testProperty "three adversaries" (prop_longRangeAttack 1 [2, 5, 10])
+  ]
 
 genChainsAndSchedule :: PointScheduleConfig -> Word -> ScheduleType -> QC.Gen (GenesisTest, PointSchedule)
 genChainsAndSchedule scheduleConfig numAdversaries scheduleType =
@@ -33,16 +41,16 @@ genChainsAndSchedule scheduleConfig numAdversaries scheduleType =
     gt <- genChains numAdversaries
     pure $ ((gt,) <$> genSchedule scheduleConfig scheduleType (gtBlockTree gt))
 
-prop_longRangeAttack :: QC.Gen QC.Property
-prop_longRangeAttack = do
-  (genesisTest, schedule) <- genChainsAndSchedule scheduleConfig 1 FastAdversary
+prop_longRangeAttack :: Int -> [Int] -> QC.Gen QC.Property
+prop_longRangeAttack honestFreq advFreqs = do
+  (genesisTest, schedule) <- genChainsAndSchedule scheduleConfig (fromIntegral (length advFreqs)) (Frequencies freqs)
   let Classifiers {..} = classifiers genesisTest
 
   -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
 
   pure $ withMaxSuccess 10 $
     classify genesisWindowAfterIntersection "Full genesis window after intersection" $
-    existsSelectableAdversary
+    allAdversariesSelectable
     ==>
     runSimOrThrow $
       runTest
@@ -53,6 +61,8 @@ prop_longRangeAttack = do
             not $ isHonestTestFragH svSelectedChain
 
   where
+    freqs = mkPeers honestFreq advFreqs
+
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of
         AF.AnchorGenesis   -> True

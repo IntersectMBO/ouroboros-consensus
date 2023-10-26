@@ -6,6 +6,7 @@
 
 module Test.Consensus.PeerSimulator.Run (
     SchedulerConfig (..)
+  , debugScheduler
   , defaultSchedulerConfig
   , noTimeoutsSchedulerConfig
   , runPointSchedule
@@ -85,27 +86,41 @@ data SchedulerConfig =
 
     -- | Config shared with point schedule generators.
     , scSchedule        :: PointScheduleConfig
+
+    -- | If 'True', 'Test.Consensus.Genesis.Setup.runTest' will enable full
+    -- tracing during the test.
+    --
+    -- Use 'debugScheduler' to toggle it conveniently.
+    , scDebug           :: Bool
   }
 
+-- | Determine timeouts based on the 'Asc' and a slot length of 20 seconds.
 defaultSchedulerConfig :: PointScheduleConfig -> Asc -> SchedulerConfig
 defaultSchedulerConfig scSchedule asc =
   SchedulerConfig {
     scChainSyncTimeouts = chainSyncTimeouts scSlotLength asc,
     scSlotLength,
-    scSchedule
+    scSchedule,
+    scDebug = False
   }
   where
     scSlotLength = slotLengthFromSec 20
 
+-- | Config with no timeouts and a slot length of 20 seconds.
 noTimeoutsSchedulerConfig :: PointScheduleConfig -> SchedulerConfig
 noTimeoutsSchedulerConfig scSchedule =
   SchedulerConfig {
     scChainSyncTimeouts = chainSyncNoTimeouts,
     scSlotLength,
-    scSchedule
+    scSchedule,
+    scDebug = False
   }
   where
     scSlotLength = slotLengthFromSec 20
+
+-- | Enable debug tracing during a scheduler test.
+debugScheduler :: SchedulerConfig -> SchedulerConfig
+debugScheduler conf = conf { scDebug = True }
 
 basicChainSyncClient ::
   IOLike m =>

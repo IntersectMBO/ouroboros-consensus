@@ -15,7 +15,7 @@ where
 
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (traceWith)
+import           Control.Tracer (traceWith, debugTracer)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Test.Consensus.BlockTree as BT
@@ -28,6 +28,8 @@ import Test.Consensus.Genesis.Setup.GenChains
 import Test.Consensus.PeerSimulator.StateView
 import Ouroboros.Network.Protocol.ChainSync.Codec (ChainSyncTimeout(..))
 import Test.Consensus.PeerSimulator.Trace (traceLinesWith)
+import Data.Foldable (for_)
+import Test.Consensus.BlockTree (allFragments)
 
 runTest ::
   (IOLike m, MonadTime m, MonadTimer m, Testable a) =>
@@ -37,7 +39,9 @@ runTest ::
   (StateView -> a) ->
   m Property
 runTest schedulerConfig genesisTest schedule makeProperty = do
-    (tracer, getTrace) <- recordingTracerTVar
+    (recordingTracer, getTrace) <- recordingTracerTVar
+    let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
+    for_ (allFragments gtBlockTree) \ bt -> traceWith tracer (condense bt)
 
     traceLinesWith tracer [
       "Security param k = " ++ show gtSecurityParam,
