@@ -71,6 +71,7 @@ import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
 import qualified Data.Set as Set
 import           Data.Text (Text)
+import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
                      (WhetherToIntervene (..))
@@ -161,6 +162,14 @@ class ( Core.EraSegWits era
          , SL.Validated (Core.Tx era)
          )
 
+  -- | Get the protocol version out of a 'Core.PParamsUpdate', used to detect
+  -- whether we should perform a HF. This will likely be removed/changed once we
+  -- implement HF enactment in Conway (see
+  -- <https://github.com/input-output-hk/ouroboros-consensus/issues/61>).
+  --
+  -- For now, this always returns 'Nothing' for Conway (see the instance below).
+  getProposedProtocolVersion :: Core.PParamsUpdate era -> Maybe ProtVer
+
 -- | The default implementation of 'applyShelleyBasedTx', a thin wrapper around
 -- 'SL.applyTx'
 defaultApplyShelleyBasedTx ::
@@ -182,11 +191,20 @@ defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
       mempoolState
       tx
 
+defaultGetProposedProtocolVersion ::
+     (EraPParams era, ProtVerAtMost era 8)
+  => Core.PParamsUpdate era
+  -> Maybe ProtVer
+defaultGetProposedProtocolVersion proposal =
+    strictMaybeToMaybe $ proposal ^. ppuProtocolVersionL
+
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (ShelleyEra c) where
   shelleyBasedEraName _ = "Shelley"
 
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
+
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AllegraEra c) where
@@ -194,11 +212,15 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
 
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
+
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (MaryEra c) where
   shelleyBasedEraName _ = "Mary"
 
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
+
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AlonzoEra c) where
@@ -206,13 +228,18 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
 
   applyShelleyBasedTx = applyAlonzoBasedTx
 
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
+
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (BabbageEra c) where
   shelleyBasedEraName _ = "Babbage"
   applyShelleyBasedTx = applyAlonzoBasedTx
 
+  getProposedProtocolVersion = defaultGetProposedProtocolVersion
+
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (ConwayEra c) where
   shelleyBasedEraName _ = "Conway"
   applyShelleyBasedTx = applyAlonzoBasedTx
+  getProposedProtocolVersion _ = Nothing
 
 applyAlonzoBasedTx :: forall era.
   ( ShelleyBasedEra era,
