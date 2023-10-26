@@ -31,11 +31,12 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Text.Printf (printf)
 
 -- | Represent a branch of a block tree by a prefix and a suffix. The full
--- fragment (the prefix and suffix catenated) is provided for practicality.
+-- fragment (the prefix and suffix catenated) and the trunk suffix (the rest of
+-- the trunk after the branch forks off) are provided for practicality.
 --
 -- INVARIANT: the head of @btbPrefix@ is the anchor of @btbSuffix@.
 --
--- INVARIANT: @btbFull == fromJust $ AF.join btbPrefix btbSuffix@
+-- INVARIANT: @btbFull == fromJust $ AF.join btbPrefix btbSuffix@.
 data BlockTreeBranch blk = BlockTreeBranch {
     btbPrefix      :: AF.AnchoredFragment blk,
     btbSuffix      :: AF.AnchoredFragment blk,
@@ -56,6 +57,9 @@ data BlockTreeBranch blk = BlockTreeBranch {
 --
 -- INVARIANT: The branches' suffixes do not contain any block in common with one
 -- another.
+--
+-- INVARIANT: for all @BlockTreeBranch{..}@ in the tree, @btTrunk == fromJust $
+-- AF.join btbPrefix btbTrunkSuffix@.
 --
 -- REVIEW: Find another name so as not to clash with 'BlockTree' from
 -- `unstable-consensus-testlib/Test/Util/TestBlock.hs`.
