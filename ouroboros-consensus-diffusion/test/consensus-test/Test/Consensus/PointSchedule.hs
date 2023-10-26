@@ -43,9 +43,12 @@ module Test.Consensus.PointSchedule (
   , TestFragH
   , Tick (..)
   , TipPoint (..)
+  , balanced
+  , banalStates
   , defaultPointScheduleConfig
   , genSchedule
   , onlyHonestWithMintingPointSchedule
+  , peersOnlyHonest
   , pointSchedulePeers
   ) where
 
@@ -217,6 +220,14 @@ data Tick =
 
 instance Condense Tick where
   condense Tick {active} = condense active
+
+-- | A set of peers with only one honest peer carrying the given value.
+peersOnlyHonest :: a -> Peers a
+peersOnlyHonest value =
+  Peers {
+    honest = Peer {name = HonestPeer, value},
+    others = Map.empty
+    }
 
 -- | A point schedule is a series of states for a set of peers.
 --
@@ -420,7 +431,8 @@ balanced states =
     initial = Tick {active = initialH, peers = Peers initialH ((NodeOffline <$) <$> others states)}
     initialH = Peer HonestPeer NodeOffline
 
--- | Generate a point schedule that servers a single header in each tick for each peer in turn.
+-- | Generate a point schedule that serves a single header in each tick for each
+-- peer in turn. See 'blockTreePeers' for peers generation.
 banalPointSchedule ::
   BlockTree TestBlock ->
   Maybe PointSchedule

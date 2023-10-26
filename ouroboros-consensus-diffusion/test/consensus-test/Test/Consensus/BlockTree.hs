@@ -31,15 +31,17 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Text.Printf (printf)
 
 -- | Represent a branch of a block tree by a prefix and a suffix. The full
--- fragment (the prefix and suffix catenated) is provided for practicality.
+-- fragment (the prefix and suffix catenated) and the trunk suffix (the rest of
+-- the trunk after the branch forks off) are provided for practicality.
 --
 -- INVARIANT: the head of @btbPrefix@ is the anchor of @btbSuffix@.
 --
--- INVARIANT: @btbFull == fromJust $ AF.join btbPrefix btbSuffix@
+-- INVARIANT: @btbFull == fromJust $ AF.join btbPrefix btbSuffix@.
 data BlockTreeBranch blk = BlockTreeBranch {
-    btbPrefix :: AF.AnchoredFragment blk,
-    btbSuffix :: AF.AnchoredFragment blk,
-    btbFull   :: AF.AnchoredFragment blk
+    btbPrefix      :: AF.AnchoredFragment blk,
+    btbSuffix      :: AF.AnchoredFragment blk,
+    btbTrunkSuffix :: AF.AnchoredFragment blk,
+    btbFull        :: AF.AnchoredFragment blk
   }
   deriving (Show)
 
@@ -55,6 +57,9 @@ data BlockTreeBranch blk = BlockTreeBranch {
 --
 -- INVARIANT: The branches' suffixes do not contain any block in common with one
 -- another.
+--
+-- INVARIANT: for all @BlockTreeBranch{..}@ in the tree, @btTrunk == fromJust $
+-- AF.join btbPrefix btbTrunkSuffix@.
 --
 -- REVIEW: Find another name so as not to clash with 'BlockTree' from
 -- `unstable-consensus-testlib/Test/Util/TestBlock.hs`.
@@ -76,10 +81,10 @@ mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 -- the trunk.
 --
 -- FIXME: we should enforce that the new branch' suffix does not contain any
--- block in common with an existingbranch.
+-- block in common with an existing branch.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
 addBranch branch BlockTree{..} = do
-  (_, btbPrefix, _, btbSuffix) <- AF.intersect btTrunk branch
+  (btbPrefix, _, btbTrunkSuffix, btbSuffix) <- AF.intersect btTrunk branch
   -- NOTE: We could use the monadic bind for @Maybe@ here but we would rather
   -- catch bugs quicker.
   let btbFull = fromJust $ AF.join btbPrefix btbSuffix
