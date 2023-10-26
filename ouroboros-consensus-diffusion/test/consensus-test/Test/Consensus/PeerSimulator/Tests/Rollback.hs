@@ -28,8 +28,13 @@ tests = testGroup "rollback" [
   testProperty "cannot rollback" (prop_rollback False)
   ]
 
--- | The boolean parameter specifies whether we are interested in the property
--- when we can rollback.
+-- | @prop_rollback True@ tests that the selection of the node under test
+-- changes branches when sent a rollback to a block no older than 'k' blocks
+-- before the current selection.
+--
+-- @prop_rollback False@ tests that the selection of the node under test *does
+-- not* change branches when sent a rollback to a block strictly older than 'k'
+-- blocks before the current selection.
 prop_rollback :: Bool -> QC.Gen QC.Property
 prop_rollback wantRollback = do
   genesisTest <- genChains 1
