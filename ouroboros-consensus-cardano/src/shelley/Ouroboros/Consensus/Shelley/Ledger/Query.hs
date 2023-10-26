@@ -248,8 +248,8 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- The argument specifies whose stake should be returned. When it's empty,
   -- the stake of every 'DRep's is returned.
   GetDRepStakeDistr
-    :: Set (LC.DRep (EraCrypto era))
-    -> BlockQuery (ShelleyBlock proto era) (Map (LC.DRep (EraCrypto era)) Coin)
+    :: Set (SL.DRep (EraCrypto era))
+    -> BlockQuery (ShelleyBlock proto era) (Map (SL.DRep (EraCrypto era)) Coin)
 
   -- | Query committee members
   GetCommitteeState
