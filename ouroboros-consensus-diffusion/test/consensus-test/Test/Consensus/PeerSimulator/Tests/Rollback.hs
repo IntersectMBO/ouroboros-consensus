@@ -39,7 +39,7 @@ prop_rollback wantRollback = do
   -- | We consider the test case interesting if we want a rollback and we can
   -- actually get one, or if we want no rollback and we cannot actually get one.
   pure $
-    wantRollback == canRollbackFromTrunk (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
+    wantRollback == canRollbackFromTrunkTip (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
     ==>
       runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
@@ -77,8 +77,8 @@ prop_rollback wantRollback = do
     --
     -- REVIEW: Why does 'existsSelectableAdversary' get to be a classifier and
     -- not this? (or a generalised version of this)
-    canRollbackFromTrunk :: SecurityParam -> BlockTree TestBlock -> Bool
-    canRollbackFromTrunk (SecurityParam k) blockTree =
+    canRollbackFromTrunkTip :: SecurityParam -> BlockTree TestBlock -> Bool
+    canRollbackFromTrunkTip (SecurityParam k) blockTree =
       let BlockTreeBranch{btbSuffix, btbTrunkSuffix} = head $ btBranches blockTree
           lengthSuffix = AF.length btbSuffix
           lengthTrunkSuffix = AF.length btbTrunkSuffix
