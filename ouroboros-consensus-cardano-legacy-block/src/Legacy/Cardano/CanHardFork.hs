@@ -44,7 +44,6 @@ import qualified Data.SOP.Tails as Tails
 import           Data.Void (absurd)
 import           Legacy.Byron.Ledger ()
 import           Legacy.Cardano.Block
-import           Legacy.LegacyBlock
 import           Legacy.Shelley.Ledger ()
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
@@ -60,6 +59,7 @@ import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot),
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import           Ouroboros.Consensus.Legacy.Block
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as PBftState

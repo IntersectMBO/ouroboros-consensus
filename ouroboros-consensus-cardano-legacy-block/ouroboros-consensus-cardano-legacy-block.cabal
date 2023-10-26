@@ -53,7 +53,6 @@ library
     Legacy.Cardano.CanonicalTxIn
     Legacy.Cardano.Ledger
     Legacy.Convert
-    Legacy.LegacyBlock
     Legacy.Shelley.Ledger
     Ouroboros.Consensus.HardFork.Trans
     Ouroboros.Consensus.Legacy.Block
@@ -73,6 +72,7 @@ library
     , cardano-prelude
     , cardano-protocol-tpraos       >=1.0.1 && <1.1
     , cardano-slotting
+    , cborg
     , containers                    >=0.5   && <0.7
     , mtl                           >=2.2   && <2.4
     , nothunks
@@ -80,5 +80,6 @@ library
     , ouroboros-consensus-cardano
     , ouroboros-consensus-protocol
     , ouroboros-network-api
+    , serialise
     , small-steps
     , sop-core

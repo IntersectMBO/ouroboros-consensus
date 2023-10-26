@@ -16,12 +16,12 @@ import           GHC.Stack (HasCallStack)
 import           Legacy.Cardano.Block
 import           Legacy.Cardano.CanHardFork (LegacyCardanoHardForkConstraints)
 import           Legacy.Cardano.CanonicalTxIn ()
-import           Legacy.LegacyBlock
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano ()
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import           Ouroboros.Consensus.Legacy.Block
 
 {-------------------------------------------------------------------------------
   Ticking
