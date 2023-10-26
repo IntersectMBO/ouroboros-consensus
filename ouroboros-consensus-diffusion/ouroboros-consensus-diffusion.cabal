@@ -76,7 +76,7 @@ library
     , hashable
     , io-classes                   ^>=1.2
     , mtl
-    , ouroboros-consensus          ^>=0.12
+    , ouroboros-consensus          ^>=0.13
     , ouroboros-network            ^>=0.9.1
     , ouroboros-network-api        ^>=0.5.1
     , ouroboros-network-framework  ^>=0.9
