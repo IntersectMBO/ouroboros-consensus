@@ -43,10 +43,10 @@ module Test.Consensus.PointSchedule (
   , TestFragH
   , Tick (..)
   , TipPoint (..)
-  , balanced
   , banalStates
   , defaultPointScheduleConfig
   , genSchedule
+  , interleaveBalanced
   , mkPeers
   , onlyHonestWithMintingPointSchedule
   , peersOnlyHonest
@@ -55,7 +55,7 @@ module Test.Consensus.PointSchedule (
 
 import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)
-import           Data.List (mapAccumL, sortOn, transpose)
+import           Data.List (mapAccumL, sortOn, tails, transpose)
 import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -64,7 +64,8 @@ import           Data.Time (DiffTime)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block.Abstract (HasHeader, getHeader)
-import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam)
+import           Ouroboros.Consensus.Protocol.Abstract
+                     (SecurityParam (SecurityParam))
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)), anchorFromBlock)
@@ -255,13 +256,16 @@ instance Condense PointSchedule where
 data PointScheduleConfig =
   PointScheduleConfig {
     -- | Duration of a tick, for timeouts in the scheduler.
-    pscTickDuration :: DiffTime
+    pscTickDuration :: DiffTime,
+
+    -- | @k@. We all know it
+    psSecurityParam :: SecurityParam
   }
   deriving (Eq, Show)
 
-defaultPointScheduleConfig :: PointScheduleConfig
-defaultPointScheduleConfig =
-  PointScheduleConfig {pscTickDuration = 0.1}
+defaultPointScheduleConfig :: SecurityParam -> PointScheduleConfig
+defaultPointScheduleConfig psSecurityParam =
+  PointScheduleConfig {pscTickDuration = 0.1, psSecurityParam}
 
 ----------------------------------------------------------------------------------------------------
 -- Accessors
@@ -357,7 +361,7 @@ peer2Point ps (PeerSchedule n) =
         name       -> Peers {honest, others = Map.insert name active others}
 
 ----------------------------------------------------------------------------------------------------
--- Folding functions
+-- Folding and traversal functions
 ----------------------------------------------------------------------------------------------------
 
 -- | Combine two 'Peers' by creating tuples of the two honest 'Peer's and of each pair
@@ -371,6 +375,12 @@ zipPeers a b =
   }
   where
     zp p1 p2 = Peer (name p1) (value p1, value p2)
+
+-- | Apply the first function to the honest peer and the second one to all
+-- others.
+bimapPeers :: (a -> b) -> (a -> b) -> Peers a -> Peers b
+bimapPeers hon oth Peers {honest, others} =
+  Peers {honest = hon <$> honest, others = fmap oth <$> others}
 
 ----------------------------------------------------------------------------------------------------
 -- Schedule generators
@@ -397,30 +407,15 @@ banalStates frag@(_ :> tipBlock) =
 --
 -- REVIEW: I see the point of this point schedule as an exercice to manipulate
 -- them but I otherwise find it rather useless.
-balanced ::
+interleaveBalanced ::
   Peers [NodeState] ->
   Maybe PointSchedule
-balanced states =
-  pointSchedule (snd (mapAccumL step initial activeSeq))
+interleaveBalanced states =
+  peer2Point states (PeerSchedule activeSeq)
   where
-    step :: Tick -> Peer NodeState -> (Tick, Tick)
-    step Tick {peers} active =
-      let next = Tick {active, peers = updatePeer peers active}
-       in (next, next)
-
-    updatePeer :: Peers a -> Peer a -> Peers a
-    updatePeer Peers {honest, others} active =
-      case name active of
-        HonestPeer -> Peers {honest = active, others}
-        name       -> Peers {honest, others = Map.insert name active others}
-
     -- Sequence containing the first state of all the nodes in order, then the
     -- second in order, etc.
     activeSeq = concat $ transpose $ sequenceA (honest states) : (sequenceA <$> Map.elems (others states))
-
-    -- Initial state where all the peers are offline.
-    initial = Tick {active = initialH, peers = Peers initialH ((NodeOffline <$) <$> others states)}
-    initialH = Peer HonestPeer NodeOffline
 
 -- | Generate a point schedule that serves a single header in each tick for each
 -- peer in turn. See 'blockTreePeers' for peers generation.
@@ -428,22 +423,13 @@ banalPointSchedule ::
   BlockTree TestBlock ->
   Maybe PointSchedule
 banalPointSchedule blockTree =
-  balanced (banalStates <$> blockTreePeers blockTree)
+  interleaveBalanced (banalStates <$> blockTreePeers blockTree)
 
--- | Generate a point schedule for the scenario in which adversaries send blocks much faster
--- than the honest node.
+-- | Interleave a set of peer schedules with a fixed occurrence frequency for each peer.
 --
--- This is intended to test the Limit on Eagerness, which prevents the selection from advancing
--- far enough into a fork that the immutable tip moves into the fork as well (i.e. more than k
--- blocks).
---
--- The LoE is only resolved when all peers with forks at that block have been disconnected from,
--- in particular due to a decision based on the Genesis density criterion.
---
--- This is implemented by initializing each peer's schedule with 'banalStates' (which advances by
--- one block per tick) and assigning interval lengths to each peer tick based on the frequency
+-- This is implemented by assigning interval lengths to each peer tick based on the frequency
 -- config in the first argument, then sorting the resulting absolute times.
-frequencyPointSchedule ::
+interleaveWithFrequencies ::
   -- | A set of relative frequencies.
   -- If peer A has a value of @2@ and peer B has @6@, peer B will get three turns in the schedule
   -- for each turn of A.
@@ -458,9 +444,9 @@ frequencyPointSchedule ::
   --
   -- With the order of equal values determined by the @PeerId@s.
   Peers Int ->
-  BlockTree TestBlock ->
+  Peers [NodeState] ->
   Maybe PointSchedule
-frequencyPointSchedule freqs blockTree =
+interleaveWithFrequencies freqs states =
   peer2Point freqs (PeerSchedule (fmap snd <$> sortOn (fst . value) catted))
   where
     catted = sequenceA =<< toList (peersList intvals)
@@ -469,15 +455,33 @@ frequencyPointSchedule freqs blockTree =
 
     mkIntvals freq ss = zip (peerIntervals (length ss) freq) ss
 
-    states = banalStates <$> frags
-
-    frags = blockTreePeers blockTree
-
     peerIntervals :: Int -> Int -> [Double]
     peerIntervals count freq =
       (* intvalLen) <$> [1 .. fromIntegral count]
       where
         intvalLen = 1 / fromIntegral freq
+
+-- | Generate a point schedule for the scenario in which some peers send blocks at a different
+-- rate than others.
+--
+-- This is intended to test the Limit on Eagerness, which prevents the selection from advancing
+-- far enough into a fork that the immutable tip moves into the fork as well (i.e. more than k
+-- blocks).
+--
+-- The LoE is only resolved when all peers with forks at that block have been disconnected from,
+-- in particular due to a decision based on the Genesis density criterion.
+--
+-- This is implemented by initializing each peer's schedule with 'banalStates' (which advances by
+-- one block per tick) and assigning interval lengths to each peer tick based on the frequency
+-- config in the first argument, then sorting the resulting absolute times.
+frequencyPointSchedule ::
+  Peers Int ->
+  BlockTree TestBlock ->
+  Maybe PointSchedule
+frequencyPointSchedule freqs blockTree =
+  interleaveWithFrequencies freqs states
+  where
+    states = banalStates <$> blockTreePeers blockTree
 
 -- | Generate a point schedule that consist of a single tick in which the honest peer advertises
 -- its entire chain immediately.
@@ -558,13 +562,67 @@ splitFragmentAtSlotNo slotNo (fragment :> block) =
 splitFragmentAtSlotNo _ (Empty anchor) =
   (Empty anchor, Empty anchor)
 
+-- | Generate a peer schedule that rolls back repeatedly.
+--
+-- See 'rollbackSpamPointSchedule'.
+rollbackSpamPeer ::
+  SecurityParam ->
+  Bool ->
+  TestFrag ->
+  [NodeState]
+rollbackSpamPeer (SecurityParam sp) bulk frag =
+  concat (take 1 tips ++ zipWith (:) states (drop 1 tips))
+  where
+    tips | bulk = pure <$> drop (k - 1) states
+         | otherwise = take k <$> tails states
+    states = banalStates frag
+    k = fromIntegral sp
+
+-- | Generate a point schedule in which adversaries roll back repeatedly.
+--
+-- Each rollback happens after having sent @k@ blocks, after which the rollback
+-- point is advanced by one block, e.g. with @k = 3@:
+--
+-- 1, 2, 3, 1, 2, 3, 4, 2, 3, 4, 5, 3, 4, 5, 6
+--
+-- When @bulk@ is 'True', the fragments are compressed into a single tick:
+--
+-- 3, 1, 4, 2, 5, 3, 6
+--
+-- HP is reset to the first block of the rollback fragment, which is only necessary
+-- (I think) to avoid @bulk@ mode from degenerating into a linear sequence.
+rollbackSpamPointSchedule ::
+  PointScheduleConfig ->
+  Peers Int ->
+  Bool ->
+  BlockTree TestBlock ->
+  Maybe PointSchedule
+rollbackSpamPointSchedule PointScheduleConfig {psSecurityParam} freqs bulk blockTree =
+  interleaveWithFrequencies freqs peers
+  where
+    peers = bimapPeers banalStates (rollbackSpamPeer psSecurityParam bulk) (blockTreePeers blockTree)
+
+----------------------------------------------------------------------------------------------------
+-- Main API
+----------------------------------------------------------------------------------------------------
+
 -- | Encodes the different scheduling styles for use with quickcheck generators.
 data ScheduleType =
+  -- | Serve one point per peer tick, interleaving peer schedules with different
+  -- occurrence frequencies.
   Frequencies (Peers Int)
   |
+  -- | Serve one point per peer tick, with uniform frequency.
   Banal
   |
+  -- | Serve only the honest chain, in a single tick.
   OnlyHonest
+  |
+  -- | Each adversary advertises @k@ blocks, then rolls back, advances one block, and repeats.
+  RollbackSpam
+    (Peers Int)
+    -- | Whether to advertise the short fragments in a single tick ('True') or individually.
+    Bool
   deriving (Eq, Show)
 
 newtype GenesisWindow = GenesisWindow { getGenesisWindow :: Word64 }
@@ -582,7 +640,8 @@ data GenesisTest = GenesisTest {
 --
 -- The first argument determines the scheduling style.
 genSchedule :: PointScheduleConfig -> ScheduleType -> BlockTree TestBlock -> Maybe PointSchedule
-genSchedule _ = \case
+genSchedule conf = \case
   Frequencies fs -> frequencyPointSchedule fs
   Banal -> banalPointSchedule
   OnlyHonest -> onlyHonestPointSchedule
+  RollbackSpam freqs bulk -> rollbackSpamPointSchedule conf freqs bulk
