@@ -85,6 +85,13 @@ data SchedulerConfig =
 
     -- | Config shared with point schedule generators.
     , scSchedule        :: PointScheduleConfig
+
+    -- | A function that can add more ticks once the evaluation came to an end.
+    -- It returns 'Nothing' if it does not wish to extend the point schedule or
+    -- 'Just' a point schedule otherwise. It receive the whole state view which
+    -- contains the point schedule so far as well as other information on the
+    -- current simulation.
+    , scExtender        :: StateView -> Maybe PointSchedule
   }
 
 defaultSchedulerConfig :: PointScheduleConfig -> Asc -> SchedulerConfig
@@ -92,7 +99,8 @@ defaultSchedulerConfig scSchedule asc =
   SchedulerConfig {
     scChainSyncTimeouts = chainSyncTimeouts scSlotLength asc,
     scSlotLength,
-    scSchedule
+    scSchedule,
+    scExtender = const Nothing
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -102,7 +110,8 @@ noTimeoutsSchedulerConfig scSchedule =
   SchedulerConfig {
     scChainSyncTimeouts = chainSyncNoTimeouts,
     scSlotLength,
-    scSchedule
+    scSchedule,
+    scExtender = const Nothing
   }
   where
     scSlotLength = slotLengthFromSec 20

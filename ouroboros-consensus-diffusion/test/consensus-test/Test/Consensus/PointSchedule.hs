@@ -255,6 +255,16 @@ defaultPointScheduleConfig :: PointScheduleConfig
 defaultPointScheduleConfig =
   PointScheduleConfig {pscTickDuration = 0.1}
 
+-- | REVIEW: To be future-proof, and to make function types more explicit, I
+-- would much rather have a type for point schedule _extensions_ that would only
+-- contain the types that need to be extended. We would have an operation
+-- 'extend :: PointSchedule -> PointScheduleExtension -> PointSchedule'.
+-- However, it does not work that well from a user point of view without an
+-- empty 'PointSchedule', which we precisely do not have. If 'PointSchedule'
+-- keep containing only ticks, then a 'Semigroup' instance will do just fine.
+instance Semigroup PointSchedule where
+  (<>) ps1 ps2 = PointSchedule (ticks ps1 <> ticks ps2)
+
 ----------------------------------------------------------------------------------------------------
 -- Accessors
 ----------------------------------------------------------------------------------------------------
