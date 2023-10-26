@@ -2,6 +2,40 @@
 
 # Changelog entries
 
+<a id='changelog-0.13.0.0'></a>
+## 0.13.0.0 — 2023-10-26
+
+### Patch
+
+- Replace all occurrences of `Ticked (LedgerView X)` with `LedgerView X`.
+
+### Non-Breaking
+
+- Added `ChainGenerators`.
+  See `checkAdversarialChain` and `checkHonestChain` for the invariants these generators ensure.
+
+- Add `castRealPoint` utility function.
+
+- Export `HardForkSelectView` from
+  `Ouroboros.Consensus.HardFork.Combinator.Protocol` (and hence, also from
+  `Ouroboros.Consensus.HardFork.Combinator`).
+
+### Breaking
+
+- Remove `Ticked` from the return type of `forecastFor`.
+- Remove `Ticked (LedgerView X)` data family instances.
+- Remove `Ticked (K a x)` data family instance.
+- Remove `WrapTickedLedgerView`.
+- Rename `tickedLedgerView` field of `TickedExtLedgerState` to `ledgerView`.
+
+- Rename `NewTipInfo` (contained in the trace constructors
+  `AddedToCurrentChain`/`SwitchedToAFork`) to `SelectionChangedInfo`, and add
+  the `SelectView`s of the old and the new tip. Concrete motivation is that
+  these contain the tie-breaker VRF which is very useful to have at hand in
+  various cases.
+
+- Renamed `TriggerHardForkNever` to `TriggerHardForkNotDuringThisExecution`.
+
 <a id='changelog-0.12.0.0'></a>
 ## 0.12.0.0 — 2023-09-27
 
