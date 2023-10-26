@@ -60,7 +60,7 @@ prop_rollback wantRollback = do
     rollbackSchedule :: BlockTree TestBlock -> PointSchedule
     rollbackSchedule blockTree =
       let trunk = btTrunk blockTree
-          [branch] = map btbSuffix (btBranches blockTree)
+          branch = btbSuffix $ head $ btBranches blockTree
           states = banalStates trunk ++ banalStates branch
           peers = peersOnlyHonest states
           pointSchedule = balanced peers
