@@ -291,7 +291,8 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
     pure $ StateView {
       svSelectedChain,
-      svChainSyncExceptions
+      svChainSyncExceptions,
+      svPointSchedule = pointSchedule
       }
   where
     config = defaultCfg k

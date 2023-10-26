@@ -4,7 +4,7 @@ module Test.Consensus.PeerSimulator.StateView (
   ) where
 
 import           Ouroboros.Consensus.Util.IOLike (SomeException)
-import           Test.Consensus.PointSchedule (PeerId, TestFragH)
+import           Test.Consensus.PointSchedule (PeerId, PointSchedule, TestFragH)
 
 -- | A record to associate an exception thrown by the ChainSync
 -- thread with the peer that it was running for.
@@ -25,5 +25,8 @@ data StateView = StateView {
     -- servers.
     --
     -- REVIEW: Only the server part?
-    svChainSyncExceptions :: [ChainSyncException]
+    svChainSyncExceptions :: [ChainSyncException],
+
+    -- | The point schedule ran in the simulation.
+    svPointSchedule       :: PointSchedule
   }
