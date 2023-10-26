@@ -1,6 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes     #-}
 {-# LANGUAGE DataKinds               #-}
-{-# LANGUAGE DefaultSignatures       #-}
 {-# LANGUAGE DeriveAnyClass          #-}
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}

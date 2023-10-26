@@ -763,10 +763,10 @@ decodeShelleyQuery = do
       (2, 25) -> SomeSecond . GetDRepState <$> fromCBOR
       (2, 26) -> SomeSecond . GetDRepStakeDistr <$> LC.fromEraCBOR @era
       (4, 27) -> do
-                  coldCreds <- fromCBOR
-                  hotCreds <- fromCBOR
-                  statuses <- LC.fromEraCBOR @era
-                  return $ SomeSecond $ GetCommitteeMembersState coldCreds hotCreds statuses
+        coldCreds <- fromCBOR
+        hotCreds <- fromCBOR
+        statuses <- LC.fromEraCBOR @era
+        return $ SomeSecond $ GetCommitteeMembersState coldCreds hotCreds statuses
       _       -> fail $
         "decodeShelleyQuery: invalid (len, tag): (" <>
         show len <> ", " <> show tag <> ")"
