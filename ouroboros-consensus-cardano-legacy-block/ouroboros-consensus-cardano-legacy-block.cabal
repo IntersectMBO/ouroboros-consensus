@@ -55,6 +55,7 @@ library
     Legacy.Convert
     Legacy.LegacyBlock
     Legacy.Shelley.Ledger
+    Ouroboros.Consensus.HardFork.Trans
 
   build-depends:
     , base                          >=4.14  && <4.19
