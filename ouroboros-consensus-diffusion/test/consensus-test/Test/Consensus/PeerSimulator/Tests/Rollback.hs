@@ -39,11 +39,13 @@ prop_rollback :: Bool -> QC.Gen QC.Property
 prop_rollback wantRollback = do
   genesisTest <- genChains 1
 
-  let schedule = rollbackSchedule (gtBlockTree genesisTest)
+  let
+      schedulerConfig = noTimeoutsSchedulerConfig (defaultPointScheduleConfig (gtSecurityParam genesisTest))
+      schedule = rollbackSchedule (gtBlockTree genesisTest)
 
   -- | We consider the test case interesting if we want a rollback and we can
   -- actually get one, or if we want no rollback and we cannot actually get one.
-  pure $
+  pure $ withMaxSuccess 10 $
     wantRollback == canRollbackFromTrunkTip (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
     ==>
       runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
@@ -56,7 +58,6 @@ prop_rollback wantRollback = do
         wantRollback == headOnAlternativeChain
 
   where
-    schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
 
     -- A schedule that advertises all the points of the trunk, then switches to
     -- the first alternative chain of the given block tree.
@@ -68,7 +69,7 @@ prop_rollback wantRollback = do
           branch = btbSuffix $ head $ btBranches blockTree
           states = banalStates trunk ++ banalStates branch
           peers = peersOnlyHonest states
-          pointSchedule = balanced peers
+          pointSchedule = interleaveBalanced peers
        in fromJust pointSchedule
 
     -- | Whether it is possible to roll back from the trunk after having served

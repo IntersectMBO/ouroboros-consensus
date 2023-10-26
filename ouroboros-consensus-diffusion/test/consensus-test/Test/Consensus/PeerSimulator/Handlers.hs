@@ -15,7 +15,7 @@ import           Control.Monad.Trans (lift)
 import           Control.Monad.Writer.Strict (MonadWriter (tell),
                      WriterT (runWriterT))
 import           Data.Coerce (coerce)
-import           Data.Maybe (fromJust)
+import           Data.Maybe (fromJust, fromMaybe)
 import           Data.Monoid (First (..))
 import           Ouroboros.Consensus.Block.Abstract (Point (..), getHeader)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -53,7 +53,7 @@ handlerFindIntersection ::
 handlerFindIntersection currentIntersection blockTree points clientPoints = do
   let TipPoint tip' = tip points
       tipPoint = getTipPoint tip'
-      fragment = fromJust $ BT.findFragment tipPoint blockTree
+      fragment = fromMaybe (error ("Tip " ++ condense tipPoint ++ " not in the tree")) $ BT.findFragment tipPoint blockTree
   case intersectWith fragment clientPoints of
     Nothing ->
       pure (IntersectNotFound tip', [])

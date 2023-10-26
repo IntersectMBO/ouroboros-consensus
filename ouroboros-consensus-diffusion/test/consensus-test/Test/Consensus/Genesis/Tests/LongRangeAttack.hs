@@ -35,15 +35,19 @@ tests =
     -- testProperty "three adversaries" (prop_longRangeAttack 1 [2, 5, 10])
   ]
 
-genChainsAndSchedule :: PointScheduleConfig -> Word -> ScheduleType -> QC.Gen (GenesisTest, PointSchedule)
-genChainsAndSchedule scheduleConfig numAdversaries scheduleType =
+genChainsAndSchedule ::
+  Word ->
+  ScheduleType ->
+  QC.Gen (GenesisTest, PointScheduleConfig, PointSchedule)
+genChainsAndSchedule numAdversaries scheduleType =
   unsafeMapSuchThatJust do
     gt <- genChains numAdversaries
-    pure $ ((gt,) <$> genSchedule scheduleConfig scheduleType (gtBlockTree gt))
+    let scheduleConfig = defaultPointScheduleConfig (gtSecurityParam gt)
+    pure $ ((gt, scheduleConfig,) <$> genSchedule scheduleConfig scheduleType (gtBlockTree gt))
 
 prop_longRangeAttack :: Int -> [Int] -> QC.Gen QC.Property
 prop_longRangeAttack honestFreq advFreqs = do
-  (genesisTest, schedule) <- genChainsAndSchedule scheduleConfig (fromIntegral (length advFreqs)) (Frequencies freqs)
+  (genesisTest, scheduleConfig, schedule) <- genChainsAndSchedule (fromIntegral (length advFreqs)) (Frequencies freqs)
   let Classifiers {..} = classifiers genesisTest
 
   -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
@@ -70,5 +74,3 @@ prop_longRangeAttack honestFreq advFreqs = do
 
     isHonestTestHeaderHash :: HeaderHash TestBlock -> Bool
     isHonestTestHeaderHash = all (0 ==) . unTestHash
-
-    scheduleConfig = defaultPointScheduleConfig
