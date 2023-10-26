@@ -56,6 +56,8 @@ library
     Legacy.LegacyBlock
     Legacy.Shelley.Ledger
     Ouroboros.Consensus.HardFork.Trans
+    Ouroboros.Consensus.Legacy.Block
+    Ouroboros.Consensus.Legacy.Util
 
   build-depends:
     , base                          >=4.14  && <4.19

@@ -20,7 +20,7 @@
 {-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE ViewPatterns               #-}
 
-module Legacy.LegacyBlock (
+module Ouroboros.Consensus.Legacy.Block (
     BlockConfig (..)
   , BlockQuery (..)
   , CodecConfig (..)
