@@ -2,6 +2,15 @@
 
 # Changelog entries
 
+<a id='changelog-0.6.0.0'></a>
+## 0.6.0.0 — 2023-10-26
+
+### Breaking
+
+- Replace all occurrences of `Ticked (LedgerView X)` with `LedgerView X`.
+- Remove `Ticked (LedgerView X)` data family instances.
+- Rename `translateTickedLedgerView` to `translateLedgerView`.
+
 <a id='changelog-0.5.0.7'></a>
 ## 0.5.0.7 — 2023-09-27
 
