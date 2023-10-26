@@ -228,25 +228,77 @@ dispatchTick config tracer peers Tick {active = Peer pid state} =
   where
     trace = traceUnitWith tracer "Scheduler"
 
--- | Iterate over a 'PointSchedule', sending each tick to the associated peer in turn,
--- giving each peer a chunk of computation time, sequentially, until it satisfies the
--- conditions given by the tick.
--- This usually means for the ChainSync server to have sent the target header to the
--- client.
-runScheduler ::
-  IOLike m =>
+-- | Construct STM resources, set up ChainSync and BlockFetch threads, and
+-- send all ticks in a 'PointSchedule' to all given peers in turn.
+runPointSchedule ::
+  forall m.
+  (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
-  Tracer m String ->
+  GenesisTest ->
   PointSchedule ->
-  Map PeerId (PeerResources m) ->
-  m ()
-runScheduler config tracer (PointSchedule ps) peers = do
-  traceWith tracer "Schedule is:"
-  for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
-  traceStartOfTimePoetry
-  for_ ps (dispatchTick config tracer peers)
-  traceEndOfTimePoetry
+  Tracer m String ->
+  m StateView
+runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} initialPointSchedule tracer =
+  withRegistry $ \registry -> do
+    resources <- makePeersResources tracer gtBlockTree (pointSchedulePeers initialPointSchedule)
+    let candidates = srCandidateFragment . prShared <$> resources
+    chainDb <- mkChainDb tracer candidates config registry
+    fetchClientRegistry <- newFetchClientRegistry
+    let chainDbView = defaultChainDbView chainDb
+    chainSyncRess <- for resources $ \PeerResources {prShared, prChainSync} -> do
+      chainSyncRes <- startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig
+      PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
+      pure chainSyncRes
+    for_ resources $ \PeerResources {prShared} ->
+      startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared
+    -- The block fetch logic needs to be started after the block fetch clients
+    -- otherwise, an internal assertion fails because getCandidates yields more
+    -- peer fragments than registered clients.
+    let getCandidates = traverse readTVar candidates
+    PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
+
+    -- Scheduler main loop. It runs the given point schedule It returns a final
+    -- state view.
+    let runScheduler :: PointSchedule -> m StateView
+        runScheduler pointSchedule@PointSchedule{ticks} = do
+          -- Run the given point schedule: iterate over its ticks, sending each
+          -- tick to the associated peer in turn, giving each peer a chunk of
+          -- computation time, sequentially, until it satisfies the conditions
+          -- given by the tick. This usually means for the ChainSync server to
+          -- have sent the target header/s to the client.
+          traceWith tracer "Schedule is:"
+          for_ ticks  $ \tick -> traceWith tracer $ "  " ++ condense tick
+          for_ ticks (dispatchTick schedulerConfig tracer resources)
+          -- Build a state view. This allows inspecting the point schedule ran
+          -- as well as the state of various elements of the peer simulator.
+          -- This will be returned to the tests.
+          svChainSyncExceptions <- collectExceptions (Map.elems chainSyncRess)
+          svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
+          let svPointSchedule = pointSchedule
+              stateView = StateView {
+                svSelectedChain,
+                svChainSyncExceptions,
+                svPointSchedule
+                }
+          pure stateView
+
+    traceStartOfTimePoetry
+    finalStateView <- runScheduler initialPointSchedule
+    traceEndOfTimePoetry
+    pure finalStateView
   where
+    config = defaultCfg k
+
+    collectExceptions :: [StrictTVar m (Maybe ChainSyncException)] -> m [ChainSyncException]
+    collectExceptions vars = do
+      res <- mapM readTVarIO vars
+      pure $ [ e | Just e <- res, not (isAsyncCancelled e) ]
+
+    isAsyncCancelled :: ChainSyncException -> Bool
+    isAsyncCancelled e = case fromException $ cseException e of
+      Just AsyncCancelled -> True
+      _                   -> False
+
     traceStartOfTimePoetry =
       traceLinesWith tracer [
         hline,
@@ -266,55 +318,6 @@ runScheduler config tracer (PointSchedule ps) peers = do
         "» That just now dangled still -"
         ]
     hline = "--------------------------------------------------------------------------------"
-
--- | Construct STM resources, set up ChainSync and BlockFetch threads, and
--- send all ticks in a 'PointSchedule' to all given peers in turn.
-runPointSchedule ::
-  forall m.
-  (IOLike m, MonadTime m, MonadTimer m) =>
-  SchedulerConfig ->
-  GenesisTest ->
-  PointSchedule ->
-  Tracer m String ->
-  m StateView
-runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} pointSchedule tracer =
-  withRegistry $ \registry -> do
-    resources <- makePeersResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
-    let candidates = srCandidateFragment . prShared <$> resources
-    chainDb <- mkChainDb tracer candidates config registry
-    fetchClientRegistry <- newFetchClientRegistry
-    let chainDbView = defaultChainDbView chainDb
-    chainSyncRess <- for resources $ \PeerResources {prShared, prChainSync} -> do
-      chainSyncRes <- startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig
-      PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
-      pure chainSyncRes
-    for_ resources $ \PeerResources {prShared} ->
-      startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared
-    -- The block fetch logic needs to be started after the block fetch clients
-    -- otherwise, an internal assertion fails because getCandidates yields more
-    -- peer fragments than registered clients.
-    let getCandidates = traverse readTVar candidates
-    PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
-    runScheduler schedulerConfig tracer pointSchedule resources
-    svChainSyncExceptions <- collectExceptions (Map.elems chainSyncRess)
-    svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
-    pure $ StateView {
-      svSelectedChain,
-      svChainSyncExceptions,
-      svPointSchedule = pointSchedule
-      }
-  where
-    config = defaultCfg k
-
-    collectExceptions :: [StrictTVar m (Maybe ChainSyncException)] -> m [ChainSyncException]
-    collectExceptions vars = do
-      res <- mapM readTVarIO vars
-      pure $ [ e | Just e <- res, not (isAsyncCancelled e) ]
-
-    isAsyncCancelled :: ChainSyncException -> Bool
-    isAsyncCancelled e = case fromException $ cseException e of
-      Just AsyncCancelled -> True
-      _                   -> False
 
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.
