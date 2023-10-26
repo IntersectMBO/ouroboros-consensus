@@ -1,9 +1,9 @@
 # Ouroboros Consensus
 
-[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.12.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-0.12.0.0/)
-[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.8.0.1-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-diffusion-0.8.0.1/)
-[![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.5.0.7-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-protocol-0.5.0.7/)
-[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.10.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-cardano-0.10.0.0/)
+[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.13.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-0.13.0.0/)
+[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.8.0.2-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-diffusion-0.8.0.2/)
+[![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.6.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-protocol-0.6.0.0/)
+[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.11.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-cardano-0.11.0.0/)
 [![sop-extras](https://img.shields.io/badge/sop--extras-0.1.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/sop-extras-0.1.0.0/)
 [![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/strict-sop-core-0.1.0.0/)
 
