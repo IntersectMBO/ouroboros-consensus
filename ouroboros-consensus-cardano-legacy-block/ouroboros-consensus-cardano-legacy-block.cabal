@@ -55,7 +55,9 @@ library
     Legacy.Cardano.CanonicalTxIn
     Legacy.Cardano.Ledger
     Legacy.Convert
+    Legacy.Shelley
     Legacy.Shelley.Ledger
+    Legacy.Shelley.Node
     Ouroboros.Consensus.HardFork.Trans
     Ouroboros.Consensus.Legacy.Block
     Ouroboros.Consensus.Legacy.Util
