@@ -54,6 +54,7 @@ library
     Legacy.Cardano.CanHardFork
     Legacy.Cardano.CanonicalTxIn
     Legacy.Cardano.Ledger
+    Legacy.Cardano.Node
     Legacy.Convert
     Legacy.Shelley
     Legacy.Shelley.Ledger
@@ -67,7 +68,6 @@ library
     , bytestring
     , cardano-binary
     , cardano-crypto-class
-    , cardano-ledger-allegra
     , cardano-ledger-alonzo
     , cardano-ledger-babbage
     , cardano-ledger-byron

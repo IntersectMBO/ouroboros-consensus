@@ -1,3 +1,4 @@
+{-# LANGUAGE EmptyCase             #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE InstanceSigs          #-}
@@ -20,6 +21,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano ()
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Query
+                     (BlockSupportsLedgerQuery (..))
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Legacy.Block
 
@@ -133,3 +136,13 @@ instance LegacyCardanoHardForkConstraints c
         LegacyCardanoBlock c
     -> LedgerTables (LedgerState (LegacyCardanoBlock c)) KeysMK
   getBlockKeySets = const trivialLedgerTables
+
+{-------------------------------------------------------------------------------
+  Queries
+-------------------------------------------------------------------------------}
+
+instance LegacyCardanoHardForkConstraints c
+      => BlockSupportsLedgerQuery (LegacyCardanoBlock c) where
+  answerPureBlockQuery _ = undefined -- TODO
+  answerBlockQueryLookup _cfg q _dlv = case q of {}
+  answerBlockQueryTraverse _cfg q _dlv = case q of {}
