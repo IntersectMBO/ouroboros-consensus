@@ -53,6 +53,10 @@ instance IsLedger (LedgerState ByronBlock)
       castTickedLedgerState = TickedLegacyLedgerState
                             . flip withLedgerTables emptyLedgerTables
 
+{-------------------------------------------------------------------------------
+  Applying blocks
+-------------------------------------------------------------------------------}
+
 instance ApplyBlock (LedgerState ByronBlock) ByronBlock
       => ApplyBlock (LedgerState (LegacyBlock ByronBlock)) (LegacyBlock ByronBlock) where
   applyBlockLedgerResult ::
@@ -130,6 +134,7 @@ instance ApplyBlock (LedgerState ByronBlock) ByronBlock
 
 instance BlockSupportsLedgerQuery (LegacyBlock ByronBlock) where
   answerPureBlockQuery cfg (LegacyBlockQuery GetUpdateInterfaceState) ext =
-    answerPureBlockQuery (castExtLedgerCfg castTopLevelConfig cfg) GetUpdateInterfaceState $ castExtLedgerState coerce ext
+    answerPureBlockQuery (castExtLedgerCfg castTopLevelConfig cfg) GetUpdateInterfaceState $
+      castExtLedgerState coerce ext
   answerBlockQueryLookup _cfg q _dlv = case q of {}
   answerBlockQueryTraverse _cfg q _dlv = case q of {}
