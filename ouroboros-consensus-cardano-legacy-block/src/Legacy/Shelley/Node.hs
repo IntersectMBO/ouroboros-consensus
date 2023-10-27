@@ -70,7 +70,7 @@ instance SerialiseNodeToClient blk (ApplyTxError era)
 
   decodeNodeToClient ::
        CodecConfig (LegacyBlock blk)
-    -> BlockNodeToClientVersion (LegacyBlock  blk)
+    -> BlockNodeToClientVersion (LegacyBlock blk)
     -> forall s. Decoder s (ApplyTxError era)
   decodeNodeToClient ccfg version = coerce $
       decodeNodeToClient @blk @(ApplyTxError era) (coerce ccfg) version

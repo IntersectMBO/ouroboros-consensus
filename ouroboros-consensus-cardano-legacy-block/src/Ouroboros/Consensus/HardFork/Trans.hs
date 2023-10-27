@@ -84,6 +84,12 @@ module Ouroboros.Consensus.HardFork.Trans (
     -- * ProtocolInfo
   , hcoerce_ProtocolInfo
   , htrans_ProtocolInfo
+    -- * ApplyTxErr
+  , hcoerce_ApplyTxErr
+    -- * GenTxId
+  , hcoerce_GenTxId
+    -- * GenTx
+  , hcoerce_GenTx
   ) where
 
 import           Data.Coerce
@@ -98,6 +104,7 @@ import           Ouroboros.Consensus.HardFork.History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.TypeFamilyWrappers
@@ -861,6 +868,54 @@ htrans_ProtocolInfo p f1 f2 f3 f4 f5 f6 f7 f8 f9 pinfo = ProtocolInfo {
       , pInfoInitLedger
       } = pinfo
 
+{-------------------------------------------------------------------------------
+  ApplyTxErr
+-------------------------------------------------------------------------------}
 
+hcoerce_ApplyTxErr ::
+     ( AllZip (LiftedCoercible WrapApplyTxErr WrapApplyTxErr) xs ys
+     , AllZip (LiftedCoercible LedgerEraInfo LedgerEraInfo) xs ys
+     )
+  => ApplyTxErr (HardForkBlock xs)
+  -> ApplyTxErr (HardForkBlock ys)
+hcoerce_ApplyTxErr = \case
+    HardForkApplyTxErrFromEra err -> HardForkApplyTxErrFromEra
+                                   . OneEraApplyTxErr
+                                   . hcoerce
+                                   . getOneEraApplyTxErr
+                                   $ err
+    HardForkApplyTxErrWrongEra err -> HardForkApplyTxErrWrongEra
+                                    . MismatchEraInfo
+                                    . hcoerce
+                                    . getMismatchEraInfo
+                                    $ err
 
+{-------------------------------------------------------------------------------
+  GenTxId
+-------------------------------------------------------------------------------}
 
+hcoerce_GenTxId ::
+     AllZip (LiftedCoercible WrapGenTxId WrapGenTxId) xs ys
+  => GenTxId (HardForkBlock xs)
+  -> GenTxId (HardForkBlock ys)
+hcoerce_GenTxId =
+      HardForkGenTxId
+    . OneEraGenTxId
+    . hcoerce
+    . getOneEraGenTxId
+    . getHardForkGenTxId
+
+{-------------------------------------------------------------------------------
+  GenTx
+-------------------------------------------------------------------------------}
+
+hcoerce_GenTx ::
+     AllZip (LiftedCoercible GenTx GenTx) xs ys
+  => GenTx (HardForkBlock xs)
+  -> GenTx (HardForkBlock ys)
+hcoerce_GenTx =
+      HardForkGenTx
+    . OneEraGenTx
+    . hcoerce
+    . getOneEraGenTx
+    . getHardForkGenTx
