@@ -1,18 +1,22 @@
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE EmptyCase            #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE PolyKinds            #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds       #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE EmptyCase             #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds             #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE StandaloneDeriving    #-}
+{-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE UndecidableInstances  #-}
+
+{- HLINT ignore "Use camelCase" -}
+
 -- | NP with optional values
 --
 --
@@ -40,9 +44,11 @@ module Data.SOP.OptNP (
   ) where
 
 import           Control.Monad (guard)
+import           Data.Coerce (coerce)
 import           Data.Functor.These (These1 (..))
 import           Data.Kind (Type)
 import           Data.Maybe (isJust)
+import           Data.SOP.Classes (Same)
 import           Data.SOP.Index
 import           Data.SOP.NonEmpty
 import           Data.SOP.Strict hiding (And)
@@ -143,6 +149,33 @@ instance HSequence (OptNP empty) where
   hctraverse' = ctraverse'
   htraverse'  = hctraverse' (Proxy @Top)
   hsequence'  = htraverse' unComp
+
+type instance Same (OptNP empty) = OptNP empty
+
+instance HTrans (OptNP empty) (OptNP empty) where
+  htrans  = trans_OptNP
+  -- NOTE(jdral): this code could be replaced by 'unsafeCoerce' (see 'trans_NP'
+  -- or 'trans_NS' for examples), but this would technically sacrifice type
+  -- safety. For now, this version should be sufficient.
+  hcoerce = coerce_OptNP
+
+trans_OptNP ::
+     AllZipN (Prod (OptNP empty)) c xs ys
+  => proxy c
+  -> (forall x y. c x y => f x -> g y)
+  -> OptNP empty f xs
+  -> OptNP empty g ys
+trans_OptNP p t = \case
+    OptNil -> OptNil
+    OptCons fx fxs -> OptCons (t fx) (trans_OptNP p t fxs)
+    OptSkip fxs -> OptSkip (trans_OptNP p t fxs)
+
+coerce_OptNP ::
+     forall empty f g xs ys.
+     AllZipN (Prod (OptNP empty)) (LiftedCoercible f g) xs ys
+  => OptNP empty f xs
+  -> OptNP empty g ys
+coerce_OptNP = trans_OptNP (Proxy @(LiftedCoercible f g)) coerce
 
 {-------------------------------------------------------------------------------
   View

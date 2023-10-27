@@ -1,17 +1,21 @@
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE DerivingStrategies   #-}
-{-# LANGUAGE EmptyCase            #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE PolyKinds            #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds       #-}
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DerivingStrategies    #-}
+{-# LANGUAGE EmptyCase             #-}
+{-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE GADTs                 #-}
+{-# LANGUAGE InstanceSigs          #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds             #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes            #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE StandaloneDeriving    #-}
+{-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeFamilies          #-}
+{-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 -- | Intended for qualified import
 --
@@ -37,8 +41,11 @@ module Data.SOP.Match (
   ) where
 
 import           Data.Bifunctor
+import           Data.Coerce (coerce)
+import           Data.Constraint (Dict (..))
 import           Data.Functor.Product
 import           Data.Kind (Type)
+import           Data.SOP.Classes (Same)
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
@@ -108,6 +115,46 @@ instance HAp (Mismatch f) where
       go (_ :* fs) (ML fx gy) = ML fx (hap fs gy)
       go (f :* _)  (MR fy gx) = MR fy (apFn f gx)
       go Nil       m          = case m of {}
+
+type instance Same (Mismatch f) = Mismatch f
+
+instance (forall x y. LiftedCoercible p p x y)
+      => HTrans (Mismatch p) (Mismatch p) where
+  htrans ::
+       forall proxy c f g xs ys. AllZipN (Prod (Mismatch p)) c xs ys
+    => proxy c
+    -> (forall x y. c x y => f x -> g y)
+    -> Mismatch p f xs
+    -> Mismatch p g ys
+  htrans p t = \case
+      ML fx gy -> ML (coerce fx) $ htrans p t gy
+      MR fy gx | Dict <- tailDict -> MR (hcoerce fy) $ t gx
+        where
+          tailDict :: Dict (AllZip (LiftedCoercible p p) (Tail xs) (Tail ys))
+          tailDict = impliesAllZip (Proxy @c)
+      MS m     -> MS $ htrans p t m
+
+  -- NOTE(jdral): this code could be replaced by 'unsafeCoerce' (see 'trans_NP'
+  -- or 'trans_NS' for examples), but this would technically sacrifice type
+  -- safety. For now, this version should be sufficient.
+  hcoerce ::
+       forall f g xs ys. AllZipN (Prod (Mismatch p)) (LiftedCoercible f g) xs ys
+    => Mismatch p f xs
+    -> Mismatch p g ys
+  hcoerce = htrans (Proxy @(LiftedCoercible f g)) coerce
+
+impliesAllZip ::
+     forall c c' xs ys.
+     (AllZip c xs ys, forall x y. c x y => c' x y)
+  => Proxy c -> Dict (AllZip c' xs ys)
+impliesAllZip _ = go sList sList
+  where
+    go ::
+         forall as bs. AllZip c as bs
+      => SList as -> SList bs
+      -> Dict (AllZip c' as bs)
+    go SNil  SNil  = Dict
+    go SCons SCons = case go (sList @(Tail as)) (sList @(Tail bs)) of Dict -> Dict
 
 {-------------------------------------------------------------------------------
   Utilities

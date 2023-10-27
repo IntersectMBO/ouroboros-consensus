@@ -58,12 +58,9 @@ module Legacy.Convert (
   , convertTopLevelConfig
   ) where
 
-import           Data.Coerce
-import           Data.Constraint
 import           Data.SOP.Classes
 import           Data.SOP.Counting
 import           Data.SOP.Functors
-import           Data.SOP.Match
 import           Data.SOP.Strict
 import           Legacy.Cardano
 import           Legacy.LegacyBlock
@@ -285,53 +282,6 @@ convertLedgerError (HardForkLedgerErrorWrongEra we) =
     . hcoerce
     . getMismatchEraInfo
     $ we
-
-type instance Same (Mismatch f) = Mismatch f
-
--- NOTE(jdral): some of this code could technically be optimised using
--- 'unsafeCoerce', but this would sacrifice type safety. For now, this version
--- should be sufficient.
-instance (forall x y. LiftedCoercible p p x y)
-      => HTrans (Mismatch p) (Mismatch p) where
-  htrans ::
-       forall proxy c f g xs ys. AllZipN (Prod (Mismatch p)) c xs ys
-    => proxy c
-    -> (forall x y. c x y => f x -> g y)
-    -> Mismatch p f xs
-    -> Mismatch p g ys
-  htrans p t = \case
-      ML fx gy -> ML (coerce fx) $ htrans p t gy
-      MR fy gx | Dict <- tailDict -> MR (hcoerce fy) $ t gx
-        where
-          tailDict :: Dict (AllZip (LiftedCoercible p p) (Tail xs) (Tail ys))
-          tailDict = replaceAllZipConstraint (Proxy @c)
-      MS m     -> MS $ htrans p t m
-
-  hcoerce ::
-       forall f g xs ys. AllZipN (Prod (Mismatch p)) (LiftedCoercible f g) xs ys
-    => Mismatch p f xs
-    -> Mismatch p g ys
-  hcoerce = \case
-      ML fx gy -> ML (coerce fx) $ hcoerce gy
-      MR fy gx | Dict <- tailDict -> MR (hcoerce fy) $ coerce gx
-        where
-          tailDict :: Dict (AllZip (LiftedCoercible p p) (Tail xs) (Tail ys))
-          tailDict = replaceAllZipConstraint (Proxy @(LiftedCoercible f g))
-      MS m     -> MS $ hcoerce m
-
-replaceAllZipConstraint ::
-     forall c c' xs ys.
-     (AllZip c xs ys, forall x y. c' x y)
-  => Proxy c -> Dict (AllZip c' xs ys)
-replaceAllZipConstraint _ = go sList sList
-  where
-    go ::
-         forall as bs. AllZip c as bs
-      => SList as -> SList bs
-      -> Dict (AllZip c' as bs)
-    go SNil  SNil  = Dict
-    go SCons SCons = case go (sList @(Tail as)) (sList @(Tail bs)) of
-        Dict -> Dict
 
 {-------------------------------------------------------------------------------
   Ledger result

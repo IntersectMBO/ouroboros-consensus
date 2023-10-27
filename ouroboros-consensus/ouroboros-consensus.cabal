@@ -326,6 +326,7 @@ library
     , cardano-slotting
     , cardano-strict-containers
     , cborg                        >=0.2.2    && <0.3
+    , constraints
     , containers                   >=0.5      && <0.7
     , contra-tracer
     , deepseq
