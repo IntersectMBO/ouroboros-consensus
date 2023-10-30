@@ -95,20 +95,58 @@ instance Read SomeCheckedHonestRecipe where
             <*> Some.readArg
 
 data NoSuchHonestChainSchema =
-    -- | must have @0 <= 'Kcp' <= 'Scg'@
+    -- | must have @2 <= 'Kcp' <= 'Scg'@
+    --
+    -- Chosing @Kcp > 2@ allows adversarial schemas to have at least 1 active
+    -- slot and still lose density comparisons and races.
     BadKcp
   |
     -- | 'Len' must be positive
     BadLen
   deriving (Eq, Read, Show)
 
+-- Note [Minimum schema length]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- We want schemas to have at least k+1 active slots after the intersection.
+-- This would produce sufficiently long chains to test the long range attack and
+-- rollbacks.
+--
+-- The minimum length is calculated to allow k+1 active slots in every schema,
+-- and then allowing the intersection to be the genesis block. When the schemas
+-- are longer than the minimum, chosing a later intersection is possible.
+--
+-- We divide the length of the schemas in the following three segments:
+--
+-- 2s - (k - 1) | d | k
+--
+-- To ensure the honest schema has at least k+1 active slots, we need at least
+-- the length of the first segment: 2s - (k - 1). We know that because 2s slots
+-- have at a minimum 2k blocks by the chain growth assumption. But that would be
+-- ensuring k-1 more blocks than we want. Thus we subtract the redundant k-1
+-- slots.
+--
+-- To ensure the alternative schema can have k+1 active slots, we reserve
+-- k unstable slots at the end of the schema (this is the last of our segments),
+-- and we make sure to activate one more earlier slot.
+--
+-- To reserve k unstable slots, we need to meet two conditions. One condition is
+-- that there needs to be a gap of d slots between the first unstable slot and
+-- the k+1st active slot in the honest schema. This is the middle segment in the
+-- schema. Therefore, to obtain the total length, we need to extend the length
+-- of the first segment by d+k, to obtain 2s - (k - 1) + d + k = 2s + d + 1.
+--
+-- The second condition for unstable slots requires that the first alternative
+-- active slot after the intersection is s slots before the first unstable slot.
+-- To ensure that we can activate a slot at this point or earlier, we chose k>1,
+-- which we already needed to ensure that the alternative schema can have at
+-- least one active slot, yet lose density and race comparisons.
+
 genHonestRecipe :: QC.Gen HonestRecipe
 genHonestRecipe = sized1 $ \sz -> do
     (Kcp k, Scg s, Delta d) <- genKSD
-    -- 2s slots has at least 2k blocks. But that is ensuring k-1 more blocks
-    -- than we actually need. Thus it's safe to remove the k-1 last slots.
-    -- Therefore we set for a length of at least 2s - (k - 1).
-    l <- (+ (2*s - (k - 1))) <$> QC.choose (0, 5 * sz)
+    -- See Note [Minimum schema length].
+    l <- (+ (2*s + d + 1)) <$> QC.choose (0, 5 * sz)
     pure $ HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l)
 
 -- | Checks whether the given 'HonestRecipe' determines a valid input to
@@ -117,7 +155,7 @@ checkHonestRecipe :: HonestRecipe -> Exn.Except NoSuchHonestChainSchema SomeChec
 checkHonestRecipe recipe = do
     when (l <= 0) $ Exn.throwError BadLen
 
-    when (k < 0 || s < k) $ Exn.throwError BadKcp
+    when (k < 2 || s < k) $ Exn.throwError BadKcp
 
     C.withTopWindow (C.Lbl @HonestLbl) l $ \base topWindow -> do
         C.SomeWindow Proxy slots <- pure topWindow

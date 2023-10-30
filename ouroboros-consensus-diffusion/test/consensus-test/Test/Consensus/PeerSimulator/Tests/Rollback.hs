@@ -14,7 +14,6 @@ import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
-import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -23,11 +22,11 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests = testGroup "rollback" [
-  adjustQuickCheckTests (`div` 10) $
+  adjustQuickCheckTests (`div` 2) $
   localOption (QuickCheckMaxRatio 100) $
   testProperty "can rollback" prop_rollback
   ,
-  adjustQuickCheckTests (`div` 10) $
+  adjustQuickCheckTests (`div` 2) $
   testProperty "cannot rollback" prop_cannotRollback
   ]
 
@@ -42,9 +41,7 @@ prop_rollback = do
         -- Create a block tree with @1@ alternative chain, such that we can rollback
         -- from the trunk to that chain.
         gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
-        if alternativeChainIsLongEnough gtSecurityParam gtBlockTree
-          then pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree)
-          else discard)
+        pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree))
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
@@ -60,9 +57,7 @@ prop_cannotRollback =
   forAllGenesisTest
 
     (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
-        if alternativeChainIsLongEnough gtSecurityParam gtBlockTree
-          then pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree)
-          else discard)
+        pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree))
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
@@ -89,20 +84,6 @@ rollbackSchedule n blockTree =
       peers = peersOnlyHonest states
       pointSchedule = balanced defaultPointScheduleConfig peers
    in pointSchedule
-
--- | Whether the alternative chain has more than 'k' blocks after the
--- intersection with the honest chain.
---
--- PRECONDITION: Block tree with exactly one alternative chain, otherwise
--- this property does not make sense. With no alternative chain, this will
--- even crash.
-alternativeChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
-alternativeChainIsLongEnough (SecurityParam k) blockTree =
-  let BlockTreeBranch{btbSuffix} = case btBranches blockTree of
-        [b] -> b
-        _   -> error "The block tree must have exactly one alternative branch"
-      lengthSuffix = AF.length btbSuffix
-   in lengthSuffix > fromIntegral k
 
 -- | Given a hash, checks whether it is on the trunk of the block tree, that is
 -- if it only contains zeroes.
