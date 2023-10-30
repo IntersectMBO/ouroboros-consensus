@@ -35,7 +35,7 @@ import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import           Test.Ouroboros.Consensus.ChainGenerator.Honest
-                     (ChainSchema (ChainSchema))
+                     (ChainSchema (ChainSchema), HonestRecipe(HonestRecipe))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
                      Delta (Delta), Kcp (Kcp), Scg (Scg))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.RaceIterator as RI
@@ -637,15 +637,24 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 --
 -- The count will be strictly smaller than the number of active slots in the given 'ChainSchema'.
 --
+-- The following precondition ensures that there are enough slots to produce an
+-- alternative chain schema with at least k+1 slots.
+--
+-- PRECONDITION: @schemaSize schedH >= s + k + d + 1@
+--
 -- REVIEW: why do we not allow forking off the block number 1?
-genPrefixBlockCount :: R.RandomGen g => g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
-genPrefixBlockCount g schedH =
+genPrefixBlockCount :: R.RandomGen g => g -> HonestRecipe -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
+genPrefixBlockCount g (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) schedH
+    | C.getCount validIntersections >= 0 =
     if C.toVar numChoices < 2 then C.Count 0 {- can always pick genesis -} else do
         C.toVar $ R.runSTGen_ g $ C.uniformIndex numChoices
+    | otherwise =
+        error "size of schema is smaller than s + k + d + 1"
   where
     ChainSchema _slots v = schedH
 
-    numChoices = pc C.- 1   -- can't pick the last active slot
-
     -- 'H.uniformTheHonestChain' ensures 0 < pc
-    pc = BV.countActivesInV S.notInverted v
+    numChoices = BV.countActivesInV S.notInverted $
+           C.sliceV (C.UnsafeContains (C.Count 0) validIntersections) v
+
+    validIntersections = C.lengthV v C.- (s + k + d + 1)

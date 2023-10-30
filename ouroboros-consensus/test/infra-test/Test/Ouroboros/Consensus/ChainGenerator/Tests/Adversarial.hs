@@ -25,15 +25,14 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Honest as H
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genAsc,
-                     genKSD)
+                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genAsc)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.RaceIterator as RI
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest as H
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck.Extras (sized1, unsafeMapSuchThatJust)
+import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
@@ -107,7 +106,7 @@ instance QC.Arbitrary SomeTestAdversarial where
 
         testSeedPrefix <- QC.arbitrary @QCGen
 
-        let arPrefix = genPrefixBlockCount testSeedPrefix arHonest
+        let arPrefix = genPrefixBlockCount testSeedPrefix testRecipeH arHonest
 
         let H.HonestRecipe kcp scg delta _len = testRecipeH
 
@@ -295,14 +294,7 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
     arbitrary = do
         mut <- QC.elements [minBound .. maxBound :: AdversarialMutation]
         unsafeMapSuchThatJust $ do
-            (kcp, scg, delta, len) <- sized1 $ \sz -> do
-                (kcp, Scg s, delta) <- genKSD
-
-                l <- (+ s) <$> QC.choose (0, 5 * sz)
-
-                pure (kcp, Scg s, delta, Len l)
-
-            let recipeH = H.HonestRecipe kcp scg delta len
+            recipeH@(H.HonestRecipe kcp scg delta len) <- H.genHonestRecipe
 
             someTestRecipeH' <- case Exn.runExcept $ H.checkHonestRecipe recipeH of
                 Left e  -> error $ "impossible! " <> show (recipeH, e)
@@ -316,7 +308,7 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
 
             testSeedPrefix <- QC.arbitrary @QCGen
 
-            let arPrefix = genPrefixBlockCount testSeedPrefix arHonest
+            let arPrefix = genPrefixBlockCount testSeedPrefix recipeH arHonest
 
             let recipeA = A.AdversarialRecipe {
                     A.arPrefix
