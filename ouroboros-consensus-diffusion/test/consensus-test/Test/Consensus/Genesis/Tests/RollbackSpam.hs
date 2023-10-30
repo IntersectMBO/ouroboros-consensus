@@ -26,16 +26,16 @@ tests = testProperty "rollback spam" prop_rollbackSpam
 genChainsAndSchedule :: QC.Gen (GenesisTest, PointScheduleConfig, PointSchedule)
 genChainsAndSchedule =
   unsafeMapSuchThatJust $ do
-    gt <- genChains 2
+    gt <- genChains 100
     let secParam@(SecurityParam k) = gtSecurityParam gt
     let scheduleConfig = defaultPointScheduleConfig secParam
-        mode = RollbackRepeatBranch
+        mode = RollbackGenerated
         bulk = True
         freq | bulk = 2
              | otherwise = fromIntegral k + 1
         tree = gtBlockTree gt
         result = do
-          (schedule, newTree) <- genSchedule' scheduleConfig (RollbackSpam (mkPeers 1 [freq, freq]) bulk mode) tree
+          (schedule, newTree) <- genSchedule' scheduleConfig (RollbackSpam (mkPeers 1 [freq, freq, freq]) bulk mode) tree
           pure (gt {gtBlockTree = fromMaybe tree newTree}, scheduleConfig, schedule)
     pure result
 

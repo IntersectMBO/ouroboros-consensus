@@ -610,6 +610,8 @@ data RollbackMode =
   RollbackOneBranch
   |
   RollbackRepeatBranch
+  |
+  RollbackGenerated
   deriving (Eq, Show)
 
 -- | Generate a peer schedule that rolls back repeatedly.
@@ -626,7 +628,7 @@ rollbackSpamPeerSingle bulk (_, (prefix, (fork, suffix))) =
     suffixStates = rollback (banalStates suffix)
     forkStates = rollback (banalStates fork)
     rollback frag | bulk = pure <$> frag
-                  | otherwise = tails frag
+                  | otherwise = inits frag
 
 rollbackSpamPointScheduleSingle ::
   Peers Int ->
@@ -728,6 +730,45 @@ rollbackSpamPointScheduleRepeat PointScheduleConfig {psSecurityParam} freqs bulk
           in (n1, (pid, Peer pid v))
         _ -> (n, (pid, Peer pid ([], [])))
 
+-- | Generate a peer schedule that rolls back repeatedly.
+--
+-- See 'rollbackSpamPointSchedule'.
+rollbackSpamPeerGenerated ::
+  SecurityParam ->
+  Bool ->
+  [TestFrag] ->
+  [NodeState]
+rollbackSpamPeerGenerated (SecurityParam k) _bulk fragments =
+  -- FIXME: Always assumes 'bulk' for now.
+  map (last . take (fromIntegral k) . banalStates) fragments
+
+rollbackSpamPointScheduleGenerated ::
+  PointScheduleConfig ->
+  Peers Int ->
+  Bool ->
+  BlockTree TestBlock ->
+  Maybe (PointSchedule, Maybe a)
+rollbackSpamPointScheduleGenerated psConfig freqs bulk blockTree =
+  fmap (\ a -> (a, Nothing)) (interleaveWithFrequencies freqs peers)
+
+  where
+    sortedBranches = sortOn (AF.anchorToSlotNo . AF.anchor) $ map btbSuffix $ btBranches blockTree
+
+    distributeEvenly :: Int -> [a] -> [[a]]
+    distributeEvenly n =
+      transpose . chunkify
+      where
+        chunkify [] = []
+        chunkify l =
+          let (b, a) = splitAt n l
+           in b : chunkify a
+
+    peers =
+      bimapPeers
+        (const $ banalStates $ btTrunk blockTree)
+        (rollbackSpamPeerGenerated (psSecurityParam psConfig) bulk)
+        (mkPeers [] (distributeEvenly (Map.size $ others freqs) sortedBranches))
+
 -- | Generate a point schedule in which adversaries roll back repeatedly.
 --
 -- The adversary first serves the honest prefix, then alternates between
@@ -745,6 +786,7 @@ rollbackSpamPointSchedule ::
 rollbackSpamPointSchedule = \case
   RollbackOneBranch -> const rollbackSpamPointScheduleSingle
   RollbackRepeatBranch -> rollbackSpamPointScheduleRepeat
+  RollbackGenerated -> rollbackSpamPointScheduleGenerated
 
 ----------------------------------------------------------------------------------------------------
 -- Main API
