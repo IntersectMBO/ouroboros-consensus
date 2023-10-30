@@ -114,7 +114,7 @@ instance QC.Arbitrary SomeTestAdversarial where
 
         testSeedPrefix <- QC.arbitrary @QCGen
 
-        let arPrefix = genPrefixBlockCount kcp testSeedPrefix arHonest
+        let arPrefix = genPrefixBlockCount testRecipeH testSeedPrefix arHonest
 
             H.HonestRecipe kcp scg delta _len = testRecipeH
 
@@ -152,7 +152,8 @@ instance QC.Arbitrary SomeTestAdversarial where
                     testSeedH
                   }
 
--- | The honest schema has k+1 blocks after the intersection.
+-- | Both the honest and the alternative schema have k+1 blocks after the
+-- intersection.
 prop_kPlus1BlocksAfterIntersection :: SomeTestAdversarial -> QCGen -> QC.Property
 prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $ do
     SomeTestAdversarial Proxy Proxy TestAdversarial {
@@ -166,7 +167,7 @@ prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $
 
     let A.AdversarialRecipe { A.arHonest = schedH } = testRecipeA
         schedA = A.uniformAdversarialChain (Just testAscA) recipeA' testSeedA
-        H.ChainSchema winA _vA = schedA
+        H.ChainSchema winA vA = schedA
         H.ChainSchema _winH vH = schedH
         A.AdversarialRecipe { A.arParams = (Kcp k, scg, _delta) } = testRecipeA
 
@@ -185,11 +186,9 @@ prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $
           (BV.countActivesInV S.notInverted vH
             `QC.ge` C.toSize (C.Count (k + 1) + A.arPrefix testRecipeA)
           )
--- TODO: uncomment this after ensuring the same for the alternative schema
---        QC..&&.
---        QC.counterexample ("The alternative chain should have k+1 blocks after the intersection")
---          (BV.countActivesInV S.notInverted vA `QC.ge` C.Count (k + 1))
-
+        QC..&&.
+          QC.counterexample ("The alternative chain should have k+1 blocks after the intersection")
+            (BV.countActivesInV S.notInverted vA `QC.ge` C.Count (k + 1))
 
 -- | No seed exists such that each 'A.checkAdversarialChain' rejects the result of 'A.uniformAdversarialChain'
 prop_adversarialChain :: SomeTestAdversarial -> QCGen -> QC.Property
@@ -356,7 +355,7 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
 
             testSeedPrefix <- QC.arbitrary @QCGen
 
-            let arPrefix = genPrefixBlockCount kcp testSeedPrefix arHonest
+            let arPrefix = genPrefixBlockCount recipeH testSeedPrefix arHonest
 
             let recipeA = A.AdversarialRecipe {
                     A.arPrefix
@@ -426,9 +425,9 @@ prop_adversarialChainMutation (SomeTestAdversarialMutation Proxy Proxy testAdver
     counter <- newIORef @Int 0
     catch   <- newIORef @(QCGen, [String]) (undefined, [])
 
-    -- we're willing to wait up to 2s to find a failure for each 'TestHonestMutation'
+    -- we're willing to wait up to 20s to find a failure for each 'TestHonestMutation'
     IO.timeout
-        (2 * 10^(6::Int))
+        (20 * 10^(6::Int))
         (go catch counter recipeA' testSeedAsSeed0) >>= \case
             Just prop -> pure prop
             Nothing   ->    -- did not find a failure caused by the mutation
