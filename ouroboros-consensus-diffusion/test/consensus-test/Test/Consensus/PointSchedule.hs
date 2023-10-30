@@ -84,7 +84,6 @@ import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
                      TestHash (TestHash), tbSlot, modifyFork, successorBlock, firstBlock)
-import Debug.Trace (traceM)
 
 ----------------------------------------------------------------------------------------------------
 -- Data types
@@ -714,9 +713,6 @@ rollbackSpamPointScheduleRepeat ::
 rollbackSpamPointScheduleRepeat PointScheduleConfig {psSecurityParam} freqs bulk blockTree = do
   schedule <- interleaveWithFrequencies freqs (fst <$> peers)
   let newTree = foldrM addBranch (mkTrunk (btTrunk blockTree)) (snd . value =<< Map.elems (others peers))
-  for_ (prettyPrint blockTree) traceM
-  for_ newTree $ \ nt -> for_ (prettyPrint nt) traceM
-  traceM (condense schedule)
   pure (schedule, newTree)
   where
     Peers {honest = Peer _ h0, others = o0} = blockTreePeersFull blockTree

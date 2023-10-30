@@ -1,4 +1,3 @@
-{-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -26,7 +25,7 @@ tests = testProperty "rollback spam" prop_rollbackSpam
 
 genChainsAndSchedule :: QC.Gen (GenesisTest, PointScheduleConfig, PointSchedule)
 genChainsAndSchedule =
-  unsafeMapSuchThatJust do
+  unsafeMapSuchThatJust $ do
     gt <- genChains 2
     let secParam@(SecurityParam k) = gtSecurityParam gt
     let scheduleConfig = defaultPointScheduleConfig secParam
@@ -45,7 +44,7 @@ prop_rollbackSpam = do
   (genesisTest, scheduleConfig, schedule) <- genChainsAndSchedule
   let Classifiers {..} = classifiers genesisTest
 
-  pure $ withMaxSuccess 2 $
+  pure $ withMaxSuccess 10 $
     classify genesisWindowAfterIntersection "Full genesis window after intersection" $
     runSimOrThrow $
       runTest
