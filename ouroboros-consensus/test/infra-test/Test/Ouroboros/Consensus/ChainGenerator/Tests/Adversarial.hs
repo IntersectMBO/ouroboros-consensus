@@ -109,7 +109,7 @@ instance QC.Arbitrary SomeTestAdversarial where
 
         testSeedPrefix <- QC.arbitrary @QCGen
 
-        let arPrefix = genPrefixBlockCount kcp testSeedPrefix arHonest
+        let arPrefix = genPrefixBlockCount testRecipeH testSeedPrefix arHonest
 
             H.HonestRecipe kcp scg delta _len = testRecipeH
 
@@ -351,7 +351,7 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
 
             testSeedPrefix <- QC.arbitrary @QCGen
 
-            let arPrefix = genPrefixBlockCount kcp testSeedPrefix arHonest
+            let arPrefix = genPrefixBlockCount recipeH testSeedPrefix arHonest
 
             let recipeA = A.AdversarialRecipe {
                     A.arPrefix

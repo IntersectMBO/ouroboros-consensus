@@ -38,7 +38,7 @@ import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import           Test.Ouroboros.Consensus.ChainGenerator.Honest
-                     (ChainSchema (ChainSchema))
+                     (ChainSchema (ChainSchema), HonestRecipe (HonestRecipe))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
                      Delta (Delta), Kcp (Kcp), Scg (Scg))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.RaceIterator as RI
@@ -742,17 +742,42 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 -- The count will be strictly smaller than the number of active slots in the given 'ChainSchema'.
 --
 -- The result is guaranteed to leave more than k active slots after the
--- intersection.
-genPrefixBlockCount :: R.RandomGen g => Kcp -> g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
-genPrefixBlockCount (Kcp k) g schedH
-    | C.getCount numChoices <= 0 = error "there should be at least k+1 blocks in the honest schema"
+-- intersection in the honest and the adversarial chains.
+--
+-- The following precondition ensures that there are enough slots to produce an
+-- alternative chain schema with at least k+1 slots.
+-- The precondition allows the intersection to occur early enough (earlier than
+-- s+k+d+1 slots from the end), which should allow the generation algorithm to
+-- fit k+1 active slots in the alternative schema after the intersection.
+--
+-- PRECONDITION: @schemaSize schedH >= s + k + d + 1@
+--
+-- The following precondition ensures that there are at least k+1 blocks after
+-- the intersection in the honest chain.
+--
+-- PRECONDITION: there is at least one block before the last s + k + d + 1 slots
+genPrefixBlockCount :: R.RandomGen g => HonestRecipe -> g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
+genPrefixBlockCount (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) g schedH
+    | C.getCount validIntersections < 0 =
+        error "size of schema is smaller than s + k + d + 1"
+    | numBlocks == C.Count 0 =
+          -- Pick genesis if there are no blocks
+          0
     | otherwise =
-        -- uniformIndex is going to pick a number between 0 and numChoices-1
-        C.toVar $ R.runSTGen_ g $ C.uniformIndex numChoices
+        -- @uniformIndex n@ yields a value in @[0..n-1]@, we add 1 to the
+        -- argument to account for the possibility of intersecting at the
+        -- genesis block
+        C.toVar $ R.runSTGen_ g $ C.uniformIndex (possibleBlocks C.+ 1)
   where
     ChainSchema _slots v = schedH
 
-    numChoices = actives C.- k
+    -- 'H.uniformTheHonestChain' ensures there is at least one block in the
+    -- first s slots.
+    -- By leaving one block after the intersection in the first s slots, we
+    -- ensure there are k+1 active slots in the honest chain after the
+    -- intersection.
+    possibleBlocks = numBlocks C.- 1
+    numBlocks = BV.countActivesInV S.notInverted $
+           C.sliceV (C.UnsafeContains (C.Count 0) validIntersections) v
 
-    -- 'H.uniformTheHonestChain' ensures k < active
-    actives = BV.countActivesInV S.notInverted v
+    validIntersections = C.lengthV v C.- (s + k + d + 1)
