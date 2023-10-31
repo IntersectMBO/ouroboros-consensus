@@ -168,6 +168,15 @@ Lastly the user can provide the analysis that should be run on the chain:
       - Ticking the [ledger state](https://github.com/input-output-hk/ouroboros-consensus/blob/51da3876c01edc2eec250fdc998f6cb33cdc4367/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs#L174).
       - Applying a block.
 
+* `--repro-mempool-and-forge NUM` populates the mempool with the transactions
+  from NUM blocks every time and then runs the forging loop. Useful to inspect
+  regressions in the forging loop or in the mempool adding/snapshotting logic.
+  The output shows the time spent on ticking and snapshotting the mempool broken
+  down into:
+  - real monotonic measured time
+  - time spent in the mutator in microseconds
+  - time spent in GC in microseconds
+
 If no analysis flag is provided, then the ChainDB will be opened, all the chunks
 in the immutable and volatile databases will be validated (see
 [validation](#database-validation)), and the tool will exit.
