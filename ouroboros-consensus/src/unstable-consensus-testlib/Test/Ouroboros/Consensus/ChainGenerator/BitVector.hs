@@ -175,10 +175,10 @@ fillInWindow pol (SomeDensityWindow k s) g mv = do
     -- This discount reflects that we (very conservatively!) assume every
     -- truncated slot would be an active polarized slot.
     let discountedK :: C.Var base (PreImage pol ActiveSlotE)
-        discountedK = C.Count $ C.getCount k - (C.getCount s - C.getCount sz)   -- TODO assert sz <= s
+        discountedK = C.Count $ C.getCount k - (C.getCount s - C.getCount sz)
 
     -- how many active polarized slots need to be added to @actual@
-    let adding = C.toVar discountedK - initialActives :: C.Var base (PreImage pol ActiveSlotE)
+    let adding = max 0 $ C.toVar discountedK - initialActives :: C.Var base (PreImage pol ActiveSlotE)
 
     -- draw from the empty polarized slots uniformly without replacement, a la Fisher-Yates shuffle
     C.forRange_ (C.toSize adding) $ \alreadyAdded -> do
