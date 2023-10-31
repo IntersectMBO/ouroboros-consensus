@@ -28,7 +28,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
   ) where
 
 import           Control.Applicative ((<|>))
-import           Control.Monad (void, when)
+import           Control.Monad (forM_, void, when)
 import qualified Control.Monad.Except as Exn
 import           Data.Proxy (Proxy (Proxy))
 import qualified System.Random.Stateful as R
@@ -482,9 +482,20 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         iterH =
             maybe (RI.initConservative vA) id
           $ RI.init kcp vA
-    unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
+    -- We don't want to change the first active slot in the adversarial chain
+    -- Otherwise, we can't predict the position of the acceleration bound.
+    firstActive <- BV.findIthEmptyInMV S.inverted mv (C.Count 0) >>= \case
+      BV.NothingFound -> error "the adversarial schema is empty"
+      BV.JustFound x  -> pure x
+    unfillRaces kPlus1st (firstActive C.+ 1) UnknownYS iterH g mv
 
     ensureLowerDensityThanHonestSchema g mv
+
+    -- Fill active slots after the stability window to ensure the alternative
+    -- schema has more than k active slots
+    let trailingSlots = C.getCount sz - k
+    forM_ [trailingSlots .. C.getCount sz - 1] $ \i ->
+      BV.setMV S.notInverted mv (C.Count i)
 
     pure mv
   where
@@ -596,7 +607,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                                   max
                                     (kPlus1st C.+ d C.+ 1)
                                     (C.fromWindow settledSlots x C.+ s C.+ 1)
-                unfillRaces kPlus1st (C.windowLast win C.+ 1) mbYS' iter' g mv
+                unfillRaces kPlus1st (max scope (C.windowLast win C.+ 1)) mbYS' iter' g mv
 
     ensureLowerDensityThanHonestSchema g mv =
         when (C.Count s <= C.windowSize carWin) $ do
