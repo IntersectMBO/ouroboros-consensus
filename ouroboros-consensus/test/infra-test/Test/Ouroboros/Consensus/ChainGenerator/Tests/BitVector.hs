@@ -2,14 +2,17 @@
 {-# LANGUAGE DeriveGeneric             #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE KindSignatures            #-}
+{-# LANGUAGE MonoLocalBinds            #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
+{-# LANGUAGE StandaloneDeriving        #-}
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector (tests) where
 
 import           Data.Monoid (Endo (Endo, appEndo))
 import qualified Data.Vector.Unboxed as V
 import           GHC.Generics (Generic)
+import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
@@ -17,14 +20,17 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Slot
                      (E (EmptySlotE, SlotE), POL, PreImage, S)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.QuickCheck as QC
+import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
+import qualified Test.Util.QuickCheck as QC
 
 -----
 
 tests :: [TT.TestTree]
 tests = [
-    TT.testProperty "prop_findIthZeroInV" prop_findIthZeroInV
+    TT.testProperty "prop_findIthZeroInV" prop_findIthZeroInV,
+    TT.testProperty "prop_fillInWindow" prop_fillInWindow
   ]
 
 -----
@@ -57,6 +63,10 @@ instance QC.Arbitrary (ProxyPol pol) where
     arbitrary = pure ProxyPol
     shrink    = QC.shrinkNothing
 
+data SomePol = forall pol. TestPOL pol => SomePol (ProxyPol pol)
+
+deriving instance Show SomePol
+
 data FindTestSetup (pol :: S.Pol) = FindTestSetup {
     testPol   :: ProxyPol pol
   ,
@@ -67,12 +77,19 @@ data FindTestSetup (pol :: S.Pol) = FindTestSetup {
   }
   deriving (Eq, Generic, Read, Show)
 
+instance QC.Arbitrary SomePol where
+    arbitrary = do
+        inverted <- QC.arbitrary
+        if inverted then
+          pure $ SomePol (ProxyPol :: ProxyPol S.Inverted)
+        else
+          pure $ SomePol (ProxyPol :: ProxyPol S.NotInverted)
+    shrink    = QC.shrinkNothing
+
 instance QC.Arbitrary SomeFindTestSetup where
     arbitrary = do
-        pol <- QC.arbitrary
-        case pol of
-            True  -> SomeFindTestSetup <$> (QC.arbitrary :: QC.Gen (FindTestSetup S.Inverted   ))
-            False -> SomeFindTestSetup <$> (QC.arbitrary :: QC.Gen (FindTestSetup S.NotInverted))
+        SomePol (_ :: ProxyPol pol) <- QC.arbitrary
+        SomeFindTestSetup <$> (QC.arbitrary :: QC.Gen (FindTestSetup pol))
 
     shrink (SomeFindTestSetup x) = [ SomeFindTestSetup y | y <- QC.shrink x ]
 
@@ -141,3 +158,71 @@ prop_findIthZeroInV testSetup = case testSetup of
                       $ QC.counterexample "There are not testIndex-many post-polarization-0s preceding i!"
                       $ targetsInPrecedingWords QC.=== C.getCount testIndex
                   )
+
+
+data FillInWindowSetup =
+    FillInWindowSetup
+      SomePol
+      Int -- ^ k
+      Int -- ^ size of the window to fill
+      QCGen -- ^ random generator
+      (V.Vector S) -- ^ the vector to fill
+
+instance Show FillInWindowSetup where
+  showsPrec p (FillInWindowSetup spol k szW qcGen v) =
+        showParen (p >= 11)
+      $ showString "FillInWindowSetup"
+      . showString "\n  pol = " . shows spol
+      . showString "\n  k = " . shows k
+      . showString "\n  qcGen = " . shows qcGen
+      . showString "\n  szW = " . shows szW
+      . showString "\n  v = " . shows (showBitVector v)
+
+showBitVector :: V.Vector S -> String
+showBitVector v =
+    take bvLen [ if b then '1' else '0' | s <- V.toList v, let b = S.test S.notInverted s ]
+    ++ if szV > bvLen then "..." else ""
+  where
+    szV = V.length v
+    bvLen = 80
+
+instance QC.Arbitrary FillInWindowSetup where
+  arbitrary = do
+      pol <- QC.arbitrary
+      QC.NonNegative k <- QC.arbitrary
+      QC.NonNegative k1 <- QC.arbitrary
+      QC.NonNegative k2 <- QC.arbitrary
+      qcGen <- QC.arbitrary
+      let szV = k1
+          szW = max k szV + k2 -- k <= szW && szV <= szW
+      ss <- QC.vectorOf szV QC.arbitrary
+      pure $ FillInWindowSetup pol k szW qcGen (V.fromList ss)
+
+prop_fillInWindow :: FillInWindowSetup -> QC.Property
+prop_fillInWindow
+        (FillInWindowSetup
+          (SomePol pol)
+          k
+          szW
+          qcGen
+          v
+        ) = R.runSTGen_ qcGen $ \g -> do
+    vmv <- V.thaw v
+    let mv = C.MVector vmv
+        szV = V.length v
+    actives0 <- C.getCount <$> BV.countActivesInMV pol mv
+    c <- C.getCount <$> BV.fillInWindow pol (BV.SomeDensityWindow (C.Count k) (C.Count szW)) g mv
+    actives1 <- C.getCount <$> BV.countActivesInMV pol mv
+    mvFrozen <- V.freeze vmv
+    pure $
+        QC.counterexample (showPol pol) $
+        QC.counterexample ("actives0 = " ++ show actives0) $
+        QC.counterexample ("actives1 = " ++ show actives1) $
+        QC.counterexample ("szV = " ++ show szV) $
+        QC.counterexample ("v = " ++ show (showBitVector mvFrozen)) $
+
+        (QC.counterexample "actives0 <= actives1" $ actives0 `QC.le` actives1)
+        QC..&&.
+        (QC.counterexample "c == actives1" $ c QC.=== actives1)
+        QC..&&.
+        (QC.counterexample "k <= actives1 + szW - szV" $ k `QC.le` actives1 + szW - szV)
