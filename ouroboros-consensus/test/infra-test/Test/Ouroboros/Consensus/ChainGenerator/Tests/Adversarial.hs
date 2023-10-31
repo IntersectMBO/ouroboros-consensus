@@ -32,16 +32,19 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest as H
-import qualified Test.QuickCheck as QC
+import qualified Test.QuickCheck as QC hiding (elements)
 import           Test.QuickCheck.Extras (sized1, unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
+import qualified Test.Util.QuickCheck as QC
 
 -----
 
 tests :: [TT.TestTree]
 tests = [
+    TT.testProperty "k+1 blocks after the intersection" prop_kPlus1BlocksAfterIntersection
+  ,
     TT.testProperty "prop_adversarialChain" prop_adversarialChain
   ,
     TT.localOption (TT.QuickCheckMaxSize 14) $ TT.testProperty "prop_adversarialChainMutation" prop_adversarialChainMutation
@@ -143,6 +146,45 @@ instance QC.Arbitrary SomeTestAdversarial where
                   ,
                     testSeedH
                   }
+
+-- | Both the honest and the alternative schema have k+1 blocks after the
+-- intersection.
+prop_kPlus1BlocksAfterIntersection :: SomeTestAdversarial -> QCGen -> QC.Property
+prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $ do
+    SomeTestAdversarial Proxy Proxy TestAdversarial {
+        testAscA
+      ,
+        testRecipeA
+      ,
+        testRecipeA'
+      } <- pure someTestAdversarial
+    A.SomeCheckedAdversarialRecipe Proxy recipeA' <- pure testRecipeA'
+
+    let A.AdversarialRecipe { A.arHonest = schedH } = testRecipeA
+        schedA = A.uniformAdversarialChain (Just testAscA) recipeA' testSeedA
+        H.ChainSchema winA vA = schedA
+        H.ChainSchema _winH vH = schedH
+        A.AdversarialRecipe { A.arParams = (Kcp k, scg, _delta) } = testRecipeA
+
+    C.SomeWindow Proxy stabWin <- do
+        pure $ calculateStability scg schedA
+
+    pure $
+      QC.counterexample (unlines $
+                            H.prettyChainSchema schedH "H"
+                            ++ H.prettyChainSchema schedA "A"
+                          )
+      $ QC.counterexample ("arPrefix = " <> show (A.arPrefix testRecipeA))
+      $ QC.counterexample ("stabWin  = " <> show stabWin)
+      $ QC.counterexample ("stabWin' = " <> show (C.joinWin winA stabWin))
+      $ QC.counterexample ("The honest chain has k+1 blocks after the intersection")
+          (BV.countActivesInV S.notInverted vH
+            `QC.ge` C.toSize (C.Count (k + 1) + A.arPrefix testRecipeA)
+          )
+        QC..&&.
+        QC.counterexample ("The alternative chain has k+1 blocks after the intersection")
+          (BV.countActivesInV S.notInverted vA `QC.ge` C.Count (k + 1))
+
 
 -- | No seed exists such that each 'A.checkAdversarialChain' rejects the result of 'A.uniformAdversarialChain'
 prop_adversarialChain :: SomeTestAdversarial -> QCGen -> QC.Property
