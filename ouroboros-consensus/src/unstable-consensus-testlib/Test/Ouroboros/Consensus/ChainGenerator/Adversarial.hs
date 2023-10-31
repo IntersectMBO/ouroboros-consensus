@@ -28,7 +28,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
   ) where
 
 import           Control.Applicative ((<|>))
-import           Control.Monad (foldM, void, when)
+import           Control.Monad (foldM, forM_, void, when)
 import qualified Control.Monad.Except as Exn
 import           Control.Monad.ST (ST)
 import           Data.Maybe (fromJust)
@@ -522,12 +522,24 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
             maybe (RI.initConservative vHAfterIntersection) id
           $ RI.init kcp vHAfterIntersection
 
-    ensureLowerDensityInWindows iterH g mv
+    -- We don't want to change the first active slot in the adversarial chain
+    -- Otherwise, we can't predict the position of the acceleration bound.
+    firstActive <- BV.findIthEmptyInMV S.inverted mv (C.Count 0) >>= \case
+      BV.NothingFound -> error "the adversarial schema is empty"
+      BV.JustFound x  -> pure x
+
+    ensureLowerDensityInWindows firstActive iterH g mv
 
     -- While densities are lower in the adversarial schema, the adversarial
     -- schema could still win races to the k+1st block by less than 1+delta
     -- slots. Therefore, we call @unfillRaces@ to deactivate further slots.
-    unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
+    unfillRaces kPlus1st (firstActive C.+ 1) UnknownYS iterH g mv
+
+    -- Fill active slots after the stability window to ensure the alternative
+    -- schema has more than k active slots
+    let trailingSlots = C.getCount sz - k
+    forM_ [trailingSlots .. C.getCount sz - 1] $ \i ->
+      BV.setMV S.notInverted mv (C.Count i)
 
     pure mv
   where
@@ -640,7 +652,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                                   max
                                     (kPlus1st C.+ d C.+ 1)
                                     (C.fromWindow settledSlots x C.+ s C.+ 1)
-                unfillRaces kPlus1st (C.windowLast win C.+ 1) mbYS' iter' g mv
+                unfillRaces kPlus1st (max scope (C.windowLast win C.+ 1)) mbYS' iter' g mv
 
     -- | Ensure the density of the adversarial schema is less than the density
     -- of the honest schema in the first stability window after the intersection
@@ -663,8 +675,13 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- the chains.
     --
     ensureLowerDensityInWindows
-      :: R.StatefulGen sg (ST s) => RI.Race adv -> sg -> C.MVector adv SlotE s S.S -> ST s ()
-    ensureLowerDensityInWindows (RI.Race (C.SomeWindow _ w0)) g mv = do
+      :: R.StatefulGen sg (ST s)
+      => C.Index adv SlotE
+      -> RI.Race adv
+      -> sg
+      -> C.MVector adv SlotE s S.S
+      -> ST s ()
+    ensureLowerDensityInWindows firstActiveSlot (RI.Race (C.SomeWindow _ w0)) g mv = do
         let
           -- A window after the intersection as short as the shortest of the
           -- stability window or the first race to the k+1st block.
@@ -672,7 +689,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
           hCount = C.toVar $
             BV.countActivesInV S.notInverted (C.sliceV w0' vHAfterIntersection)
 
-        aCount <- ensureLowerDensityInWindow w0' g mv hCount
+        aCount <- ensureLowerDensityInWindow firstActiveSlot w0' g mv hCount
 
         void $ foldM
           updateDensityOfMv
@@ -709,7 +726,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
 
           ac'' <-
               if ac' >= hc' then
-                ensureLowerDensityInWindow w g mv hc'
+                ensureLowerDensityInWindow firstActiveSlot w g mv hc'
               else
                 pure ac'
 
@@ -720,17 +737,33 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     --
     -- @hCount@ is the number of active slots in the honest schema in the
     -- given window.
-    ensureLowerDensityInWindow w g mv hCount = do
+    ensureLowerDensityInWindow firstActiveSlot w g mv hCount = do
         let emptyCountTarget = C.toVar $ S.complementActive S.notInverted (C.windowSize w) hCount C.+ 1
 
-        emptyCount <- BV.fillInWindow
-            S.inverted
-            (BV.SomeDensityWindow emptyCountTarget (C.windowSize w))
-            g
-            (C.sliceMV w mv)
+        emptyCount <- fillInWindowSkippingFirstActiveSlot
+          firstActiveSlot
+          emptyCountTarget
+          w
+          g
+          mv
 
         pure $ C.toVar $ S.complementActive S.inverted (C.windowSize w) emptyCount
 
+    fillInWindowSkippingFirstActiveSlot firstActiveSlot emptyCountTarget w g mv
+      | C.getCount (C.windowSize w) <= C.getCount firstActiveSlot = pure (C.Count 0)
+      | otherwise = do
+        let
+          slot = C.getCount firstActiveSlot
+          emptyCountTarget' = emptyCountTarget C.- slot
+          w' = C.UnsafeContains
+                 (firstActiveSlot C.+ 1)
+                 (C.windowSize w C.- (slot + 1))
+
+        BV.fillInWindow
+          S.inverted
+          (BV.SomeDensityWindow emptyCountTarget' (C.windowSize w'))
+          g
+          (C.sliceMV w' mv)
 
 -- | The youngest stable slot
 --
