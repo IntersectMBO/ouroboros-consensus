@@ -41,6 +41,8 @@ import qualified Test.Tasty.QuickCheck as TT
 
 tests :: [TT.TestTree]
 tests = [
+    TT.testProperty "k+1 blocks after the intersection" prop_kPlus1BlocksAfterIntersection
+  ,
     TT.testProperty "prop_adversarialChain" prop_adversarialChain
   ,
     TT.localOption (TT.QuickCheckMaxSize 14) $ TT.testProperty "prop_adversarialChainMutation" prop_adversarialChainMutation
@@ -142,6 +144,40 @@ instance QC.Arbitrary SomeTestAdversarial where
                   ,
                     testSeedH
                   }
+
+-- | Both the honest and the alternative schema have k+1 blocks after the
+-- intersection.
+prop_kPlus1BlocksAfterIntersection :: SomeTestAdversarial -> QCGen -> QC.Property
+prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $ do
+    SomeTestAdversarial Proxy Proxy TestAdversarial {
+        testAscA
+      ,
+        testRecipeA
+      ,
+        testRecipeA'
+      } <- pure someTestAdversarial
+    A.SomeCheckedAdversarialRecipe Proxy recipeA' <- pure testRecipeA'
+
+    let A.AdversarialRecipe { A.arHonest = schedH } = testRecipeA
+        schedA = A.uniformAdversarialChain (Just testAscA) recipeA' testSeedA
+        H.ChainSchema winA vA = schedA
+        H.ChainSchema _winH vH = schedH
+        A.AdversarialRecipe { A.arParams = (Kcp k, scg, _delta) } = testRecipeA
+
+    C.SomeWindow Proxy stabWin <- do
+        pure $ calculateStability scg schedA
+
+    pure
+      $ QC.counterexample (unlines $
+                            H.prettyChainSchema schedH "H"
+                            ++ H.prettyChainSchema schedA "A"
+                          )
+      $ QC.counterexample ("arPrefix = " <> show (A.arPrefix testRecipeA))
+      $ QC.counterexample ("stabWin  = " <> show stabWin)
+      $ QC.counterexample ("stabWin' = " <> show (C.joinWin winA stabWin))
+      $ BV.countActivesInV S.notInverted vA  >= C.Count (k + 1)
+        && BV.countActivesInV S.notInverted vH
+             >= C.toSize (C.Count (k + 1) + A.arPrefix testRecipeA)
 
 -- | No seed exists such that each 'A.checkAdversarialChain' rejects the result of 'A.uniformAdversarialChain'
 prop_adversarialChain :: SomeTestAdversarial -> QCGen -> QC.Property
