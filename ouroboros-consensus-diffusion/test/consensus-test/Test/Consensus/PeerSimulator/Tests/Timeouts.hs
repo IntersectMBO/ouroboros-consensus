@@ -70,4 +70,4 @@ prop_timeouts = do
           tick = Tick { active = state }
           maximumNumberOfTicks = round $ timeout / pscTickDuration scheduleConfig
       in
-      PointSchedule (tick :| replicate maximumNumberOfTicks tick)
+      PointSchedule (tick :| replicate maximumNumberOfTicks tick) (HonestPeer :| [])

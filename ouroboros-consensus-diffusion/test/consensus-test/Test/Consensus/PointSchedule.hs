@@ -239,12 +239,16 @@ peersOnlyHonest value =
 -- given tick.
 -- Each tick gives agency to only a single peer, which should process messages regularly
 -- until the given state is reached, while the other peers block.
-newtype PointSchedule =
-  PointSchedule {ticks :: NonEmpty Tick}
+data PointSchedule =
+  PointSchedule
+    { ticks   :: NonEmpty Tick
+    , peerIds :: NonEmpty PeerId -- ^ The peer ids that are involved in this point schedule.
+                                 -- Ticks can only refer to these peers.
+    }
   deriving (Eq, Show)
 
 instance Condense PointSchedule where
-  condense (PointSchedule ticks) = unlines (condense <$> toList ticks)
+  condense (PointSchedule ticks _) = unlines (condense <$> toList ticks)
 
 -- | Parameters that are significant for components outside of generators, like the peer
 -- simulator.
@@ -264,8 +268,8 @@ defaultPointScheduleConfig =
 ----------------------------------------------------------------------------------------------------
 
 -- | Extract all 'PeerId's.
-_getPeerIds :: Peers a -> NonEmpty PeerId
-_getPeerIds peers = HonestPeer :| Map.keys (others peers)
+getPeerIds :: Peers a -> NonEmpty PeerId
+getPeerIds peers = HonestPeer :| Map.keys (others peers)
 
 -- | Extract the trunk and all the branches from the 'BlockTree' and store them in
 -- an honest 'Peer' and several adversarial ones, respectively.
@@ -290,7 +294,7 @@ blockTreePeers BlockTree {btTrunk, btBranches} =
 -- nonempty, so we don't have to carry around another value for the
 -- 'PeerId's.
 pointSchedulePeers :: PointSchedule -> NonEmpty PeerId
-pointSchedulePeers PointSchedule{} = undefined
+pointSchedulePeers = peerIds
 
 -- | Convert 'Peers' to a list of 'Peer'.
 peersList :: Peers a -> NonEmpty (Peer a)
@@ -313,26 +317,13 @@ mkPeers h as =
 ----------------------------------------------------------------------------------------------------
 
 -- | Ensure that a 'PointSchedule' isn't empty.
-pointSchedule :: [Tick] -> Maybe PointSchedule
-pointSchedule ticks = PointSchedule <$> nonEmpty ticks
+pointSchedule :: [Tick] -> NonEmpty PeerId -> Maybe PointSchedule
+pointSchedule ticks nePeerIds = (`PointSchedule` nePeerIds) <$> nonEmpty ticks
 
--- | Create the final 'PointSchedule' from a 'PeerSchedule', which consists of adding the inactive
--- peers' states to each tick.
---
--- - Initialize all peers to 'NodeOffline'.
---
--- - Fold over the list of active peer states in the 'PeerSchedule'.
---
--- - In a fold 'step', update the active peer's state in the accumulator (in @updatePeer@), then
---   emit a 'Tick' with both the active peer's state and the accumulator in it.
---
--- - 'mapAccumL' allows the step function to produce a new accumulator as well as a result list
---   element, so its final result is the accumulator after the last step as well as each step's
---   'Tick' as a new list.
---   We discard the final accumulator and pass the new list of 'Tick's to 'pointSchedule', which
---   ensures that the schedule is nonempty, and returns 'Nothing' otherwise.
-peer2Point :: Peers a -> PeerSchedule -> Maybe PointSchedule
-peer2Point _ps (PeerSchedule n) = pointSchedule (map Tick n)
+-- | Create the final 'PointSchedule' from a 'PeerSchedule', which consists of
+-- adding attaching the peer ids, and checking that the ticks are non-empty.
+peer2Point :: NonEmpty PeerId -> PeerSchedule -> Maybe PointSchedule
+peer2Point ps (PeerSchedule n) = pointSchedule (map Tick n) ps
 
 ----------------------------------------------------------------------------------------------------
 -- Folding functions
@@ -379,7 +370,7 @@ balanced ::
   Peers [NodeState] ->
   Maybe PointSchedule
 balanced states =
-  pointSchedule (map step activeSeq)
+  pointSchedule (map step activeSeq) (getPeerIds states)
   where
     step :: Peer NodeState -> Tick
     step active = Tick {active}
@@ -427,7 +418,7 @@ frequencyPointSchedule ::
   BlockTree TestBlock ->
   Maybe PointSchedule
 frequencyPointSchedule freqs blockTree =
-  peer2Point freqs (PeerSchedule (fmap snd <$> sortOn (fst . value) catted))
+  peer2Point (getPeerIds freqs) (PeerSchedule (fmap snd <$> sortOn (fst . value) catted))
   where
     catted = sequenceA =<< toList (peersList intvals)
 
@@ -450,7 +441,7 @@ frequencyPointSchedule freqs blockTree =
 onlyHonestPointSchedule :: BlockTree TestBlock -> Maybe PointSchedule
 onlyHonestPointSchedule BlockTree {btTrunk = Empty _} = Nothing
 onlyHonestPointSchedule BlockTree {btTrunk = _ :> tipBlock} =
-  Just $ PointSchedule (pure tick)
+  Just $ PointSchedule (pure tick) (HonestPeer :| [])
   where
     tick = Tick {active = honestPeerState}
     honestPeerState = Peer HonestPeer (NodeOnline points)
@@ -465,7 +456,7 @@ onlyHonestPointSchedule BlockTree {btTrunk = _ :> tipBlock} =
 -- No idea what the point of this is.
 onlyHonestWithMintingPointSchedule :: SlotNo -> Int -> TestFrag -> Maybe PointSchedule
 onlyHonestWithMintingPointSchedule initialSlotNo _ticksPerSlot fullFragment@(_ :> finalBlock) =
-  pointSchedule (map tickAtSlotNo [initialSlotNo .. finalSlotNo])
+  pointSchedule (map tickAtSlotNo [initialSlotNo .. finalSlotNo]) (HonestPeer :| [])
   where
     -- If we hold a block, we are guaranteed that the slot number cannot be
     -- origin?

@@ -246,7 +246,7 @@ runScheduler ::
   PointSchedule ->
   Map PeerId (PeerResources m) ->
   m ()
-runScheduler config tracer (PointSchedule ps) peers = do
+runScheduler config tracer PointSchedule {ticks=ps} peers = do
   traceWith tracer "Schedule is:"
   for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
   traceStartOfTimePoetry
