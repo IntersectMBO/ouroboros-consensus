@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Build haddock documentation and an index for all projects in
 # `ouroboros-consensus` repository.
 #
