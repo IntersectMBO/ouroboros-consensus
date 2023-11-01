@@ -11,11 +11,8 @@
 -- we want to use for tests.
 --
 -- Each generator takes a set of 'AnchoredFragment's corresponding to the tested peers'
--- chains, and converts them to a 'PeerSchedule' consisting of a sequence of states
+-- chains, and converts them to a 'PointSchedule' consisting of a sequence of states
 -- ('AdvertisedPoints'), each of which is associated with a single peer.
---
--- The generated 'PeerSchedule' is transformed into a 'PointSchedule' that adds the current
--- states of the other peers to each entry (as a 'Tick').
 --
 -- When a schedule is executed in a test, each tick is processed in order.
 -- The peer associated with the current tick is considered "active", which means that
@@ -209,11 +206,6 @@ data Peers a =
 instance Functor Peers where
   fmap f Peers {honest, others} = Peers {honest = f <$> honest, others = fmap f <$> others}
 
--- | Intermediate type that contains the states for only the active peers.
-newtype PeerSchedule =
-  PeerSchedule [Peer NodeState]
-  deriving (Eq, Show)
-
 -- | A tick is an entry in a 'PointSchedule', containing the peer that is
 -- going to change state.
 data Tick =
@@ -320,11 +312,6 @@ mkPeers h as =
 pointSchedule :: [Tick] -> NonEmpty PeerId -> Maybe PointSchedule
 pointSchedule ticks nePeerIds = (`PointSchedule` nePeerIds) <$> nonEmpty ticks
 
--- | Create the final 'PointSchedule' from a 'PeerSchedule', which consists of
--- adding attaching the peer ids, and checking that the ticks are non-empty.
-peer2Point :: NonEmpty PeerId -> PeerSchedule -> Maybe PointSchedule
-peer2Point ps (PeerSchedule n) = pointSchedule (map Tick n) ps
-
 ----------------------------------------------------------------------------------------------------
 -- Folding functions
 ----------------------------------------------------------------------------------------------------
@@ -418,7 +405,7 @@ frequencyPointSchedule ::
   BlockTree TestBlock ->
   Maybe PointSchedule
 frequencyPointSchedule freqs blockTree =
-  peer2Point (getPeerIds freqs) (PeerSchedule (fmap snd <$> sortOn (fst . value) catted))
+  pointSchedule (map (Tick . fmap snd) (sortOn (fst . value) catted)) (getPeerIds freqs)
   where
     catted = sequenceA =<< toList (peersList intvals)
 
