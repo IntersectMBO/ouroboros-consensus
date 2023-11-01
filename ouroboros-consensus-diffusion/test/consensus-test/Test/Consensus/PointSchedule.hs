@@ -55,7 +55,7 @@ module Test.Consensus.PointSchedule (
 
 import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)
-import           Data.List (mapAccumL, sortOn, transpose)
+import           Data.List (sortOn, transpose)
 import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -214,15 +214,11 @@ newtype PeerSchedule =
   PeerSchedule [Peer NodeState]
   deriving (Eq, Show)
 
--- | A tick is an entry in a 'PointSchedule', containing the node states for all peers
--- as well as a designated peer that should be processing messages during this tick.
---
--- REVIEW: What is the purpose of having the other peers as well in a
--- 'TickState'?
+-- | A tick is an entry in a 'PointSchedule', containing the peer that is
+-- going to change state.
 data Tick =
   Tick {
-    active :: Peer NodeState,
-    peers  :: Peers NodeState
+    active :: Peer NodeState
   }
   deriving (Eq, Show)
 
@@ -268,8 +264,8 @@ defaultPointScheduleConfig =
 ----------------------------------------------------------------------------------------------------
 
 -- | Extract all 'PeerId's.
-getPeerIds :: Peers a -> NonEmpty PeerId
-getPeerIds peers = HonestPeer :| Map.keys (others peers)
+_getPeerIds :: Peers a -> NonEmpty PeerId
+_getPeerIds peers = HonestPeer :| Map.keys (others peers)
 
 -- | Extract the trunk and all the branches from the 'BlockTree' and store them in
 -- an honest 'Peer' and several adversarial ones, respectively.
@@ -294,8 +290,7 @@ blockTreePeers BlockTree {btTrunk, btBranches} =
 -- nonempty, so we don't have to carry around another value for the
 -- 'PeerId's.
 pointSchedulePeers :: PointSchedule -> NonEmpty PeerId
-pointSchedulePeers PointSchedule{ticks = Tick {peers} :| _} =
-  getPeerIds peers
+pointSchedulePeers PointSchedule{} = undefined
 
 -- | Convert 'Peers' to a list of 'Peer'.
 peersList :: Peers a -> NonEmpty (Peer a)
@@ -337,24 +332,7 @@ pointSchedule ticks = PointSchedule <$> nonEmpty ticks
 --   We discard the final accumulator and pass the new list of 'Tick's to 'pointSchedule', which
 --   ensures that the schedule is nonempty, and returns 'Nothing' otherwise.
 peer2Point :: Peers a -> PeerSchedule -> Maybe PointSchedule
-peer2Point ps (PeerSchedule n) =
-  pointSchedule (snd (mapAccumL step initial n))
-  where
-
-    initial :: Peers NodeState
-    initial = NodeOffline <$ ps
-
-    step :: Peers NodeState -> Peer NodeState -> (Peers NodeState, Tick)
-    step z active =
-      (new, Tick active new)
-      where
-        new = updatePeer z active
-
-    updatePeer :: Peers a -> Peer a -> Peers a
-    updatePeer Peers {honest, others} active =
-      case name active of
-        HonestPeer -> Peers {honest = active, others}
-        name       -> Peers {honest, others = Map.insert name active others}
+peer2Point _ps (PeerSchedule n) = pointSchedule (map Tick n)
 
 ----------------------------------------------------------------------------------------------------
 -- Folding functions
@@ -401,26 +379,14 @@ balanced ::
   Peers [NodeState] ->
   Maybe PointSchedule
 balanced states =
-  pointSchedule (snd (mapAccumL step initial activeSeq))
+  pointSchedule (map step activeSeq)
   where
-    step :: Tick -> Peer NodeState -> (Tick, Tick)
-    step Tick {peers} active =
-      let next = Tick {active, peers = updatePeer peers active}
-       in (next, next)
-
-    updatePeer :: Peers a -> Peer a -> Peers a
-    updatePeer Peers {honest, others} active =
-      case name active of
-        HonestPeer -> Peers {honest = active, others}
-        name       -> Peers {honest, others = Map.insert name active others}
+    step :: Peer NodeState -> Tick
+    step active = Tick {active}
 
     -- Sequence containing the first state of all the nodes in order, then the
     -- second in order, etc.
     activeSeq = concat $ transpose $ sequenceA (honest states) : (sequenceA <$> Map.elems (others states))
-
-    -- Initial state where all the peers are offline.
-    initial = Tick {active = initialH, peers = Peers initialH ((NodeOffline <$) <$> others states)}
-    initialH = Peer HonestPeer NodeOffline
 
 -- | Generate a point schedule that serves a single header in each tick for each
 -- peer in turn. See 'blockTreePeers' for peers generation.
@@ -486,7 +452,7 @@ onlyHonestPointSchedule BlockTree {btTrunk = Empty _} = Nothing
 onlyHonestPointSchedule BlockTree {btTrunk = _ :> tipBlock} =
   Just $ PointSchedule (pure tick)
   where
-    tick = Tick {active = honestPeerState, peers = Peers honestPeerState Map.empty}
+    tick = Tick {active = honestPeerState}
     honestPeerState = Peer HonestPeer (NodeOnline points)
     points = AdvertisedPoints tipPoint headerPoint blockPoint
     tipPoint = TipPoint $ tipFromHeader tipBlock
@@ -525,8 +491,7 @@ onlyHonestWithMintingPointSchedule initialSlotNo _ticksPerSlot fullFragment@(_ :
               advertisedPointsAtSlotNo slotNo
        in
           Tick {
-            active = honestPeerState,
-            peers = Peers honestPeerState Map.empty
+            active = honestPeerState
           }
 onlyHonestWithMintingPointSchedule _initialSlotNo _ticksPerSlot _fullFragment =
     error "unexpected alternative"

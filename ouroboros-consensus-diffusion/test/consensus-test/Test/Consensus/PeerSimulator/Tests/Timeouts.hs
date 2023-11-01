@@ -5,7 +5,6 @@ module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
 
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
-import qualified Data.Map as Map
 import           Data.Maybe (fromJust)
 import           Ouroboros.Consensus.Block (getHeader)
 import           Ouroboros.Consensus.Util.Condense
@@ -68,7 +67,7 @@ prop_timeouts = do
           headerPoint = HeaderPoint $ getHeader tipBlock
           blockPoint = BlockPoint tipBlock
           state = Peer HonestPeer $ NodeOnline $ AdvertisedPoints tipPoint headerPoint blockPoint
-          tick = Tick { active = state, peers = Peers state Map.empty }
+          tick = Tick { active = state }
           maximumNumberOfTicks = round $ timeout / pscTickDuration scheduleConfig
       in
       PointSchedule (tick :| replicate maximumNumberOfTicks tick)
