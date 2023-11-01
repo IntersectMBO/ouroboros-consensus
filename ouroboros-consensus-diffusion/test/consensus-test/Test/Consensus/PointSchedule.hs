@@ -357,11 +357,8 @@ balanced ::
   Peers [NodeState] ->
   Maybe PointSchedule
 balanced states =
-  pointSchedule (map step activeSeq) (getPeerIds states)
+  pointSchedule (map Tick activeSeq) (getPeerIds states)
   where
-    step :: Peer NodeState -> Tick
-    step active = Tick {active}
-
     -- Sequence containing the first state of all the nodes in order, then the
     -- second in order, etc.
     activeSeq = concat $ transpose $ sequenceA (honest states) : (sequenceA <$> Map.elems (others states))
