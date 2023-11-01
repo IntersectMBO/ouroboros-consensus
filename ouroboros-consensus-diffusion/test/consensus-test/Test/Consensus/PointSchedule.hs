@@ -208,7 +208,7 @@ instance Functor Peers where
 
 -- | A tick is an entry in a 'PointSchedule', containing the peer that is
 -- going to change state.
-data Tick =
+newtype Tick =
   Tick {
     active :: Peer NodeState
   }
