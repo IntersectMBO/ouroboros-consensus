@@ -63,7 +63,6 @@ import           Data.SOP.Counting
 import           Data.SOP.Functors
 import           Data.SOP.Strict
 import           Legacy.Cardano
-import           Legacy.LegacyBlock
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Config
@@ -75,6 +74,7 @@ import           Ouroboros.Consensus.HardFork.History.Summary
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Legacy.Block
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.TypeFamilyWrappers
 

@@ -9,9 +9,9 @@ module Legacy.Cardano.Block (
   ) where
 
 import           Data.Kind
-import           Legacy.LegacyBlock
 import           Ouroboros.Consensus.Byron.Ledger.Block
 import           Ouroboros.Consensus.Cardano.Block
+import           Ouroboros.Consensus.Legacy.Block
 import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Ledger
