@@ -12,8 +12,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import           Cardano.Slotting.Time (SlotLength (getSlotLength),
-                     slotLengthFromSec)
+import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Monad.Class.MonadAsync
                      (AsyncCancelled (AsyncCancelled))
 import           Control.Monad.Class.MonadTime (MonadTime)
@@ -64,7 +63,7 @@ import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
                      Peer (Peer), PeerId, PointSchedule (PointSchedule),
                      PointScheduleConfig, TestFragH, Tick (Tick),
-                     pointSchedulePeers)
+                     pointSchedulePeers, pscTickDuration)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
@@ -228,7 +227,7 @@ dispatchTick config tracer peers Tick {active = Peer pid state} =
       -- REVIEW: It would be worth sanity-checking that our understanding of
       -- `threadDelay` is correct; and maybe getting explicit information from
       -- both ChainSync & BlockFetch servers that they are done.
-      threadDelay (realToFrac (getSlotLength (scSlotLength config)))
+      threadDelay (pscTickDuration (scSchedule config))
       trace $ condense pid ++ "'s tick is now done."
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
