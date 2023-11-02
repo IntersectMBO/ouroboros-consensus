@@ -43,6 +43,7 @@ import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock,
                      Telescope (..), proxySingle)
 import           Ouroboros.Consensus.HardFork.Combinator.State (Current (..),
                      Past (..))
+<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Orphans/Arbitrary.hs
 import           Ouroboros.Consensus.HardFork.History (Bound (..))
 import           Ouroboros.Consensus.HeaderValidation (TipInfo)
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -50,6 +51,12 @@ import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+||||||| parent of 247fc7048... Add round trip tests for ledger config:ouroboros-consensus-test/src/Test/Util/Orphans/Arbitrary.hs
+
+=======
+import           Ouroboros.Consensus.HardFork.History.EraParams
+
+>>>>>>> 247fc7048... Add round trip tests for ledger config:ouroboros-consensus-test/src/Test/Util/Orphans/Arbitrary.hs
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (ChunkNo (..), ChunkSize (..), RelativeSlot (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout
@@ -254,6 +261,22 @@ instance (All (Arbitrary `Compose` f) xs, IsNonEmpty xs)
           , (lengthSList pf', S <$> arbitrary)
           ]
   shrink = hctraverse' (Proxy @(Arbitrary `Compose` f)) shrink
+
+{-------------------------------------------------------------------------------
+  Configuration
+-------------------------------------------------------------------------------}
+
+instance Arbitrary EraParams where
+  arbitrary = EraParams <$> arbitrary <*> arbitrary <*> arbitrary
+
+instance Arbitrary EpochSize where
+  arbitrary = EpochSize <$> arbitrary
+
+instance Arbitrary SafeZone where
+  arbitrary = oneof
+      [ StandardSafeZone <$> arbitrary
+      , return UnsafeIndefiniteSafeZone
+      ]
 
 {-------------------------------------------------------------------------------
   Telescope & HardForkState

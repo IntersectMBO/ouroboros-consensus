@@ -3,7 +3,13 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+<<<<<<< HEAD:ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/NodeId.hs
 {-# LANGUAGE StandaloneDeriving         #-}
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/NodeId.hs
+=======
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE TypeApplications           #-}
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/NodeId.hs
 
 module Ouroboros.Consensus.NodeId (
     -- * Node IDs
@@ -14,13 +20,29 @@ module Ouroboros.Consensus.NodeId (
   , fromCoreNodeId
   ) where
 
+<<<<<<< HEAD:ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/NodeId.hs
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (Serialise)
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/NodeId.hs
+import           Codec.Serialise (Serialise)
+=======
+import           Codec.Serialise (Serialise (..))
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/NodeId.hs
 import           Data.Hashable
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
+<<<<<<< HEAD:ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/NodeId.hs
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/NodeId.hs
+import           Quiet
+
+=======
+import           Quiet
+
+import           Cardano.Binary
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/NodeId.hs
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 import           Quiet
@@ -35,6 +57,24 @@ data NodeId = CoreId !CoreNodeId
             | RelayId !Word64
   deriving (Eq, Ord, Show, Generic, NoThunks)
 
+instance FromCBOR NodeId where
+  fromCBOR = do
+    len <- decodeListLen
+    tag <- decodeWord8
+    case (len, tag) of
+      (2, 0) -> CoreId <$> fromCBOR @CoreNodeId
+      (2, 1) -> RelayId <$> fromCBOR @Word64
+      _      -> fail $ "NodeId: unknown (len, tag) " ++ show (len, tag)
+
+instance ToCBOR NodeId where
+    toCBOR nodeId = case nodeId of
+      CoreId x  -> encodeListLen 2 <> encodeWord8 0 <> toCBOR x
+      RelayId x -> encodeListLen 2 <> encodeWord8 1 <> toCBOR x
+
+instance Serialise NodeId where
+  decode = fromCBOR
+  encode = toCBOR
+
 instance Condense NodeId where
   condense (CoreId (CoreNodeId i)) = "c" ++ show i
   condense (RelayId            i ) = "r" ++ show i
@@ -46,11 +86,12 @@ newtype CoreNodeId = CoreNodeId {
       unCoreNodeId :: Word64
     }
   deriving stock   (Eq, Ord, Generic)
-  deriving newtype (Condense, Serialise, NoThunks)
+  deriving newtype (Condense, FromCBOR, ToCBOR, NoThunks)
   deriving Show via Quiet CoreNodeId
 
 instance Hashable CoreNodeId
 
+<<<<<<< HEAD:ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/NodeId.hs
 instance ShowProxy NodeId where
   showProxy _ = "NodeId"
 
@@ -71,5 +112,12 @@ decodeNodeId = do
     1 -> RelayId <$> CBOR.decodeWord64
     _ -> fail ("decodeNodeId: unknown tok:" ++ show tok)
 
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/NodeId.hs
+=======
+instance Serialise CoreNodeId where
+  decode = fromCBOR
+  encode = toCBOR
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/NodeId.hs
 fromCoreNodeId :: CoreNodeId -> NodeId
 fromCoreNodeId = CoreId

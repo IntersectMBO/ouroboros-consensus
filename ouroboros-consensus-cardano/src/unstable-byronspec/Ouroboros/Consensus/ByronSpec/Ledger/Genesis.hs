@@ -1,6 +1,10 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE DerivingStrategies    #-}
+{-# LANGUAGE DerivingVia           #-}
+{-# LANGUAGE FlexibleInstances     #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE TypeApplications      #-}
 
 -- | Genesis config for the spec
 --
@@ -20,6 +24,23 @@ module Ouroboros.Consensus.ByronSpec.Ledger.Genesis (
   , toChainEnv
   ) where
 
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/unstable-byronspec/Ouroboros/Consensus/ByronSpec/Ledger/Genesis.hs
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-byronspec/src/Ouroboros/Consensus/ByronSpec/Ledger/Genesis.hs
+import           Data.Coerce (coerce)
+import           Data.Set (Set)
+import           NoThunks.Class (AllowThunk (..), NoThunks)
+import           Numeric.Natural (Natural)
+
+=======
+import           Data.Coerce (coerce)
+import           Data.Set (Set)
+import           NoThunks.Class (AllowThunk (..), NoThunks)
+import           Numeric.Natural (Natural)
+
+import           Cardano.Binary
+import           Codec.Serialise (Serialise (..))
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-byronspec/src/Ouroboros/Consensus/ByronSpec/Ledger/Genesis.hs
 import qualified Byron.Spec.Chain.STS.Rule.Chain as Spec
 import qualified Byron.Spec.Ledger.Core as Spec
 import qualified Byron.Spec.Ledger.Update as Spec
@@ -30,6 +51,7 @@ import           Data.Set (Set)
 import           NoThunks.Class (AllowThunk (..), NoThunks)
 import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.ByronSpec.Ledger.Orphans ()
+import           Ouroboros.Consensus.Node.Serialisation
 
 {-------------------------------------------------------------------------------
   Genesis config
@@ -52,6 +74,24 @@ data ByronSpecGenesis = ByronSpecGenesis {
     }
   deriving stock (Show)
   deriving NoThunks via AllowThunk ByronSpecGenesis
+
+instance SerialiseNodeToClient blk ByronSpecGenesis where
+  encodeNodeToClient _ _ (ByronSpecGenesis delegators utxo pparams k slotLength) = mconcat
+    [ encodeListLen 5
+    , toCBOR delegators
+    , encode utxo
+    , encode pparams
+    , toCBOR k
+    , toCBOR slotLength
+    ]
+  decodeNodeToClient _ _ = do
+    enforceSize "ByronSpecGenesis" 5
+    ByronSpecGenesis
+      <$> fromCBOR @(Set Spec.VKeyGenesis)
+      <*> decode @Spec.UTxO
+      <*> decode @Spec.PParams
+      <*> fromCBOR @Spec.BlockCount
+      <*> fromCBOR @Natural
 
 modPBftThreshold :: (Double -> Double)
                  -> ByronSpecGenesis -> ByronSpecGenesis

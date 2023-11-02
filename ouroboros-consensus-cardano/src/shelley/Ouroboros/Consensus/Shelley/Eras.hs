@@ -140,8 +140,18 @@ class ( Core.EraSegWits era
       , DecCBOR (PredicateFailure (EraRule "UTXOW" era))
       , EncCBOR (PredicateFailure (EraRule "UTXOW" era))
 
+<<<<<<< HEAD:ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Eras.hs
       , DSignable (EraCrypto era) (Hash (EraCrypto era) EraIndependentTxBody)
       , NoThunks (PredicateFailure (Core.EraRule "BBODY" era))
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/Eras.hs
+=======
+      , Eq       (Core.Tx era)
+      , NoThunks (Core.Tx era)
+      , Show     (Core.Tx era)
+
+      , FromCBOR (Core.TranslationContext era)
+      , ToCBOR   (Core.TranslationContext era)
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley/src/Ouroboros/Consensus/Shelley/Eras.hs
       , NoThunks (Core.TranslationContext era)
 
       ) => ShelleyBasedEra era where

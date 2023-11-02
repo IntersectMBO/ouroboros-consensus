@@ -24,7 +24,45 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool (extractTxs)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
+<<<<<<< HEAD:ouroboros-consensus-cardano/test/shelley-test/Test/ThreadNet/Shelley.hs
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley-test/test/Test/ThreadNet/Shelley.hs
+
+import           Test.ThreadNet.General
+import           Test.ThreadNet.Infra.Shelley
+import           Test.ThreadNet.Network (TestNodeInitialization (..),
+                     nodeOutputFinalLedger)
+
+import           Test.Util.HardFork.Future (singleEraFuture)
+import           Test.Util.Nightly
+import           Test.Util.Orphans.Arbitrary ()
+import           Test.Util.Slots (NumSlots (..))
+
+import qualified Cardano.Ledger.BaseTypes as SL (UnitInterval,
+                     mkNonceFromNumber, unboundRational)
+import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Protocol.TPraos.OCert as SL
+
+=======
+
+import           Ouroboros.Consensus.Shelley.ShelleyHFC ()
+
+import           Test.ThreadNet.General
+import           Test.ThreadNet.Infra.Shelley
+import           Test.ThreadNet.Network (TestNodeInitialization (..),
+                     nodeOutputFinalLedger)
+
+import           Test.Util.HardFork.Future (singleEraFuture)
+import           Test.Util.Nightly
+import           Test.Util.Orphans.Arbitrary ()
+import           Test.Util.Slots (NumSlots (..))
+
+import qualified Cardano.Ledger.BaseTypes as SL (UnitInterval,
+                     mkNonceFromNumber, unboundRational)
+import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Protocol.TPraos.OCert as SL
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-shelley-test/test/Test/ThreadNet/Shelley.hs
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley

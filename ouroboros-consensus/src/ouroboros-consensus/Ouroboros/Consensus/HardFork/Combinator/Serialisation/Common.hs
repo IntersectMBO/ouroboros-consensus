@@ -88,12 +88,30 @@ import           Data.SOP.Telescope (SimpleTelescope (..), Telescope (..))
 import qualified Data.SOP.Telescope as Telescope
 import           Data.Word
 import           Ouroboros.Consensus.Block
+<<<<<<< HEAD:ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/HardFork/Combinator/Serialisation/Common.hs
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/HardFork/Combinator/Serialisation/Common.hs
+import           Ouroboros.Consensus.Node.NetworkProtocolVersion
+import           Ouroboros.Consensus.Node.Run
+import           Ouroboros.Consensus.Node.Serialisation (Some (..))
+import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.SOP
+
+=======
+import           Ouroboros.Consensus.Node.NetworkProtocolVersion
+import           Ouroboros.Consensus.Node.Run
+import           Ouroboros.Consensus.Node.Serialisation (SerialiseNodeToClient,
+                     Some (..))
+import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.SOP
+
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus/src/Ouroboros/Consensus/HardFork/Combinator/Serialisation/Common.hs
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
+import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.State
 import           Ouroboros.Consensus.HardFork.Combinator.State.Instances
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -226,6 +244,7 @@ class ( SingleEraBlock                   blk
       , SerialiseDiskConstraints         blk
       , SerialiseNodeToNodeConstraints   blk
       , SerialiseNodeToClientConstraints blk
+      , SerialiseNodeToClient            blk (PartialLedgerConfig blk)
       , HasNetworkProtocolVersion        blk
       ) => SerialiseConstraintsHFC       blk
 

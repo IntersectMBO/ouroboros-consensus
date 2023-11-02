@@ -19,18 +19,31 @@
 --  existing roundtrip test functions.
 module Test.Consensus.Cardano.ByronCompatibility (tests) where
 
+<<<<<<< HEAD:ouroboros-consensus-cardano/test/cardano-test/Test/Consensus/Cardano/ByronCompatibility.hs
 import qualified Cardano.Chain.Byron.API as CC
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-cardano-test/test/Test/Consensus/Cardano/ByronCompatibility.hs
+import           Codec.CBOR.Decoding (Decoder)
+import           Codec.CBOR.Encoding (Encoding)
+=======
+import           Codec.CBOR.Decoding (Decoder, decodeNull)
+import           Codec.CBOR.Encoding (Encoding, encodeNull)
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-cardano-test/test/Test/Consensus/Cardano/ByronCompatibility.hs
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Coerce (Coercible, coerce)
 import           Data.SOP.BasicFunctors
 import           Ouroboros.Consensus.Block
+<<<<<<< HEAD:ouroboros-consensus-cardano/test/cardano-test/Test/Consensus/Cardano/ByronCompatibility.hs
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node ()
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.HardFork.Combinator (NestedCtxt_ (..))
+||||||| parent of 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-cardano-test/test/Test/Consensus/Cardano/ByronCompatibility.hs
+=======
+import           Ouroboros.Consensus.Ledger.Abstract
+>>>>>>> 2726854bf... Satisfy new serialisation constraints on LedgerConfig:ouroboros-consensus-cardano-test/test/Test/Consensus/Cardano/ByronCompatibility.hs
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -125,6 +138,24 @@ toCardanoCodecConfig codecConfigByron =
       ShelleyCodecConfig
       ShelleyCodecConfig
 
+-- | In both the cardano-to-byron and byron-to-cardano case, we don't attempt to
+-- test serialization of the ledger config, and so just use a unit type.
+-- Unfortunately, the serialisation of @SerialiseNodeToClient ByronBlock
+-- (LedgerConfig ByronBlock)@ and of @SerialiseNodeToClient (HardForkBlock
+-- '[ByronBlock]) (LedgerConfig (HardForkBlock '[ByronBlock]))@ are not
+-- compatible. In practice, we're not concerned by this as the ledger config is
+-- only serialised in response to a 'GetLedgerConfig' query which is only
+-- enabled in newer node-to-client versions i.e. not enabled when using a block
+-- type of 'ByronBlock' directly.
+data LedgerConfigUnit = LedgerConfigUnit
+
+instance SerialiseNodeToClient blk LedgerConfigUnit where
+  encodeNodeToClient _ _ _ = encodeNull
+  decodeNodeToClient _ _   = LedgerConfigUnit <$ decodeNull
+
+instance Arbitrary LedgerConfigUnit where
+  arbitrary = pure LedgerConfigUnit
+
 {------------------------------------------------------------------------------
   Byron to Cardano
 ------------------------------------------------------------------------------}
@@ -152,6 +183,7 @@ deriving instance Show (NestedCtxt_ ByronToCardano Header a)
 unNestedCtxt_B2C :: NestedCtxt_ ByronToCardano f a -> NestedCtxt_ ByronBlock f a
 unNestedCtxt_B2C (NestedCtxt_B2C ctxt) = ctxt
 
+type instance LedgerCfg (LedgerState ByronToCardano) = LedgerConfigUnit
 type instance HeaderHash ByronToCardano = HeaderHash ByronBlock
 type instance ApplyTxErr ByronToCardano = ApplyTxErr ByronBlock
 
@@ -458,6 +490,7 @@ deriving instance Show (NestedCtxt_ CardanoToByron Header a)
 unNestedCtxt_C2B :: NestedCtxt_ CardanoToByron f a -> NestedCtxt_ ByronBlock f a
 unNestedCtxt_C2B (NestedCtxt_C2B ctxt) = ctxt
 
+type instance LedgerCfg (LedgerState CardanoToByron) = LedgerConfigUnit
 type instance HeaderHash CardanoToByron = HeaderHash ByronBlock
 type instance ApplyTxErr CardanoToByron = ApplyTxErr ByronBlock
 
