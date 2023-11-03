@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
+{-# LANGUAGE LambdaCase                #-}
 {-# LANGUAGE MultiWayIf                #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE PolyKinds                 #-}
@@ -18,7 +19,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
   , checkAdversarialRecipe
   , uniformAdversarialChain
     -- * Testing
-  , AdversarialViolation (BadAnchor, BadCount, BadRace)
+  , AdversarialViolation (..)
   , AnchorViolation (HonestActiveMustAnchorAdversarial)
   , ChainSchema (ChainSchema)
   , RaceViolation (AdversaryWonRace, rvAdv, rvHon)
@@ -74,6 +75,15 @@ data AdversarialViolation hon adv =
     BadCount
   |
     BadRace !(RaceViolation hon adv)
+  |
+    -- | The density of the adversarial schema is not less than the density of
+    -- the honest schema in the first stability window after the intersection.
+    --
+    -- In @BadDensity h a@, @h@ is the amount of active slots in the first
+    -- stability window after the intersection in the honest schema and @a@ is
+    -- the amount of active slots in the first stability window after the
+    -- intersection in the adversarial schema.
+    BadDensity Int Int
   deriving (Eq, Read, Show)
 
 -- | Check the chain matches the given 'AdversarialRecipe'.
@@ -116,6 +126,7 @@ checkAdversarialChain recipe adv = do
     checkStart
     checkCount
     checkRaces
+    checkDensity
   where
     AdversarialRecipe {
         arHonest = ChainSchema winH vH
@@ -238,6 +249,20 @@ checkAdversarialChain recipe adv = do
                 Nothing     -> pure ()   -- there are no remaining honest active slots
                                          --
                                          -- TODO hpc shows this never executes
+    checkDensity :: Exn.Except (AdversarialViolation hon adv) ()
+    checkDensity =
+        when (C.Count s <= C.windowSize winA) $ do
+            let -- first stability window after the intersection in the honest
+                -- schema
+                hScgWin = C.UnsafeContains (C.Count $ C.getCount $ C.windowStart winA) (C.Count s)
+                -- first stability window after the intersection in the
+                -- alternative schema
+                aScgWin = C.UnsafeContains (C.Count 0) (C.Count s)
+                -- number of active slots in the first stability window after
+                -- the intersection in the honest schema
+                hCount = C.getCount $ BV.countActivesInV S.notInverted (C.sliceV hScgWin vH)
+                aCount = C.getCount $ BV.countActivesInV S.notInverted (C.sliceV aScgWin vA)
+            when (aCount >= hCount) $ Exn.throwError $ BadDensity hCount aCount
 
 -----
 
@@ -403,6 +428,10 @@ data TouchableLbl
 -- window after the first (remaining) active adversarial slot in it. In each
 -- such Window, it removes the youngest active slots from the adversarial
 -- leader schedule until it loses that Race.
+--
+-- Finally, it ensures that the density of the alternative schema is
+-- less than the density of the honest schema in the first stability window
+-- after the intersection.
 uniformAdversarialChain ::
   forall g base hon adv.
      R.RandomGen g
@@ -447,6 +476,8 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
             maybe (RI.initConservative vA) id
           $ RI.init kcp vA
     unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
+
+    ensureLowerDensityThanHonestSchema g mv
 
     pure mv
   where
@@ -559,6 +590,36 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                                     (kPlus1st C.+ d C.+ 1)
                                     (C.fromWindow settledSlots x C.+ s C.+ 1)
                 unfillRaces kPlus1st (C.windowLast win C.+ 1) mbYS' iter' g mv
+
+    ensureLowerDensityThanHonestSchema g mv =
+        when (C.Count s <= C.windowSize carWin) $ do
+            let -- first stability window after the intersection in the honest
+                -- schema
+                hScgWin = C.UnsafeContains (C.windowStart carWin) (C.Count s)
+                -- number of active slots in the first stability window after
+                -- the intersection in the honest schema
+                hCount = BV.countActivesInV S.notInverted (C.sliceV hScgWin vH)
+            firstActiveSlot <- BV.findIthEmptyInMV S.inverted mv (C.Count 0) >>= \case
+                BV.JustFound x -> pure x
+                BV.NothingFound -> error "dead code: there must be at least one empty slot in the alternative schema"
+            -- If density in the first stability window is 0, then the adversary can't win
+            when (firstActiveSlot < C.Count s) $ do
+                -- We avoid flipping the first active slot in the alternative
+                -- schema, since that could affect the expected youngest stable
+                -- slot, and therefore the races that are considered relevant.
+                let aScgWin = C.UnsafeContains (firstActiveSlot C.+ 1) (C.Count (s - C.getCount firstActiveSlot - 1))
+                    -- slice of the alternative schema for the first stability
+                    -- window after the intersection, skipping the first active slot
+                    aScgMv  = C.sliceMV aScgWin mv
+                    -- intended number of empty slots in the first stability window
+                    -- after the intersection in the alternative schema, skipping
+                    -- the first active slot
+                    emptyCountTarget = C.toVar $ S.complementActive S.notInverted (C.windowSize aScgWin) (hCount C.- 1) C.+ 1
+                void $ BV.fillInWindow
+                    S.inverted
+                    (BV.SomeDensityWindow emptyCountTarget (C.windowSize aScgWin))
+                    g
+                    aScgMv
 
 -- | The youngest stable slot
 --

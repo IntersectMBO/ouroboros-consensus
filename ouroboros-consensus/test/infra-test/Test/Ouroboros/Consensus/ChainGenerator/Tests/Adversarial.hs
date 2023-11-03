@@ -171,6 +171,7 @@ prop_adversarialChain someTestAdversarial testSeedA = runIdentity $ do
         Left e   -> case e of
             A.BadAnchor{} -> QC.counterexample (show e) False
             A.BadCount{}  -> QC.counterexample (show e) False
+            A.BadDensity{}  -> QC.counterexample (show e) False
             A.BadRace rv  -> case rv of
                 A.AdversaryWonRace {
                     A.rvAdv = RI.Race (C.SomeWindow Proxy rAdv)
@@ -230,7 +231,11 @@ data AdversarialMutation =
     -- | Increasing 'Delta' by one may cause the adversary to win a race
     AdversarialMutateDelta
   |
-    -- | Decreasing 'Kcp' by one may cause the adversary to win a race
+    -- | Decreasing 'Kcp' by two may cause the adversary to win a race
+    --
+    -- NOTE: decreasing 'Kcp' by one does not guarantee a lost race since the
+    -- alternative chain already has one slot less in the first window after the
+    -- intersection.
     AdversarialMutateKcp
 {-
   |
@@ -282,7 +287,7 @@ mutateAdversarial recipe mut =
 
     (k', s', d') = case mut of
         AdversarialMutateDelta -> (k,     s,     d + 1)
-        AdversarialMutateKcp   -> (k - 1, s,     d    )
+        AdversarialMutateKcp   -> (k - 2, s,     d    )
 --        AdversarialMutateScgNeg -> (k,     s - 1, d    )
 --        AdversarialMutateScgPos -> (k,     s + 1, d    )
 
@@ -417,9 +422,10 @@ prop_adversarialChainMutation (SomeTestAdversarialMutation Proxy Proxy testAdver
                 writeIORef catch (testSeedA,  H.prettyChainSchema schedA "A" <> pretty)
                 go catch counter recipeA' testSeedAsSeed'
             Left e   -> case e of
-                A.BadAnchor{} -> error $ "impossible! " <> show e
-                A.BadCount{}  -> error $ "impossible! " <> show e
-                A.BadRace{}   -> pure $ QC.property ()
+                A.BadAnchor{}  -> error $ "impossible! " <> show e
+                A.BadCount{}   -> error $ "impossible! " <> show e
+                A.BadDensity{} -> pure $ QC.property ()
+                A.BadRace{}    -> pure $ QC.property ()
 
 -----
 
