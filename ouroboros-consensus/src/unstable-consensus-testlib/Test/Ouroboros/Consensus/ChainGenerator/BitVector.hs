@@ -154,6 +154,7 @@ instance Read (SomeDensityWindow pol) where
 -- slots polarizely active.
 --
 -- Precondition: @lengthMV mv <= s@
+-- Precondition: @k <= s@
 fillInWindow ::
   forall proxy pol base g s.
      (POL pol, R.StatefulGen g (ST s))
@@ -162,11 +163,17 @@ fillInWindow ::
   -> g
   -> C.MVector base SlotE s S
   -> ST s (C.Var base (PreImage pol ActiveSlotE))   -- ^ the count after filling
-fillInWindow pol (SomeDensityWindow k s) g mv = do
+fillInWindow pol (SomeDensityWindow k s) g mv
+        | not (C.getCount k <= C.getCount s) =
+            error $ "fillInWindow: assertion failure: k <= s: "
+                    ++ show k ++ " <= " ++ show s
+        | not (C.getCount sz <= C.getCount s) =
+            error $ "fillInWindow: assertion failure: sz <= s: "
+                    ++ show sz ++ " <= " ++ show s
+        | otherwise = do
     -- how many active polarized slots @actual@ currently has
     initialActives <- countActivesInMV pol mv
 
-    let sz = C.lengthMV mv :: C.Size base SlotE
 
     -- discount the numerator accordingly if @actual@ is smaller than @s@
     --
@@ -194,6 +201,8 @@ fillInWindow pol (SomeDensityWindow k s) g mv = do
         setMV pol mv slot
 
     pure $ initialActives + adding
+  where
+    sz = C.lengthMV mv :: C.Size base SlotE
 
 -----
 
