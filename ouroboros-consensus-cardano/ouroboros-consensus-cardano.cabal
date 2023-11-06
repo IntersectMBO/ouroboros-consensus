@@ -611,6 +611,7 @@ test-suite tools-test
   build-depends:
     , base
     , cardano-tools
+    , ouroboros-consensus-cardano
     , ouroboros-consensus:consensus-testlib
     , tasty
     , tasty-hunit

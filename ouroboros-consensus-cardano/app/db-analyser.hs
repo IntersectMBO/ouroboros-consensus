@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Database analysis tool.
@@ -27,13 +28,13 @@ import           Options.Applicative (execParser, fullDesc, helper, info,
 main :: IO ()
 main = do
     cryptoInit
-    cmdLine <- getCmdLine
-    void $ case blockType cmdLine of
-      ByronBlock   args -> analyse cmdLine args
-      ShelleyBlock args -> analyse cmdLine args
-      CardanoBlock args -> analyse cmdLine args
+    (conf, blocktype) <- getCmdLine
+    void $ case blocktype of
+      ByronBlock   args -> analyse conf args
+      ShelleyBlock args -> analyse conf args
+      CardanoBlock args -> analyse conf args
 
-getCmdLine :: IO DBAnalyserConfig
+getCmdLine :: IO (DBAnalyserConfig, BlockType)
 getCmdLine = execParser opts
   where
     opts = info (parseCmdLine <**> helper) (mconcat [
