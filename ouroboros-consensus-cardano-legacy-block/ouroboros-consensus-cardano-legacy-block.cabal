@@ -41,6 +41,10 @@ common common-lib
   if flag(asserts)
     ghc-options: -fno-ignore-asserts
 
+common common-exe
+  import:      common-lib
+  ghc-options: -threaded -rtsopts "-with-rtsopts=-N -I0 -A16m"
+
 library
   import:          common-lib
   hs-source-dirs:  src
@@ -88,3 +92,31 @@ library
     , serialise
     , small-steps
     , sop-core
+
+executable db-analyser
+  import:         common-exe
+  hs-source-dirs: app
+  main-is:        db-analyser.hs
+  build-depends:
+    , base
+    , cardano-crypto-class
+    , cardano-crypto-wrapper
+    , optparse-applicative
+    , ouroboros-consensus
+    , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, cardano-tools}
+    , cardano-ledger-byron
+    , cardano-ledger-alonzo
+    , directory
+    , ouroboros-consensus-protocol
+    , cardano-ledger-core
+    , cardano-ledger-conway
+    , ouroboros-consensus-cardano-legacy-block
+    , bytestring
+    , cardano-ledger-shelley
+    , filepath
+    , aeson
+    , containers
+
+  other-modules:
+    DBAnalyser.LegacyCardano
+    DBAnalyser.Parsers
