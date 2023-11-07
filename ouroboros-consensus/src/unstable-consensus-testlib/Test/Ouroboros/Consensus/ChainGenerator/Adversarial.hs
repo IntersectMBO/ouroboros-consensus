@@ -655,8 +655,8 @@ genPrefixBlockCount g (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) schedH
 
     -- 'H.uniformTheHonestChain' ensures there is at least one block in the
     -- first s slots.
-    -- By leaving on block after the intersection in the first s slots, we
-    -- ensure there is are k+1 active slots in the honest chain after the
+    -- By leaving one block after the intersection in the first s slots, we
+    -- ensure there are k+1 active slots in the honest chain after the
     -- intersection.
     numChoices = numBlocks C.- 1
     numBlocks = BV.countActivesInV S.notInverted $
