@@ -153,8 +153,11 @@ instance Read (SomeDensityWindow pol) where
 -- that the vector @take s $ mv ++ repeat (mkActive pol)@ has at least @k@
 -- slots polarizely active.
 --
--- Precondition: @lengthMV mv <= s@
--- Precondition: @k <= s@
+-- Preconditions:
+--
+-- > lengthMV mv <= s
+-- > k <= s
+--
 fillInWindow ::
   forall proxy pol base g s.
      (POL pol, R.StatefulGen g (ST s))
@@ -175,16 +178,16 @@ fillInWindow pol (SomeDensityWindow k s) g mv
     initialActives <- countActivesInMV pol mv
 
 
-    -- discount the numerator accordingly if @actual@ is smaller than @s@
+    -- discount the numerator accordingly if @mv@ is smaller than @s@
     --
-    -- EG when a full-size @actual@ would reach past the 'Len'.
+    -- EG when a full-size @mv@ would reach past the 'Len'.
     --
     -- This discount reflects that we (very conservatively!) assume every
     -- truncated slot would be an active polarized slot.
     let discountedK :: C.Var base (PreImage pol ActiveSlotE)
         discountedK = C.Count $ C.getCount k - (C.getCount s - C.getCount sz)
 
-    -- how many active polarized slots need to be added to @actual@
+    -- how many active polarized slots need to be added to @mv@
     let adding = max 0 $ C.toVar discountedK - initialActives :: C.Var base (PreImage pol ActiveSlotE)
 
     -- draw from the empty polarized slots uniformly without replacement, a la Fisher-Yates shuffle

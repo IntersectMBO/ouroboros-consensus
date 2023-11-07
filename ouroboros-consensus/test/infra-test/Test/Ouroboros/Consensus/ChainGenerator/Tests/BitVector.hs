@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric             #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE KindSignatures            #-}
+{-# LANGUAGE MonoLocalBinds            #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE StandaloneDeriving        #-}
@@ -22,6 +23,7 @@ import qualified Test.QuickCheck as QC
 import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
+import qualified Test.Util.QuickCheck as QC
 
 -----
 
@@ -86,10 +88,8 @@ instance QC.Arbitrary SomePol where
 
 instance QC.Arbitrary SomeFindTestSetup where
     arbitrary = do
-        pol <- QC.arbitrary
-        case pol of
-          SomePol (_ :: ProxyPol pol) ->
-              SomeFindTestSetup <$> (QC.arbitrary :: QC.Gen (FindTestSetup pol))
+        SomePol (_ :: ProxyPol pol) <- QC.arbitrary
+        SomeFindTestSetup <$> (QC.arbitrary :: QC.Gen (FindTestSetup pol))
 
     shrink (SomeFindTestSetup x) = [ SomeFindTestSetup y | y <- QC.shrink x ]
 
@@ -167,7 +167,24 @@ data FillInWindowSetup =
       Int -- ^ size of the window to fill
       QCGen -- ^ random generator
       (V.Vector S) -- ^ the vector to fill
-  deriving (Show)
+
+instance Show FillInWindowSetup where
+  showsPrec p (FillInWindowSetup spol k szW qcGen v) =
+        showParen (p >= 11)
+      $ showString "FillInWindowSetup"
+      . showString "\n  pol = " . shows spol
+      . showString "\n  k = " . shows k
+      . showString "\n  qcGen = " . shows qcGen
+      . showString "\n  szW = " . shows szW
+      . showString "\n  v = " . shows (showBitVector v)
+
+showBitVector :: V.Vector S -> String
+showBitVector v =
+    take bvLen [ if b then '1' else '0' | s <- V.toList v, let b = S.test S.notInverted s ]
+    ++ if szV > bvLen then "..." else ""
+  where
+    szV = V.length v
+    bvLen = 80
 
 instance QC.Arbitrary FillInWindowSetup where
   arbitrary = do
@@ -176,7 +193,7 @@ instance QC.Arbitrary FillInWindowSetup where
       QC.NonNegative k1 <- QC.arbitrary
       QC.NonNegative k2 <- QC.arbitrary
       qcGen <- QC.arbitrary
-      let szV = k1 + 1
+      let szV = k1
           szW = max k szV + k2 -- k <= szW && szV <= szW
       ss <- QC.vectorOf szV QC.arbitrary
       pure $ FillInWindowSetup pol k szW qcGen (V.fromList ss)
@@ -190,24 +207,22 @@ prop_fillInWindow
           qcGen
           v
         ) = R.runSTGen_ qcGen $ \g -> do
-    mv <- C.unsafeThawV $ C.Vector v
-    let szV = V.length v
+    vmv <- V.thaw v
+    let mv = C.MVector vmv
+        szV = V.length v
     actives0 <- C.getCount <$> BV.countActivesInMV pol mv
     c <- C.getCount <$> BV.fillInWindow pol (BV.SomeDensityWindow (C.Count k) (C.Count szW)) g mv
     actives1 <- C.getCount <$> BV.countActivesInMV pol mv
+    mvFrozen <- V.freeze vmv
     pure $
         QC.counterexample (showPol pol) $
         QC.counterexample ("actives0 = " ++ show actives0) $
         QC.counterexample ("actives1 = " ++ show actives1) $
         QC.counterexample ("szV = " ++ show szV) $
-        QC.counterexample ("szW = " ++ show szW) $
-        QC.counterexample ("k = " ++ show k) $
+        QC.counterexample ("v = " ++ show (showBitVector mvFrozen)) $
 
-        (QC.counterexample "actives0 <= actives1" $
-          QC.property $ actives0 <= actives1)
+        (QC.counterexample "actives0 <= actives1" $ actives0 `QC.le` actives1)
         QC..&&.
-        (QC.counterexample "c == actives1" $
-          QC.property $ c == actives1)
+        (QC.counterexample "c == actives1" $ c QC.=== actives1)
         QC..&&.
-        (QC.counterexample "k <= actives1 + szW - szV" $
-          QC.property $ k <= actives1 + szW - szV)
+        (QC.counterexample "k <= actives1 + szW - szV" $ k `QC.le` actives1 + szW - szV)
