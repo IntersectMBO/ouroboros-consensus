@@ -209,5 +209,5 @@ prop_fillInWindow
         (QC.counterexample "c == actives1" $
           QC.property $ c == actives1)
         QC..&&.
-        (QC.counterexample "min k szV <= actives1" $
-          QC.property $ min k szV <= actives1 + szW - szV)
+        (QC.counterexample "k <= actives1 + szW - szV" $
+          QC.property $ k <= actives1 + szW - szV)
