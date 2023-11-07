@@ -3,13 +3,11 @@ module Cardano.Tools.DBTruncater.Types (
   , TruncateAfter (..)
   ) where
 
-import           Cardano.Tools.DBAnalyser.Types
 import           Ouroboros.Consensus.Block.Abstract
 
 data DBTruncaterConfig = DBTruncaterConfig {
     dbDir         :: FilePath
   , truncateAfter :: TruncateAfter
-  , blockType     :: BlockType
   , verbose       :: Bool
   }
 

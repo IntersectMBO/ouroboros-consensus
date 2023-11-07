@@ -5,12 +5,14 @@ import           DBAnalyser.Parsers
 import           Options.Applicative
 import           Ouroboros.Consensus.Block.Abstract
 
-commandLineParser :: Parser DBTruncaterConfig
-commandLineParser = DBTruncaterConfig
-  <$> parseChainDBPath
-  <*> parseTruncateAfter
-  <*> blockTypeParser
-  <*> parseVerbose
+commandLineParser :: Parser (DBTruncaterConfig, BlockType)
+commandLineParser = (,) <$> parseDBTruncaterConfig <*> blockTypeParser
+
+parseDBTruncaterConfig :: Parser DBTruncaterConfig
+parseDBTruncaterConfig = DBTruncaterConfig
+    <$> parseChainDBPath
+    <*> parseTruncateAfter
+    <*> parseVerbose
   where
     parseChainDBPath = strOption $
       mconcat
@@ -19,7 +21,6 @@ commandLineParser = DBTruncaterConfig
         , metavar "PATH"
         ]
     parseVerbose = switch (long "verbose" <> help "Enable verbose logging")
-
 parseTruncateAfter :: Parser TruncateAfter
 parseTruncateAfter =
   fmap TruncateAfterSlot slotNoOption <|> fmap TruncateAfterBlock blockNoOption

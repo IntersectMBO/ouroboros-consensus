@@ -1,7 +1,7 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE CPP           #-}
 
-module DBAnalyser.Parsers (parseCmdLine, blockTypeParser) where
+module DBAnalyser.Parsers (parseCmdLine, blockTypeParser, BlockType (..)) where
 
 import           Cardano.Crypto (RequiresNetworkMagic (..))
 import           Cardano.Tools.DBAnalyser.Block.Byron
@@ -17,13 +17,15 @@ import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
 import           Ouroboros.Consensus.Shelley.Node (Nonce (..))
 import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..))
 
-
 {-------------------------------------------------------------------------------
   Parsing
 -------------------------------------------------------------------------------}
 
-parseCmdLine :: Parser DBAnalyserConfig
-parseCmdLine = DBAnalyserConfig
+parseCmdLine :: Parser (DBAnalyserConfig, BlockType)
+parseCmdLine = (,) <$> parseDBAnalyserConfig <*> blockTypeParser
+
+parseDBAnalyserConfig :: Parser DBAnalyserConfig
+parseDBAnalyserConfig = DBAnalyserConfig
     <$> strOption (mconcat [
             long "db"
           , help "Path to the Chain DB"
@@ -35,7 +37,6 @@ parseCmdLine = DBAnalyserConfig
           ])
     <*> parseSelectDB
     <*> parseValidationPolicy
-    <*> blockTypeParser
     <*> parseAnalysis
     <*> parseLimit
 
@@ -58,7 +59,7 @@ parseSelectDB = asum [
 
 
 parseValidationPolicy :: Parser (Maybe ValidateBlocks)
-parseValidationPolicy = parseMaybe $ asum [
+parseValidationPolicy = optional $ asum [
       flag' ValidateAllBlocks $ mconcat [
           long "validate-all-blocks"
         , help "Validate all blocks of the Volatile and Immutable DB"
@@ -159,6 +160,15 @@ pMaybeOutputFile =
       <> completer (bashCompleter "file")
       )
 
+{-------------------------------------------------------------------------------
+  Parse BlockType-specific arguments
+-------------------------------------------------------------------------------}
+
+data BlockType =
+    ByronBlock   ByronBlockArgs
+  | ShelleyBlock ShelleyBlockArgs
+  | CardanoBlock CardanoBlockArgs
+
 blockTypeParser :: Parser BlockType
 blockTypeParser = subparser $ mconcat
   [ command "byron"
@@ -177,14 +187,6 @@ parseShelleyType = ShelleyBlock <$> parseShelleyArgs
 
 parseCardanoType :: Parser BlockType
 parseCardanoType = CardanoBlock <$> parseCardanoArgs
-
-parseMaybe ::  Parser a -> Parser (Maybe a)
-parseMaybe parser = asum [Just <$> parser, pure Nothing]
-
-
-{-------------------------------------------------------------------------------
-  Parse BlockType-specific arguments
--------------------------------------------------------------------------------}
 
 parseCardanoArgs :: Parser CardanoBlockArgs
 parseCardanoArgs = CardanoBlockArgs

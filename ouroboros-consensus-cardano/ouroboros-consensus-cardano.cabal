@@ -586,6 +586,7 @@ test-suite tools-test
   main-is:        Main.hs
   build-depends:
     , base
+    , ouroboros-consensus-cardano
     , ouroboros-consensus:unstable-consensus-testlib
     , tasty
     , tasty-hunit
