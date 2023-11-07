@@ -59,7 +59,7 @@ parseSelectDB = asum [
 
 
 parseValidationPolicy :: Parser (Maybe ValidateBlocks)
-parseValidationPolicy = parseMaybe $ asum [
+parseValidationPolicy = optional $ asum [
       flag' ValidateAllBlocks $ mconcat [
           long "validate-all-blocks"
         , help "Validate all blocks of the Volatile and Immutable DB"
@@ -159,9 +159,6 @@ pMaybeOutputFile =
       <> help "Optional output file. Default is to write to stdout."
       <> completer (bashCompleter "file")
       )
-
-parseMaybe ::  Parser a -> Parser (Maybe a)
-parseMaybe parser = asum [Just <$> parser, pure Nothing]
 
 {-------------------------------------------------------------------------------
   Parse BlockType-specific arguments
