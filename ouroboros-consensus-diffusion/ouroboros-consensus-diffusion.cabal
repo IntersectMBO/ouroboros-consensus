@@ -218,6 +218,7 @@ test-suite consensus-test
     Test.Consensus.Node
     Test.Consensus.PeerSimulator.BlockFetch
     Test.Consensus.PeerSimulator.ChainSync
+    Test.Consensus.PeerSimulator.ChainDB
     Test.Consensus.PeerSimulator.Config
     Test.Consensus.PeerSimulator.Handlers
     Test.Consensus.PeerSimulator.Resources

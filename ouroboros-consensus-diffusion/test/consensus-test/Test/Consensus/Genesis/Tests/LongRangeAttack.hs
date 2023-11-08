@@ -17,7 +17,7 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           System.Random.Stateful (runSTGen_)
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
+import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig, useMockDb)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
@@ -65,7 +65,7 @@ prop_longRangeAttack honestFreq advFreqs = do
     ==>
     runSimOrThrow $
       runTest
-        (noTimeoutsSchedulerConfig scheduleConfig)
+        (useMockDb (noTimeoutsSchedulerConfig scheduleConfig))
         genesisTest
         schedule
         $ exceptionCounterexample $ \StateView{svSelectedChain} killed ->

@@ -10,6 +10,7 @@ module Test.Consensus.PeerSimulator.Run (
   , defaultSchedulerConfig
   , noTimeoutsSchedulerConfig
   , runPointSchedule
+  , useMockDb
   ) where
 
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
@@ -47,6 +48,7 @@ import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockF
 import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient,
                      startBlockFetchLogic)
 import           Test.Consensus.PeerSimulator.ChainSync (runChainSyncClient)
+import           Test.Consensus.PeerSimulator.ChainDB (mockChainDb)
 import           Test.Consensus.PeerSimulator.Config
 import           Test.Consensus.PeerSimulator.Resources
 import           Test.Consensus.PeerSimulator.StateView
@@ -94,6 +96,7 @@ data SchedulerConfig =
     -- to 'maxBound', allowing the selection of any block beyond the LoE
     -- fragment.
     , scEnableGdd       :: Bool
+    , scMockDb          :: Bool
   }
 
 -- | Determine timeouts based on the 'Asc' and a slot length of 20 seconds.
@@ -104,7 +107,8 @@ defaultSchedulerConfig scSchedule asc =
     scSlotLength,
     scSchedule,
     scDebug = False,
-    scEnableGdd = True
+    scEnableGdd = True,
+    scMockDb = False
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -117,7 +121,8 @@ noTimeoutsSchedulerConfig scSchedule =
     scSlotLength,
     scSchedule,
     scDebug = False,
-    scEnableGdd = True
+    scEnableGdd = True,
+    scMockDb = False
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -125,6 +130,9 @@ noTimeoutsSchedulerConfig scSchedule =
 -- | Enable debug tracing during a scheduler test.
 debugScheduler :: SchedulerConfig -> SchedulerConfig
 debugScheduler conf = conf { scDebug = True }
+
+useMockDb :: SchedulerConfig -> SchedulerConfig
+useMockDb conf = conf {scMockDb = True}
 
 -- | Run a ChainSync protocol for one peer, consisting of a server and client.
 --
@@ -252,7 +260,10 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree, 
   withRegistry $ \registry -> do
     stateViewTracers <- defaultStateViewTracers
     resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
-    chainDb <- mkChainDb schedulerConfig tracer config registry
+    chainDb <-
+      if scMockDb schedulerConfig
+      then mockChainDb k tracer (psrCandidates resources)
+      else mkChainDb schedulerConfig tracer config registry
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = defaultChainDbView chainDb
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
