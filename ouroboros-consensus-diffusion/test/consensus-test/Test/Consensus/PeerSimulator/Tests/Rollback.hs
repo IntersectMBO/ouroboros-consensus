@@ -21,11 +21,12 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, unTestHash)
+import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests = testGroup "rollback" [
-  testProperty "can rollback" (prop_rollback True),
-  testProperty "cannot rollback" (prop_rollback False)
+    adjustQuickCheckTests (`div` 10) $ testProperty "can rollback" (prop_rollback True),
+    adjustQuickCheckTests (`div` 10) $ testProperty "cannot rollback" (prop_rollback False)
   ]
 
 -- | @prop_rollback True@ tests that the selection of the node under test
