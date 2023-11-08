@@ -228,6 +228,9 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.Tests.Timeouts
     Test.Consensus.PeerSimulator.Trace
     Test.Consensus.PointSchedule
+    Test.Consensus.PointSchedule.SinglePeer
+    Test.Consensus.PointSchedule.SinglePeer.Indices
+    Test.Consensus.PointSchedule.Tests
 
   build-depends:
     , base
@@ -254,6 +257,7 @@ test-suite consensus-test
     , ouroboros-network-protocols
     , QuickCheck
     , quiet
+    , random
     , serialise
     , si-timers
     , sop-extras
