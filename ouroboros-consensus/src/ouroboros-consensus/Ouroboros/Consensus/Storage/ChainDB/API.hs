@@ -331,6 +331,9 @@ data ChainDB m blk = ChainDB {
       -- invalid block is detected. These blocks are likely to be valid.
     , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
 
+    , setLoEFrag :: AnchoredFragment (Header blk) -> STM m ()
+      -- ^ Update the LoE, which is anchored in a recent immutable tip.
+
       -- | Close the ChainDB
       --
       -- Idempotent.

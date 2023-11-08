@@ -13,6 +13,7 @@ module Test.Consensus.PeerSimulator.Run (
   ) where
 
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer)
@@ -20,9 +21,11 @@ import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Ouroboros.Consensus.Config (TopLevelConfig (..))
+import           Ouroboros.Consensus.Config (SecurityParam (maxRollbacks),
+                     TopLevelConfig (..), configSecurityParam)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     defaultChainDbView)
+                     ChainSyncClientHandle (..), defaultChainDbView)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.GenesisDensityGovernor as GenesisDensityGovernor
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
@@ -80,6 +83,17 @@ data SchedulerConfig =
     --
     -- Use 'debugScheduler' to toggle it conveniently.
     , scDebug           :: Bool
+
+    -- | Whether to run the test with Genesis Density Disconnect enabled.
+    -- This has two effects:
+    --
+    -- - If 'True', a new thread is started by the scheduler in which the GDD
+    -- governor executes.
+    --
+    -- - If 'True', the Limit on Eagerness is set to @k@; otherwise it is set
+    -- to 'maxBound', allowing the selection of any block beyond the LoE
+    -- fragment.
+    , scEnableGdd       :: Bool
   }
 
 -- | Determine timeouts based on the 'Asc' and a slot length of 20 seconds.
@@ -89,7 +103,8 @@ defaultSchedulerConfig scSchedule asc =
     scChainSyncTimeouts = chainSyncTimeouts scSlotLength asc,
     scSlotLength,
     scSchedule,
-    scDebug = False
+    scDebug = False,
+    scEnableGdd = True
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -101,7 +116,8 @@ noTimeoutsSchedulerConfig scSchedule =
     scChainSyncTimeouts = chainSyncNoTimeouts,
     scSlotLength,
     scSchedule,
-    scDebug = False
+    scDebug = False,
+    scEnableGdd = True
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -130,6 +146,7 @@ startChainSyncConnectionThread ::
   SchedulerConfig ->
   StateViewTracers m ->
   StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
+  StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock)) ->
   m ()
 startChainSyncConnectionThread
   registry
@@ -141,11 +158,13 @@ startChainSyncConnectionThread
   ChainSyncResources{csrServer}
   SchedulerConfig {scChainSyncTimeouts}
   tracers
-  varCandidates =
+  varCandidates
+  varHandles
+  =
     void $
     forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-    runChainSyncClient tracer cfg chainDbView srPeerId csrServer scChainSyncTimeouts tracers varCandidates
+    runChainSyncClient tracer cfg chainDbView srPeerId csrServer scChainSyncTimeouts tracers varCandidates varHandles
 
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
 -- register it for synchronization with the ChainSync client.
@@ -229,15 +248,15 @@ runPointSchedule ::
   PointSchedule ->
   Tracer m String ->
   m StateView
-runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} pointSchedule tracer =
+runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree, gtGenesisWindow} pointSchedule tracer =
   withRegistry $ \registry -> do
     stateViewTracers <- defaultStateViewTracers
     resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
-    chainDb <- mkChainDb tracer config registry
+    chainDb <- mkChainDb schedulerConfig tracer config registry
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = defaultChainDbView chainDb
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
-      startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig stateViewTracers (psrCandidates resources)
+      startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig stateViewTracers (psrCandidates resources) (psrHandles resources)
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
     for_ (psrPeers resources) $ \PeerResources {prShared, prBlockFetch} ->
       startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared prBlockFetch
@@ -246,20 +265,30 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     -- peer fragments than registered clients.
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
     startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
+
+    when (scEnableGdd schedulerConfig) $ void $ forkLinkedThread registry "GenesisDensityGovernor" $
+      GenesisDensityGovernor.run
+        (GenesisDensityGovernor.defaultChainDbView chainDb)
+        config
+        tracer
+        (readTVar (psrCandidates resources))
+        (readTVar (psrHandles resources))
+
     runScheduler tracer pointSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
-    config = defaultCfg k
+    config = defaultCfg k gtGenesisWindow
 
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.
 mkChainDb ::
   IOLike m =>
+  SchedulerConfig ->
   Tracer m String ->
   TopLevelConfig TestBlock ->
   ResourceRegistry m ->
   m (ChainDB m TestBlock)
-mkChainDb tracer nodeCfg registry = do
+mkChainDb schedulerConfig tracer nodeCfg registry = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
       pure $ (
@@ -271,7 +300,11 @@ mkChainDb tracer nodeCfg registry = do
           , mcdbNodeDBs
           }
         ) {
-            cdbTracer = mkCdbTracer tracer
+            cdbTracer = mkCdbTracer tracer,
+            ChainDB.Impl.cdbLoELimit =
+              if scEnableGdd schedulerConfig
+              then maxRollbacks (configSecurityParam nodeCfg)
+              else maxBound
         }
     (_, (chainDB, ChainDB.Impl.Internal{intAddBlockRunner})) <-
       allocate

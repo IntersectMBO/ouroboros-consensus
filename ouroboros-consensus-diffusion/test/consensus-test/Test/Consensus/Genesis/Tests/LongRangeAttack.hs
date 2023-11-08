@@ -70,9 +70,7 @@ prop_longRangeAttack honestFreq advFreqs = do
         schedule
         $ exceptionCounterexample $ \StateView{svSelectedChain} killed ->
             killCounterexample killed $
-            -- This is the expected behavior of Praos to be reversed with Genesis.
-            -- But we are testing Praos for the moment
-            not (isHonestTestFragH svSelectedChain)
+            isHonestTestFragH svSelectedChain
 
   where
     sched | newLRA = NewLRA

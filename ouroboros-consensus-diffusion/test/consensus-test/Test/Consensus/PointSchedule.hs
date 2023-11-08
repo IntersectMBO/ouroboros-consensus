@@ -62,14 +62,15 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, listToMaybe)
 import           Data.String (IsString (fromString))
 import           Data.Time (DiffTime)
-import           Data.Word (Word64)
 import           GHC.Generics (Generic)
-import           Ouroboros.Consensus.Block.Abstract (HasHeader,
-                     WithOrigin (Origin), getHeader)
+import           Ouroboros.Consensus.Block.Abstract (HasHeader, WithOrigin (..),
+                     getHeader)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam)
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     AnchoredSeq (Empty, (:>)), anchorFromBlock)
+                     AnchoredSeq (Empty, (:>)), anchorFromBlock, toOldestFirst)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (SlotNo, Tip (Tip, TipGenesis),
                      blockNo, blockSlot, getTipSlotNo, tipFromHeader)
@@ -350,9 +351,13 @@ pointSchedule ticks nePeerIds = (`PointSchedule` nePeerIds) <$> nonEmpty ticks
 -- This is a preliminary measure to make the long range attack test work, since that relies on the
 -- honest node sending headers later than the adversary, which is not possible if the adversary's
 -- first tip point is delayed by 20 or more seconds due to being in a later slot.
+--
+-- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
+-- useful effects in the simulator, but it does set the tip in the governor to 'Origin', which
+-- causes slow nodes to be disconnected from right away.
 peerStates :: PeerId -> [(DiffTime, SchedulePoint)] -> [(DiffTime, Peer NodeState)]
 peerStates peerId pts =
-  zip (0 : (shiftTime <$> times)) (Peer peerId . NodeOnline <$> scanl' modPoint zero points)
+  drop 1 (zip (0 : (shiftTime <$> times)) (Peer peerId . NodeOnline <$> scanl' modPoint zero points))
   where
     shiftTime t = t - firstTipOffset
 
@@ -380,7 +385,7 @@ fromSchedulePoints peers = do
   peerIds <- nonEmpty (Map.keys peers)
   pointSchedule (zipWith Tick states durations) peerIds
   where
-    durations = drop 1 (snd (mapAccumL (\ prev start -> (start, start - prev)) 0 (drop 1 starts))) ++ [0]
+    durations = snd (mapAccumL (\ prev start -> (start, start - prev)) 0 (drop 1 starts)) ++ [0.1]
 
     (starts, states) = unzip $ foldr (mergeOn fst) [] [peerStates p sch | (p, sch) <- Map.toList peers]
 
@@ -408,14 +413,10 @@ zipPeers a b =
 banalStates :: TestFrag -> [NodeState]
 banalStates (Empty _) = []
 banalStates frag@(_ :> tipBlock) =
-  spin [] frag
+  mkState <$> toOldestFirst frag
   where
-    spin z (Empty _) = z
-    spin z (pre :> block) =
-      let header = HeaderPoint $ At (getHeader block)
-       in spin
-            (NodeOnline AdvertisedPoints {tip, header, block = BlockPoint (At block)} : z)
-            pre
+    mkState block =
+      NodeOnline AdvertisedPoints {tip, header = HeaderPoint (At (getHeader block)), block = BlockPoint (At block)}
     tip = TipPoint $ tipFromHeader tipBlock
 
 -- | Generate a point schedule from a set of peer schedules by taking one element from each peer in
@@ -611,9 +612,6 @@ data ScheduleType =
   |
   NewLRA
   deriving (Eq, Show)
-
-newtype GenesisWindow = GenesisWindow { getGenesisWindow :: Word64 }
-  deriving (Show)
 
 -- | All the data used by point schedule tests.
 data GenesisTest = GenesisTest {

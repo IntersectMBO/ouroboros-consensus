@@ -86,6 +86,8 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import           Ouroboros.Consensus.HardFork.History.EraParams
+                     (EraParams (eraGenesisWin))
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
@@ -626,6 +628,8 @@ instance ValidateEnvelope TestBlock where
 instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView   _ _  = ()
   ledgerViewForecastAt _    = trivialForecast
+  computeGenesisWindow cfg _ =
+    HardFork.eraGenesisWin cfg
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
@@ -675,6 +679,7 @@ mkTestConfig k ChunkSize { chunkCanContainEBB, numRegularBlocks } =
         eraEpochSize  = EpochSize numRegularBlocks
       , eraSlotLength = slotLength
       , eraSafeZone   = HardFork.StandardSafeZone (maxRollbacks k * 2)
+      , eraGenesisWin = GenesisWindow (maxRollbacks k * 2)
       }
 
 {-------------------------------------------------------------------------------

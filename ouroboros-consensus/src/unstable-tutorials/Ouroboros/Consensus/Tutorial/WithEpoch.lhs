@@ -81,7 +81,7 @@ And imports, of course:
 >
 > import Ouroboros.Consensus.Ledger.SupportsMempool ()
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
->   (LedgerSupportsProtocol (..))
+>   (GenesisWindow(..), LedgerSupportsProtocol (..))
 >
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
@@ -632,6 +632,8 @@ ledger view: (1) the slot (`for` in the code below) is in the current epoch and
 >     -- after the following epoch:
 >     maxFor :: SlotNo
 >     maxFor = nextEpochStartSlot at + SlotNo slotsInEpoch
+>
+>   computeGenesisWindow _ _ = GenesisWindow 42 -- TODO
 
 Summary and Review
 ==================

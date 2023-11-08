@@ -375,6 +375,16 @@ instance CanHardFork xs => LedgerSupportsProtocol (HardForkBlock xs) where
           cfg' :: LedgerConfig blk
           cfg' = completeLedgerConfig' ei cfg
 
+  computeGenesisWindow ledgerCfg (HardForkLedgerState ledgerSt) =
+      hcollapse $ hcliftA2
+        proxySingle
+        (\cfg st -> K $ computeGenesisWindow (unwrapLedgerConfig cfg) st)
+        (hcmap proxySingle (completeLedgerConfig'' ei) pcfgs)
+        (State.tip ledgerSt)
+    where
+      ei    = State.epochInfoLedger ledgerCfg ledgerSt
+      pcfgs = getPerEraLedgerConfig (hardForkLedgerConfigPerEra ledgerCfg)
+
 {-------------------------------------------------------------------------------
   Annotated forecasts
 -------------------------------------------------------------------------------}

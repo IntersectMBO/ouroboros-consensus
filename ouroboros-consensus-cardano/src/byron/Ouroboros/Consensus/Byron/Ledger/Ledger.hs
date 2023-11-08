@@ -43,6 +43,7 @@ module Ouroboros.Consensus.Byron.Ledger.Ledger (
 
 import qualified Cardano.Chain.Block as CC
 import qualified Cardano.Chain.Byron.API as CC
+import qualified Cardano.Chain.Common as Gen
 import qualified Cardano.Chain.Genesis as Gen
 import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Chain.Update.Validation.Endorsement as UPE
@@ -74,6 +75,8 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.Abstract
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
+import           Ouroboros.Consensus.HardFork.History.EraParams
+                     (EraParams (eraGenesisWin))
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.CommonProtocolParams
@@ -272,12 +275,17 @@ instance LedgerSupportsProtocol ByronBlock where
           Origin      -> SlotNo $ 2 * k
           NotOrigin s -> SlotNo $ unSlotNo s + 1 + (2 * k)
 
+  computeGenesisWindow cfg _ = GenesisWindow (2 * k)
+    where
+      SecurityParam k = genesisSecurityParam cfg
+
 -- | To be used for a Byron-to-X (where X is typically Shelley) chain.
 byronEraParams :: Gen.Config -> HardFork.EraParams
 byronEraParams genesis = HardFork.EraParams {
       eraEpochSize  = fromByronEpochSlots $ Gen.configEpochSlots genesis
     , eraSlotLength = fromByronSlotLength $ genesisSlotLength genesis
     , eraSafeZone   = HardFork.StandardSafeZone (2 * k)
+    , eraGenesisWin = GenesisWindow (2 * k)
     }
   where
     SecurityParam k = genesisSecurityParam genesis
@@ -288,6 +296,7 @@ byronEraParamsNeverHardForks genesis = HardFork.EraParams {
       eraEpochSize  = fromByronEpochSlots $ Gen.configEpochSlots genesis
     , eraSlotLength = fromByronSlotLength $ genesisSlotLength genesis
     , eraSafeZone   = HardFork.UnsafeIndefiniteSafeZone
+    , eraGenesisWin = GenesisWindow (2 * Gen.unBlockCount (Gen.configK genesis))
     }
 
 instance HasHardForkHistory ByronBlock where

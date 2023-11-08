@@ -43,6 +43,8 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (GenesisWindow))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
@@ -150,6 +152,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         <*> testSetupSlotLength
         <*> AB (History.StandardSafeZone (safeFromTipA k))
                (safeZoneB k)
+        <*> pure (GenesisWindow ((maxRollbacks k) * 2))
 
     shape :: History.Shape '[BlockA, BlockB]
     shape = History.Shape $ exactlyTwo eraParamsA eraParamsB
