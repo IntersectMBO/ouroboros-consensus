@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -21,6 +22,7 @@ import           Data.Aeson as Aeson (FromJSON, Result (..), Value,
                      eitherDecodeFileStrict', eitherDecodeStrict', fromJSON)
 import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
+import           Data.Functor.Identity (Identity (..))
 import           Ouroboros.Consensus.Config (configSecurityParam, configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
 import qualified Ouroboros.Consensus.Node as Node (mkChainDbArgs,
@@ -30,10 +32,9 @@ import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..),
                      validateGenesis)
-import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (defaultArgs,
-                     getTipPoint)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (cdbTracer,
-                     withDB)
+import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
+                     (ChainDbArgs (..), defaultArgs, getTipPoint)
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (withDB)
 import           Ouroboros.Consensus.Storage.LedgerDB (SnapshotInterval (..),
                      defaultDiskPolicy)
 import           Ouroboros.Consensus.Util.IOLike (atomically)
@@ -119,9 +120,13 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
             k           = configSecurityParam pInfoConfig
             diskPolicy  = defaultDiskPolicy k DefaultSnapshotInterval
-            dbArgs      = Node.mkChainDbArgs
+            dbArgs      = disarmLoE $ Node.mkChainDbArgs
                 registry InFuture.dontCheck pInfoConfig pInfoInitLedger chunkInfo $
                     ChainDB.defaultArgs (Node.stdMkChainDbHasFS confDbDir) diskPolicy
+             where
+               -- TODO node config option that (implicitly) does this?
+               disarmLoE :: ChainDB.ChainDbArgs Identity m blk -> ChainDB.ChainDbArgs Identity m blk
+               disarmLoE c = c { ChainDB.cdbLoELimit = maxBound }
 
         forgers <- blockForging
         let fCount = length forgers

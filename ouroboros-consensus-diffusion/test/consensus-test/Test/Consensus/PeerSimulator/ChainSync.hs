@@ -10,11 +10,12 @@ import           Data.Proxy (Proxy (..))
 import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     Consensus, bracketChainSyncClient, chainSyncClient)
+                     ChainSyncClientHandle, Consensus, Their,
+                     bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), StrictTVar)
+                     IOLike, MonadCatch (try), STM, StrictTVar)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (createConnectedChannels)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
@@ -48,8 +49,9 @@ basicChainSyncClient :: forall m.
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
   StrictTVar m TestFragH ->
+  (Their (Tip TestBlock) -> STM m ()) ->
   Consensus ChainSyncClientPipelined TestBlock m
-basicChainSyncClient tracer cfg chainDbView varCandidate =
+basicChainSyncClient tracer cfg chainDbView =
   chainSyncClient
     (pipelineDecisionLowHighMark 10 20)
     (mkChainSyncClientTracer tracer)
@@ -59,7 +61,6 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
     maxBound
     (return Continue)
     nullTracer
-    varCandidate
   where
     dummyHeaderInFutureCheck :: InFutureCheck.HeaderInFutureCheck m TestBlock
     dummyHeaderInFutureCheck = InFutureCheck.HeaderInFutureCheck
@@ -79,6 +80,7 @@ runChainSyncClient ::
   ChainSyncTimeout ->
   StateViewTracers m ->
   StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
+  StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock)) ->
   m ()
 runChainSyncClient
   tracer
@@ -89,15 +91,16 @@ runChainSyncClient
   chainSyncTimeouts
   StateViewTracers {svtChainSyncExceptionsTracer}
   varCandidates
+  varHandles
   =
-    bracketChainSyncClient nullTracer chainDbView varCandidates peerId ntnVersion $ \ varCandidate -> do
+    bracketChainSyncClient nullTracer chainDbView varCandidates varHandles peerId ntnVersion $ \ varCandidate setTip -> do
       res <- try $ runConnectedPeersPipelinedWithLimits
         createConnectedChannels
         nullTracer
         codecChainSyncId
         chainSyncNoSizeLimits
         (timeLimitsChainSync chainSyncTimeouts)
-        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate))
+        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate setTip))
         (chainSyncServerPeer server)
       case res of
         Left exn -> do

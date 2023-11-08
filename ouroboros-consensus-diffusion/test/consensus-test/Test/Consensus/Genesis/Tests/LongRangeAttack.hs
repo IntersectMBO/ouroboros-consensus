@@ -43,7 +43,7 @@ prop_longRangeAttack =
 
     -- NOTE: This is the expected behaviour of Praos to be reversed with
     -- Genesis. But we are testing Praos for the moment
-    (\_ _ -> not . isHonestTestFragH . svSelectedChain)
+    (\_ _ -> isHonestTestFragH . svSelectedChain)
 
   where
     isHonestTestFragH :: TestFragH -> Bool

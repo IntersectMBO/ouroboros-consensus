@@ -30,6 +30,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
 import           Ouroboros.Consensus.HardFork.History.Summary (Bound, Summary,
                      initBound, neverForksSummary)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol (GenesisWindow)
 
 {-------------------------------------------------------------------------------
   Query language
@@ -98,10 +99,11 @@ singleEraCompatQuery ::
        forall m blk era. (Monad m, HardForkIndices blk ~ '[era])
     => EpochSize
     -> SlotLength
+    -> GenesisWindow
     -> (forall result. BlockQuery blk result -> m result)
     -- ^ Submit a query through the LocalStateQuery protocol.
     -> (forall result. HardForkCompatQuery blk result -> m result)
-singleEraCompatQuery epochSize slotLen f = go
+singleEraCompatQuery epochSize slotLen genesisWindow f = go
   where
     go :: HardForkCompatQuery blk result -> m result
     go (CompatIfCurrent qry)    = f qry
@@ -116,7 +118,7 @@ singleEraCompatQuery epochSize slotLen f = go
     goHardFork GetCurrentEra  = return $ eraIndexZero
 
     summary :: Summary '[era]
-    summary = neverForksSummary epochSize slotLen
+    summary = neverForksSummary epochSize slotLen genesisWindow
 
     trivialIndex :: EraIndex '[era] -> ()
     trivialIndex (EraIndex (Z (K ()))) = ()

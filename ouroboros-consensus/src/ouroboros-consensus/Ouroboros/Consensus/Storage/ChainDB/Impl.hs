@@ -174,6 +174,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       varCopyLock        <- newMVar  ()
       varKillBgThreads   <- newTVarIO $ return ()
       blocksToAdd        <- newBlocksToAdd (Args.cdbBlocksToAddSize args)
+      varLoEFrag         <- newTVarIO (AF.Empty AF.AnchorGenesis)
 
       let env = CDB { cdbImmutableDB     = immutableDB
                     , cdbVolatileDB      = volatileDB
@@ -199,6 +200,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     , cdbCheckInFuture   = Args.cdbCheckInFuture args
                     , cdbBlocksToAdd     = blocksToAdd
                     , cdbFutureBlocks    = varFutureBlocks
+                    , cdbLoEFrag         = varLoEFrag
+                    , cdbLoELimit        = Args.cdbLoELimit args
                     }
       h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
       let chainDB = API.ChainDB
@@ -215,6 +218,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , stream                = Iterator.stream  h
             , newFollower           = Follower.newFollower h
             , getIsInvalidBlock     = getEnvSTM  h Query.getIsInvalidBlock
+            , setLoEFrag            = writeTVar varLoEFrag
             , closeDB               = closeDB h
             , isOpen                = isOpen  h
             }

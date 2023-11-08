@@ -59,13 +59,14 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, listToMaybe)
 import           Data.Time (DiffTime)
-import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     AnchoredSeq (Empty, (:>)))
+                     AnchoredSeq (Empty, (:>)), toOldestFirst)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (TipGenesis), tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
@@ -304,14 +305,10 @@ fromSchedulePoints peers = do
 banalStates :: TestFrag -> [NodeState]
 banalStates (Empty _) = []
 banalStates frag@(_ :> tipBlock) =
-  spin [] frag
+  mkState <$> toOldestFirst frag
   where
-    spin z (Empty _) = z
-    spin z (pre :> block) =
-      let header = HeaderPoint $ At (getHeader block)
-       in spin
-            (NodeOnline AdvertisedPoints {tip, header, block = BlockPoint (At block)} : z)
-            pre
+    mkState block =
+      NodeOnline AdvertisedPoints {tip, header = HeaderPoint (At (getHeader block)), block = BlockPoint (At block)}
     tip = TipPoint $ tipFromHeader tipBlock
 
 -- | Generate a point schedule from a set of peer schedules by taking one element from each peer in
@@ -419,9 +416,6 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
       pure defaultPeerScheduleParams {pspTipDelayInterval = (tipL, tipU), pspHeaderDelayInterval = (headerL, headerU)}
 
     rollbackProb = 0.2
-
-newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
-  deriving (Show)
 
 -- | All the data used by point schedule tests.
 data GenesisTest = GenesisTest {

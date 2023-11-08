@@ -1,7 +1,9 @@
 {-# LANGUAGE BangPatterns               #-}
 {-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE DuplicateRecordFields      #-}
 {-# LANGUAGE ExistentialQuantification  #-}
 {-# LANGUAGE FlexibleContexts           #-}
@@ -24,6 +26,7 @@
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
     ChainDbView (..)
   , ChainSyncClientException (..)
+  , ChainSyncClientHandle (..)
   , ChainSyncClientResult (..)
   , Consensus
   , Our (..)
@@ -48,7 +51,7 @@ import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           Network.TypedProtocol.Pipelined
-import           NoThunks.Class (unsafeNoThunks)
+import           NoThunks.Class (AllowThunk (..), unsafeNoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
@@ -77,7 +80,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Ouroboros.Network.AnchoredSeq as AS
-import           Ouroboros.Network.Block (Tip, getTipBlockNo)
+import           Ouroboros.Network.Block (Tip (..), getTipBlockNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
                      (WhetherReceivingTentativeBlocks (..))
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
@@ -118,6 +121,13 @@ newtype Our   a = Our   { unOur   :: a }
   deriving stock   (Eq)
   deriving newtype (Show, NoThunks)
 
+data ChainSyncClientHandle m blk = ChainSyncClientHandle {
+    cschKill     :: !(m ())
+  , cschTheirTip :: !(STM m (Maybe (Tip blk)))
+  }
+  deriving stock (Generic)
+  deriving (NoThunks) via AllowThunk (ChainSyncClientHandle m blk)
+
 bracketChainSyncClient
     :: ( IOLike m
        , Ord peer
@@ -128,28 +138,39 @@ bracketChainSyncClient
     -> StrictTVar m (Map peer (StrictTVar m (AnchoredFragment (Header blk))))
        -- ^ The candidate chains, we need the whole map because we
        -- (de)register nodes (@peer@).
+    -> StrictTVar m (Map peer (ChainSyncClientHandle m blk))
     -> peer
     -> NodeToNodeVersion
     -> (    StrictTVar m (AnchoredFragment (Header blk))
+         -> (Their (Tip blk) -> STM m ())
          -> m a
        )
     -> m a
 bracketChainSyncClient tracer ChainDbView { getIsInvalidBlock } varCandidates
-                       peer version body =
+                       varHandles peer version body =
     bracket newCandidateVar releaseCandidateVar
-      $ \varCandidate ->
+      $ \(varCandidate, varTheirTip) ->
       withWatcher
         "ChainSync.Client.rejectInvalidBlocks"
         (invalidBlockWatcher varCandidate)
-        $ body varCandidate
+        $ body varCandidate varTheirTip
   where
     newCandidateVar = do
       varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
-      atomically $ modifyTVar varCandidates $ Map.insert peer varCandidate
-      return varCandidate
+      varTheirTip  <- newTVarIO Nothing
+      tid <- myThreadId
+      atomically $ do
+        modifyTVar varCandidates $ Map.insert peer varCandidate
+        modifyTVar varHandles $ Map.insert peer ChainSyncClientHandle {
+            cschKill     = killThread tid
+          , cschTheirTip = readTVar varTheirTip
+          }
+      return (varCandidate, writeTVar varTheirTip . Just . unTheir)
 
     releaseCandidateVar _ = do
-      atomically $ modifyTVar varCandidates $ Map.delete peer
+      atomically $ do
+        modifyTVar varCandidates $ Map.delete peer
+        modifyTVar varHandles $ Map.delete peer
 
     invalidBlockWatcher varCandidate =
       invalidBlockRejector
@@ -438,6 +459,7 @@ chainSyncClient
     -> ControlMessageSTM m
     -> HeaderMetricsTracer m
     -> StrictTVar m (AnchoredFragment (Header blk))
+    -> (Their (Tip blk) -> STM m ())
     -> Consensus ChainSyncClientPipelined blk m
 chainSyncClient mkPipelineDecision0 tracer cfg
                 InFutureCheck.HeaderInFutureCheck
@@ -456,7 +478,8 @@ chainSyncClient mkPipelineDecision0 tracer cfg
                 version
                 controlMessageSTM
                 headerMetricsTracer
-                varCandidate = ChainSyncClientPipelined $
+                varCandidate
+                setTheirTip = ChainSyncClientPipelined $
     continueWithState () $ initialise
   where
     -- | Start ChainSync by looking for an intersection between our current
@@ -544,7 +567,9 @@ chainSyncClient mkPipelineDecision0 tracer cfg
                 intersection
                 (ourTipFromChain ourFrag)
                 theirTip
-        atomically $ writeTVar varCandidate theirFrag
+        atomically $ do
+          writeTVar varCandidate theirFrag
+          setTheirTip theirTip
         let kis = assertKnownIntersectionInvariants (configConsensus cfg) $
               KnownIntersectionState
                 { theirFrag               = theirFrag
@@ -632,7 +657,9 @@ chainSyncClient mkPipelineDecision0 tracer cfg
               -- Our chain (tip) didn't change or if it did, it still intersects
               -- with the candidate fragment, so we can continue requesting the
               -- next block.
-              atomically $ writeTVar varCandidate theirFrag
+              atomically $ do
+                writeTVar varCandidate theirFrag
+                setTheirTip theirTip
               let candTipBlockNo = AF.headBlockNo theirFrag
               return $
                 requestNext kis' mkPipelineDecision n theirTip candTipBlockNo
@@ -796,7 +823,9 @@ chainSyncClient mkPipelineDecision0 tracer cfg
                     , ourFrag                 = ourFrag
                     , mostRecentIntersection  = mostRecentIntersection'
                     }
-            atomically $ writeTVar varCandidate theirFrag'
+            atomically $ do
+              writeTVar varCandidate theirFrag'
+              setTheirTip theirTip
             atomically $ traceWith headerMetricsTracer (slotNo, now)
 
             continueWithState kis'' $ nextStep mkPipelineDecision n theirTip
@@ -935,7 +964,9 @@ chainSyncClient mkPipelineDecision0 tracer cfg
                     , ourFrag                 = ourFrag
                     , mostRecentIntersection  = mostRecentIntersection'
                     }
-            atomically $ writeTVar varCandidate theirFrag'
+            atomically $ do
+              writeTVar varCandidate theirFrag'
+              setTheirTip theirTip
 
             continueWithState kis' $ nextStep mkPipelineDecision n theirTip
 

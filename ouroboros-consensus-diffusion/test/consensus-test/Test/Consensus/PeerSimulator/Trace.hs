@@ -41,6 +41,9 @@ mkCdbTracer tracer =
           trace "Switched to a fork"
           trace $ "New tip: " ++ terseRealPoint newTipPoint
           trace $ "New fragment: " ++ terseHFragment newFragment
+        StoreButDontChange block -> do
+          trace "Did not add block due to LoE"
+          trace $ "Block: " ++ terseRealPoint block
         _ -> pure ()
     _ -> pure ()
   where

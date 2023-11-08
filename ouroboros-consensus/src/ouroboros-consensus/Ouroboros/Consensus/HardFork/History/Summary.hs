@@ -67,6 +67,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import           Ouroboros.Consensus.HardFork.History.EraParams
 import           Ouroboros.Consensus.HardFork.History.Util
+import           Ouroboros.Consensus.Ledger.SupportsProtocol (GenesisWindow)
 
 {-------------------------------------------------------------------------------
   Bounds
@@ -203,14 +204,15 @@ newtype Summary xs = Summary { getSummary :: NonEmpty xs EraSummary }
 -------------------------------------------------------------------------------}
 
 -- | 'Summary' for a ledger that never forks
-neverForksSummary :: EpochSize -> SlotLength -> Summary '[x]
-neverForksSummary epochSize slotLen = Summary $ NonEmptyOne $ EraSummary {
+neverForksSummary :: EpochSize -> SlotLength -> GenesisWindow -> Summary '[x]
+neverForksSummary epochSize slotLen genesisWindow = Summary $ NonEmptyOne $ EraSummary {
       eraStart  = initBound
     , eraEnd    = EraUnbounded
     , eraParams = EraParams {
           eraEpochSize  = epochSize
         , eraSlotLength = slotLen
         , eraSafeZone   = UnsafeIndefiniteSafeZone
+        , eraGenesisWin = genesisWindow
         }
     }
 

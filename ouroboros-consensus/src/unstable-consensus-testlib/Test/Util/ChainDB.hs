@@ -110,4 +110,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
   , cdbGcDelay                = 1
   , cdbGcInterval             = 1
   , cdbBlocksToAddSize        = 1
+    -- TODO using this for tests for now to simulate behavior without LoE
+  , cdbLoELimit               = maxBound
   }

@@ -350,6 +350,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     -- separate map too, one that isn't emptied. We can use this map to look
     -- at the final state of each candidate.
     varFinalCandidates <- uncheckedNewTVarM Map.empty
+    varHandles     <- uncheckedNewTVarM Map.empty
 
     (tracer, getTrace) <- do
           (tracer', getTrace) <- recordingTracerTVar
@@ -396,10 +397,11 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
             -- client's and server's clock as the tolerable clock skew.
 
         client :: StrictTVar m (AnchoredFragment (Header TestBlock))
+               -> (Their (Tip TestBlock) -> STM m ())
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client = chainSyncClient
+        client candidate setTheirTip = chainSyncClient
                    (pipelineDecisionLowHighMark 10 20)
                    chainSyncTracer
                    nodeCfg
@@ -408,6 +410,8 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                    (maxBound :: NodeToNodeVersion)
                    (return Continue)
                    nullTracer
+                   candidate
+                   setTheirTip
 
     -- Set up the server
     varChainProducerState <- uncheckedNewTVarM $ initChainProducerState Genesis
@@ -477,13 +481,14 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  chainSyncTracer
                  chainDbView
                  varCandidates
+                 varHandles
                  serverId
-                 maxBound $ \varCandidate -> do
+                 maxBound $ \varCandidate setTheirTip -> do
                    atomically $ modifyTVar varFinalCandidates $
                      Map.insert serverId varCandidate
                    result <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
-                       chainSyncClientPeerPipelined $ client varCandidate
+                       chainSyncClientPeerPipelined $ client varCandidate setTheirTip
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
                    return ()
               `catchAlsoLinked` \ex -> do
