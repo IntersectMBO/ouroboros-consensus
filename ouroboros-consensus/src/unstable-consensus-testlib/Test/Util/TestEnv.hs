@@ -3,6 +3,7 @@
 -- | A @tasty@ command-line option for enabling nightly tests
 module Test.Util.TestEnv (
     TestEnv (..)
+  , adjustQuickCheckTests
   , askTestEnv
   , defaultMainWithTestEnv
   , defaultTestEnvConfig
@@ -66,3 +67,11 @@ instance IsOption TestEnv where
 
   -- Set of choices for test environment
   optionCLParser = mkOptionCLParser $ metavar "nightly|ci|dev"
+
+-- | Locally adjust the number of QuickCheck tests for the given test subtree.
+-- Unless the previous number of tests was exactly '0', the result will always
+-- be at least '1'.
+adjustQuickCheckTests :: (Int -> Int) -> TestTree -> TestTree
+adjustQuickCheckTests f =
+  adjustOption $ \(QuickCheckTests n) ->
+    QuickCheckTests $ if n == 0 then 0 else (max 1 (f n))
