@@ -143,15 +143,6 @@ instance Arbitrary TestSetup where
 
   -- TODO shrink
 
--- | Run relatively fewer tests
---
--- These tests are slow, so we settle for running fewer of them in this test
--- suite since it is invoked frequently (eg CI for each push).
-oneTenthTestCount :: QuickCheckTests -> QuickCheckTests
-oneTenthTestCount (QuickCheckTests n) = QuickCheckTests $
-    if 0 == n then 0 else
-    max 1 $ n `div` 10
-
 tests :: TestTree
 tests = localOption (QuickCheckTests 100) $
         testGroup "AllegraMary ThreadNet" [
@@ -161,7 +152,10 @@ tests = localOption (QuickCheckTests 100) $
       adjustTestEnv :: TestTree -> TestEnv -> TestTree
       adjustTestEnv tree = \case
         Nightly -> tree
-        _       -> adjustOption oneTenthTestCount tree
+        _       ->
+          -- These tests are slow, so we settle for running fewer of them in this test
+          -- suite since it is invoked frequently (eg CI for each push).
+          adjustQuickCheckTests (`div` 10) tree
 
 prop_simple_allegraMary_convergence :: TestSetup -> Property
 prop_simple_allegraMary_convergence TestSetup

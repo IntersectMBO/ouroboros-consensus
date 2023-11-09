@@ -82,6 +82,7 @@ import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Examples (Examples (..), Labelled)
 import           Test.Util.Serialisation.SomeResult (SomeResult (..))
+import           Test.Util.TestEnv (adjustQuickCheckTests)
 import           Text.Pretty.Simple (pShow)
 
 {------------------------------------------------------------------------------
@@ -301,7 +302,7 @@ roundtrip_SerialiseDisk ccfg dictNestedHdr =
                 nestedHdr
       -- Since the 'LedgerState' is a large data structure, we lower the
       -- number of tests to avoid slowing down the testsuite too much
-    , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (1 `max` (div n 10))) $
+    , adjustQuickCheckTests (`div` 10) $
       rt (Proxy @(LedgerState blk)) "LedgerState"
     , rt (Proxy @(AnnTip blk)) "AnnTip"
     , rt (Proxy @(ChainDepState (BlockProtocol blk))) "ChainDepState"

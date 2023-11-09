@@ -143,15 +143,6 @@ instance Arbitrary TestSetup where
 
   -- TODO shrink
 
--- | Run relatively fewer tests
---
--- These tests are slow, so we settle for running fewer of them in this test
--- suite since it is invoked frequently (eg CI for each push).
-twoFifthsTestCount :: QuickCheckTests -> QuickCheckTests
-twoFifthsTestCount (QuickCheckTests n) = QuickCheckTests $
-    if 0 == n then 0 else
-    max 1 $ (2 * n) `div` 5
-
 tests :: TestTree
 tests = localOption (QuickCheckTests 100) $
         testGroup "Cardano ThreadNet" [
@@ -163,8 +154,10 @@ tests = localOption (QuickCheckTests 100) $
       adjustTestMode :: TestTree -> TestEnv ->  TestTree
       adjustTestMode tree = \case
         Nightly -> tree
-        _       -> adjustOption twoFifthsTestCount tree
-
+        _       ->
+          -- These tests are slow, so we settle for running fewer of them in this test
+          -- suite since it is invoked frequently (eg CI for each push).
+          adjustQuickCheckTests (\n -> (2 * n) `div` 5) tree
 
 prop_simple_cardano_convergence :: TestSetup -> Property
 prop_simple_cardano_convergence TestSetup
