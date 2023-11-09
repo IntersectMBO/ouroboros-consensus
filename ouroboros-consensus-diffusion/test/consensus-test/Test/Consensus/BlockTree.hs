@@ -26,7 +26,7 @@ import           Data.Functor ((<&>))
 import           Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Vector as Vector
 import           Ouroboros.Consensus.Block.Abstract (blockNo, blockSlot,
-                     unBlockNo)
+                     fromWithOrigin, unBlockNo)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Text.Printf (printf)
 
@@ -159,7 +159,7 @@ findPath source target blockTree = do
 prettyPrint :: AF.HasHeader blk => BlockTree blk -> [String]
 prettyPrint blockTree = do
   ["Block tree:"]
-    ++ ["  slots:   " ++ unwords (map (printf "%2d" . unSlotNo) [veryFirstSlot + 1 .. veryLastSlot])]
+    ++ ["  slots:   " ++ unwords (map (printf "%2d" . unSlotNo) [veryFirstSlot .. veryLastSlot])]
     ++ [printTrunk honestFragment]
     ++ (map printBranch adversarialFragments)
 
@@ -167,12 +167,12 @@ prettyPrint blockTree = do
     honestFragment = btTrunk blockTree
     adversarialFragments = map btbSuffix (btBranches blockTree)
 
-    veryFirstSlot = slotNoFromAnchor . AF.anchor $ honestFragment
+    veryFirstSlot = firstNo $ honestFragment
 
     veryLastSlot =
       foldl max 0 $
         map
-          (slotNoFromAnchor . AF.headAnchor)
+          lastNo
           (honestFragment : adversarialFragments)
 
     printTrunk :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
@@ -184,8 +184,8 @@ prettyPrint blockTree = do
 
     printLine :: AF.HasHeader blk => (SlotNo -> String) -> AF.AnchoredFragment blk -> String
     printLine printHeader fragment =
-      let firstSlot = slotNoFromAnchor $ AF.anchor fragment
-          lastSlot = slotNoFromAnchor $ AF.headAnchor fragment
+      let firstSlot = firstNo fragment
+          lastSlot = lastNo fragment
       in printHeader firstSlot ++ printFragment firstSlot lastSlot fragment
 
     printFragment :: AF.HasHeader blk => SlotNo -> SlotNo -> AF.AnchoredFragment blk -> String
@@ -193,7 +193,7 @@ prettyPrint blockTree = do
       fragment
         & AF.toOldestFirst
         -- Turn the fragment into a list of (SlotNo, Just BlockNo)
-        & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo firstSlot - 1), Just (unBlockNo (blockNo block))))
+        & map (\block -> (fromIntegral (unSlotNo (blockSlot block) - unSlotNo firstSlot), Just (unBlockNo (blockNo block))))
         -- Update only the Vector elements that have blocks in them
         & Vector.toList . (slotRange Vector.//)
         & map (maybe "  " (printf "%2d"))
@@ -201,9 +201,13 @@ prettyPrint blockTree = do
         & map (\c -> if c == ' ' then '─' else c)
       where
         -- Initialize a Vector with the length of the fragment containing only Nothings
-        slotRange = Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot)) Nothing
+        slotRange = Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot + 1)) Nothing
 
-    slotNoFromAnchor :: AF.Anchor b -> SlotNo
-    slotNoFromAnchor = \case
-      AF.AnchorGenesis -> 0
-      AF.Anchor slotNo _ _ -> slotNo
+    lastNo ::  AF.HasHeader blk => AF.AnchoredFragment blk -> SlotNo
+    lastNo = fromWithOrigin 0 . AF.headSlot
+
+    firstNo :: AF.AnchoredFragment blk -> SlotNo
+    firstNo frag =
+      case AF.anchor frag of
+        AF.AnchorGenesis     -> 0
+        AF.Anchor slotNo _ _ -> slotNo + 1

@@ -105,7 +105,7 @@ genChains numForks = do
   let ChainSchema _ vH = honestChainSchema
       goodChain = mkTestFragment goodBlocks
       -- blocks for the good chain in reversed order
-      goodBlocks = mkTestBlocks True [] slotsH 0
+      goodBlocks = mkTestBlocks [] slotsH 0
       slotsH = Vector.toList (getVector vH)
       HonestRecipe (Kcp kcp) (Scg scg) _delta _len = honestRecipe
 
@@ -120,8 +120,7 @@ genChains numForks = do
   where
     genAdversarialFragment :: [TestBlock] -> Int -> (Int, [S]) -> TestFrag
     genAdversarialFragment goodBlocks forkNo (prefixCount, slotsA)
-      =
-      mkTestFragment (mkTestBlocks False prefix slotsA forkNo)
+      = mkTestFragment (mkTestBlocks prefix slotsA forkNo)
       where
         -- blocks in the common prefix in reversed order
         prefix = drop (length goodBlocks - prefixCount) goodBlocks
@@ -130,14 +129,14 @@ genChains numForks = do
     mkTestFragment =
       AF.fromNewestFirst AF.AnchorGenesis
 
-    mkTestBlocks :: Bool -> [TestBlock] -> [S] -> Int -> [TestBlock]
-    mkTestBlocks honest pre active forkNo =
+    mkTestBlocks :: [TestBlock] -> [S] -> Int -> [TestBlock]
+    mkTestBlocks pre active forkNo =
       fst (foldl' folder ([], 0) active)
       where
         folder (chain, inc) s | S.test S.notInverted s = (issue inc chain, 0)
                               | otherwise = (chain, inc + 1)
         issue inc (h : t) = incSlot inc (successorBlock h) : h : t
-        issue inc [] | [] <- pre = [ incSlot inc (firstBlock (if honest then 0 else fromIntegral forkNo)) ]
+        issue inc [] | [] <- pre = [incSlot inc ((firstBlock (fromIntegral forkNo)) {tbSlot = 0})]
                      | h : t <- pre = incSlot inc (modifyFork (const (fromIntegral forkNo)) (successorBlock h)) : h : t
 
     incSlot :: SlotNo -> TestBlock -> TestBlock
