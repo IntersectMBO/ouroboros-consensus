@@ -1,5 +1,6 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -8,7 +9,9 @@
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
 import           Control.Monad.IOSim (runSimOrThrow)
+import           Data.List (intercalate)
 import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
+import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
@@ -57,11 +60,16 @@ prop_longRangeAttack honestFreq advFreqs = do
         (noTimeoutsSchedulerConfig scheduleConfig)
         genesisTest
         schedule
-        $ exceptionCounterexample $ \StateView{svSelectedChain} ->
-            not $ isHonestTestFragH svSelectedChain
+        $ exceptionCounterexample $ \StateView{svSelectedChain} killed ->
+            killCounterexample killed $
+            not (isHonestTestFragH svSelectedChain)
 
   where
     freqs = mkPeers honestFreq advFreqs
+
+    killCounterexample = \case
+      [] -> property
+      killed -> counterexample ("Some peers were killed: " ++ intercalate ", " (condense <$> killed))
 
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of

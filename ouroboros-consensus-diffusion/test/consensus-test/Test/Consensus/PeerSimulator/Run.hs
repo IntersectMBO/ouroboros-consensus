@@ -13,6 +13,7 @@ module Test.Consensus.PeerSimulator.Run (
   ) where
 
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
+import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.Class.MonadAsync
                      (AsyncCancelled (AsyncCancelled))
 import           Control.Monad.Class.MonadTime (MonadTime)
@@ -180,6 +181,11 @@ startChainSyncConnectionThread registry tracer cfg chainDbView fetchClientRegist
               traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of time limit exceeded."
             Nothing ->
               pure ()
+          case fromException exn of
+            Just ThreadKilled ->
+              traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminated by GDD governor."
+            _ ->
+              pure ()
         Right _ -> pure ()
   pure chainSyncException
 
@@ -317,6 +323,8 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
 
     isAsyncCancelled :: ChainSyncException -> Bool
     isAsyncCancelled e = case fromException $ cseException e of
+      -- FIXME: since we moved from @async@ to @forkLinkedThread@, this cannot be thrown anymore - it's ThreadKilled in
+      -- MonadFork. Also, we now want to keep this exception to detect Genesis disconnection.
       Just AsyncCancelled -> True
       _                   -> False
 
