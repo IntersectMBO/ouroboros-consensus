@@ -26,7 +26,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     Consensus, chainSyncClient, defaultChainDbView)
+                     Consensus, bracketChainSyncClient, chainSyncClient,
+                     defaultChainDbView)
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
@@ -45,6 +46,7 @@ import           Ouroboros.Network.Channel (createConnectedChannels)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
                      ControlMessageSTM)
 import           Ouroboros.Network.Driver.Limits
+import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
 import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
                      (ChainSyncClientPipelined, chainSyncClientPeerPipelined)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
@@ -158,36 +160,41 @@ startChainSyncConnectionThread ::
   SharedResources m ->
   ChainSyncResources m ->
   SchedulerConfig ->
+  StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
   m (StrictTVar m (Maybe ChainSyncException))
-startChainSyncConnectionThread registry tracer cfg chainDbView fetchClientRegistry SharedResources {srPeerId, srCandidateFragment} ChainSyncResources {csrServer} SchedulerConfig {scChainSyncTimeouts} = do
+startChainSyncConnectionThread registry tracer cfg chainDbView fetchClientRegistry SharedResources {srPeerId} ChainSyncResources {csrServer} SchedulerConfig {scChainSyncTimeouts} varCandidates = do
   chainSyncException <- uncheckedNewTVarM Nothing
   _ <- forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $ do
-      res <- try $ runConnectedPeersPipelinedWithLimits
-        createConnectedChannels
-        nullTracer
-        codecChainSyncId
-        chainSyncNoSizeLimits
-        (timeLimitsChainSync scChainSyncTimeouts)
-        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView srCandidateFragment))
-        (chainSyncServerPeer csrServer)
-      case res of
-        Left exn -> do
-          atomically $ writeTVar chainSyncException $ Just $ ChainSyncException srPeerId exn
-          case fromException exn of
-            Just (ExceededSizeLimit _) ->
-              traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of size limit exceeded."
-            Just (ExceededTimeLimit _) ->
-              traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of time limit exceeded."
-            Nothing ->
-              pure ()
-          case fromException exn of
-            Just ThreadKilled ->
-              traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminated by GDD governor."
-            _ ->
-              pure ()
-        Right _ -> pure ()
+      bracketChainSyncClient nullTracer chainDbView varCandidates srPeerId ntnVersion $ \ varCandidate -> do
+        res <- try $ runConnectedPeersPipelinedWithLimits
+          createConnectedChannels
+          nullTracer
+          codecChainSyncId
+          chainSyncNoSizeLimits
+          (timeLimitsChainSync scChainSyncTimeouts)
+          (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate))
+          (chainSyncServerPeer csrServer)
+        case res of
+          Left exn -> do
+            atomically $ writeTVar chainSyncException $ Just $ ChainSyncException srPeerId exn
+            case fromException exn of
+              Just (ExceededSizeLimit _) ->
+                traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of size limit exceeded."
+              Just (ExceededTimeLimit _) ->
+                traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of time limit exceeded."
+              Nothing ->
+                pure ()
+            case fromException exn of
+              Just ThreadKilled ->
+                traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminated by GDD governor."
+              _ ->
+                pure ()
+          Right _ -> pure ()
   pure chainSyncException
+  where
+    ntnVersion :: NodeToNodeVersion
+    ntnVersion = maxBound
 
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
 -- register it for synchronization with the ChainSync client.
@@ -290,23 +297,23 @@ runPointSchedule ::
   m StateView
 runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} pointSchedule tracer =
   withRegistry $ \registry -> do
-    resources <- makePeersResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
-    let candidates = srCandidateFragment . prShared <$> resources
-    chainDb <- mkChainDb tracer candidates config registry
+    resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
+    chainDb <- mkChainDb tracer config registry
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = defaultChainDbView chainDb
-    chainSyncRess <- for resources $ \PeerResources {prShared, prChainSync} -> do
-      chainSyncRes <- startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig
+    chainSyncRess <- for (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
+      chainSyncRes <- startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig (psrCandidates resources)
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
       pure chainSyncRes
-    for_ resources $ \PeerResources {prShared} ->
+
+    for_ (psrPeers resources) $ \PeerResources {prShared} ->
       startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared
     -- The block fetch logic needs to be started after the block fetch clients
     -- otherwise, an internal assertion fails because getCandidates yields more
     -- peer fragments than registered clients.
-    let getCandidates = traverse readTVar candidates
+    let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
     PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
-    runScheduler schedulerConfig tracer pointSchedule resources
+    runScheduler schedulerConfig tracer pointSchedule (psrPeers resources)
     svChainSyncExceptions <- collectExceptions (Map.elems chainSyncRess)
     svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
     pure $ StateView {
@@ -333,11 +340,10 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
 mkChainDb ::
   IOLike m =>
   Tracer m String ->
-  Map PeerId (StrictTVar m TestFragH) ->
   TopLevelConfig TestBlock ->
   ResourceRegistry m ->
   m (ChainDB m TestBlock)
-mkChainDb tracer _candidateVars nodeCfg registry = do
+mkChainDb tracer nodeCfg registry = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
       pure $ (
