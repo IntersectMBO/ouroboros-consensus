@@ -63,6 +63,8 @@
         devShells = rec {
           default = ghc96;
           ghc96 = hydraJobs.native.haskell96.devShell;
+          ghc96-profiled = hydraJobs.native.haskell96.devShellProfiled;
+
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];
           };

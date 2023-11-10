@@ -38,12 +38,22 @@ let
         reinstallableLibGhc = false;
       })
     ];
-    flake.variants.noAsserts = {
-      src = lib.mkForce (final.applyPatches {
-        name = "consensus-src-no-asserts";
-        src = ./..;
-        postPatch = ''echo > asserts.cabal'';
-      });
+    flake.variants = {
+      noAsserts = {
+        src = lib.mkForce (final.applyPatches {
+          name = "consensus-src-no-asserts";
+          src = ./..;
+          postPatch = ''echo > asserts.cabal'';
+        });
+      };
+      profiled = {
+        modules = [{
+          enableLibraryProfiling = true;
+          enableProfiling = true;
+          # https://well-typed.com/blog/2023/03/prof-late/
+          profilingDetail = "late";
+        }];
+      };
     };
   };
 in
