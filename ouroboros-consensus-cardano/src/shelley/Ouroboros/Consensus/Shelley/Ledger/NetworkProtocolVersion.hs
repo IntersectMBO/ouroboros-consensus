@@ -35,7 +35,7 @@ data ShelleyNodeToClientVersion =
     -- | New queries introduced: GetStakeDelegDeposits
   | ShelleyNodeToClientVersion7
 
-    -- | New queries introduced: GetConstitutionHash
+    -- | New queries introduced: GetConstitutionHash, GetFilteredVoteDelegatees
   | ShelleyNodeToClientVersion8
   deriving (Show, Eq, Ord, Enum, Bounded)
 
