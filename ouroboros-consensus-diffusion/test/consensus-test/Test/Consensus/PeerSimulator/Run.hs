@@ -14,8 +14,6 @@ module Test.Consensus.PeerSimulator.Run (
 
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Exception (AsyncException (ThreadKilled))
-import           Control.Monad.Class.MonadAsync
-                     (AsyncCancelled (AsyncCancelled))
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
@@ -71,6 +69,7 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
+import Data.Maybe (catMaybes)
 
 -- | Behavior config for the scheduler.
 data SchedulerConfig =
@@ -314,7 +313,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
     PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
     runScheduler schedulerConfig tracer pointSchedule (psrPeers resources)
-    svChainSyncExceptions <- collectExceptions (Map.elems chainSyncRess)
+    svChainSyncExceptions <- catMaybes <$> mapM readTVarIO (Map.elems chainSyncRess)
     svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
     pure $ StateView {
       svSelectedChain,
@@ -322,18 +321,6 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
       }
   where
     config = defaultCfg k
-
-    collectExceptions :: [StrictTVar m (Maybe ChainSyncException)] -> m [ChainSyncException]
-    collectExceptions vars = do
-      res <- mapM readTVarIO vars
-      pure $ [ e | Just e <- res, not (isAsyncCancelled e) ]
-
-    isAsyncCancelled :: ChainSyncException -> Bool
-    isAsyncCancelled e = case fromException $ cseException e of
-      -- FIXME: since we moved from @async@ to @forkLinkedThread@, this cannot be thrown anymore - it's ThreadKilled in
-      -- MonadFork. Also, we now want to keep this exception to detect Genesis disconnection.
-      Just AsyncCancelled -> True
-      _                   -> False
 
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.
