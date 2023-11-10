@@ -1014,6 +1014,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                      { canAwaitTimeout  = waitForever
                      , intersectTimeout = waitForever
                      , mustReplyTimeout = waitForever
+                     , idleTimeout      = waitForever
                      })
                   nullMetric
                   -- The purpose of this test is not testing protocols, so

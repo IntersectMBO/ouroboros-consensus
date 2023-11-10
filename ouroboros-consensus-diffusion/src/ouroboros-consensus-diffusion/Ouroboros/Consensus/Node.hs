@@ -120,7 +120,7 @@ import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
                      newPeerMetric, reportMetric)
 import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
 import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
-                     (encodeRemoteAddress, decodeRemoteAddress)
+                     (decodeRemoteAddress, encodeRemoteAddress)
 import           Ouroboros.Network.Protocol.Limits (shortWait)
 import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharingAmount)
 import           Ouroboros.Network.RethrowPolicy
@@ -740,6 +740,7 @@ stdChainSyncTimeout = do
       { canAwaitTimeout  = shortWait
       , intersectTimeout = shortWait
       , mustReplyTimeout
+      , idleTimeout      = Just 3673
       }
 
 stdVersionDataNTN :: NetworkMagic
