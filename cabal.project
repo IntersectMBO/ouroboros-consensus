@@ -32,3 +32,7 @@ benchmarks: true
 
 import: ./asserts.cabal
 
+constraints:
+  -- Plutus is incompatible with 0.1.5 because of the NoThunks (Identity a)
+  -- instance, once they fix that we shall remove this constraint.
+  nothunks == 0.1.4
