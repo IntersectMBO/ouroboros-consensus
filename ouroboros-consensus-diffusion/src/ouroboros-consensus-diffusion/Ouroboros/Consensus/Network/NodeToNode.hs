@@ -278,12 +278,12 @@ defaultCodecs :: forall m blk addr.
                 )
               => CodecConfig       blk
               -> BlockNodeToNodeVersion blk
-              -> (addr -> CBOR.Encoding)
-              -> (forall s . CBOR.Decoder s addr)
+              -> (NodeToNodeVersion -> addr -> CBOR.Encoding)
+              -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addr)
               -> NodeToNodeVersion
               -> Codecs blk addr DeserialiseFailure m
                    ByteString ByteString ByteString ByteString ByteString ByteString ByteString
-defaultCodecs ccfg version encAddr decAddr _nodeToNodeVersion = Codecs {
+defaultCodecs ccfg version encAddr decAddr nodeToNodeVersion = Codecs {
       cChainSyncCodec =
         codecChainSync
           enc
@@ -325,7 +325,7 @@ defaultCodecs ccfg version encAddr decAddr _nodeToNodeVersion = Codecs {
 
     , cKeepAliveCodec = codecKeepAlive_v2
 
-    , cPeerSharingCodec = codecPeerSharing encAddr decAddr
+    , cPeerSharingCodec = codecPeerSharing (encAddr nodeToNodeVersion) (decAddr nodeToNodeVersion)
     }
   where
     p :: Proxy blk

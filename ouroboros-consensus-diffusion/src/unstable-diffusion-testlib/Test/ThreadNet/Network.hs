@@ -1014,6 +1014,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                      { canAwaitTimeout  = waitForever
                      , intersectTimeout = waitForever
                      , mustReplyTimeout = waitForever
+                     , idleTimeout      = waitForever
                      })
                   nullMetric
                   -- The purpose of this test is not testing protocols, so
@@ -1097,7 +1098,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
               NTN.cPeerSharingCodec NTN.identityCodecs
         }
       where
-        binaryProtocolCodecs = NTN.defaultCodecs (configCodec cfg) blockVersion encodeNodeId decodeNodeId ntnVersion
+        binaryProtocolCodecs = NTN.defaultCodecs (configCodec cfg) blockVersion (const encodeNodeId) (const decodeNodeId) ntnVersion
 
 -- | Sum of 'CodecFailure' (from @identityCodecs@) and 'DeserialiseFailure'
 -- (from @defaultCodecs@).
@@ -1347,7 +1348,7 @@ directedEdgeInner registry clock (version, blockVersion) (cfg, calcMessageDelay)
           _ -> pure ()
       where
         codec =
-            NTN.cChainSyncCodec $ NTN.defaultCodecs cfg blockVersion encodeNodeId decodeNodeId version
+            NTN.cChainSyncCodec $ NTN.defaultCodecs cfg blockVersion (const encodeNodeId) (const decodeNodeId) version
 
 -- | Variant of 'createConnectChannels' with intermediate queues for
 -- delayed-but-in-order messages

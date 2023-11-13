@@ -261,9 +261,9 @@ library
     , measures
     , mtl
     , nothunks                     ^>=0.1.2
-    , ouroboros-network-api        ^>=0.5.1
+    , ouroboros-network-api        ^>=0.6.0
     , ouroboros-network-mock       ^>=0.1.0.1
-    , ouroboros-network-protocols  ^>=0.5
+    , ouroboros-network-protocols  ^>=0.6
     , psqueues                     ^>=0.2.3
     , quiet                        ^>=0.2
     , semialign                    >=1.1

@@ -67,8 +67,8 @@ immDBServer ::
      , SupportedNetworkProtocolVersion blk
      )
   => CodecConfig blk
-  -> (addr -> CBOR.Encoding)
-  -> (forall s . CBOR.Decoder s addr)
+  -> (NodeToNodeVersion -> addr -> CBOR.Encoding)
+  -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addr)
   -> ImmutableDB m blk
   -> NetworkMagic
   -> Versions NodeToNodeVersion NodeToNodeVersionData
@@ -90,7 +90,7 @@ immDBServer codecCfg encAddr decAddr immDB networkMagic = do
               stdVersionDataNTN
                 networkMagic
                 N2N.InitiatorOnlyDiffusionMode
-                NoPeerSharing
+                PeerSharingDisabled
           }
 
     application ::

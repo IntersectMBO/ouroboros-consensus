@@ -28,7 +28,7 @@ import           Ouroboros.Network.ErrorPolicy (nullErrorPolicies)
 import           Ouroboros.Network.IOManager (withIOManager)
 import           Ouroboros.Network.Mux
 import qualified Ouroboros.Network.NodeToNode as N2N
-import           Ouroboros.Network.PeerSelection.PeerSharing
+import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
                      (decodeRemoteAddress, encodeRemoteAddress)
 import qualified Ouroboros.Network.Snocket as Snocket
 import           Ouroboros.Network.Socket (configureSocket)

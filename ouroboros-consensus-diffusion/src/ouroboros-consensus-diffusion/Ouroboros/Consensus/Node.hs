@@ -118,8 +118,9 @@ import           Ouroboros.Network.PeerSelection.LedgerPeers
                      (LedgerPeersConsensusInterface (..))
 import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
                      newPeerMetric, reportMetric)
-import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing,
-                     decodeRemoteAddress, encodeRemoteAddress)
+import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
+import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
+                     (decodeRemoteAddress, encodeRemoteAddress)
 import           Ouroboros.Network.Protocol.Limits (shortWait)
 import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharingAmount)
 import           Ouroboros.Network.RethrowPolicy
@@ -309,8 +310,8 @@ runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      , NetworkAddr addrNTN
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
-  -> (addrNTN -> CBOR.Encoding)
-  -> (forall s . CBOR.Decoder s addrNTN)
+  -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
+  -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addrNTN)
   -> LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p
   -> m ()
 runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
@@ -420,8 +421,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
       -> NodeKernel     m addrNTN (ConnectionId addrNTC) blk
       -> PeerMetrics m addrNTN
-      -> (addrNTN -> CBOR.Encoding)
-      -> (forall s . CBOR.Decoder s addrNTN)
+      -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
+      -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addrNTN)
       -> BlockNodeToNodeVersion blk
       -> (PeerSharingAmount -> m [addrNTN])
       -- ^ Peer Sharing result computation callback
@@ -739,6 +740,7 @@ stdChainSyncTimeout = do
       { canAwaitTimeout  = shortWait
       , intersectTimeout = shortWait
       , mustReplyTimeout
+      , idleTimeout      = Just 3673
       }
 
 stdVersionDataNTN :: NetworkMagic
