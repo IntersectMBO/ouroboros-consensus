@@ -29,6 +29,7 @@ import           Test.Consensus.BlockTree (BlockTree)
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
                      (FindIntersect (..),
                      RequestNext (AwaitReply, RollBackward, RollForward))
+import           Test.Consensus.PeerSimulator.Trace (terseFrag)
 import           Test.Consensus.PointSchedule (AdvertisedPoints (header, tip),
                      HeaderPoint (HeaderPoint), TipPoint (TipPoint))
 import           Test.Util.Orphans.IOLike ()
@@ -102,7 +103,7 @@ handlerRequestNext currentIntersection blockTree points =
       -- we have something to serve.
       (BT.PathAnchoredAtSource True, fragmentAhead@(next AF.:< _)) -> do
         trace "  intersection is before our header point"
-        trace $ "  fragment ahead: " ++ condense fragmentAhead
+        trace $ "  fragment ahead: " ++ terseFrag fragmentAhead
         lift $ writeTVar currentIntersection $ blockPoint next
         pure $ Just (RollForward (getHeader next) (coerce (tip points)))
       -- If the anchor is not the intersection but the fragment is empty, then

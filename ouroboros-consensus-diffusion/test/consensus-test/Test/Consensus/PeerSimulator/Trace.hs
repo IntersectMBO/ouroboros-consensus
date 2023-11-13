@@ -1,17 +1,29 @@
 {-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeFamilies   #-}
+{-# LANGUAGE TypeOperators  #-}
 
 -- | Helpers for tracing used by the peer simulator.
 module Test.Consensus.PeerSimulator.Trace (
     mkCdbTracer
   , mkChainSyncClientTracer
+  , terseBlock
+  , terseFrag
+  , terseFragH
+  , terseHeader
   , traceLinesWith
   , traceUnitWith
   ) where
 
+import           Cardano.Slotting.Block (BlockNo (BlockNo))
+import           Cardano.Slotting.Slot (SlotNo (SlotNo))
 import           Control.Tracer (Tracer (Tracer), traceWith)
 import           Data.Foldable (traverse_)
+import           Data.List (intercalate)
+import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.Time.Clock (diffTimeToPicoseconds)
+import           Ouroboros.Consensus.Block (Header, blockHash, blockNo,
+                     blockSlot, getHeader)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
@@ -20,7 +32,12 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
-import           Test.Util.TestBlock (TestBlock)
+import           Ouroboros.Network.AnchoredFragment
+                     (Anchor (Anchor, AnchorGenesis), AnchoredSeq (Empty),
+                     anchor, mapAnchoredFragment, toOldestFirst)
+import           Test.Consensus.PointSchedule (TestFrag, TestFragH)
+import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
+                     unTestHash)
 import           Text.Printf (printf)
 
 mkCdbTracer ::
@@ -78,3 +95,36 @@ traceLinesWith ::
   [String] ->
   m ()
 traceLinesWith = traverse_ . traceWith
+
+terseSlotBlock :: SlotNo -> BlockNo -> String
+terseSlotBlock (SlotNo slot) (BlockNo block) =
+  show slot ++ "-" ++ show block
+
+terseBlock :: TestBlock -> String
+terseBlock block =
+  terseSlotBlock (blockSlot block) (blockNo block) ++ forkNoSuffix (unTestHash (blockHash block))
+  where
+    forkNoSuffix (forkNo :| _) | forkNo == 0 = ""
+                               | otherwise = "[" ++ show forkNo ++ "]"
+
+
+terseHeader :: Header TestBlock -> String
+terseHeader (TestHeader block) = terseBlock block
+
+terseFragH :: TestFragH -> String
+terseFragH frag =
+  renderAnchor ++ renderBlocks
+  where
+    renderBlocks = case frag of
+      Empty _ -> ""
+      _       -> " ⚓ " ++ intercalate " " (terseHeader <$> toOldestFirst frag)
+    renderAnchor = case anchor frag of
+      AnchorGenesis -> "Genesis"
+      Anchor slot hash block -> terseSlotBlock slot block ++ renderAnchorHash hash
+    renderAnchorHash hash
+      | all (== 0) (unTestHash hash) = ""
+      | otherwise = condense hash
+
+terseFrag :: TestFrag -> String
+terseFrag =
+  terseFragH . mapAnchoredFragment getHeader

@@ -29,7 +29,7 @@ import           Test.Consensus.BlockTree (allFragments)
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
-import           Test.Consensus.PeerSimulator.Trace (traceLinesWith)
+import           Test.Consensus.PeerSimulator.Trace (traceLinesWith, terseFrag)
 import           Test.Consensus.PointSchedule
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (ascVal)
 import           Test.QuickCheck
@@ -46,7 +46,7 @@ runTest ::
 runTest schedulerConfig genesisTest schedule makeProperty = do
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
-    for_ (allFragments gtBlockTree) \ bt -> traceWith tracer (condense bt)
+    for_ (allFragments gtBlockTree) \ bt -> traceWith tracer (terseFrag bt)
 
     traceLinesWith tracer [
       "SchedulerConfig:",
@@ -62,6 +62,7 @@ runTest schedulerConfig genesisTest schedule makeProperty = do
     mapM_ (traceWith tracer) $ BT.prettyPrint gtBlockTree
 
     finalStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
+    traceWith tracer (condense finalStateView)
     trace <- unlines <$> getTrace
 
     pure $ counterexample trace $ makeProperty finalStateView
@@ -74,8 +75,7 @@ exceptionCounterexample :: Testable a => (StateView -> [PeerId] -> a) -> StateVi
 exceptionCounterexample makeProperty stateView =
   case svChainSyncExceptions stateView of
     exns | ([], killed) <- partitionEithers (genesisException <$> exns) ->
-      counterexample ("result: " <> condense (svSelectedChain stateView)) $
-        makeProperty stateView killed
+      property $ makeProperty stateView killed
     exns ->
       counterexample ("exceptions: " <> show exns) False
   where

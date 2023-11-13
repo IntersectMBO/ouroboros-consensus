@@ -21,6 +21,7 @@ import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (catMaybes)
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
@@ -69,7 +70,6 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
-import Data.Maybe (catMaybes)
 
 -- | Behavior config for the scheduler.
 data SchedulerConfig =
