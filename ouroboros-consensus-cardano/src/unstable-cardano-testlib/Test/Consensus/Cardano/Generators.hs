@@ -46,7 +46,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Block ()
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
-import           Test.Cardano.Ledger.Conway.Serialisation.Generators ()
+import           Test.Cardano.Ledger.Conway.Arbitrary ()
 import           Test.Consensus.Byron.Generators
 import           Test.Consensus.Cardano.MockCrypto
 import           Test.Consensus.Protocol.Serialisation.Generators ()

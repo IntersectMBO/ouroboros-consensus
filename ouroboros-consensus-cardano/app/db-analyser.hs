@@ -6,13 +6,13 @@
 --
 -- Usage: db-analyser --db PATH [--verbose]
 --                    [--only-immutable-db [--analyse-from SLOT_NUMBER]]
---                    [--validate-all-blocks | --minimum-block-validation] COMMAND
+--                    [--validate-all-blocks | --minimum-block-validation]
 --                    [--show-slot-block-no | --count-tx-outputs |
 --                      --show-block-header-size | --show-block-txs-size |
 --                      --show-ebbs | --store-ledger SLOT_NUMBER | --count-blocks |
 --                      --checkThunks BLOCK_COUNT | --trace-ledger |
---                      --repro-mempool-and-forge INT]
---                    [--num-blocks-to-process INT]
+--                      --repro-mempool-and-forge INT | --benchmark-ledger-ops
+--                      [--out-file FILE]] [--num-blocks-to-process INT] COMMAND
 module Main (main) where
 
 import           Cardano.Crypto.Init (cryptoInit)
@@ -27,13 +27,13 @@ import           Options.Applicative (execParser, fullDesc, helper, info,
 main :: IO ()
 main = do
     cryptoInit
-    cmdLine <- getCmdLine
-    void $ case blockType cmdLine of
-      ByronBlock   args -> analyse cmdLine args
-      ShelleyBlock args -> analyse cmdLine args
-      CardanoBlock args -> analyse cmdLine args
+    (conf, blocktype) <- getCmdLine
+    void $ case blocktype of
+      ByronBlock   args -> analyse conf args
+      ShelleyBlock args -> analyse conf args
+      CardanoBlock args -> analyse conf args
 
-getCmdLine :: IO DBAnalyserConfig
+getCmdLine :: IO (DBAnalyserConfig, BlockType)
 getCmdLine = execParser opts
   where
     opts = info (parseCmdLine <**> helper) (mconcat [

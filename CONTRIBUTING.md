@@ -14,22 +14,24 @@ proposals are welcome.
 
 We have two types of documentation:
 
-- Markdown files, which can be found in the [docs](docs/website/contents) directory.
-  They contain information that is not strictly related to the code itself, such
-  as getting started guides, references, tutorials, etc.
+- Markdown files, which can be found in the [docs](docs/website/contents)
+  directory. They contain information that is not strictly related to the code
+  itself, such as getting started guides, references, tutorials, etc.
 - [Haddock][haddock-site] comments. They contain more low level information
-  about the code.
+  about the code and should be used as a reference, although we aim to provide
+  some context navigation (cross referencing modules) on the module
+  descriptions.
 
 When adding or improving documentation about the implementation, it is
 preferable to add haddock comments since they are closer to the code. However
 not all documentation can be placed inside haddock comments, and in such cases
 the contributor can update the markdown files in [docs](docs/website/contents).
 
-This repository also contains a [technical report](docs/report) that describes
-the implementation of the Consensus layer. We will not update this report. We
-keep it here as a historical reference, and we will systematically convert the
-relevant parts of the report into the two types of documentation mentioned
-above.
+This repository also contains a [technical report](docs/tech-reports/report)
+that describes the implementation of the Consensus layer. We will not update
+this report. We keep it here as a historical reference, and we will
+systematically convert the relevant parts of the report into the two types of
+documentation mentioned above.
 
 When somebody asks a question about the code, we should try to refer people to
 the documentation. If no relevant entry exists, we should create it and submit a
@@ -44,7 +46,7 @@ live in this repository.
 
 Consensus can be built using [Nix](https://nixos.org/download.html). The
 installation and configuration instructions are taken from
-[cardano-node](https://github.com/input-output-hk/cardano-node/blob/master/doc/getting-started/building-the-node-using-nix.md),
+[cardano-node](https://github.com/input-output-hk/cardano-node-wiki/blob/main/docs/getting-started/building-the-node-using-nix.md),
 and detailed below. To install `nix` run:
 
 ```sh
@@ -79,7 +81,7 @@ EOF
 
 An alternative to using `nix` is to set up the development
 environment yourself. Follow [these
-instructions](https://github.com/input-output-hk/cardano-node/blob/master/doc/getting-started/install.md)
+instructions](https://github.com/input-output-hk/cardano-node-wiki/blob/main/docs/getting-started/install.md)
 to properly configure your system.
 
 # Building the project
@@ -132,13 +134,16 @@ will guide you through the process when reviewing your pull request.
 
 This section contain guidelines on what to check when making a pull request.
 
-- When bumping version bounds on the dependencies *it is not necessary* to increase the package version number. See [this section](#updating-the-dependencies-bounds).
-- When you want to create a changelog entry, follow [this and the following section](docs/website/contents/for-developers/ReleaseProcess.md#installing-scriv).
+- When bumping version bounds on the dependencies *it is not necessary* to
+  increase the package version number. See [this
+  section](#updating-the-dependencies-bounds).
+- When you want to create a changelog entry, follow [this and the following
+  section](docs/website/contents/for-developers/ReleaseProcess.md#installing-scriv).
 
 ## Following our git process
 
-Our [git process](docs/website/contents/for-developers/GitProcess.md) describes the `git` practices we
-encourage when working with the code in this repository.
+Our [git process](docs/website/contents/for-developers/GitProcess.md) describes
+the `git` practices we encourage when working with the code in this repository.
 
 ## Updating the documentation
 
@@ -147,9 +152,10 @@ documentation (see [this section](#documentation)).
 
 ## Following the style guide
 
-We have a [Haskell style guide](docs/website/contents/for-developers/StyleGuide.md) that should be followed when
-writing code in Consensus. Our style guide is not set in stone, and improvements
-are always welcome.
+We have a [Haskell style
+guide](docs/website/contents/for-developers/StyleGuide.md) that should be
+followed when writing code in Consensus. Our style guide is not set in stone,
+and improvements are always welcome.
 
 ## Formatting the code
 
@@ -227,27 +233,25 @@ Our Haskell packages come from two package repositories:
 - [CHaP][chap] (which is essentially another Hackage)
 
 The `index-state` of each repository is pinned to a particular time in
-`cabal.project`.  This tells Cabal to treat the repository as if it was
-the specified time, ensuring reproducibility.  If you want to use a package
-version from repository X which was added after the pinned index state
-time, you need to bump the index state for X.  This is not a big deal,
-since all it does is change what packages `cabal` considers to be available
-when doing solving, but it will change what package versions cabal picks
-for the plan, and so will likely result in significant recompilation, and
-potentially some breakage.  That typically just means that we need to fix
-the breakage (increasing the lower-bound on the problematic package if fix
-is not backward compatible), or delay that work and instead decrease the
-upper-bound on the problematic package for now.
+`cabal.project`. This tells Cabal to treat the repository as if it was the
+specified time, ensuring reproducibility. If you want to use a package version
+from repository X which was added after the pinned index state time, you need to
+bump the index state for X. This is not a big deal, since all it does is change
+what packages `cabal` considers to be available when doing solving, but it will
+change what package versions cabal picks for the plan, and so will likely result
+in significant recompilation, and potentially some breakage. That typically just
+means that we need to fix the breakage (increasing the lower-bound on the
+problematic package if fix is not backward compatible), or delay that work and
+instead decrease the upper-bound on the problematic package for now.
 
 Note that `cabal`'s own persistent state includes which index states it is
 aware of, so when you bump the pinned index state you may need to
 call `cabal update` in order for `cabal` to be happy.
 
-The Nix code which builds our packages also needs some information relating
-to the index-state. This information needs to be new enough to include
-the index-state specified in `cabal.project`. The information is represented
-by Nix flake inputs.
-You can update these by running:
+The Nix code which builds our packages also needs some information relating to
+the index-state. This information needs to be new enough to include the
+index-state specified in `cabal.project`. The information is represented by Nix
+flake inputs. You can update these by running:
 - `nix flake lock --update-input hackageNix` for Hackage
 - `nix flake lock --update-input CHaP` for CHaP
 
@@ -262,13 +266,19 @@ the shell. From time to time, this `index-state` should be updated manually.
 
 ## Updating the dependencies bounds
 
-Sometimes, when creating pull requests to [CHaP][chap], it is desirable to loose/tighten certain dependencies bounds via a revision.
+Sometimes, when creating pull requests to [CHaP][chap], it is desirable to
+loose/tighten certain dependencies bounds via a revision.
 
- - If you do so for a Consensus package, please first open a PR to Consensus mirroring the change in CHaP; but do not increment the version number of the Consensus package.
+ - If you do so for a Consensus package, please first open a PR to Consensus
+   mirroring the change in CHaP; but do not increment the version number of the
+   Consensus package.
 
- - If your revision is about allowing a new version of package, please update the version bound in a way that keeps the previously allowed versions, unless this is undesirable due to eg a bug in an earlier version.
+ - If your revision is about allowing a new version of package, please update
+   the version bound in a way that keeps the previously allowed versions, unless
+   this is undesirable due to eg a bug in an earlier version.
 
-   For example, if we have `cardano-ledger-core ^>= 1.1` and you want to also allow `1.2`, use `^>= 1.1 || ^>= 1.2`.
+   For example, if we have `cardano-ledger-core ^>= 1.1` and you want to also
+   allow `1.2`, use `^>= 1.1 || ^>= 1.2`.
 
 ### Use of `source-repository-package`s
 
@@ -287,12 +297,16 @@ If you do add a temporary `source-repository-package` stanza, you need to
 provide a `--sha256` comment in `cabal.project` so that Nix knows the hash
 of the content. There are two relatively straightforward ways to do this:
 
-1. The TOFU approach: put in the wrong hash and then Nix will tell you the correct one, which you can copy in.
-2. Calculate the hash with `nix-shell -p nix-prefetch-git --run 'nix-prefetch-git <URL> <COMMIT_HASH>'`
+1. The TOFU approach: put in the wrong hash and then Nix will tell you the
+   correct one, which you can copy in.
+2. Calculate the hash with `nix-shell -p nix-prefetch-git --run
+   'nix-prefetch-git <URL> <COMMIT_HASH>'`
 
 ## Inspecting dependencies as used by Nix
 
-When debugging an issue or when not using the shipped Nix shell, it is often desirable to know the exact version/revision of a specific tool or library as used by Nix.
+When debugging an issue or when not using the shipped Nix shell, it is often
+desirable to know the exact version/revision of a specific tool or library as
+used by Nix.
 
 To get the exact `libsodium-vrf` used by Nix:
 ```console
@@ -306,7 +320,8 @@ To get the `cabal-fmt` version used by Nix:
 "0.1.6"
 ```
 
-In more complex cases, you can start a Nix REPL and go on to explore interactively:
+In more complex cases, you can start a Nix REPL and go on to explore
+interactively:
 
 ```console
  $ nix repl
@@ -336,7 +351,7 @@ The core contributors to consensus codebase are:
 
 -   [Nicolas Frisby](https://github.com/nfrisby)
 
--   [Javier Sagredo](https://github.com/Jasagredo)
+-   [Javier Sagredo](https://github.com/jasagredo)
 
 -   [Alexander Esgen](https://github.com/amesgen)
 

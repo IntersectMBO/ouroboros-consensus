@@ -5,6 +5,7 @@ import qualified Cardano.Tools.DBAnalyser.Run as DBAnalyser
 import           Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
+import           Ouroboros.Consensus.Cardano.Block
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Util.TestEnv
@@ -52,10 +53,12 @@ testAnalyserConfig =
     , verbose     = False
     , selectDB    = SelectChainDB
     , validation  = Just ValidateAllBlocks
-    , blockType   = CardanoBlock (Cardano.CardanoBlockArgs nodeConfig Nothing)
     , analysis    = CountBlocks
     , confLimit   = Unlimited
     }
+
+testBlockArgs :: Cardano.Args (CardanoBlock StandardCrypto)
+testBlockArgs = Cardano.CardanoBlockArgs nodeConfig Nothing
 
 -- | A multi-step test including synthesis and analaysis 'SomeConsensusProtocol' using the Cardano instance.
 --
@@ -82,9 +85,7 @@ blockCountTest logStep = do
     blockCountAppend > 0 @? "no blocks have been forged during append step"
 
     logStep "running analysis"
-    resultAnalysis <- case blockType testAnalyserConfig of
-        CardanoBlock b  -> DBAnalyser.analyse testAnalyserConfig b
-        _               -> assertFailure "expexcting test case for Cardano block type"
+    resultAnalysis <- DBAnalyser.analyse testAnalyserConfig testBlockArgs
 
     let blockCount = blockCountCreate + blockCountAppend
     resultAnalysis == Just (ResultCountBlock blockCount) @?

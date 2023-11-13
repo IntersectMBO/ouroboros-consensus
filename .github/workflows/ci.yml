@@ -25,7 +25,7 @@ jobs:
          os: [ubuntu-latest]
     env:
       # Modify this value to "invalidate" the Cabal cache.
-      CABAL_CACHE_VERSION: "2023-10-23"
+      CABAL_CACHE_VERSION: "2023-10-24"
 
     steps:
     - uses: actions/checkout@v4
@@ -91,24 +91,6 @@ jobs:
         restore-keys: |
           cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
           cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-
-
-    # This is used for caching the `dist-newstyle` directory.
-    - name: Store week number as environment variable
-      run: echo "WEEKNUM=$(/usr/bin/date -u '+%W')" >> $GITHUB_ENV
-
-    # Cache the `dist-newstyle` folder.
-    #
-    # See 'restore-cabal-store' for why we use the week number in the primary
-    # key and restore keys.
-    - name: "Cache dist-newstyle"
-      uses: actions/cache@v3
-      if: matrix.ghc!='8.10.7'
-      with:
-        path: dist-newstyle
-        key: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}-${{ hashFiles('dependencies.txt') }}
-        restore-keys: |
-          cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}-${{ hashFiles('dependencies.txt') }}
-          cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}-
 
     - name: Build dependencies
       id: build-dependencies

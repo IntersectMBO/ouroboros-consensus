@@ -248,12 +248,15 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- The argument specifies whose stake should be returned. When it's empty,
   -- the stake of every 'DRep's is returned.
   GetDRepStakeDistr
-    :: Set (LC.DRep (EraCrypto era))
-    -> BlockQuery (ShelleyBlock proto era) (Map (LC.DRep (EraCrypto era)) Coin)
+    :: Set (SL.DRep (EraCrypto era))
+    -> BlockQuery (ShelleyBlock proto era) (Map (SL.DRep (EraCrypto era)) Coin)
 
   -- | Query committee members
-  GetCommitteeState
-    :: BlockQuery (ShelleyBlock proto era) (SL.CommitteeState era)
+  GetCommitteeMembersState
+    :: Set (SL.Credential 'ColdCommitteeRole (EraCrypto era) )
+    -> Set (SL.Credential 'HotCommitteeRole (EraCrypto era))
+    -> Set SL.MemberStatus
+    -> BlockQuery (ShelleyBlock proto era) (Maybe (SL.CommitteeMembersState (EraCrypto era)))
 
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
@@ -401,8 +404,8 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto) => QueryLedge
           SL.queryDRepState st drepCreds
         GetDRepStakeDistr dreps ->
           SL.queryDRepStakeDistr st dreps
-        GetCommitteeState ->
-          SL.queryCommitteeState st
+        GetCommitteeMembersState coldCreds hotCreds statuses ->
+          SL.queryCommitteeMembersState coldCreds hotCreds statuses st
     where
       lcfg    = configLedger $ getExtLedgerCfg cfg
       globals = shelleyLedgerGlobals lcfg
@@ -546,8 +549,8 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
   sameDepIndex GetDRepState{} _ = Nothing
   sameDepIndex GetDRepStakeDistr{} GetDRepStakeDistr{} = Just Refl
   sameDepIndex GetDRepStakeDistr{} _ = Nothing
-  sameDepIndex GetCommitteeState GetCommitteeState = Just Refl
-  sameDepIndex GetCommitteeState _ = Nothing
+  sameDepIndex GetCommitteeMembersState{} GetCommitteeMembersState{} = Just Refl
+  sameDepIndex GetCommitteeMembersState{} _ = Nothing
 
 deriving instance Eq   (BlockQuery (ShelleyBlock proto era) result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) result)
@@ -581,7 +584,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetGovState                                -> show
       GetDRepState {}                            -> show
       GetDRepStakeDistr {}                       -> show
-      GetCommitteeState                          -> show
+      GetCommitteeMembersState {}                -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
 querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
@@ -613,7 +616,7 @@ querySupportedVersion = \case
     GetGovState                                -> (>= v8)
     GetDRepState {}                            -> (>= v8)
     GetDRepStakeDistr {}                       -> (>= v8)
-    GetCommitteeState                          -> (>= v8)
+    GetCommitteeMembersState {}                -> (>= v8)
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
   where
@@ -722,8 +725,8 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 25 <> toCBOR drepCreds
     GetDRepStakeDistr dreps ->
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 26 <> LC.toEraCBOR @era dreps
-    GetCommitteeState ->
-      CBOR.encodeListLen 1 <> CBOR.encodeWord8 27
+    GetCommitteeMembersState coldCreds hotCreds statuses ->
+      CBOR.encodeListLen 4 <> CBOR.encodeWord8 27 <> toCBOR coldCreds <> toCBOR hotCreds <> LC.toEraCBOR @era statuses
 
 decodeShelleyQuery ::
      forall era proto. ShelleyBasedEra era
@@ -759,7 +762,11 @@ decodeShelleyQuery = do
       (1, 24) -> return $ SomeSecond GetGovState
       (2, 25) -> SomeSecond . GetDRepState <$> fromCBOR
       (2, 26) -> SomeSecond . GetDRepStakeDistr <$> LC.fromEraCBOR @era
-      (1, 27) -> return $ SomeSecond GetCommitteeState
+      (4, 27) -> do
+        coldCreds <- fromCBOR
+        hotCreds <- fromCBOR
+        statuses <- LC.fromEraCBOR @era
+        return $ SomeSecond $ GetCommitteeMembersState coldCreds hotCreds statuses
       _       -> fail $
         "decodeShelleyQuery: invalid (len, tag): (" <>
         show len <> ", " <> show tag <> ")"
@@ -796,7 +803,7 @@ encodeShelleyResult v query = case query of
     GetGovState                                -> toCBOR
     GetDRepState {}                            -> LC.toEraCBOR @era
     GetDRepStakeDistr {}                       -> LC.toEraCBOR @era
-    GetCommitteeState                          -> toCBOR
+    GetCommitteeMembersState {}                -> LC.toEraCBOR @era
 
 decodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
@@ -831,7 +838,7 @@ decodeShelleyResult v query = case query of
     GetGovState                                -> fromCBOR
     GetDRepState {}                            -> LC.fromEraCBOR @era
     GetDRepStakeDistr {}                       -> LC.fromEraCBOR @era
-    GetCommitteeState                          -> LC.fromEraCBOR @era
+    GetCommitteeMembersState {}                -> LC.fromEraCBOR @era
 
 currentPParamsEnDecoding ::
      forall era s.

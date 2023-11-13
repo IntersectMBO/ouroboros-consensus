@@ -25,6 +25,7 @@ import           Codec.CBOR.Encoding (Encoding)
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
+import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text.IO as Text.IO
@@ -178,15 +179,19 @@ data TraceEvent blk =
     --   * slot number when the block was forged
     --   * number of transactions in the block
     --   * total size of transactions in the block
-  | BlockMempoolAndForgeRepro BlockNo SlotNo Int SizeInBytes IOLike.DiffTime IOLike.DiffTime
-    -- ^ triggered for all blocks during ShowBlockTxsSize analysis,
+  | BlockMempoolAndForgeRepro BlockNo SlotNo Int SizeInBytes IOLike.DiffTime Int64 Int64 IOLike.DiffTime Int64 Int64
+    -- ^ triggered for all blocks during MempoolAndForgeRepro analysis,
     --   it holds:
     --   * block number
     --   * slot number when the block was forged
     --   * number of transactions in the block
     --   * total size of transactions in the block
-    --   * time to tick ledger state
-    --   * time to call 'Mempool.getSnapshotFor'
+    --   * monotonic time to tick ledger state
+    --   * total time spent in the mutator when ticking the ledger state
+    --   * total time spent in gc when ticking the ledger state
+    --   * monotonic time to call 'Mempool.getSnapshotFor'
+    --   * total time spent in the mutator when calling 'Mempool.getSnapshotFor'
+    --   * total time spent in gc when calling 'Mempool.getSnapshotFor'
 
 instance HasAnalysis blk => Show (TraceEvent blk) where
   show (StartedEvent analysisName)        = "Started " <> (show analysisName)
@@ -224,13 +229,17 @@ instance HasAnalysis blk => Show (TraceEvent blk) where
     , "Num txs in block = " <> show numBlocks
     , "Total size of txs in block = " <> show txsSize
     ]
-  show (BlockMempoolAndForgeRepro bno slot txsCount txsSize durTick durSnap) = intercalate "\t" [
+  show (BlockMempoolAndForgeRepro bno slot txsCount txsSize durTick mutTick gcTick durSnap mutSnap gcSnap) = intercalate "\t" [
       show bno
     , show slot
     , "txsCount " <> show txsCount
     , "txsSize " <> show txsSize
     , "durTick " <> show durTick
+    , "mutTick " <> show mutTick
+    , "gcTick " <> show gcTick
     , "durSnap " <> show durSnap
+    , "mutSnap " <> show mutSnap
+    , "gcSnap " <> show gcSnap
     ]
 
 
@@ -659,12 +668,18 @@ reproMempoolForge numBlks env = do
     elCfg :: LedgerCfg (ExtLedgerState blk)
     elCfg = ExtLedgerCfg cfg
 
-    timed :: IO a -> IO (a, IOLike.DiffTime)
+    timed :: IO a -> IO (a, IOLike.DiffTime, Int64, Int64)
     timed m = do
       before <- IOLike.getMonotonicTime
+      prevRtsStats <- GC.getRTSStats
       !x <- m
+      newRtsStats <- GC.getRTSStats
       after <- IOLike.getMonotonicTime
-      pure (x, after `IOLike.diffTime` before)
+      pure ( x
+           , after `IOLike.diffTime` before
+           , (GC.mutator_elapsed_ns newRtsStats - GC.mutator_elapsed_ns prevRtsStats) `div` 1000
+           , (GC.gc_elapsed_ns newRtsStats - GC.gc_elapsed_ns prevRtsStats) `div` 1000
+           )
 
     process
       :: ReproMempoolForgeHowManyBlks
@@ -695,9 +710,9 @@ reproMempoolForge numBlks env = do
           -- Primary caveat: that thread's mempool may have had more transactions in it.
           do
             let slot = blockSlot blk
-            (ticked, durTick) <- timed $ IOLike.evaluate $
+            (ticked, durTick, mutTick, gcTick) <- timed $ IOLike.evaluate $
               applyChainTick lCfg slot (ledgerState st)
-            ((), durSnap) <- timed $ IOLike.atomically $ do
+            ((), durSnap, mutSnap, gcSnap) <- timed $ IOLike.atomically $ do
               snap <- Mempool.getSnapshotFor mempool $ Mempool.ForgeInKnownSlot slot ticked
 
               pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotLedgerState snap `seq` ()
@@ -710,7 +725,11 @@ reproMempoolForge numBlks env = do
                 (length sizes)
                 (sum sizes)
                 durTick
+                mutTick
+                gcTick
                 durSnap
+                mutSnap
+                gcSnap
 
           -- advance the ledger state to include this block
           --

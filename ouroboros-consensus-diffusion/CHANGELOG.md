@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.8.0.2'></a>
+## 0.8.0.2 — 2023-10-26
+
+### Patch
+
+- In tests only: replace all occurrences of `WrapTickedLedgerView` and `TickedTrivial` with `WrapLedgerView` and `()`.
+
 <a id='changelog-0.8.0.1'></a>
 ## 0.8.0.1 — 2023-09-27
 

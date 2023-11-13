@@ -1,0 +1,128 @@
+= Ouroboros-Consensus Repository Hackage Documentation
+
+[Skip to module list](#module-list)
+
+This graph depicts the relationship between the various Consensus packages:
+
+![Consensus packages dependencies](packages-consensus.svg)
+
+The [Ouroboros Consensus Modules Map](./modules-consensus.svg) represents the
+dependencies between various @ouroboros-consensus@ modules and is a map to
+navigate the (large) codebase. __Note__: The image needs to be enlarged to be
+useful hence why it's an external link.
+
+== Notable haddock comments
+
+The comments in modules listed below provide important information on the
+implementation of consensus.
+
+* Databases:
+
+    * "Ouroboros.Consensus.Storage.ChainDB"
+
+    * "Ouroboros.Consensus.Storage.ChainDB.API"
+
+    * "Ouroboros.Consensus.Storage.ImmutableDB.API"
+
+    * "Ouroboros.Consensus.Storage.VolatileDB.API"
+
+    * "Ouroboros.Consensus.Storage.LedgerDB"
+
+    * "Ouroboros.Consensus.Storage.ChainDB.Impl.Iterator"
+
+* Mempool: "Ouroboros.Consensus.Mempool.API"
+
+* Protocol:
+
+    * "Ouroboros.Consensus.Protocol.Abstract"
+
+    * "Ouroboros.Consensus.HeaderValidation"
+
+    * "Ouroboros.Consensus.Forecast"
+
+* HardFork combinator:
+
+    * "Ouroboros.Consensus.HardFork.History.EraParams"
+
+    * "Ouroboros.Consensus.HardFork.History.Qry"
+
+    * "Ouroboros.Consensus.HardFork.History.Summary"
+
+* Chain selection: "Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel"
+
+* Miniprotocols:
+
+    * "Ouroboros.Consensus.MiniProtocol.ChainSync.Client"
+
+* Utilities:
+
+    * "Ouroboros.Consensus.Util.ResourceRegistry"
+
+
+== Consensus Components
+
+The following [C4 Component Diagram](https://c4model.com/) provides a high-level
+overview of the main components involved in /Consensus/. Note that clicking on a
+box should link to the corresponding documentation:
+
+![Ouroboros Consensus Components](./Consensus.svg)
+
+== ThreadNet tests
+
+The main consensus tests are the consensus layer's sophisticated tests. They are
+"system level" tests, in which we set up a mock network of nodes, where we can
+simulate things like nodes joining late, network message delay, etc. We then
+have these nodes run the full protocol, exchanging blocks, doing chain
+selection, etc. Finally we verify that the nodes can reach consensus. We have
+some generic infrastructure for doing all of this, and then have specific tests
+for each of the protocols/ledgers we support.
+
+In a way, these are the most important tests we have, as they are testing
+properties of the system as a whole. Of course, that also means that if
+something goes wrong, debugging these tests can be difficult, and it would be
+better to have such problems caught by the other, more fine-grained, tests.
+
+We run these tests for
+
+* A mock ledger (containing bare bones UTxO style transactions) using a variety
+    of consensus protocols: BFT, PBFT, Praos, and a version of Praos where we
+    override the leader schedule. See [this
+    library](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus/src/unstable-mock-block/Ouroboros/Consensus/Mock)
+    and the corresponding
+    [tests](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion/test/mock-test/Test/ThreadNet).
+
+* Byron/PBFT. See
+    [Test.ThreadNet.Byron](https://github.com/input-output-hk/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/test/byron-test/Test/ThreadNet/Byron.hs).
+
+* DualByron. Running Byron specification and Byron implementation at the same time. See
+    [Test.ThreadNet.DualByron](https://github.com/input-output-hk/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/test/byron-test/Test/ThreadNet/DualByron.hs).
+
+* Shelley/TPraos. See
+    [Test.ThreadNet.Shelley](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/shelley-test/Test/ThreadNet).
+
+* Cardano. Testing transitions between several Cardano eras. See
+    [Test.ThreadNet.Cardano](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/cardano-test/Test/ThreadNet).
+
+* The hard fork combinator transitioning from a mock ledger @A@ to a mock ledger
+    @B@; these mock ledgers are absolutely minimal ledgers: the only transaction
+    supported on the @A@ ledger is "initiate transition to @B@", and the @B@
+    ledger can only contain blocks with a header only, no body at all. See [this
+    directory](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/HardFork).
+
+* @HardForkBlock '[Byron, Shelley]@: the hard fork combinator instantiated with
+    the Byron and Shelley ledgers, running @PBFT@ before the transition and
+    @TPraos@ after. See [this file](https://github.com/input-output-hk/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/test/cardano-test/Test/ThreadNet/Cardano.hs).
+
+== Note about the documentation
+
+Due to limitations on how Haddock documents sublibraries, test-suites, bechmarks
+and executables, their documentation is named after the package name, that's why
+you will see multiple @ouroboros-consensus@ sections below. This is annoying but
+it has to be fixed upstream in the toolchain and we can't do anything about it
+at the moment.
+
+Moreover, modules with the exact same name are confused by Haddock into the same
+module (see that @Main@ links always to the same module).
+
+In general, the main libraries have as top level directory only a @Ouroboros@
+folder and are the first appearance of each package name.

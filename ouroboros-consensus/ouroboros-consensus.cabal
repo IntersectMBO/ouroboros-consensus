@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            ouroboros-consensus
-version:         0.12.0.0
+version:         0.13.0.0
 synopsis:        Consensus layer for the Ouroboros blockchain protocol
 description:     Consensus layer for the Ouroboros blockchain protocol.
 license:         Apache-2.0
@@ -279,7 +279,7 @@ library
     , these                        ^>=1.2
     , time
     , transformers
-    , typed-protocols
+    , typed-protocols              ^>=0.1.1
     , vector                       ^>=0.12
 
 library unstable-consensus-testlib
@@ -510,7 +510,7 @@ test-suite consensus-test
     , tasty-quickcheck
     , time
     , tree-diff
-    , typed-protocols
+    , typed-protocols                                                     ^>=0.1.1
     , typed-protocols-examples
     , unstable-consensus-testlib
     , unstable-mock-block

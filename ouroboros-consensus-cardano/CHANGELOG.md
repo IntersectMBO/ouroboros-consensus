@@ -2,6 +2,32 @@
 
 # Changelog entries
 
+<a id='changelog-0.11.0.0'></a>
+## 0.11.0.0 — 2023-10-26
+
+### Patch
+
+- `TriggerHardForkNever` was renamed to `TriggerHardForkNotDuringThisExecution` upstream.
+
+### Non-Breaking
+
+- Updated to `typed-protocols-0.1.1`
+- Add `getProposedProtocolVersion` to `ShelleyBasedEra` class
+
+### Breaking
+
+- Remove `Ticked (LedgerView X)` data family instances.
+- Remove `toTickedPBftLedgerView`.
+
+ - Updated to newer `cardano-ledger-*` packages:
+    * `cardano-ledger-api-1.7`
+    * `cardano-ledger-core-1.8`
+    * `cardano-ledger-shelley-1.7`
+    * `cardano-ledger-babbage-1.5`
+    * `cardano-ledger-conway-1.10`
+    * `cardano-protocol-tpraos-1.0.3.6`
+ - Replaced `GetCommitteeState` query with `GetCommitteeMembersState`
+
 <a id='changelog-0.10.0.0'></a>
 ## 0.10.0.0 — 2023-09-27
 
