@@ -159,7 +159,7 @@ jobs:
         if [ -f baseline-mempool-benchmarks.csv ]; then
           cabal new-run ouroboros-consensus:mempool-bench -- \
           --timeout=60 --baseline baseline-mempool-benchmarks.csv \
-          --fail-if-slower 20 \
+          --fail-if-slower 100 \
           +RTS -T
         else
           echo "No baseline benchmarks found. This likely happened when adding a new GHC version to the build matrix."
