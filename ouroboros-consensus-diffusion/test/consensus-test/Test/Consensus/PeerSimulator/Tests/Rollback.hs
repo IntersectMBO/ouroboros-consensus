@@ -25,8 +25,11 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests = testGroup "rollback" [
-    adjustQuickCheckTests (`div` 10) $ testProperty "can rollback" (prop_rollback True),
-    adjustQuickCheckTests (`div` 10) $ testProperty "cannot rollback" (prop_rollback False)
+    adjustQuickCheckTests (`div` 10) $
+    testProperty "can rollback" (prop_rollback True)
+    ,
+    adjustQuickCheckTests (`div` 10) $
+    testProperty "cannot rollback" (prop_rollback False)
   ]
 
 -- | @prop_rollback True@ tests that the selection of the node under test
