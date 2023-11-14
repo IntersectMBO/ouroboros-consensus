@@ -280,7 +280,7 @@ library
     , time
     , transformers
     , typed-protocols              ^>=0.1.1
-    , vector                       ^>=0.12
+    , vector                       ^>=0.13
 
 library unstable-consensus-testlib
   import:          common-lib

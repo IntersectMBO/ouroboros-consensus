@@ -115,25 +115,25 @@ library
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
-    , cardano-ledger-allegra
-    , cardano-ledger-alonzo         ^>=1.5.0
+    , cardano-ledger-allegra        ^>=1.2.5
+    , cardano-ledger-alonzo         ^>=1.5.1
     , cardano-ledger-api            ^>=1.7
-    , cardano-ledger-babbage        ^>=1.5.0
-    , cardano-ledger-binary
-    , cardano-ledger-byron
-    , cardano-ledger-conway         ^>=1.10.0
-    , cardano-ledger-core           ^>=1.8.0
-    , cardano-ledger-mary
-    , cardano-ledger-shelley        ^>=1.7.0
+    , cardano-ledger-babbage        ^>=1.5.1
+    , cardano-ledger-binary         ^>=1.2.1
+    , cardano-ledger-byron          ^>=1.0.0.3
+    , cardano-ledger-conway         ^>=1.11
+    , cardano-ledger-core           ^>=1.9
+    , cardano-ledger-mary           ^>=1.4
+    , cardano-ledger-shelley        ^>=1.8
     , cardano-prelude
-    , cardano-protocol-tpraos       ^>=1.0.3.6
+    , cardano-protocol-tpraos       ^>=1.0.3.7
     , cardano-slotting
     , cardano-strict-containers
     , cborg                         ^>=0.2.2
     , containers                    >=0.5      && <0.7
     , cryptonite                    >=0.25     && <0.31
     , deepseq
-    , formatting                    >=6.3      && <7.2
+    , formatting                    >=6.3      && <7.3
     , measures
     , microlens
     , mtl
@@ -362,7 +362,7 @@ library unstable-cardano-testlib
     , cardano-ledger-conway-test                                                                 ^>=1.2.1.1
     , cardano-ledger-conway:testlib
     , cardano-ledger-core:{cardano-ledger-core, testlib}
-    , cardano-ledger-shelley                                                                     ^>=1.7
+    , cardano-ledger-shelley
     , cardano-protocol-tpraos
     , cardano-slotting
     , cardano-strict-containers
