@@ -9,10 +9,14 @@ module Test.Consensus.PeerSimulator.StateView (
   ) where
 
 import           Control.Tracer (Tracer)
+import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
+import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
-import           Ouroboros.Consensus.Util.IOLike (IOLike, SomeException)
+import           Ouroboros.Consensus.Util.IOLike (IOLike, SomeException,
+                     atomically)
 import           Test.Consensus.PeerSimulator.Trace (terseFragH)
 import           Test.Consensus.PointSchedule (PeerId, TestFragH)
+import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
 
 -- | A record to associate an exception thrown by the ChainSync
@@ -61,8 +65,9 @@ defaultStateViewTracers = do
 snapshotStateView ::
   IOLike m =>
   StateViewTracers m ->
-  TestFragH ->
+  ChainDB m TestBlock ->
   m StateView
-snapshotStateView StateViewTracers{svtGetChainSyncExceptions} svSelectedChain = do
+snapshotStateView StateViewTracers{svtGetChainSyncExceptions} chainDb = do
   svChainSyncExceptions <- svtGetChainSyncExceptions
+  svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
   pure StateView {svSelectedChain, svChainSyncExceptions}
