@@ -71,43 +71,43 @@ prop_rollback wantRollback = do
   where
     schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
 
-    -- A schedule that advertises all the points of the trunk up until the kth
-    -- block after the intersection, then switches to the first alternative
-    -- chain of the given block tree.
-    --
-    -- PRECONDITION: Block tree with at least one alternative chain.
-    rollbackSchedule :: Int -> BlockTree TestBlock -> PointSchedule
-    rollbackSchedule k blockTree =
-      let branch = head $ btBranches blockTree
-          trunk = btTrunk blockTree
-          prefixLen = AF.length $ btbPrefix branch
-          trunkPrefix = AF.takeOldest (k + prefixLen) trunk
-          branchSuffix = btbSuffix branch
-          states = banalStates trunkPrefix ++ banalStates branchSuffix
-          peers = peersOnlyHonest states
-          pointSchedule = balanced defaultPointScheduleConfig peers
-       in fromJust pointSchedule
+-- A schedule that advertises all the points of the trunk up until the kth
+-- block after the intersection, then switches to the first alternative
+-- chain of the given block tree.
+--
+-- PRECONDITION: Block tree with at least one alternative chain.
+rollbackSchedule :: Int -> BlockTree TestBlock -> PointSchedule
+rollbackSchedule k blockTree =
+  let branch = head $ btBranches blockTree
+      trunk = btTrunk blockTree
+      prefixLen = AF.length $ btbPrefix branch
+      trunkPrefix = AF.takeOldest (k + prefixLen) trunk
+      branchSuffix = btbSuffix branch
+      states = banalStates trunkPrefix ++ banalStates branchSuffix
+      peers = peersOnlyHonest states
+      pointSchedule = balanced defaultPointScheduleConfig peers
+   in fromJust pointSchedule
 
-    -- | Whether the honest chain has more than 'k' blocks after the
-    -- intersection with the alternative chain.
-    --
-    -- PRECONDITION: Block tree with exactly one alternative chain, otherwise
-    -- this property does not make sense. With no alternative chain, this will
-    -- even crash.
-    honestChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
-    honestChainIsLongEnough (SecurityParam k) blockTree =
-      let BlockTreeBranch{btbTrunkSuffix} = head $ btBranches blockTree
-          lengthTrunkSuffix = AF.length btbTrunkSuffix
-       in lengthTrunkSuffix > fromIntegral k
+-- | Whether the honest chain has more than 'k' blocks after the
+-- intersection with the alternative chain.
+--
+-- PRECONDITION: Block tree with exactly one alternative chain, otherwise
+-- this property does not make sense. With no alternative chain, this will
+-- even crash.
+honestChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
+honestChainIsLongEnough (SecurityParam k) blockTree =
+  let BlockTreeBranch{btbTrunkSuffix} = head $ btBranches blockTree
+      lengthTrunkSuffix = AF.length btbTrunkSuffix
+   in lengthTrunkSuffix > fromIntegral k
 
-    -- | Whether the alternative chain has more than 'k' blocks after the
-    -- intersection with the honest chain.
-    --
-    -- PRECONDITION: Block tree with exactly one alternative chain, otherwise
-    -- this property does not make sense. With no alternative chain, this will
-    -- even crash.
-    alternativeChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
-    alternativeChainIsLongEnough (SecurityParam k) blockTree =
-      let BlockTreeBranch{btbSuffix} = head $ btBranches blockTree
-          lengthSuffix = AF.length btbSuffix
-       in lengthSuffix > fromIntegral k
+-- | Whether the alternative chain has more than 'k' blocks after the
+-- intersection with the honest chain.
+--
+-- PRECONDITION: Block tree with exactly one alternative chain, otherwise
+-- this property does not make sense. With no alternative chain, this will
+-- even crash.
+alternativeChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
+alternativeChainIsLongEnough (SecurityParam k) blockTree =
+  let BlockTreeBranch{btbSuffix} = head $ btBranches blockTree
+      lengthSuffix = AF.length btbSuffix
+   in lengthSuffix > fromIntegral k
