@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.13.0.1'></a>
+## 0.13.0.1 — 2023-11-14
+
+### Patch
+
+- Update to `vector ^>=0.13`
+
 <a id='changelog-0.13.0.0'></a>
 ## 0.13.0.0 — 2023-10-26
 
