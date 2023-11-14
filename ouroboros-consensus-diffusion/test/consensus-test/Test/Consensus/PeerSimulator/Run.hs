@@ -320,12 +320,8 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
     PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
     runScheduler schedulerConfig tracer pointSchedule (psrPeers resources)
-    svChainSyncExceptions <- svtGetChainSyncExceptions stateViewTracers
     svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
-    pure $ StateView {
-      svSelectedChain,
-      svChainSyncExceptions
-      }
+    snapshotStateView stateViewTracers svSelectedChain
   where
     config = defaultCfg k
 

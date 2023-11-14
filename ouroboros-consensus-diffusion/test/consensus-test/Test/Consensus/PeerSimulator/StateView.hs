@@ -5,6 +5,7 @@ module Test.Consensus.PeerSimulator.StateView (
   , StateView (..)
   , StateViewTracers (..)
   , defaultStateViewTracers
+  , snapshotStateView
   ) where
 
 import           Control.Tracer (Tracer)
@@ -48,3 +49,15 @@ defaultStateViewTracers ::
 defaultStateViewTracers = do
   (svtChainSyncExceptionsTracer, svtGetChainSyncExceptions) <- recordingTracerTVar
   pure StateViewTracers {svtChainSyncExceptionsTracer, svtGetChainSyncExceptions}
+
+-- | Use the state view tracers as well as some extra information to produce a
+-- state view. This mostly consists in reading and storing the current state of
+-- the tracers.
+snapshotStateView ::
+  IOLike m =>
+  StateViewTracers m ->
+  TestFragH ->
+  m StateView
+snapshotStateView StateViewTracers{svtGetChainSyncExceptions} svSelectedChain = do
+  svChainSyncExceptions <- svtGetChainSyncExceptions
+  pure StateView {svSelectedChain, svChainSyncExceptions}
