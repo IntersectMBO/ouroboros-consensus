@@ -39,12 +39,17 @@ prop_rollback :: Bool -> QC.Gen QC.Property
 prop_rollback wantRollback = do
   genesisTest <- genChains 1
 
-  let schedule = rollbackSchedule (gtBlockTree genesisTest)
+  let SecurityParam k = gtSecurityParam genesisTest
+      schedule =
+        if wantRollback then rollbackSchedule (fromIntegral k) (gtBlockTree genesisTest)
+        else rollbackSchedule (fromIntegral (k + 1)) (gtBlockTree genesisTest)
 
   -- | We consider the test case interesting if we want a rollback and we can
   -- actually get one, or if we want no rollback and we cannot actually get one.
   pure $
-    wantRollback == canRollbackFromTrunkTip (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
+    alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
+      &&
+    (wantRollback || honestChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest))
     ==>
       runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
@@ -58,33 +63,43 @@ prop_rollback wantRollback = do
   where
     schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
 
-    -- A schedule that advertises all the points of the trunk, then switches to
-    -- the first alternative chain of the given block tree.
+    -- A schedule that advertises all the points of the trunk up until the kth
+    -- block after the intersection, then switches to the first alternative
+    -- chain of the given block tree.
     --
     -- PRECONDITION: Block tree with at least one alternative chain.
-    rollbackSchedule :: BlockTree TestBlock -> PointSchedule
-    rollbackSchedule blockTree =
-      let trunk = btTrunk blockTree
-          branch = btbSuffix $ head $ btBranches blockTree
-          states = banalStates trunk ++ banalStates branch
+    rollbackSchedule :: Int -> BlockTree TestBlock -> PointSchedule
+    rollbackSchedule k blockTree =
+      let branch = head $ btBranches blockTree
+          trunk = btTrunk blockTree
+          prefixLen = AF.length $ btbPrefix branch
+          trunkPrefix = AF.takeOldest (k + prefixLen) trunk
+          branchSuffix = btbSuffix branch
+          states = banalStates trunkPrefix ++ banalStates branchSuffix
           peers = peersOnlyHonest states
           pointSchedule = balanced peers
        in fromJust pointSchedule
 
-    -- | Whether it is possible to roll back from the trunk after having served
-    -- it fully, that is whether there is an alternative chain that forks of the
-    -- trunk no more than 'k' blocks from the tip and that is longer than the
-    -- trunk.
+    -- | Whether the honest chain has more than 'k' blocks after the
+    -- intersection with the alternative chain.
     --
     -- PRECONDITION: Block tree with exactly one alternative chain, otherwise
     -- this property does not make sense. With no alternative chain, this will
     -- even crash.
-    --
-    -- REVIEW: Why does 'existsSelectableAdversary' get to be a classifier and
-    -- not this? (or a generalised version of this)
-    canRollbackFromTrunkTip :: SecurityParam -> BlockTree TestBlock -> Bool
-    canRollbackFromTrunkTip (SecurityParam k) blockTree =
-      let BlockTreeBranch{btbSuffix, btbTrunkSuffix} = head $ btBranches blockTree
-          lengthSuffix = AF.length btbSuffix
+    honestChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
+    honestChainIsLongEnough (SecurityParam k) blockTree =
+      let BlockTreeBranch{btbTrunkSuffix} = head $ btBranches blockTree
           lengthTrunkSuffix = AF.length btbTrunkSuffix
-       in lengthTrunkSuffix <= fromIntegral k && lengthSuffix > lengthTrunkSuffix
+       in lengthTrunkSuffix > fromIntegral k
+
+    -- | Whether the alternative chain has more than 'k' blocks after the
+    -- intersection with the honest chain.
+    --
+    -- PRECONDITION: Block tree with exactly one alternative chain, otherwise
+    -- this property does not make sense. With no alternative chain, this will
+    -- even crash.
+    alternativeChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
+    alternativeChainIsLongEnough (SecurityParam k) blockTree =
+      let BlockTreeBranch{btbSuffix} = head $ btBranches blockTree
+          lengthSuffix = AF.length btbSuffix
+       in lengthSuffix > fromIntegral k
