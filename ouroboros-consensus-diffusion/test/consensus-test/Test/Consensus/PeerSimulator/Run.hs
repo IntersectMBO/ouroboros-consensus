@@ -21,8 +21,6 @@ import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
-import           Data.Traversable (for)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      Consensus, bracketChainSyncClient, chainSyncClient,
@@ -36,7 +34,7 @@ import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), MonadDelay (threadDelay),
                      MonadSTM (atomically, retry), StrictTVar, readTVar,
-                     readTVarIO, tryPutTMVar, uncheckedNewTVarM, writeTVar)
+                     tryPutTMVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (blockPoint)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
@@ -159,8 +157,9 @@ startChainSyncConnectionThread ::
   SharedResources m ->
   ChainSyncResources m ->
   SchedulerConfig ->
+  StateViewTracers m ->
   StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
-  m (StrictTVar m (Maybe ChainSyncException))
+  m ()
 startChainSyncConnectionThread
   registry
   tracer
@@ -170,10 +169,10 @@ startChainSyncConnectionThread
   SharedResources {srPeerId}
   ChainSyncResources {csrServer}
   SchedulerConfig {scChainSyncTimeouts}
+  StateViewTracers {svtChainSyncExceptionsTracer}
   varCandidates
-  = do
-  chainSyncException <- uncheckedNewTVarM Nothing
-  _ <- forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
+  =
+  void $ forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $ do
       bracketChainSyncClient nullTracer chainDbView varCandidates srPeerId ntnVersion $ \ varCandidate -> do
         res <- try $ runConnectedPeersPipelinedWithLimits
@@ -186,7 +185,7 @@ startChainSyncConnectionThread
           (chainSyncServerPeer csrServer)
         case res of
           Left exn -> do
-            atomically $ writeTVar chainSyncException $ Just $ ChainSyncException srPeerId exn
+            traceWith svtChainSyncExceptionsTracer $ ChainSyncException srPeerId exn
             case fromException exn of
               Just (ExceededSizeLimit _) ->
                 traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of size limit exceeded."
@@ -200,7 +199,6 @@ startChainSyncConnectionThread
               _ ->
                 pure ()
           Right _ -> pure ()
-  pure chainSyncException
   where
     ntnVersion :: NodeToNodeVersion
     ntnVersion = maxBound
@@ -306,15 +304,14 @@ runPointSchedule ::
   m StateView
 runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} pointSchedule tracer =
   withRegistry $ \registry -> do
+    stateViewTracers <- defaultStateViewTracers
     resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
     chainDb <- mkChainDb tracer config registry
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = defaultChainDbView chainDb
-    chainSyncRess <- for (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
-      chainSyncRes <- startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig (psrCandidates resources)
+    for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
+      startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig stateViewTracers (psrCandidates resources)
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
-      pure chainSyncRes
-
     for_ (psrPeers resources) $ \PeerResources {prShared} ->
       startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared
     -- The block fetch logic needs to be started after the block fetch clients
@@ -323,7 +320,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
     PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
     runScheduler schedulerConfig tracer pointSchedule (psrPeers resources)
-    svChainSyncExceptions <- catMaybes <$> mapM readTVarIO (Map.elems chainSyncRess)
+    svChainSyncExceptions <- svtGetChainSyncExceptions stateViewTracers
     svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
     pure $ StateView {
       svSelectedChain,
