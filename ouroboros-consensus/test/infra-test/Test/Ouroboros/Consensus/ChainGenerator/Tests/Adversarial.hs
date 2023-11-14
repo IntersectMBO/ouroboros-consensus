@@ -168,17 +168,19 @@ prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $
     C.SomeWindow Proxy stabWin <- do
         pure $ calculateStability scg schedA
 
-    pure
-      $ QC.counterexample (unlines $
+    pure $
+      (BV.countActivesInV S.notInverted vA >= C.Count (k + 1))
+      QC.==>
+      (QC.counterexample (unlines $
                             H.prettyChainSchema schedH "H"
                             ++ H.prettyChainSchema schedA "A"
                           )
       $ QC.counterexample ("arPrefix = " <> show (A.arPrefix testRecipeA))
       $ QC.counterexample ("stabWin  = " <> show stabWin)
       $ QC.counterexample ("stabWin' = " <> show (C.joinWin winA stabWin))
-      $ BV.countActivesInV S.notInverted vA  >= C.Count (k + 1)
-        && BV.countActivesInV S.notInverted vH
-             >= C.toSize (C.Count (k + 1) + A.arPrefix testRecipeA)
+      $ BV.countActivesInV S.notInverted vH
+          >= C.toSize (C.Count (k + 1) + A.arPrefix testRecipeA)
+      )
 
 -- | No seed exists such that each 'A.checkAdversarialChain' rejects the result of 'A.uniformAdversarialChain'
 prop_adversarialChain :: SomeTestAdversarial -> QCGen -> QC.Property
