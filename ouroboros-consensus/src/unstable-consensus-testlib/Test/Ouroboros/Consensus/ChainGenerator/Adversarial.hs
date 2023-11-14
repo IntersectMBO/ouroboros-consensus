@@ -35,7 +35,7 @@ import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import           Test.Ouroboros.Consensus.ChainGenerator.Honest
-                     (ChainSchema (ChainSchema), HonestRecipe(HonestRecipe))
+                     (ChainSchema (ChainSchema), HonestRecipe (HonestRecipe))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
                      Delta (Delta), Kcp (Kcp), Scg (Scg))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.RaceIterator as RI
