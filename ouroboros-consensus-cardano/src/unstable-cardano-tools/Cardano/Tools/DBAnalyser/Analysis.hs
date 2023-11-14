@@ -28,7 +28,6 @@ import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
-import qualified Data.Text.IO as Text.IO
 import           Data.Word (Word16, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
@@ -68,7 +67,6 @@ import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (SomeHasFS (..))
 import qualified System.IO as IO
-import qualified Text.Builder as Builder
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -494,10 +492,7 @@ benchmarkLedgerOps ::
   => Maybe FilePath -> Analysis blk
 benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
     withFile mOutfile $ \outFileHandle -> do
-      let line = Builder.run $ DP.showHeaders separator
-                             <> separator
-                             <> "...era-specific stats"
-      Text.IO.hPutStrLn outFileHandle line
+      DP.writeHeader outFileHandle DP.CSV
 
       void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle)
       pure Nothing
@@ -505,9 +500,6 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
     withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
     withFile (Just outfile) = IO.withFile outfile IO.WriteMode
     withFile Nothing        = \f -> f IO.stdout
-
-    -- Separator for the data that is printed
-    separator = "\t"
 
     ccfg = topLevelConfigProtocol cfg
     lcfg = topLevelConfigLedger   cfg
@@ -555,17 +547,14 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
             , mut_headerApply = tHdrApp   `div` 1000
             , mut_blockTick   = tBlkTick  `div` 1000
             , mut_blockApply  = tBlkApp   `div` 1000
+            , blockStats      = HasAnalysis.blockStats blk
             }
 
           slotCount (SlotNo i) = \case
             Slotting.Origin        -> i
             Slotting.At (SlotNo j) -> i - j
 
-          line = Builder.run $  DP.showData slotDataPoint separator
-                             <> separator
-                             <> Builder.intercalate separator (HasAnalysis.blockStats blk)
-
-        Text.IO.hPutStrLn outFileHandle line
+        DP.writeDataPoint outFileHandle DP.CSV slotDataPoint
 
         pure $ ExtLedgerState ldgrSt' hdrSt'
       where

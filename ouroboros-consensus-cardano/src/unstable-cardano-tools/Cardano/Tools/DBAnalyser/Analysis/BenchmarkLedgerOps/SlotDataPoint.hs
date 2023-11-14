@@ -5,11 +5,18 @@ module Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint (
     SlotDataPoint (..)
   , showData
   , showHeaders
+    -- * Write data points to file
+  , DataPointOutputFormat (CSV, JSON)
+  , writeDataPoint
+  , writeHeader
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
 import           Data.Int (Int64)
+import qualified Data.Text.IO as Text.IO
 import           Data.Word (Word32, Word64)
+import qualified System.IO as IO
+import qualified Text.Builder as Builder
 import           Text.Builder (Builder, decimal, intercalate)
 
 -- | Information about the time spent processing the block corresponding to
@@ -47,6 +54,8 @@ data SlotDataPoint =
       , mut_headerApply :: !Int64
       , mut_blockTick   :: !Int64
       , mut_blockApply  :: !Int64
+      -- | Free-form information about the block.
+      , blockStats      :: ![Builder]
       }
 
 -- | Return the headers that correspond to the fields of 'SlotDataPoint'.
@@ -65,15 +74,48 @@ showData dp sep = intercalate sep $ fmap (($ dp) . snd) showHeadersAndData
 
 showHeadersAndData :: [(Builder, SlotDataPoint -> Builder)]
 showHeadersAndData =
-    [ ("slot"           , decimal . unSlotNo . slot)
-    , ("slotGap"        , decimal . slotGap)
-    , ("totalTime"      , decimal . totalTime)
-    , ("mut"            , decimal . mut)
-    , ("gc"             , decimal . gc)
-    , ("majGcCount"     , decimal . majGcCount)
-    , ("mut_forecast"   , decimal . mut_forecast)
-    , ("mut_headerTick" , decimal . mut_headerTick)
-    , ("mut_headerApply", decimal . mut_headerApply)
-    , ("mut_blockTick"  , decimal . mut_blockTick)
-    , ("mut_blockApply" , decimal . mut_blockApply)
+    [ ("slot"                  , decimal . unSlotNo . slot)
+    , ("slotGap"               , decimal . slotGap)
+    , ("totalTime"             , decimal . totalTime)
+    , ("mut"                   , decimal . mut)
+    , ("gc"                    , decimal . gc)
+    , ("majGcCount"            , decimal . majGcCount)
+    , ("mut_forecast"          , decimal . mut_forecast)
+    , ("mut_headerTick"        , decimal . mut_headerTick)
+    , ("mut_headerApply"       , decimal . mut_headerApply)
+    , ("mut_blockTick"         , decimal . mut_blockTick)
+    , ("mut_blockApply"        , decimal . mut_blockApply)
+    , ("...era-specific stats" , Builder.intercalate separator . blockStats)
     ]
+
+{-------------------------------------------------------------------------------
+  Write data points to file
+-------------------------------------------------------------------------------}
+
+data DataPointOutputFormat = CSV | JSON
+  deriving (Show, Eq)
+
+-- | Separator used for CSV output.
+separator :: Builder
+separator = "\t"
+
+-- | Write a header for the data points.
+--
+-- This is only needed for the CSV output format.
+writeHeader :: IO.Handle -> DataPointOutputFormat -> IO ()
+writeHeader outFileHandle CSV  =
+     Text.IO.hPutStrLn outFileHandle
+   $ Builder.run
+   $ showHeaders separator
+writeHeader _             JSON = pure ()
+
+writeDataPoint ::
+     IO.Handle
+  -> DataPointOutputFormat
+  -> SlotDataPoint
+  -> IO ()
+writeDataPoint outFileHandle CSV  slotDataPoint =
+      Text.IO.hPutStrLn outFileHandle
+    $ Builder.run
+    $ showData slotDataPoint separator
+writeDataPoint outFileHandle JSON slotDataPoint = undefined
