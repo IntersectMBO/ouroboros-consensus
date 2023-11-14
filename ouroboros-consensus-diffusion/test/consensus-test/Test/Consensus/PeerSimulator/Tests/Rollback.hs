@@ -25,48 +25,63 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests = testGroup "rollback" [
-  -- NOTE: The property @prop_rollback True@ discards a lot of inputs, making
-  -- it quite flakey. We increase the maximum number of discarded tests per
-  -- successful ones so as to make this test more reliable.
   adjustQuickCheckTests (`div` 10) $
   localOption (QuickCheckMaxRatio 100) $
-  testProperty "can rollback" (prop_rollback True)
+  testProperty "can rollback" prop_rollback
   ,
   adjustQuickCheckTests (`div` 10) $
-  testProperty "cannot rollback" (prop_rollback False)
+  testProperty "cannot rollback" prop_cannotRollback
   ]
 
--- | @prop_rollback True@ tests that the selection of the node under test
+-- | @prop_rollback@ tests that the selection of the node under test
 -- changes branches when sent a rollback to a block no older than 'k' blocks
 -- before the current selection.
---
--- @prop_rollback False@ tests that the selection of the node under test *does
--- not* change branches when sent a rollback to a block strictly older than 'k'
--- blocks before the current selection.
-prop_rollback :: Bool -> QC.Gen QC.Property
-prop_rollback wantRollback = do
+prop_rollback :: QC.Gen QC.Property
+prop_rollback = do
   genesisTest <- genChains 1
 
   let SecurityParam k = gtSecurityParam genesisTest
-      schedule =
-        if wantRollback then rollbackSchedule (fromIntegral k) (gtBlockTree genesisTest)
-        else rollbackSchedule (fromIntegral (k + 1)) (gtBlockTree genesisTest)
+      schedule = rollbackSchedule (fromIntegral k) (gtBlockTree genesisTest)
 
-  -- | We consider the test case interesting if we want a rollback and we can
-  -- actually get one, or if we want no rollback and we cannot actually get one.
+  -- We consider the test case interesting if we can rollback
   pure $
     alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
-      &&
-    (wantRollback || honestChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest))
     ==>
       runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
               GenesisHash    -> False
               BlockHash hash -> any (0 /=) $ unTestHash hash
         in
-        -- The test passes if we want a rollback and we actually end up on the
-        -- alternative chain or if we want no rollback and end up on the trunk.
-        wantRollback == headOnAlternativeChain
+        -- The test passes if we end up on the alternative chain
+        headOnAlternativeChain
+
+  where
+    schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
+
+-- @prop_cannotRollback@ tests that the selection of the node under test *does
+-- not* change branches when sent a rollback to a block strictly older than 'k'
+-- blocks before the current selection.
+prop_cannotRollback :: QC.Gen QC.Property
+prop_cannotRollback = do
+  genesisTest <- genChains 1
+
+  let SecurityParam k = gtSecurityParam genesisTest
+      schedule = rollbackSchedule (fromIntegral (k + 1)) (gtBlockTree genesisTest)
+
+  -- We consider the test case interesting if it allows to rollback even if
+  -- the implementation doesn't
+  pure $
+    alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
+      &&
+    honestChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
+    ==>
+      runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
+        let headOnAlternativeChain = case AF.headHash svSelectedChain of
+              GenesisHash    -> False
+              BlockHash hash -> any (0 /=) $ unTestHash hash
+        in
+        -- The test passes if we end up on the trunk.
+        not headOnAlternativeChain
 
   where
     schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
