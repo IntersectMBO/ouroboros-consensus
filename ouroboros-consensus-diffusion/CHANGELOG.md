@@ -2,6 +2,15 @@
 
 # Changelog entries
 
+<a id='changelog-0.9.0.0'></a>
+## 0.9.0.0 — 2023-11-14
+
+### Breaking
+
+- Adds `NodeToNodeVersion` to the arguments of `defaultCodecs` and `runWith` functions.
+
+- Adds `srnChainSyncTimeout` argument to `StdRunNodeArgs`.
+
 <a id='changelog-0.8.0.2'></a>
 ## 0.8.0.2 — 2023-10-26
 
