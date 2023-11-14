@@ -25,7 +25,11 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests = testGroup "rollback" [
+    -- NOTE: The property @prop_rollback True@ discards a lot of inputs, making
+    -- it quite flakey. We increase the maximum number of discarded tests per
+    -- successful ones so as to make this test more reliable.
     adjustQuickCheckTests (`div` 10) $
+    localOption (QuickCheckMaxRatio 100) $
     testProperty "can rollback" (prop_rollback True)
     ,
     adjustQuickCheckTests (`div` 10) $
