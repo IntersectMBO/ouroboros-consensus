@@ -807,6 +807,8 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
   , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
     -- ^ Determine whether to use the system default mempool capacity or explicitly set
     -- capacity of the mempool.
+  , srnChainSyncTimeout             :: Maybe NTN.ChainSyncTimeout
+    -- ^ A custom timeout for ChainSync.
   }
 
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
@@ -832,7 +834,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
     llrnKeepAliveRng <- stdKeepAliveRngIO
     pure LowLevelRunNodeArgs
       { llrnBfcSalt
-      , llrnChainSyncTimeout = stdChainSyncTimeout
+      , llrnChainSyncTimeout = maybe stdChainSyncTimeout pure srnChainSyncTimeout
       , llrnCustomiseHardForkBlockchainTimeArgs = id
       , llrnKeepAliveRng
       , llrnChainDbArgsDefaults =
