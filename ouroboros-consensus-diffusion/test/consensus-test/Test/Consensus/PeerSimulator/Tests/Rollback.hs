@@ -24,78 +24,111 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests = testGroup "rollback" [
-  -- NOTE: The property @prop_rollback True@ discards a lot of inputs, making
-  -- it quite flakey. We increase the maximum number of discarded tests per
-  -- successful ones so as to make this test more reliable.
   adjustQuickCheckTests (`div` 10) $
   localOption (QuickCheckMaxRatio 100) $
-  testProperty "can rollback" (prop_rollback True)
+  testProperty "can rollback" prop_rollback
   ,
   adjustQuickCheckTests (`div` 10) $
-  testProperty "cannot rollback" (prop_rollback False)
+  testProperty "cannot rollback" prop_cannotRollback
   ]
 
--- | @prop_rollback True@ tests that the selection of the node under test
+-- | @prop_rollback@ tests that the selection of the node under test
 -- changes branches when sent a rollback to a block no older than 'k' blocks
 -- before the current selection.
---
--- @prop_rollback False@ tests that the selection of the node under test *does
--- not* change branches when sent a rollback to a block strictly older than 'k'
--- blocks before the current selection.
-prop_rollback :: Bool -> QC.Gen QC.Property
-prop_rollback wantRollback = do
+prop_rollback :: QC.Gen QC.Property
+prop_rollback = do
   genesisTest <- genChains (pure 1)
 
-  let schedule = rollbackSchedule (gtBlockTree genesisTest)
+  let SecurityParam k = gtSecurityParam genesisTest
+      schedule = rollbackSchedule (fromIntegral k) (gtBlockTree genesisTest)
 
-  -- | We consider the test case interesting if we want a rollback and we can
-  -- actually get one, or if we want no rollback and we cannot actually get one.
+  -- We consider the test case interesting if we can rollback
   pure $
-    wantRollback == canRollbackFromTrunkTip (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
+    alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
     ==>
       runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
               GenesisHash    -> False
               BlockHash hash -> any (0 /=) $ unTestHash hash
         in
-        -- The test passes if we want a rollback and we actually end up on the
-        -- alternative chain or if we want no rollback and end up on the trunk.
-        wantRollback == headOnAlternativeChain
+        -- The test passes if we end up on the alternative chain
+        headOnAlternativeChain
 
   where
     schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
 
-    -- A schedule that advertises all the points of the trunk, then switches to
-    -- the first alternative chain of the given block tree.
-    --
-    -- PRECONDITION: Block tree with at least one alternative chain.
-    rollbackSchedule :: BlockTree TestBlock -> PointSchedule
-    rollbackSchedule blockTree =
-      let trunk = btTrunk blockTree
-          branch = case btBranches blockTree of
-            [b] -> btbSuffix b
-            _   -> error "The block tree must have exactly one alternative branch"
-          states = banalStates trunk ++ banalStates branch
-          peers = peersOnlyHonest states
-          pointSchedule = balanced defaultPointScheduleConfig peers
-       in pointSchedule
+-- @prop_cannotRollback@ tests that the selection of the node under test *does
+-- not* change branches when sent a rollback to a block strictly older than 'k'
+-- blocks before the current selection.
+prop_cannotRollback :: QC.Gen QC.Property
+prop_cannotRollback = do
+  genesisTest <- genChains (pure 1)
 
-    -- | Whether it is possible to roll back from the trunk after having served
-    -- it fully, that is whether there is an alternative chain that forks of the
-    -- trunk no more than 'k' blocks from the tip and that is longer than the
-    -- trunk.
-    --
-    -- PRECONDITION: Block tree with exactly one alternative chain, otherwise
-    -- this property does not make sense. With no alternative chain, this will
-    -- even crash.
-    --
-    -- REVIEW: Why does 'existsSelectableAdversary' get to be a classifier and
-    -- not this? (or a generalised version of this)
-    canRollbackFromTrunkTip :: SecurityParam -> BlockTree TestBlock -> Bool
-    canRollbackFromTrunkTip (SecurityParam k) blockTree =
-      let BlockTreeBranch{btbSuffix, btbTrunkSuffix} = case btBranches blockTree of
-            [b] -> b
-            _   -> error "The block tree must have exactly one alternative branch"
-          lengthSuffix = AF.length btbSuffix
-          lengthTrunkSuffix = AF.length btbTrunkSuffix
-       in lengthTrunkSuffix <= fromIntegral k && lengthSuffix > lengthTrunkSuffix
+  let SecurityParam k = gtSecurityParam genesisTest
+      schedule = rollbackSchedule (fromIntegral (k + 1)) (gtBlockTree genesisTest)
+
+  -- We consider the test case interesting if it allows to rollback even if
+  -- the implementation doesn't
+  pure $
+    alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
+      &&
+    honestChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
+    ==>
+      runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
+        let headOnAlternativeChain = case AF.headHash svSelectedChain of
+              GenesisHash    -> False
+              BlockHash hash -> any (0 /=) $ unTestHash hash
+        in
+        -- The test passes if we end up on the trunk.
+        not headOnAlternativeChain
+
+  where
+    schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
+
+-- | A schedule that advertises all the points of the trunk up until the nth
+-- block after the intersection, then switches to the first alternative
+-- chain of the given block tree.
+--
+-- PRECONDITION: Block tree with at least one alternative chain.
+rollbackSchedule :: Int -> BlockTree TestBlock -> PointSchedule
+rollbackSchedule n blockTree =
+  let branch = case btBranches blockTree of
+        [b] -> b
+        _   -> error "The block tree must have exactly one alternative branch"
+      trunkSuffix = AF.takeOldest n (btbTrunkSuffix branch)
+      states = concat
+        [ banalStates (btbPrefix branch)
+        , banalStates trunkSuffix
+        , banalStates (btbSuffix branch)
+        ]
+      peers = peersOnlyHonest states
+      pointSchedule = balanced defaultPointScheduleConfig peers
+   in pointSchedule
+
+-- | Whether the honest chain has more than 'k' blocks after the
+-- intersection with the alternative chain.
+--
+-- PRECONDITION: Block tree with exactly one alternative chain, otherwise
+-- this property does not make sense. With no alternative chain, this will
+-- even crash.
+honestChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
+honestChainIsLongEnough (SecurityParam k) blockTree =
+  let BlockTreeBranch{btbTrunkSuffix} = case btBranches blockTree of
+        [b] -> b
+        _   -> error "The block tree must have exactly one alternative branch"
+      lengthTrunkSuffix = AF.length btbTrunkSuffix
+   in lengthTrunkSuffix > fromIntegral k
+
+-- | Whether the alternative chain has more than 'k' blocks after the
+-- intersection with the honest chain.
+--
+-- PRECONDITION: Block tree with exactly one alternative chain, otherwise
+-- this property does not make sense. With no alternative chain, this will
+-- even crash.
+alternativeChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
+alternativeChainIsLongEnough (SecurityParam k) blockTree =
+  let BlockTreeBranch{btbSuffix} = case btBranches blockTree of
+        [b] -> b
+        _   -> error "The block tree must have exactly one alternative branch"
+      lengthSuffix = AF.length btbSuffix
+   in lengthSuffix > fromIntegral k
