@@ -161,7 +161,17 @@ startChainSyncConnectionThread ::
   SchedulerConfig ->
   StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
   m (StrictTVar m (Maybe ChainSyncException))
-startChainSyncConnectionThread registry tracer cfg chainDbView fetchClientRegistry SharedResources {srPeerId} ChainSyncResources {csrServer} SchedulerConfig {scChainSyncTimeouts} varCandidates = do
+startChainSyncConnectionThread
+  registry
+  tracer
+  cfg
+  chainDbView
+  fetchClientRegistry
+  SharedResources {srPeerId}
+  ChainSyncResources {csrServer}
+  SchedulerConfig {scChainSyncTimeouts}
+  varCandidates
+  = do
   chainSyncException <- uncheckedNewTVarM Nothing
   _ <- forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $ do
