@@ -1,8 +1,7 @@
 // @ts-check
 // Note: type annotations allow type checking and IDEs autocompletion
 
-const lightCodeTheme = require('prism-react-renderer/themes/github');
-const darkCodeTheme = require('prism-react-renderer/themes/dracula');
+import {themes as prismThemes} from 'prism-react-renderer';
 
 // Required to render mathematical equations using KaTeX (https://docusaurus.io/docs/markdown-features/math-equations).
 const math = require('remark-math');
@@ -40,6 +39,9 @@ const config = {
 
   markdown: {
     mermaid: true,
+      // We don't want to use MDX, as this requires escaping `<` and `{` symbols, which is quite inconvenient.
+      // See: https://docusaurus.io/docs/markdown-features#mdx-vs-commonmark
+    format: 'md',
   },
 
   themes: ['@docusaurus/theme-mermaid'],
@@ -159,8 +161,8 @@ const config = {
         copyright: `Copyright © ${new Date().getFullYear()} Input Output Global, Built with Docusaurus.`,
       },
       prism: {
-        theme: lightCodeTheme,
-        darkTheme: darkCodeTheme,
+        theme: prismThemes.github,
+        darkTheme: prismThemes.dracula,
         additionalLanguages: ['haskell'],
       },
     }),

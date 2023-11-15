@@ -400,7 +400,7 @@ The consensus packages are now split as follows:
   support `ouroboros-consensus` and the association with the protocols in
   `ouroboros-consensus-protocol`. In particular it contains 3 subdirectories
   with the `byron`, `shelley` and `cardano` (`HardForkBlock`) instantitations.
-  
+
   It also contains the code for the `cardano-tools` like `db-analyzer` and
   `db-synthesizer`.
 
