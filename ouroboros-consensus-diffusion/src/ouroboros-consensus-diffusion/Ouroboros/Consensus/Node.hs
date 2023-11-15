@@ -64,7 +64,7 @@ import           Data.Functor.Contravariant (Predicate (..))
 import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isNothing)
+import           Data.Maybe (fromMaybe, isNothing)
 import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
@@ -807,7 +807,7 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
   , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
     -- ^ Determine whether to use the system default mempool capacity or explicitly set
     -- capacity of the mempool.
-  , srnChainSyncTimeout             :: Maybe NTN.ChainSyncTimeout
+  , srnChainSyncTimeout             :: Maybe (m NTN.ChainSyncTimeout)
     -- ^ A custom timeout for ChainSync.
   }
 
@@ -834,7 +834,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
     llrnKeepAliveRng <- stdKeepAliveRngIO
     pure LowLevelRunNodeArgs
       { llrnBfcSalt
-      , llrnChainSyncTimeout = maybe stdChainSyncTimeout pure srnChainSyncTimeout
+      , llrnChainSyncTimeout = fromMaybe stdChainSyncTimeout srnChainSyncTimeout
       , llrnCustomiseHardForkBlockchainTimeArgs = id
       , llrnKeepAliveRng
       , llrnChainDbArgsDefaults =
