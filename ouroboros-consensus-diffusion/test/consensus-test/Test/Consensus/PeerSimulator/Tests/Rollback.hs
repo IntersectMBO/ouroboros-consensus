@@ -81,19 +81,20 @@ prop_cannotRollback = do
   where
     schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
 
--- A schedule that advertises all the points of the trunk up until the kth
+-- | A schedule that advertises all the points of the trunk up until the nth
 -- block after the intersection, then switches to the first alternative
 -- chain of the given block tree.
 --
 -- PRECONDITION: Block tree with at least one alternative chain.
 rollbackSchedule :: Int -> BlockTree TestBlock -> PointSchedule
-rollbackSchedule k blockTree =
+rollbackSchedule n blockTree =
   let branch = head $ btBranches blockTree
-      trunk = btTrunk blockTree
-      prefixLen = AF.length $ btbPrefix branch
-      trunkPrefix = AF.takeOldest (k + prefixLen) trunk
-      branchSuffix = btbSuffix branch
-      states = banalStates trunkPrefix ++ banalStates branchSuffix
+      trunkSuffix = AF.takeOldest n (btbTrunkSuffix branch)
+      states = concat
+        [ banalStates (btbPrefix branch)
+        , banalStates trunkSuffix
+        , banalStates (btbSuffix branch)
+        ]
       peers = peersOnlyHonest states
       pointSchedule = balanced peers
    in fromJust pointSchedule
