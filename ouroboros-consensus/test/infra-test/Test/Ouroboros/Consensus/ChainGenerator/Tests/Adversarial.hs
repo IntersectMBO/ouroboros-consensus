@@ -44,9 +44,9 @@ tests :: [TT.TestTree]
 tests = [
     TT.testProperty "k+1 blocks after the intersection" prop_kPlus1BlocksAfterIntersection
   ,
-    TT.testProperty "prop_adversarialChain" prop_adversarialChain
+    TT.testProperty "Adversarial chains lose density and race comparisons" prop_adversarialChain
   ,
-    TT.localOption (TT.QuickCheckMaxSize 14) $ TT.testProperty "prop_adversarialChainMutation" prop_adversarialChainMutation
+    TT.localOption (TT.QuickCheckMaxSize 14) $ TT.testProperty "Adversarial chains win if checked with relaxed parameters" prop_adversarialChainMutation
   ]
 
 -----
