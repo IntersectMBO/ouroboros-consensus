@@ -146,7 +146,7 @@ instance Arbitrary NightlyTestSetup where
           }
 
 tests :: TestTree
-tests = localOption (QuickCheckTests 100) $ testGroup "Shelley ThreadNet"
+tests = testGroup "Shelley ThreadNet"
     [ let name = "simple convergence" in
       askTestEnv $ \case
           Nightly -> testProperty name $ \(NightlyTestSetup setup) ->

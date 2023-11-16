@@ -53,10 +53,11 @@ import           Test.ThreadNet.Util.NodeRestarts (noRestarts)
 import           Test.ThreadNet.Util.NodeToNodeVersion (newestVersion)
 import           Test.Util.HardFork.Future (singleEraFuture)
 import           Test.Util.Slots (NumSlots (..))
+import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests = testGroup "DualByron" [
-      localOption (QuickCheckTests 10) $ testProperty "convergence" $ prop_convergence
+      adjustQuickCheckTests (`div` 10) $ testProperty "convergence" $ prop_convergence
     ]
 
 -- These tests are very expensive, due to the Byron generators

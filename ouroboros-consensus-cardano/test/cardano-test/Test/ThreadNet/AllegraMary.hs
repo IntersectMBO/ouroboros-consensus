@@ -144,8 +144,7 @@ instance Arbitrary TestSetup where
   -- TODO shrink
 
 tests :: TestTree
-tests = localOption (QuickCheckTests 100) $
-        testGroup "AllegraMary ThreadNet" [
+tests = testGroup "AllegraMary ThreadNet" [
           askTestEnv $ adjustTestEnv $ testProperty "simple convergence" prop_simple_allegraMary_convergence
         ]
     where

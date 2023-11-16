@@ -144,8 +144,7 @@ instance Arbitrary TestSetup where
   -- TODO shrink
 
 tests :: TestTree
-tests = localOption (QuickCheckTests 100) $
-        testGroup "Cardano ThreadNet" [
+tests = testGroup "Cardano ThreadNet" [
           let name = "simple convergence" in
           askTestEnv $ adjustTestMode $
             testProperty name prop_simple_cardano_convergence
