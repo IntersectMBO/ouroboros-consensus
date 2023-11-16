@@ -1,0 +1,246 @@
+[1 of 1] Compiling MicroReadTVarIO2 ( MicroReadTVarIO2.hs, MicroReadTVarIO2.o )
+
+==================== Tidy Core ====================
+Result size of Tidy Core
+  = {terms: 357, types: 597, coercions: 130, joins: 4/6}
+
+-- RHS size: {terms: 6, types: 32, coercions: 0, joins: 0/0}
+$p1MonadSTM
+  = \ @ m_amB v_B1 ->
+      case v_B1 of v_B1 { C:MonadSTM v_B2 v_B3 v_B4 v_B5 v_B6 -> v_B2 }
+
+-- RHS size: {terms: 6, types: 32, coercions: 0, joins: 0/0}
+$p2MonadSTM
+  = \ @ m_amB v_B1 ->
+      case v_B1 of v_B1 { C:MonadSTM v_B2 v_B3 v_B4 v_B5 v_B6 -> v_B3 }
+
+-- RHS size: {terms: 6, types: 32, coercions: 0, joins: 0/0}
+atomically
+  = \ @ m_amB v_B1 ->
+      case v_B1 of v_B1 { C:MonadSTM v_B2 v_B3 v_B4 v_B5 v_B6 -> v_B4 }
+
+-- RHS size: {terms: 6, types: 32, coercions: 0, joins: 0/0}
+readTVar
+  = \ @ m_amB v_B1 ->
+      case v_B1 of v_B1 { C:MonadSTM v_B2 v_B3 v_B4 v_B5 v_B6 -> v_B5 }
+
+-- RHS size: {terms: 6, types: 32, coercions: 0, joins: 0/0}
+readTVarIO
+  = \ @ m_amB v_B1 ->
+      case v_B1 of v_B1 { C:MonadSTM v_B2 v_B3 v_B4 v_B5 v_B6 -> v_B6 }
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+lvl_r3bV = "Negative exponent"#
+
+-- RHS size: {terms: 3, types: 2, coercions: 0, joins: 0/0}
+$s^1 = errorWithoutStackTrace (unpackCString# lvl_r3bV)
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+$seven1 = 2
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+lvl1_r3bW = 1
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+$s^2 = 0
+
+Rec {
+-- RHS size: {terms: 38, types: 5, coercions: 0, joins: 0/0}
+$wg1_r3bX
+  = \ ww_s35T w_s35P ww1_s35X ->
+      case eqInteger# (remInteger w_s35P $seven1) $s^2 of {
+        __DEFAULT ->
+          case eqInteger# w_s35P lvl1_r3bW of {
+            __DEFAULT ->
+              $wg1_r3bX
+                (*# ww_s35T ww_s35T)
+                (quotInteger w_s35P $seven1)
+                (*# ww_s35T ww1_s35X);
+            1# -> *# ww_s35T ww1_s35X
+          };
+        1# ->
+          $wg1_r3bX
+            (*# ww_s35T ww_s35T) (quotInteger w_s35P $seven1) ww1_s35X
+      }
+end Rec }
+
+Rec {
+-- RHS size: {terms: 32, types: 4, coercions: 0, joins: 0/0}
+$wf
+  = \ ww_s367 w_s364 ->
+      case eqInteger# (remInteger w_s364 $seven1) $s^2 of {
+        __DEFAULT ->
+          case eqInteger# w_s364 lvl1_r3bW of {
+            __DEFAULT ->
+              $wg1_r3bX
+                (*# ww_s367 ww_s367) (quotInteger w_s364 $seven1) ww_s367;
+            1# -> ww_s367
+          };
+        1# -> $wf (*# ww_s367 ww_s367) (quotInteger w_s364 $seven1)
+      }
+end Rec }
+
+-- RHS size: {terms: 23, types: 7, coercions: 0, joins: 0/0}
+$w$s^
+  = \ w_s36d w1_s36e ->
+      case ltInteger# w1_s36e $s^2 of {
+        __DEFAULT ->
+          case eqInteger# w1_s36e $s^2 of {
+            __DEFAULT ->
+              case w_s36d of { I# ww1_s367 -> $wf ww1_s367 w1_s36e };
+            1# -> 1#
+          };
+        1# -> case $s^1 of wild1_00 { }
+      }
+
+-- RHS size: {terms: 6, types: 1, coercions: 42, joins: 0/0}
+$fMonadSTMIO
+  = C:MonadSTM
+      $fMonadIO
+      ($fMonadSTM `cast` <Co:3>)
+      (atomically# `cast` <Co:14>)
+      (readTVar1 `cast` <Co:15>)
+      (readTVarIO1 `cast` <Co:10>)
+
+-- RHS size: {terms: 18, types: 30, coercions: 0, joins: 0/0}
+$woptimized
+  = \ @ m_s36j ww_s36y ww1_s372 w_s36l w1_s36m ->
+      ww_s36y
+        (\ d_aJN ->
+           case w_s36l of {
+             __DEFAULT -> case d_aJN of { __DEFAULT -> Dummy2 };
+             999# -> d_aJN
+           })
+        (ww1_s372 w1_s36m)
+
+-- RHS size: {terms: 23, types: 37, coercions: 0, joins: 0/0}
+$wunoptimized
+  = \ @ m_s375 ww_s37c ww1_s37d ww2_s37e w_s377 w1_s378 ->
+      ww1_s37d
+        (fmap
+           ($p1Applicative ($p1Monad ww_s37c))
+           (\ d_aJN ->
+              case w_s377 of {
+                __DEFAULT -> case d_aJN of { __DEFAULT -> Dummy2 };
+                999# -> d_aJN
+              })
+           (ww2_s37e w1_s378))
+
+-- RHS size: {terms: 2, types: 0, coercions: 0, joins: 0/0}
+main3 = I# 10#
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+main2 = 7
+
+-- RHS size: {terms: 7, types: 1, coercions: 0, joins: 0/0}
+numRepetitions
+  = case $w$s^ main3 main2 of ww_s36h { __DEFAULT -> I# ww_s36h }
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+main6 = "$1 must be O or U"#
+
+-- RHS size: {terms: 2, types: 0, coercions: 0, joins: 0/0}
+main5 = unpackCString# main6
+
+-- RHS size: {terms: 3, types: 3, coercions: 0, joins: 0/0}
+main4 = noinline mkUserError main5
+
+-- RHS size: {terms: 134, types: 192, coercions: 79, joins: 4/6}
+main1
+  = \ s_a2yT ->
+      case ((allocaBytesAligned
+               $fStorableBool7 $fStorableBool7 (getArgs1 `cast` <Co:7>))
+            `cast` <Co:3>)
+             s_a2yT
+      of
+      { (# ipv_a2yV, ipv1_a2yW #) ->
+      case ipv1_a2yW of {
+        [] -> raiseIO# main4 ipv_a2yV;
+        : ds_d2xh ds2_d2xi ->
+          case ds_d2xh of {
+            [] -> raiseIO# main4 ipv_a2yV;
+            : c_aEJ ds3_d2xj ->
+              case ds3_d2xj of {
+                [] ->
+                  case ds2_d2xi of {
+                    [] ->
+                      case c_aEJ of { C# ds4_d2wH ->
+                      case ds4_d2wH of {
+                        __DEFAULT -> raiseIO# main4 ipv_a2yV;
+                        'O'# ->
+                          case newTVar# Dummy ipv_a2yV of { (# ipv2_a2z2, ipv3_a2z3 #) ->
+                          let { var_s307 = TVar ipv3_a2z3 } in
+                          joinrec {
+                            $wgo_s37p ww_s37n w_s37k
+                              = case ww_s37n of ds7_X28y {
+                                  __DEFAULT ->
+                                    case (($woptimized
+                                             ($fFunctorIO2 `cast` <Co:15>)
+                                             (readTVarIO1 `cast` <Co:10>)
+                                             ds7_X28y
+                                             (var_s307 `cast` <Co:4>))
+                                          `cast` <Co:2>)
+                                           w_s37k
+                                    of
+                                    { (# ipv4_X2zx, ipv5_X2zz #) ->
+                                    jump $wgo_s37p (-# ds7_X28y 1#) ipv4_X2zx
+                                    };
+                                  0# -> (# w_s37k, () #)
+                                }; } in
+                          join {
+                            go_s306 w_s37j w1_s37k
+                              = case w_s37j of { I# ww1_s37n ->
+                                jump $wgo_s37p ww1_s37n w1_s37k
+                                } } in
+                          jump go_s306 numRepetitions ipv2_a2z2
+                          };
+                        'U'# ->
+                          case newTVar# Dummy ipv_a2yV of { (# ipv2_a2z2, ipv3_a2z3 #) ->
+                          let { var_s30b = TVar ipv3_a2z3 } in
+                          joinrec {
+                            $wgo_s37w ww_s37u w_s37r
+                              = case ww_s37u of ds7_X28y {
+                                  __DEFAULT ->
+                                    case (($wunoptimized
+                                             ($fMonadSTM `cast` <Co:3>)
+                                             (atomically# `cast` <Co:14>)
+                                             (readTVar1 `cast` <Co:15>)
+                                             ds7_X28y
+                                             (var_s30b `cast` <Co:4>))
+                                          `cast` <Co:2>)
+                                           w_s37r
+                                    of
+                                    { (# ipv4_X2zx, ipv5_X2zz #) ->
+                                    jump $wgo_s37w (-# ds7_X28y 1#) ipv4_X2zx
+                                    };
+                                  0# -> (# w_s37r, () #)
+                                }; } in
+                          join {
+                            go_s30a w_s37q w1_s37r
+                              = case w_s37q of { I# ww1_s37u ->
+                                jump $wgo_s37w ww1_s37u w1_s37r
+                                } } in
+                          jump go_s30a numRepetitions ipv2_a2z2
+                          }
+                      }
+                      };
+                    : ipv2_s2La ipv3_s2Lo -> raiseIO# main4 ipv_a2yV
+                  };
+                : ipv2_s2L8 ipv3_s2Lq -> raiseIO# main4 ipv_a2yV
+              }
+          }
+      }
+      }
+
+-- RHS size: {terms: 1, types: 0, coercions: 3, joins: 0/0}
+main = main1 `cast` <Co:3>
+
+-- RHS size: {terms: 2, types: 1, coercions: 3, joins: 0/0}
+main7 = runMainIO1 (main1 `cast` <Co:3>)
+
+-- RHS size: {terms: 1, types: 0, coercions: 3, joins: 0/0}
+main = main7 `cast` <Co:3>
+
+
+
+Linking MicroReadTVarIO2 ...
