@@ -13,7 +13,7 @@ For more information on when that is, see the Consensus Report and the recording
 However, most of the the ledger code that interacts with the given `EpochInfo` assumes it cannot fail by using `epochInfoPure`.
 
 ```haskell
-data Globals = Globals { epochInfo :: !(EpochInfo (Either Text)), ... }  
+data Globals = Globals { epochInfo :: !(EpochInfo (Either Text)), ... }
 
 epochInfoPure :: Globals -> EpochInfo Identity
 epochInfoPure = hoistEpochInfo (either (throw . EpochErr) pure) . epochInfo

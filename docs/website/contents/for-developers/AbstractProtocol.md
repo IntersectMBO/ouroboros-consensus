@@ -173,29 +173,29 @@ Classes connected to headers and blocks:
    getHeader          :: b → Header b             -- extract header from the block
    blockMatchesHeader :: Header b → b → Bool      -- check if the header is the header of the block
    headerIsEBB        :: Header b → Maybe EpochNo -- when the header of an Epoch Boundary Block (EBB), ...
- 
- class (HasHeader b, GetHeader b) => GetPrevHash b where   
+
+ class (HasHeader b, GetHeader b) => GetPrevHash b where
    headerPrevHash :: Header b → ChainHash b       -- get the hash of predecessor
- 
+
  -- construct the two views on block 'b' required by protocol 'p'
- class (GetPrevHash b, ConsensusProtocol p) => BlockSupportsProtocol b where              
+ class (GetPrevHash b, ConsensusProtocol p) => BlockSupportsProtocol b where
    validateView :: bc → Header b → ValidateView p  -- project from hdr for hdr validation
    selectView   :: bc → Header b → SelectView p    -- project from hdr for chain selection
 ```
 Classes connected to ledgers:
 ```haskell
-  class GetTip l where                         
+  class GetTip l where
     getTip :: l → Point l               -- Point of the most recently applied block
 
   class (GetTip l, GetTip (Ticked l)) => IsLedger l where
-    type family LedgerErr l      :: Type                   
+    type family LedgerErr l      :: Type
     type family AuxLedgerEvent l :: Type
     applyChainTickLedgerResult   :: lc → SlotNo → l → LedgerResult l (Ticked l)  -- apply slot based state transformations (tip unchanged)
-        
+
   class (IsLedger l, HeaderHash l ~ HeaderHash b, HasHeader b, HasHeader (Header b)) => ApplyBlock l b where
-    applyBlockLedgerResult   :: lc → b → Ticked l → Except (LedgerErr l) (LedgerResult l l)  
+    applyBlockLedgerResult   :: lc → b → Ticked l → Except (LedgerErr l) (LedgerResult l l)
     reapplyBlockLedgerResult :: lc → b → Ticked l →                       LedgerResult l l
-    
+
   class ApplyBlock (LedgerState b) b => UpdateLedger b where
     {}
 
@@ -203,7 +203,7 @@ Classes connected to ledgers:
   class (BlockSupportsProtocol b, UpdateLedger b, ValidateEnvelope b) => LedgerSupportsProtocol b where
     protocolLedgerView   :: lc → Ticked l → ledvw          -- 'ledvw' ('LedgerView (BlockProtocol b)') extracted from the ledger
     ledgerViewForecastAt :: lc → l → Forecast ledvw        -- get a forecast (of future 'ledvw's) from a given ledger state.
-      
+
   class (UpdateLedger b) => LedgerSupportsMempool b where
     txInvariant :: GenTx b → Bool                                                -- check if internal invariants of the transaction hold
     applyTx   :: lc → WhetherToIntervene → SlotNo → tx → tls → Except txerr (tls, Validated tx)      -- apply an unvalidated transaction
@@ -216,12 +216,12 @@ Classes connected to ledgers:
 ## Some Commonly Used Base Types (from pkgs ouroboros-consensus, cardano-base, and ouroboros-network)
 
 ``` haskell
-data Forecast a = 
+data Forecast a =
   Forecast { forecastAt  :: WithOrigin SlotNo                                        -- Forecast a - Forecast the effect
            , forecastFor :: SlotNo -> Except OutsideForecastRange (Ticked a)         --              of time ticking
            }
 
-data LedgerResult l a = LedgerResult { lrEvents :: [AuxLedgerEvent l]        -- LedgerResult l a - The result of invoking 
+data LedgerResult l a = LedgerResult { lrEvents :: [AuxLedgerEvent l]        -- LedgerResult l a - The result of invoking
                                      , lrResult :: !a                        -- a ledger function that does validation
                                      }
 
@@ -247,7 +247,7 @@ pattern BlockPoint { atSlot, withHash } = Point (At (Point.Block atSlot withHash
 {-# COMPLETE GenesisPoint, BlockPoint #-}
 
 ```
-  
+
 ## And Some Commonly Used Projections
 
 ``` haskell
@@ -269,14 +269,14 @@ blockNo = headerFieldBlockNo . getHeaderFields
    - these are not kinds in the code, but "morally equivalent",  created for the sake of documentation.
    - `p`, `b`, and `l` are used as type names, respectively elements of the `P`,
      `B`, and `L` kinds.
-  
+
 - Associated types are not being distinguished from standalone type families.
-  
+
 - NOTE: For the sake of line-width, or clarity, "type variables" are sometimes
   used in place of "type-functions applied to variables".  This should not
   result in ambiguity.  E.g.,
    -  `p` in place of `BlockProtocol b`
    -  `cds` in place of `ChainDepState p`
-  
+
 - To reduce the "noise", these type-class constraints are being ignored:
   `NoThunks`, `Eq`, `Show`, `HasCallStack`; `Ord` is *not* being ignored.
