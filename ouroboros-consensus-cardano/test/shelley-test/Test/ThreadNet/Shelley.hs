@@ -151,10 +151,7 @@ tests = testGroup "Shelley ThreadNet"
       askTestEnv $ \case
           Nightly -> testProperty name $ \(NightlyTestSetup setup) ->
             prop_simple_real_tpraos_convergence setup
-          _      ->
-            -- These tests are slow, so we settle for running fewer of them in this test
-            -- suite since it is invoked frequently (eg CI for each push).
-            adjustQuickCheckTests (`div` 5) $ testProperty name prop_simple_real_tpraos_convergence
+          _      -> adjustQuickCheckTests (`div` 5) $ testProperty name prop_simple_real_tpraos_convergence
     ]
 
 prop_simple_real_tpraos_convergence :: TestSetup -> Property

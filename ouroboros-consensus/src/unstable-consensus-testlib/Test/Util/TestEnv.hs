@@ -71,7 +71,13 @@ instance IsOption TestEnv where
 -- | Locally adjust the number of QuickCheck tests for the given test subtree.
 -- Unless the previous number of tests was exactly '0', the result will always
 -- be at least '1'.
+--
+-- This matters in particular with tests that take a long time; in that case, we
+-- settle for running fewer tests, while still scaling with the different test
+-- environments (nightly, ci, dev). This function should almost always be
+-- preferred to @localOption (QuickCheckTests ...)@ which sets the number of
+-- tests regarless of the test environment.
 adjustQuickCheckTests :: (Int -> Int) -> TestTree -> TestTree
 adjustQuickCheckTests f =
   adjustOption $ \(QuickCheckTests n) ->
-    QuickCheckTests $ if n == 0 then 0 else (max 1 (f n))
+    QuickCheckTests $ if n == 0 then 0 else max 1 (f n)

@@ -151,10 +151,7 @@ tests = testGroup "AllegraMary ThreadNet" [
       adjustTestEnv :: TestTree -> TestEnv -> TestTree
       adjustTestEnv tree = \case
         Nightly -> tree
-        _       ->
-          -- These tests are slow, so we settle for running fewer of them in this test
-          -- suite since it is invoked frequently (eg CI for each push).
-          adjustQuickCheckTests (`div` 10) tree
+        _       -> adjustQuickCheckTests (`div` 10) tree
 
 prop_simple_allegraMary_convergence :: TestSetup -> Property
 prop_simple_allegraMary_convergence TestSetup

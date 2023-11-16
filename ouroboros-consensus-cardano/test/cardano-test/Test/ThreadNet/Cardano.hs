@@ -153,10 +153,7 @@ tests = testGroup "Cardano ThreadNet" [
       adjustTestMode :: TestTree -> TestEnv ->  TestTree
       adjustTestMode tree = \case
         Nightly -> tree
-        _       ->
-          -- These tests are slow, so we settle for running fewer of them in this test
-          -- suite since it is invoked frequently (eg CI for each push).
-          adjustQuickCheckTests (\n -> (2 * n) `div` 5) tree
+        _       -> adjustQuickCheckTests (\n -> (2 * n) `div` 5) tree
 
 prop_simple_cardano_convergence :: TestSetup -> Property
 prop_simple_cardano_convergence TestSetup
