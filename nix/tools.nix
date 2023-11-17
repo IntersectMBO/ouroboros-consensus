@@ -1,7 +1,7 @@
 inputs: final: prev:
 
 let
-  tool-index-state = "2023-10-06T00:00:00Z";
+  tool-index-state = "2023-11-16T00:00:00Z";
   tool = name: version: other:
     final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
       version = version;
@@ -18,8 +18,8 @@ in
     src = final.fetchFromGitHub {
       owner = "haskell";
       repo = "cabal";
-      rev = "249374d16b328736a01a4c7e84fa42fbad7422e7";
-      hash = "sha256-KQm3NwQAvsii+6o7MRRL4emCEBUT77foywTBHfq1pxg=";
+      rev = "27f4ee71d949837ba31e170d205fbe6c1ecf847d";
+      hash = "sha256-Ia0CgKuqtYynSIR1TQd2/enB+IpzCYrB7CbbVBb3Rus=";
     };
     index-state = tool-index-state;
     inherit (final.hsPkgs.args) compiler-nix-name;
@@ -42,12 +42,14 @@ in
       rev = "7452c2b1dbdae4eb675d280ed99ec135293adc13";
       hash = "sha256-w7PkNZfHJw1291c2nfviENSXykYpNV+4i3FmbMJqSMs=";
     };
-    index-state = null; # use upstream cabal.project
+    cabalProjectLocal = ''
+      allow-newer: cabal-hoogle:*
+    '';
   };
 
-  stylish-haskell = tool "stylish-haskell" "0.14.4.0" { };
+  stylish-haskell = tool "stylish-haskell" "0.14.5.0" { };
 
-  cabal-fmt = tool "cabal-fmt" "0.1.7" { };
+  cabal-fmt = tool "cabal-fmt" "0.1.9" { };
 
   scriv = prev.scriv.overrideAttrs (_: {
     version = "1.2.0-custom-iog";

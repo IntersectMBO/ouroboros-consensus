@@ -14,10 +14,9 @@ let
   };
   hsPkgs = haskell-nix.cabalProject {
     src = ./..;
-    compiler-nix-name = "ghc928";
+    compiler-nix-name = "ghc963";
     flake.variants = {
       ghc810 = { compiler-nix-name = lib.mkForce "ghc8107"; };
-      ghc96 = { compiler-nix-name = lib.mkForce "ghc963"; };
     };
     inputMap = {
       "https://input-output-hk.github.io/cardano-haskell-packages" = inputs.CHaP;
@@ -35,6 +34,9 @@ let
               extraSrcFiles = [ "golden/${n}/**/*" ];
             }) [ "byron" "shelley" "cardano" ]);
       }
+      ({ lib, pkgs, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
+        reinstallableLibGhc = false;
+      })
     ];
     flake.variants.noAsserts = {
       src = lib.mkForce (final.applyPatches {
