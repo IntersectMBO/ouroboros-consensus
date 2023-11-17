@@ -2,16 +2,20 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
 
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
+import           Control.Monad.Class.MonadTime (MonadTime)
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List (intercalate)
 import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
 import           Ouroboros.Consensus.Util.Condense (condense)
+import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
@@ -55,7 +59,7 @@ prop_longRangeAttack honestFreq advFreqs = do
     classify genesisWindowAfterIntersection "Full genesis window after intersection" $
     allAdversariesSelectable
     ==>
-    runSimOrThrow $
+    runIOLike $
       runTest
         (noTimeoutsSchedulerConfig scheduleConfig)
         genesisTest
@@ -79,4 +83,11 @@ prop_longRangeAttack honestFreq advFreqs = do
     isHonestTestHeaderHash :: HeaderHash TestBlock -> Bool
     isHonestTestHeaderHash = all (0 ==) . unTestHash
 
-    scheduleConfig = defaultPointScheduleConfig
+    scheduleConfig | useIOSim = defaultPointScheduleConfig
+                   | otherwise = defaultPointScheduleConfig {pscTickDuration=0.001}
+
+    runIOLike :: (forall m . (IOLike m, MonadTime m, MonadTimer m) => m Property) -> Property
+    runIOLike | useIOSim = runSimOrThrow
+              | otherwise = ioProperty
+
+    useIOSim = True
