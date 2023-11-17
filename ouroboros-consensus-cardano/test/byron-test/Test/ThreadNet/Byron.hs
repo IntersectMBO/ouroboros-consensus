@@ -77,6 +77,7 @@ import           Test.Util.HardFork.Future (singleEraFuture)
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import qualified Test.Util.Stream as Stream
+import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 data TestSetup = TestSetup
   { setupEBBs         :: ProduceEBBs
@@ -136,7 +137,7 @@ tests = testGroup "Byron" $
     [ testProperty "trivial join plan is considered deterministic"
         $ \TestSetup{setupK = k, setupTestConfig = TestConfig{numCoreNodes}} ->
           prop_deterministicPlan $ byronPBftParams k numCoreNodes
-    , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (1 `max` (div n 10))) $
+    , adjustQuickCheckTests (`div` 10) $
       -- as of merging PR #773, this test case fails without the commit that
       -- introduces the InvalidRollForward exception
       --
@@ -281,7 +282,7 @@ tests = testGroup "Byron" $
             , setupVersion    = (NodeToNodeV_7, ByronNodeToNodeVersion1)
             }
     , -- Byron runs are slow, so do 10x less of this narrow test
-      adjustOption (\(QuickCheckTests i) -> QuickCheckTests $ max 1 $ i `div` 10) $
+      adjustQuickCheckTests (`div` 10) $
       testProperty "re-delegation via NodeRekey" $ \seed w ->
           let ncn = NumCoreNodes 5
               k :: Num a => a

@@ -49,9 +49,14 @@ import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Roundtrip
 import           Test.Util.Serialisation.SomeResult (SomeResult (..))
+import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
-tests = adjustOption reduceTests $
+tests =
+  -- | We're not trying to find edge cases in the roundtrip tests, we just
+  -- want to check compatibility. In case of incompatibility, the first test
+  -- will probably fail already.
+  adjustQuickCheckTests (`div` 10) $
     testGroup "Byron compatibility" [
         testGroup "Byron to Cardano" [
               testProperty "roundtrip block" $
@@ -74,11 +79,6 @@ tests = adjustOption reduceTests $
                 roundtrip_SerialiseNodeToClient (const CheckCBORValidity) cardanoToByronCodeConfig
             ]
       ]
-  where
-    -- | We're not trying to find edge cases in the roundtrip tests, we just
-    -- want to check compatibility. In case of incompatibility, the first test
-    -- will probably fail already.
-    reduceTests (QuickCheckTests n) = QuickCheckTests (1 `max` (div n 10))
 
 byronCodecConfig :: CodecConfig ByronBlock
 byronCodecConfig = ByronCodecConfig epochSlots

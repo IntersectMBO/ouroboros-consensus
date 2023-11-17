@@ -145,18 +145,8 @@ instance Arbitrary TestSetup where
 
   -- TODO shrink
 
--- | Run relatively fewer tests
---
--- These tests are slow, so we settle for running fewer of them in this test
--- suite since it is invoked frequently (eg CI for each push).
-oneTenthTestCount :: QuickCheckTests -> QuickCheckTests
-oneTenthTestCount (QuickCheckTests n) = QuickCheckTests $
-    if 0 == n then 0 else
-    max 1 $ n `div` 10
-
 tests :: TestTree
-tests = localOption (QuickCheckTests 100) $
-        testGroup "MaryAlonzo ThreadNet" [
+tests = testGroup "MaryAlonzo ThreadNet" [
           let name = "simple convergence" in
           askTestEnv $ adjustTestMode $
             testProperty name prop_simple_allegraAlonzo_convergence
@@ -166,7 +156,7 @@ tests = localOption (QuickCheckTests 100) $
       adjustTestMode :: TestTree -> TestEnv -> TestTree
       adjustTestMode tree = \case
         Nightly -> tree
-        _       -> adjustOption oneTenthTestCount tree
+        _       -> adjustQuickCheckTests (`div` 10) tree
 
 prop_simple_allegraAlonzo_convergence :: TestSetup -> Property
 prop_simple_allegraAlonzo_convergence TestSetup

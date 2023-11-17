@@ -145,22 +145,13 @@ instance Arbitrary NightlyTestSetup where
               }
           }
 
--- | Run relatively fewer tests
---
--- These tests are slow, so we settle for running fewer of them in this test
--- suite since it is invoked frequently (eg CI for each push).
-fifthTestCount :: QuickCheckTests -> QuickCheckTests
-fifthTestCount (QuickCheckTests n) = QuickCheckTests $
-    if 0 == n then 0 else
-    max 1 $ n `div` 5
-
 tests :: TestTree
-tests = localOption (QuickCheckTests 100) $ testGroup "Shelley ThreadNet"
+tests = testGroup "Shelley ThreadNet"
     [ let name = "simple convergence" in
       askTestEnv $ \case
           Nightly -> testProperty name $ \(NightlyTestSetup setup) ->
             prop_simple_real_tpraos_convergence setup
-          _      -> adjustOption fifthTestCount $ testProperty name prop_simple_real_tpraos_convergence
+          _      -> adjustQuickCheckTests (`div` 5) $ testProperty name prop_simple_real_tpraos_convergence
     ]
 
 prop_simple_real_tpraos_convergence :: TestSetup -> Property

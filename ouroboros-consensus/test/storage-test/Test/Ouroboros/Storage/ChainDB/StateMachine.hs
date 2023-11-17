@@ -153,8 +153,8 @@ import qualified Test.StateMachine.Labelling as C
 import qualified Test.StateMachine.Sequential as QSM
 import qualified Test.StateMachine.Types as QSM
 import qualified Test.StateMachine.Types.Rank2 as Rank2
-import           Test.Tasty (TestTree, localOption, testGroup)
-import           Test.Tasty.QuickCheck (QuickCheckTests (..), testProperty)
+import           Test.Tasty (TestTree, testGroup)
+import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.ChainDB
 import           Test.Util.ChunkInfo
 import           Test.Util.Orphans.ToExpr ()
@@ -162,6 +162,7 @@ import           Test.Util.QuickCheck
 import qualified Test.Util.RefEnv as RE
 import           Test.Util.RefEnv (RefEnv)
 import           Test.Util.SOP
+import           Test.Util.TestEnv (adjustQuickCheckTests)
 import           Test.Util.Tracer (recordingTracerIORef)
 import           Test.Util.WithEq
 
@@ -1703,5 +1704,5 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
 
 tests :: TestTree
 tests = testGroup "ChainDB q-s-m"
-    [ localOption (QuickCheckTests 100000) $ testProperty "sequential" prop_sequential
+    [ adjustQuickCheckTests (* 100) $ testProperty "sequential" prop_sequential
     ]

@@ -64,13 +64,14 @@ import           Test.Tasty.QuickCheck hiding (Fixed)
 import           Test.Util.Orphans.Arbitrary (genNominalDiffTime50Years)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Range
+import           Test.Util.TestEnv (adjustQuickCheckTests)
 import           Test.Util.Time
 
 tests :: TestTree
 tests = testGroup "WallClock" [
-      localOption (QuickCheckTests 10) $ testProperty "delayNextSlot" prop_delayNextSlot
+      adjustQuickCheckTests (`div` 10) $ testProperty "delayNextSlot" prop_delayNextSlot
     , testProperty "delayClockShift"   prop_delayClockShift
-    , localOption (QuickCheckTests 1)  $ testProperty "delayNoClockShift" prop_delayNoClockShift
+    , adjustQuickCheckTests (const 1)  $ testProperty "delayNoClockShift" prop_delayNoClockShift
     ]
 
 {-------------------------------------------------------------------------------
