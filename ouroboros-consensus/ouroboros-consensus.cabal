@@ -361,7 +361,7 @@ library unstable-consensus-testlib
     , ouroboros-network-mock
     , pretty-simple
     , QuickCheck
-    , quickcheck-state-machine
+    , quickcheck-state-machine                                ^>=0.7
     , quiet
     , random
     , serialise
