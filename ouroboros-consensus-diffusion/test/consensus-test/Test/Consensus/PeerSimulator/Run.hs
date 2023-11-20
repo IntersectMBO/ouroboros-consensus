@@ -12,6 +12,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
+import           Cardano.Slotting.Slot (WithOrigin (At, Origin))
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.Class.MonadTime (MonadTime)
@@ -24,7 +25,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     Consensus, bracketChainSyncClient, chainSyncClient)
+                     Consensus, bracketChainSyncClient, chainSyncClient,
+                     defaultChainDbView)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Storage.ChainDB.API
@@ -62,10 +64,12 @@ import           Test.Consensus.PeerSimulator.Resources
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
-import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
+import           Test.Consensus.PointSchedule
+                     (AdvertisedPoints (AdvertisedPoints),
+                     BlockPoint (BlockPoint), GenesisTest (GenesisTest),
                      Peer (Peer), PeerId, PointSchedule (PointSchedule),
                      PointScheduleConfig, TestFragH, Tick (Tick),
-                     pointSchedulePeers, pscTickDuration)
+                     pointSchedulePeers)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
@@ -237,11 +241,12 @@ startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM Share
       nodeState <- readTVar srCurrentState
       case nodeState of
         Nothing -> retry
-        Just aps -> do
-          let PointSchedule.BlockPoint b = PointSchedule.block aps
+        Just AdvertisedPoints {block = BlockPoint (At b)} -> do
           case BT.findFragment (blockPoint b) srBlockTree of
             Just f  -> pure f
             Nothing -> error "block tip is not in the block tree"
+        Just AdvertisedPoints {block = BlockPoint Origin} ->
+          retry
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -249,22 +254,21 @@ startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM Share
 -- for new instructions.
 dispatchTick ::
   IOLike m =>
-  SchedulerConfig ->
   Tracer m String ->
   Map PeerId (PeerResources m) ->
   Tick ->
   m ()
-dispatchTick config tracer peers Tick {active = Peer pid state} =
+dispatchTick tracer peers Tick {active = Peer pid state, duration} =
   case peers Map.!? pid of
     Just PeerResources {prChainSync = ChainSyncResources {csrNextState}} -> do
+      -- REVIEW: It would be worth sanity-checking that our understanding of
+      -- `threadDelay` is correct; and maybe getting explicit information from
+      -- both ChainSync & BlockFetch servers that they are done.
+      threadDelay duration
       trace $ "Writing state " ++ condense state
       atomically (tryPutTMVar csrNextState state) >>= \case
         True -> trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
         False -> trace $ "Client for " ++ condense pid ++ " has ceased operation."
-      -- REVIEW: It would be worth sanity-checking that our understanding of
-      -- `threadDelay` is correct; and maybe getting explicit information from
-      -- both ChainSync & BlockFetch servers that they are done.
-      threadDelay (pscTickDuration (scSchedule config))
       trace $ condense pid ++ "'s tick is now done."
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
@@ -277,16 +281,15 @@ dispatchTick config tracer peers Tick {active = Peer pid state} =
 -- client.
 runScheduler ::
   IOLike m =>
-  SchedulerConfig ->
   Tracer m String ->
   PointSchedule ->
   Map PeerId (PeerResources m) ->
   m ()
-runScheduler config tracer PointSchedule {ticks=ps} peers = do
+runScheduler tracer PointSchedule {ticks=ps} peers = do
   traceWith tracer "Schedule is:"
   for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
   traceStartOfTime
-  for_ ps (dispatchTick config tracer peers)
+  for_ ps (dispatchTick tracer peers)
   traceEndOfTime
   where
     traceStartOfTime =
@@ -329,7 +332,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     -- peer fragments than registered clients.
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
     PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
-    runScheduler schedulerConfig tracer pointSchedule (psrPeers resources)
+    runScheduler tracer pointSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
     config = defaultCfg k
