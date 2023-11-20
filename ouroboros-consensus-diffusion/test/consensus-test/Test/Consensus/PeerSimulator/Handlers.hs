@@ -1,4 +1,5 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Business logic of the SyncChain protocol handlers that operates
 -- on the 'AdvertisedPoints' of a point schedule.
@@ -16,7 +17,8 @@ import           Control.Monad.Writer.Strict (MonadWriter (tell),
                      WriterT (runWriterT))
 import           Data.Coerce (coerce)
 import           Data.Maybe (fromJust)
-import           Ouroboros.Consensus.Block.Abstract (Point (..), getHeader)
+import           Ouroboros.Consensus.Block.Abstract (Header, Point (..),
+                     getHeader, withOrigin)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
@@ -68,6 +70,7 @@ handlerFindIntersection currentIntersection blockTree points clientPoints = do
 -- - HP before intersection (special case for the point scheduler architecture)
 -- - Anchor != intersection
 handlerRequestNext ::
+  forall m .
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
@@ -77,11 +80,19 @@ handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
     trace $ "  last intersection is " ++ condense intersection
-    maybe noPathError analysePath (BT.findPath intersection headerPoint blockTree)
+    withOrigin headerIsOrigin (withHeader intersection) (coerce (header points))
   where
-    noPathError = error "serveHeader: intersection and and headerPoint should always be in the block tree"
+    headerIsOrigin = pure Nothing
 
-    analysePath = \case
+    withHeader :: Point TestBlock -> Header TestBlock -> WriterT [String] (STM m) (Maybe RequestNext)
+    withHeader intersection h =
+      maybe noPathError (analysePath hp) (BT.findPath intersection hp blockTree)
+      where
+        hp = AF.castPoint $ blockPoint h
+
+    noPathError = error "serveHeader: intersection and headerPoint should always be in the block tree"
+
+    analysePath headerPoint = \case
       -- If the anchor is the intersection (the source of the path-finding) but
       -- the fragment is empty, then the intersection is exactly our header
       -- point and there is nothing to do. If additionally the header point is
@@ -125,8 +136,6 @@ handlerRequestNext currentIntersection blockTree points =
         lift $ writeTVar currentIntersection point
         pure $ Just (RollBackward point tip')
 
-    HeaderPoint header' = header points
-    headerPoint = AF.castPoint $ blockPoint header'
     TipPoint tip' = tip points
 
     trace = tell . pure
