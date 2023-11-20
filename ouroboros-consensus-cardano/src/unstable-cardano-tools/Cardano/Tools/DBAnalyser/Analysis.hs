@@ -490,11 +490,18 @@ benchmarkLedgerOps ::
      , LedgerSupportsProtocol blk
      )
   => Maybe FilePath -> Analysis blk
-benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
-    withFile mOutfile $ \outFileHandle -> do
-      DP.writeHeader outFileHandle DP.CSV
+benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} = do
+    -- We default to CSV when the there is no output file (and thus the results are output to stdout).
+    outFormat <- case maybe (pure DP.CSV) DP.outputFormatFromFileExtension mOutfile of
+                   Right outFormat -> pure outFormat
+                   Left  ext       -> do
+                     IO.hPutStr IO.stderr $ "Unsupported extension '" <> ext <> "'. Defaulting to CSV."
+                     pure DP.CSV
 
-      void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle)
+    withFile mOutfile $ \outFileHandle -> do
+      DP.writeHeader outFileHandle outFormat
+
+      void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle outFormat)
       pure Nothing
   where
     withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
@@ -506,10 +513,11 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
 
     process ::
          IO.Handle
+      -> DP.DataPointOutputFormat
       -> ExtLedgerState blk
       -> blk
       -> IO (ExtLedgerState blk)
-    process outFileHandle prevLedgerState blk = do
+    process outFileHandle outFormat prevLedgerState blk = do
         prevRtsStats <- GC.getRTSStats
         let
           -- Compute how many nanoseconds the mutator used from the last
@@ -547,14 +555,14 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
             , mut_headerApply = tHdrApp   `div` 1000
             , mut_blockTick   = tBlkTick  `div` 1000
             , mut_blockApply  = tBlkApp   `div` 1000
-            , blockStats      = HasAnalysis.blockStats blk
+            , blockStats      = DP.BlockStats $ HasAnalysis.blockStats blk
             }
 
           slotCount (SlotNo i) = \case
             Slotting.Origin        -> i
             Slotting.At (SlotNo j) -> i - j
 
-        DP.writeDataPoint outFileHandle DP.CSV slotDataPoint
+        DP.writeDataPoint outFileHandle outFormat slotDataPoint
 
         pure $ ExtLedgerState ldgrSt' hdrSt'
       where

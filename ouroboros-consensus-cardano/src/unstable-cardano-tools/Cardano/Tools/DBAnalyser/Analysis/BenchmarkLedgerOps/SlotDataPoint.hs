@@ -115,6 +115,16 @@ showHeadersAndData =
 data DataPointOutputFormat = CSV | JSON
   deriving (Show, Eq)
 
+-- | Return the output format that corresponds to the given extension,
+-- or the extension as string if it does not match any of the
+-- supported output formats (as defined in 'DataPointOutputFormat').
+outputFormatFromFileExtension :: FilePath -> Either String DataPointOutputFormat
+outputFormatFromFileExtension filePath =
+  case takeExtension filePath of
+    ".csv"  -> Right CSV
+    ".json" -> Right JSON
+    ext     -> Left  ext
+
 -- | Separator used for CSV output.
 separator :: Builder
 separator = "\t"
