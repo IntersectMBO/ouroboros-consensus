@@ -67,7 +67,7 @@ prop_timeouts = do
           headerPoint = HeaderPoint $ getHeader tipBlock
           blockPoint = BlockPoint tipBlock
           state = Peer HonestPeer $ NodeOnline $ AdvertisedPoints tipPoint headerPoint blockPoint
-          tick = Tick { active = state }
+          tick = Tick { active = state, duration = pscTickDuration scheduleConfig }
           maximumNumberOfTicks = round $ timeout / pscTickDuration scheduleConfig
       in
       PointSchedule (tick :| replicate maximumNumberOfTicks tick) (HonestPeer :| [])

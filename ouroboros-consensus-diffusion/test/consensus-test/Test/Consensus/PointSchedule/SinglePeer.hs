@@ -5,12 +5,13 @@ module Test.Consensus.PointSchedule.SinglePeer
   , SchedulePoint(..)
   , schedulePointToBlock
   , defaultPeerScheduleParams
-  , singleJumpPeerSchedule
   , peerScheduleFromTipPoints
-  -- * Exposed for testing
+  , singleJumpPeerSchedule
+    -- * Exposed for testing
+  , IsTrunk (..)
+  , mergeOn
   , zipMany
-  )
-  where
+  ) where
 
 import           Cardano.Slotting.Slot (WithOrigin(At, Origin), withOrigin)
 import           Control.Arrow (second)
@@ -49,12 +50,12 @@ schedulePointToBlock (ScheduleBlockPoint b) = b
 -- and block points are sent eventually, but the points are delayed according
 -- to these parameters.
 data PeerScheduleParams = PeerScheduleParams
-  { pspSlotLength :: DiffTime
+  { pspSlotLength          :: DiffTime
     -- | Each of these pairs specifies a range of delays for a point. The
     -- actual delay is chosen uniformly at random from the range.
     --
     -- For tip points, the delay is relative to the slot of the tip point.
-  , pspTipDelayInterval :: (DiffTime, DiffTime)
+  , pspTipDelayInterval    :: (DiffTime, DiffTime)
     -- | For header points, the delay is relative to the previous header point
     -- or the tip point that advertises the existence of the header (whichever
     -- happened most recently).
@@ -62,7 +63,7 @@ data PeerScheduleParams = PeerScheduleParams
     -- | For block points, the delay is relative to the previous block point or
     -- the header point that advertises the existence of the block (whichever
     -- happened most recently).
-  , pspBlockDelayInterval :: (DiffTime, DiffTime)
+  , pspBlockDelayInterval  :: (DiffTime, DiffTime)
   }
   deriving (Show)
 

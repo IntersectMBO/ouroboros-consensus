@@ -12,12 +12,12 @@
 -- generated with 'headerPointSchedule' as well. See the implementation of
 -- 'Test.Consensus.PointSchedule.Random.singleJumpPeerSchedule' for an example.
 --
-module Test.Consensus.PointSchedule.SinglePeer.Indices(
-    singleJumpTipPoints
-  , rollbacksTipPoints
-  , tipPointSchedule
+module Test.Consensus.PointSchedule.SinglePeer.Indices (
+    HeaderPointSchedule (..)
   , headerPointSchedule
-  , HeaderPointSchedule (..)
+  , rollbacksTipPoints
+  , singleJumpTipPoints
+  , tipPointSchedule
   ) where
 
 import           Control.Monad (forM, replicateM)
@@ -189,7 +189,7 @@ uniformRMDiffTime (a, b) g =
       R.uniformRM (diffTimeToPicoseconds a, diffTimeToPicoseconds b) g
 
 data HeaderPointSchedule = HeaderPointSchedule {
-    hpsTrunk :: [(DiffTime, Int)] -- ^ header points up to the intersection
+    hpsTrunk  :: [(DiffTime, Int)] -- ^ header points up to the intersection
   , hpsBranch :: [(DiffTime, Int)] -- ^ header points after the intersection
                                    -- indices are relative to the branch
   }
