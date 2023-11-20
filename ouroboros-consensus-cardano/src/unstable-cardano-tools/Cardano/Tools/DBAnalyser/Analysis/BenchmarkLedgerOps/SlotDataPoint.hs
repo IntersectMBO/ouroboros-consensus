@@ -1,20 +1,28 @@
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint (
-    SlotDataPoint (..)
+    BlockStats (BlockStats, unBlockStats)
+  , SlotDataPoint (..)
   , showData
   , showHeaders
     -- * Write data points to file
   , DataPointOutputFormat (CSV, JSON)
+  , outputFormatFromFileExtension
   , writeDataPoint
   , writeHeader
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
+import           Data.Aeson as Aeson
+import qualified Data.Aeson.Encoding as Aeson.Encoding
+import qualified Data.ByteString.Lazy as BSL
 import           Data.Int (Int64)
 import qualified Data.Text.IO as Text.IO
 import           Data.Word (Word32, Word64)
+import           GHC.Generics (Generic)
+import           System.FilePath.Posix (takeExtension)
 import qualified System.IO as IO
 import qualified Text.Builder as Builder
 import           Text.Builder (Builder, decimal, intercalate)
@@ -55,8 +63,20 @@ data SlotDataPoint =
       , mut_blockTick   :: !Int64
       , mut_blockApply  :: !Int64
       -- | Free-form information about the block.
-      , blockStats      :: ![Builder]
-      }
+      , blockStats      :: !BlockStats
+      } deriving (Generic, Show)
+
+newtype BlockStats = BlockStats { unBlockStats :: [Builder] }
+  deriving (Generic, Show)
+
+instance ToJSON BlockStats where
+  -- We convert the blocks stats to a 'Vector Text'.
+  toJSON = toJSON . (fmap Builder.run) . unBlockStats
+
+  toEncoding = Aeson.Encoding.list (Aeson.Encoding.text . Builder.run) . unBlockStats
+
+instance ToJSON SlotDataPoint where
+  toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 
 -- | Return the headers that correspond to the fields of 'SlotDataPoint'.
 --
@@ -85,7 +105,7 @@ showHeadersAndData =
     , ("mut_headerApply"       , decimal . mut_headerApply)
     , ("mut_blockTick"         , decimal . mut_blockTick)
     , ("mut_blockApply"        , decimal . mut_blockApply)
-    , ("...era-specific stats" , Builder.intercalate separator . blockStats)
+    , ("...era-specific stats" , Builder.intercalate separator . unBlockStats . blockStats)
     ]
 
 {-------------------------------------------------------------------------------
@@ -109,6 +129,7 @@ writeHeader outFileHandle CSV  =
    $ showHeaders separator
 writeHeader _             JSON = pure ()
 
+-- | NOTE: This function is not thread safe.
 writeDataPoint ::
      IO.Handle
   -> DataPointOutputFormat
@@ -118,4 +139,5 @@ writeDataPoint outFileHandle CSV  slotDataPoint =
       Text.IO.hPutStrLn outFileHandle
     $ Builder.run
     $ showData slotDataPoint separator
-writeDataPoint outFileHandle JSON slotDataPoint = undefined
+writeDataPoint outFileHandle JSON slotDataPoint =
+  BSL.hPut outFileHandle $ Aeson.encode slotDataPoint
