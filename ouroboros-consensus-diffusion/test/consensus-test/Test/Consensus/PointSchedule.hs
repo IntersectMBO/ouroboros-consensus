@@ -43,6 +43,7 @@ module Test.Consensus.PointSchedule (
   , balanced
   , banalStates
   , defaultPointScheduleConfig
+  , fromSchedulePoints
   , genSchedule
   , mkPeers
   , onlyHonestWithMintingPointSchedule
@@ -52,23 +53,31 @@ module Test.Consensus.PointSchedule (
 
 import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)
-import           Data.List (sortOn, transpose)
+import           Data.List (mapAccumL, scanl', sortOn, transpose)
 import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe, listToMaybe)
 import           Data.String (IsString (fromString))
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
-import           Ouroboros.Consensus.Block.Abstract (HasHeader, getHeader)
+import           Ouroboros.Consensus.Block.Abstract (HasHeader,
+                     WithOrigin (Origin), getHeader)
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam)
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)), anchorFromBlock)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (SlotNo, Tip (Tip, TipGenesis),
                      blockNo, blockSlot, getTipSlotNo, tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
+import           System.Random.Stateful (StatefulGen)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
+import           Test.Consensus.PointSchedule.SinglePeer
+                     (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
+                     SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
+                     peerScheduleFromTipPoints)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.TestBlock (Header (TestHeader), TestBlock)
 
@@ -87,29 +96,35 @@ newtype TipPoint =
   deriving (Eq, Show)
 
 instance Condense TipPoint where
-  condense (TipPoint TipGenesis) = "genesis"
+  condense (TipPoint TipGenesis) = "G"
   condense (TipPoint (Tip slot _ bno)) =
       "B:" <> condense bno <> ",S:" <> condense slot
 
 -- | The latest header that should be sent to the client by the ChainSync server
 -- in a tick.
 newtype HeaderPoint =
-  HeaderPoint (Header TestBlock)
+  HeaderPoint (WithOrigin (Header TestBlock))
   deriving (Eq, Show)
 
 instance Condense HeaderPoint where
-  condense (HeaderPoint (TestHeader b)) =
-    "B:" <> condense (blockNo b) <> ",S:" <> condense (blockSlot b)
+  condense = \case
+    HeaderPoint (At (TestHeader b)) ->
+      "B:" <> condense (blockNo b) <> ",S:" <> condense (blockSlot b)
+    HeaderPoint Origin ->
+      "G"
 
 -- | The latest block that should be sent to the client by the BlockFetch server
 -- in a tick.
 newtype BlockPoint =
-  BlockPoint TestBlock
+  BlockPoint (WithOrigin TestBlock)
   deriving (Eq, Show)
 
 instance Condense BlockPoint where
-  condense (BlockPoint b) =
-    "B:" <> condense (blockNo b) <> ",S:" <> condense (blockSlot b)
+  condense = \case
+    BlockPoint (At b) ->
+      "B:" <> condense (blockNo b) <> ",S:" <> condense (blockSlot b)
+    BlockPoint Origin ->
+      "G"
 
 -- | The set of parameters that define the state that a peer should reach when it receives control
 -- by the scheduler in a single tick.
@@ -208,14 +223,20 @@ instance Functor Peers where
 
 -- | A tick is an entry in a 'PointSchedule', containing the peer that is
 -- going to change state.
-newtype Tick =
+data Tick =
   Tick {
-    active :: Peer NodeState
+    active   :: Peer NodeState,
+    -- | The duration of this tick, for the scheduler to pass to @threadDelay@.
+    duration :: DiffTime
   }
   deriving (Eq, Show)
 
 instance Condense Tick where
-  condense Tick {active} = condense active
+  condense Tick {active, duration} = condense active ++ " | " ++ show duration
+
+tickDefault :: PointScheduleConfig -> Peer NodeState -> Tick
+tickDefault PointScheduleConfig {pscTickDuration} active =
+  Tick {active, duration = pscTickDuration}
 
 -- | A set of peers with only one honest peer carrying the given value.
 peersOnlyHonest :: a -> Peers a
@@ -312,6 +333,50 @@ mkPeers h as =
 pointSchedule :: [Tick] -> NonEmpty PeerId -> Maybe PointSchedule
 pointSchedule ticks nePeerIds = (`PointSchedule` nePeerIds) <$> nonEmpty ticks
 
+-- | Convert a @SinglePeer@ schedule to a 'NodeState' schedule.
+--
+-- Accumulates the new points in each tick into the previous state, starting with a set of all
+-- 'Origin' points.
+--
+-- Also shifts all tick start times so that the first tip point is announced at the very beginning
+-- of the test, keeping the relative delays of the schedule intact.
+-- This is a preliminary measure to make the long range attack test work, since that relies on the
+-- honest node sending headers later than the adversary, which is not possible if the adversary's
+-- first tip point is delayed by 20 or more seconds due to being in a later slot.
+peerStates :: PeerId -> [(DiffTime, SchedulePoint)] -> [(DiffTime, Peer NodeState)]
+peerStates peerId pts =
+  zip (shiftTime <$> times) (Peer peerId . NodeOnline <$> scanl' modPoint zero points)
+  where
+    shiftTime t = t - firstTipOffset
+
+    modPoint z = \case
+      ScheduleTipPoint tip -> z {tip = TipPoint (tipFromHeader tip)}
+      ScheduleHeaderPoint h -> z {header = HeaderPoint (At (getHeader h))}
+      ScheduleBlockPoint b -> z {block = BlockPoint (At b)}
+
+    zero = AdvertisedPoints {
+      tip = TipPoint TipGenesis,
+      header = HeaderPoint Origin,
+      block = BlockPoint Origin
+    }
+
+    firstTipOffset = fromMaybe 0 (listToMaybe times)
+
+    (times, points) = unzip pts
+
+-- | Convert a set of @SinglePeer@ schedules to a 'PointSchedule'.
+--
+-- Call 'peerStates' for each peer, then merge all of them sorted by tick start times, then convert
+-- start times to relative tick durations.
+fromSchedulePoints :: Map PeerId [(DiffTime, SchedulePoint)] -> Maybe PointSchedule
+fromSchedulePoints peers = do
+  peerIds <- nonEmpty (Map.keys peers)
+  pointSchedule (zipWith Tick states durations) peerIds
+  where
+    durations = drop 1 (snd (mapAccumL (\ prev start -> (start, start - prev)) 0 (drop 1 starts))) ++ [0]
+
+    (starts, states) = unzip $ foldr (mergeOn fst) [] [peerStates p sch | (p, sch) <- Map.toList peers]
+
 ----------------------------------------------------------------------------------------------------
 -- Folding functions
 ----------------------------------------------------------------------------------------------------
@@ -340,9 +405,9 @@ banalStates frag@(_ :> tipBlock) =
   where
     spin z (Empty _) = z
     spin z (pre :> block) =
-      let header = HeaderPoint $ getHeader block
+      let header = HeaderPoint $ At (getHeader block)
        in spin
-            (NodeOnline AdvertisedPoints {tip, header, block = BlockPoint block} : z)
+            (NodeOnline AdvertisedPoints {tip, header, block = BlockPoint (At block)} : z)
             pre
     tip = TipPoint $ tipFromHeader tipBlock
 
@@ -354,10 +419,11 @@ banalStates frag@(_ :> tipBlock) =
 -- REVIEW: I see the point of this point schedule as an exercice to manipulate
 -- them but I otherwise find it rather useless.
 balanced ::
+  PointScheduleConfig ->
   Peers [NodeState] ->
   Maybe PointSchedule
-balanced states =
-  pointSchedule (map Tick activeSeq) (getPeerIds states)
+balanced config states =
+  pointSchedule (map (tickDefault config) activeSeq) (getPeerIds states)
   where
     -- Sequence containing the first state of all the nodes in order, then the
     -- second in order, etc.
@@ -366,10 +432,11 @@ balanced states =
 -- | Generate a point schedule that serves a single header in each tick for each
 -- peer in turn. See 'blockTreePeers' for peers generation.
 banalPointSchedule ::
+  PointScheduleConfig ->
   BlockTree TestBlock ->
   Maybe PointSchedule
-banalPointSchedule blockTree =
-  balanced (banalStates <$> blockTreePeers blockTree)
+banalPointSchedule config blockTree =
+  balanced config (banalStates <$> blockTreePeers blockTree)
 
 -- | Generate a point schedule for the scenario in which adversaries send blocks much faster
 -- than the honest node.
@@ -398,11 +465,12 @@ frequencyPointSchedule ::
   -- B(1/10) B(2/10) B(3/10) B(4/10) A(1/2) B(5/10) B(6/10) B(7/10) B(8/10) B(9/10) H(1/1) (2/2) B(10/10)
   --
   -- With the order of equal values determined by the @PeerId@s.
+  PointScheduleConfig ->
   Peers Int ->
   BlockTree TestBlock ->
   Maybe PointSchedule
-frequencyPointSchedule freqs blockTree =
-  pointSchedule (map (Tick . fmap snd) (sortOn (fst . value) catted)) (getPeerIds freqs)
+frequencyPointSchedule config freqs blockTree =
+  pointSchedule (map (tickDefault config . fmap snd) (sortOn (fst . value) catted)) (getPeerIds freqs)
   where
     catted = sequenceA =<< toList (peersList intvals)
 
@@ -422,24 +490,32 @@ frequencyPointSchedule freqs blockTree =
 
 -- | Generate a point schedule that consist of a single tick in which the honest peer advertises
 -- its entire chain immediately.
-onlyHonestPointSchedule :: BlockTree TestBlock -> Maybe PointSchedule
-onlyHonestPointSchedule BlockTree {btTrunk = Empty _} = Nothing
-onlyHonestPointSchedule BlockTree {btTrunk = _ :> tipBlock} =
+onlyHonestPointSchedule ::
+  PointScheduleConfig ->
+  BlockTree TestBlock ->
+  Maybe PointSchedule
+onlyHonestPointSchedule _ BlockTree {btTrunk = Empty _} = Nothing
+onlyHonestPointSchedule config BlockTree {btTrunk = _ :> tipBlock} =
   Just $ PointSchedule (pure tick) (HonestPeer :| [])
   where
-    tick = Tick {active = honestPeerState}
+    tick = tickDefault config honestPeerState
     honestPeerState = Peer HonestPeer (NodeOnline points)
     points = AdvertisedPoints tipPoint headerPoint blockPoint
-    tipPoint = TipPoint $ tipFromHeader tipBlock
-    headerPoint = HeaderPoint $ getHeader tipBlock
-    blockPoint = BlockPoint tipBlock
+    tipPoint = TipPoint (tipFromHeader tipBlock)
+    headerPoint = HeaderPoint $ At (getHeader tipBlock)
+    blockPoint = BlockPoint (At tipBlock)
 
 -- | Generate a point schedule that consist of a single tick in which the honest peer advertises
 -- its entire chain as it becomes available.
 --
 -- No idea what the point of this is.
-onlyHonestWithMintingPointSchedule :: SlotNo -> Int -> TestFrag -> Maybe PointSchedule
-onlyHonestWithMintingPointSchedule initialSlotNo _ticksPerSlot fullFragment@(_ :> finalBlock) =
+onlyHonestWithMintingPointSchedule ::
+  PointScheduleConfig ->
+  SlotNo ->
+  Int ->
+  TestFrag ->
+  Maybe PointSchedule
+onlyHonestWithMintingPointSchedule config initialSlotNo _ticksPerSlot fullFragment@(_ :> finalBlock) =
   pointSchedule (map tickAtSlotNo [initialSlotNo .. finalSlotNo]) (HonestPeer :| [])
   where
     -- If we hold a block, we are guaranteed that the slot number cannot be
@@ -454,8 +530,8 @@ onlyHonestWithMintingPointSchedule initialSlotNo _ticksPerSlot fullFragment@(_ :
         Empty _ -> error "onlyHonestWithMintingPointSchedule: there should be a block at that slot"
         (_ :> tipBlock) ->
           let tipPoint = TipPoint $ tipFromHeader tipBlock
-              headerPoint = HeaderPoint $ getHeader tipBlock
-              blockPoint = BlockPoint tipBlock
+              headerPoint = HeaderPoint $ At (getHeader tipBlock)
+              blockPoint = BlockPoint (At tipBlock)
            in AdvertisedPoints tipPoint headerPoint blockPoint
 
     tickAtSlotNo :: SlotNo -> Tick
@@ -465,10 +541,8 @@ onlyHonestWithMintingPointSchedule initialSlotNo _ticksPerSlot fullFragment@(_ :
               NodeOnline $
               advertisedPointsAtSlotNo slotNo
        in
-          Tick {
-            active = honestPeerState
-          }
-onlyHonestWithMintingPointSchedule _initialSlotNo _ticksPerSlot _fullFragment =
+          tickDefault config honestPeerState
+onlyHonestWithMintingPointSchedule _ _initialSlotNo _ticksPerSlot _fullFragment =
     error "unexpected alternative"
 
 -- onlyHonestWithMintingPointSchedule' :: SlotNo -> Int -> TestFrag -> PointSchedule
@@ -498,6 +572,28 @@ splitFragmentAtSlotNo slotNo (fragment :> block) =
 splitFragmentAtSlotNo _ (Empty anchor) =
   (Empty anchor, Empty anchor)
 
+-- | Produce a schedule similar to @Frequencies (Peers 1 [10])@, using the new @SinglePeer@
+-- generator.
+--
+-- We hardcode the two schedules to use the latest block as the initial tip point.
+-- The honest peer gets a substantially larger (and disconnected) delay interval to ensure
+-- that k+1 blocks are sent fast enough to trigger selection of a fork.
+newLongRangeAttack ::
+  StatefulGen g m =>
+  g ->
+  BlockTree TestBlock ->
+  m (Maybe PointSchedule)
+newLongRangeAttack g BlockTree {btTrunk, btBranches = [branch]} = do
+  honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
+  adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
+  pure (fromSchedulePoints (Map.fromList [(HonestPeer, honest), ("adversary 1", adv)]))
+  where
+    honParams = defaultPeerScheduleParams {pspHeaderDelayInterval = (0.3, 0.4)}
+    advParams = defaultPeerScheduleParams {pspTipDelayInterval = (0, 0.1)}
+
+newLongRangeAttack _ _ =
+  pure Nothing
+
 -- | Encodes the different scheduling styles for use with quickcheck generators.
 data ScheduleType =
   Frequencies (Peers Int)
@@ -505,6 +601,8 @@ data ScheduleType =
   Banal
   |
   OnlyHonest
+  |
+  NewLRA
   deriving (Eq, Show)
 
 newtype GenesisWindow = GenesisWindow { getGenesisWindow :: Word64 }
@@ -521,8 +619,15 @@ data GenesisTest = GenesisTest {
 -- | Create a point schedule from the given block tree.
 --
 -- The first argument determines the scheduling style.
-genSchedule :: PointScheduleConfig -> ScheduleType -> BlockTree TestBlock -> Maybe PointSchedule
-genSchedule _ = \case
-  Frequencies fs -> frequencyPointSchedule fs
-  Banal -> banalPointSchedule
-  OnlyHonest -> onlyHonestPointSchedule
+genSchedule ::
+  StatefulGen g m =>
+  g ->
+  PointScheduleConfig ->
+  ScheduleType ->
+  BlockTree TestBlock ->
+  m (Maybe PointSchedule)
+genSchedule g config = \case
+  Frequencies fs -> pure . frequencyPointSchedule config fs
+  Banal -> pure . banalPointSchedule config
+  OnlyHonest -> pure . onlyHonestPointSchedule config
+  NewLRA -> newLongRangeAttack g
