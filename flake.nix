@@ -59,8 +59,8 @@
         hydraJobs = import ./nix/ci.nix pkgs;
       in
       {
-        devShells = {
-          default = hydraJobs.native.haskell92.devShell;
+        devShells = rec {
+          default = ghc96;
           ghc96 = hydraJobs.native.haskell96.devShell;
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];
@@ -69,7 +69,7 @@
         inherit hydraJobs;
         legacyPackages = pkgs;
         packages =
-          hydraJobs.native.haskell92.exesNoAsserts.ouroboros-consensus-cardano;
+          hydraJobs.native.haskell96.exesNoAsserts.ouroboros-consensus-cardano;
       }
     );
 }

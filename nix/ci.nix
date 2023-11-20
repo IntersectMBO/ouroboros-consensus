@@ -33,7 +33,7 @@ let
 
   jobs = lib.filterAttrsRecursive (n: v: n != "recurseForDerivations") ({
     native = {
-      haskell92 = mkHaskellJobsFor pkgs.hsPkgs;
+      haskell96 = mkHaskellJobsFor pkgs.hsPkgs;
     } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
       formatting = import ./formatting.nix pkgs;
       inherit (pkgs) consensus-pdfs;
@@ -42,15 +42,10 @@ let
       haskell810 = builtins.removeAttrs
         (mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc810)
         [ "checks" "devShell" ];
-
-      # ensure we can already build with 9.6, but do not yet run tests to reduce CI load
-      haskell96 = builtins.removeAttrs
-        (mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc96)
-        [ "checks" ];
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
-      haskell92 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.mingwW64;
+      haskell96 = mkHaskellJobsFor pkgs.hsPkgs.projectCross.mingwW64;
     };
   });
 
