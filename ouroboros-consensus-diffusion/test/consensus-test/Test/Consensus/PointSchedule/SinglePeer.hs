@@ -8,6 +8,7 @@ module Test.Consensus.PointSchedule.SinglePeer (
   , schedulePointToBlock
   , singleJumpPeerSchedule
     -- * Exposed for testing
+  , mergeOn
   , zipMany
   ) where
 

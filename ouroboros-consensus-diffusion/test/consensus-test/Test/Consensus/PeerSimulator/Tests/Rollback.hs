@@ -68,7 +68,7 @@ prop_rollback wantRollback = do
           branch = btbSuffix $ head $ btBranches blockTree
           states = banalStates trunk ++ banalStates branch
           peers = peersOnlyHonest states
-          pointSchedule = balanced peers
+          pointSchedule = balanced defaultPointScheduleConfig peers
        in fromJust pointSchedule
 
     -- | Whether it is possible to roll back from the trunk after having served
