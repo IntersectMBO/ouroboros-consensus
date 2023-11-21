@@ -218,15 +218,18 @@ intersectionsAsBlockIndices trunk0 branches isTrunks =
     findIntersection acc@(_, (_ AF.:< _), _) IsTrunk =
       (acc, Nothing)
     findIntersection (n, trunk@(b AF.:< rest), anchors@(anchor:as)) IsBranch =
-      if tbSlot b == anchor
-        then ((n, trunk, as), Just n)
-        else findIntersection (n+1, rest, anchors) IsBranch
+      if anchor == (-1) then
+        ((n, trunk, as), Just (-1))
+      else if tbSlot b == anchor then
+        ((n, trunk, as), Just n)
+      else
+        findIntersection (n+1, rest, anchors) IsBranch
     findIntersection _ _ = error "findIntersection: empty fragment"
 
     fragmentAnchor :: AF.AnchoredFragment TestBlock -> SlotNo
     fragmentAnchor f = case AF.anchorToSlotNo (AF.anchor f) of
       At s -> s
-      Origin -> error "fragmentAnchor: origin anchor"
+      Origin -> -1
 
 -- | Get the blocks at the given offsets from the given chain.
 --
