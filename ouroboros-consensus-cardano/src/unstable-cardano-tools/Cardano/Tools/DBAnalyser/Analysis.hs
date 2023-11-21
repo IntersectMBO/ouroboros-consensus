@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE BlockArguments      #-}
+{-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
@@ -25,11 +26,18 @@ import           Codec.CBOR.Encoding (Encoding)
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
+import           Data.Aeson (FromJSON, ToJSON)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encoding as Aeson.Encoding
+import qualified Data.ByteString.Lazy as BSL
 import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
-import           Data.Word (Word16, Word64)
+import qualified Data.Version
+import           Data.Word (Word16, Word32, Word64)
 import qualified Debug.Trace as Debug
+import           GHC.Generics (Generic)
+import qualified GHC.RTS.Flags as RTS
 import qualified GHC.Stats as GC
 import           NoThunks.Class (noThunks)
 import           Ouroboros.Consensus.Block
@@ -66,6 +74,7 @@ import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes,
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (SomeHasFS (..))
+import qualified System.Info
 import qualified System.IO as IO
 
 {-------------------------------------------------------------------------------
@@ -499,6 +508,20 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
                      pure DP.CSV
 
     withFile mOutfile $ \outFileHandle -> do
+      rtsFlags <- RTS.getRTSFlags
+      when (outFormat == DP.JSON) $
+        let metadata = BenchmarkLedgerOpsMetadata {
+                rtsGCMaxStkSize             = RTS.maxStkSize     $ RTS.gcFlags rtsFlags
+              , rtsGCMaxHeapSize            = RTS.maxHeapSize    $ RTS.gcFlags rtsFlags
+              , rtsConcurrentCtxtSwitchTime = RTS.ctxtSwitchTime $ RTS.concurrentFlags rtsFlags
+              , rtsParNCapabilities         = RTS.nCapabilities  $ RTS.parFlags rtsFlags
+              , compilerVersion             = Data.Version.showVersion System.Info.compilerVersion
+              , compilerName                = System.Info.compilerName
+              , operatingSystem             = System.Info.os
+              , machineArchitecture         = System.Info.arch
+              }
+        in BSL.hPut outFileHandle (Aeson.encode metadata)
+
       DP.writeHeader outFileHandle outFormat
 
       void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle outFormat)
@@ -612,6 +635,22 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
             case runExcept (lrResult <$> applyBlockLedgerResult lcfg blk tickedLedgerSt) of
               Left err -> fail $ "benchmark doesn't support invalid blocks: " <> show rp <> " " <> show err
               Right x  -> pure x
+
+data BenchmarkLedgerOpsMetadata = BenchmarkLedgerOpsMetadata {
+    rtsGCMaxStkSize             :: Word32
+  , rtsGCMaxHeapSize            :: Word32
+  , rtsConcurrentCtxtSwitchTime :: Word64
+  , rtsParNCapabilities         :: Word32
+  , compilerVersion             :: String
+  , compilerName                :: String
+  , operatingSystem             :: String
+  , machineArchitecture         :: String
+  } deriving (Generic, Show)
+
+instance ToJSON BenchmarkLedgerOpsMetadata where
+  toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
+
+instance FromJSON BenchmarkLedgerOpsMetadata
 
 {-------------------------------------------------------------------------------
   Analysis: reforge the blocks, via the mempool
