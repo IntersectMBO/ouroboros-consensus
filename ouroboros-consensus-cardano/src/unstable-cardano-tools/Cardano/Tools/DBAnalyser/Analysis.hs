@@ -25,8 +25,6 @@ import           Codec.CBOR.Encoding (Encoding)
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Lazy as BSL
 import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
@@ -69,7 +67,7 @@ import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (SomeHasFS (..))
 import qualified System.IO as IO
-import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata as BenchmarkLedgerOps.Metadata
+import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -495,18 +493,11 @@ benchmarkLedgerOps ::
   => Maybe FilePath -> Analysis blk
 benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} = do
     -- We default to CSV when the no output file is provided (and thus the results are output to stdout).
-    outFormat <- case maybe (pure DP.CSV) DP.outputFormatFromFileExtension mOutfile of
-                   Right outFormat -> pure outFormat
-                   Left  ext       -> do
-                     IO.hPutStr IO.stderr $ "Unsupported extension '" <> ext <> "'. Defaulting to CSV."
-                     pure DP.CSV
+    outFormat <- F.getOutputFormat mOutfile
 
     withFile mOutfile $ \outFileHandle -> do
-      when (outFormat == DP.JSON) $ do
-        metadata <- BenchmarkLedgerOps.Metadata.getMetadata
-        BSL.hPut outFileHandle (Aeson.encode metadata)
-
-      DP.writeHeader outFileHandle outFormat
+      F.writeMetadata outFileHandle outFormat
+      F.writeHeader   outFileHandle outFormat
 
       void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle outFormat)
       pure Nothing
@@ -520,7 +511,7 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
 
     process ::
          IO.Handle
-      -> DP.DataPointOutputFormat
+      -> F.OutputFormat
       -> ExtLedgerState blk
       -> blk
       -> IO (ExtLedgerState blk)
@@ -569,7 +560,7 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
             Slotting.Origin        -> i
             Slotting.At (SlotNo j) -> i - j
 
-        DP.writeDataPoint outFileHandle outFormat slotDataPoint
+        F.writeDataPoint outFileHandle outFormat slotDataPoint
 
         pure $ ExtLedgerState ldgrSt' hdrSt'
       where

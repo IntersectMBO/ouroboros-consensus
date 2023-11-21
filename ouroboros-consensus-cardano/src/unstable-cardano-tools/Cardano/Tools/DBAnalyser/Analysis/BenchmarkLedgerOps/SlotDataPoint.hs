@@ -5,29 +5,18 @@
 module Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint (
     BlockStats (BlockStats, unBlockStats)
   , SlotDataPoint (..)
-  , showData
-  , showHeaders
-    -- * Write data points to file
-  , DataPointOutputFormat (CSV, JSON)
-  , outputFormatFromFileExtension
-  , writeDataPoint
-  , writeHeader
   ) where
 
-import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
+import           Cardano.Slotting.Slot (SlotNo)
 import           Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as Aeson.Encoding
 import           Data.Aeson.Types as Aeson.Types
-import qualified Data.ByteString.Lazy as BSL
 import           Data.Int (Int64)
-import qualified Data.Text.IO as Text.IO
 import           Data.Word (Word32, Word64)
 import           GHC.Exts (toList)
 import           GHC.Generics (Generic)
-import           System.FilePath.Posix (takeExtension)
-import qualified System.IO as IO
 import qualified Text.Builder as Builder
-import           Text.Builder (Builder, decimal, intercalate)
+import           Text.Builder (Builder)
 
 -- | Information about the time spent processing the block corresponding to
 -- 'slot', divided into the five major operations:
@@ -91,77 +80,3 @@ instance ToJSON SlotDataPoint where
   toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
 
 instance FromJSON SlotDataPoint
-
--- | Return the headers that correspond to the fields of 'SlotDataPoint'.
---
--- The position of each header matches the position in which the corresponding
--- field value is returned in 'showData'. Eg, if show headers returns:
---
--- > "slot slotGap totalTime" ...
---
--- then the third value returned by 'showData' will correspond to 'totalTime'.
-showHeaders :: Builder -> Builder
-showHeaders sep = intercalate sep $ fmap fst           showHeadersAndData
-
-showData :: SlotDataPoint -> Builder -> Builder
-showData dp sep = intercalate sep $ fmap (($ dp) . snd) showHeadersAndData
-
-showHeadersAndData :: [(Builder, SlotDataPoint -> Builder)]
-showHeadersAndData =
-    [ ("slot"                  , decimal . unSlotNo . slot)
-    , ("slotGap"               , decimal . slotGap)
-    , ("totalTime"             , decimal . totalTime)
-    , ("mut"                   , decimal . mut)
-    , ("gc"                    , decimal . gc)
-    , ("majGcCount"            , decimal . majGcCount)
-    , ("mut_forecast"          , decimal . mut_forecast)
-    , ("mut_headerTick"        , decimal . mut_headerTick)
-    , ("mut_headerApply"       , decimal . mut_headerApply)
-    , ("mut_blockTick"         , decimal . mut_blockTick)
-    , ("mut_blockApply"        , decimal . mut_blockApply)
-    , ("...era-specific stats" , Builder.intercalate separator . unBlockStats . blockStats)
-    ]
-
-{-------------------------------------------------------------------------------
-  Write data points to file
--------------------------------------------------------------------------------}
-
-data DataPointOutputFormat = CSV | JSON
-  deriving (Show, Eq)
-
--- | Return the output format that corresponds to the given extension,
--- or the extension as string if it does not match any of the
--- supported output formats (as defined in 'DataPointOutputFormat').
-outputFormatFromFileExtension :: FilePath -> Either String DataPointOutputFormat
-outputFormatFromFileExtension filePath =
-  case takeExtension filePath of
-    ".csv"  -> Right CSV
-    ".json" -> Right JSON
-    ext     -> Left  ext
-
--- | Separator used for CSV output.
-separator :: Builder
-separator = "\t"
-
--- | Write a header for the data points.
---
--- This is only needed for the CSV output format.
-writeHeader :: IO.Handle -> DataPointOutputFormat -> IO ()
-writeHeader outFileHandle CSV  =
-     Text.IO.hPutStrLn outFileHandle
-   $ Builder.run
-   $ showHeaders separator
-writeHeader _             JSON = pure ()
-
--- | NOTE: This function is not thread safe.
-writeDataPoint ::
-     IO.Handle
-  -> DataPointOutputFormat
-  -> SlotDataPoint
-  -> IO ()
-writeDataPoint outFileHandle CSV  slotDataPoint =
-      Text.IO.hPutStrLn outFileHandle
-    $ Builder.run
-    $ showData slotDataPoint separator
-writeDataPoint outFileHandle JSON slotDataPoint =
-  BSL.hPut outFileHandle $ Aeson.encode slotDataPoint
