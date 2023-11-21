@@ -12,14 +12,16 @@ let
       projectHsPkgsNoAsserts =
         haskellLib.selectProjectPackages hsPkgs.projectVariants.noAsserts.hsPkgs;
       noCross = buildSystem == hsPkgs.pkgs.stdenv.hostPlatform.system;
+      set-git-revs =
+        lib.mapAttrsRecursiveCond (as: !lib.isDerivation as) (pa: pkgs.set-git-rev);
     in
     {
       libs =
         haskellLib.collectComponents' "library" projectHsPkgs;
       exes =
-        haskellLib.collectComponents' "exes" projectHsPkgs;
+        set-git-revs (haskellLib.collectComponents' "exes" projectHsPkgs);
       exesNoAsserts =
-        haskellLib.collectComponents' "exes" projectHsPkgsNoAsserts;
+        set-git-revs (haskellLib.collectComponents' "exes" projectHsPkgsNoAsserts);
       benchmarks =
         haskellLib.collectComponents' "benchmarks" projectHsPkgs;
       tests =

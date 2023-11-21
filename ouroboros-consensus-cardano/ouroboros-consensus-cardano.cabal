@@ -457,6 +457,7 @@ library unstable-cardano-tools
     Cardano.Tools.DBSynthesizer.Types
     Cardano.Tools.DBTruncater.Run
     Cardano.Tools.DBTruncater.Types
+    Cardano.Tools.GitRev
     Cardano.Tools.ImmDBServer.Diffusion
     Cardano.Tools.ImmDBServer.MiniProtocols
 
@@ -483,6 +484,7 @@ library unstable-cardano-tools
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
+    , cardano-git-rev
     , cardano-ledger-allegra
     , cardano-ledger-alonzo
     , cardano-ledger-api
@@ -503,6 +505,7 @@ library unstable-cardano-tools
     , directory
     , filepath
     , fs-api                         ^>=0.2
+    , githash
     , microlens
     , mtl
     , network
@@ -535,6 +538,7 @@ executable db-analyser
     , optparse-applicative
     , ouroboros-consensus
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
+    , text
 
   other-modules:  DBAnalyser.Parsers
 

@@ -51,6 +51,7 @@
             inputs.iohkNix.overlays.crypto
             inputs.haskellNix.overlay
             inputs.iohkNix.overlays.haskell-nix-crypto
+            inputs.iohkNix.overlays.haskell-nix-extra
             (import ./nix/tools.nix inputs)
             (import ./nix/haskell.nix inputs)
             (import ./nix/pdfs.nix)

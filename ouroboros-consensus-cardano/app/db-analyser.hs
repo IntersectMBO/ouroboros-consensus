@@ -18,10 +18,12 @@ module Main (main) where
 import           Cardano.Crypto.Init (cryptoInit)
 import           Cardano.Tools.DBAnalyser.Run
 import           Cardano.Tools.DBAnalyser.Types
+import           Cardano.Tools.GitRev (gitRev)
 import           Control.Monad (void)
+import qualified Data.Text as T
 import           DBAnalyser.Parsers
-import           Options.Applicative (execParser, fullDesc, helper, info,
-                     progDesc, (<**>))
+import           Options.Applicative (execParser, footer, fullDesc, helper,
+                     info, progDesc, (<**>))
 
 
 main :: IO ()
@@ -39,4 +41,5 @@ getCmdLine = execParser opts
     opts = info (parseCmdLine <**> helper) (mconcat [
           fullDesc
         , progDesc "Simple framework used to analyse a Chain DB"
+        , footer $ "ouroboros-consensus commit: " <> T.unpack gitRev
         ])
