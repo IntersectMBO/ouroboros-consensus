@@ -230,8 +230,8 @@ intersectionsAsBlockIndices trunk0 branches isTrunks =
 
 -- | Get the blocks at the given offsets from the given chain.
 --
--- PRECONDITION: The offsets are in ascending order and do not exceed the length
--- of the chain.
+-- PRECONDITION: The offsets are in ascending order, there are no duplicates
+-- and do not exceed the length of the chain.
 --
 getBlocksFromSortedIndices :: [Int] -> AF.AnchoredFragment TestBlock -> [TestBlock]
 getBlocksFromSortedIndices ixs = snd . getBlocksWithResidue ixs
@@ -239,7 +239,7 @@ getBlocksFromSortedIndices ixs = snd . getBlocksWithResidue ixs
 getBlocksWithResidue
   :: [Int] -> AF.AnchoredFragment TestBlock -> (AF.AnchoredFragment TestBlock, [TestBlock])
 getBlocksWithResidue [] chain = (chain, [])
-getBlocksWithResidue (i0:ixs0) chain = go i0 ixs0 chain []
+getBlocksWithResidue ixs0 chain = go 0 ixs0 chain []
   where
     go
       :: Int
@@ -247,10 +247,12 @@ getBlocksWithResidue (i0:ixs0) chain = go i0 ixs0 chain []
       -> AF.AnchoredFragment TestBlock
       -> [TestBlock]
       -> (AF.AnchoredFragment TestBlock, [TestBlock])
-    go 0 ixs (x AF.:< s) acc = case ixs of
-      [] -> (s, reverse (x:acc))
-      i:ixss -> go i ixss s (x:acc)
-    go i ixs (_ AF.:< s) acc = go (i - 1) ixs s acc
+    go cur iixs@(i:ixs) (x AF.:< s) acc =
+      if cur == i then
+        go (cur + 1) ixs s (x:acc)
+      else
+        go (cur + 1) iixs s acc
+    go _ [] rest acc = (rest, reverse acc)
     go _  _  AF.Empty{} _ = error "offsets exceed chain length"
 
 -- | Merge two sorted lists.
