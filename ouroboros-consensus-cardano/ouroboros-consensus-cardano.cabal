@@ -446,6 +446,7 @@ library unstable-cardano-tools
     Cardano.Node.Types
     Cardano.Tools.DBAnalyser.Analysis
     Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
+    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata
     Cardano.Tools.DBAnalyser.Block.Byron
     Cardano.Tools.DBAnalyser.Block.Cardano
     Cardano.Tools.DBAnalyser.Block.Shelley
