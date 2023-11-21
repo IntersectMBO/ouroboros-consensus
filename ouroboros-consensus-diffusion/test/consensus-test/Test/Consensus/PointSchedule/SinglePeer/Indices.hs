@@ -304,10 +304,8 @@ headerPointSchedule g msgDelayInterval xs =
         go :: DiffTime -> Int -> [(DiffTime, Int)] -> m ((DiffTime, Int), [(DiffTime, Int)])
         go tLast nextHp acc = do
           t <- (+tLast) <$> uniformRMDiffTime msgDelayInterval g
-          if maybe False (t >) mtMax then
+          if maybe False (t >) mtMax || nextHp > tp then
             pure ((tLast, nextHp), reverse acc)
-          else if nextHp > tp then
-            pure ((tLast, nextHp + 1), reverse ((t, nextHp) : acc))
           else
             go t (nextHp+1) ((t, nextHp) : acc)
 
