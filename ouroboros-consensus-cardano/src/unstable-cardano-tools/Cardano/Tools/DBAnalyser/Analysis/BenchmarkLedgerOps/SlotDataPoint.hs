@@ -17,10 +17,12 @@ module Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint (
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
 import           Data.Aeson as Aeson
 import qualified Data.Aeson.Encoding as Aeson.Encoding
+import           Data.Aeson.Types as Aeson.Types
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Int (Int64)
 import qualified Data.Text.IO as Text.IO
 import           Data.Word (Word32, Word64)
+import           GHC.Exts (toList)
 import           GHC.Generics (Generic)
 import           System.FilePath.Posix (takeExtension)
 import qualified System.IO as IO
@@ -75,8 +77,17 @@ instance ToJSON BlockStats where
 
   toEncoding = Aeson.Encoding.list (Aeson.Encoding.text . Builder.run) . unBlockStats
 
+instance FromJSON BlockStats where
+  parseJSON (Aeson.Array v) =
+    BlockStats . toList . fmap Builder.text  <$> traverse parseJSON v
+  parseJSON value           =
+    Aeson.Types.prependFailure
+      "Parsing Block stats failed: " (Aeson.Types.typeMismatch "Array" value)
+
 instance ToJSON SlotDataPoint where
   toEncoding = Aeson.genericToEncoding Aeson.defaultOptions
+
+instance FromJSON SlotDataPoint
 
 -- | Return the headers that correspond to the fields of 'SlotDataPoint'.
 --
