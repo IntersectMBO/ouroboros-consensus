@@ -42,7 +42,7 @@ import qualified System.Random.Stateful as R
 -- > singleJumpTipPoints
 -- >   :: g
 -- >   -> {m:Int | m >= 0}
--- >   -> {n:Int | n >= m}
+-- >   -> {n:Int | n >= 0}
 -- >   -> m {v:[Int]
 -- >        | isSorted v &&
 -- >          all (m<=) v &&
@@ -51,6 +51,8 @@ import qualified System.Random.Stateful as R
 -- >        }
 --
 singleJumpTipPoints :: R.StatefulGen g m => g -> Int -> Int -> m [Int]
+singleJumpTipPoints _g m n
+    | n < m = pure []
 singleJumpTipPoints g m n = do
     jump <- R.uniformRM (m, n) g
     pure [jump..n]
