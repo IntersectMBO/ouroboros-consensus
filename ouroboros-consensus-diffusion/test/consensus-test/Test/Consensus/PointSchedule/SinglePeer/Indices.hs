@@ -129,25 +129,35 @@ rollbacksTipPoints g k = mapM walkBranch
 --
 tipPointSchedule
   :: forall g m. R.StatefulGen g m => g -> DiffTime -> (DiffTime, DiffTime) -> [SlotNo] -> m [DiffTime]
+tipPointSchedule _g slotLength (a, b) _slots
+    | slotLength <= b = error "tipPointSchedule: slotLength <= maximum delay"
+    | b < a = error "tipPointSchedule: empty delay interval"
 tipPointSchedule g slotLength msgDelayInterval slots = do
     let -- pairs of times corresponding to the start and end of each interval
         -- between tip points
-        timePairs = zip slots $ tail slots ++ [last slots]
+        slotTimes = map toDiffTime slots
+        timePairs = zip slotTimes $ tail slotTimes ++ [last slotTimes + 1]
     go timePairs
   where
-    go :: [(SlotNo, SlotNo)] -> m [DiffTime]
+    go :: [(DiffTime, DiffTime)] -> m [DiffTime]
     go [] = pure []
     go xs = do
       -- While the slots are increasing, assign a time to each point
       -- by choosing a random time in the delay interval after the
       -- slot start
-      let (pointSeq, newBranch) = span (\(a, b) -> a <= b) xs
+      let (pointSeq, newBranch) = span (\(a, b) -> a < b) xs
       times <- forM pointSeq $ \(s, _) -> do
                  delay <- uniformRMDiffTime msgDelayInterval g
-                 pure $ toDiffTime s + delay
+                 pure $ s + delay
+      (times', xss) <- case newBranch of
+        [] -> pure ([], [])
+        ((seqLast, _) : branches) -> do
+          delay <- uniformRMDiffTime msgDelayInterval g
+          let lastTime = seqLast + delay
+          (times', xss) <- handleDelayedTipPoints lastTime branches
+          pure (lastTime : times', xss)
       -- When the slots are not increasing, we must be doing a rollback.
       -- We might have tip points in past slots.
-      (times', xss) <- handleDelayedTipPoints newBranch
       times'' <- go xss
       pure $ times ++ times' ++ times''
 
@@ -156,22 +166,21 @@ tipPointSchedule g slotLength msgDelayInterval slots = do
     toDiffTime (SlotNo s) = fromIntegral s * slotLength
 
     -- | Assign times to tip points in past slots. A past slots is
-    -- any earlier slot than the first slot in the list.
+    -- any earlier slot than the first parameter.
     --
     -- Yields the assigned times and the remaining tip points which
     -- aren't in the past.
-    handleDelayedTipPoints :: [(SlotNo, SlotNo)] -> m ([DiffTime], [(SlotNo, SlotNo)])
-    handleDelayedTipPoints [] = pure ([], [])
-    handleDelayedTipPoints ((seqLast, _b) : xss) = do
-      let (pointSeq, newBranch) = span (\(a, _) -> a < seqLast) xss
+    handleDelayedTipPoints :: DiffTime -> [(DiffTime, DiffTime)] -> m ([DiffTime], [(DiffTime, DiffTime)])
+    handleDelayedTipPoints lastTime xss = do
+      let (pointSeq, newBranch) = span (\(a, _) -> a + fst msgDelayInterval <= lastTime) xss
           nseq = length pointSeq
           -- The first point in xss that is not in the past
           firstLater = case newBranch of
             -- If there is no later point, pick an arbitrary later time interval
             -- to sample from
-            [] -> toDiffTime (seqLast + toEnum nseq)
-            ((a, _) : _) -> toDiffTime a
-      times <- replicateM nseq (uniformRMDiffTime (toDiffTime seqLast, firstLater) g)
+            [] -> lastTime + toDiffTime (toEnum nseq)
+            ((a, _) : _) -> a + fst msgDelayInterval
+      times <- replicateM nseq (uniformRMDiffTime (lastTime, firstLater) g)
       pure (sort times, newBranch)
 
 uniformRMDiffTime :: R.StatefulGen g m => (DiffTime, DiffTime) -> g -> m DiffTime
