@@ -6,6 +6,7 @@ import           Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
 import           Ouroboros.Consensus.Cardano.Block
+import           Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as SlotDataPoint
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Util.TestEnv
@@ -96,6 +97,7 @@ tests :: TestTree
 tests =
     testGroup "cardano-tools"
       [ testCaseSteps "synthesize and analyse: blockCount\n" blockCountTest
+      , SlotDataPoint.roundtripJSON
       ]
 
 main :: IO ()

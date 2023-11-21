@@ -66,10 +66,13 @@ data SlotDataPoint =
       , mut_blockApply  :: !Int64
       -- | Free-form information about the block.
       , blockStats      :: !BlockStats
-      } deriving (Generic, Show)
+      } deriving (Generic, Show, Eq)
 
 newtype BlockStats = BlockStats { unBlockStats :: [Builder] }
   deriving (Generic, Show)
+
+instance Eq BlockStats where
+  BlockStats st0 == BlockStats st1 = fmap Builder.run st0 == fmap Builder.run st1
 
 instance ToJSON BlockStats where
   -- We convert the blocks stats to a 'Vector Text'.

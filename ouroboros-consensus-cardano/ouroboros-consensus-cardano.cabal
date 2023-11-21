@@ -445,6 +445,7 @@ library unstable-cardano-tools
     Cardano.Node.Protocol.Types
     Cardano.Node.Types
     Cardano.Tools.DBAnalyser.Analysis
+    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
     Cardano.Tools.DBAnalyser.Block.Byron
     Cardano.Tools.DBAnalyser.Block.Cardano
     Cardano.Tools.DBAnalyser.Block.Shelley
@@ -474,7 +475,6 @@ library unstable-cardano-tools
     Cardano.Node.Protocol.Cardano
     Cardano.Node.Protocol.Conway
     Cardano.Node.Protocol.Shelley
-    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
 
   build-depends:
     , aeson
@@ -589,9 +589,18 @@ test-suite tools-test
   hs-source-dirs: test/tools-test
   main-is:        Main.hs
   build-depends:
+    , aeson
     , base
+    , cardano-slotting
     , ouroboros-consensus-cardano
     , ouroboros-consensus:unstable-consensus-testlib
+    , quickcheck-unicode
     , tasty
     , tasty-hunit
+    , tasty-quickcheck
+    , text
+    , text-builder
     , unstable-cardano-tools
+
+  other-modules:
+    Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
