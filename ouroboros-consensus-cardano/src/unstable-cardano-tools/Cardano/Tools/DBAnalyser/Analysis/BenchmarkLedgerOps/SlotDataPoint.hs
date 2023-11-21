@@ -76,7 +76,7 @@ instance Eq BlockStats where
 
 instance ToJSON BlockStats where
   -- We convert the blocks stats to a 'Vector Text'.
-  toJSON = toJSON . (fmap Builder.run) . unBlockStats
+  toJSON = toJSON . fmap Builder.run . unBlockStats
 
   toEncoding = Aeson.Encoding.list (Aeson.Encoding.text . Builder.run) . unBlockStats
 

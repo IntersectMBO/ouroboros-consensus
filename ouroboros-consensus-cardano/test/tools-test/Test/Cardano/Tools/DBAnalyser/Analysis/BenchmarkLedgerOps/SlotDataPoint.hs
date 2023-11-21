@@ -16,7 +16,7 @@ roundtripJSON =
   where
     testRoundtrip :: TestSlotDataPoint -> Property
     testRoundtrip (TestSlotDataPoint dataPoint) =
-        withMaxSuccess 1000 $ -- This would take 150 milliseconds in a modern machine
+        withMaxSuccess 1000 $ -- This takes 150 milliseconds in a modern machine
           Aeson.eitherDecode (Aeson.encode dataPoint) === Right dataPoint
 
 newtype TestSlotDataPoint = TestSlotDataPoint SlotDataPoint

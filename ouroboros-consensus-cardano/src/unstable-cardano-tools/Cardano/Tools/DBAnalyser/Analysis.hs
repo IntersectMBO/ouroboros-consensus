@@ -491,7 +491,7 @@ benchmarkLedgerOps ::
      )
   => Maybe FilePath -> Analysis blk
 benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} = do
-    -- We default to CSV when the there is no output file (and thus the results are output to stdout).
+    -- We default to CSV when the no output file is provided (and thus the results are output to stdout).
     outFormat <- case maybe (pure DP.CSV) DP.outputFormatFromFileExtension mOutfile of
                    Right outFormat -> pure outFormat
                    Left  ext       -> do
