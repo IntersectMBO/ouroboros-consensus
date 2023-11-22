@@ -132,7 +132,9 @@ peerScheduleFromTipPoints
   -> [AF.AnchoredFragment TestBlock]
   -> m [(DiffTime, SchedulePoint)]
 peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
-    (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0
+    let branches0v = map (Vector.fromList . AF.toOldestFirst) branches0
+        anchors = map fragmentAnchorSlotNo branches0
+    (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0v anchors
     let tipPoints' = map (second (ScheduleTipPoint . tipFromHeader)) tps
         headerPoints = map (second (ScheduleHeaderPoint . getHeader)) hps
         blockPoints = map (second ScheduleBlockPoint) bps
@@ -140,6 +142,11 @@ peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
     pure $
       mergeOn fst tipPoints' $
       mergeOn fst headerPoints blockPoints
+  where
+    fragmentAnchorSlotNo :: AF.AnchoredFragment TestBlock -> SlotNo
+    fragmentAnchorSlotNo f = case AF.anchorToSlotNo (AF.anchor f) of
+      At s -> s
+      Origin -> -1
 
 rawPeerScheduleFromTipPoints
   :: R.StatefulGen g m
@@ -147,20 +154,19 @@ rawPeerScheduleFromTipPoints
   -> PeerScheduleParams
   -> [(IsTrunk, [Int])]
   -> AF.AnchoredFragment TestBlock
-  -> [AF.AnchoredFragment TestBlock]
+  -> [Vector TestBlock]
+  -> [SlotNo]
   -> m ([(DiffTime, TestBlock)], [(DiffTime, TestBlock)], [(DiffTime, TestBlock)])
-rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
+rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0v anchors = do
     let (isTrunks, tpSegments) = unzip tipPoints
         trunk0l = AF.toOldestFirst trunk0
         trunk0v = Vector.fromList trunk0l
-        branches0v = map (Vector.fromList . AF.toOldestFirst) branches0
         tipPointBlks = concat $ indicesToBlocks trunk0v branches0v tipPoints
         tipPointSlots = map tbSlot tipPointBlks
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
     -- generate the header point schedule
     let tpSchedules = attachTimesToTipPoints ts tpSegments
-        anchors = map fragmentAnchorSlotNo branches0
         trunkSlots = map tbSlot trunk0l
         intersections = intersectionsAsBlockIndices trunkSlots anchors isTrunks
     hpss <- headerPointSchedule g (pspHeaderDelayInterval psp) $ zip intersections tpSchedules
@@ -211,11 +217,6 @@ rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
         branchBlocks brs (IsTrunk, s) = (brs, map (trunk Vector.!) s)
         branchBlocks (br:brs) (IsBranch, s) = (brs, map (br Vector.!) s)
         branchBlocks [] (IsBranch, _) = error "not enough branches"
-
-    fragmentAnchorSlotNo :: AF.AnchoredFragment TestBlock -> SlotNo
-    fragmentAnchorSlotNo f = case AF.anchorToSlotNo (AF.anchor f) of
-      At s -> s
-      Origin -> -1
 
 
 -- | @intersectionsAsBlockIndices trunk anchors isTrunks@ returns a list of
