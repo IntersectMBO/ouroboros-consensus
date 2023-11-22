@@ -11,6 +11,8 @@ import           Cardano.Slotting.Slot (WithOrigin(At, Origin))
 import           Control.Arrow (second)
 import           Data.List (mapAccumL)
 import           Data.Time.Clock (DiffTime)
+import           Data.Vector (Vector)
+import qualified Data.Vector as Vector
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (SlotNo, Tip, tipFromHeader)
 import           Ouroboros.Consensus.Block.Abstract (getHeader)
@@ -90,7 +92,8 @@ singleJumpRawPeerSchedule
 singleJumpRawPeerSchedule g psp chain = do
     -- generate the tip points
     ixs <- singleJumpTipPoints g 0 (AF.length chain - 1)
-    let tipPointBlks = getBlocksFromSortedIndices ixs chain
+    let chainv = Vector.fromList $ AF.toOldestFirst chain
+        tipPointBlks = map (chainv Vector.!) ixs
         tipPointSlots = map tbSlot tipPointBlks
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
@@ -102,10 +105,8 @@ singleJumpRawPeerSchedule g psp chain = do
     -- collect the blocks for each schedule
     let bps = concatMap hpsTrunk bpss
         tipPointTips = zip ts tipPointBlks
-        hpsHeaders =
-          zip (map fst hps) (getBlocksFromSortedIndices (map snd hps) chain)
-        bpsBlks =
-          zip (map fst bps) (getBlocksFromSortedIndices (map snd bps) chain)
+        hpsHeaders = map (second (chainv Vector.!)) hps
+        bpsBlks = map (second (chainv Vector.!)) bps
     pure (tipPointTips, hpsHeaders, bpsBlks)
 
 data IsTrunk = IsTrunk | IsBranch
@@ -149,7 +150,9 @@ rawPeerScheduleFromTipPoints
   -> m ([(DiffTime, TestBlock)], [(DiffTime, TestBlock)], [(DiffTime, TestBlock)])
 rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
     let (isTrunks, tpSegments) = unzip tipPoints
-        tipPointBlks = concat $ indicesToBlocks trunk0 branches0 tipPoints
+        trunk0v = Vector.fromList $ AF.toOldestFirst trunk0
+        branches0v = map (Vector.fromList . AF.toOldestFirst) branches0
+        tipPointBlks = concat $ indicesToBlocks trunk0v branches0v tipPoints
         tipPointSlots = map tbSlot tipPointBlks
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
@@ -168,8 +171,8 @@ rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
           | (mi, hps) <- zip intersections bpss
           ]
     let tipPointTips = zip ts tipPointBlks
-        hpsHeaders = scheduleIndicesToBlocks trunk0 branches0 hpsPerBranch
-        bpsBlks = scheduleIndicesToBlocks trunk0 branches0 bpsPerBranch
+        hpsHeaders = scheduleIndicesToBlocks trunk0v branches0v hpsPerBranch
+        bpsBlks = scheduleIndicesToBlocks trunk0v branches0v bpsPerBranch
     pure (tipPointTips, hpsHeaders, bpsBlks)
 
   where
@@ -183,32 +186,27 @@ rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
 
     -- | Replaces block indices with the actual blocks
     scheduleIndicesToBlocks
-      :: AF.AnchoredFragment TestBlock
-      -> [AF.AnchoredFragment TestBlock]
+      :: Vector TestBlock
+      -> [Vector TestBlock]
       -> [(Maybe Int, [(DiffTime, Int)])]
       -> [(DiffTime, TestBlock)]
-    scheduleIndicesToBlocks trunk branches ((Nothing, s) : ss) =
-      let (trunk', blks) = getBlocksWithResidue (map snd s) trunk
-       in zip (map fst s) blks ++ scheduleIndicesToBlocks trunk' branches ss
-    scheduleIndicesToBlocks trunk (branch:branches) ((Just _, s) : ss) =
-      let blks = getBlocksFromSortedIndices (map snd s) branch
-       in zip (map fst s) blks ++ scheduleIndicesToBlocks trunk branches ss
-    scheduleIndicesToBlocks _  _ [] = []
-    scheduleIndicesToBlocks _ _ _ = error "not enough branches"
+    scheduleIndicesToBlocks trunk branches =
+        concat . snd . mapAccumL branchBlocks branches
+      where
+        branchBlocks brs (Nothing, s) = (brs, map (second (trunk Vector.!)) s)
+        branchBlocks (br:brs) (Just _, s) = (brs, map (second (br Vector.!)) s)
+        branchBlocks [] (Just _, _) = error "not enough branches"
 
     indicesToBlocks
-      :: AF.AnchoredFragment TestBlock
-      -> [AF.AnchoredFragment TestBlock]
+      :: Vector TestBlock
+      -> [Vector TestBlock]
       -> [(IsTrunk, [Int])]
       -> [[TestBlock]]
-    indicesToBlocks trunk branches ((IsTrunk, s) : ss) =
-      let (trunk', blks) = getBlocksWithResidue s trunk
-       in blks : indicesToBlocks trunk' branches ss
-    indicesToBlocks trunk (branch:branches) ((IsBranch, s) : ss) =
-      let blks = getBlocksFromSortedIndices s branch
-       in blks : indicesToBlocks trunk branches ss
-    indicesToBlocks _  _ [] = []
-    indicesToBlocks _ _ _ = error "not enough branches"
+    indicesToBlocks trunk branches = snd . mapAccumL branchBlocks branches
+      where
+        branchBlocks brs (IsTrunk, s) = (brs, map (trunk Vector.!) s)
+        branchBlocks (br:brs) (IsBranch, s) = (brs, map (br Vector.!) s)
+        branchBlocks [] (IsBranch, _) = error "not enough branches"
 
 
 -- | Get the block indices of the intersection points of the given chains.
@@ -251,33 +249,6 @@ intersectionsAsBlockIndices trunk0 branches isTrunks =
     fragmentAnchor f = case AF.anchorToSlotNo (AF.anchor f) of
       At s -> s
       Origin -> -1
-
--- | Get the blocks at the given offsets from the given chain.
---
--- PRECONDITION: The offsets are in ascending order, there are no duplicates
--- and do not exceed the length of the chain.
---
-getBlocksFromSortedIndices :: [Int] -> AF.AnchoredFragment TestBlock -> [TestBlock]
-getBlocksFromSortedIndices ixs = snd . getBlocksWithResidue ixs
-
-getBlocksWithResidue
-  :: [Int] -> AF.AnchoredFragment TestBlock -> (AF.AnchoredFragment TestBlock, [TestBlock])
-getBlocksWithResidue [] chain = (chain, [])
-getBlocksWithResidue ixs0 chain = go 0 ixs0 chain []
-  where
-    go
-      :: Int
-      -> [Int]
-      -> AF.AnchoredFragment TestBlock
-      -> [TestBlock]
-      -> (AF.AnchoredFragment TestBlock, [TestBlock])
-    go cur iixs@(i:ixs) (x AF.:< s) acc =
-      if cur == i then
-        go (cur + 1) ixs s (x:acc)
-      else
-        go (cur + 1) iixs s acc
-    go _ [] rest acc = (rest, reverse acc)
-    go _  _  AF.Empty{} _ = error "offsets exceed chain length"
 
 -- | Merge two sorted lists.
 --
