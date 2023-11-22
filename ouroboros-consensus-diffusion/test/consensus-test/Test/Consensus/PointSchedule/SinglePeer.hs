@@ -74,7 +74,8 @@ singleJumpPeerSchedule
   -> AF.AnchoredFragment TestBlock
   -> m [(DiffTime, SchedulePoint)]
 singleJumpPeerSchedule g psp chain = do
-    (tps, hps, bps) <- singleJumpRawPeerSchedule g psp chain
+    let chainv = Vector.fromList $ AF.toOldestFirst chain
+    (tps, hps, bps) <- singleJumpRawPeerSchedule g psp tbSlot chainv
     let tipPoints = map (second (ScheduleTipPoint . tipFromHeader)) tps
         headerPoints = map (second (ScheduleHeaderPoint . getHeader)) hps
         blockPoints = map (second ScheduleBlockPoint) bps
@@ -87,14 +88,14 @@ singleJumpRawPeerSchedule
   :: R.StatefulGen g m
   => g
   -> PeerScheduleParams
-  -> AF.AnchoredFragment TestBlock
-  -> m ([(DiffTime, TestBlock)], [(DiffTime, TestBlock)], [(DiffTime, TestBlock)])
-singleJumpRawPeerSchedule g psp chain = do
+  -> (b -> SlotNo)
+  -> Vector b
+  -> m ([(DiffTime, b)], [(DiffTime, b)], [(DiffTime, b)])
+singleJumpRawPeerSchedule g psp slotOfB chainv = do
     -- generate the tip points
-    ixs <- singleJumpTipPoints g 0 (AF.length chain - 1)
-    let chainv = Vector.fromList $ AF.toOldestFirst chain
-        tipPointBlks = map (chainv Vector.!) ixs
-        tipPointSlots = map tbSlot tipPointBlks
+    ixs <- singleJumpTipPoints g 0 (Vector.length chainv - 1)
+    let tipPointBlks = map (chainv Vector.!) ixs
+        tipPointSlots = map slotOfB tipPointBlks
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
     -- generate the header point schedule
