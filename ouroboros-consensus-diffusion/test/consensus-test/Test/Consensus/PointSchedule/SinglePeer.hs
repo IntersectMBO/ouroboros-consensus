@@ -72,6 +72,22 @@ singleJumpPeerSchedule
   -> AF.AnchoredFragment TestBlock
   -> m [(DiffTime, SchedulePoint)]
 singleJumpPeerSchedule g psp chain = do
+    (tps, hps, bps) <- singleJumpRawPeerSchedule g psp chain
+    let tipPoints = map (second (ScheduleTipPoint . tipFromHeader)) tps
+        headerPoints = map (second (ScheduleHeaderPoint . getHeader)) hps
+        blockPoints = map (second ScheduleBlockPoint) bps
+    -- merge the schedules
+    pure $
+      mergeOn fst tipPoints $
+      mergeOn fst headerPoints blockPoints
+
+singleJumpRawPeerSchedule
+  :: R.StatefulGen g m
+  => g
+  -> PeerScheduleParams
+  -> AF.AnchoredFragment TestBlock
+  -> m ([(DiffTime, TestBlock)], [(DiffTime, TestBlock)], [(DiffTime, TestBlock)])
+singleJumpRawPeerSchedule g psp chain = do
     -- generate the tip points
     ixs <- singleJumpTipPoints g 0 (AF.length chain - 1)
     let tipPointBlks = getBlocksFromSortedIndices ixs chain
@@ -83,21 +99,14 @@ singleJumpPeerSchedule g psp chain = do
     let hps = concatMap hpsTrunk hpss
     -- generate the block point schedule
     bpss <- headerPointSchedule g (pspBlockDelayInterval psp) [(Nothing, hps)]
+    -- collect the blocks for each schedule
     let bps = concatMap hpsTrunk bpss
-        tipPointTips =
-          zip ts (map (ScheduleTipPoint . tipFromHeader) tipPointBlks)
+        tipPointTips = zip ts tipPointBlks
         hpsHeaders =
-          zip
-            (map fst hps)
-            (map (ScheduleHeaderPoint . getHeader) $ getBlocksFromSortedIndices (map snd hps) chain)
+          zip (map fst hps) (getBlocksFromSortedIndices (map snd hps) chain)
         bpsBlks =
-          zip
-            (map fst bps)
-            (map ScheduleBlockPoint $ getBlocksFromSortedIndices (map snd bps) chain)
-    -- merge the schedules
-    pure $
-      mergeOn fst tipPointTips $
-      mergeOn fst hpsHeaders bpsBlks
+          zip (map fst bps) (getBlocksFromSortedIndices (map snd bps) chain)
+    pure (tipPointTips, hpsHeaders, bpsBlks)
 
 data IsTrunk = IsTrunk | IsBranch
   deriving (Eq, Show)
@@ -121,6 +130,24 @@ peerScheduleFromTipPoints
   -> [AF.AnchoredFragment TestBlock]
   -> m [(DiffTime, SchedulePoint)]
 peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
+    (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0
+    let tipPoints' = map (second (ScheduleTipPoint . tipFromHeader)) tps
+        headerPoints = map (second (ScheduleHeaderPoint . getHeader)) hps
+        blockPoints = map (second ScheduleBlockPoint) bps
+    -- merge the schedules
+    pure $
+      mergeOn fst tipPoints' $
+      mergeOn fst headerPoints blockPoints
+
+rawPeerScheduleFromTipPoints
+  :: R.StatefulGen g m
+  => g
+  -> PeerScheduleParams
+  -> [(IsTrunk, [Int])]
+  -> AF.AnchoredFragment TestBlock
+  -> [AF.AnchoredFragment TestBlock]
+  -> m ([(DiffTime, TestBlock)], [(DiffTime, TestBlock)], [(DiffTime, TestBlock)])
+rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
     let (isTrunks, tpSegments) = unzip tipPoints
         tipPointBlks = concat $ indicesToBlocks trunk0 branches0 tipPoints
         tipPointSlots = map tbSlot tipPointBlks
@@ -140,16 +167,10 @@ peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
           [ [(Nothing, hpsTrunk hps), (mi, hpsBranch hps)]
           | (mi, hps) <- zip intersections bpss
           ]
-    -- inject tips, headers, and blocks into SchedulePoint
-    let tipPointTips =
-          zip ts (map (ScheduleTipPoint . tipFromHeader) tipPointBlks)
-        hpsHeaders =
-          map (second (ScheduleHeaderPoint . getHeader)) $ scheduleIndicesToBlocks trunk0 branches0 hpsPerBranch
-        bpsBlks = map (second ScheduleBlockPoint) $ scheduleIndicesToBlocks trunk0 branches0 bpsPerBranch
-    -- merge the schedules
-    pure $
-      mergeOn fst tipPointTips $
-      mergeOn fst hpsHeaders bpsBlks
+    let tipPointTips = zip ts tipPointBlks
+        hpsHeaders = scheduleIndicesToBlocks trunk0 branches0 hpsPerBranch
+        bpsBlks = scheduleIndicesToBlocks trunk0 branches0 bpsPerBranch
+    pure (tipPointTips, hpsHeaders, bpsBlks)
 
   where
     attachTimesToTipPoints
