@@ -151,7 +151,8 @@ rawPeerScheduleFromTipPoints
   -> m ([(DiffTime, TestBlock)], [(DiffTime, TestBlock)], [(DiffTime, TestBlock)])
 rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
     let (isTrunks, tpSegments) = unzip tipPoints
-        trunk0v = Vector.fromList $ AF.toOldestFirst trunk0
+        trunk0l = AF.toOldestFirst trunk0
+        trunk0v = Vector.fromList trunk0l
         branches0v = map (Vector.fromList . AF.toOldestFirst) branches0
         tipPointBlks = concat $ indicesToBlocks trunk0v branches0v tipPoints
         tipPointSlots = map tbSlot tipPointBlks
@@ -159,7 +160,9 @@ rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
     -- generate the header point schedule
     let tpSchedules = attachTimesToTipPoints ts tpSegments
-        intersections = intersectionsAsBlockIndices trunk0 branches0 isTrunks
+        anchors = map fragmentAnchorSlotNo branches0
+        trunkSlots = map tbSlot trunk0l
+        intersections = intersectionsAsBlockIndices trunkSlots anchors isTrunks
     hpss <- headerPointSchedule g (pspHeaderDelayInterval psp) $ zip intersections tpSchedules
     -- generate the block point schedule
     let hpsPerBranch = concat
@@ -209,47 +212,52 @@ rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
         branchBlocks (br:brs) (IsBranch, s) = (brs, map (br Vector.!) s)
         branchBlocks [] (IsBranch, _) = error "not enough branches"
 
-
--- | Get the block indices of the intersection points of the given chains.
---
--- The branches should be given in ascending order of their intersections with
--- the trunk.
---
--- > intersectionsAsBlockIndices
--- >   :: trunk:AF.AnchoredFragment TestBlock
--- >   -> branches:[AF.AnchoredFragment TestBlock]
--- >   -> isTrunks:[IsTrunk]
--- >   -> {v:[Int] | length v == length isTrunks}
---
-intersectionsAsBlockIndices
-  :: AF.AnchoredFragment TestBlock
-  -> [AF.AnchoredFragment TestBlock]
-  -> [IsTrunk]
-  -> [Maybe Int]
-intersectionsAsBlockIndices _trunk _branches [] = []
-intersectionsAsBlockIndices trunk0 branches isTrunks =
-    let anchors = map fragmentAnchor branches
-     in snd $ mapAccumL findIntersection (0, trunk0, anchors) isTrunks
-  where
-    findIntersection
-      :: (Int, AF.AnchoredFragment TestBlock, [SlotNo])
-      -> IsTrunk
-      -> ((Int, AF.AnchoredFragment TestBlock, [SlotNo]), Maybe Int)
-    findIntersection acc@(_, (_ AF.:< _), _) IsTrunk =
-      (acc, Nothing)
-    findIntersection (n, trunk@(b AF.:< rest), anchors@(anchor:as)) IsBranch =
-      if anchor == (-1) then
-        ((n, trunk, as), Just (-1))
-      else if tbSlot b == anchor then
-        ((n, trunk, as), Just n)
-      else
-        findIntersection (n+1, rest, anchors) IsBranch
-    findIntersection _ _ = error "findIntersection: empty fragment"
-
-    fragmentAnchor :: AF.AnchoredFragment TestBlock -> SlotNo
-    fragmentAnchor f = case AF.anchorToSlotNo (AF.anchor f) of
+    fragmentAnchorSlotNo :: AF.AnchoredFragment TestBlock -> SlotNo
+    fragmentAnchorSlotNo f = case AF.anchorToSlotNo (AF.anchor f) of
       At s -> s
       Origin -> -1
+
+
+-- | @intersectionsAsBlockIndices trunk anchors isTrunks@ returns a list of
+-- block indices for the given active slots in trunk and the slots of
+-- intersections.
+--
+-- The intersections should be given in ascending order.
+--
+-- > intersectionsAsBlockIndices
+-- >   :: trunk:[SlotNo]
+-- >   -> {anchors:[SlotNo] | isSorted anchors}
+-- >   -> {isTrunks:[IsTrunk] | length [() | IsBranch <- isTrunks] == length anchors}
+-- >   -> {v:[Maybe Int] | length v == length isTrunks}
+--
+intersectionsAsBlockIndices
+  :: [SlotNo]
+  -> [SlotNo]
+  -> [IsTrunk]
+  -> [Maybe Int]
+intersectionsAsBlockIndices trunk0 anchors0 isTrunks = go 0 trunk0 anchors0 isTrunks
+  where
+    -- go
+    --   :: {i:Int| i >= 0}
+    --   -> {trs:[SlotNo] | i + length trs == length trunk0}
+    --   -> [SlotNo]
+    --   -> {isTrunks:[IsTrunk] | length [() | IsBranch <- isTrunks] == length anchors}
+    --   -> {v:[Maybe {j:Int| j == -1 || j >= 0 && j < length trunk0}]
+    --      | length v == length isTrunks
+    --      }
+    go :: Int -> [SlotNo] -> [SlotNo] -> [IsTrunk] -> [Maybe Int]
+    go i ttrs@(tr:trs) aas@(a:as) iisTrunk@(IsBranch:isTrunk) =
+      if a == (-1) then
+        Just (-1) : go i ttrs as isTrunk
+      else if tr == a then
+        Just i : go i ttrs as isTrunk
+      else
+        go (i+1) trs aas iisTrunk
+    go i ttrs aas (IsTrunk:isTrunk) =
+      Nothing : go i ttrs aas isTrunk
+    go _i _ttrs [] _iisTrunk = []
+    go _i _ttrs _aas [] = error "intersectionsAsBlockIndices: missing isTrunks"
+    go _i [] _aas _iisTrunk = error "intersectionsAsBlockIndices: missing intersection"
 
 -- | Merge two sorted lists.
 --
