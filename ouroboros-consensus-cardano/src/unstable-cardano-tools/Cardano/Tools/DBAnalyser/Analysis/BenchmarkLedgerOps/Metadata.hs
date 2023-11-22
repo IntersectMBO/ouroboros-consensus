@@ -15,8 +15,10 @@ module Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata (
   , getMetadata
   ) where
 
+import           Cardano.Tools.GitRev (gitRev)
 import           Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
+import qualified Data.Text as T
 import qualified Data.Version
 import           Data.Word (Word32, Word64)
 import           GHC.Generics (Generic)
@@ -32,6 +34,7 @@ data Metadata = Metadata {
   , compilerName                :: String
   , operatingSystem             :: String
   , machineArchitecture         :: String
+  , gitRevison                  :: String
   } deriving (Generic, Show, Eq)
 
 instance ToJSON Metadata where
@@ -51,4 +54,5 @@ getMetadata = do
     , compilerName                = System.Info.compilerName
     , operatingSystem             = System.Info.os
     , machineArchitecture         = System.Info.arch
+    , gitRevison                  = T.unpack gitRev
     }

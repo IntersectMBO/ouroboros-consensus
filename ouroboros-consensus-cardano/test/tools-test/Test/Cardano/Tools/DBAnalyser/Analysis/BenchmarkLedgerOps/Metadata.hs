@@ -29,3 +29,4 @@ instance Arbitrary TestMetadata where
           <*> arbitrary
           <*> arbitrary
           <*> arbitrary
+          <*> arbitrary
