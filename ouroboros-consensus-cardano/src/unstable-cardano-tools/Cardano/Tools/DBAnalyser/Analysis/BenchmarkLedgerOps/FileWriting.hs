@@ -1,26 +1,27 @@
-{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting (
     -- * Output format
     OutputFormat
   , getOutputFormat
     -- * File writing functions
-  , writeHeader
   , writeDataPoint
+  , writeHeader
   , writeMetadata
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
+import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata as BenchmarkLedgerOps.Metadata
+import           Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
+                     (SlotDataPoint)
+import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
+import           Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text.IO as Text.IO
+import           System.FilePath.Posix (takeExtension)
 import qualified System.IO as IO
-import           Data.Aeson as Aeson
-import Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint (SlotDataPoint)
-import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
-import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata as BenchmarkLedgerOps.Metadata
 import qualified Text.Builder as Builder
 import           Text.Builder (Builder, decimal, intercalate)
-import           System.FilePath.Posix (takeExtension)
 
 {-------------------------------------------------------------------------------
   Output format
@@ -45,7 +46,6 @@ getOutputFormat (Just filePath) =
       IO.hPutStr IO.stderr $ "Unsupported extension '" <> ext <> "'. Defaulting to CSV."
       pure CSV
 getOutputFormat Nothing         = pure CSV
-
 
 {-------------------------------------------------------------------------------
   File writing functions

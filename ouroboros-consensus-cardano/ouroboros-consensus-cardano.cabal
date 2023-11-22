@@ -445,9 +445,9 @@ library unstable-cardano-tools
     Cardano.Node.Protocol.Types
     Cardano.Node.Types
     Cardano.Tools.DBAnalyser.Analysis
-    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
-    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata
     Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting
+    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata
+    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
     Cardano.Tools.DBAnalyser.Block.Byron
     Cardano.Tools.DBAnalyser.Block.Cardano
     Cardano.Tools.DBAnalyser.Block.Shelley
@@ -605,4 +605,6 @@ test-suite tools-test
     , unstable-cardano-tools
 
   other-modules:
+    Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.JSONRoundtrip
+    Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata
     Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint

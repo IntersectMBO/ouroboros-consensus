@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 -- | Functions related to obtaining information about the 'db-analyser' run.
 --
@@ -15,13 +15,13 @@ module Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata (
   , getMetadata
   ) where
 
-import           Data.Word (Word32, Word64)
 import           Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as Aeson
+import qualified Data.Version
+import           Data.Word (Word32, Word64)
+import           GHC.Generics (Generic)
 import qualified GHC.RTS.Flags as RTS
 import qualified System.Info
-import           GHC.Generics (Generic)
-import qualified Data.Version
 
 data Metadata = Metadata {
     rtsGCMaxStkSize             :: Word32
@@ -32,7 +32,7 @@ data Metadata = Metadata {
   , compilerName                :: String
   , operatingSystem             :: String
   , machineArchitecture         :: String
-  } deriving (Generic, Show)
+  } deriving (Generic, Show, Eq)
 
 instance ToJSON Metadata where
   toEncoding = Aeson.genericToEncoding Aeson.defaultOptions

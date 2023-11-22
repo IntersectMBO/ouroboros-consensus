@@ -2,28 +2,25 @@ module Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint (
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo))
 import           Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
-import           Data.Aeson as Aeson
 import qualified Data.Text as Text
+import qualified Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.JSONRoundtrip as JSONRoundtrip
 import qualified Test.QuickCheck.Unicode as Unicode
 import           Test.Tasty (TestTree)
-import           Test.Tasty.QuickCheck (Arbitrary (arbitrary), Property, listOf,
-                     testProperty, withMaxSuccess, (===))
+import           Test.Tasty.QuickCheck (Arbitrary (arbitrary), listOf,
+                     testProperty, withMaxSuccess)
 import qualified Text.Builder as Builder
 
 roundtripJSON :: TestTree
 roundtripJSON =
-    testProperty "JSON encoding roundtrips" testRoundtrip
-  where
-    testRoundtrip :: TestSlotDataPoint -> Property
-    testRoundtrip (TestSlotDataPoint dataPoint) =
-        withMaxSuccess 1000 $ -- This takes 150 milliseconds in a modern machine
-          Aeson.eitherDecode (Aeson.encode dataPoint) === Right dataPoint
+    testProperty "JSON encoding roundtrips"
+      $ withMaxSuccess 1000  -- This takes 150 milliseconds in a modern machine
+      $ JSONRoundtrip.test . unTestSlotDataPoint
 
-newtype TestSlotDataPoint = TestSlotDataPoint SlotDataPoint
+newtype TestSlotDataPoint = TestSlotDataPoint { unTestSlotDataPoint :: SlotDataPoint }
   deriving (Eq)
 
 instance Show TestSlotDataPoint where
-  show (TestSlotDataPoint dp) = show dp
+  show = show . unTestSlotDataPoint
 
 instance Arbitrary TestSlotDataPoint where
   arbitrary = TestSlotDataPoint <$> arbitrarySlotDataPoint
