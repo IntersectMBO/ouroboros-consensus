@@ -239,7 +239,9 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Bridge
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Status
+    Ouroboros.Consensus.Storage.LedgerDB.Common
     Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+    Ouroboros.Consensus.Storage.LedgerDB.LedgerSeq
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
     Ouroboros.Consensus.Storage.VolatileDB.API
