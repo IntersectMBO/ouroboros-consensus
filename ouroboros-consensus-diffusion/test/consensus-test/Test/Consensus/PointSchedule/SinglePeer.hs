@@ -139,7 +139,7 @@ peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
         anchors = map fragmentAnchorSlotNo branches0
         isTrunks = map fst tipPoints
         intersections = intersectionsAsBlockIndices trunkSlots anchors isTrunks
-    (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tipPoints trunk0v branches0v intersections
+    (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tbSlot tipPoints trunk0v branches0v intersections
     let tipPoints' = map (second (ScheduleTipPoint . tipFromHeader)) tps
         headerPoints = map (second (ScheduleHeaderPoint . getHeader)) hps
         blockPoints = map (second ScheduleBlockPoint) bps
@@ -157,14 +157,15 @@ rawPeerScheduleFromTipPoints
   :: R.StatefulGen g m
   => g
   -> PeerScheduleParams
+  -> (b -> SlotNo)
   -> [(IsTrunk, [Int])]
-  -> Vector TestBlock
-  -> [Vector TestBlock]
+  -> Vector b
+  -> [Vector b]
   -> [Maybe Int]
-  -> m ([(DiffTime, TestBlock)], [(DiffTime, TestBlock)], [(DiffTime, TestBlock)])
-rawPeerScheduleFromTipPoints g psp tipPoints trunk0v branches0v intersections = do
+  -> m ([(DiffTime, b)], [(DiffTime, b)], [(DiffTime, b)])
+rawPeerScheduleFromTipPoints g psp slotOfB tipPoints trunk0v branches0v intersections = do
     let tipPointBlks = concat $ indicesToBlocks trunk0v branches0v tipPoints
-        tipPointSlots = map tbSlot tipPointBlks
+        tipPointSlots = map slotOfB tipPointBlks
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
     -- generate the header point schedule
@@ -196,10 +197,10 @@ rawPeerScheduleFromTipPoints g psp tipPoints trunk0v branches0v intersections = 
 
     -- | Replaces block indices with the actual blocks
     scheduleIndicesToBlocks
-      :: Vector TestBlock
-      -> [Vector TestBlock]
+      :: Vector b
+      -> [Vector b]
       -> [(Maybe Int, [(DiffTime, Int)])]
-      -> [(DiffTime, TestBlock)]
+      -> [(DiffTime, b)]
     scheduleIndicesToBlocks trunk branches =
         concat . snd . mapAccumL branchBlocks branches
       where
@@ -208,10 +209,10 @@ rawPeerScheduleFromTipPoints g psp tipPoints trunk0v branches0v intersections = 
         branchBlocks [] (Just _, _) = error "not enough branches"
 
     indicesToBlocks
-      :: Vector TestBlock
-      -> [Vector TestBlock]
+      :: Vector b
+      -> [Vector b]
       -> [(IsTrunk, [Int])]
-      -> [[TestBlock]]
+      -> [[b]]
     indicesToBlocks trunk branches = snd . mapAccumL branchBlocks branches
       where
         branchBlocks brs (IsTrunk, s) = (brs, map (trunk Vector.!) s)
