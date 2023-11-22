@@ -4,6 +4,8 @@ module Test.Consensus.PointSchedule.SinglePeer
   , defaultPeerScheduleParams
   , singleJumpPeerSchedule
   , peerScheduleFromTipPoints
+  -- * Exposed for testing
+  , zipMany
   )
   where
 
@@ -169,7 +171,7 @@ rawPeerScheduleFromTipPoints g psp slotOfB tipPoints trunk0v branches0v intersec
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
     -- generate the header point schedule
-    let tpSchedules = attachTimesToTipPoints ts $ map snd tipPoints
+    let tpSchedules = zipMany ts $ map snd tipPoints
     hpss <- headerPointSchedule g (pspHeaderDelayInterval psp) $ zip intersections tpSchedules
     -- generate the block point schedule
     let hpsPerBranch = concat
@@ -187,14 +189,6 @@ rawPeerScheduleFromTipPoints g psp slotOfB tipPoints trunk0v branches0v intersec
     pure (tipPointTips, hpsHeaders, bpsBlks)
 
   where
-    attachTimesToTipPoints
-      :: [DiffTime] -> [[Int]] -> [[(DiffTime, Int)]]
-    attachTimesToTipPoints [] [] = []
-    attachTimesToTipPoints ts (ixs:ixss) =
-      let (ts', rest) = splitAt (length ixs) ts
-       in zip ts' ixs : attachTimesToTipPoints rest ixss
-    attachTimesToTipPoints _ _ = error "lengths of lists don't match"
-
     -- | Replaces block indices with the actual blocks
     scheduleIndicesToBlocks
       :: Vector b
@@ -272,3 +266,10 @@ mergeOn f xxs@(x:xs) yys@(y:ys) =
     if f x <= f y
       then x : mergeOn f xs yys
       else y : mergeOn f xxs ys
+
+zipMany :: [a] -> [[b]] -> [[(a, b)]]
+zipMany xs0 = snd . mapAccumL (go []) xs0
+  where
+    go acc xs [] = (xs, reverse acc)
+    go _acc [] _ys = error "zipMany: lengths don't match"
+    go acc (x:xs) (y:ys) = go ((x, y) : acc) xs ys

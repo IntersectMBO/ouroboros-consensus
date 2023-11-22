@@ -5,7 +5,7 @@
 module Test.Consensus.PointSchedule.Tests (tests) where
 
 import           Control.Monad (replicateM)
-import           Data.List (mapAccumL, sort)
+import           Data.List (sort)
 --import           Data.List.NonEmpty (NonEmpty ((:|)))
 --import           Data.Maybe (fromJust)
 import           Data.Time.Clock (DiffTime, picosecondsToDiffTime, diffTimeToPicoseconds)
@@ -13,7 +13,7 @@ import           Data.Time.Clock (DiffTime, picosecondsToDiffTime, diffTimeToPic
 --import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (SlotNo (..))
 --import           Test.Consensus.BlockTree (btTrunk)
---import           Test.Consensus.PointSchedule.SinglePeer
+import           Test.Consensus.PointSchedule.SinglePeer
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
@@ -151,9 +151,3 @@ chooseDiffTime (a, b) = do
         bInt = diffTimeToPicoseconds b
     picosecondsToDiffTime <$> QC.chooseInteger (aInt, bInt)
 
-zipMany :: [a] -> [[b]] -> [[(a, b)]]
-zipMany xs0 = snd . mapAccumL (go []) xs0
-  where
-    go acc xs [] = (xs, reverse acc)
-    go _acc [] _ys = error "zipMany: lengths don't match"
-    go acc (x:xs) (y:ys) = go ((x, y) : acc) xs ys
