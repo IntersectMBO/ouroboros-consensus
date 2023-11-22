@@ -132,9 +132,14 @@ peerScheduleFromTipPoints
   -> [AF.AnchoredFragment TestBlock]
   -> m [(DiffTime, SchedulePoint)]
 peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
-    let branches0v = map (Vector.fromList . AF.toOldestFirst) branches0
+    let trunk0l = AF.toOldestFirst trunk0
+        trunk0v = Vector.fromList trunk0l
+        trunkSlots = map tbSlot trunk0l
+        branches0v = map (Vector.fromList . AF.toOldestFirst) branches0
         anchors = map fragmentAnchorSlotNo branches0
-    (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0v anchors
+        isTrunks = map fst tipPoints
+        intersections = intersectionsAsBlockIndices trunkSlots anchors isTrunks
+    (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tipPoints trunk0v branches0v intersections
     let tipPoints' = map (second (ScheduleTipPoint . tipFromHeader)) tps
         headerPoints = map (second (ScheduleHeaderPoint . getHeader)) hps
         blockPoints = map (second ScheduleBlockPoint) bps
@@ -153,22 +158,17 @@ rawPeerScheduleFromTipPoints
   => g
   -> PeerScheduleParams
   -> [(IsTrunk, [Int])]
-  -> AF.AnchoredFragment TestBlock
+  -> Vector TestBlock
   -> [Vector TestBlock]
-  -> [SlotNo]
+  -> [Maybe Int]
   -> m ([(DiffTime, TestBlock)], [(DiffTime, TestBlock)], [(DiffTime, TestBlock)])
-rawPeerScheduleFromTipPoints g psp tipPoints trunk0 branches0v anchors = do
-    let (isTrunks, tpSegments) = unzip tipPoints
-        trunk0l = AF.toOldestFirst trunk0
-        trunk0v = Vector.fromList trunk0l
-        tipPointBlks = concat $ indicesToBlocks trunk0v branches0v tipPoints
+rawPeerScheduleFromTipPoints g psp tipPoints trunk0v branches0v intersections = do
+    let tipPointBlks = concat $ indicesToBlocks trunk0v branches0v tipPoints
         tipPointSlots = map tbSlot tipPointBlks
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
     -- generate the header point schedule
-    let tpSchedules = attachTimesToTipPoints ts tpSegments
-        trunkSlots = map tbSlot trunk0l
-        intersections = intersectionsAsBlockIndices trunkSlots anchors isTrunks
+    let tpSchedules = attachTimesToTipPoints ts $ map snd tipPoints
     hpss <- headerPointSchedule g (pspHeaderDelayInterval psp) $ zip intersections tpSchedules
     -- generate the block point schedule
     let hpsPerBranch = concat
