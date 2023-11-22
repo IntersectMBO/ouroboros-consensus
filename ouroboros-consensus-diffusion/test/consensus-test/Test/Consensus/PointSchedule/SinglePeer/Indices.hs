@@ -230,7 +230,9 @@ data HeaderPointSchedule = HeaderPointSchedule {
 -- >      }
 -- >   -> m {v:[HeaderPointSchedule]
 -- >        | length v == length tpSchedule &&
--- >          all (\hps -> isSorted (hpsTrunk hps) && isSorted (hpsBranch hps)) v &&
+-- >          isSorted [ map fst (hpsTrunk hps) ++ map fst (hpsBranch hps) | hps <- v ] &&
+-- >          isSorted [ map snd (hpsTrunk hps) | hps <- v ] &&
+-- >          all (\hps -> isSorted (map snd $ hpsBranch hps)) v &&
 -- >          all (\hps -> all (0<=) (map snd (hpsTrunk hps))) v &&
 -- >          all (\hps -> all (0<=) (map snd (hpsBranch hps))) v &&
 -- >          all (\hps -> not (hasDuplicates (map snd (hpsTrunk hps)))) v &&
