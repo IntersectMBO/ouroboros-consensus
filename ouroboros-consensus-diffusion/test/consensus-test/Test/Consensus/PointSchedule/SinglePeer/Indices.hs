@@ -245,7 +245,7 @@ headerPointSchedule
 headerPointSchedule g msgDelayInterval xs =
    let -- Pair each  branch with the maximum time at which its header points
        -- should be offered
-       xs' = zip xs $ [ Just t | (_, (t, _) : _) <- tail xs ] ++ [Nothing]
+       xs' = zip xs $ map (Just . fst . head . snd) (tail xs) ++ [Nothing]
     in snd <$> mapAccumM genHPBranchSchedule (0, 0) xs'
 
   where
