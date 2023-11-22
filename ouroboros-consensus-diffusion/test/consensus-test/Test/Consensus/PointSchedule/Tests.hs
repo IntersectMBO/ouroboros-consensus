@@ -1,9 +1,11 @@
 {-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Test.Consensus.PointSchedule.Tests (tests) where
 
-import           Data.List (sort)
+import           Control.Monad (replicateM)
+import           Data.List (mapAccumL, sort)
 --import           Data.List.NonEmpty (NonEmpty ((:|)))
 --import           Data.Maybe (fromJust)
 import           Data.Time.Clock (DiffTime, picosecondsToDiffTime, diffTimeToPicoseconds)
@@ -26,6 +28,7 @@ tests =
     testGroup "PointSchedule"
       [ testProperty "singleJumpTipPoints" prop_singleJumpTipPoints
       , testProperty "tipPointSchedule" prop_tipPointSchedule
+      , testProperty "headerPointSchedule" prop_headerPointSchedule
       ]
 
 data SingleJumpTipPointsInput = SingleJumpTipPointsInput
@@ -43,7 +46,7 @@ prop_singleJumpTipPoints :: QCGen -> SingleJumpTipPointsInput -> QC.Property
 prop_singleJumpTipPoints seed (SingleJumpTipPointsInput m n) =
     runSTGen_ seed $ \g -> do
       xs <- singleJumpTipPoints g m n
-      pure $ isSorted xs
+      pure $ isSorted QC.le xs
         QC..&&.
          (QC.counterexample ("length xs = " ++ show (length xs)) $
            length xs `QC.le` n - m + 1
@@ -81,18 +84,76 @@ prop_tipPointSchedule seed (TipPointScheduleInput slotLength msgInterval slots) 
              length slots QC.=== length ts
           )
         QC..&&.
-          isSorted ts
+          isSorted QC.le ts
+
+data HeaderPointScheduleInput = HeaderPointScheduleInput
+  { hpsMsgInterval :: (DiffTime, DiffTime)
+  , hpsTipPoints :: [(Maybe Int, [(DiffTime, Int)])]
+  } deriving (Show)
+
+instance QC.Arbitrary HeaderPointScheduleInput where
+  arbitrary = do
+    a <- (\t -> t - 1) <$> chooseDiffTime (1, 20)
+    b <- (\t -> t - 1) <$> chooseDiffTime (1, 20)
+    let msgInterval = (min a b, max a b)
+    branchCount <- QC.choose (1, 5)
+    branchTips <- replicateM branchCount (sort . QC.getNonEmpty <$> QC.arbitrary)
+    let tpCount = sum $ map length branchTips
+    ts <- sort <$> replicateM tpCount (chooseDiffTime (0, fromIntegral tpCount))
+    let tpts = zipMany ts branchTips
+    intersectionBlocks <- sort <$> replicateM branchCount QC.arbitrary
+    maybes <- QC.infiniteList @(Maybe Int)
+    let intersections = zipWith (>>) maybes $ map Just intersectionBlocks
+    pure $ HeaderPointScheduleInput msgInterval (zip intersections tpts)
+
+prop_headerPointSchedule :: QCGen -> HeaderPointScheduleInput -> QC.Property
+prop_headerPointSchedule g (HeaderPointScheduleInput msgDelayInterval xs) =
+    runSTGen_ g $ \g' -> do
+      hpss <- headerPointSchedule g' msgDelayInterval xs
+      pure $
+          (QC.counterexample ("length xs = " ++ show (length xs)) $
+           QC.counterexample ("length hpss = " ++ show (length hpss)) $
+            length xs QC.=== length hpss
+          )
+        QC..&&.
+          (QC.counterexample ("header points are sorted in each branch") $
+            foldr (QC..&&.) (QC.property True)
+              [ QC.counterexample ("branch = " ++ show hps) $
+                isSorted QC.lt (map snd trunk) QC..&&. isSorted QC.lt (map snd branch)
+              | hps@(HeaderPointSchedule trunk branch) <- hpss
+              ]
+          )
+         QC..&&.
+          (QC.counterexample ("times are sorted accross branches") $
+           QC.counterexample ("branches = " ++ show hpss) $
+            isSorted QC.le $ concat
+              [ map fst trunk ++ map fst branch
+              | HeaderPointSchedule trunk branch <- hpss
+              ]
+          )
+        QC..&&.
+          (QC.counterexample ("trunk header points are sorted accross branches") $
+           QC.counterexample ("branches = " ++ show hpss) $
+            isSorted QC.lt $ concat
+              [ map snd trunk | HeaderPointSchedule trunk _ <- hpss ]
+          )
 
 
-
-isSorted :: (Ord a, Show a) => [a] -> QC.Property
-isSorted xs =
+isSorted :: Show a => (a -> a -> QC.Property) -> [a] -> QC.Property
+isSorted cmp xs =
     QC.counterexample ("isSorted " ++ show xs) $
     foldr (QC..&&.) (QC.property True)
-      [ QC.le a b | (a, b) <- zip xs (tail xs) ]
+      [ cmp a b | (a, b) <- zip xs (drop 1 xs) ]
 
 chooseDiffTime :: (DiffTime, DiffTime) -> QC.Gen DiffTime
 chooseDiffTime (a, b) = do
     let aInt = diffTimeToPicoseconds a
         bInt = diffTimeToPicoseconds b
     picosecondsToDiffTime <$> QC.chooseInteger (aInt, bInt)
+
+zipMany :: [a] -> [[b]] -> [[(a, b)]]
+zipMany xs0 = snd . mapAccumL (go []) xs0
+  where
+    go acc xs [] = (xs, reverse acc)
+    go _acc [] _ys = error "zipMany: lengths don't match"
+    go acc (x:xs) (y:ys) = go ((x, y) : acc) xs ys
