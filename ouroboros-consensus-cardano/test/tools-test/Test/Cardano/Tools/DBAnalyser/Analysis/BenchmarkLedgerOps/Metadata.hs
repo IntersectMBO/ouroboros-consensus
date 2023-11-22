@@ -3,13 +3,11 @@ module Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata (round
 import           Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata
 import qualified Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.JSONRoundtrip as JSONRoundtrip
 import           Test.Tasty (TestTree)
-import           Test.Tasty.QuickCheck (Arbitrary (arbitrary), testProperty,
-                     withMaxSuccess)
+import           Test.Tasty.QuickCheck (Arbitrary (arbitrary), testProperty)
 
 roundtripJSON :: TestTree
 roundtripJSON =
-    testProperty "JSON encoding roundtrips"
-      $ withMaxSuccess 1000  -- This takes 150 milliseconds in a modern machine
+        testProperty "JSON encoding roundtrips"
       $ JSONRoundtrip.test . unTestMetadata
 
 newtype TestMetadata = TestMetadata { unTestMetadata :: Metadata }

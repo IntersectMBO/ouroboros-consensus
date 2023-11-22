@@ -7,13 +7,12 @@ import qualified Test.Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.JSONR
 import qualified Test.QuickCheck.Unicode as Unicode
 import           Test.Tasty (TestTree)
 import           Test.Tasty.QuickCheck (Arbitrary (arbitrary), listOf,
-                     testProperty, withMaxSuccess)
+                     testProperty)
 import qualified Text.Builder as Builder
 
 roundtripJSON :: TestTree
 roundtripJSON =
-    testProperty "JSON encoding roundtrips"
-      $ withMaxSuccess 1000  -- This takes 150 milliseconds in a modern machine
+        testProperty "JSON encoding roundtrips"
       $ JSONRoundtrip.test . unTestSlotDataPoint
 
 newtype TestSlotDataPoint = TestSlotDataPoint { unTestSlotDataPoint :: SlotDataPoint }
