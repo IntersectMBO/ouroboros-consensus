@@ -193,6 +193,7 @@ data HeaderPointSchedule = HeaderPointSchedule {
   , hpsBranch :: [(DiffTime, Int)] -- ^ header points after the intersection
                                    -- indices are relative to the branch
   }
+  deriving (Show)
 
 -- | @headerPointSchedule g msgDelayInterval tpSchedule@ generates a
 -- schedule of header points for a single peer.
