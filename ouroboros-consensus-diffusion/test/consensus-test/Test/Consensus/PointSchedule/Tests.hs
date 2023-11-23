@@ -1,27 +1,28 @@
 {-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE TypeApplications #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.PointSchedule.Tests (tests) where
 
-import           Control.Monad (replicateM)
-import           Data.List (group, sort)
---import           Data.List.NonEmpty (NonEmpty ((:|)))
---import           Data.Maybe (fromJust)
+import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..), withOrigin)
+import           Control.Monad (forM, replicateM)
+import           Data.Bifunctor (second)
+import           Data.List (foldl', group, sort)
 import           Data.Time.Clock (DiffTime, picosecondsToDiffTime, diffTimeToPicoseconds)
---import           Ouroboros.Consensus.Block (getHeader)
---import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (SlotNo (..))
---import           Test.Consensus.BlockTree (btTrunk)
+import           GHC.Stack (HasCallStack)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.PointSchedule.SinglePeer
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
-import qualified Test.QuickCheck as QC
+import qualified Test.QuickCheck as QC hiding (elements)
 import           Test.QuickCheck
 import           Test.QuickCheck.Random
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import qualified Test.Util.QuickCheck as QC
 import           System.Random.Stateful (runSTGen_)
+import           Test.Util.TestBlock
+  (TestBlock, tbSlot, firstBlock, modifyFork, successorBlock)
 
 tests :: TestTree
 tests =
@@ -29,6 +30,7 @@ tests =
       [ testProperty "singleJumpTipPoints" prop_singleJumpTipPoints
       , testProperty "tipPointSchedule" prop_tipPointSchedule
       , testProperty "headerPointSchedule" prop_headerPointSchedule
+      , testProperty "peerScheduleFromTipPoints" prop_peerScheduleFromTipPoints
       ]
 
 data SingleJumpTipPointsInput = SingleJumpTipPointsInput
@@ -52,10 +54,10 @@ prop_singleJumpTipPoints seed (SingleJumpTipPointsInput m n) =
            length xs `QC.le` n - m + 1
          )
         QC..&&.
-         (QC.counterexample ("head xs = " ++ show (head xs)) $
-             head xs `QC.le` n
+         (QC.counterexample ("head xs = " ++ show (headCallStack xs)) $
+             headCallStack xs `QC.le` n
            QC..&&.
-             m `QC.le` head xs
+             m `QC.le` headCallStack xs
          )
 
 data TipPointScheduleInput = TipPointScheduleInput
@@ -67,11 +69,9 @@ data TipPointScheduleInput = TipPointScheduleInput
 instance QC.Arbitrary TipPointScheduleInput where
   arbitrary = do
     slotLength <- chooseDiffTime (1, 20)
-    a <- (\t -> t - 1) <$> chooseDiffTime (1, slotLength)
-    b <- (\t -> t - 1) <$> chooseDiffTime (1, slotLength)
-    let msgInterval = (min a b, max a b)
-    slots0 <- dedupSorted . sort . map (SlotNo . QC.getNonNegative) <$> arbitrary
-    slots1 <- dedupSorted . sort . map (SlotNo . QC.getNonNegative) <$> arbitrary
+    msgInterval <- genTimeInterval (slotLength - 0.1)
+    slots0 <- dedupSorted . map (SlotNo . QC.getNonNegative) <$> QC.orderedList
+    slots1 <- dedupSorted . map (SlotNo . QC.getNonNegative) <$> QC.orderedList
     pure $ TipPointScheduleInput slotLength msgInterval (slots0 ++ slots1)
 
 prop_tipPointSchedule :: QCGen -> TipPointScheduleInput -> QC.Property
@@ -93,16 +93,13 @@ data HeaderPointScheduleInput = HeaderPointScheduleInput
 
 instance QC.Arbitrary HeaderPointScheduleInput where
   arbitrary = do
-    a <- (\t -> t - 1) <$> chooseDiffTime (1, 10)
-    b <- (\t -> t - 1) <$> chooseDiffTime (1, 10)
-    let msgInterval = (min a b, max a b)
-    branchCount <- QC.choose (1, 5)
-    branchTips <- replicateM branchCount (dedupSorted . sort . map QC.getNonNegative . QC.getNonEmpty <$> QC.arbitrary)
-    let tpCount = sum $ map length branchTips
+    msgInterval <- genTimeInterval 10
+    branchTips <- genTipPoints
+    let branchCount = length branchTips
+        tpCount = sum $ map length branchTips
     ts <- scanl1 (+) . sort <$> replicateM tpCount (chooseDiffTime (7, 12))
     let tpts = zipMany ts branchTips
-    intersectionBlocks <-
-      map (\x -> x - 1) . sort . map QC.getNonNegative <$> replicateM branchCount QC.arbitrary
+    intersectionBlocks <- genIntersections branchCount
     maybes <- QC.infiniteList @(Maybe Int)
     let intersections = zipWith (>>) maybes $ map Just intersectionBlocks
     pure $ HeaderPointScheduleInput msgInterval (zip intersections tpts)
@@ -149,6 +146,92 @@ prop_headerPointSchedule g (HeaderPointScheduleInput msgDelayInterval xs) =
                 ) hpss xs
           )
 
+data PeerScheduleFromTipPointsInput = PeerScheduleFromTipPointsInput
+       PeerScheduleParams
+       [(IsTrunk, [Int])]
+       (AF.AnchoredFragment TestBlock)
+       [AF.AnchoredFragment TestBlock]
+
+instance Show PeerScheduleFromTipPointsInput where
+  show (PeerScheduleFromTipPointsInput psp tps trunk branches) =
+    unlines
+      [ "PeerScheduleFromTipPointsInput"
+      , "  params = "  ++ show psp
+      , "  tipPoints = " ++ show tps
+      , "  trunk = " ++ show (AF.toOldestFirst trunk)
+      , "  branches = " ++ show [ (AF.anchorBlockNo b, AF.toOldestFirst b) | b <- branches ]
+      ]
+
+instance QC.Arbitrary PeerScheduleFromTipPointsInput where
+  arbitrary = do
+    slotLength <- chooseDiffTime (1, 20)
+    tipDelayInterval <- genTimeInterval (slotLength - 0.1)
+    headerDelayInterval <- genTimeInterval (min 2 (slotLength - 0.1))
+    blockDelayInterval <- genTimeInterval (min 2 (slotLength - 0.1))
+    tipPoints <- genTipPoints
+    isTrunks <- QC.infiniteList
+    intersections <- genIntersections (length tipPoints)
+    let tstps = zip isTrunks tipPoints
+        tsi = zip isTrunks intersections
+        -- The maximum block number in the tip points and the intersections.
+        maxBlock =
+          maximum $ concat [ b | (IsTrunk, b) <- tstps ] ++
+                           [ i | (IsBranch, i) <- tsi ]
+    trunkSlots <- map SlotNo <$> genSortedVectorWithoutDuplicates (maxBlock + 1)
+    let branchesTipPoints = [ b | (IsBranch, b) <- tstps ]
+    branchesSlots <- forM branchesTipPoints $ \b -> do
+      let maxBranchBlock = maximum b
+      map SlotNo <$> genSortedVectorWithoutDuplicates (maxBranchBlock + 1)
+    let trunk = mkFragment Origin trunkSlots 0
+        branchIntersections = [ i | (IsBranch, i) <- tsi ]
+        branches =
+          [ genAdversarialFragment trunk fNo i branchSlots
+          | (fNo, branchSlots, i)  <- zip3 [1..] branchesSlots branchIntersections
+          ]
+        psp = PeerScheduleParams
+          { pspSlotLength = slotLength
+          , pspTipDelayInterval = tipDelayInterval
+          , pspHeaderDelayInterval = headerDelayInterval
+          , pspBlockDelayInterval = blockDelayInterval
+          }
+
+    pure $ PeerScheduleFromTipPointsInput psp tstps trunk branches
+
+instance QC.Arbitrary IsTrunk where
+  arbitrary = QC.elements [IsTrunk, IsBranch]
+
+prop_peerScheduleFromTipPoints :: QCGen -> PeerScheduleFromTipPointsInput -> QC.Property
+prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trunk branches) =
+    runSTGen_ seed $ \g -> do
+      ss <- peerScheduleFromTipPoints g psp tps trunk branches
+      pure $
+        QC.counterexample ("schedule = " ++ show (map (second showPoint) ss)) $
+        isSorted QC.le (map fst ss)
+  where
+    showPoint :: SchedulePoint -> String
+    showPoint (ScheduleTipPoint _) = "TP"
+    showPoint (ScheduleHeaderPoint _) = "HP"
+    showPoint (ScheduleBlockPoint _) = "BP"
+
+
+genTimeInterval :: DiffTime -> QC.Gen (DiffTime, DiffTime)
+genTimeInterval trange = do
+    a <- chooseDiffTime (1, trange)
+    b <- chooseDiffTime (1, trange)
+    pure (min a b, max a b)
+
+genTipPoints :: QC.Gen [[Int]]
+genTipPoints = do
+    branchCount <- QC.choose (1, 5)
+    xss <- QC.vector branchCount
+    pure $ map (dedupSorted . sort . map QC.getNonNegative . QC.getNonEmpty) xss
+
+-- | @genIntersections n@ generates a list of @n@ intersections as block numbers.
+genIntersections :: Int -> QC.Gen [Int]
+genIntersections n =
+    -- Intersection with the genesis block is represented by @Just (-1)@.
+    map (\x -> x - 1) . sort . map QC.getNonNegative <$> QC.vector n
+
 isSorted :: Show a => (a -> a -> QC.Property) -> [a] -> QC.Property
 isSorted cmp xs =
     QC.counterexample ("isSorted " ++ show xs) $
@@ -162,7 +245,10 @@ chooseDiffTime (a, b) = do
     picosecondsToDiffTime <$> QC.chooseInteger (aInt, bInt)
 
 dedupSorted :: Eq a => [a] -> [a]
-dedupSorted = map head . group
+dedupSorted = map headCallStack . group
+
+headCallStack :: HasCallStack => [a] -> a
+headCallStack xs = if null xs then error "headCallStack: empty list" else head xs
 
 hpFollowsBranchPoints :: [(DiffTime, Int)] -> [(DiffTime, Int)] -> QC.Property
 hpFollowsBranchPoints [] [] = QC.property True
@@ -184,3 +270,30 @@ hpFollowsBranchPoints [] _ps =
 hpFollowsBranchPoints ss [] =
       QC.counterexample ("schedule times finish after last tip point: " ++ show ss) $
         QC.property False
+
+-- | @genAdversarialFragment goodBlocks forkNo prefixCount slotsA@ generates
+-- a fragment for a chain that forks off the given chain.
+genAdversarialFragment :: AF.AnchoredFragment TestBlock -> Int -> Int -> [SlotNo] -> AF.AnchoredFragment TestBlock
+genAdversarialFragment goodBlocks forkNo prefixCount slotsA
+      = mkFragment intersectionBlock slotsA forkNo
+  where
+    -- blocks in the common prefix in reversed order
+    intersectionBlock = case AF.head $ AF.takeOldest (prefixCount + 1) goodBlocks of
+        Left _ -> Origin
+        Right b -> At b
+
+-- | @mkFragment pre active forkNo@ generates a list of blocks at the given slots.
+mkFragment :: WithOrigin TestBlock -> [SlotNo] -> Int -> AF.AnchoredFragment TestBlock
+mkFragment pre active forkNo = AF.fromNewestFirst anchor $ foldl' issue [] active
+  where
+    anchor = withOrigin AF.AnchorGenesis AF.anchorFromBlock pre
+    issue (h : t) s = (successorBlock h) {tbSlot = s} : h : t
+    issue [] s | Origin <- pre = [(firstBlock (fromIntegral forkNo)) {tbSlot = s}]
+               | At h <- pre = [(modifyFork (const (fromIntegral forkNo)) (successorBlock h)) {tbSlot = s}]
+
+-- | @genVectorWithoutDuplicates n@ generates a vector of length @n@
+-- without duplicates.
+genSortedVectorWithoutDuplicates :: (QC.Arbitrary a, Num a, Ord a) => Int -> QC.Gen [a]
+genSortedVectorWithoutDuplicates n = do
+    x0 <- QC.arbitrary
+    scanl (+) x0 . map ((+1) . QC.getNonNegative) <$> QC.vector (n - 1)

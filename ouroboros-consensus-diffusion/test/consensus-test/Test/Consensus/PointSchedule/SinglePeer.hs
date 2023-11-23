@@ -1,6 +1,8 @@
 -- | This module contains functions for generating random point schedules.
 module Test.Consensus.PointSchedule.SinglePeer
-  ( PeerScheduleParams
+  ( IsTrunk(..)
+  , PeerScheduleParams(..)
+  , SchedulePoint(..)
   , defaultPeerScheduleParams
   , singleJumpPeerSchedule
   , peerScheduleFromTipPoints
