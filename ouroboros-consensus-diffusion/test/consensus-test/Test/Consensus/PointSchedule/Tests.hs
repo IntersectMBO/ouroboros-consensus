@@ -5,7 +5,7 @@
 module Test.Consensus.PointSchedule.Tests (tests) where
 
 import           Control.Monad (replicateM)
-import           Data.List (sort)
+import           Data.List (group, sort)
 --import           Data.List.NonEmpty (NonEmpty ((:|)))
 --import           Data.Maybe (fromJust)
 import           Data.Time.Clock (DiffTime, picosecondsToDiffTime, diffTimeToPicoseconds)
@@ -70,8 +70,8 @@ instance QC.Arbitrary TipPointScheduleInput where
     a <- (\t -> t - 1) <$> chooseDiffTime (1, slotLength)
     b <- (\t -> t - 1) <$> chooseDiffTime (1, slotLength)
     let msgInterval = (min a b, max a b)
-    slots0 <- sort . map SlotNo <$> arbitrary
-    slots1 <- sort . map SlotNo <$> arbitrary
+    slots0 <- dedupSorted . sort . map (SlotNo . QC.getNonNegative) <$> arbitrary
+    slots1 <- dedupSorted . sort . map (SlotNo . QC.getNonNegative) <$> arbitrary
     pure $ TipPointScheduleInput slotLength msgInterval (slots0 ++ slots1)
 
 prop_tipPointSchedule :: QCGen -> TipPointScheduleInput -> QC.Property
@@ -93,15 +93,16 @@ data HeaderPointScheduleInput = HeaderPointScheduleInput
 
 instance QC.Arbitrary HeaderPointScheduleInput where
   arbitrary = do
-    a <- (\t -> t - 1) <$> chooseDiffTime (1, 20)
-    b <- (\t -> t - 1) <$> chooseDiffTime (1, 20)
+    a <- (\t -> t - 1) <$> chooseDiffTime (1, 10)
+    b <- (\t -> t - 1) <$> chooseDiffTime (1, 10)
     let msgInterval = (min a b, max a b)
     branchCount <- QC.choose (1, 5)
-    branchTips <- replicateM branchCount (sort . QC.getNonEmpty <$> QC.arbitrary)
+    branchTips <- replicateM branchCount (dedupSorted . sort . map QC.getNonNegative . QC.getNonEmpty <$> QC.arbitrary)
     let tpCount = sum $ map length branchTips
-    ts <- sort <$> replicateM tpCount (chooseDiffTime (0, fromIntegral tpCount))
+    ts <- scanl1 (+) . sort <$> replicateM tpCount (chooseDiffTime (7, 12))
     let tpts = zipMany ts branchTips
-    intersectionBlocks <- sort <$> replicateM branchCount QC.arbitrary
+    intersectionBlocks <-
+      map (\x -> x - 1) . sort . map QC.getNonNegative <$> replicateM branchCount QC.arbitrary
     maybes <- QC.infiniteList @(Maybe Int)
     let intersections = zipWith (>>) maybes $ map Just intersectionBlocks
     pure $ HeaderPointScheduleInput msgInterval (zip intersections tpts)
@@ -151,3 +152,5 @@ chooseDiffTime (a, b) = do
         bInt = diffTimeToPicoseconds b
     picosecondsToDiffTime <$> QC.chooseInteger (aInt, bInt)
 
+dedupSorted :: Eq a => [a] -> [a]
+dedupSorted = map head . group
