@@ -107,6 +107,7 @@ data BackingStoreSelector m where
 -- in use.
 data BackingStoreTraceByBackend = LMDBTrace BackingStoreTrace
                                 | InMemoryTrace BackingStoreTrace
+                                | InitEvent TraceBackingStoreInitEvent
   deriving (Show)
 
 -- | A trace event for the backing store that we have initialised.
