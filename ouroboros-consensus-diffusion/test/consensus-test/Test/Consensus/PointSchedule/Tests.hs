@@ -138,7 +138,16 @@ prop_headerPointSchedule g (HeaderPointScheduleInput msgDelayInterval xs) =
             isSorted QC.lt $ concat
               [ map snd trunk | HeaderPointSchedule trunk _ <- hpss ]
           )
-
+        QC..&&.
+          (QC.counterexample "branch header points follow tip points" $
+           QC.counterexample ("branches = " ++ show hpss) $
+             foldr (QC..&&.) (QC.property True) $
+               zipWith (\hps x ->
+                 case x of
+                   (Just _, b) -> hpFollowsBranchPoints (hpsBranch hps) b
+                   _ -> QC.property True
+                ) hpss xs
+          )
 
 isSorted :: Show a => (a -> a -> QC.Property) -> [a] -> QC.Property
 isSorted cmp xs =
@@ -154,3 +163,24 @@ chooseDiffTime (a, b) = do
 
 dedupSorted :: Eq a => [a] -> [a]
 dedupSorted = map head . group
+
+hpFollowsBranchPoints :: [(DiffTime, Int)] -> [(DiffTime, Int)] -> QC.Property
+hpFollowsBranchPoints [] [] = QC.property True
+hpFollowsBranchPoints ((t0, i0): ss) ((t1, i1) : ps) =
+      QC.counterexample "schedule times follow tip points" (QC.ge t0 t1)
+    QC..&&.
+      (if i0 < i1 then
+         hpFollowsBranchPoints ss ((t1, i1) : ps)
+       else
+         hpFollowsBranchPoints ss ps
+      )
+hpFollowsBranchPoints [] _ps =
+--      There can be unscheduled header points if they would be produced so
+--      late that they would come after the tip point has moved to another branch.
+--
+--      QC.counterexample ("schedule times are sufficient for: " ++ show ps) $
+--        QC.property False
+      QC.property True
+hpFollowsBranchPoints ss [] =
+      QC.counterexample ("schedule times finish after last tip point: " ++ show ss) $
+        QC.property False
