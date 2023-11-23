@@ -57,6 +57,7 @@ data PeerScheduleParams = PeerScheduleParams
     -- happened most recently).
   , pspBlockDelayInterval :: (DiffTime, DiffTime)
   }
+  deriving (Show)
 
 defaultPeerScheduleParams :: PeerScheduleParams
 defaultPeerScheduleParams = PeerScheduleParams
