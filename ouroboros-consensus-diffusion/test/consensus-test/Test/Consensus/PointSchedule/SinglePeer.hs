@@ -184,52 +184,47 @@ rawPeerScheduleFromTipPoints
   -> [Maybe Int]
   -> m ([(DiffTime, b)], [(DiffTime, b)], [(DiffTime, b)])
 rawPeerScheduleFromTipPoints g psp slotOfB tipPoints trunk0v branches0v intersections = do
-    let tipPointBlks = concat $ indicesToBlocks trunk0v branches0v tipPoints
+    let (isTrunks, tpIxs) = unzip tipPoints
+        pairedVectors = pairVectorsWithChunks trunk0v branches0v isTrunks
+        tipPointBlks = concat $ zipWith indicesToBlocks pairedVectors tpIxs
         tipPointSlots = map slotOfB tipPointBlks
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
     -- generate the header point schedule
-    let tpSchedules = zipMany ts $ map snd tipPoints
+    let tpSchedules = zipMany ts tpIxs
     hpss <- headerPointSchedule g (pspHeaderDelayInterval psp) $ zip intersections tpSchedules
     -- generate the block point schedule
-    let hpsPerBranch = filter (not . null . snd) $ concat
-          [ [(Nothing, hpsTrunk hps), (mi, hpsBranch hps)]
-          | (mi, hps) <- zip intersections hpss
+    let (hpsPerBranch, vs) = unzip $ filter (not . null . snd .fst) $ concat
+          [ [((Nothing, hpsTrunk hps), trunk0v), ((mi, hpsBranch hps), v)]
+          | (mi, hps, v) <- zip3 intersections hpss pairedVectors
           ]
     bpss <- headerPointSchedule g (pspBlockDelayInterval psp) hpsPerBranch
-    let bpsPerBranch = concat
-          [ [(Nothing, hpsTrunk hps), (mi, hpsBranch hps)]
-          | (mi, hps) <- zip intersections bpss
-          ]
     let tipPointTips = zip ts tipPointBlks
-        hpsHeaders = scheduleIndicesToBlocks trunk0v branches0v hpsPerBranch
-        bpsBlks = scheduleIndicesToBlocks trunk0v branches0v bpsPerBranch
+        hpsHeaders = concat $ zipWith (scheduleIndicesToBlocks trunk0v) pairedVectors hpss
+        bpsBlks = concat $ zipWith (scheduleIndicesToBlocks trunk0v) vs bpss
     pure (tipPointTips, hpsHeaders, bpsBlks)
 
   where
-    -- | Replaces block indices with the actual blocks
-    scheduleIndicesToBlocks
+    pairVectorsWithChunks
       :: Vector b
       -> [Vector b]
-      -> [(Maybe Int, [(DiffTime, Int)])]
-      -> [(DiffTime, b)]
-    scheduleIndicesToBlocks trunk branches =
-        concat . snd . mapAccumL branchBlocks branches
+      -> [IsTrunk]
+      -> [Vector b]
+    pairVectorsWithChunks trunk branches =
+       snd . mapAccumL pairVectors branches
       where
-        branchBlocks brs (Nothing, s) = (brs, map (second (trunk Vector.!)) s)
-        branchBlocks (br:brs) (Just _, s) = (brs, map (second (br Vector.!)) s)
-        branchBlocks [] (Just _, _) = error "not enough branches"
+        pairVectors brs IsTrunk = (brs, trunk)
+        pairVectors (br:brs) IsBranch = (brs, br)
+        pairVectors [] IsBranch = error "not enough branches"
 
-    indicesToBlocks
-      :: Vector b
-      -> [Vector b]
-      -> [(IsTrunk, [Int])]
-      -> [[b]]
-    indicesToBlocks trunk branches = snd . mapAccumL branchBlocks branches
-      where
-        branchBlocks brs (IsTrunk, s) = (brs, map (trunk Vector.!) s)
-        branchBlocks (br:brs) (IsBranch, s) = (brs, map (br Vector.!) s)
-        branchBlocks [] (IsBranch, _) = error "not enough branches"
+    -- | Replaces block indices with the actual blocks
+    scheduleIndicesToBlocks :: Vector b -> Vector b -> HeaderPointSchedule -> [(DiffTime, b)]
+    scheduleIndicesToBlocks trunk v hps =
+        map (second (trunk Vector.!)) (hpsTrunk hps)
+          ++ map (second (v Vector.!)) (hpsBranch hps)
+
+    indicesToBlocks :: Vector b -> [Int] -> [b]
+    indicesToBlocks v ixs = map (v Vector.!) ixs
 
 
 -- | Merge two sorted lists.
