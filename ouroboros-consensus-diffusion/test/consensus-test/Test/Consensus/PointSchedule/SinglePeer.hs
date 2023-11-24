@@ -185,7 +185,7 @@ rawPeerScheduleFromTipPoints g psp slotOfB tipPoints trunk0v branches0v intersec
     let tpSchedules = zipMany ts $ map snd tipPoints
     hpss <- headerPointSchedule g (pspHeaderDelayInterval psp) $ zip intersections tpSchedules
     -- generate the block point schedule
-    let hpsPerBranch = concat
+    let hpsPerBranch = filter (not . null . snd) $ concat
           [ [(Nothing, hpsTrunk hps), (mi, hpsBranch hps)]
           | (mi, hps) <- zip intersections hpss
           ]
