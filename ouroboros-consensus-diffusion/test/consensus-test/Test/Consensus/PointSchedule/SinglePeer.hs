@@ -3,6 +3,7 @@ module Test.Consensus.PointSchedule.SinglePeer
   ( IsTrunk(..)
   , PeerScheduleParams(..)
   , SchedulePoint(..)
+  , schedulePointToBlock
   , defaultPeerScheduleParams
   , singleJumpPeerSchedule
   , peerScheduleFromTipPoints
@@ -18,9 +19,7 @@ import           Data.Time.Clock (DiffTime)
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block
-  (BlockNo(unBlockNo), SlotNo, Tip, tipFromHeader)
-import           Ouroboros.Consensus.Block.Abstract (getHeader)
+import           Ouroboros.Network.Block (BlockNo(unBlockNo), SlotNo)
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
   ( HeaderPointSchedule (hpsTrunk, hpsBranch)
   , headerPointSchedule
@@ -28,14 +27,20 @@ import           Test.Consensus.PointSchedule.SinglePeer.Indices
   , tipPointSchedule
   )
 import qualified System.Random.Stateful as R (StatefulGen)
-import           Test.Util.TestBlock (Header, TestBlock, tbSlot)
+import           Test.Util.TestBlock (TestBlock, tbSlot)
+
 
 -- | A point in the schedule of a single peer.
 data SchedulePoint
-  = ScheduleTipPoint (Tip TestBlock)
-  | ScheduleHeaderPoint (Header TestBlock)
+  = ScheduleTipPoint TestBlock
+  | ScheduleHeaderPoint TestBlock
   | ScheduleBlockPoint TestBlock
   deriving (Eq, Show)
+
+schedulePointToBlock :: SchedulePoint -> TestBlock
+schedulePointToBlock (ScheduleTipPoint b) = b
+schedulePointToBlock (ScheduleHeaderPoint b) = b
+schedulePointToBlock (ScheduleBlockPoint b) = b
 
 -- | Parameters for generating a schedule for a single peer.
 --
@@ -82,8 +87,8 @@ singleJumpPeerSchedule
 singleJumpPeerSchedule g psp chain = do
     let chainv = Vector.fromList $ AF.toOldestFirst chain
     (tps, hps, bps) <- singleJumpRawPeerSchedule g psp tbSlot chainv
-    let tipPoints = map (second (ScheduleTipPoint . tipFromHeader)) tps
-        headerPoints = map (second (ScheduleHeaderPoint . getHeader)) hps
+    let tipPoints = map (second ScheduleTipPoint) tps
+        headerPoints = map (second ScheduleHeaderPoint) hps
         blockPoints = map (second ScheduleBlockPoint) bps
     -- merge the schedules
     pure $
@@ -148,8 +153,8 @@ peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
         isTrunks = map fst tipPoints
         intersections = intersperseTrunkFragments anchorBlockIndices isTrunks
     (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tbSlot tipPoints trunk0v branches0v intersections
-    let tipPoints' = map (second (ScheduleTipPoint . tipFromHeader)) tps
-        headerPoints = map (second (ScheduleHeaderPoint . getHeader)) hps
+    let tipPoints' = map (second ScheduleTipPoint) tps
+        headerPoints = map (second ScheduleHeaderPoint) hps
         blockPoints = map (second ScheduleBlockPoint) bps
     -- merge the schedules
     pure $
