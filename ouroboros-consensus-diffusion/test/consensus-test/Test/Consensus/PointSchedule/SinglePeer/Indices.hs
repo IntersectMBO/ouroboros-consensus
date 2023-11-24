@@ -28,6 +28,7 @@ import           Data.Time.Clock (
   , diffTimeToPicoseconds
   , picosecondsToDiffTime
   )
+import           GHC.Stack (HasCallStack)
 import           Ouroboros.Network.Block (SlotNo(SlotNo))
 import qualified System.Random.Stateful as R
 
@@ -239,7 +240,7 @@ data HeaderPointSchedule = HeaderPointSchedule {
 -- >          all (\hps -> not (hasDuplicates (map snd (hpsBranch hps)))) v
 -- >        }
 headerPointSchedule
-  :: forall g m. R.StatefulGen g m
+  :: forall g m. (HasCallStack, R.StatefulGen g m)
   => g
   -> (DiffTime, DiffTime)
   -> [(Maybe Int, [(DiffTime, Int)])]
@@ -247,7 +248,7 @@ headerPointSchedule
 headerPointSchedule g msgDelayInterval xs =
    let -- Pair each  branch with the maximum time at which its header points
        -- should be offered
-       xs' = zip xs $ map (Just . fst . head . snd) (tail xs) ++ [Nothing]
+       xs' = zip xs $ map (Just . fst . headCallStack . snd) (tail xs) ++ [Nothing]
     in snd <$> mapAccumM genHPBranchSchedule (0, 0) xs'
 
   where
@@ -318,3 +319,6 @@ mapAccumM f acc (x:xs) = do
     (acc', y) <- f acc x
     (acc'', ys) <- mapAccumM f acc' xs
     pure (acc'', y:ys)
+
+headCallStack :: HasCallStack => [a] -> a
+headCallStack xs = if null xs then error "headCallStack: empty list" else head xs
