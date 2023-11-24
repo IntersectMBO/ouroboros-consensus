@@ -8,10 +8,12 @@ module Test.Consensus.PointSchedule.Tests (tests) where
 import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..), withOrigin)
 import           Control.Monad (forM, replicateM)
 import           Data.Bifunctor (second)
-import           Data.List (foldl', group, sort)
+import           Data.List (foldl', group, isSuffixOf, partition, sort)
+import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Time.Clock (DiffTime, picosecondsToDiffTime, diffTimeToPicoseconds)
 import           GHC.Stack (HasCallStack)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Block (blockHash)
 import           Test.Consensus.PointSchedule.SinglePeer
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
 import qualified Test.QuickCheck as QC hiding (elements)
@@ -22,7 +24,8 @@ import           Test.Tasty.QuickCheck
 import qualified Test.Util.QuickCheck as QC
 import           System.Random.Stateful (runSTGen_)
 import           Test.Util.TestBlock
-  (TestBlock, tbSlot, firstBlock, modifyFork, successorBlock)
+  (TestBlock, TestHash(unTestHash), tbSlot, firstBlock, modifyFork, successorBlock)
+
 
 tests :: TestTree
 tests =
@@ -141,10 +144,13 @@ prop_headerPointSchedule g (HeaderPointScheduleInput msgDelayInterval xs) =
              foldr (QC..&&.) (QC.property True) $
                zipWith (\hps x ->
                  case x of
-                   (Just _, b) -> hpFollowsBranchPoints (hpsBranch hps) b
+                   (Just _, b) -> headerPointsFollowTipPoints leMaybe (hpsBranch hps) b
                    _ -> QC.property True
                 ) hpss xs
           )
+  where
+    leMaybe :: Ord a => a -> a -> Maybe Ordering
+    leMaybe a b = Just $ compare a b
 
 data PeerScheduleFromTipPointsInput = PeerScheduleFromTipPointsInput
        PeerScheduleParams
@@ -204,14 +210,41 @@ prop_peerScheduleFromTipPoints :: QCGen -> PeerScheduleFromTipPointsInput -> QC.
 prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trunk branches) =
     runSTGen_ seed $ \g -> do
       ss <- peerScheduleFromTipPoints g psp tps trunk branches
+      let (tps', (hps, _bps)) =
+            partition (isHeaderPoint . snd) <$> partition (isTipPoint . snd) ss
       pure $
-        QC.counterexample ("schedule = " ++ show (map (second showPoint) ss)) $
-        isSorted QC.le (map fst ss)
+          (QC.counterexample ("hps = " ++ show (map (second showPoint) hps)) $
+           QC.counterexample ("tps' = " ++ show (map (second showPoint) tps')) $
+             headerPointsFollowTipPoints isAncestorBlock
+               (map (second schedulePointToBlock) hps)
+               (map (second schedulePointToBlock) tps')
+          )
+        QC..&&.
+          (QC.counterexample ("schedule = " ++ show (map (second showPoint) ss)) $
+            isSorted QC.le (map fst ss))
   where
     showPoint :: SchedulePoint -> String
-    showPoint (ScheduleTipPoint _) = "TP"
-    showPoint (ScheduleHeaderPoint _) = "HP"
-    showPoint (ScheduleBlockPoint _) = "BP"
+    showPoint (ScheduleTipPoint b) = "TP " ++ show (blockHash b)
+    showPoint (ScheduleHeaderPoint b) = "HP " ++ show (blockHash b)
+    showPoint (ScheduleBlockPoint b) = "BP " ++ show (blockHash b)
+
+    isTipPoint :: SchedulePoint -> Bool
+    isTipPoint (ScheduleTipPoint _) = True
+    isTipPoint _ = False
+
+    isHeaderPoint :: SchedulePoint -> Bool
+    isHeaderPoint (ScheduleHeaderPoint _) = True
+    isHeaderPoint _ = False
+
+    isAncestorBlock :: TestBlock -> TestBlock -> Maybe Ordering
+    isAncestorBlock b0 b1 =
+      if isSuffixOf
+           (NonEmpty.toList (unTestHash (blockHash b0)))
+           (NonEmpty.toList (unTestHash (blockHash b1)))
+      then if blockHash b0 == blockHash b1
+        then Just EQ
+        else Just LT
+      else Nothing
 
 
 genTimeInterval :: DiffTime -> QC.Gen (DiffTime, DiffTime)
@@ -250,24 +283,24 @@ dedupSorted = map headCallStack . group
 headCallStack :: HasCallStack => [a] -> a
 headCallStack xs = if null xs then error "headCallStack: empty list" else head xs
 
-hpFollowsBranchPoints :: [(DiffTime, Int)] -> [(DiffTime, Int)] -> QC.Property
-hpFollowsBranchPoints [] [] = QC.property True
-hpFollowsBranchPoints ((t0, i0): ss) ((t1, i1) : ps) =
+headerPointsFollowTipPoints :: Show a => (a -> a -> Maybe Ordering) -> [(DiffTime, a)] -> [(DiffTime, a)] -> QC.Property
+headerPointsFollowTipPoints _ [] [] = QC.property True
+headerPointsFollowTipPoints isAncestor ((t0, i0) : ss) ((t1, i1) : ps) =
       QC.counterexample "schedule times follow tip points" (QC.ge t0 t1)
     QC..&&.
-      (if i0 < i1 then
-         hpFollowsBranchPoints ss ((t1, i1) : ps)
-       else
-         hpFollowsBranchPoints ss ps
+      (case isAncestor i0 i1 of
+         Just LT -> headerPointsFollowTipPoints isAncestor ss ((t1, i1) : ps)
+         Just EQ -> headerPointsFollowTipPoints isAncestor ss ps
+         _ -> headerPointsFollowTipPoints isAncestor ((t0, i0) : ss) ps
       )
-hpFollowsBranchPoints [] _ps =
+headerPointsFollowTipPoints _ [] _ps =
 --      There can be unscheduled header points if they would be produced so
 --      late that they would come after the tip point has moved to another branch.
 --
 --      QC.counterexample ("schedule times are sufficient for: " ++ show ps) $
 --        QC.property False
       QC.property True
-hpFollowsBranchPoints ss [] =
+headerPointsFollowTipPoints _ ss [] =
       QC.counterexample ("schedule times finish after last tip point: " ++ show ss) $
         QC.property False
 
