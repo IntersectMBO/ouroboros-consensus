@@ -22,7 +22,6 @@ module Test.Consensus.PointSchedule.SinglePeer.Indices(
 
 import           Control.Monad (forM, replicateM)
 import           Data.List (sort)
-import           Data.Maybe (fromMaybe)
 import           Data.Time.Clock (
     DiffTime
   , diffTimeToPicoseconds
@@ -277,19 +276,13 @@ headerPointSchedule g msgDelayInterval xs =
       -> m ((DiffTime, Int), HeaderPointSchedule)
     genHPBranchSchedule (tLast, trunkNextHp) ((_mi, []), _mtMax) =
       pure ((tLast, trunkNextHp), HeaderPointSchedule [] [])
-    genHPBranchSchedule (tLast, trunkNextHp) ((mi, tps@((firstTipTime, _):_)), mtMax) = do
-      let -- The last header point that might be offered from the branch
-          hpLast = snd (last tps)
-          -- The last intersection with the trunk
-          iLast = fromMaybe hpLast mi
-      -- sample the header point delays
+    genHPBranchSchedule (tLast, trunkNextHp) ((Nothing, tps), mtMax) = do
+      (p, tsTrunk) <- mapAccumM (generatePerTipPointTimes mtMax) (tLast, trunkNextHp) tps
+      pure (p, HeaderPointSchedule (concat tsTrunk) [])
+    genHPBranchSchedule (tLast, trunkNextHp) ((Just iLast, tps@((firstTipTime, _):_)), mtMax) = do
       ((tLast', trunkNextHp'), tsTrunk) <- generatePerTipPointTimes mtMax (tLast, trunkNextHp) (firstTipTime, iLast)
       ((tLast'', _), tsBranch) <- mapAccumM (generatePerTipPointTimes mtMax) (tLast', 0) tps
-      let chainMessages = HeaderPointSchedule {
-              hpsTrunk = tsTrunk
-            , hpsBranch = concat tsBranch
-            }
-      pure ((tLast'', trunkNextHp'), chainMessages)
+      pure ((tLast'', trunkNextHp'), HeaderPointSchedule tsTrunk (concat tsBranch))
 
     -- | @generatePerTipPointTimes mtMax (tLast, nextHp) (tTip, tp)@ schedules the header
     -- points from @nextHp@ to @tp@ in ascending order starting from the maximum
