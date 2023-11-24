@@ -14,7 +14,7 @@ module Test.Consensus.PointSchedule.SinglePeer
 
 import           Cardano.Slotting.Slot (WithOrigin(At, Origin), withOrigin)
 import           Control.Arrow (second)
-import           Data.List (mapAccumL)
+import           Data.List (mapAccumL, mapAccumR)
 import           Data.Time.Clock (DiffTime)
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
@@ -245,8 +245,8 @@ mergeOn f xxs@(x:xs) yys@(y:ys) =
       else y : mergeOn f xxs ys
 
 zipMany :: [a] -> [[b]] -> [[(a, b)]]
-zipMany xs0 = snd . mapAccumL (go []) xs0
+zipMany xs0 = snd . mapAccumR (go []) xs0
   where
-    go acc xs [] = (xs, reverse acc)
+    go acc xs [] = (xs, acc)
     go _acc [] _ys = error "zipMany: lengths don't match"
     go acc (x:xs) (y:ys) = go ((x, y) : acc) xs ys
