@@ -10,6 +10,7 @@ import           Control.Monad (forM, replicateM)
 import           Data.Bifunctor (second)
 import           Data.List (foldl', group, isSuffixOf, partition, sort)
 import qualified Data.List.NonEmpty as NonEmpty
+import           Data.Maybe (isNothing)
 import           Data.Time.Clock (DiffTime, picosecondsToDiffTime, diffTimeToPicoseconds)
 import           GHC.Stack (HasCallStack)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -222,6 +223,10 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
         QC..&&.
           (QC.counterexample ("schedule = " ++ show (map (second showPoint) ss)) $
             isSorted QC.le (map fst ss))
+        QC..&&.
+          (QC.counterexample ("schedule = " ++ show (map (second showPoint) ss)) $
+            noReturnToAncestors (map snd ss)
+          )
   where
     showPoint :: SchedulePoint -> String
     showPoint (ScheduleTipPoint b) = "TP " ++ show (blockHash b)
@@ -236,16 +241,31 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
     isHeaderPoint (ScheduleHeaderPoint _) = True
     isHeaderPoint _ = False
 
-    isAncestorBlock :: TestBlock -> TestBlock -> Maybe Ordering
-    isAncestorBlock b0 b1 =
-      if isSuffixOf
-           (NonEmpty.toList (unTestHash (blockHash b0)))
-           (NonEmpty.toList (unTestHash (blockHash b1)))
-      then if blockHash b0 == blockHash b1
-        then Just EQ
-        else Just LT
-      else Nothing
+isAncestorBlock :: TestBlock -> TestBlock -> Maybe Ordering
+isAncestorBlock b0 b1 =
+    if isSuffixOf
+         (NonEmpty.toList (unTestHash (blockHash b0)))
+         (NonEmpty.toList (unTestHash (blockHash b1)))
+    then if blockHash b0 == blockHash b1
+      then Just EQ
+      else Just LT
+    else Nothing
 
+noReturnToAncestors :: [SchedulePoint] -> QC.Property
+noReturnToAncestors = go []
+  where
+    go _ [] = QC.property True
+    go ancestors (p : ss) =
+      let b = schedulePointToBlock p
+       in   foldr (QC..&&.) (QC.property True)
+              (map (isNotAncestorOf b) ancestors)
+          QC..&&.
+            go (b : ancestors) ss
+
+    isNotAncestorOf :: TestBlock -> TestBlock -> QC.Property
+    isNotAncestorOf b0 b1 =
+      QC.counterexample ("return to ancestor: " ++ show (blockHash b0) ++ " -> " ++ show (blockHash b1)) $
+        QC.property $ isNothing $ isAncestorBlock b0 b1
 
 genTimeInterval :: DiffTime -> QC.Gen (DiffTime, DiffTime)
 genTimeInterval trange = do
