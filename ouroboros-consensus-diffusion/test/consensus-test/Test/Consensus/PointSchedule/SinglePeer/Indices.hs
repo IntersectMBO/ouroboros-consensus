@@ -255,7 +255,8 @@ headerPointSchedule g msgDelayInterval xs =
     -- | @genHPBranchSchedule (tLast, trunkNextHp) ((mi, tps), mtMax)@ generates
     -- a schedule for a single branch.
     --
-    -- @tLast@ is the time at which the last header point was offered.
+    -- @tLast@ is the time at which the last header point was offered. If there
+    -- was no previous header point, it can be set to 0.
     --
     -- @trunkNextHp@ is the index of the next header point that was offered
     -- from the trunk.
