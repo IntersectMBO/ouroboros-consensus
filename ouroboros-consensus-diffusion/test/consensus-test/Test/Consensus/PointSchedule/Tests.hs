@@ -225,7 +225,13 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
             isSorted QC.le (map fst ss))
         QC..&&.
           (QC.counterexample ("schedule = " ++ show (map (second showPoint) ss)) $
-            noReturnToAncestors (map snd ss)
+           QC.counterexample ("header points don't decrease or repeat") $
+            noReturnToAncestors (filter isHeaderPoint $ map snd ss)
+          )
+        QC..&&.
+          (QC.counterexample ("schedule = " ++ show (map (second showPoint) ss)) $
+           QC.counterexample ("block points don't decrease or repeat") $
+            noReturnToAncestors (filter isBlockPoint $ map snd ss)
           )
   where
     showPoint :: SchedulePoint -> String
@@ -240,6 +246,10 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
     isHeaderPoint :: SchedulePoint -> Bool
     isHeaderPoint (ScheduleHeaderPoint _) = True
     isHeaderPoint _ = False
+
+    isBlockPoint :: SchedulePoint -> Bool
+    isBlockPoint (ScheduleBlockPoint _) = True
+    isBlockPoint _ = False
 
 isAncestorBlock :: TestBlock -> TestBlock -> Maybe Ordering
 isAncestorBlock b0 b1 =
