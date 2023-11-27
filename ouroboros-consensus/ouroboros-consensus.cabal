@@ -326,6 +326,7 @@ library unstable-consensus-testlib
     Test.Util.SOP
     Test.Util.Split
     Test.Util.Stream
+    Test.Util.SupportedNetworkProtocolVersion
     Test.Util.TestBlock
     Test.Util.TestEnv
     Test.Util.Time
@@ -371,6 +372,7 @@ library unstable-consensus-testlib
     , tasty
     , tasty-expected-failure
     , tasty-golden
+    , tasty-hunit
     , tasty-quickcheck
     , template-haskell
     , text

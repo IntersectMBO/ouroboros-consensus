@@ -310,6 +310,7 @@ test-suite shelley-test
     Test.Consensus.Shelley.Coherence
     Test.Consensus.Shelley.Golden
     Test.Consensus.Shelley.Serialisation
+    Test.Consensus.Shelley.SupportedNetworkProtocolVersion
     Test.ThreadNet.Shelley
 
   build-depends:
@@ -331,7 +332,10 @@ test-suite shelley-test
     , ouroboros-consensus-protocol
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , QuickCheck
+    , sop-core
+    , strict-sop-core
     , tasty
+    , tasty-hunit
     , tasty-quickcheck
     , unstable-shelley-testlib
 
@@ -392,6 +396,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
     Test.Consensus.Cardano.Serialisation
+    Test.Consensus.Cardano.SupportedNetworkProtocolVersion
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
     Test.ThreadNet.MaryAlonzo
