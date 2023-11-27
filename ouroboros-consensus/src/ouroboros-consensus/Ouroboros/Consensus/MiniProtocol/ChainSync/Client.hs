@@ -36,7 +36,6 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , TraceChainSyncClientEvent (..)
   ) where
 
-import           Control.Monad
 import           Control.Monad.Except
 import           Control.Tracer
 import           Data.Kind (Type)
@@ -775,16 +774,6 @@ chainSyncClient mkPipelineDecision0 tracer cfg
                 } = kis'
 
           -- Validate header
-          let expectPrevHash = castHash (AF.headHash theirFrag)
-              actualPrevHash = headerPrevHash hdr
-          when (actualPrevHash /= expectPrevHash) $
-            disconnect $
-              DoesntFit
-                actualPrevHash
-                expectPrevHash
-                (ourTipFromChain ourFrag)
-                theirTip
-
           theirHeaderStateHistory' <-
             case runExcept $ validateHeader cfg ledgerView hdr theirHeaderStateHistory of
               Right theirHeaderStateHistory' -> return theirHeaderStateHistory'
@@ -1160,18 +1149,6 @@ data ChainSyncClientException =
           (Our   (Tip blk))
           (Their (Tip blk))
 
-      -- | The received header to roll forward doesn't fit onto the previous
-      -- one.
-      --
-      -- The first 'ChainHash' is the previous hash of the received header and
-      -- the second 'ChainHash' is that of the previous one.
-    | forall blk. BlockSupportsProtocol blk =>
-        DoesntFit
-          (ChainHash blk)  -- ^ Received hash
-          (ChainHash blk)  -- ^ Expected hash
-          (Our   (Tip blk))
-          (Their (Tip blk))
-
       -- | The upstream node's chain contained a block that we know is invalid.
     | forall blk. LedgerSupportsProtocol blk =>
         InvalidBlock
@@ -1196,12 +1173,6 @@ instance Eq ChainSyncClientException where
       Nothing   -> False
       Just Refl -> (a, b, c) == (a', b', c')
   InvalidIntersection{} == _ = False
-
-  DoesntFit (a :: ChainHash blk) b c d == DoesntFit (a' :: ChainHash blk') b' c' d' =
-    case eqT @blk @blk' of
-      Nothing   -> False
-      Just Refl -> (a, b, c, d) == (a', b', c', d')
-  DoesntFit{} == _ = False
 
   InvalidBlock (a :: Point blk) b c == InvalidBlock (a' :: Point blk') b' c' =
     case eqT @blk @blk' of
