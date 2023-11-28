@@ -11,6 +11,7 @@ module Test.Consensus.PeerSimulator.Trace (
   , terseFrag
   , terseFragH
   , terseHeader
+  , tersePoint
   , traceLinesWith
   , traceUnitWith
   ) where
@@ -22,7 +23,8 @@ import           Data.Foldable (traverse_)
 import           Data.List (intercalate)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.Time.Clock (diffTimeToPicoseconds)
-import           Ouroboros.Consensus.Block (Header, blockHash, blockNo,
+import           Ouroboros.Consensus.Block (Header,
+                     Point (BlockPoint, GenesisPoint), blockHash, blockNo,
                      blockSlot, getHeader)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
@@ -110,6 +112,11 @@ terseBlock block =
 
 terseHeader :: Header TestBlock -> String
 terseHeader (TestHeader block) = terseBlock block
+
+tersePoint :: Point TestBlock -> String
+tersePoint = \case
+  BlockPoint slot hash -> terseSlotBlock slot (BlockNo (fromIntegral (length (unTestHash hash))))
+  GenesisPoint -> "G"
 
 terseFragH :: TestFragH -> String
 terseFragH frag =

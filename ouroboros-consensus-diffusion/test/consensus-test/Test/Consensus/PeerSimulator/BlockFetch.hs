@@ -21,6 +21,7 @@ import           Data.Map.Strict (Map)
 import           Network.TypedProtocol.Channel (createConnectedChannels)
 import           Network.TypedProtocol.Driver.Simple
                      (runConnectedPeersPipelined)
+import           Ouroboros.Consensus.Block (blockPoint)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -41,11 +42,12 @@ import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion,
                      isPipeliningEnabled)
 import           Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
 import           Ouroboros.Network.Protocol.BlockFetch.Server
-                     (BlockFetchBlockSender (SendMsgStartBatch),
+                     (BlockFetchBlockSender (SendMsgNoBlocks, SendMsgStartBatch),
                      BlockFetchSendBlocks (SendMsgBatchDone, SendMsgBlock),
                      BlockFetchServer (..), blockFetchServerPeer)
 import           Ouroboros.Network.Protocol.BlockFetch.Type (ChainRange (..))
-import           Test.Consensus.PeerSimulator.Trace (terseFrag)
+import           Test.Consensus.PeerSimulator.Trace (terseFrag,
+                     tersePoint)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
 import           Test.Util.Time (dawnOfTime)
@@ -107,7 +109,7 @@ runBlockFetchClient
   -> STM m ()
   -> FetchClientRegistry peer (Header TestBlock) TestBlock m
   -> ControlMessageSTM m
-  -> m (AnchoredFragment TestBlock)
+  -> m (AnchoredFragment TestBlock, TestBlock)
   -> m ()
 runBlockFetchClient peerId tracer wait fetchClientRegistry controlMsgSTM getCurrentServerChain =
     bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId $ \clientCtx -> do
@@ -124,32 +126,54 @@ runBlockFetchClient peerId tracer wait fetchClientRegistry controlMsgSTM getCurr
     ntnVersion :: NodeToNodeVersion
     ntnVersion = maxBound
 
+-- TODO Move this to Handlers, create ScheduledBlockFetchServer
 mockBlockFetchServer ::
      forall m.
      (IOLike m)
   => STM m ()
   -> Tracer m String
-  -> m (AnchoredFragment TestBlock)
+  -> m (AnchoredFragment TestBlock, TestBlock)
   -> BlockFetchServer TestBlock (Point TestBlock) m ()
 mockBlockFetchServer wait tracer getCurrentChain = idle
   where
     idle :: BlockFetchServer TestBlock (Point TestBlock) m ()
     idle = BlockFetchServer check ()
 
-    -- REVIEW: When the range does not match the current chain, we block until it doesn't.
-    -- This means that the client will never be able to change the range, like when rolling back.
     check :: ChainRange (Point TestBlock) -> m (BlockFetchBlockSender TestBlock (Point TestBlock) m ())
     check (ChainRange from to) = do
-      curChain <- getCurrentChain
-      case AF.sliceRange curChain from to of
-        Nothing    -> do
-          trace ("Waiting for next tick for range: " ++ condense from)
-          atomically wait
-          trace "unblocked"
-          check (ChainRange from to)
-        Just slice -> do
-          trace ("Sending slice " ++ terseFrag slice)
-          pure (SendMsgStartBatch $ sendBlocks (AF.toOldestFirst slice))
+      (hpChain, bp) <- getCurrentChain
+      -- First, check whether the block point is on the same chain, and before or equal to, the header point.
+      case AF.rollback (blockPoint bp) hpChain of
+        Nothing ->
+          -- REVIEW: Should this be fatal?
+          error "Block point isn't on the same chain as header point"
+          -- pure noBlocks
+        Just bpChain ->
+          -- Next, check whether the requested range is contained in the fragment before the block point.
+          -- REVIEW: this is Nothing if only _part_ of the range is on the current chain.
+          -- Is it correct that we don't want to send anything in this case?
+          case AF.sliceRange bpChain from to of
+            Nothing    -> do
+              trace ("Waiting for next tick for range: " ++ tersePoint from ++ " -> " ++ tersePoint to)
+              -- Finally, if we cannot serve blocks, decide whether to send NoBlocks before yielding control
+              -- to the scheduler.
+              -- If the @to@ point is not part of the chain up to HP, we must have switched to a fork, so we
+              -- need to give the client a chance to adapt the range before trying again with the next tick's
+              -- chain.
+              -- Otherwise, we simply have to wait for BP to advance sufficiently, and we block without sending
+              -- a message, to simulate a slow response.
+              case AF.withinFragmentBounds to hpChain of
+                False -> pure noBlocks
+                True -> do
+                  waitM
+                  check (ChainRange from to)
+            Just slice -> do
+              trace ("Sending slice " ++ terseFrag slice)
+              pure (SendMsgStartBatch $ sendBlocks (AF.toOldestFirst slice))
+
+    noBlocks = SendMsgNoBlocks (idle <$ waitM)
+
+    waitM = atomically wait
 
     sendBlocks :: [TestBlock] -> m (BlockFetchSendBlocks TestBlock (Point TestBlock) m ())
     sendBlocks = \case

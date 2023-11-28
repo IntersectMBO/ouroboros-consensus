@@ -12,9 +12,8 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import           Cardano.Slotting.Slot (WithOrigin (At, Origin))
+import           Cardano.Slotting.Slot (WithOrigin (At))
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
-import           Control.Concurrent.Class.MonadSTM.Strict.TChan
 import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -23,6 +22,7 @@ import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Ouroboros.Consensus.Block (headerPoint)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      Consensus, bracketChainSyncClient, chainSyncClient,
@@ -35,10 +35,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), MonadDelay (threadDelay),
-                     MonadSTM (atomically, retry), StrictTVar, readTVar,
-                     tryPutTMVar)
+                     MonadSTM (atomically, retry), StrictTVar, readTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Network.Block (blockPoint)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
                      bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.Channel (createConnectedChannels)
@@ -57,7 +55,8 @@ import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.Genesis.Setup.GenChains (GenesisTest)
 import           Test.Consensus.Network.Driver.Limits.Extras
 import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
-import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient)
+import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient,
+                     startBlockFetchLogic)
 import           Test.Consensus.PeerSimulator.Config
 import           Test.Consensus.PeerSimulator.Resources
 import           Test.Consensus.PeerSimulator.StateView
@@ -66,9 +65,9 @@ import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule
                      (AdvertisedPoints (AdvertisedPoints),
                      BlockPoint (BlockPoint), GenesisTest (GenesisTest),
-                     Peer (Peer), PeerId, PointSchedule (PointSchedule),
-                     PointScheduleConfig, TestFragH, Tick (Tick),
-                     pointSchedulePeers)
+                     HeaderPoint (HeaderPoint), Peer (Peer), PeerId,
+                     PointSchedule (PointSchedule), PointScheduleConfig,
+                     TestFragH, Tick (Tick), pointSchedulePeers)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
@@ -226,11 +225,11 @@ startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM Share
       atomically $ do
         readTVar srCurrentState >>= \case
           Nothing -> retry
-          Just AdvertisedPoints {block = BlockPoint (At b)} -> do
-            case BT.findFragment (blockPoint b) srBlockTree of
-              Just f  -> pure f
-              Nothing -> error "block tip is not in the block tree"
-          Just AdvertisedPoints {block = BlockPoint Origin} -> do
+          Just AdvertisedPoints {header = HeaderPoint (At h), block = BlockPoint (At b)} -> do
+            case BT.findFragment (headerPoint h) srBlockTree of
+              Just f  -> pure (f, b)
+              Nothing -> error "header point is not in the block tree"
+          Just AdvertisedPoints {} -> do
             retry
 
     tracer = Tracer (traceUnitWith srTracer ("BlockFetch " ++ condense srPeerId))
@@ -322,7 +321,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     -- otherwise, an internal assertion fails because getCandidates yields more
     -- peer fragments than registered clients.
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
-    PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
+    startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
     runScheduler tracer pointSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
