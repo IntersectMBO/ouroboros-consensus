@@ -17,8 +17,6 @@
 module Legacy.Cardano.CanHardFork (LegacyCardanoHardForkConstraints) where
 
 import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
-import           Cardano.Ledger.Allegra.Translation
-                     (shelleyToAllegraAVVMsToDelete)
 import           Cardano.Ledger.Alonzo.Translation ()
 import           Cardano.Ledger.Babbage.Translation ()
 import           Cardano.Ledger.Conway.Translation ()
@@ -337,36 +335,14 @@ translateLedgerStateShelleyToAllegraWrapper ::
 translateLedgerStateShelleyToAllegraWrapper =
     ignoringBoth $
       TranslateLedgerState {
-          translateLedgerStateWith = \_epochNo (LegacyLedgerState ls) -> LegacyLedgerState $
-              -- In the Shelley to Allegra transition, the AVVM addresses have
-              -- to be deleted, and their balance has to be moved to the
-              -- reserves. For this matter, the Ledger keeps track of these
-              -- small set of entries since the Byron to Shelley transition and
-              -- provides them to us through 'shelleyToAllegraAVVMsToDelete'.
-              --
-              -- In the long run, the ledger will already use ledger states
-              -- parametrized by the map kind and therefore will already provide
-              -- the differences in this translation.
-              let avvms           = SL.unUTxO
-                                  $ shelleyToAllegraAVVMsToDelete
-                                  $ shelleyLedgerState ls
-
-                  -- This 'stowLedgerTables' + 'withLedgerTables' injects the
-                  -- values provided by the Ledger so that the translation
-                  -- operation finds those entries in the UTxO and destroys
-                  -- them, modifying the reserves accordingly.
-                  stowedState = stowLedgerTables
-                              . withLedgerTables ls
-                              . LedgerTables
-                              . ValuesMK
-                              $ avvms
-
-                  resultingState = unFlip . unComp
-                                 . SL.translateEra' ()
-                                 . Comp   . Flip
-                                 $ stowedState
-
-              in resultingState `withLedgerTables` emptyLedgerTables
+          translateLedgerStateWith = \_epochNo ->
+                LegacyLedgerState
+              . unFlip
+              . unComp
+              . SL.translateEra' ()
+              . Comp
+              . Flip
+              . getLegacyLedgerState
         }
 
 translateTxShelleyToAllegraWrapper ::
@@ -415,8 +391,6 @@ translateLedgerStateAllegraToMaryWrapper =
       TranslateLedgerState {
           translateLedgerStateWith = \_epochNo ->
                 LegacyLedgerState
-              . forgetLedgerTables
-              . noNewTickingDiffs
               . unFlip
               . unComp
               . SL.translateEra' ()
@@ -471,8 +445,6 @@ translateLedgerStateMaryToAlonzoWrapper =
       TranslateLedgerState {
           translateLedgerStateWith = \_epochNo ->
                 LegacyLedgerState
-              . forgetLedgerTables
-              . noNewTickingDiffs
               . unFlip
               . unComp
               . SL.translateEra' (getAlonzoTranslationContext cfgAlonzo)
@@ -536,8 +508,6 @@ translateLedgerStateAlonzoToBabbageWrapper =
       TranslateLedgerState {
           translateLedgerStateWith = \_epochNo ->
                 LegacyLedgerState
-              . forgetLedgerTables
-              . noNewTickingDiffs
               . unFlip
               . unComp
               . SL.translateEra' ()
@@ -623,8 +593,6 @@ translateLedgerStateBabbageToConwayWrapper =
       TranslateLedgerState {
           translateLedgerStateWith = \_epochNo ->
                 LegacyLedgerState
-              . forgetLedgerTables
-              . noNewTickingDiffs
               . unFlip
               . unComp
               . SL.translateEra' (getConwayTranslationContext cfgConway)

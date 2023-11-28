@@ -5,8 +5,9 @@ module Legacy.Cardano (
   , LegacyCardanoShelleyEras
   ) where
 
-import           Legacy.Byron.Ledger ()
+import           Legacy.Byron ()
 import           Legacy.Cardano.Block
 import           Legacy.Cardano.CanHardFork
 import           Legacy.Cardano.Ledger ()
-import           Legacy.Shelley.Ledger ()
+import           Legacy.Cardano.Node ()
+import           Legacy.Shelley ()

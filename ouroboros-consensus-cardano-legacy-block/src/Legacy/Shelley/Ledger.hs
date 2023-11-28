@@ -94,6 +94,10 @@ instance (ShelleyBasedEra era, IsLedger (LedgerState (ShelleyBlock proto era)))
           shelleyLedgerState
           slotNo
 
+{-------------------------------------------------------------------------------
+  Applying blocks
+-------------------------------------------------------------------------------}
+
 instance ( ShelleyCompatible proto era
          , ApplyBlock (LedgerState (ShelleyBlock proto era)) (ShelleyBlock proto era)
          ) => ApplyBlock (LedgerState (LegacyBlock (ShelleyBlock proto era))) (LegacyBlock (ShelleyBlock proto era)) where
@@ -244,7 +248,7 @@ instance ( LedgerSupportsProtocol (ShelleyBlock proto era)
       (SQFLookupTables, GetCBOR q') ->
         mkSerialised (encodeShelleyResult maxBound q') $
         answerPureBlockQuery cfg (LegacyBlockQuery q') ext
-      (SQFNoTables, _) -> answerPureBlockQuery (castExtLedgerCfg castTopLevelConfig cfg) q $ castExtLedgerState coerce ext
-
+      (SQFNoTables, _) -> answerPureBlockQuery (castExtLedgerCfg castTopLevelConfig cfg) q $
+        castExtLedgerState coerce ext
   answerBlockQueryLookup _cfg q _dlv = case q of {}
   answerBlockQueryTraverse _cfg q _dlv = case q of {}

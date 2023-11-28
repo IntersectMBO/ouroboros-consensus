@@ -46,14 +46,19 @@ library
   hs-source-dirs:  src
   exposed-modules:
     DBSync
+    Legacy.Byron
     Legacy.Byron.Ledger
+    Legacy.Byron.Node
     Legacy.Cardano
     Legacy.Cardano.Block
     Legacy.Cardano.CanHardFork
     Legacy.Cardano.CanonicalTxIn
     Legacy.Cardano.Ledger
+    Legacy.Cardano.Node
     Legacy.Convert
+    Legacy.Shelley
     Legacy.Shelley.Ledger
+    Legacy.Shelley.Node
     Ouroboros.Consensus.HardFork.Trans
     Ouroboros.Consensus.Legacy.Block
     Ouroboros.Consensus.Legacy.Util
@@ -63,9 +68,9 @@ library
     , bytestring
     , cardano-binary
     , cardano-crypto-class
-    , cardano-ledger-allegra
     , cardano-ledger-alonzo
     , cardano-ledger-babbage
+    , cardano-ledger-byron
     , cardano-ledger-conway
     , cardano-ledger-core
     , cardano-ledger-shelley

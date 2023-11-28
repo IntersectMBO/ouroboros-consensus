@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Legacy.Block (
     BlockConfig (..)
   , BlockQuery (..)
   , CodecConfig (..)
+  , FromLegacyBlock
   , GenTx (..)
   , Header (..)
   , LedgerState (..)
@@ -33,6 +34,7 @@ module Ouroboros.Consensus.Legacy.Block (
   , NestedCtxt_ (..)
   , StorageConfig (..)
   , Ticked1 (..)
+  , ToLegacyBlock
   , TxId (..)
   , Validated (..)
   ) where
@@ -119,6 +121,12 @@ newtype LegacyBlock (blk :: Type) = LegacyBlock { getLegacyBlock :: blk }
   deriving newtype Show
   deriving newtype (BlockSupportsMetrics, ConfigSupportsNode)
 
+class blk' ~ LegacyBlock blk => ToLegacyBlock blk blk'
+instance blk' ~ LegacyBlock blk => ToLegacyBlock blk blk'
+
+class blk ~ LegacyBlock blk' => FromLegacyBlock blk blk'
+instance blk ~ LegacyBlock blk' => FromLegacyBlock blk blk'
+
 {-------------------------------------------------------------------------------
   LegacyBlock: data/type family instances
 -------------------------------------------------------------------------------}
@@ -162,7 +170,9 @@ instance (forall fp'. ShowQuery (BlockQuery blk fp')) => ShowQuery (BlockQuery (
 
 type instance ApplyTxErr (LegacyBlock blk) = ApplyTxErr blk
 
-newtype instance TxId (GenTx (LegacyBlock blk)) = LegacyTxId (TxId (GenTx blk))
+newtype instance TxId (GenTx (LegacyBlock blk)) = LegacyGenTxId {
+    getLegacyGenTxId :: TxId (GenTx blk)
+  }
 deriving newtype instance NoThunks (TxId (GenTx blk))
                        => NoThunks (TxId (GenTx (LegacyBlock blk)))
 deriving newtype instance Eq (TxId (GenTx blk))
