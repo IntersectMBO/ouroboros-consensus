@@ -14,10 +14,11 @@ module Test.Consensus.PeerSimulator.Run (
 
 import           Cardano.Slotting.Slot (WithOrigin (At, Origin))
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
+import           Control.Concurrent.Class.MonadSTM.Strict.TChan
 import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer, nullTracer, traceWith)
+import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
@@ -56,6 +57,7 @@ import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.Genesis.Setup.GenChains (GenesisTest)
 import           Test.Consensus.Network.Driver.Limits.Extras
 import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
+import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient)
 import           Test.Consensus.PeerSimulator.Config
 import           Test.Consensus.PeerSimulator.Resources
 import           Test.Consensus.PeerSimulator.StateView
@@ -214,21 +216,24 @@ startBlockFetchConnectionThread ::
   FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
   ControlMessageSTM m ->
   SharedResources m ->
+  BlockFetchResources m ->
   m ()
-startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM SharedResources {srPeerId, srBlockTree, srCurrentState} =
+startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM SharedResources {srTracer, srPeerId, srBlockTree, srCurrentState} BlockFetchResources {bfrTickStarted} =
   void $ forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
-    PeerSimulator.BlockFetch.runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM getCurrentChain
+    runBlockFetchClient srPeerId tracer bfrTickStarted fetchClientRegistry controlMsgSTM getCurrentChain
   where
-    getCurrentChain = atomically $ do
-      nodeState <- readTVar srCurrentState
-      case nodeState of
-        Nothing -> retry
-        Just AdvertisedPoints {block = BlockPoint (At b)} -> do
-          case BT.findFragment (blockPoint b) srBlockTree of
-            Just f  -> pure f
-            Nothing -> error "block tip is not in the block tree"
-        Just AdvertisedPoints {block = BlockPoint Origin} ->
-          retry
+    getCurrentChain =
+      atomically $ do
+        readTVar srCurrentState >>= \case
+          Nothing -> retry
+          Just AdvertisedPoints {block = BlockPoint (At b)} -> do
+            case BT.findFragment (blockPoint b) srBlockTree of
+              Just f  -> pure f
+              Nothing -> error "block tip is not in the block tree"
+          Just AdvertisedPoints {block = BlockPoint Origin} -> do
+            retry
+
+    tracer = Tracer (traceUnitWith srTracer ("BlockFetch " ++ condense srPeerId))
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -242,15 +247,11 @@ dispatchTick ::
   m ()
 dispatchTick tracer peers Tick {active = Peer pid state, duration} =
   case peers Map.!? pid of
-    Just PeerResources {prChainSync = ChainSyncResources {csrNextState}} -> do
-      -- REVIEW: It would be worth sanity-checking that our understanding of
-      -- `threadDelay` is correct; and maybe getting explicit information from
-      -- both ChainSync & BlockFetch servers that they are done.
-      threadDelay duration
+    Just PeerResources {prUpdateState} -> do
       trace $ "Writing state " ++ condense state
-      atomically (tryPutTMVar csrNextState state) >>= \case
-        True -> trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
-        False -> trace $ "Client for " ++ condense pid ++ " has ceased operation."
+      atomically (prUpdateState state)
+      trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
+      threadDelay duration
       trace $ condense pid ++ "'s tick is now done."
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
@@ -272,6 +273,7 @@ runScheduler tracer PointSchedule {ticks=ps} peers = do
   for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
   traceStartOfTimePoetry
   for_ ps (dispatchTick tracer peers)
+  threadDelay 1
   traceEndOfTimePoetry
   where
     traceStartOfTimePoetry =
@@ -314,8 +316,8 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
       startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig stateViewTracers (psrCandidates resources)
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
-    for_ (psrPeers resources) $ \PeerResources {prShared} ->
-      startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared
+    for_ (psrPeers resources) $ \PeerResources {prShared, prBlockFetch} ->
+      startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared prBlockFetch
     -- The block fetch logic needs to be started after the block fetch clients
     -- otherwise, an internal assertion fails because getCandidates yields more
     -- peer fragments than registered clients.

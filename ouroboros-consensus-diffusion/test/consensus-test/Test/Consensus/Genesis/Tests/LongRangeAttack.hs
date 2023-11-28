@@ -57,7 +57,7 @@ prop_longRangeAttack honestFreq advFreqs = do
 
   -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
 
-  pure $ withMaxSuccess 10 $
+  pure $ withMaxSuccess 15 $
     classify genesisWindowAfterIntersection "Full genesis window after intersection" $
     allAdversariesSelectable
     ==>

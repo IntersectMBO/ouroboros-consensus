@@ -119,7 +119,7 @@ terseFragH frag =
       Empty _ -> ""
       _       -> " ⚓ " ++ intercalate " " (terseHeader <$> toOldestFirst frag)
     renderAnchor = case anchor frag of
-      AnchorGenesis -> "Genesis"
+      AnchorGenesis -> "G"
       Anchor slot hash block -> terseSlotBlock slot block ++ renderAnchorHash hash
     renderAnchorHash hash
       | all (== 0) (unTestHash hash) = ""

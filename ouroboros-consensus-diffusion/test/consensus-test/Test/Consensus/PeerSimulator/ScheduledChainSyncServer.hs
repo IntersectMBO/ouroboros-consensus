@@ -61,7 +61,7 @@ data ScheduledChainSyncServer m a =
   ScheduledChainSyncServer {
     scssName           :: String,
     scssCurrentState   :: STM m (Maybe a),
-    scssAwaitNextState :: STM m (Maybe a),
+    scssAwaitNextState :: STM m (),
     scssHandlers       :: ChainSyncServerHandlers m a,
     scssTracer         :: Tracer m String
   }
@@ -75,10 +75,12 @@ awaitNextState ::
   IOLike m =>
   ScheduledChainSyncServer m a ->
   m a
-awaitNextState server@ScheduledChainSyncServer{scssAwaitNextState} = do
-  atomically scssAwaitNextState >>= \case
-    Nothing       -> awaitNextState server
-    Just resource -> pure resource
+awaitNextState server@ScheduledChainSyncServer{scssAwaitNextState, scssCurrentState} =
+  atomically (scssAwaitNextState >> scssCurrentState) >>= \case
+    Nothing       ->
+      awaitNextState server
+    Just resource ->
+      pure resource
 
 -- | Fetch the current state from the STM action, and if it is 'Nothing',
 -- wait for the next tick to be triggered in 'awaitNextState'.
@@ -92,8 +94,10 @@ ensureCurrentState ::
   m a
 ensureCurrentState server@ScheduledChainSyncServer{scssCurrentState} =
   atomically scssCurrentState >>= \case
-    Nothing -> awaitNextState server
-    Just resource -> pure resource
+    Nothing ->
+      awaitNextState server
+    Just resource ->
+      pure resource
 
 -- | Handler functions are STM actions for the usual race condition reasons,
 -- which means that they cannot emit trace messages.
@@ -199,7 +203,7 @@ runScheduledChainSyncServer ::
   Condense a =>
   IOLike m =>
   String ->
-  STM m (Maybe a) ->
+  STM m () ->
   STM m (Maybe a) ->
   Tracer m String ->
   ChainSyncServerHandlers m a ->

@@ -22,13 +22,11 @@ module Test.Consensus.PointSchedule.SinglePeer.Indices (
 
 import           Control.Monad (forM, replicateM)
 import           Data.List (sort)
-import           Data.Time.Clock (
-    DiffTime
-  , diffTimeToPicoseconds
-  , picosecondsToDiffTime
-  )
+import           Data.Maybe (fromMaybe, listToMaybe)
+import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
+                     picosecondsToDiffTime)
 import           GHC.Stack (HasCallStack)
-import           Ouroboros.Network.Block (SlotNo(SlotNo))
+import           Ouroboros.Network.Block (SlotNo (SlotNo))
 import qualified System.Random.Stateful as R
 
 
@@ -163,7 +161,9 @@ tipPointSchedule g slotLength msgDelayInterval slots = do
 
     -- | The start of each slot in the schedule
     toDiffTime :: SlotNo -> DiffTime
-    toDiffTime (SlotNo s) = fromIntegral s * slotLength
+    toDiffTime (SlotNo s) = fromIntegral (s - firstSlot) * slotLength
+
+    SlotNo firstSlot = fromMaybe 0 (listToMaybe slots)
 
     -- | Assign times to tip points in past slots. A past slots is
     -- any earlier slot than the first parameter.
@@ -178,7 +178,7 @@ tipPointSchedule g slotLength msgDelayInterval slots = do
           firstLater = case newBranch of
             -- If there is no later point, pick an arbitrary later time interval
             -- to sample from
-            [] -> lastTime + toDiffTime (toEnum nseq)
+            []           -> lastTime + toDiffTime (toEnum nseq)
             ((a, _) : _) -> a + fst msgDelayInterval
       times <- replicateM nseq (uniformRMDiffTime (lastTime, firstLater) g)
       pure (sort times, newBranch)

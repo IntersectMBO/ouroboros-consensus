@@ -54,7 +54,7 @@ module Test.Consensus.PointSchedule (
 import           Data.Bifunctor (second)
 import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)
-import           Data.List (scanl', sortOn, transpose, mapAccumL)
+import           Data.List (mapAccumL, scanl', sortOn, transpose)
 import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -96,7 +96,7 @@ newtype TipPoint =
   deriving (Eq, Show)
 
 instance Condense TipPoint where
-  condense (TipPoint TipGenesis) = "genesis"
+  condense (TipPoint TipGenesis) = "G"
   condense (TipPoint (Tip slot _ bno)) =
       "B:" <> condense bno <> ",S:" <> condense slot
 
@@ -341,8 +341,8 @@ peerStates peerId =
     step (_, z) = fmap (modPoint z)
 
     modPoint z = \case
-      ScheduleTipPoint tip -> z {tip = TipPoint tip}
-      ScheduleHeaderPoint h -> z {header = HeaderPoint (At h)}
+      ScheduleTipPoint tip -> z {tip = TipPoint (tipFromHeader tip)}
+      ScheduleHeaderPoint h -> z {header = HeaderPoint (At (getHeader h))}
       ScheduleBlockPoint b -> z {block = BlockPoint (At b)}
 
     zero = AdvertisedPoints {
@@ -354,11 +354,11 @@ peerStates peerId =
 fromSchedulePoints :: Map PeerId [(DiffTime, SchedulePoint)] -> Maybe PointSchedule
 fromSchedulePoints peers = do
   peerIds <- nonEmpty (Map.keys peers)
-  pointSchedule (snd (mapAccumL mkTick 0 states)) peerIds
+  pointSchedule (zipWith Tick states durations) peerIds
   where
-    mkTick prev (t, s) = (t, Tick s (t - prev))
+    durations = drop 1 (snd (mapAccumL (\ prev start -> (start, start - prev)) 0 (drop 1 starts))) ++ [0]
 
-    states = foldr (mergeOn fst) [] [peerStates p sch | (p, sch) <- Map.toList peers]
+    (starts, states) = unzip $ foldr (mergeOn fst) [] [peerStates p sch | (p, sch) <- Map.toList peers]
 
 ----------------------------------------------------------------------------------------------------
 -- Folding functions
@@ -484,7 +484,7 @@ onlyHonestPointSchedule config BlockTree {btTrunk = _ :> tipBlock} =
     tick = tickDefault config honestPeerState
     honestPeerState = Peer HonestPeer (NodeOnline points)
     points = AdvertisedPoints tipPoint headerPoint blockPoint
-    tipPoint = TipPoint $ tipFromHeader tipBlock
+    tipPoint = TipPoint (tipFromHeader tipBlock)
     headerPoint = HeaderPoint $ At (getHeader tipBlock)
     blockPoint = BlockPoint (At tipBlock)
 
@@ -562,10 +562,11 @@ newLongRangeAttack ::
   m (Maybe PointSchedule)
 newLongRangeAttack g BlockTree {btTrunk, btBranches = [branch]} = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
-  adv <- peerScheduleFromTipPoints g defaultPeerScheduleParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
+  adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
   pure (fromSchedulePoints (Map.fromList [(HonestPeer, honest), ("adversary 1", adv)]))
   where
     honParams = defaultPeerScheduleParams {pspHeaderDelayInterval = (0.3, 0.4)}
+    advParams = defaultPeerScheduleParams {pspTipDelayInterval = (0, 0.1)}
 
 newLongRangeAttack _ _ =
   pure Nothing

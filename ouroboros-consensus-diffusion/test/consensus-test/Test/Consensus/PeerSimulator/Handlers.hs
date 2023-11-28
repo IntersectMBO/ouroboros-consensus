@@ -19,7 +19,7 @@ import           Data.Coerce (coerce)
 import           Data.Maybe (fromJust)
 import           Data.Monoid (First (..))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..),
-                     getHeader, withOrigin)
+                     WithOrigin, getHeader, withOrigin)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
@@ -85,15 +85,13 @@ handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
     trace $ "  last intersection is " ++ condense intersection
-    withOrigin headerIsOrigin (withHeader intersection) (coerce (header points))
+    withHeader intersection (coerce (header points))
   where
-    headerIsOrigin = pure Nothing
-
-    withHeader :: Point TestBlock -> Header TestBlock -> WriterT [String] (STM m) (Maybe RequestNext)
+    withHeader :: Point TestBlock -> WithOrigin (Header TestBlock) -> WriterT [String] (STM m) (Maybe RequestNext)
     withHeader intersection h =
       maybe noPathError (analysePath hp) (BT.findPath intersection hp blockTree)
       where
-        hp = AF.castPoint $ blockPoint h
+        hp = AF.castPoint $ withOrigin GenesisPoint blockPoint h
 
     noPathError = error "serveHeader: intersection and headerPoint should always be in the block tree"
 
