@@ -233,6 +233,8 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
     Ouroboros.Consensus.Storage.LedgerDB
+    Ouroboros.Consensus.Storage.LedgerDB.API
+    Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory
@@ -240,6 +242,12 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Bridge
     Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Status
     Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+    Ouroboros.Consensus.Storage.LedgerDB.V1
+    Ouroboros.Consensus.Storage.LedgerDB.V1.Common
+    Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
+    Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
+    Ouroboros.Consensus.Storage.LedgerDB.V1.Init
+    Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
     Ouroboros.Consensus.Storage.VolatileDB.API
@@ -355,6 +363,7 @@ library
     , these                        ^>=1.2
     , time
     , transformers
+    , transformers-base
     , typed-protocols
     , vector                       >=0.12     && <0.13
 

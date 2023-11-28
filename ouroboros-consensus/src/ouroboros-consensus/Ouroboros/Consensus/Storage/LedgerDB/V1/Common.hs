@@ -1,0 +1,239 @@
+{-# LANGUAGE ConstraintKinds            #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE StandaloneKindSignatures   #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE UndecidableInstances       #-}
+
+module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
+    -- * LedgerDB internal state
+    LedgerDBEnv (..)
+  , LedgerDBHandle (..)
+  , LedgerDBState (..)
+  , getEnv
+  , getEnv1
+  , getEnv2
+  , getEnvSTM
+  , getEnvSTM1
+    -- * LedgerDB lock
+  , LedgerDBLock
+  , mkLedgerDBLock
+  , withReadLock
+  , withWriteLock
+    -- * Constraints
+  , LedgerDbSerialiseConstraints
+    -- * Exposed internals for testing purposes
+  , TestInternals (..)
+  ) where
+
+import           Codec.Serialise.Class
+import           Control.Tracer
+import           Data.Kind
+import           Data.Set (Set)
+import           Data.Word
+import           GHC.Generics
+import           NoThunks.Class
+import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HeaderValidation
+import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Protocol.Abstract
+import           Ouroboros.Consensus.Storage.LedgerDB.API as API
+import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog)
+import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Util.CallStack
+import           Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as Lock
+import           System.FS.API
+
+{-------------------------------------------------------------------------------
+  LedgerDB internal state
+-------------------------------------------------------------------------------}
+
+newtype LedgerDBHandle m l blk = LDBHandle (StrictTVar m (LedgerDBState m l blk))
+  deriving Generic
+
+data LedgerDBState m l blk =
+    LedgerDBOpen !(LedgerDBEnv m l blk)
+  | LedgerDBClosed
+  deriving Generic
+
+deriving instance ( IOLike m
+                  , LedgerSupportsProtocol blk
+                  , NoThunks (l EmptyMK)
+                  , NoThunks (Key l)
+                  , NoThunks (Value l)
+                  ) => NoThunks (LedgerDBState m l blk)
+
+data LedgerDBEnv m l blk = LedgerDBEnv {
+    -- | INVARIANT: the tip of the 'LedgerDB' is always in sync with the tip of
+    -- the current chain of the ChainDB.
+    ldbChangelog      :: !(StrictTVar m (DbChangelog l))
+    -- | Handle to the ledger's backing store, containing the parts that grow too
+    -- big for in-memory residency
+  , ldbBackingStore   :: !(LedgerBackingStore m l)
+    -- | The flush lock to the 'BackingStore'. This lock is crucial when it
+    -- comes to keeping the data in memory consistent with the data on-disk.
+    --
+    -- This lock should be held whenever we want to keep a consistent view of
+    -- the backing store for some time. In particular we use this:
+    --
+    -- - when performing a query on the ledger state, we need to hold a
+    --   'LocalStateQueryView' which, while live, must maintain a consistent view
+    --   of the DB, and therefore we acquire a Read lock.
+    --
+    -- - when taking a snapshot of the ledger db, we need to prevent others
+    --   from altering the backing store at the same time, thus we acquire a
+    --   Write lock.
+  , ldbLock           :: !(LedgerDBLock m)
+    -- | INVARIANT: this set contains only points that are in the
+    -- VolatileDB.
+    --
+    -- INVARIANT: all points on the current chain fragment are in this set.
+    --
+    -- The VolatileDB might contain invalid blocks, these will not be in
+    -- this set.
+    --
+    -- When a garbage-collection is performed on the VolatileDB, the points
+    -- of the blocks eligible for garbage-collection should be removed from
+    -- this set.
+  , ldbPrevApplied    :: !(StrictTVar m (Set (RealPoint blk)))
+
+
+  , ldbDiskPolicy     :: !DiskPolicy
+  , ldbTracer         :: !(Tracer m (TraceLedgerDBEvent blk))
+  , ldbCfg            :: !(TopLevelConfig blk)
+  , ldbHasFS          :: !(SomeHasFS m)
+  , ldbShouldFlush    :: !(Word64 -> Bool)
+  , ldbQueryBatchSize :: !Word64
+  , ldbResolveBlock   :: !(ResolveBlock m blk)
+  , ldbSecParam       :: !SecurityParam
+  , ldbBsTracer       :: !(Tracer m BackingStoreTraceByBackend)
+  } deriving (Generic)
+
+deriving instance ( IOLike m
+                  , LedgerSupportsProtocol blk
+                  , NoThunks (l EmptyMK)
+                  , NoThunks (Key l)
+                  , NoThunks (Value l)
+                  ) => NoThunks (LedgerDBEnv m l blk)
+
+
+-- | Check if the LedgerDB is open, if so, executing the given function on the
+-- 'LedgerDBEnv', otherwise, throw a 'CloseDBError'.
+getEnv :: forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
+       => LedgerDBHandle m l blk
+       -> (LedgerDBEnv m l blk -> m r)
+       -> m r
+getEnv (LDBHandle varState) f = readTVarIO varState >>= \case
+    LedgerDBOpen env -> f env
+    LedgerDBClosed   -> throwIO $ ClosedDBError @blk prettyCallStack
+
+-- | Variant 'of 'getEnv' for functions taking one argument.
+getEnv1 :: (IOLike m, HasCallStack, HasHeader blk)
+        => LedgerDBHandle m l blk
+        -> (LedgerDBEnv m l blk -> a -> m r)
+        -> a -> m r
+getEnv1 h f a = getEnv h (\env -> f env a)
+
+-- | Variant 'of 'getEnv' for functions taking two arguments.
+getEnv2 :: (IOLike m, HasCallStack, HasHeader blk)
+        => LedgerDBHandle m l blk
+        -> (LedgerDBEnv m l blk -> a -> b -> m r)
+        -> a -> b -> m r
+getEnv2 h f a b = getEnv h (\env -> f env a b)
+
+-- | Variant of 'getEnv' that works in 'STM'.
+getEnvSTM :: forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
+          => LedgerDBHandle m l blk
+          -> (LedgerDBEnv m l blk -> STM m r)
+          -> STM m r
+getEnvSTM (LDBHandle varState) f = readTVar varState >>= \case
+    LedgerDBOpen env -> f env
+    LedgerDBClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
+
+-- | Variant of 'getEnv1' that works in 'STM'.
+getEnvSTM1 ::
+     forall m l blk a r. (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> (LedgerDBEnv m l blk -> a -> STM m r)
+  -> a -> STM m r
+getEnvSTM1 (LDBHandle varState) f a = readTVar varState >>= \case
+    LedgerDBOpen env -> f env a
+    LedgerDBClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
+
+{-------------------------------------------------------------------------------
+  LedgerDB lock
+-------------------------------------------------------------------------------}
+
+-- | A lock to prevent the LedgerDB (i.e. a 'DbChangelog') from getting out of
+-- sync with the 'BackingStore'.
+--
+-- We rely on the capability of the @BackingStore@s of providing
+-- 'BackingStoreValueHandles' that can be used to hold a persistent view of the
+-- database as long as the handle is open. Assuming this functionality, the lock
+-- is used in three ways:
+--
+-- - Read lock to acquire a value handle: we do this when acquiring a view of the
+--   'LedgerDB' (which lives in a 'StrictTVar' at the 'ChainDB' level) and of
+--   the 'BackingStore'. We momentarily acquire a read lock, consult the
+--   transactional variable and also open a 'BackingStoreValueHandle'. This is
+--   the case for ledger state queries and for the forging loop.
+--
+-- - Read lock to ensure two operations are in sync: in the above situation, we
+--   relied on the 'BackingStoreValueHandle' functionality, but sometimes we
+--   won't access the values through a value handle, and instead we might use
+--   the LMDB environment (as it is the case for 'lmdbCopy'). In these cases, we
+--   acquire a read lock until we ended the copy, so that writers are blocked
+--   until this process is completed. This is the case when taking a snapshot.
+--
+-- - Write lock when flushing differences.
+newtype LedgerDBLock m = LedgerDBLock (Lock.RAWLock m ())
+  deriving newtype NoThunks
+
+mkLedgerDBLock :: IOLike m => m (LedgerDBLock m)
+mkLedgerDBLock = LedgerDBLock <$> Lock.new ()
+
+-- | Acquire the ledger DB read lock and hold it while performing an action
+withReadLock :: IOLike m => LedgerDBLock m -> m a -> m a
+withReadLock (LedgerDBLock lock) m =
+    Lock.withReadAccess lock (\() -> m)
+
+-- | Acquire the ledger DB write lock and hold it while performing an action
+withWriteLock :: IOLike m => LedgerDBLock m -> m a -> m a
+withWriteLock (LedgerDBLock lock) m =
+    Lock.withWriteAccess lock (\() -> (,) () <$> m)
+
+{-------------------------------------------------------------------------------
+  Constraints
+-------------------------------------------------------------------------------}
+
+-- | Serialization constraints required by the 'LedgerDB' to be properly
+-- instantiated with a @blk@.
+type LedgerDbSerialiseConstraints blk =
+  ( Serialise      (HeaderHash  blk)
+  , EncodeDisk blk (LedgerState blk EmptyMK)
+  , DecodeDisk blk (LedgerState blk EmptyMK)
+  , EncodeDisk blk (AnnTip      blk)
+  , DecodeDisk blk (AnnTip      blk)
+  , EncodeDisk blk (ChainDepState (BlockProtocol blk))
+  , DecodeDisk blk (ChainDepState (BlockProtocol blk))
+  , CanSerializeLedgerTables (LedgerState blk)
+  )
+
+{-------------------------------------------------------------------------------
+  Exposed internals for testing purposes
+-------------------------------------------------------------------------------}
+
+-- TODO: fill in as required
+type TestInternals :: (Type -> Type) -> LedgerStateKind -> Type -> Type
+data TestInternals m l blk = TestInternals

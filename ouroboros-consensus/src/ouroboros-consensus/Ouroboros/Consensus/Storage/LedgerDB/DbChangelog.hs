@@ -1000,7 +1000,6 @@ splitForFlushing dblog =
 
     immTip = AS.anchor adcStates
 
-    -- TODO: #4371 by point, not by count, so sequences can be ragged
     splitSeqDiff ::
          (Ord k, Eq v)
       => SeqDiffMK k v
