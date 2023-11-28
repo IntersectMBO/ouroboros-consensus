@@ -31,10 +31,13 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
                      StrictTVar, readTVar, uncheckedNewTVarM, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..))
+import           Ouroboros.Network.Protocol.BlockFetch.Server (BlockFetchServer)
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (ChainSyncServer (..))
 import           Test.Consensus.BlockTree (BlockTree)
 import           Test.Consensus.PeerSimulator.Handlers
+import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
+                     (runScheduledBlockFetchServer)
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
 import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
@@ -77,6 +80,9 @@ data ChainSyncResources m =
 -- "Test.Consensus.PeerSimulator.BlockFetch".
 data BlockFetchResources m =
   BlockFetchResources {
+    -- | The final server passed to typed-protocols.
+    bfrServer      :: BlockFetchServer TestBlock (Point TestBlock) m (),
+
     -- | This action blocks while this peer is inactive in the point schedule.
     bfrTickStarted :: STM m ()
   }
@@ -190,7 +196,7 @@ makePeerResources srTracer srBlockTree srPeerId = do
   srCurrentState <- uncheckedNewTVarM Nothing
   (prUpdateState, csrTickStarted, bfrTickStarted) <- updateState srCurrentState
   let prShared = SharedResources {srTracer, srBlockTree, srPeerId, srCurrentState}
-      prBlockFetch = BlockFetchResources {bfrTickStarted}
+      prBlockFetch = BlockFetchResources {bfrTickStarted, bfrServer = runScheduledBlockFetchServer (condense srPeerId) csrTickStarted (readTVar srCurrentState) srTracer (handlerBlockFetch srBlockTree)}
   prChainSync <- makeChainSyncResources csrTickStarted prShared
   pure PeerResources {prShared, prChainSync, prBlockFetch, prUpdateState}
 

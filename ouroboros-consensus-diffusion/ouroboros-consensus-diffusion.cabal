@@ -219,7 +219,9 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.Handlers
     Test.Consensus.PeerSimulator.Resources
     Test.Consensus.PeerSimulator.Run
+    Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
     Test.Consensus.PeerSimulator.ScheduledChainSyncServer
+    Test.Consensus.PeerSimulator.Server
     Test.Consensus.PeerSimulator.StateView
     Test.Consensus.PeerSimulator.Tests
     Test.Consensus.PeerSimulator.Tests.Rollback

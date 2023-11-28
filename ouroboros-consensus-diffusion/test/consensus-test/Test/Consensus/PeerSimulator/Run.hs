@@ -217,22 +217,9 @@ startBlockFetchConnectionThread ::
   SharedResources m ->
   BlockFetchResources m ->
   m ()
-startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM SharedResources {srTracer, srPeerId, srBlockTree, srCurrentState} BlockFetchResources {bfrTickStarted} =
+startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM SharedResources {srTracer, srPeerId, srBlockTree, srCurrentState} BlockFetchResources {bfrServer} =
   void $ forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
-    runBlockFetchClient srPeerId tracer bfrTickStarted fetchClientRegistry controlMsgSTM getCurrentChain
-  where
-    getCurrentChain =
-      atomically $ do
-        readTVar srCurrentState >>= \case
-          Nothing -> retry
-          Just AdvertisedPoints {header = HeaderPoint (At h), block = BlockPoint (At b)} -> do
-            case BT.findFragment (headerPoint h) srBlockTree of
-              Just f  -> pure (f, b)
-              Nothing -> error "header point is not in the block tree"
-          Just AdvertisedPoints {} -> do
-            retry
-
-    tracer = Tracer (traceUnitWith srTracer ("BlockFetch " ++ condense srPeerId))
+    runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM bfrServer
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar

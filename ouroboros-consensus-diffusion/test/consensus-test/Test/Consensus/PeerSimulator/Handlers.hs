@@ -1,39 +1,44 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | Business logic of the SyncChain protocol handlers that operates
+-- | Business logic of the ChainSync and BlockFetch protocol handlers that operate
 -- on the 'AdvertisedPoints' of a point schedule.
 --
 -- These are separated from the scheduling related mechanics of the
--- ChainSync server mock that the peer simulator uses, in
--- "Test.Consensus.PeerSimulator.ScheduledChainSyncServer".
+-- server mocks that the peer simulator uses, in
+-- "Test.Consensus.PeerSimulator.ScheduledChainSyncServer" and
+-- "Test.Consensus.PeerSimulator.ScheduledBlockFetchServer".
 module Test.Consensus.PeerSimulator.Handlers (
-    handlerFindIntersection
+    handlerBlockFetch
+  , handlerFindIntersection
   , handlerRequestNext
   ) where
 
+import           Cardano.Slotting.Slot (WithOrigin (At))
 import           Control.Monad.Trans (lift)
 import           Control.Monad.Writer.Strict (MonadWriter (tell),
                      WriterT (runWriterT))
 import           Data.Coerce (coerce)
 import           Data.Maybe (fromJust)
 import           Data.Monoid (First (..))
-import           Ouroboros.Consensus.Block.Abstract (Header, Point (..),
-                     WithOrigin, getHeader, withOrigin)
+import           Ouroboros.Consensus.Block (Header, Point (GenesisPoint), getHeader, headerPoint, withOrigin)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockPoint, getTipPoint)
+import           Ouroboros.Network.BlockFetch.ClientState
+                     (ChainRange (ChainRange))
 import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.BlockTree (BlockTree)
+import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
+                     (BlockFetch (..))
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
                      (FindIntersect (..),
                      RequestNext (AwaitReply, RollBackward, RollForward))
-import           Test.Consensus.PeerSimulator.Trace (terseFrag)
-import           Test.Consensus.PointSchedule (AdvertisedPoints (header, tip),
-                     HeaderPoint (HeaderPoint), TipPoint (TipPoint))
+import           Test.Consensus.PeerSimulator.Trace (terseFrag, tersePoint)
+import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 
@@ -50,20 +55,19 @@ handlerFindIntersection ::
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
-  AdvertisedPoints ->
   [Point TestBlock] ->
-  STM m (FindIntersect, [String])
-handlerFindIntersection currentIntersection blockTree points clientPoints = do
+  AdvertisedPoints ->
+  STM m (Maybe FindIntersect, [String])
+handlerFindIntersection currentIntersection blockTree clientPoints points = do
   let TipPoint tip' = tip points
       tipPoint = getTipPoint tip'
       fragment = fromJust $ BT.findFragment tipPoint blockTree
   case intersectWith fragment clientPoints of
     Nothing ->
-      pure (IntersectNotFound tip', [])
+      pure (Just (IntersectNotFound tip'), [])
     Just intersection -> do
       writeTVar currentIntersection intersection
-      pure (IntersectFound intersection tip', [])
-  where
+      pure (Just (IntersectFound intersection tip'), [])
 
 -- | Handle a @MsgRequestNext@ message.
 --
@@ -95,14 +99,14 @@ handlerRequestNext currentIntersection blockTree points =
 
     noPathError = error "serveHeader: intersection and headerPoint should always be in the block tree"
 
-    analysePath headerPoint = \case
+    analysePath hp = \case
       -- If the anchor is the intersection (the source of the path-finding) but
       -- the fragment is empty, then the intersection is exactly our header
       -- point and there is nothing to do. If additionally the header point is
       -- also the tip point (because we served our whole chain, or we are
       -- stalling as an adversarial behaviour), then we ask the client to wait;
       -- otherwise we just do nothing.
-      (BT.PathAnchoredAtSource True, AF.Empty _) | getTipPoint tip' == headerPoint -> do
+      (BT.PathAnchoredAtSource True, AF.Empty _) | getTipPoint tip' == hp -> do
         trace "  chain has been fully served"
         pure (Just AwaitReply)
       (BT.PathAnchoredAtSource True, AF.Empty _) -> do
@@ -140,5 +144,51 @@ handlerRequestNext currentIntersection blockTree points =
         pure $ Just (RollBackward point tip')
 
     TipPoint tip' = tip points
+
+    trace = tell . pure
+
+handlerBlockFetch ::
+  forall m .
+  IOLike m =>
+  BlockTree TestBlock ->
+  ChainRange (Point TestBlock) ->
+  AdvertisedPoints ->
+  STM m (Maybe BlockFetch, [String])
+handlerBlockFetch blockTree (ChainRange from to) points =
+  runWriterT $ case points of
+    AdvertisedPoints {header = HeaderPoint (At h), block = BlockPoint (At b)} -> do
+      case BT.findFragment (headerPoint h) blockTree of
+        Just f  -> withHpFragment (f, b)
+        Nothing -> error "header point is not in the block tree"
+    AdvertisedPoints {} -> pure Nothing
+  where
+
+    withHpFragment (hpChain, bp) =
+      -- First, check whether the block point is on the same chain, and before or equal to, the header point.
+      case AF.rollback (blockPoint bp) hpChain of
+        Nothing ->
+          -- REVIEW: Should this be fatal?
+          error "Block point isn't on the same chain as header point"
+          -- pure (Just NoBlocks)
+        Just bpChain ->
+          -- Next, check whether the requested range is contained in the fragment before the block point.
+          -- REVIEW: this is Nothing if only _part_ of the range is on the current chain.
+          -- Is it correct that we don't want to send anything in this case?
+          case AF.sliceRange bpChain from to of
+            Nothing    -> do
+              trace ("Waiting for next tick for range: " ++ tersePoint from ++ " -> " ++ tersePoint to)
+              -- Finally, if we cannot serve blocks, decide whether to send NoBlocks before yielding control
+              -- to the scheduler.
+              -- If the @to@ point is not part of the chain up to HP, we must have switched to a fork, so we
+              -- need to give the client a chance to adapt the range before trying again with the next tick's
+              -- chain.
+              -- Otherwise, we simply have to wait for BP to advance sufficiently, and we block without sending
+              -- a message, to simulate a slow response.
+              case AF.withinFragmentBounds to hpChain of
+                False -> pure (Just NoBlocks)
+                True  -> pure Nothing
+            Just slice -> do
+              trace ("Sending slice " ++ terseFrag slice)
+              pure (Just (StartBatch (AF.toOldestFirst slice)))
 
     trace = tell . pure
