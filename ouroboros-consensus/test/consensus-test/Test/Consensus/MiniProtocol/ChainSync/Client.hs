@@ -2,8 +2,8 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 -- | Tests for the chain sync client.
@@ -28,8 +28,7 @@ import           Cardano.Crypto.DSIGN.Mock
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.IOSim (runSimOrThrow)
-import           Control.Tracer (contramap, nullTracer)
-import           Data.Bifunctor (first)
+import           Control.Tracer (contramap, contramapM, nullTracer)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
@@ -47,6 +46,7 @@ import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended hiding (ledgerState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+import           Ouroboros.Consensus.Node.NetworkProtocolVersion (NodeToNodeVersion)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
@@ -57,7 +57,7 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
-                     WithFingerprint (..), forkLinkedWatcher)
+                     WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (getTipPoint)
@@ -79,8 +79,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.ChainUpdates (ChainUpdate (..), UpdateBehavior (..),
                      genChainUpdates, toChainUpdates)
-import qualified Test.Util.LogicalClock as LogicalClock
-import           Test.Util.LogicalClock (NumTicks (..), Tick (..))
+import           Test.Util.LogicalClock (Tick (..))
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Schedule (Schedule (..), genSchedule, joinSchedule,
@@ -103,7 +102,13 @@ tests = testGroup "ChainSyncClient"
 -------------------------------------------------------------------------------}
 
 prop_chainSync :: ChainSyncClientSetup -> Property
-prop_chainSync ChainSyncClientSetup {..} =
+prop_chainSync ChainSyncClientSetup {
+    securityParam
+  , clientUpdates
+  , serverUpdates
+  , startTick
+  , invalidBlocks
+  } =
     counterexample
     ("Client chain: "     <> ppChain finalClientChain  <> "\n" <>
      "Server chain: "     <> ppChain finalServerChain  <> "\n" <>
@@ -140,8 +145,19 @@ prop_chainSync ChainSyncClientSetup {..} =
   where
     k = maxRollbacks securityParam
 
-    ChainSyncOutcome {..} = runSimOrThrow $
-      runChainSync securityParam clientUpdates serverUpdates invalidBlocks startTick
+    ChainSyncOutcome {
+        finalClientChain
+      , finalServerChain
+      , mbResult
+      , syncedFragment
+      , traceEvents
+      } = runSimOrThrow $
+        runChainSync
+          securityParam
+          clientUpdates
+          serverUpdates
+          invalidBlocks
+          startTick
 
     clientFragment = AF.anchorNewest k $ Chain.toAnchoredFragment finalClientChain
 
@@ -185,6 +201,10 @@ isSuffixOf fragment chain =
 serverId :: CoreNodeId
 serverId = CoreNodeId 1
 
+-- | The schedule that determines the evolution of the local chain.
+--
+-- Note that the 'TestBlock' used in this test is constructed in such a way
+-- that the block's slot number equals its block number.
 newtype ClientUpdates =
   ClientUpdates { getClientUpdates :: Schedule ChainUpdate }
   deriving (Show)
@@ -248,7 +268,7 @@ runChainSync securityParam (ClientUpdates clientUpdates)
     (ServerUpdates serverUpdates) (InvalidBlocks invalidBlocks)
     startSyncingAt = withRegistry $ \registry -> do
 
-    clock <- LogicalClock.new registry numTicks
+    varCurrentLogicalTick <- uncheckedNewTVarM (Tick 0)
 
     -- Set up the client
     varCandidates   <- uncheckedNewTVarM Map.empty
@@ -261,7 +281,12 @@ runChainSync securityParam (ClientUpdates clientUpdates)
     -- at the final state of each candidate.
     varFinalCandidates <- uncheckedNewTVarM Map.empty
 
-    (tracer, getTrace) <- first (LogicalClock.tickTracer clock) <$> recordingTracerTVar
+    (tracer, getTrace) <- do
+          (tracer', getTrace) <- recordingTracerTVar
+          let foo ev = do
+                now <- readTVarIO varCurrentLogicalTick
+                pure (now, ev)
+          pure (contramapM foo tracer', getTrace)
     let chainSyncTracer = contramap Left  tracer
         protocolTracer  = contramap Right tracer
 
@@ -302,7 +327,7 @@ runChainSync securityParam (ClientUpdates clientUpdates)
                    chainSyncTracer
                    nodeCfg
                    chainDbView
-                   maxBound
+                   (maxBound :: NodeToNodeVersion)
                    (return Continue)
                    nullTracer
 
@@ -312,99 +337,98 @@ runChainSync securityParam (ClientUpdates clientUpdates)
                                   (Tip TestBlock) m ()
         server = chainSyncServerExample () varChainProducerState getHeader
 
-    -- Schedule updates of the client and server chains
-    varLastUpdate <- uncheckedNewTVarM 0
-    let forkLinkedTickWatcher :: (Tick -> m ()) -> m ()
-        forkLinkedTickWatcher =
-              void
-            . forkLinkedWatcher registry "scheduled updates"
-            . LogicalClock.tickWatcher clock
-    forkLinkedTickWatcher $ \tick -> do
-      -- Stop updating the client and server chains when the chain sync client
-      -- has thrown an exception or has gracefully terminated, so that at the
-      -- end, we can read the chains in the states they were in when the
-      -- exception was thrown.
-      stop <- fmap isJust $ atomically $ readTVar varClientResult
-      unless stop $ do
-        -- Newly discovered invalid blocks
-        whenJust (Map.lookup tick (getSchedule invalidBlocks)) $
-          atomically . modifyTVar varKnownInvalid . Set.union . Set.fromList
+    -- Do scheduled updates of the client and server chains
+    let updateChainsDuringTick :: Tick -> m ()
+        updateChainsDuringTick tick = do
+            -- Stop updating the client and server chains when the chain sync client
+            -- has thrown an exception or has gracefully terminated, so that at the
+            -- end, we can read the chains in the states they were in when the
+            -- exception was thrown.
+            stop <- fmap isJust $ atomically $ readTVar varClientResult
+            unless stop $ do
+              -- Newly discovered invalid blocks
+              whenJust (Map.lookup tick (getSchedule invalidBlocks)) $
+                atomically . modifyTVar varKnownInvalid . Set.union . Set.fromList
 
-        -- Client
-        whenJust (Map.lookup tick (getSchedule clientUpdates)) $ \chainUpdates ->
-          atomically $ modifyTVar varClientState $ updateClientState chainUpdates
+              -- Client
+              doTick clientUpdates tick $ \chainUpdates ->
+                atomically $ modifyTVar varClientState $ updateClientState chainUpdates
 
-        -- Server
-        whenJust (Map.lookup tick (getSchedule serverUpdates)) $ \chainUpdates ->
-          atomically $ do
-            chainProducerState <- readTVar varChainProducerState
-            case CPS.applyChainUpdates
-                   (toChainUpdates chainUpdates)
-                   chainProducerState of
-              Just chainProducerState' ->
-                writeTVar varChainProducerState chainProducerState'
-              Nothing                  ->
-                error $ "Invalid chainUpdates: " <> show chainUpdates <>
-                        " for " <> show (chainState chainProducerState)
-        atomically $ writeTVar varLastUpdate tick
+              -- Server
+              doTick serverUpdates tick $ \chainUpdates ->
+                atomically $ do
+                  chainProducerState <- readTVar varChainProducerState
+                  case CPS.applyChainUpdates
+                         (toChainUpdates chainUpdates)
+                         chainProducerState of
+                    Just chainProducerState' ->
+                      writeTVar varChainProducerState chainProducerState'
+                    Nothing                  ->
+                      error $ "Invalid chainUpdates: " <> show chainUpdates <>
+                              " for " <> show (chainState chainProducerState)
 
     -- Connect client to server and run the chain sync protocol
-    LogicalClock.onTick registry clock "startSyncing" startSyncingAt $ do
-      -- When updates are planned at the same time that we start syncing, we
-      -- wait until these updates are done before we start syncing.
-      when (Map.member startSyncingAt (getSchedule clientUpdates) ||
-            Map.member startSyncingAt (getSchedule serverUpdates)) $
-        atomically $ do
-          lastUpdate <- readTVar varLastUpdate
-          check (lastUpdate == startSyncingAt)
+    --
+    -- Happens /immediately after/ the chain and clock effects schedule for
+    -- 'startSyncingAt'.
+    let initiateChainSync = do
+            (clientChannel, serverChannel) <- createConnectedChannels
+            -- Don't link the thread (which will cause the exception to be
+            -- rethrown in the main thread), just catch the exception and store
+            -- it, because we want a "regular ending".
+            void $ forkThread registry "ChainSyncClient" $
+              bracketChainSyncClient
+                 chainSyncTracer
+                 chainDbView
+                 varCandidates
+                 serverId
+                 maxBound $ \varCandidate -> do
+                   atomically $ modifyTVar varFinalCandidates $
+                     Map.insert serverId varCandidate
+                   result <-
+                     runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
+                       chainSyncClientPeerPipelined $ client varCandidate
+                   atomically $ writeTVar varClientResult (Just (Right result))
+                   return ()
+              `catchAlsoLinked` \ex -> do
+                atomically $ writeTVar varClientResult (Just (Left ex))
+                -- Rethrow, but it will be ignored anyway.
+                throwIO ex
+            void $ forkLinkedThread registry "ChainSyncServer" $
+              runPeer nullTracer codecChainSyncId serverChannel
+                      (chainSyncServerPeer server)
 
-      (clientChannel, serverChannel) <- createConnectedChannels
-      -- Don't link the thread (which will cause the exception to be rethrown
-      -- in the main thread), just catch the exception and store it, because
-      -- we want a "regular ending".
-      void $ forkThread registry "ChainSyncClient" $
-        bracketChainSyncClient
-           chainSyncTracer
-           chainDbView
-           varCandidates
-           serverId
-           maxBound $ \varCandidate -> do
-             atomically $ modifyTVar varFinalCandidates $
-               Map.insert serverId varCandidate
-             result <-
-               runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
-                 chainSyncClientPeerPipelined $ client varCandidate
-             atomically $ writeTVar varClientResult (Just (Right result))
-             return ()
-        `catchAlsoLinked` \ex -> do
-          atomically $ writeTVar varClientResult (Just (Left ex))
-          -- Rethrow, but it will be ignored anyway.
-          throwIO ex
-      void $ forkLinkedThread registry "ChainSyncServer" $
-        runPeer nullTracer codecChainSyncId serverChannel
-                (chainSyncServerPeer server)
+    do
+      let loop tick = do
+              updateChainsDuringTick tick
+              when (tick == startSyncingAt) $ initiateChainSync
+              when (tick < finalTick)       $ loop (tick + 1)
+      loop (Tick 1)
 
-    LogicalClock.waitUntilDone clock
-    -- Wait a random amount of time after the final tick for the chain sync
-    -- to finish
-    threadDelay 2000
+      -- This delay seems enough to let all threads finish their final work.
+      --
+      -- TODO what is the necessary threshold?
+      threadDelay 86400
 
     traceEvents <- getTrace
     -- Collect the return values
     atomically $ do
-      finalClientChain       <- readTVar varClientState
-      finalServerChain       <- chainState <$> readTVar varChainProducerState
+      finalClientChain  <- readTVar varClientState
+      finalServerChain  <- chainState <$> readTVar varChainProducerState
       candidateFragment <- readTVar varFinalCandidates >>= readTVar . (Map.! serverId)
-      mbResult      <- readTVar varClientResult
+      mbResult          <- readTVar varClientResult
       return ChainSyncOutcome {
-        syncedFragment   = AF.mapAnchoredFragment testHeader candidateFragment
-        , ..
+          finalClientChain
+        , finalServerChain
+        , mbResult
+        , syncedFragment   = AF.mapAnchoredFragment testHeader candidateFragment
+        , traceEvents
         }
   where
     k = maxRollbacks securityParam
 
-    slotLength :: SlotLength
-    slotLength = slotLengthFromSec 20
+    doTick :: Schedule a -> Tick -> ([a] -> m ()) -> m ()
+    doTick sched tick kont = whenJust (Map.lookup tick (getSchedule sched)) kont
 
     nodeCfg :: TopLevelConfig TestBlock
     nodeCfg = TopLevelConfig {
@@ -431,8 +455,8 @@ runChainSync securityParam (ClientUpdates clientUpdates)
     numCoreNodes :: NumCoreNodes
     numCoreNodes = NumCoreNodes 2
 
-    numTicks :: NumTicks
-    numTicks = LogicalClock.sufficientTimeFor
+    finalTick :: Tick
+    finalTick = maximum
       [ lastTick clientUpdates
       , lastTick serverUpdates
       , startSyncingAt
@@ -502,6 +526,12 @@ computeHeaderStateHistory cfg =
   ChainSyncClientSetup
 -------------------------------------------------------------------------------}
 
+slotLength :: SlotLength
+slotLength = slotLengthFromSec $ toEnum slotLengthInSeconds
+
+slotLengthInSeconds :: Int
+slotLengthInSeconds = 20
+
 -- | Bundle dependent arguments for test generation
 data ChainSyncClientSetup = ChainSyncClientSetup
   { securityParam :: SecurityParam
@@ -535,8 +565,19 @@ instance Arbitrary ChainSyncClientSetup where
           , tbValid b == Invalid
           ]
     invalidBlocks <- InvalidBlocks <$> (genSchedule =<< shuffle trapBlocks)
-    return ChainSyncClientSetup {..}
-  shrink cscs@ChainSyncClientSetup {..} =
+
+    return ChainSyncClientSetup {
+        securityParam
+      , clientUpdates
+      , serverUpdates
+      , startTick
+      , invalidBlocks
+      }
+  shrink cscs@ChainSyncClientSetup {
+      clientUpdates
+    , serverUpdates
+    , startTick
+    } =
     -- We don't shrink 'securityParam' because the updates depend on it
 
     -- We also don't shrink 'invalidBlocks' right now (as it does not impact
@@ -573,7 +614,13 @@ instance Arbitrary ChainSyncClientSetup where
     ]
 
 instance Show ChainSyncClientSetup where
-  show ChainSyncClientSetup {..} = unlines
+  show ChainSyncClientSetup {
+      securityParam
+    , clientUpdates
+    , serverUpdates
+    , startTick
+    , invalidBlocks
+    } = unlines
       [ "ChainSyncClientSetup:"
       , "securityParam: " <> show (maxRollbacks securityParam)
       , "clientUpdates:"
