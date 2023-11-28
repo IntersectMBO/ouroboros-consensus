@@ -38,12 +38,12 @@ import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (numDeletes,
                      numInserts)
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.API as API
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API as BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding
-                     (ExceededRollback)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbCh
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
+                     (LedgerDBEnv (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbCh
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry

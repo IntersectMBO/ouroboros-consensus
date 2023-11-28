@@ -11,7 +11,7 @@
 {-# LANGUAGE TypeOperators       #-}
 
 -- | A 'BackingStore' implementation based on [LMDB](http://www.lmdb.tech/doc/).
-module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB (
+module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB (
     -- * Opening a database
     LMDBLimits (LMDBLimits, lmdbMapSize, lmdbMaxDatabases, lmdbMaxReaders)
   , newLMDBBackingStore
@@ -42,11 +42,11 @@ import qualified Database.LMDB.Simple.TransactionHandle as TrH
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Tables
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API as API
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Bridge as Bridge
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Status
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as API
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge as Bridge
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
                      (Status (..), StatusLock)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Status as Status
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status as Status
 import           Ouroboros.Consensus.Util (foldlM')
 import           Ouroboros.Consensus.Util.IOLike (Exception (..), IOLike,
                      MonadCatch (..), MonadThrow (..), bracket)

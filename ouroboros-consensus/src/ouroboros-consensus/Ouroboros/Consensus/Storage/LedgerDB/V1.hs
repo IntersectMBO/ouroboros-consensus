@@ -118,11 +118,12 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding
-                     (ExceededRollback, ResolveBlock)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbCh
+import qualified Ouroboros.Consensus.Storage.LedgerDB.API as API
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
+                     (ExceededRollback, ResolveBlock)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbCh
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init

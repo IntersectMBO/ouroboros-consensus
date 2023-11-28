@@ -5,7 +5,7 @@
 {-# LANGUAGE TupleSections      #-}
 
 -- | LMDB resource status with read-append-write locking
-module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Status (
+module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status (
     -- * Status
     Status (..)
   , StatusLock

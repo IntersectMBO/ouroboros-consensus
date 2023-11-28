@@ -235,15 +235,15 @@ library
     Ouroboros.Consensus.Storage.LedgerDB
     Ouroboros.Consensus.Storage.LedgerDB.API
     Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Bridge
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Status
-    Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
     Ouroboros.Consensus.Storage.LedgerDB.V1
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
     Ouroboros.Consensus.Storage.LedgerDB.V1.Common
+    Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
     Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
     Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V1.Init

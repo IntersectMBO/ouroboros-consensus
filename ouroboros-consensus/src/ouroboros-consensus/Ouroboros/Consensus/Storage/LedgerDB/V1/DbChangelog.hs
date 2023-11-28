@@ -104,7 +104,7 @@
 --
 -- Only when flushing, the 'SeqDiffMK' is pruned, by extracting the differences
 -- in between the last flushed state and the current immutable tip.
-module Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (
+module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
     -- * The DbChangelog
     DbChangelog (..)
   , DbChangelog'
@@ -237,7 +237,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.AnchoredSeq (AnchoredSeq)
