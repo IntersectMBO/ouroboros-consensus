@@ -504,7 +504,7 @@ switch ldb cfg numRollbacks trace newBlocks = do
     Right fo -> do
       case newBlocks of
         [] -> pure ()
-        -- no blocks to apply to ledger state, return current DbChangelog
+        -- no blocks to apply to ledger state, return the forker
         (firstBlock:_) -> do
           let start   = PushStart . toRealPoint $ firstBlock
               goal    = PushGoal  . toRealPoint . last $ newBlocks
@@ -557,9 +557,7 @@ toRealPoint (ReapplyRef rp)  = rp
 toRealPoint (ApplyRef rp)    = rp
 toRealPoint (Weaken ap)      = toRealPoint ap
 
--- | Apply block to the current tip of the db changelog
---
--- We take in the entire 'DbChangelog' because we record that as part of errors.
+-- | Apply blocks to the given forker
 applyBlock :: forall m bm c l blk. (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm)
            => LedgerCfg l
            -> Ap m l blk c
@@ -593,7 +591,7 @@ applyBlock cfg ap fo = case ap of
         f vs
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
--- extend the DbChangelog with the resulting ledger state.
+-- push the resulting ledger state to the forker.
 --
 -- Note that we require @c@ (from the particular choice of @Ap m l blk c@) so
 -- this sometimes can throw ledger errors.
@@ -776,7 +774,7 @@ newtype Pushing blk = Pushing { unPushing :: RealPoint blk }
   deriving (Show, Eq)
 
 data TraceValidateEvent blk =
-    -- | Event fired when we are about to push a block to the DbChangelog
+    -- | Event fired when we are about to push a block to a forker
       StartedPushingBlockToTheLedgerDb
         !(PushStart blk)
         -- ^ Point from which we started pushing new blocks

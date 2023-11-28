@@ -16,7 +16,7 @@ import           GHC.Generics
 import           NoThunks.Class
 import           Ouroboros.Consensus.Config
 
--- | Length of time that has to pas after which a snapshot is taken.
+-- | Length of time that has to pass after which a snapshot is taken.
 data SnapshotInterval =
     DefaultSnapshotInterval
   | RequestedSnapshotInterval DiffTime
