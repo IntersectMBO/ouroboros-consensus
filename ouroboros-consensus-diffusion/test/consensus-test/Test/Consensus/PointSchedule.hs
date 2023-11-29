@@ -345,7 +345,7 @@ pointSchedule ticks nePeerIds = (`PointSchedule` nePeerIds) <$> nonEmpty ticks
 -- first tip point is delayed by 20 or more seconds due to being in a later slot.
 peerStates :: PeerId -> [(DiffTime, SchedulePoint)] -> [(DiffTime, Peer NodeState)]
 peerStates peerId pts =
-  zip (shiftTime <$> times) (Peer peerId . NodeOnline <$> scanl' modPoint zero points)
+  zip (0 : (shiftTime <$> times)) (Peer peerId . NodeOnline <$> scanl' modPoint zero points)
   where
     shiftTime t = t - firstTipOffset
 
