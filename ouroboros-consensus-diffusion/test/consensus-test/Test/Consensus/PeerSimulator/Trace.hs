@@ -12,6 +12,7 @@ module Test.Consensus.PeerSimulator.Trace (
   , terseFrag
   , terseFragH
   , terseHeader
+  , tersePoint
   , traceLinesWith
   , traceUnitWith
   ) where
@@ -23,7 +24,8 @@ import           Data.Foldable (traverse_)
 import           Data.List (intercalate)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.Time.Clock (diffTimeToPicoseconds)
-import           Ouroboros.Consensus.Block (Header, blockHash, blockNo,
+import           Ouroboros.Consensus.Block (Header,
+                     Point (BlockPoint, GenesisPoint), blockHash, blockNo,
                      blockSlot, getHeader)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
@@ -38,7 +40,7 @@ import           Ouroboros.Network.AnchoredFragment
                      anchor, mapAnchoredFragment, toOldestFirst)
 import           Test.Consensus.PointSchedule (TestFrag, TestFragH)
 import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
-                     unTestHash)
+                     TestHash (TestHash), unTestHash)
 import           Text.Printf (printf)
 
 mkCdbTracer ::
@@ -101,16 +103,24 @@ terseSlotBlock :: SlotNo -> BlockNo -> String
 terseSlotBlock (SlotNo slot) (BlockNo block) =
   show slot ++ "-" ++ show block
 
-terseBlock :: TestBlock -> String
-terseBlock block =
-  terseSlotBlock (blockSlot block) (blockNo block) ++ forkNoSuffix (unTestHash (blockHash block))
+terseSlotBlockFork :: SlotNo -> BlockNo -> TestHash -> String
+terseSlotBlockFork sno bno (TestHash hash) =
+  terseSlotBlock sno bno ++ forkNoSuffix hash
   where
     forkNoSuffix (forkNo :| _) | forkNo == 0 = ""
                                | otherwise = "[" ++ show forkNo ++ "]"
 
+terseBlock :: TestBlock -> String
+terseBlock block =
+  terseSlotBlockFork (blockSlot block) (blockNo block) (blockHash block)
 
 terseHeader :: Header TestBlock -> String
 terseHeader (TestHeader block) = terseBlock block
+
+tersePoint :: Point TestBlock -> String
+tersePoint = \case
+  BlockPoint slot hash -> terseSlotBlockFork slot (BlockNo (fromIntegral (length (unTestHash hash)))) hash
+  GenesisPoint -> "G"
 
 terseFragH :: TestFragH -> String
 terseFragH frag =
@@ -120,7 +130,7 @@ terseFragH frag =
       Empty _ -> ""
       _       -> " ⚓ " ++ intercalate " " (terseHeader <$> toOldestFirst frag)
     renderAnchor = case anchor frag of
-      AnchorGenesis -> "Genesis"
+      AnchorGenesis -> "G"
       Anchor slot hash block -> terseSlotBlock slot block ++ renderAnchorHash hash
     renderAnchorHash hash
       | all (== 0) (unTestHash hash) = ""
