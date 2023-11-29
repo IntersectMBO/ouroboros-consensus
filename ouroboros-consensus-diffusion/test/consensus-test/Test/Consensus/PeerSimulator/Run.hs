@@ -12,61 +12,44 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import           Cardano.Slotting.Slot (WithOrigin (At, Origin))
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
-import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer, nullTracer, traceWith)
+import           Control.Tracer (Tracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Proxy (Proxy (..))
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     Consensus, bracketChainSyncClient, chainSyncClient,
-                     defaultChainDbView)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
-import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
                      (ChainDbArgs (cdbTracer))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
-import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), MonadDelay (threadDelay),
-                     MonadSTM (atomically, retry), StrictTVar, readTVar,
-                     tryPutTMVar)
+import           Ouroboros.Consensus.Util.IOLike (IOLike,
+                     MonadDelay (threadDelay), MonadSTM (atomically),
+                     StrictTVar, readTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Network.Block (blockPoint)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
                      bracketSyncWithFetchClient, newFetchClientRegistry)
-import           Ouroboros.Network.Channel (createConnectedChannels)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
                      ControlMessageSTM)
-import           Ouroboros.Network.Driver.Limits
-import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion)
-import           Ouroboros.Network.Protocol.ChainSync.ClientPipelined
-                     (ChainSyncClientPipelined, chainSyncClientPeerPipelined)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
-import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
-                     (pipelineDecisionLowHighMark)
-import           Ouroboros.Network.Protocol.ChainSync.Server
-                     (chainSyncServerPeer)
-import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.Genesis.Setup.GenChains (GenesisTest)
 import           Test.Consensus.Network.Driver.Limits.Extras
 import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
+import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient,
+                     startBlockFetchLogic)
+import           Test.Consensus.PeerSimulator.ChainSync (runChainSyncClient)
 import           Test.Consensus.PeerSimulator.Config
 import           Test.Consensus.PeerSimulator.Resources
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
-import           Test.Consensus.PointSchedule
-                     (AdvertisedPoints (AdvertisedPoints),
-                     BlockPoint (BlockPoint), GenesisTest (GenesisTest),
+import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
                      Peer (Peer), PeerId, PointSchedule (PointSchedule),
                      PointScheduleConfig, TestFragH, Tick (Tick),
                      pointSchedulePeers)
@@ -127,39 +110,6 @@ noTimeoutsSchedulerConfig scSchedule =
 debugScheduler :: SchedulerConfig -> SchedulerConfig
 debugScheduler conf = conf { scDebug = True }
 
-basicChainSyncClient :: forall m.
-  IOLike m =>
-  Tracer m String ->
-  TopLevelConfig TestBlock ->
-  ChainDbView m TestBlock ->
-  StrictTVar m TestFragH ->
-  Consensus ChainSyncClientPipelined TestBlock m
-basicChainSyncClient tracer cfg chainDbView varCandidate =
-  chainSyncClient
-    CSClient.ConfigEnv {
-        CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
-      , CSClient.tracer                  = mkChainSyncClientTracer tracer
-      , CSClient.cfg
-      , CSClient.chainDbView
-      , CSClient.someHeaderInFutureCheck = dummyHeaderInFutureCheck
-      }
-    CSClient.DynamicEnv {
-        CSClient.version             = maxBound
-      , CSClient.controlMessageSTM   = return Continue
-      , CSClient.headerMetricsTracer = nullTracer
-      , CSClient.varCandidate
-      }
-  where
-    dummyHeaderInFutureCheck ::
-      InFutureCheck.SomeHeaderInFutureCheck m TestBlock
-    dummyHeaderInFutureCheck =
-      InFutureCheck.SomeHeaderInFutureCheck InFutureCheck.HeaderInFutureCheck
-      { InFutureCheck.proxyArrival = Proxy
-      , InFutureCheck.recordHeaderArrival = \_ -> pure ()
-      , InFutureCheck.judgeHeaderArrival = \_ _ _ -> pure ()
-      , InFutureCheck.handleHeaderArrival = \_ -> pure Nothing
-      }
-
 -- | Run a ChainSync protocol for one peer, consisting of a server and client.
 --
 -- The connection uses timeouts based on the ASC.
@@ -190,39 +140,12 @@ startChainSyncConnectionThread
   SharedResources {srPeerId}
   ChainSyncResources {csrServer}
   SchedulerConfig {scChainSyncTimeouts}
-  StateViewTracers {svtChainSyncExceptionsTracer}
-  varCandidates
-  =
-  void $ forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
-    bracketSyncWithFetchClient fetchClientRegistry srPeerId $ do
-      bracketChainSyncClient nullTracer chainDbView varCandidates srPeerId ntnVersion $ \ varCandidate -> do
-        res <- try $ runConnectedPeersPipelinedWithLimits
-          createConnectedChannels
-          nullTracer
-          codecChainSyncId
-          chainSyncNoSizeLimits
-          (timeLimitsChainSync scChainSyncTimeouts)
-          (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate))
-          (chainSyncServerPeer csrServer)
-        case res of
-          Left exn -> do
-            traceWith svtChainSyncExceptionsTracer $ ChainSyncException srPeerId exn
-            case fromException exn of
-              Just (ExceededSizeLimit _) ->
-                traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of size limit exceeded."
-              Just (ExceededTimeLimit _) ->
-                traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminating because of time limit exceeded."
-              Nothing ->
-                pure ()
-            case fromException exn of
-              Just ThreadKilled ->
-                traceUnitWith tracer ("ChainSyncClient " ++ condense srPeerId) "Terminated by GDD governor."
-              _ ->
-                pure ()
-          Right _ -> pure ()
-  where
-    ntnVersion :: NodeToNodeVersion
-    ntnVersion = maxBound
+  tracers
+  varCandidates =
+    void $
+    forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
+    bracketSyncWithFetchClient fetchClientRegistry srPeerId $
+    runChainSyncClient tracer cfg chainDbView srPeerId csrServer scChainSyncTimeouts tracers varCandidates
 
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
 -- register it for synchronization with the ChainSync client.
@@ -232,21 +155,17 @@ startBlockFetchConnectionThread ::
   FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
   ControlMessageSTM m ->
   SharedResources m ->
+  BlockFetchResources m ->
   m ()
-startBlockFetchConnectionThread registry fetchClientRegistry controlMsgSTM SharedResources {srPeerId, srBlockTree, srCurrentState} =
-  void $ forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
-    PeerSimulator.BlockFetch.runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM getCurrentChain
-  where
-    getCurrentChain = atomically $ do
-      nodeState <- readTVar srCurrentState
-      case nodeState of
-        Nothing -> retry
-        Just AdvertisedPoints {block = BlockPoint (At b)} -> do
-          case BT.findFragment (blockPoint b) srBlockTree of
-            Just f  -> pure f
-            Nothing -> error "block tip is not in the block tree"
-        Just AdvertisedPoints {block = BlockPoint Origin} ->
-          retry
+startBlockFetchConnectionThread
+  registry
+  fetchClientRegistry
+  controlMsgSTM
+  SharedResources {srPeerId}
+  BlockFetchResources {bfrServer} =
+    void $
+    forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
+    runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM bfrServer
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -260,15 +179,11 @@ dispatchTick ::
   m ()
 dispatchTick tracer peers Tick {active = Peer pid state, duration} =
   case peers Map.!? pid of
-    Just PeerResources {prChainSync = ChainSyncResources {csrNextState}} -> do
-      -- REVIEW: It would be worth sanity-checking that our understanding of
-      -- `threadDelay` is correct; and maybe getting explicit information from
-      -- both ChainSync & BlockFetch servers that they are done.
-      threadDelay duration
+    Just PeerResources {prUpdateState} -> do
       trace $ "Writing state " ++ condense state
-      atomically (tryPutTMVar csrNextState state) >>= \case
-        True -> trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
-        False -> trace $ "Client for " ++ condense pid ++ " has ceased operation."
+      atomically (prUpdateState state)
+      trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
+      threadDelay duration
       trace $ condense pid ++ "'s tick is now done."
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
@@ -325,13 +240,13 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
       startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig stateViewTracers (psrCandidates resources)
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
-    for_ (psrPeers resources) $ \PeerResources {prShared} ->
-      startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared
+    for_ (psrPeers resources) $ \PeerResources {prShared, prBlockFetch} ->
+      startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared prBlockFetch
     -- The block fetch logic needs to be started after the block fetch clients
     -- otherwise, an internal assertion fails because getCandidates yields more
     -- peer fragments than registered clients.
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
-    PeerSimulator.BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
+    startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
     runScheduler tracer pointSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where

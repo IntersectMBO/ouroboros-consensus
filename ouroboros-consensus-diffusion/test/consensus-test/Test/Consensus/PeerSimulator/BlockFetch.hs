@@ -21,7 +21,6 @@ import           Data.Map.Strict (Map)
 import           Network.TypedProtocol.Channel (createConnectedChannels)
 import           Network.TypedProtocol.Driver.Simple
                      (runConnectedPeersPipelined)
-import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -31,7 +30,6 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, atomically,
                      retry)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      FetchClientRegistry, FetchMode (..), blockFetchLogic,
                      bracketFetchClient, bracketKeepAliveClient)
@@ -41,10 +39,7 @@ import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion,
                      isPipeliningEnabled)
 import           Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
 import           Ouroboros.Network.Protocol.BlockFetch.Server
-                     (BlockFetchBlockSender (SendMsgNoBlocks, SendMsgStartBatch),
-                     BlockFetchSendBlocks (SendMsgBatchDone, SendMsgBlock),
-                     BlockFetchServer (..), blockFetchServerPeer)
-import           Ouroboros.Network.Protocol.BlockFetch.Type (ChainRange (..))
+                     (BlockFetchServer (..), blockFetchServerPeer)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
 import           Test.Util.Time (dawnOfTime)
@@ -108,12 +103,12 @@ runBlockFetchClient
   => peer
   -> FetchClientRegistry peer (Header TestBlock) TestBlock m
   -> ControlMessageSTM m
-  -> m (AnchoredFragment TestBlock)
+  -> BlockFetchServer TestBlock (Point TestBlock) m ()
   -> m ()
-runBlockFetchClient peerId fetchClientRegistry controlMsgSTM getCurrentServerChain =
+runBlockFetchClient peerId fetchClientRegistry controlMsgSTM server =
     bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId $ \clientCtx -> do
       let bfClient = blockFetchClient ntnVersion controlMsgSTM nullTracer clientCtx
-          bfServer = blockFetchServerPeer $ mockBlockFetchServer getCurrentServerChain
+          bfServer = blockFetchServerPeer server
 
       fst <$> runConnectedPeersPipelined
               createConnectedChannels
@@ -124,22 +119,3 @@ runBlockFetchClient peerId fetchClientRegistry controlMsgSTM getCurrentServerCha
   where
     ntnVersion :: NodeToNodeVersion
     ntnVersion = maxBound
-
-mockBlockFetchServer ::
-     forall m blk.
-     (Monad m, HasHeader blk)
-  => m (AnchoredFragment blk)
-  -> BlockFetchServer blk (Point blk) m ()
-mockBlockFetchServer getCurrentChain = idle
-  where
-    idle :: BlockFetchServer blk (Point blk) m ()
-    idle = flip BlockFetchServer () $ \(ChainRange from to) -> do
-        curChain <- getCurrentChain
-        pure $ case AF.sliceRange curChain from to of
-          Nothing    -> SendMsgNoBlocks (pure idle)
-          Just slice -> SendMsgStartBatch $ sendBlocks (AF.toOldestFirst slice)
-
-    sendBlocks :: [blk] -> m (BlockFetchSendBlocks blk (Point blk) m ())
-    sendBlocks = pure . \case
-      []         -> SendMsgBatchDone (pure idle)
-      blk : blks -> SendMsgBlock blk (sendBlocks blks)
