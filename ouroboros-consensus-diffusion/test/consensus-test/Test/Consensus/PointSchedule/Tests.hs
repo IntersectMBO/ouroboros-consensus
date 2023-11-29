@@ -1,20 +1,23 @@
-{-# LANGUAGE LambdaCase     #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE LambdaCase       #-}
+{-# LANGUAGE NamedFieldPuns   #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.PointSchedule.Tests (tests) where
 
-import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..), withOrigin)
+import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..),
+                     withOrigin)
 import           Control.Monad (forM, replicateM)
 import           Data.Bifunctor (second)
 import           Data.List (foldl', group, isSuffixOf, partition, sort)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (isNothing)
-import           Data.Time.Clock (DiffTime, picosecondsToDiffTime, diffTimeToPicoseconds)
+import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
+                     picosecondsToDiffTime)
 import           GHC.Stack (HasCallStack)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockHash)
+import           System.Random.Stateful (runSTGen_)
 import           Test.Consensus.PointSchedule.SinglePeer
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
 import qualified Test.QuickCheck as QC hiding (elements)
@@ -23,9 +26,8 @@ import           Test.QuickCheck.Random
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import qualified Test.Util.QuickCheck as QC
-import           System.Random.Stateful (runSTGen_)
-import           Test.Util.TestBlock
-  (TestBlock, TestHash(unTestHash), tbSlot, firstBlock, modifyFork, successorBlock)
+import           Test.Util.TestBlock (TestBlock, TestHash (unTestHash),
+                     firstBlock, modifyFork, successorBlock, tbSlot)
 
 
 tests :: TestTree
@@ -39,7 +41,7 @@ tests =
 
 data SingleJumpTipPointsInput = SingleJumpTipPointsInput
   { sjtpMin :: Int
-  , sjtpMax  :: Int
+  , sjtpMax :: Int
   } deriving (Show)
 
 instance QC.Arbitrary SingleJumpTipPointsInput where
@@ -65,9 +67,9 @@ prop_singleJumpTipPoints seed (SingleJumpTipPointsInput m n) =
          )
 
 data TipPointScheduleInput = TipPointScheduleInput
-  { tpsSlotLength :: DiffTime
+  { tpsSlotLength  :: DiffTime
   , tpsMsgInterval :: (DiffTime, DiffTime)
-  , tpsSlots :: [SlotNo]
+  , tpsSlots       :: [SlotNo]
   } deriving (Show)
 
 instance QC.Arbitrary TipPointScheduleInput where
@@ -92,7 +94,7 @@ prop_tipPointSchedule seed (TipPointScheduleInput slotLength msgInterval slots) 
 
 data HeaderPointScheduleInput = HeaderPointScheduleInput
   { hpsMsgInterval :: (DiffTime, DiffTime)
-  , hpsTipPoints :: [(Maybe Int, [(DiffTime, Int)])]
+  , hpsTipPoints   :: [(Maybe Int, [(DiffTime, Int)])]
   } deriving (Show)
 
 instance QC.Arbitrary HeaderPointScheduleInput where
@@ -235,21 +237,21 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
           )
   where
     showPoint :: SchedulePoint -> String
-    showPoint (ScheduleTipPoint b) = "TP " ++ show (blockHash b)
+    showPoint (ScheduleTipPoint b)    = "TP " ++ show (blockHash b)
     showPoint (ScheduleHeaderPoint b) = "HP " ++ show (blockHash b)
-    showPoint (ScheduleBlockPoint b) = "BP " ++ show (blockHash b)
+    showPoint (ScheduleBlockPoint b)  = "BP " ++ show (blockHash b)
 
     isTipPoint :: SchedulePoint -> Bool
     isTipPoint (ScheduleTipPoint _) = True
-    isTipPoint _ = False
+    isTipPoint _                    = False
 
     isHeaderPoint :: SchedulePoint -> Bool
     isHeaderPoint (ScheduleHeaderPoint _) = True
-    isHeaderPoint _ = False
+    isHeaderPoint _                       = False
 
     isBlockPoint :: SchedulePoint -> Bool
     isBlockPoint (ScheduleBlockPoint _) = True
-    isBlockPoint _ = False
+    isBlockPoint _                      = False
 
 isAncestorBlock :: TestBlock -> TestBlock -> Maybe Ordering
 isAncestorBlock b0 b1 =
@@ -321,7 +323,7 @@ headerPointsFollowTipPoints isAncestor ((t0, i0) : ss) ((t1, i1) : ps) =
       (case isAncestor i0 i1 of
          Just LT -> headerPointsFollowTipPoints isAncestor ss ((t1, i1) : ps)
          Just EQ -> headerPointsFollowTipPoints isAncestor ss ps
-         _ -> headerPointsFollowTipPoints isAncestor ((t0, i0) : ss) ps
+         _       -> headerPointsFollowTipPoints isAncestor ((t0, i0) : ss) ps
       )
 headerPointsFollowTipPoints _ [] _ps =
 --      There can be unscheduled header points if they would be produced so
@@ -342,7 +344,7 @@ genAdversarialFragment goodBlocks forkNo prefixCount slotsA
   where
     -- blocks in the common prefix in reversed order
     intersectionBlock = case AF.head $ AF.takeOldest (prefixCount + 1) goodBlocks of
-        Left _ -> Origin
+        Left _  -> Origin
         Right b -> At b
 
 -- | @mkFragment pre active forkNo@ generates a list of blocks at the given slots.

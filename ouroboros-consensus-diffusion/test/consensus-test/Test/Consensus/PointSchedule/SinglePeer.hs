@@ -1,32 +1,28 @@
 -- | This module contains functions for generating random point schedules.
-module Test.Consensus.PointSchedule.SinglePeer
-  ( IsTrunk(..)
-  , PeerScheduleParams(..)
-  , SchedulePoint(..)
-  , schedulePointToBlock
+module Test.Consensus.PointSchedule.SinglePeer (
+    IsTrunk (..)
+  , PeerScheduleParams (..)
+  , SchedulePoint (..)
   , defaultPeerScheduleParams
-  , singleJumpPeerSchedule
   , peerScheduleFromTipPoints
-  -- * Exposed for testing
+  , schedulePointToBlock
+  , singleJumpPeerSchedule
+    -- * Exposed for testing
   , zipMany
-  )
-  where
+  ) where
 
-import           Cardano.Slotting.Slot (WithOrigin(At, Origin), withOrigin)
+import           Cardano.Slotting.Slot (WithOrigin (At, Origin), withOrigin)
 import           Control.Arrow (second)
 import           Data.List (mapAccumL, mapAccumR)
 import           Data.Time.Clock (DiffTime)
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (BlockNo(unBlockNo), SlotNo)
-import           Test.Consensus.PointSchedule.SinglePeer.Indices
-  ( HeaderPointSchedule (hpsTrunk, hpsBranch)
-  , headerPointSchedule
-  , singleJumpTipPoints
-  , tipPointSchedule
-  )
+import           Ouroboros.Network.Block (BlockNo (unBlockNo), SlotNo)
 import qualified System.Random.Stateful as R (StatefulGen)
+import           Test.Consensus.PointSchedule.SinglePeer.Indices
+                     (HeaderPointSchedule (hpsBranch, hpsTrunk),
+                     headerPointSchedule, singleJumpTipPoints, tipPointSchedule)
 import           Test.Util.TestBlock (TestBlock, tbSlot)
 
 
@@ -38,9 +34,9 @@ data SchedulePoint
   deriving (Eq, Show)
 
 schedulePointToBlock :: SchedulePoint -> TestBlock
-schedulePointToBlock (ScheduleTipPoint b) = b
+schedulePointToBlock (ScheduleTipPoint b)    = b
 schedulePointToBlock (ScheduleHeaderPoint b) = b
-schedulePointToBlock (ScheduleBlockPoint b) = b
+schedulePointToBlock (ScheduleBlockPoint b)  = b
 
 -- | Parameters for generating a schedule for a single peer.
 --
@@ -49,12 +45,12 @@ schedulePointToBlock (ScheduleBlockPoint b) = b
 -- and block points are sent eventually, but the points are delayed according
 -- to these parameters.
 data PeerScheduleParams = PeerScheduleParams
-  { pspSlotLength :: DiffTime
+  { pspSlotLength          :: DiffTime
     -- | Each of these pairs specifies a range of delays for a point. The
     -- actual delay is chosen uniformly at random from the range.
     --
     -- For tip points, the delay is relative to the slot of the tip point.
-  , pspTipDelayInterval :: (DiffTime, DiffTime)
+  , pspTipDelayInterval    :: (DiffTime, DiffTime)
     -- | For header points, the delay is relative to the previous header point
     -- or the tip point that advertises the existence of the header (whichever
     -- happened most recently).
@@ -62,7 +58,7 @@ data PeerScheduleParams = PeerScheduleParams
     -- | For block points, the delay is relative to the previous block point or
     -- the header point that advertises the existence of the block (whichever
     -- happened most recently).
-  , pspBlockDelayInterval :: (DiffTime, DiffTime)
+  , pspBlockDelayInterval  :: (DiffTime, DiffTime)
   }
   deriving (Show)
 
@@ -163,7 +159,7 @@ peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
   where
     fragmentAnchorBlockNo :: AF.AnchoredFragment TestBlock -> BlockNo
     fragmentAnchorBlockNo f = case AF.anchorBlockNo f of
-      At s -> s
+      At s   -> s
       Origin -> 0
 
     intersperseTrunkFragments :: [Int] -> [IsTrunk] -> [Maybe Int]
@@ -213,9 +209,9 @@ rawPeerScheduleFromTipPoints g psp slotOfB tipPoints trunk0v branches0v intersec
     pairVectorsWithChunks trunk branches =
        snd . mapAccumL pairVectors branches
       where
-        pairVectors brs IsTrunk = (brs, trunk)
+        pairVectors brs IsTrunk       = (brs, trunk)
         pairVectors (br:brs) IsBranch = (brs, br)
-        pairVectors [] IsBranch = error "not enough branches"
+        pairVectors [] IsBranch       = error "not enough branches"
 
     -- | Replaces block indices with the actual blocks
     scheduleIndicesToBlocks :: Vector b -> Vector b -> HeaderPointSchedule -> [(DiffTime, b)]
@@ -242,6 +238,6 @@ mergeOn f xxs@(x:xs) yys@(y:ys) =
 zipMany :: [a] -> [[b]] -> [[(a, b)]]
 zipMany xs0 = snd . mapAccumR (go []) xs0
   where
-    go acc xs [] = (xs, acc)
-    go _acc [] _ys = error "zipMany: lengths don't match"
+    go acc xs []         = (xs, acc)
+    go _acc [] _ys       = error "zipMany: lengths don't match"
     go acc (x:xs) (y:ys) = go ((x, y) : acc) xs ys

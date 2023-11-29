@@ -12,23 +12,20 @@
 -- generated with 'headerPointSchedule' as well. See the implementation of
 -- 'Test.Consensus.PointSchedule.Random.singleJumpPeerSchedule' for an example.
 --
-module Test.Consensus.PointSchedule.SinglePeer.Indices(
-    singleJumpTipPoints
-  , rollbacksTipPoints
-  , tipPointSchedule
+module Test.Consensus.PointSchedule.SinglePeer.Indices (
+    HeaderPointSchedule (..)
   , headerPointSchedule
-  , HeaderPointSchedule (..)
+  , rollbacksTipPoints
+  , singleJumpTipPoints
+  , tipPointSchedule
   ) where
 
 import           Control.Monad (forM, replicateM)
 import           Data.List (sort)
-import           Data.Time.Clock (
-    DiffTime
-  , diffTimeToPicoseconds
-  , picosecondsToDiffTime
-  )
+import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
+                     picosecondsToDiffTime)
 import           GHC.Stack (HasCallStack)
-import           Ouroboros.Network.Block (SlotNo(SlotNo))
+import           Ouroboros.Network.Block (SlotNo (SlotNo))
 import qualified System.Random.Stateful as R
 
 
@@ -178,7 +175,7 @@ tipPointSchedule g slotLength msgDelayInterval slots = do
           firstLater = case newBranch of
             -- If there is no later point, pick an arbitrary later time interval
             -- to sample from
-            [] -> lastTime + toDiffTime (toEnum nseq)
+            []           -> lastTime + toDiffTime (toEnum nseq)
             ((a, _) : _) -> a + fst msgDelayInterval
       times <- replicateM nseq (uniformRMDiffTime (lastTime, firstLater) g)
       pure (sort times, newBranch)
@@ -189,7 +186,7 @@ uniformRMDiffTime (a, b) g =
       R.uniformRM (diffTimeToPicoseconds a, diffTimeToPicoseconds b) g
 
 data HeaderPointSchedule = HeaderPointSchedule {
-    hpsTrunk :: [(DiffTime, Int)] -- ^ header points up to the intersection
+    hpsTrunk  :: [(DiffTime, Int)] -- ^ header points up to the intersection
   , hpsBranch :: [(DiffTime, Int)] -- ^ header points after the intersection
                                    -- indices are relative to the branch
   }
