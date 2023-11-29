@@ -13,17 +13,17 @@ module Test.Consensus.PeerSimulator.ScheduledChainSyncServer (
   ) where
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
-import           Data.Foldable (traverse_)
 import           Ouroboros.Consensus.Block.Abstract (Point (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
-import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
-                     atomically)
+import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM))
 import           Ouroboros.Network.Block (Tip (..))
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (ChainSyncServer (..),
                      ServerStIdle (ServerStIdle, recvMsgDoneClient, recvMsgFindIntersect, recvMsgRequestNext),
                      ServerStIntersect (SendMsgIntersectFound, SendMsgIntersectNotFound),
                      ServerStNext (SendMsgRollBackward, SendMsgRollForward))
+import           Test.Consensus.PeerSimulator.ScheduledServer
+                     (ScheduledServer (..), awaitOnlineState, runHandler)
 import           Test.Consensus.PeerSimulator.Trace (terseHeader, traceUnitWith)
 import           Test.Util.TestBlock (Header (..), TestBlock)
 
@@ -53,62 +53,15 @@ data FindIntersect =
 data ChainSyncServerHandlers m a =
   ChainSyncServerHandlers {
     csshRequestNext      :: a -> STM m (Maybe RequestNext, [String]),
-    csshFindIntersection :: a -> [Point TestBlock] -> STM m (FindIntersect, [String])
+    csshFindIntersection :: [Point TestBlock] -> a -> STM m (Maybe FindIntersect, [String])
   }
 
 -- | Resources used by a ChainSync server mock.
 data ScheduledChainSyncServer m a =
   ScheduledChainSyncServer {
-    scssName           :: String,
-    scssCurrentState   :: STM m (Maybe a),
-    scssAwaitNextState :: STM m (Maybe a),
-    scssHandlers       :: ChainSyncServerHandlers m a,
-    scssTracer         :: Tracer m String
+    scssServer   :: ScheduledServer m a,
+    scssHandlers :: ChainSyncServerHandlers m a
   }
-
--- | Block until the peer simulator has updated the concurrency primitive that
--- indicates that it's this peer's server's turn in the point schedule.
--- If the new state is 'Nothing', the point schedule has declared this peer as
--- offline for the current tick, so it will not resume operation and wait for
--- the next update.
-awaitNextState ::
-  IOLike m =>
-  ScheduledChainSyncServer m a ->
-  m a
-awaitNextState server@ScheduledChainSyncServer{scssAwaitNextState} = do
-  atomically scssAwaitNextState >>= \case
-    Nothing       -> awaitNextState server
-    Just resource -> pure resource
-
--- | Fetch the current state from the STM action, and if it is 'Nothing',
--- wait for the next tick to be triggered in 'awaitNextState'.
---
--- Since processing of a tick always ends when the RequestNext handler finishes
--- after serving the last header, this function is only relevant for the
--- initial state update.
-ensureCurrentState ::
-  IOLike m =>
-  ScheduledChainSyncServer m a ->
-  m a
-ensureCurrentState server@ScheduledChainSyncServer{scssCurrentState} =
-  atomically scssCurrentState >>= \case
-    Nothing -> awaitNextState server
-    Just resource -> pure resource
-
--- | Handler functions are STM actions for the usual race condition reasons,
--- which means that they cannot emit trace messages.
---
--- For that reason, we allow them to return their messages alongside the
--- protocol result and emit them here.
-runHandlerWithTrace ::
-  IOLike m =>
-  Tracer m String ->
-  STM m (a, [String]) ->
-  m a
-runHandlerWithTrace tracer handler = do
-  (result, handlerMessages) <- atomically handler
-  traverse_ (traceWith tracer) handlerMessages
-  pure result
 
 -- | Declare a mock ChainSync protocol server in its typed-protocols encoding
 -- that halts and resumes operation in response to an external scheduler,
@@ -126,7 +79,7 @@ scheduledChainSyncServer ::
   IOLike m =>
   ScheduledChainSyncServer m a ->
   ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
-scheduledChainSyncServer server@ScheduledChainSyncServer {scssHandlers, scssTracer, scssName} =
+scheduledChainSyncServer ScheduledChainSyncServer {scssHandlers, scssServer} =
   go
   where
     ChainSyncServerHandlers {csshRequestNext, csshFindIntersection} = scssHandlers
@@ -138,20 +91,17 @@ scheduledChainSyncServer server@ScheduledChainSyncServer {scssHandlers, scssTrac
         , recvMsgDoneClient
       }
 
-    recvMsgRequestNext = do
-      currentState <- ensureCurrentState server
-      trace "handling MsgRequestNext"
-      trace $ "  state is " ++ condense currentState
-      runHandlerWithTrace requestNextTracer (csshRequestNext currentState) >>= \case
-        Just (RollForward header tip) -> do
+    recvMsgRequestNext =
+      runHandler scssServer "MsgRequestNext" csshRequestNext $ \case
+        RollForward header tip -> do
           trace $ "  gotta serve " ++ terseHeader header
           trace $ "  tip is      " ++ condense tip
           trace "done handling MsgRequestNext"
           pure $ Left $ SendMsgRollForward header tip go
-        Just (RollBackward point tip) -> do
+        RollBackward point tip -> do
           trace "done handling MsgRequestNext"
           pure $ Left $ SendMsgRollBackward point tip go
-        Just AwaitReply -> do
+        AwaitReply -> do
           trace "done handling MsgRequestNext"
           pure $ Right $ do -- beginning of the continuation
             restart >>= \case
@@ -162,18 +112,13 @@ scheduledChainSyncServer server@ScheduledChainSyncServer {scssHandlers, scssTrac
               -- allow anyway).
               Right cont -> cont
               Left msg -> pure msg
-        Nothing -> do
-          trace "  cannot serve at this point; waiting for node state and starting again"
-          restart
       where
         -- Yield control back to the scheduler, then wait for the next state and
         -- continue processing the client's current 'MsgRequestNext'.
-        restart = awaitNextState server *> recvMsgRequestNext
+        restart = awaitOnlineState scssServer *> recvMsgRequestNext
 
-    recvMsgFindIntersect pts = do
-      currentState <- ensureCurrentState server
-      trace "handling MsgFindIntersect"
-      runHandlerWithTrace findIntersectTracer (csshFindIntersection currentState pts) >>= \case
+    recvMsgFindIntersect pts =
+      runHandler scssServer "MsgFindIntersect" (csshFindIntersection pts) $ \case
         IntersectNotFound tip -> do
           trace "  no intersection found"
           trace "done handling MsgFindIntersect"
@@ -183,14 +128,10 @@ scheduledChainSyncServer server@ScheduledChainSyncServer {scssHandlers, scssTrac
           trace "done handling MsgFindIntersect"
           pure $ SendMsgIntersectFound intersection tip go
 
-    recvMsgDoneClient = do
+    recvMsgDoneClient =
       trace "received MsgDoneClient"
-      pure ()
 
-    trace = traceWith mainTracer
-    requestNextTracer = Tracer $ traceUnitWith scssTracer ("RequestNext handler for " ++ scssName)
-    findIntersectTracer = Tracer $ traceUnitWith scssTracer ("FindIntersect handler for " ++ scssName)
-    mainTracer = Tracer $ traceUnitWith scssTracer ("ScheduledChainSyncServer " ++ scssName)
+    trace = traceWith (ssTracer scssServer)
 
 -- | Construct a ChainSync server for the peer simulator.
 --
@@ -199,16 +140,18 @@ runScheduledChainSyncServer ::
   Condense a =>
   IOLike m =>
   String ->
-  STM m (Maybe a) ->
+  STM m () ->
   STM m (Maybe a) ->
   Tracer m String ->
   ChainSyncServerHandlers m a ->
   ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
-runScheduledChainSyncServer scssName scssAwaitNextState scssCurrentState scssTracer scssHandlers =
+runScheduledChainSyncServer ssPeerId ssTickStarted ssCurrentState tracer scssHandlers =
   scheduledChainSyncServer ScheduledChainSyncServer {
-    scssName,
-    scssAwaitNextState,
-    scssCurrentState,
-    scssTracer,
+    scssServer = ScheduledServer {
+      ssPeerId,
+      ssTickStarted,
+      ssCurrentState,
+      ssTracer = Tracer (traceUnitWith tracer ("ScheduledChainSyncServer " ++ ssPeerId))
+    },
     scssHandlers
   }
