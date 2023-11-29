@@ -13,6 +13,7 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (tipFromHeader)
 import           Ouroboros.Network.Driver.Limits
                      (ProtocolLimitFailure (ExceededTimeLimit))
+import           Ouroboros.Network.Point (WithOrigin (At))
 import           Ouroboros.Network.Protocol.ChainSync.Codec (mustReplyTimeout)
 import           Test.Consensus.BlockTree (btTrunk)
 import           Test.Consensus.Genesis.Setup
@@ -64,8 +65,8 @@ prop_timeouts = do
     dullSchedule _ _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule scheduleConfig timeout (_ AF.:> tipBlock) =
       let tipPoint = TipPoint $ tipFromHeader tipBlock
-          headerPoint = HeaderPoint $ getHeader tipBlock
-          blockPoint = BlockPoint tipBlock
+          headerPoint = HeaderPoint $ At (getHeader tipBlock)
+          blockPoint = BlockPoint (At tipBlock)
           state = Peer HonestPeer $ NodeOnline $ AdvertisedPoints tipPoint headerPoint blockPoint
           tick = Tick { active = state, duration = pscTickDuration scheduleConfig }
           maximumNumberOfTicks = round $ timeout / pscTickDuration scheduleConfig
