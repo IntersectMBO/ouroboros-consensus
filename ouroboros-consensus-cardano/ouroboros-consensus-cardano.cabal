@@ -146,9 +146,11 @@ library
     , sop-core                      ^>=0.5
     , sop-extras                    ^>=0.1
     , strict-sop-core               ^>=0.1
-    , text                          ^>=2.0
     , these                         ^>=1.2
     , vector-map
+
+  -- GHC 8.10.7 on aarch64-darwin cannot use text-2
+  build-depends:   text >=1.2.5.0 && <2.2
 
 library unstable-byronspec
   import:          common-lib

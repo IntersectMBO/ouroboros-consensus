@@ -275,12 +275,14 @@ library
     , strict-checked-vars          ^>=0.1.0.4
     , strict-sop-core              ^>=0.1
     , strict-stm                   ^>=1.3
-    , text                         ^>=2.0
     , these                        ^>=1.2
     , time
     , transformers
     , typed-protocols              ^>=0.1.1
     , vector                       ^>=0.13
+
+  -- GHC 8.10.7 on aarch64-darwin cannot use text-2
+  build-depends:   text >=1.2.5.0 && <2.2
 
 library unstable-consensus-testlib
   import:          common-lib
