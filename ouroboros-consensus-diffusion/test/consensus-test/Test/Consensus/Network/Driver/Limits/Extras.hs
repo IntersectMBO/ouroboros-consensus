@@ -78,6 +78,7 @@ chainSyncTimeouts t f =
       canAwaitTimeout
     , intersectTimeout
     , mustReplyTimeout
+    , idleTimeout
     }
   where
     canAwaitTimeout :: Maybe DiffTime
@@ -97,10 +98,14 @@ chainSyncTimeouts t f =
       realToFrac (getSlotLength t)
         * log (1 - 0.999) / log (1 - ascVal f)
 
+    idleTimeout :: Maybe DiffTime
+    idleTimeout = Just 3673       -- taken from Ouroboros.Consensus.Node.stdChainSyncTimeout
+
 chainSyncNoTimeouts :: ChainSyncTimeout
 chainSyncNoTimeouts =
   ChainSyncTimeout {
       canAwaitTimeout = Nothing
     , intersectTimeout = Nothing
     , mustReplyTimeout = Nothing
+    , idleTimeout = Nothing
   }
