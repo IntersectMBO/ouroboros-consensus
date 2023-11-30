@@ -74,6 +74,7 @@ import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import           Ouroboros.Consensus.Node.DbLock
@@ -392,6 +393,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 cfg
                 rnTraceConsensus
                 btime
+                (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
                 chainDB
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
@@ -639,6 +641,7 @@ mkNodeKernelArgs
   -> TopLevelConfig blk
   -> Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
   -> BlockchainTime m
+  -> InFutureCheck.HeaderInFutureCheck m blk
   -> ChainDB m blk
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
@@ -648,6 +651,7 @@ mkNodeKernelArgs
   cfg
   tracers
   btime
+  chainSyncFutureCheck
   chainDB
   = do
     return NodeKernelArgs
@@ -657,6 +661,7 @@ mkNodeKernelArgs
       , btime
       , chainDB
       , initChainDB             = nodeInitChainDB
+      , chainSyncFutureCheck
       , blockFetchSize          = estimateBlockSize
       , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
       , miniProtocolParameters  = defaultMiniProtocolParameters

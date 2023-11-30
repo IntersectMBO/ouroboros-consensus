@@ -46,6 +46,7 @@ import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended hiding (ledgerState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion (NodeToNodeVersion)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
@@ -318,6 +319,14 @@ runChainSync securityParam (ClientUpdates clientUpdates)
               pure $ WithFingerprint isInvalidBlock fp
           }
 
+        headerInFutureCheck :: InFutureCheck.HeaderInFutureCheck m blk
+        headerInFutureCheck = InFutureCheck.HeaderInFutureCheck
+          { InFutureCheck.handleHeaderArrival = \_judgment -> pure Nothing
+          , InFutureCheck.judgeHeaderArrival  = \_cfg _lst _arrival -> pure ()
+          , InFutureCheck.proxyArrival        = Proxy
+          , InFutureCheck.recordHeaderArrival = \_hdr -> pure ()
+          }
+
         client :: StrictTVar m (AnchoredFragment (Header TestBlock))
                -> Consensus ChainSyncClientPipelined
                     TestBlock
@@ -326,6 +335,7 @@ runChainSync securityParam (ClientUpdates clientUpdates)
                    (pipelineDecisionLowHighMark 10 20)
                    chainSyncTracer
                    nodeCfg
+                   headerInFutureCheck
                    chainDbView
                    (maxBound :: NodeToNodeVersion)
                    (return Continue)
