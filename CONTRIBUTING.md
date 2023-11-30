@@ -252,8 +252,8 @@ The Nix code which builds our packages also needs some information relating to
 the index-state. This information needs to be new enough to include the
 index-state specified in `cabal.project`. The information is represented by Nix
 flake inputs. You can update these by running:
-- `nix flake lock --update-input hackageNix` for Hackage
-- `nix flake lock --update-input CHaP` for CHaP
+- `nix flake update hackageNix` for Hackage
+- `nix flake update CHaP` for CHaP
 
 If you fail to do this you may get an error like this from Nix:
 ```
