@@ -213,7 +213,7 @@ mkHandlers
   -- ^ Peer Sharing result computation callback
   -> Handlers       m addrNTN           blk
 mkHandlers
-      NodeKernelArgs {keepAliveRng, miniProtocolParameters}
+      NodeKernelArgs {chainSyncFutureCheck, keepAliveRng, miniProtocolParameters}
       NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers}
       computePeers =
     Handlers {
@@ -224,6 +224,7 @@ mkHandlers
               (chainSyncPipeliningHighMark miniProtocolParameters))
             (contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers))
             getTopLevelConfig
+            chainSyncFutureCheck
             (defaultChainDbView getChainDB)
       , hChainSyncServer = \peer _version ->
           chainSyncHeadersServer

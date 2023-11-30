@@ -36,7 +36,8 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , TraceChainSyncClientEvent (..)
   ) where
 
-import           Control.Monad.Except
+import           Control.Monad (join)
+import           Control.Monad.Except (runExcept, throwError)
 import           Control.Tracer
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
@@ -51,12 +52,16 @@ import           NoThunks.Class (unsafeNoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
+import           Ouroboros.Consensus.HardFork.History
+                     (PastHorizonException (PastHorizon))
 import           Ouroboros.Consensus.HeaderStateHistory
                      (HeaderStateHistory (..), validateHeader)
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import           Ouroboros.Consensus.HeaderValidation hiding (validateHeader)
+import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB,
@@ -64,6 +69,7 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB,
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Assert (assertWithMsg)
+import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (Fingerprint, Watcher (..),
                      WithFingerprint (..), withWatcher)
@@ -426,6 +432,7 @@ chainSyncClient
     => MkPipelineDecision
     -> Tracer m (TraceChainSyncClientEvent blk)
     -> TopLevelConfig blk
+    -> InFutureCheck.HeaderInFutureCheck m blk
     -> ChainDbView m blk
     -> NodeToNodeVersion
     -> ControlMessageSTM m
@@ -433,6 +440,13 @@ chainSyncClient
     -> StrictTVar m (AnchoredFragment (Header blk))
     -> Consensus ChainSyncClientPipelined blk m
 chainSyncClient mkPipelineDecision0 tracer cfg
+                InFutureCheck.HeaderInFutureCheck
+                { -- these fields in order of use
+                  proxyArrival        = Proxy :: Proxy arrival
+                , recordHeaderArrival
+                , judgeHeaderArrival
+                , handleHeaderArrival
+                }
                 ChainDbView
                 { getCurrentChain
                 , getHeaderStateHistory
@@ -706,104 +720,156 @@ chainSyncClient mkPipelineDecision0 tracer cfg
                      (ClientPipelinedStIdle n)
     rollForward mkPipelineDecision n hdr theirTip
               = Stateful $ \kis -> traceException $ do
-      now <- getMonotonicTime
-      let hdrPoint = headerPoint hdr
+        arrival <- recordHeaderArrival hdr
+        now     <- getMonotonicTime
+        let hdrPoint = headerPoint hdr
+            slotNo   = blockSlot   hdr
 
-      isInvalidBlock <- atomically $ forgetFingerprint <$> getIsInvalidBlock
-      let disconnectWhenInvalid = \case
-            GenesisHash    -> pure ()
-            BlockHash hash ->
+        do
+          let scrutinee =
+                case isPipeliningEnabled version of
+                  NotReceivingTentativeBlocks -> BlockHash (headerHash hdr)
+                  -- Disconnect if the parent block of `hdr` is known to be invalid.
+                  ReceivingTentativeBlocks    -> headerPrevHash hdr
+          case scrutinee of
+            GenesisHash    -> return ()
+            BlockHash hash -> do
+              -- If the peer is sending headers quickly, the
+              -- @invalidBlockWatcher@ might miss one. So this call is a
+              -- lightweight supplement. Note that neither check /must/ be 100%
+              -- reliable.
+              isInvalidBlock <- atomically $ forgetFingerprint <$> getIsInvalidBlock
               whenJust (isInvalidBlock hash) $ \reason ->
                 disconnect $ InvalidBlock hdrPoint hash reason
-      disconnectWhenInvalid $
-        case isPipeliningEnabled version of
-          -- Disconnect if the parent block of `hdr` is known to be invalid.
-          ReceivingTentativeBlocks    -> headerPrevHash hdr
-          NotReceivingTentativeBlocks -> BlockHash (headerHash hdr)
 
-      -- Get the ledger view required to validate the header
-      -- NOTE: This will block if we are too far behind.
-      intersectCheck <- atomically $ do
-        -- Before obtaining a 'LedgerView', we must find the most recent
-        -- intersection with the current chain. Note that this is cheap when
-        -- the chain and candidate haven't changed.
-        mKis' <- intersectsWithCurrentChain kis
-        case mKis' of
-          Nothing -> return NoLongerIntersects
-          Just kis'@KnownIntersectionState { mostRecentIntersection } -> do
-            -- We're calling 'ledgerViewForecastAt' in the same STM transaction
-            -- as 'intersectsWithCurrentChain'. This guarantees the former's
-            -- precondition: the intersection is within the last @k@ blocks of
-            -- the current chain.
-            forecast <-
+        mLedgerView <- EarlyExit.withEarlyExit $ do
+          Intersects kis2 lst        <- checkArrivalTime kis arrival
+          Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
+              Just ledgerView -> pure $ Intersects kis2 ledgerView
+              Nothing         -> readLedgerState kis2 (projectLedgerView slotNo)
+          pure $ Intersects kis3 ledgerView
+
+        case mLedgerView of
+
+          Nothing -> do
+            -- The above computation exited early, which means our chain (tip)
+            -- has changed and it no longer intersects with the candidate
+            -- fragment, so we have to find a new intersection. But first drain
+            -- the pipe.
+            continueWithState ()
+              $ drainThePipe n
+              $ findIntersection NoMoreIntersection
+
+          Just (Intersects kis' ledgerView) -> do
+            -- Our chain still intersects with the candidate fragment and we
+            -- have obtained a 'LedgerView' that we can use to validate @hdr@.
+            let KnownIntersectionState {
+                    ourFrag
+                  , theirFrag
+                  , theirHeaderStateHistory
+                  , mostRecentIntersection
+                  } = kis'
+
+            -- Validate header
+            theirHeaderStateHistory' <-
+              case runExcept $ validateHeader cfg ledgerView hdr theirHeaderStateHistory of
+                Right theirHeaderStateHistory' -> return theirHeaderStateHistory'
+                Left  vErr ->
+                  disconnect $
+                    HeaderError hdrPoint vErr (ourTipFromChain ourFrag) theirTip
+
+            let theirFrag' = theirFrag :> hdr
+                -- Advance the most recent intersection if we have the same
+                -- header on our fragment too. This is cheaper than recomputing
+                -- the intersection from scratch.
+                mostRecentIntersection'
+                  | Just ourSuccessor <-
+                      AF.successorBlock (castPoint mostRecentIntersection) ourFrag
+                  , headerHash ourSuccessor == headerHash hdr
+                  = headerPoint hdr
+                  | otherwise
+                  = mostRecentIntersection
+                kis'' = assertKnownIntersectionInvariants (configConsensus cfg) $
+                  KnownIntersectionState {
+                      theirFrag               = theirFrag'
+                    , theirHeaderStateHistory = theirHeaderStateHistory'
+                    , ourFrag                 = ourFrag
+                    , mostRecentIntersection  = mostRecentIntersection'
+                    }
+            atomically $ writeTVar varCandidate theirFrag'
+            atomically $ traceWith headerMetricsTracer (slotNo, now)
+
+            continueWithState kis'' $ nextStep mkPipelineDecision n theirTip
+
+    -- Used in 'rollForward': determines whether the header is from the future,
+    -- and handle that fact if so. Also return the ledger state used for the
+    -- determination.
+    --
+    -- Relies on 'readLedgerState'.
+    checkArrivalTime :: KnownIntersectionState blk
+                     -> arrival
+                     -> EarlyExit.WithEarlyExit m (Intersects blk (LedgerState blk))
+    checkArrivalTime kis arrival = do
+        Intersects kis' (lst, judgment) <- readLedgerState kis $ \lst ->
+          case runExcept $ judgeHeaderArrival (configLedger cfg) lst arrival of
+            Left PastHorizon{} -> Nothing
+            Right judgment     -> Just (lst, judgment)
+
+        -- For example, throw an exception if the header is from the far
+        -- future.
+        EarlyExit.lift $ handleHeaderArrival judgment >>= \case
+          Just exn -> disconnect (InFutureHeaderExceedsClockSkew exn)
+          Nothing  -> return $ Intersects kis' lst
+
+    -- Used in 'rollForward': block until the the ledger state at the
+    -- intersection with the local selection returns 'Just'.
+    --
+    -- Exits early if the intersection no longer exists.
+    readLedgerState :: KnownIntersectionState blk
+                    -> (LedgerState blk -> Maybe a)
+                    -> EarlyExit.WithEarlyExit m (Intersects blk a)
+    readLedgerState kis prj =
+        join $ EarlyExit.lift $ readLedgerStateHelper kis prj
+
+    readLedgerStateHelper :: KnownIntersectionState blk
+                          -> (LedgerState blk -> Maybe a)
+                          -> m (EarlyExit.WithEarlyExit m (Intersects blk a))
+    readLedgerStateHelper kis prj = atomically $ do
+        -- We must first find the most recent intersection with the current
+        -- chain. Note that this is cheap when the chain and candidate haven't
+        -- changed.
+        intersectsWithCurrentChain kis >>= \case
+          Nothing   -> return EarlyExit.exitEarly
+          Just kis' -> do
+            let KnownIntersectionState { mostRecentIntersection } = kis'
+            lst <-
               maybe
                 (error $
                    "intersection not within last k blocks: " <> show mostRecentIntersection)
-                (ledgerViewForecastAt (configLedger cfg) . ledgerState)
+                ledgerState
                 <$> getPastLedger mostRecentIntersection
+            case prj lst of
+              Nothing         -> retry
+              Just ledgerView -> return $ return $ Intersects kis' ledgerView
 
-            case runExcept $ forecastFor forecast (blockSlot hdr) of
-              -- The header is too far ahead of the intersection point with our
-              -- current chain. We have to wait until our chain and the
-              -- intersection have advanced far enough. This will wait on
-              -- changes to the current chain via the call to
-              -- 'intersectsWithCurrentChain' before it.
-              Left OutsideForecastRange{} ->
-                retry
-              Right ledgerView ->
-                return $ Intersects kis' ledgerView
-
-      case intersectCheck of
-        NoLongerIntersects ->
-          -- Our chain (tip) has changed and it no longer intersects with the
-          -- candidate fragment, so we have to find a new intersection, but
-          -- first drain the pipe.
-          continueWithState ()
-            $ drainThePipe n
-            $ findIntersection NoMoreIntersection
-
-        Intersects kis' ledgerView -> do
-          -- Our chain still intersects with the candidate fragment and we
-          -- have obtained a 'LedgerView' that we can use to validate @hdr@.
-
-          let KnownIntersectionState {
-                  ourFrag
-                , theirFrag
-                , theirHeaderStateHistory
-                , mostRecentIntersection
-                } = kis'
-
-          -- Validate header
-          theirHeaderStateHistory' <-
-            case runExcept $ validateHeader cfg ledgerView hdr theirHeaderStateHistory of
-              Right theirHeaderStateHistory' -> return theirHeaderStateHistory'
-              Left  vErr ->
-                disconnect $
-                  HeaderError hdrPoint vErr (ourTipFromChain ourFrag) theirTip
-
-          let theirFrag' = theirFrag :> hdr
-              -- Advance the most recent intersection if we have the same header
-              -- on our fragment too. This is cheaper than recomputing the
-              -- intersection from scratch.
-              mostRecentIntersection'
-                | Just ourSuccessor <-
-                    AF.successorBlock (castPoint mostRecentIntersection) ourFrag
-                , headerHash ourSuccessor == headerHash hdr
-                = headerPoint hdr
-                | otherwise
-                = mostRecentIntersection
-              kis'' = assertKnownIntersectionInvariants (configConsensus cfg) $
-                KnownIntersectionState {
-                    theirFrag               = theirFrag'
-                  , theirHeaderStateHistory = theirHeaderStateHistory'
-                  , ourFrag                 = ourFrag
-                  , mostRecentIntersection  = mostRecentIntersection'
-                  }
-          atomically $ writeTVar varCandidate theirFrag'
-          let slotNo = blockSlot hdr
-          atomically $ traceWith headerMetricsTracer (slotNo, now)
-
-          continueWithState kis'' $ nextStep mkPipelineDecision n theirTip
+    -- Used in 'rollForward': returns 'Nothing' if the ledger state cannot
+    -- forecast the ledger view that far into the future.
+    projectLedgerView :: SlotNo
+                      -> LedgerState blk
+                      -> Maybe (LedgerView (BlockProtocol blk))
+    projectLedgerView slot lst =
+        let forecast = ledgerViewForecastAt (configLedger cfg) lst
+              -- TODO cache this in the KnownIntersectionState? Or even in the
+              -- LedgerDB?
+        in
+        case runExcept $ forecastFor forecast slot of
+          -- The header is too far ahead of the intersection point with our
+          -- current chain. We have to wait until our chain and the
+          -- intersection have advanced far enough. This will wait on
+          -- changes to the current chain via the call to
+          -- 'intersectsWithCurrentChain' before it.
+          Left OutsideForecastRange{} -> Nothing
+          Right ledgerView            -> Just ledgerView
 
     rollBackward :: MkPipelineDecision
                  -> Nat n
@@ -1024,16 +1090,10 @@ invalidBlockRejector tracer version getIsInvalidBlock getCandidate =
       throwIO ex
 
 -- | Auxiliary data type used as an intermediary result in 'rollForward'.
-data IntersectCheck blk =
-    -- | The upstream chain no longer intersects with our current chain because
-    -- our current chain changed in the background.
-    NoLongerIntersects
-    -- | The upstream chain still intersects with our chain, return the
-    -- resulting 'KnownIntersectionState' and the 'LedgerView' corresponding to
-    -- the header 'rollForward' received.
-  | Intersects
-      (KnownIntersectionState blk)
-      (LedgerView (BlockProtocol blk))
+data Intersects blk a =
+    Intersects
+        (KnownIntersectionState blk)
+        a
 
 {-------------------------------------------------------------------------------
   Explicit state
@@ -1159,6 +1219,8 @@ data ChainSyncClientException =
           -- different from the previous argument.
           (InvalidBlockReason blk)
 
+    |   InFutureHeaderExceedsClockSkew !InFutureCheck.HeaderArrivalException
+
 deriving instance Show ChainSyncClientException
 
 instance Eq ChainSyncClientException where
@@ -1179,6 +1241,10 @@ instance Eq ChainSyncClientException where
       Nothing   -> False
       Just Refl -> (a, b, c) == (a', b', c')
   InvalidBlock{} == _ = False
+
+  InFutureHeaderExceedsClockSkew a == InFutureHeaderExceedsClockSkew a' =
+    a == a'
+  InFutureHeaderExceedsClockSkew{} == _ = False
 
 instance Exception ChainSyncClientException
 

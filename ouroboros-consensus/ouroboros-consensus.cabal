@@ -141,6 +141,7 @@ library
     Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface
     Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+    Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
@@ -483,6 +484,7 @@ test-suite consensus-test
   build-depends:
     , async
     , base
+    , base-deriving-via
     , cardano-binary
     , cardano-crypto-class
     , cardano-slotting
@@ -504,6 +506,7 @@ test-suite consensus-test
     , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
     , QuickCheck
     , quickcheck-state-machine
+    , quiet
     , random
     , serialise
     , si-timers

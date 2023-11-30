@@ -70,6 +70,7 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import           Ouroboros.Consensus.Node.ExitPolicy
 import           Ouroboros.Consensus.Node.InitStorage
@@ -974,6 +975,10 @@ runThreadNetwork systemTime ThreadNetworkArgs
             , btime
             , chainDB
             , initChainDB             = nodeInitChainDB
+            , chainSyncFutureCheck    =
+                  InFutureCheck.realHeaderInFutureCheck
+                    InFuture.defaultClockSkew
+                    (OracularClock.finiteSystemTime clock)
             , blockFetchSize          = estimateBlockSize
             , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
             , keepAliveRng            = kaRng

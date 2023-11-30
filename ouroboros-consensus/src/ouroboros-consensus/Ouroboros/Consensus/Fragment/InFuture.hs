@@ -16,8 +16,9 @@ module Ouroboros.Consensus.Fragment.InFuture (
     -- * Clock skew
   , clockSkewInSeconds
   , defaultClockSkew
-    -- ** opaque
+    -- ** not exporting the constructor
   , ClockSkew
+  , unClockSkew
     -- * Testing
   , dontCheck
   , miracle
