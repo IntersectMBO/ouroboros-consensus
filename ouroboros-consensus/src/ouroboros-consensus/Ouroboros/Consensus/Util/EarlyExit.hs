@@ -244,6 +244,10 @@ instance MonadFork m => MonadFork (WithEarlyExit m) where
                          let unmask' :: forall a. WithEarlyExit m a -> WithEarlyExit m a
                              unmask' = earlyExit . unmask . withEarlyExit
                          in collapse <$> withEarlyExit (f unmask')
+  forkFinally  f fin = lift $ forkFinally
+                                (withEarlyExit f)
+                                (withEarlyExit_ . maybe (pure ()) fin . commute)
+
   throwTo            = lift .: throwTo
   yield              = lift yield
 
