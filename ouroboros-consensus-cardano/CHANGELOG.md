@@ -2,6 +2,16 @@
 
 # Changelog entries
 
+<a id='changelog-0.12.1.0'></a>
+## 0.12.1.0 — 2023-11-30
+
+### Non-Breaking
+
+- Enable `NodeToNodeV_13` protocol.
+
+- New tests to check that all network versions are supported by the Shelley and
+  Cardano blocks.
+
 <a id='changelog-0.12.0.0'></a>
 ## 0.12.0.0 — 2023-11-14
 
