@@ -67,14 +67,18 @@ startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates = do
             (TestBlockConfig $ NumCoreNodes 0) -- Only needed when minting blocks
             (BlockFetchClientInterface.defaultChainDbView chainDb)
             getCandidates
+            -- The size of headers in bytes is irrelevant because our tests
+            -- do not serialize the blocks.
             (\_hdr -> 1000)
             slotForgeTime
             (pure FetchModeBulkSync)
 
+        -- Values taken from
+        -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
         blockFetchCfg = BlockFetchConfiguration
-          { bfcMaxConcurrencyBulkSync = 2
+          { bfcMaxConcurrencyBulkSync = 1
           , bfcMaxConcurrencyDeadline = 2
-          , bfcMaxRequestsInflight = 4
+          , bfcMaxRequestsInflight = 10
           , bfcDecisionLoopInterval = 0
           , bfcSalt = 0
           }
