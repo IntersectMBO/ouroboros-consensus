@@ -24,6 +24,8 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Tracer (recordingTracerTVar)
 import Test.Consensus.Genesis.Setup.GenChains
 
+-- | Runs the given point schedule and evaluates the given property on the final
+-- state view.
 runTest ::
   (IOLike m, MonadTime m, MonadTimer m) =>
   GenesisTest ->
