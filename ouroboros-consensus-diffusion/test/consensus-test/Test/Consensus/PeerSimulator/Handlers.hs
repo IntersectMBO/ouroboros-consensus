@@ -15,9 +15,9 @@ import           Control.Monad.Trans (lift)
 import           Control.Monad.Writer.Strict (MonadWriter (tell),
                      WriterT (runWriterT))
 import           Data.Coerce (coerce)
-import           Data.Maybe (fromJust)
-import           Data.Monoid (First (..))
-import           Ouroboros.Consensus.Block.Abstract (Point (..), getHeader)
+import           Data.List (find)
+import           Data.Maybe (fromJust, isJust)
+import           Ouroboros.Consensus.Block.Abstract (HasHeader, Point (..), getHeader)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
@@ -36,8 +36,7 @@ import           Test.Util.TestBlock (TestBlock)
 
 -- | Find the first point in the fragment
 intersectWith :: HasHeader b => AnchoredFragment b -> [Point b] -> Maybe (Point b)
-intersectWith fullFrag pts =
-  AF.anchorPoint . snd <$> getFirst (foldMap (First . AF.splitAfterPoint fullFrag) pts)
+intersectWith fullFrag = find (isJust . AF.splitAfterPoint fullFrag)
 
 -- | Handle a @MsgFindIntersect@ message.
 --
