@@ -30,9 +30,9 @@ import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import           Ouroboros.Consensus.Ledger.Basics hiding (Key, LedgerState)
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
                      (DbChangelog (..))
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (HeaderHash, Point (..), SlotNo (..),
                      StandardHash, castPoint, pattern GenesisPoint)

@@ -12,19 +12,20 @@
 module Bench.Consensus.Mempool.TestBlock (
     -- * Test block
     TestBlock
-    -- * Payload semantics
-  , Ledger.GenTx (TestBlockGenTx, unGenTx)
-  , PayloadDependentState (TestPLDS)
+    -- * Initial parameters
+  , initialLedgerState
+  , sampleLedgerConfig
+  , sampleMempoolAndModelParams
     -- * Transactions
   , Token (Token)
-  , Tx (Tx, consumed, produced)
-  , mkSimpleGenesisTx
-  , mkSimpleTx
+  , Tx (Tx)
   , mkTx
   , txSize
   ) where
 
+import           Bench.Consensus.MempoolWithMockedLedgerItf
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
+import qualified Cardano.Slotting.Time as Time
 import           Codec.Serialise (Serialise (..))
 import           Control.DeepSeq (NFData)
 import           Control.Monad.Trans.Except (except)
@@ -37,6 +38,8 @@ import           Data.TreeDiff (ToExpr)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
+import           Ouroboros.Consensus.Config.SecurityParam as Consensus
+import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
@@ -48,7 +51,7 @@ import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Test.Util.TestBlock (LedgerState (TestLedger),
                      PayloadSemantics (PayloadDependentError, PayloadDependentState, applyPayload, getPayloadKeySets),
                      TestBlockWith, Ticked1 (TickedTestLedger),
-                     applyDirectlyToPayloadDependentState,
+                     applyDirectlyToPayloadDependentState, lastAppliedPoint,
                      payloadDependentState)
 
 {-------------------------------------------------------------------------------
@@ -74,19 +77,32 @@ mkTx ::
      -- ^ Consumed
   -> [Token]
      -- ^ Produced
-  -> Tx
-mkTx cons prod = Tx {
-    consumed = Set.fromList cons
-  , produced = Set.fromList prod
-  }
+  -> Ledger.GenTx TestBlock
+mkTx cons prod = TestBlockGenTx $ Tx { consumed = Set.fromList cons
+                                     , produced = Set.fromList prod
+                                     }
 
--- | Create a 'Tx' that consumes and produces exactly one 'Token'.
-mkSimpleTx :: Token -> Token -> Tx
-mkSimpleTx x y = mkTx [x] [y]
+{-------------------------------------------------------------------------------
+  Initial parameters
+-------------------------------------------------------------------------------}
 
--- | Create a 'Tx' that consumes nothing, and produces only the given 'Token'.
-mkSimpleGenesisTx :: Token -> Tx
-mkSimpleGenesisTx y = mkTx [] [y]
+initialLedgerState :: LedgerState (TestBlockWith Tx) ValuesMK
+initialLedgerState = TestLedger {
+      lastAppliedPoint      = Block.GenesisPoint
+    , payloadDependentState = TestPLDS {
+          getTestPLDS = ValuesMK Map.empty
+        }
+    }
+
+sampleLedgerConfig :: Ledger.LedgerConfig TestBlock
+sampleLedgerConfig =
+  HardFork.defaultEraParams (Consensus.SecurityParam 10) (Time.slotLengthFromSec 2)
+
+sampleMempoolAndModelParams :: InitialMempoolAndModelParams TestBlock
+sampleMempoolAndModelParams = MempoolAndModelParams {
+      immpInitialState = initialLedgerState
+    , immpLedgerConfig = sampleLedgerConfig
+    }
 
 {-------------------------------------------------------------------------------
   Payload semantics

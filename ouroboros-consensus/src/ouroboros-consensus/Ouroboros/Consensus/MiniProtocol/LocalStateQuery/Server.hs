@@ -4,6 +4,7 @@
 module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryServer) where
 
 
+import           Data.Functor ((<&>))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query (BlockSupportsLedgerQuery,
@@ -25,7 +26,7 @@ localStateQueryServer ::
      )
   => ExtLedgerCfg blk
   -> (   Maybe (Point blk)
-      -> m (Either (Point blk) (LedgerDBView' m blk))
+      -> m (Either GetForkerError (ReadOnlyForker' m blk))
      )
   -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
 localStateQueryServer cfg getView =
@@ -40,28 +41,28 @@ localStateQueryServer cfg getView =
     handleAcquire :: Maybe (Point blk)
                   -> m (ServerStAcquiring blk (Point blk) (Query blk) m ())
     handleAcquire mpt = do
-        getView mpt >>= \case
-          Left immP
-            | maybe False ((< pointSlot immP) . pointSlot) mpt
-            -> return $ SendMsgFailure AcquireFailurePointTooOld idle
-            | otherwise
-            -> return $ SendMsgFailure AcquireFailurePointNotOnChain idle
-          Right dlv -> return $ SendMsgAcquired $ acquired dlv
+        getView mpt <&> \case
+          Right forker -> SendMsgAcquired $ acquired forker
+          Left e -> case e of
+            PointTooOld ->
+              SendMsgFailure AcquireFailurePointTooOld idle
+            PointNotOnChain ->
+              SendMsgFailure AcquireFailurePointNotOnChain idle
 
-    acquired :: LedgerDBView' m blk
+    acquired :: ReadOnlyForker' m blk
              -> ServerStAcquired blk (Point blk) (Query blk) m ()
-    acquired dlv = ServerStAcquired {
-          recvMsgQuery     = handleQuery dlv
+    acquired forker = ServerStAcquired {
+          recvMsgQuery     = handleQuery forker
         , recvMsgReAcquire = \mp -> do close; handleAcquire mp
         , recvMsgRelease   =        do close; return idle
         }
       where
-        close = closeLedgerDBView dlv
+        close = roforkerClose forker
 
     handleQuery ::
-         LedgerDBView' m blk
+         ReadOnlyForker' m blk
       -> Query blk result
       -> m (ServerStQuerying blk (Point blk) (Query blk) m () result)
-    handleQuery dlv query = do
-      result <- Query.answerQuery cfg dlv query
-      return $ SendMsgResult result (acquired dlv)
+    handleQuery forker query = do
+      result <- Query.answerQuery cfg forker query
+      return $ SendMsgResult result (acquired forker)

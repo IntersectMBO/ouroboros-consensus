@@ -20,6 +20,7 @@
 module Test.Ouroboros.Storage.ChainDB.FollowerPromptness (tests) where
 
 import           Control.Monad (forever)
+import           Control.Monad.Base
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (Tracer (..), contramapM, traceWith)
 import           Data.Foldable (for_)
@@ -35,8 +36,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (BackingStoreSelector (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
@@ -114,7 +114,7 @@ data FollowerPromptnessOutcome = FollowerPromptnessOutcome {
   }
 
 runFollowerPromptnessTest ::
-     forall m. IOLike m
+     forall m. (IOLike m, MonadBase m m)
   => FollowerPromptnessTestSetup
   -> m FollowerPromptnessOutcome
 runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \registry -> do

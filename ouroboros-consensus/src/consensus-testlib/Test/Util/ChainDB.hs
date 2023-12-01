@@ -32,6 +32,7 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (simpleChunkInfo)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.IOLike hiding (invariant)
 import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
@@ -69,7 +70,7 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs {
   , mcdbNodeDBs              :: NodeDBs (StrictTVar m MockFS)
   -- ^ File systems underlying the immutable, volatile and ledger databases.
   -- Would be useful to default this to StrictTVar's containing empty MockFS's.
-  , mcdbBackingStoreSelector :: LedgerDB.BackingStoreSelector m
+  , mcdbBackingStoreSelector :: LedgerDB.V1.BackingStoreSelector m
   }
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
@@ -92,8 +93,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
   , cdbMaxBlocksPerFile       = VolatileDB.mkBlocksPerFile 4
   , cdbDiskPolicy             = LedgerDB.defaultDiskPolicy (configSecurityParam mcdbTopLevelConfig)
                                   LedgerDB.DefaultSnapshotInterval
-                                  LedgerDB.DefaultFlushFrequency
-                                  LedgerDB.DefaultQueryBatchSize
   -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 * k seconds, where k is the
   -- security parameter.
   , cdbTopLevelConfig         = mcdbTopLevelConfig

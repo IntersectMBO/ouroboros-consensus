@@ -49,7 +49,6 @@ import           Ouroboros.Consensus.Mock.Ledger.Address
 import           Ouroboros.Consensus.Mock.Ledger.Block
 import           Ouroboros.Consensus.Mock.Ledger.State
 import           Ouroboros.Consensus.Mock.Ledger.UTxO (Expiry, Tx, TxIn, TxOut)
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike hiding (bracket)
 import           Test.Consensus.Mempool.Util (TestBlock, applyTxToLedger,
@@ -526,19 +525,19 @@ newLedgerInterface initialLedger = do
                                        -- ledger db
         then
           let tbs = ltliftA2 f keys $ projectLedgerTables ti
-          in  pure $ Right tbs
+          in  pure $ Just tbs
         else case find ((castPoint pt ==). getTip) oldReachableTips of
-           Nothing -> pure $ Left $ PointNotFound pt
+           Nothing -> pure Nothing
            Just mtip ->
              if pt == castPoint (getTip mtip)
              -- if asking for tables at some still reachable state
              then
                let tbs = ltliftA2 f keys $ projectLedgerTables mtip
-               in  pure $ Right tbs
+               in  pure $ Just tbs
              else
                -- if asking for tables at other point or at the mempool tip but
                -- it is not reachable
-               pure $ Left $ PointNotFound pt
+               pure Nothing
     }, t)
  where
    f :: Ord k => KeysMK k v -> ValuesMK k v -> ValuesMK k v

@@ -80,10 +80,8 @@
 -- >>> :}
 --
 module Ouroboros.Consensus.Storage.LedgerDB.V1 (
-    -- * LedgerDB API
-    module Ouroboros.Consensus.Storage.LedgerDB.API
     -- * Opening a LedgerDB
-  , openDB
+    openDB
     -- ** Arguments
   , FlushFrequency (..)
   , LedgerDBArgs (..)
@@ -118,7 +116,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import qualified Ouroboros.Consensus.Storage.LedgerDB.API as API
+import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding

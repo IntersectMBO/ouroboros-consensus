@@ -1,13 +1,13 @@
-{-# LANGUAGE FlexibleContexts   #-}
-{-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE TupleSections      #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE NumericUnderscores  #-}
+{-# LANGUAGE OverloadedLists     #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 
 module Main (main) where
 
 import           Bench.Consensus.Mempool
-import           Bench.Consensus.Mempool.Params
-import           Bench.Consensus.Mempool.Scenario
 import           Bench.Consensus.Mempool.TestBlock (TestBlock)
 import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
 import           Bench.Consensus.MempoolWithMockedLedgerItf
@@ -22,12 +22,10 @@ import           Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (BackingStoreSelector (..))
 import           System.Exit (die, exitFailure)
 import           Test.Tasty (withResource)
-import           Test.Tasty.Bench (Benchmark, CsvPath (CsvPath), bench,
-                     benchIngredients, bgroup, nfIO)
+import           Test.Tasty.Bench (CsvPath (CsvPath), bench, benchIngredients,
+                     bgroup, nfIO)
 import           Test.Tasty.HUnit (testCase, (@?=))
 import           Test.Tasty.Options (changeOption)
 import           Test.Tasty.Runners (parseOptions, tryIngredients)
@@ -48,62 +46,13 @@ main = do
             success <- runIngredient
             unless success exitFailure
       where
-        bsss = [defaultInMemoryBSS, defaultLMDB_BSS]
-        ns   = [10_000]
-
-        showBackingStoreSelector bss = case bss of
-          InMemoryBackingStore -> "inmem"
-          LMDBBackingStore _   -> "lmdb"
-
         benchmarkJustAddingTransactions =
-            bgroup "Just adding" [
-                bgroup "empty, empty, n linked" [
-                    benchAddNTxs bss n $ do
-                        theCandidateTransactionsHaveLinkedTxs Nothing n
-                  | bss <- bsss
-                  , n <- ns
-                  ]
-              , bgroup "empty, 2_160 linked, n linked" [
-                    benchAddNTxs bss n $ do
-                        clTxs <- theChangelogHasLinkedTxs 2_160
-                        theCandidateTransactionsHaveLinkedTxs (Just $ last clTxs) n
-                  | bss <- bsss
-                  , n <- ns
-                  ]
-              , bgroup "empty, empty, n independent" [
-                    benchAddNTxs bss n $ do
-                        theCandidateTransactionsHave  n
-                  | bss <- bsss
-                  , n <- ns
-                  ]
-              , bgroup "n independent, empty, n independent" [
-                    benchAddNTxs bss n $ do
-                        bTxs <- theBackingStoreHas n
-                        theCandidateTransactionsConsume bTxs
-                  | bss <- bsss
-                  , n <- ns
-                  ]
-              , bgroup "empty, n independent, n independent" [
-                    benchAddNTxs bss n $ do
-                        cTxs <- theChangelogHas n
-                        theCandidateTransactionsConsume cTxs
-                  | bss <- bsss
-                  , n <- ns
-                  ]
-              , bgroup "n independent, n independent, n independent" [
-                    benchAddNTxs bss n $ do
-                        bTxs <- theBackingStoreHas n
-                        cTxs <- theChangelogConsumes bTxs
-                        theCandidateTransactionsConsume cTxs
-                  | bss <- bsss
-                  , n <- ns
-                  ]
-              ]
+            bgroup "Just adding" $
+                fmap benchAddNTxs [10_000, 1_000_000]
           where
-            benchAddNTxs :: BackingStoreSelector IO -> Int -> ScBuilder () -> Benchmark
-            benchAddNTxs bss n scenario =
+            benchAddNTxs n =
                 withResource
-                  ((, txs0) <$> openMempoolWithCapacityFor params txs0)
+                  (let txs = mkNTryAddTxs n in fmap (, txs) (openMempoolWithCapacityFor txs))
                   (\_ -> pure ())
                   (\getAcquiredRes -> do
                       let withAcquiredMempool act = do
@@ -111,9 +60,7 @@ main = do
                             void $ act mempool txs
                             -- TODO: consider adding a 'reset' command to the mempool to make sure its state is not tainted.
                             maybe (pure ()) (removeTxs mempool) $ NE.nonEmpty $ getCmdsTxIds txs
-                      bgroup (showBackingStoreSelector (immpBackingStoreSelector params)
-                               <> ": "
-                               <> show n <> " transactions") [
+                      bgroup (show n <> " transactions") [
                           bench "benchmark" $ nfIO $ withAcquiredMempool $ \mempool txs -> do
                             run mempool txs
                         , testCase "test" $ withAcquiredMempool $ \mempool txs ->
@@ -123,8 +70,6 @@ main = do
                         ]
                   )
               where
-                (params, txs0) = fromScenario defaultLedgerDbCfg bss (build scenario)
-
                 testAddTxs mempool txs = do
                     run mempool txs
                     mempoolTxs <- getTxs mempool
@@ -179,15 +124,20 @@ main = do
   Adding TestBlock transactions to a mempool
 -------------------------------------------------------------------------------}
 
-openMempoolWithCapacityFor ::
-     InitialMempoolAndModelParams IO TestBlock
-  -> [MempoolCmd TestBlock]
-  -> IO (MempoolWithMockedLedgerItf IO TestBlock)
-openMempoolWithCapacityFor params cmds =
+openMempoolWithCapacityFor :: [MempoolCmd TestBlock] ->  IO (MempoolWithMockedLedgerItf IO TestBlock)
+openMempoolWithCapacityFor cmds =
     openMempoolWithMockedLedgerItf capacityRequiredByCmds
                                    Tracer.nullTracer
                                    TestBlock.txSize
-                                   params
+                                   TestBlock.sampleMempoolAndModelParams
   where
     capacityRequiredByCmds = Mempool.mkCapacityBytesOverride totalTxsSize
       where totalTxsSize = sum $ fmap TestBlock.txSize $ getCmdsTxs cmds
+
+mkNTryAddTxs :: Int -> [MempoolCmd TestBlock.TestBlock]
+mkNTryAddTxs 0 = []
+mkNTryAddTxs n =        [AddTx (TestBlock.mkTx [] [TestBlock.Token 0])]
+                <> fmap (AddTx . mkSimpleTx) (zip [0 .. n - 2] [1 .. n - 1])
+  where
+    mkSimpleTx (x, y) = TestBlock.mkTx [TestBlock.Token (fromIntegral x)]
+                                       [TestBlock.Token (fromIntegral y)]

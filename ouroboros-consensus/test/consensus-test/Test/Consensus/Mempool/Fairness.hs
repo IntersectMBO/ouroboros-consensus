@@ -87,7 +87,7 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
           Mempool.getCurrentLedgerState = pure $
             testInitLedgerWithState NoPayLoadDependentState
         , Mempool.getLedgerTablesAtFor = \_ _ -> pure $
-            Right emptyLedgerTables
+            Just emptyLedgerTables
         }
 
       sampleLedgerConfig =

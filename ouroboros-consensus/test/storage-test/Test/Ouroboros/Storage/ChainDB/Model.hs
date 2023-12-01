@@ -105,9 +105,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      IteratorResult (..), StreamFrom (..), StreamTo (..),
                      UnknownRange (..), validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding
-                     (anchor, empty)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
+                     (DbChangelogCfg (..))
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import           Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
 import           Ouroboros.Consensus.Util.IOLike (MonadSTM)
@@ -329,7 +329,7 @@ getDbChangelog ::
 getDbChangelog cfg m@Model{..} =
       DbChangelog.onChangelog
       ( DbChangelog.prune (SecurityParam (maxActualRollback k m))
-      . DbChangelog.applyThenPushMany' dbChangelogCfg blks trivialKeySetsReader
+      . DbChangelog.applyThenPushMany' dbChangelogCfg blks DbChangelog.trivialKeySetsReader
       )
     $ DbChangelog.empty initLedger
   where

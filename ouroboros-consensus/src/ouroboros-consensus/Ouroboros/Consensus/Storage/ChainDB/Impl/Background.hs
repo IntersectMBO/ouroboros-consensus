@@ -38,6 +38,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background (
 
 import           Control.Exception (assert)
 import           Control.Monad (forM_, forever)
+import           Control.Monad.Base (MonadBase)
 import           Control.Tracer
 import           Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
@@ -81,6 +82,7 @@ launchBgTasks
      , LedgerSupportsProtocol blk
      , InspectLedger blk
      , HasHardForkHistory blk
+     , MonadBase m m
      )
   => ChainDbEnv m blk
   -> Word64 -- ^ Number of immutable blocks replayed on ledger DB startup
@@ -505,6 +507,7 @@ addBlockRunner
      , InspectLedger blk
      , HasHardForkHistory blk
      , HasCallStack
+     , MonadBase m m
      )
   => ChainDbEnv m blk
   -> m Void

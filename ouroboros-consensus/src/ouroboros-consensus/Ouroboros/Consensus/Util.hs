@@ -71,17 +71,12 @@ module Ouroboros.Consensus.Util (
     -- * Miscellaneous
   , eitherToMaybe
   , fib
-    -- * Static Either
-  , StaticEither (..)
-  , fromStaticLeft
-  , fromStaticRight
     -- * Tuple comments
   , type (--^)
   ) where
 
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytes,
                      hashFromBytesShort)
-import           Data.Bifunctor (Bifunctor (first, second))
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.ByteString.Short (ShortByteString)
@@ -428,33 +423,6 @@ fib n = round $ phi ** fromIntegral n / sq5
 eitherToMaybe :: Either a b -> Maybe b
 eitherToMaybe (Left _)  = Nothing
 eitherToMaybe (Right x) = Just x
-
-{-------------------------------------------------------------------------------
-  Static Either
--------------------------------------------------------------------------------}
-
-data StaticEither :: Bool -> Type -> Type -> Type where
-  StaticLeft  :: l -> StaticEither False l r
-  StaticRight :: r -> StaticEither True  l r
-
-#if __GLASGOW_HASKELL__ >= 906
-instance Functor (StaticEither b l) where
-  fmap _ (StaticLeft l)  = StaticLeft l
-  fmap f (StaticRight r) = StaticRight (f r)
-#endif
-
-instance Bifunctor (StaticEither b) where
-  first f (StaticLeft  l) = StaticLeft  (f l)
-  first _ (StaticRight r) = StaticRight    r
-
-  second _ (StaticLeft l)  = StaticLeft l
-  second f (StaticRight r) = StaticRight (f r)
-
-fromStaticLeft :: StaticEither 'False l r -> l
-fromStaticLeft (StaticLeft x) = x
-
-fromStaticRight :: StaticEither 'True l r -> r
-fromStaticRight (StaticRight x) = x
 
 {-------------------------------------------------------------------------------
  Tuple comments

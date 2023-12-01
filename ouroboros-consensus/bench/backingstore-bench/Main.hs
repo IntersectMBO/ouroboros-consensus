@@ -19,9 +19,9 @@ import           Data.Word (Word64)
 import           Ouroboros.Consensus.Ledger.Tables (DiffMK (..), KeysMK (..),
                      LedgerTables (..), ValuesMK)
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
                      (BackingStoreSelector (..), newBackingStoreInitialiser)
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
                      (LMDBLimits (..))
 import qualified System.Directory as Dir
 import           System.FS.API (HasFS (..), SomeHasFS (..))

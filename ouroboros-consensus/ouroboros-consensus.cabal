@@ -453,6 +453,7 @@ library consensus-testlib
     , tasty-quickcheck
     , template-haskell
     , time
+    , transformers-base
     , tree-diff
     , utf8-string
 
@@ -566,8 +567,6 @@ test-suite consensus-test
     , deepseq
     , diff-containers                                                     >=1.1
     , fingertree-rm                                                       >=1.0
-    , fs-api                                                              ^>=0.1
-    , fs-sim                                                              ^>=0.2
     , generics-sop
     , hashable
     , io-classes
@@ -594,6 +593,7 @@ test-suite consensus-test
     , tasty-quickcheck
     , time
     , transformers
+    , transformers-base
     , tree-diff
     , typed-protocols
     , typed-protocols-examples
@@ -698,6 +698,7 @@ test-suite storage-test
     , text
     , time
     , transformers
+    , transformers-base
     , tree-diff
     , vector
 
@@ -708,8 +709,6 @@ benchmark mempool-bench
   main-is:        Main.hs
   other-modules:
     Bench.Consensus.Mempool
-    Bench.Consensus.Mempool.Params
-    Bench.Consensus.Mempool.Scenario
     Bench.Consensus.Mempool.TestBlock
     Bench.Consensus.MempoolWithMockedLedgerItf
 
@@ -725,9 +724,6 @@ benchmark mempool-bench
     , contra-tracer
     , deepseq
     , diff-containers      >=1.1
-    , directory
-    , fs-api
-    , mtl
     , nothunks
     , ouroboros-consensus
     , serialise
@@ -735,7 +731,6 @@ benchmark mempool-bench
     , tasty
     , tasty-bench
     , tasty-hunit
-    , temporary
     , text
     , transformers
     , tree-diff

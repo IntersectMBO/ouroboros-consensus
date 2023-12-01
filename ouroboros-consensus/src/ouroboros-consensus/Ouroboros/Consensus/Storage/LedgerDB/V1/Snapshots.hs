@@ -162,6 +162,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.LedgerDB.API
+import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog

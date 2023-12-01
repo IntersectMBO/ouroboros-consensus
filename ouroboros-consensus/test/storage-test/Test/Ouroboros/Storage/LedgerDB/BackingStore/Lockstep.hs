@@ -38,9 +38,9 @@ import           Data.Constraint
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Typeable
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory as BS
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB as LMDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as BS
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
                      (LMDBErr (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..), handle)
 import           System.FS.API hiding (Handle)

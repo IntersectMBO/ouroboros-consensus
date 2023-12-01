@@ -56,9 +56,12 @@ import           Ouroboros.Consensus.Storage.Common (BlockComponent (..),
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
+                     (PointNotFound (..))
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
 import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes,
                      encodeDisk)
 import           Ouroboros.Consensus.Ticked
@@ -67,6 +70,9 @@ import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (SomeHasFS (..))
 import qualified System.IO as IO
 import qualified Text.Builder as Builder
+
+onDiskShouldFlush :: DiskPolicy -> Word64 -> Bool
+onDiskShouldFlush = undefined -- TODO(jdral_ldb)
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -700,12 +706,12 @@ reproMempoolForge numBlks env = do
             let f = do
                   lgrDb <- anchorlessChangelog <$> IOLike.atomically (IOLike.readTVar ref)
                   case DbChangelog.rollback pt lgrDb of
-                    Nothing -> pure $ Left $ PointNotFound pt
+                    Nothing -> pure Nothing
                     Just l  -> do
                       eValues <-
                         getLedgerTablesFor l keys (readKeySets bstore)
                       case eValues of
-                        Right v -> pure $ Right v
+                        Right v -> pure $ Just v
                         Left _  -> f
             fmap castLedgerTables <$> f
       }
@@ -772,7 +778,7 @@ reproMempoolForge numBlks env = do
             (ticked, durTick) <- timed $ IOLike.evaluate $
               applyChainTick lCfg slot (ledgerState $ DbChangelog.current $ anchorlessChangelog ldb)
             ((), durSnap) <- timed $ do
-              snap <- Mempool.getSnapshotFor mempool slot ticked (adcDiffs $ anchorlessChangelog ldb) vh
+              snap <- Mempool.getSnapshotFor mempool slot ticked undefined -- TODO(jdral_ldb)
 
               pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotState snap `seq` ()
 

@@ -73,7 +73,6 @@ initSlotForgeTimeOracle ::
      , BlockSupportsProtocol blk
      , History.HasHardForkHistory blk
      , SupportsNode.ConfigSupportsNode blk
-     , IsLedger (LedgerState blk)
      )
   => TopLevelConfig blk
   -> ChainDB m blk

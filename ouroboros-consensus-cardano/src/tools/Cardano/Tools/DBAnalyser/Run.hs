@@ -29,7 +29,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args (fromChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
 import           Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..))
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.IOLike
@@ -64,8 +65,6 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
           k          = configSecurityParam cfg
           diskPolicy = defaultDiskPolicy k
                          DefaultSnapshotInterval
-                         DefaultFlushFrequency
-                         DefaultQueryBatchSize
           args' =
             Node.mkChainDbArgs
               registry InFuture.dontCheck cfg genesisLedger chunkInfo $
@@ -114,8 +113,6 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               , bstore = bs
               , policy = defaultDiskPolicy (configSecurityParam cfg)
                            DefaultSnapshotInterval
-                           DefaultFlushFrequency
-                           DefaultQueryBatchSize
               }
             tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
             putStrLn $ "ImmutableDB tip: " ++ show tipPoint
@@ -134,8 +131,6 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               , bstore = bs
               , policy = defaultDiskPolicy (configSecurityParam cfg)
                            DefaultSnapshotInterval
-                           DefaultFlushFrequency
-                           DefaultQueryBatchSize
               }
             tipPoint <- atomically $ ChainDB.getTipPoint chainDB
             putStrLn $ "ChainDB tip: " ++ show tipPoint

@@ -81,6 +81,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine (
 
 import           Codec.Serialise (Serialise)
 import           Control.Monad (replicateM, void)
+import           Control.Monad.Base
 import qualified Control.Tracer as CT
 import           Data.Bifoldable
 import           Data.Bifunctor
@@ -120,8 +121,9 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (split)
 import           Ouroboros.Consensus.Util.CallStack
@@ -365,7 +367,7 @@ data ChainDBEnv m blk = ChainDBEnv {
   }
 
 open
-  :: (IOLike m, TestConstraints blk)
+  :: (IOLike m, TestConstraints blk, MonadBase m m)
   => ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
     (chainDB, internal) <- openDBInternal args False
@@ -375,7 +377,7 @@ open args = do
 
 -- PRECONDITION: the ChainDB is closed
 reopen
-  :: (IOLike m, TestConstraints blk)
+  :: (IOLike m, TestConstraints blk, MonadBase m m)
   => ChainDBEnv m blk -> m ()
 reopen ChainDBEnv { varDB, args } = do
     chainDBState <- open args
@@ -387,7 +389,7 @@ close ChainDBState { chainDB, addBlockAsync } = do
     closeDB chainDB
 
 run :: forall m blk.
-       (IOLike m, TestConstraints blk)
+       (IOLike m, TestConstraints blk, MonadBase m m)
     => ChainDBEnv m blk
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
@@ -396,7 +398,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       AddBlock blk             -> Point               <$> advanceAndAdd st (blockSlot blk) blk
       AddFutureBlock blk s     -> Point               <$> advanceAndAdd st s               blk
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
-      GetLedgerDB              -> LedgerDB . flush    <$> atomically getDbChangelog
+      GetLedgerDB              -> LedgerDB . flush    <$> atomically undefined -- TODO(jdral_ldb)
       GetTipBlock              -> MbBlock             <$> getTipBlock
       GetTipHeader             -> MbHeader            <$> getTipHeader
       GetTipPoint              -> Point               <$> atomically getTipPoint

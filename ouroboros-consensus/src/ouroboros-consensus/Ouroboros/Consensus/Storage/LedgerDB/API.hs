@@ -121,18 +121,19 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
     -- * Forker
   , Forker (..)
   , Forker'
-  , PointNotFound (..)
+  , GetForkerError (..)
   , RangeQuery (..)
   , Statistics (..)
   , forkerCurrentPoint
   , getForker
   , getTipStatistics
   , readLedgerTablesAtFor
+  , withPrivateTipForker
   , withTipForker
-    -- * DiskPolicy (re-exports)
-  , DiskPolicy (..)
-  , SnapshotInterval (..)
-  , defaultDiskPolicy
+    -- ** Read-only forkers
+  , ReadOnlyForker (..)
+  , ReadOnlyForker'
+  , readOnlyForker
     -- * Snapshots
   , DiskSnapshot (..)
   , SnapCounters (..)
@@ -163,7 +164,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
   , TraceValidateEvent (..)
   ) where
 
-import           Control.Monad (void)
+import           Control.Monad (forM, void)
 import           Control.Monad.Base
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Except (ExceptT, MonadError (throwError),
@@ -187,7 +188,6 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Consensus.Util.IOLike
@@ -213,12 +213,13 @@ data LedgerDB m l blk = LedgerDB {
       => STM m (HeaderStateHistory blk)
     -- | Acquire a 'Forker' at the tip.
   , getForkerAtTip  :: ResourceRegistry m -> m (Forker m l blk)
-    -- | Acquire a 'Forker' at the requested point. If the requested point
-    -- doesn't exist it will return a @StaticRight (Left pt)@.
+    -- | Acquire a 'Forker' at the requested point. If a ledger state associated
+    -- with the requested point does not exist in the LedgerDB, it will return a
+    -- 'GetForkerError'.
   , getForkerAtPoint ::
          ResourceRegistry m
       -> Point blk
-      -> m (Either (Point blk) (Forker m l blk))
+      -> m (Either GetForkerError (Forker m l blk))
     -- | Acquire a 'Forker' at a requested @n@ blocks back from the tip.
     --
     -- You could view this as a rollback of @n@ blocks, and acquiring the
@@ -372,6 +373,13 @@ type instance HeaderHash (Forker m l blk) = HeaderHash l
 
 type Forker' m blk = Forker m (ExtLedgerState blk) blk
 
+-- TODO(jdral_ldb): get rid of this instance
+instance Show (Forker m l blk) where show _ = "Forker"
+
+instance (GetTip l, HeaderHash l ~ HeaderHash blk, MonadSTM m)
+      => GetTipSTM m (Forker m l blk) where
+  getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
+
 -- TODO: document
 data RangeQuery l = RangeQuery {
     rqPrev  :: !(Maybe (LedgerTables l KeysMK))
@@ -383,6 +391,16 @@ newtype Statistics = Statistics {
     ledgerTableSize :: Int
   }
 
+-- | Errors that can be thrown while acquiring forkers.
+data GetForkerError =
+    -- | The requested point was not found in the LedgerDB, but the point is
+    -- recent enough that the point is not in the immutable part of the chain
+    PointNotOnChain
+    -- | The requested point was not found in the LedgerDB because the point is
+    -- in the immutable part of the chain.
+  | PointTooOld
+  deriving (Show, Eq)
+
 forkerCurrentPoint ::
      (GetTip l, HeaderHash l ~ HeaderHash blk, Functor (STM m))
   => Forker m l blk
@@ -392,50 +410,88 @@ forkerCurrentPoint forker =
     . getTip
     <$> forkerGetLedgerState forker
 
+-- | 'bracket'-style usage of a forker at the LedgerDB tip.
 withTipForker ::
      IOLike m
   => LedgerDB m l blk
+  -> ResourceRegistry m
   -> (Forker m l blk -> m a) -> m a
-withTipForker ldb action = withRegistry $ \rr ->
-    bracket (getForkerAtTip ldb rr) forkerClose action
+withTipForker ldb rr = bracket (getForkerAtTip ldb rr) forkerClose
+
+-- | Like 'withTipForker', but it uses a private registry to allocate and
+-- de-allocate the forker.
+withPrivateTipForker ::
+     IOLike m
+  => LedgerDB m l blk
+  -> (Forker m l blk -> m a) -> m a
+withPrivateTipForker ldb = bracketWithPrivateRegistry (getForkerAtTip ldb) forkerClose
 
 getForker ::
      MonadSTM m
   => LedgerDB m l blk
   -> ResourceRegistry m
   -> Maybe (Point blk)
-  -> m (Either (Point blk) (Forker m l blk))
+  -> m (Either GetForkerError (Forker m l blk))
 getForker ldb rr = \case
     Nothing -> Right <$> getForkerAtTip ldb rr
     Just pt -> getForkerAtPoint ldb rr pt
 
 -- | Read a table of values at the requested point.
 readLedgerTablesAtFor ::
-     (IOLike m, StandardHash blk)
+     IOLike m
   => LedgerDB m l blk
   -> Point blk
   -> LedgerTables l KeysMK
-  -> m (Either
-          (PointNotFound blk)
-          (LedgerTables l ValuesMK))
-readLedgerTablesAtFor ldb p ks = withRegistry $ \rr -> do
-    foEith <- getForkerAtPoint ldb rr p
-    case foEith of
-      Left e -> error $ show e
-      Right fo -> do
-        r <- fo `forkerReadTables` ks
-        forkerClose fo
-        pure $ Right r
-
--- | The requested point is not found on the ledger db
-newtype PointNotFound blk = PointNotFound (Point blk) deriving (Eq, Show)
+  -> m (Either GetForkerError (LedgerTables l ValuesMK))
+readLedgerTablesAtFor ldb p ks =
+    bracketWithPrivateRegistry
+      (\rr -> getForkerAtPoint ldb rr p)
+      (mapM_ forkerClose)
+      $ \foEith -> do
+        forM foEith $ \fo -> do
+          fo `forkerReadTables` ks
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
      IOLike m
   => LedgerDB m l blk
   -> m (Maybe Statistics)
-getTipStatistics ldb = withTipForker ldb forkerReadStatistics
+getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
+
+{-------------------------------------------------------------------------------
+  Read-only forkers
+-------------------------------------------------------------------------------}
+
+-- | Read-only 'Forker'.
+type ReadOnlyForker :: (Type -> Type) -> LedgerStateKind -> Type -> Type
+data ReadOnlyForker m l blk = ReadOnlyForker {
+    -- | See 'forkerClose'
+    roforkerClose :: !(m ())
+    -- | See 'forkerReadTables'
+  , roforkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
+    -- | See 'forkerRangeReadTables'.
+  , roforkerRangeReadTables :: !(RangeQuery l -> m (LedgerTables l ValuesMK))
+    -- | See 'forkerRangeReadTablesDefault'
+  , roforkerRangeReadTablesDefault :: !(Maybe (LedgerTables l KeysMK) -> m (LedgerTables l ValuesMK))
+    -- | See 'forkerGetLedgerState'
+  , roforkerGetLedgerState  :: !(STM m (l EmptyMK))
+    -- | See 'forkerReadStatistics'
+  , roforkerReadStatistics :: !(m (Maybe Statistics))
+  }
+
+type instance HeaderHash (ReadOnlyForker m l blk) = HeaderHash l
+
+type ReadOnlyForker' m blk = ReadOnlyForker m (ExtLedgerState blk) blk
+
+readOnlyForker :: Forker m l blk -> ReadOnlyForker m l blk
+readOnlyForker forker = ReadOnlyForker {
+      roforkerClose = forkerClose forker
+    , roforkerReadTables = forkerReadTables forker
+    , roforkerRangeReadTables = forkerRangeReadTables forker
+    , roforkerRangeReadTablesDefault = forkerRangeReadTablesDefault forker
+    , roforkerGetLedgerState = forkerGetLedgerState forker
+    , roforkerReadStatistics = forkerReadStatistics forker
+    }
 
 {-------------------------------------------------------------------------------
   Snapshots
@@ -775,7 +831,7 @@ instance Monad m
   Tracing
 -------------------------------------------------------------------------------}
 
-newtype TraceLedgerDBEvent blk =
+data TraceLedgerDBEvent blk =
     LedgerDBSnapshotEvent (TraceSnapshotEvent blk)
   deriving (Show, Eq, Generic)
 

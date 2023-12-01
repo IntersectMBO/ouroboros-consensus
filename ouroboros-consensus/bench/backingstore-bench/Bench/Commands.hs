@@ -28,10 +28,10 @@ import           Control.Monad.State.Strict (MonadState, StateT, evalStateT,
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
                      (BackingStore, BackingStoreValueHandle, InitFrom (..),
                      RangeQuery)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import           System.FS.API (SomeHasFS)
 import           System.FS.API.Types (FsPath)
 

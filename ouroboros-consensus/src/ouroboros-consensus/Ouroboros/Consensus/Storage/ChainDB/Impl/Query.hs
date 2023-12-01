@@ -9,12 +9,17 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
     -- * Queries
     getBlockComponent
   , getCurrentChain
-  , getDbChangelog
+  , getCurrentLedger
+  , getHeaderStateHistory
+  , getImmutableLedger
   , getIsFetched
   , getIsInvalidBlock
   , getIsValid
-  , getLedgerDBViewAtPoint
+  , getLedgerTablesAtFor
   , getMaxSlotNo
+  , getPastLedger
+  , getReadOnlyForkerAtPoint
+  , getStatistics
   , getTipBlock
   , getTipHeader
   , getTipPoint
@@ -28,19 +33,24 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HeaderStateHistory (HeaderStateHistory)
+import           Ouroboros.Consensus.Ledger.Basics (EmptyMK, KeysMK, ValuesMK)
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
+                     LedgerTables)
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (BlockComponent (..),
                      ChainDbFailure (..), InvalidBlockReason)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import           Ouroboros.Consensus.Storage.LedgerDB (GetForkerError,
+                     ReadOnlyForker', Statistics)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util (StaticEither (..), eitherToMaybe,
-                     fromStaticLeft, fromStaticRight)
+import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -73,9 +83,6 @@ getCurrentChain CDB{..} =
     AF.anchorNewest k <$> readTVar cdbChain
   where
     SecurityParam k = configSecurityParam cdbTopLevelConfig
-
-getDbChangelog :: ChainDbEnv m blk -> STM m (DbChangelog' blk)
-getDbChangelog CDB{..} = LedgerDB.getCurrent cdbLedgerDB
 
 getTipBlock
   :: forall m blk.
@@ -182,20 +189,51 @@ getMaxSlotNo CDB{..} = do
     volatileDbMaxSlotNo    <- VolatileDB.getMaxSlotNo cdbVolatileDB
     return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo
 
-getLedgerDBViewAtPoint ::
+-- | Get current ledger
+getCurrentLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
+getCurrentLedger CDB{..} = LedgerDB.getVolatileTip cdbLedgerDB
+
+-- | Get the immutable ledger, i.e., typically @k@ blocks back.
+getImmutableLedger :: ChainDbEnv m blk -> STM m (ExtLedgerState blk EmptyMK)
+getImmutableLedger CDB{..} = LedgerDB.getImmutableTip cdbLedgerDB
+
+-- | Get the ledger for the given point.
+--
+-- When the given point is not among the last @k@ blocks of the current
+-- chain (i.e., older than @k@ or not on the current chain), 'Nothing' is
+-- returned.
+getPastLedger ::
+     ChainDbEnv m blk
+  -> Point blk
+  -> STM m (Maybe (ExtLedgerState blk EmptyMK))
+getPastLedger CDB{..} = LedgerDB.getPastLedgerState cdbLedgerDB
+
+-- | Get a 'HeaderStateHistory' populated with the 'HeaderState's of the
+-- last @k@ blocks of the current chain.
+getHeaderStateHistory :: ChainDbEnv m blk -> STM m (HeaderStateHistory blk)
+getHeaderStateHistory CDB{..} = LedgerDB.getHeaderStateHistory cdbLedgerDB
+
+getReadOnlyForkerAtPoint ::
      IOLike m
   => ChainDbEnv m blk
+  -> ResourceRegistry m
   -> Maybe (Point blk)
-  -> m ( Either
-           (Point blk)
-           (LedgerDB.LedgerDBView' m blk)
-       )
-getLedgerDBViewAtPoint CDB{..} Nothing = do
-  ((), s) <- LedgerDB.acquireLDBReadView cdbLedgerDB (StaticLeft ()) (pure ())
-  pure $ Right $ fromStaticLeft s
-getLedgerDBViewAtPoint CDB{..} (Just p) = do
-  ((), s) <- LedgerDB.acquireLDBReadView cdbLedgerDB (StaticRight p) (pure ())
-  pure $ fromStaticRight s
+  -> m (Either GetForkerError (ReadOnlyForker' m blk))
+getReadOnlyForkerAtPoint CDB{..} rr mpt = fmap LedgerDB.readOnlyForker <$>
+    LedgerDB.getForker cdbLedgerDB rr mpt
+
+getLedgerTablesAtFor ::
+     IOLike m
+  => ChainDbEnv m blk
+  -> Point blk
+  -> LedgerTables (ExtLedgerState blk) KeysMK
+  -> m (Maybe (LedgerTables (ExtLedgerState blk) ValuesMK))
+getLedgerTablesAtFor =
+      (\ldb pt ks -> eitherToMaybe <$> LedgerDB.readLedgerTablesAtFor ldb pt ks)
+    . cdbLedgerDB
+
+getStatistics :: IOLike m => ChainDbEnv m blk -> m (Maybe Statistics)
+getStatistics CDB{..} = LedgerDB.getTipStatistics cdbLedgerDB
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent

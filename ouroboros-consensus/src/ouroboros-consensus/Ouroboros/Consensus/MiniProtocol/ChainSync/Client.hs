@@ -95,9 +95,7 @@ data ChainDbView m blk = ChainDbView {
     , getIsInvalidBlock     :: STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
     }
 
-defaultChainDbView ::
-     (IOLike m, LedgerSupportsProtocol blk)
-  => ChainDB m blk -> ChainDbView m blk
+defaultChainDbView :: ChainDB m blk -> ChainDbView m blk
 defaultChainDbView chainDB = ChainDbView {
       getCurrentChain       = ChainDB.getCurrentChain       chainDB
     , getHeaderStateHistory = ChainDB.getHeaderStateHistory chainDB

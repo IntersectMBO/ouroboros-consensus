@@ -1,18 +1,8 @@
-{-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DeriveGeneric              #-}
-{-# LANGUAGE DerivingStrategies         #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE GADTs                      #-}
-{-# LANGUAGE GeneralisedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE TypeOperators              #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
     -- * Main API
@@ -41,8 +31,8 @@ import           Ouroboros.Consensus.Storage.LedgerDB.API as API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
-                     (LedgerDBEnv (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
+                     (ExceededRollback)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbCh
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
@@ -75,7 +65,7 @@ newForkerAtPoint ::
   => LedgerDBHandle m l blk
   -> ResourceRegistry m
   -> Point blk
-  -> m (Either (Point blk) (Forker m l blk))
+  -> m (Either GetForkerError (Forker m l blk))
 newForkerAtPoint h rr pt = getEnv h $ \ldbEnv -> do
     acquireAtPoint ldbEnv rr pt >>= traverse (newForker h ldbEnv)
 
@@ -143,12 +133,14 @@ acquireAtPoint ::
   => LedgerDBEnv m l blk
   -> ResourceRegistry m
   -> Point blk
-  -> m (Either (Point blk) (Resources m l))
+  -> m (Either GetForkerError (Resources m l))
 acquireAtPoint ldbEnv rr pt =
     withReadLock (ldbLock ldbEnv) $ do
       dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
+      let immTip = castPoint $ getTip $ anchor dblog
       case rollback pt dblog of
-        Nothing     -> pure $ Left $ castPoint $ getTip $ anchor dblog
+        Nothing     | pt < immTip -> pure $ Left PointTooOld
+                    | otherwise   -> pure $ Left PointNotOnChain
         Just dblog' -> Right . (,dblog') <$> acquire ldbEnv rr dblog'
 
 -- Acquire both a value handle and a db changelog at n blocks before the tip.
@@ -184,7 +176,8 @@ acquire ldbEnv rr dblog =  do
   (_, vh) <- allocate rr (\_ -> bsValueHandle $ ldbBackingStore ldbEnv) bsvhClose
   if bsvhAtSlot vh == adcLastFlushedSlot dblog
     then pure vh
-    else error (  "Critical error: Value handles are created at "
+    else bsvhClose vh >>
+         error (  "Critical error: Value handles are created at "
                 <> show (bsvhAtSlot vh)
                 <> " while the db changelog is at "
                 <> show (adcLastFlushedSlot dblog)
