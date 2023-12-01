@@ -34,14 +34,14 @@ genChainsAndSchedule numAdversaries scheduleType =
 prop_longRangeAttack :: QC.Gen QC.Property
 prop_longRangeAttack = do
   (genesisTest, schedule) <- genChainsAndSchedule 1 FastAdversary
-  let Classifiers {..} = classifiers genesisTest
+  let cls = classifiers genesisTest
 
   pure $ withMaxSuccess 10 $ runSimOrThrow $
     runTest genesisTest schedule $ \fragment ->
-        classify genesisWindowAfterIntersection "Full genesis window after intersection"
-        $ existsSelectableAdversary ==> not $ isHonestTestFragH fragment
+        classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection"
+        $ existsSelectableAdversary cls ==> not $ isHonestTestFragH fragment
         -- TODO
-        -- $ not existsSelectableAdversary ==> immutableTipBeforeFork fragment
+        -- $ not (existsSelectableAdversary cls) ==> immutableTipBeforeFork fragment
   where
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of

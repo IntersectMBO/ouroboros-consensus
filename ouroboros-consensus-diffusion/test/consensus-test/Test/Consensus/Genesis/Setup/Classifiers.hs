@@ -48,7 +48,7 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
     existsSelectableAdversary =
       any isSelectable branches
 
-    isSelectable BlockTreeBranch{..} = AF.length btbSuffix > fromIntegral k
+    isSelectable bt = AF.length (btbSuffix bt) > fromIntegral k
 
     SlotNo goodTipSlot = withOrigin 0 id (headSlot goodChain)
 

@@ -76,12 +76,12 @@ mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 -- FIXME: we should enforce that the new branch' suffix does not contain any
 -- block in common with an existingbranch.
 addBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> Maybe (BlockTree blk)
-addBranch branch BlockTree{..} = do
-  (_, btbPrefix, _, btbSuffix) <- AF.intersect btTrunk branch
+addBranch branch bt = do
+  (_, btbPrefix, _, btbSuffix) <- AF.intersect (btTrunk bt) branch
   -- NOTE: We could use the monadic bind for @Maybe@ here but we would rather
   -- catch bugs quicker.
   let btbFull = fromJust $ AF.join btbPrefix btbSuffix
-  pure $ BlockTree { btTrunk, btBranches = BlockTreeBranch { .. } : btBranches }
+  pure $ bt { btBranches = BlockTreeBranch { .. } : btBranches bt }
 
 -- | Same as @addBranch@ but assumes that the precondition holds.
 addBranch' :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> BlockTree blk
@@ -90,7 +90,7 @@ addBranch' branch blockTree =
 
 -- | Return all the full fragments from the root of the tree.
 allFragments :: BlockTree blk -> [AF.AnchoredFragment blk]
-allFragments BlockTree{..} = btTrunk : map btbFull btBranches
+allFragments bt = btTrunk bt : map btbFull (btBranches bt)
 
 -- | Look for a point in the block tree and return a fragment going from the
 -- root of the tree to the point in question.
