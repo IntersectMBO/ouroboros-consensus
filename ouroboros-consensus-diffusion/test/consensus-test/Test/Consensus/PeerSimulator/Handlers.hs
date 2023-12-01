@@ -34,8 +34,8 @@ import           Test.Consensus.PointSchedule (AdvertisedPoints (header, tip),
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 
--- | Find the first fragment contained in the first arg that starts at one of the given points.
-intersectWith :: AnchoredFragment TestBlock -> [Point TestBlock] -> Maybe (Point TestBlock)
+-- | Find the first point in the fragment
+intersectWith :: HasHeader b => AnchoredFragment b -> [Point b] -> Maybe (Point b)
 intersectWith fullFrag pts =
   AF.anchorPoint . snd <$> getFirst (foldMap (First . AF.splitAfterPoint fullFrag) pts)
 
