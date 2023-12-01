@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumericUnderscores #-}
 
 -- | Helpers for tracing used by the peer simulator.
 module Test.Consensus.PeerSimulator.Trace (
@@ -65,7 +66,7 @@ traceUnitWith tracer unit msg = do
     showTime :: Time -> String
     showTime (Time time) =
       let ps = diffTimeToPicoseconds time
-          milliseconds = (ps `div` 1000000000) `mod` 1000
-          seconds = (ps `div` 1000000000000) `rem` 60
-          minutes = (ps `div` 1000000000000) `quot` 60
+          milliseconds = (ps `div` 1_000_000_000) `mod` 1_000
+          seconds = (ps `div` 1_000_000_000_000) `rem` 60
+          minutes = (ps `div` 1_000_000_000_000) `quot` 60
        in printf "%02d:%02d.%03d" minutes seconds milliseconds
