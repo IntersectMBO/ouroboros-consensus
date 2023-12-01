@@ -39,6 +39,8 @@ prop_longRangeAttack = do
   pure $ withMaxSuccess 10 $ runSimOrThrow $
     runTest genesisTest schedule $ \fragment ->
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection"
+        -- This is the expected behavior of Praos to be reversed with Genesis.
+        -- But we are testing Praos for the moment
         $ existsSelectableAdversary cls ==> not $ isHonestTestFragH fragment
         -- TODO
         -- $ not (existsSelectableAdversary cls) ==> immutableTipBeforeFork fragment
