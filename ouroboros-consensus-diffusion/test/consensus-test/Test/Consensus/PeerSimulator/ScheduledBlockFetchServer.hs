@@ -4,7 +4,9 @@
 
 module Test.Consensus.PeerSimulator.ScheduledBlockFetchServer (
     BlockFetch (..)
+  , BlockFetchServerHandlers (..)
   , ScheduledBlockFetchServer (..)
+  , SendBlocks (..)
   , runScheduledBlockFetchServer
   ) where
 
@@ -20,6 +22,13 @@ import           Test.Consensus.PeerSimulator.ScheduledServer
 import           Test.Consensus.PeerSimulator.Trace
 import           Test.Util.TestBlock (TestBlock)
 
+-- | Return values for the 'handlerSendBlocks'.
+data SendBlocks =
+  SendBlock TestBlock [TestBlock]
+  |
+  BatchDone
+  deriving (Eq, Show)
+
 -- | Return values for the 'handlerBlockFetch'.
 data BlockFetch =
   StartBatch [TestBlock]
@@ -30,12 +39,19 @@ data BlockFetch =
   -- ^ Negative response to the client's request for blocks.
   deriving (Eq, Show)
 
+-- | Handlers for the scheduled BlockFetch server.
+data BlockFetchServerHandlers m a =
+  BlockFetchServerHandlers {
+    bfshBlockFetch :: ChainRange (Point TestBlock) -> a -> STM m (Maybe BlockFetch, [String]),
+    bfshSendBlocks :: [TestBlock] -> a -> STM m (Maybe SendBlocks, [String])
+  }
+
 -- | Resources used by a scheduled BlockFetch server. This comprises a generic
 -- 'ScheduledServer' and BlockFetch-specific handlers.
 data ScheduledBlockFetchServer m a =
   ScheduledBlockFetchServer {
-    sbfsServer  :: ScheduledServer m a,
-    sbfsHandler :: ChainRange (Point TestBlock) -> a -> STM m (Maybe BlockFetch, [String])
+    sbfsServer   :: ScheduledServer m a,
+    sbfsHandlers :: BlockFetchServerHandlers m a
   }
 
 -- | Make a 'BlockFetchServer' able to run with the normal infrastructure from a
@@ -46,13 +62,15 @@ scheduledBlockFetchServer ::
   IOLike m =>
   ScheduledBlockFetchServer m a ->
   BlockFetchServer TestBlock (Point TestBlock) m ()
-scheduledBlockFetchServer ScheduledBlockFetchServer {sbfsServer, sbfsHandler} =
+scheduledBlockFetchServer ScheduledBlockFetchServer {sbfsServer, sbfsHandlers} =
   server
   where
     server = BlockFetchServer blockFetch ()
 
+    BlockFetchServerHandlers {bfshBlockFetch, bfshSendBlocks} = sbfsHandlers
+
     blockFetch range =
-      runHandler sbfsServer "BlockFetch" (sbfsHandler range) $ \case
+      runHandler sbfsServer "BlockFetch" (bfshBlockFetch range) $ \case
         StartBatch blocks -> do
           trace $ "  sending blocks: " ++ intercalate " " (terseBlock <$> blocks)
           trace "done handling BlockFetch"
@@ -62,14 +80,10 @@ scheduledBlockFetchServer ScheduledBlockFetchServer {sbfsServer, sbfsHandler} =
           trace "done handling BlockFetch"
           pure (SendMsgNoBlocks (server <$ awaitOnlineState sbfsServer))
 
-    sendBlocks :: [TestBlock] -> m (BlockFetchSendBlocks TestBlock (Point TestBlock) m ())
-    sendBlocks = \case
-      []         -> do
-        trace "Batch done"
-        pure (SendMsgBatchDone (pure server))
-      blk : blks -> do
-        trace ("Sending " ++ terseBlock blk)
-        pure (SendMsgBlock blk (sendBlocks blks))
+    sendBlocks bs =
+      runHandler sbfsServer "SendBlocks" (bfshSendBlocks bs) $ \case
+        SendBlock blk blks -> pure (SendMsgBlock blk (sendBlocks blks))
+        BatchDone -> pure (SendMsgBatchDone (pure server))
 
     trace = traceWith (ssTracer sbfsServer)
 
@@ -83,9 +97,9 @@ runScheduledBlockFetchServer ::
   STM m () ->
   STM m (Maybe a) ->
   Tracer m String ->
-  (ChainRange (Point TestBlock) -> a -> STM m (Maybe BlockFetch, [String])) ->
+  BlockFetchServerHandlers m a ->
   BlockFetchServer TestBlock (Point TestBlock) m ()
-runScheduledBlockFetchServer ssPeerId ssTickStarted ssCurrentState tracer sbfsHandler =
+runScheduledBlockFetchServer ssPeerId ssTickStarted ssCurrentState tracer sbfsHandlers =
   scheduledBlockFetchServer ScheduledBlockFetchServer {
     sbfsServer = ScheduledServer {
       ssPeerId,
@@ -93,5 +107,5 @@ runScheduledBlockFetchServer ssPeerId ssTickStarted ssCurrentState tracer sbfsHa
       ssCurrentState,
       ssTracer = Tracer (traceUnitWith tracer ("ScheduledBlockFetchServer " ++ ssPeerId))
     },
-    sbfsHandler
+    sbfsHandlers
   }
