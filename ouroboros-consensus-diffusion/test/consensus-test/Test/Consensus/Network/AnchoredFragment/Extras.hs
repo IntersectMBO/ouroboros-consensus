@@ -1,9 +1,19 @@
 -- | Functions to move to Ouroboros.Network.AnchoredFragment
-module Test.Consensus.Network.AnchoredFragment.Extras (slotLength) where
+module Test.Consensus.Network.AnchoredFragment.Extras
+  ( intersectWith
+  , slotLength
+  ) where
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo), withOrigin)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     HasHeader, anchor, anchorToSlotNo, headAnchor)
+import           Data.List (find)
+import           Data.Maybe (isJust)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment, Point,
+                     HasHeader, anchor, anchorToSlotNo, headAnchor, splitAfterPoint)
+
+
+-- | Find the first point in the fragment
+intersectWith :: HasHeader b => AnchoredFragment b -> [Point b] -> Maybe (Point b)
+intersectWith fullFrag = find (isJust . splitAfterPoint fullFrag)
 
 -- | The number of slots the fragment spans. This is different from the
 -- 'length' which is the number of blocks in the fragment.

@@ -15,13 +15,11 @@ import           Control.Monad.Trans (lift)
 import           Control.Monad.Writer.Strict (MonadWriter (tell),
                      WriterT (runWriterT))
 import           Data.Coerce (coerce)
-import           Data.List (find)
-import           Data.Maybe (fromJust, isJust)
-import           Ouroboros.Consensus.Block.Abstract (HasHeader, Point (..), getHeader)
+import           Data.Maybe (fromJust)
+import           Ouroboros.Consensus.Block.Abstract (Point (..), getHeader)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockPoint, getTipPoint)
 import qualified Test.Consensus.BlockTree as BT
@@ -31,12 +29,10 @@ import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
                      RequestNext (AwaitReply, RollBackward, RollForward))
 import           Test.Consensus.PointSchedule (AdvertisedPoints (header, tip),
                      HeaderPoint (HeaderPoint), TipPoint (TipPoint))
+import           Test.Consensus.Network.AnchoredFragment.Extras (intersectWith)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 
--- | Find the first point in the fragment
-intersectWith :: HasHeader b => AnchoredFragment b -> [Point b] -> Maybe (Point b)
-intersectWith fullFrag = find (isJust . AF.splitAfterPoint fullFrag)
 
 -- | Handle a @MsgFindIntersect@ message.
 --
