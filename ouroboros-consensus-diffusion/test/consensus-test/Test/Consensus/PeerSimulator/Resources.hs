@@ -37,7 +37,8 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
 import           Test.Consensus.BlockTree (BlockTree)
 import           Test.Consensus.PeerSimulator.Handlers
 import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
-                     (runScheduledBlockFetchServer)
+                     (BlockFetchServerHandlers (..),
+                     runScheduledBlockFetchServer)
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
 import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
@@ -144,6 +145,24 @@ makeChainSyncResources csrTickStarted SharedResources {srPeerId, srTracer, srBlo
     csrServer = runScheduledChainSyncServer (condense srPeerId) csrTickStarted (readTVar srCurrentState) srTracer handlers
   pure ChainSyncResources {csrTickStarted, csrServer, csrCurrentIntersection}
 
+makeBlockFetchResources ::
+  IOLike m =>
+  STM m () ->
+  SharedResources m ->
+  BlockFetchResources m
+makeBlockFetchResources bfrTickStarted SharedResources {srPeerId, srTracer, srBlockTree, srCurrentState} =
+  BlockFetchResources {
+    bfrTickStarted,
+    bfrServer
+  }
+  where
+    handlers = BlockFetchServerHandlers {
+      bfshBlockFetch = handlerBlockFetch srBlockTree,
+      bfshSendBlocks = handlerSendBlocks
+    }
+    bfrServer = runScheduledBlockFetchServer (condense srPeerId) bfrTickStarted (readTVar srCurrentState) srTracer handlers
+
+
 -- | Create the concurrency transactions for communicating the begin of a peer's
 -- tick and its new state to the ChainSync and BlockFetch servers.
 --
@@ -198,7 +217,7 @@ makePeerResources srTracer srBlockTree srPeerId = do
   srCurrentState <- uncheckedNewTVarM Nothing
   (prUpdateState, csrTickStarted, bfrTickStarted) <- updateState srCurrentState
   let prShared = SharedResources {srTracer, srBlockTree, srPeerId, srCurrentState}
-      prBlockFetch = BlockFetchResources {bfrTickStarted, bfrServer = runScheduledBlockFetchServer (condense srPeerId) bfrTickStarted (readTVar srCurrentState) srTracer (handlerBlockFetch srBlockTree)}
+      prBlockFetch = makeBlockFetchResources bfrTickStarted prShared
   prChainSync <- makeChainSyncResources csrTickStarted prShared
   pure PeerResources {prShared, prChainSync, prBlockFetch, prUpdateState}
 
