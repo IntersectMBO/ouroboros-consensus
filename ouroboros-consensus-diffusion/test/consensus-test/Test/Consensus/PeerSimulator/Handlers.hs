@@ -24,12 +24,12 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockPoint, getTipPoint)
 import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.BlockTree (BlockTree)
+import           Test.Consensus.Network.AnchoredFragment.Extras (intersectWith)
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
                      (FindIntersect (..),
                      RequestNext (AwaitReply, RollBackward, RollForward))
 import           Test.Consensus.PointSchedule (AdvertisedPoints (header, tip),
                      HeaderPoint (HeaderPoint), TipPoint (TipPoint))
-import           Test.Consensus.Network.AnchoredFragment.Extras (intersectWith)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 

@@ -1,14 +1,15 @@
 -- | Functions to move to Ouroboros.Network.AnchoredFragment
-module Test.Consensus.Network.AnchoredFragment.Extras
-  ( intersectWith
+module Test.Consensus.Network.AnchoredFragment.Extras (
+    intersectWith
   , slotLength
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo), withOrigin)
 import           Data.List (find)
 import           Data.Maybe (isJust)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment, Point,
-                     HasHeader, anchor, anchorToSlotNo, headAnchor, splitAfterPoint)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
+                     HasHeader, Point, anchor, anchorToSlotNo, headAnchor,
+                     splitAfterPoint)
 
 
 -- | Find the first point in the fragment
