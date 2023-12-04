@@ -220,18 +220,11 @@ runScheduler tracer (PointSchedule ps) peers = do
   traceWith tracer "Schedule is:"
   for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
   traceWith tracer "--------------------------------------------------------------------------------"
-  traceWith tracer "» Time says “Let there be”"
-  traceWith tracer "» every moment and instantly"
-  traceWith tracer "» there is space and the radiance"
-  traceWith tracer "» of each bright galaxy."
+  traceWith tracer "Running point schedule ..."
   traceWith tracer "--------------------------------------------------------------------------------"
   for_ ps (dispatchTick tracer peers)
   traceWith tracer "--------------------------------------------------------------------------------"
-  traceWith tracer "» A Clock stopped -"
-  traceWith tracer "» Not the Mantel's -"
-  traceWith tracer "» Geneva's farthest skill"
-  traceWith tracer "» Can't put the puppet bowing"
-  traceWith tracer "» That just now dangled still -"
+  traceWith tracer "Finished running point schedule"
 
 -- | Construct STM resources, set up ChainSync and BlockFetch threads, and
 -- send all ticks in a 'PointSchedule' to all given peers in turn.
