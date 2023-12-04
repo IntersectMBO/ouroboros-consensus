@@ -20,11 +20,13 @@ import           Data.Functor (void)
 import           Data.List.NonEmpty (NonEmpty, nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Proxy (Proxy (..))
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      Consensus, chainSyncClient, defaultChainDbView)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
@@ -79,7 +81,7 @@ data SchedulerConfig =
   }
   deriving (Show)
 
-basicChainSyncClient ::
+basicChainSyncClient :: forall m.
   IOLike m =>
   Tracer m String ->
   TopLevelConfig TestBlock ->
@@ -91,11 +93,20 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
     (pipelineDecisionLowHighMark 10 20)
     (mkChainSyncClientTracer tracer)
     cfg
+    dummyHeaderInFutureCheck
     chainDbView
     maxBound
     (return Continue)
     nullTracer
     varCandidate
+  where
+    dummyHeaderInFutureCheck :: InFutureCheck.HeaderInFutureCheck m TestBlock
+    dummyHeaderInFutureCheck = InFutureCheck.HeaderInFutureCheck
+      { InFutureCheck.proxyArrival = Proxy
+      , InFutureCheck.recordHeaderArrival = \_ -> pure ()
+      , InFutureCheck.judgeHeaderArrival = \_ _ _ -> pure ()
+      , InFutureCheck.handleHeaderArrival = \_ -> pure Nothing
+      }
 
 -- | A record to associate an exception thrown by the ChainSync
 -- thread with the peer that it was running for.
