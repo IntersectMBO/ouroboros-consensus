@@ -31,3 +31,44 @@ tests: true
 benchmarks: true
 
 import: ./asserts.cabal
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/ouroboros-network
+  tag: 196bd57bfd023372feefefced0a9cff5a373abe3
+  subdir:
+    ouroboros-network-protocols
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-ledger
+  tag: c30207b554667c96df07c24d4ab0af3b61a12406
+  subdir:
+    eras/alonzo/impl
+    eras/alonzo/test-suite
+    eras/allegra/impl
+    eras/babbage/impl
+    eras/babbage/test-suite
+    eras/byron/chain/executable-spec
+    eras/byron/crypto
+    eras/byron/crypto/test
+    eras/byron/ledger/executable-spec
+    eras/byron/ledger/impl
+    eras/byron/ledger/impl/test
+    eras/conway/impl
+    eras/conway/test-suite
+    eras/mary/impl
+    eras/shelley-ma/test-suite
+    eras/shelley/impl
+    eras/shelley/test-suite
+    libs/cardano-data
+    libs/cardano-ledger-api
+    libs/cardano-ledger-binary
+    libs/cardano-ledger-core
+    libs/cardano-ledger-pretty
+    libs/cardano-protocol-tpraos
+    libs/non-integral
+    libs/set-algebra
+    libs/small-steps
+    libs/small-steps-test
+    libs/vector-map

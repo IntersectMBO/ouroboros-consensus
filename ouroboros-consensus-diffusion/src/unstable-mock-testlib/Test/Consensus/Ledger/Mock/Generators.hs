@@ -1,11 +1,8 @@
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE NamedFieldPuns       #-}
 {-# LANGUAGE OverloadedStrings    #-}
-{-# LANGUAGE PatternSynonyms      #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -28,6 +25,8 @@ import qualified Ouroboros.Consensus.Mock.Ledger.State as L
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as L
 import           Ouroboros.Consensus.Mock.Node.Serialisation ()
 import           Ouroboros.Consensus.Protocol.BFT
+import           Test.ChainGenerators ()
+import           Test.Crypto.Hash ()
 import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Roundtrip
@@ -133,8 +132,8 @@ instance Arbitrary (TxId (GenTx (SimpleBlock c ext))) where
 
 instance Arbitrary L.Tx where
   arbitrary = L.Tx L.DoNotExpire
-         <$> pure mempty  -- For simplicity
-         <*> arbitrary
+             mempty -- for simplicity
+         <$> arbitrary
 
 instance Arbitrary L.Addr where
   arbitrary = elements ["a", "b", "c"]
