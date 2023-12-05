@@ -15,7 +15,7 @@ module Test.Consensus.PeerSimulator.Run (
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer, traceWith)
+import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
@@ -46,13 +46,15 @@ import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient,
 import           Test.Consensus.PeerSimulator.ChainSync (runChainSyncClient)
 import           Test.Consensus.PeerSimulator.Config
 import           Test.Consensus.PeerSimulator.Resources
+import           Test.Consensus.PeerSimulator.StateDiagram
+                     (peerSimStateDiagramSTMTracerDebug)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
                      Peer (Peer), PeerId, PointSchedule (PointSchedule),
                      PointScheduleConfig, TestFragH, Tick (Tick),
-                     pointSchedulePeers)
+                     pointSchedulePeers, prettyPointSchedule)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
@@ -80,6 +82,10 @@ data SchedulerConfig =
     --
     -- Use 'debugScheduler' to toggle it conveniently.
     , scDebug           :: Bool
+
+    -- Whether to trace only the current state of the candidates and selection,
+    -- which provides a less verbose view of the test progress.
+    , scTraceState      :: Bool
   }
 
 -- | Determine timeouts based on the 'Asc' and a slot length of 20 seconds.
@@ -89,7 +95,8 @@ defaultSchedulerConfig scSchedule asc =
     scChainSyncTimeouts = chainSyncTimeouts scSlotLength asc,
     scSlotLength,
     scSchedule,
-    scDebug = False
+    scDebug = False,
+    scTraceState = False
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -101,7 +108,8 @@ noTimeoutsSchedulerConfig scSchedule =
     scChainSyncTimeouts = chainSyncNoTimeouts,
     scSlotLength,
     scSchedule,
-    scDebug = False
+    scDebug = False,
+    scTraceState = False
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -174,10 +182,11 @@ startBlockFetchConnectionThread
 dispatchTick ::
   IOLike m =>
   Tracer m String ->
+  Tracer m () ->
   Map PeerId (PeerResources m) ->
   Tick ->
   m ()
-dispatchTick tracer peers Tick {active = Peer pid state, duration} =
+dispatchTick tracer stateTracer peers Tick {active = Peer pid state, duration} =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
       trace $ "Writing state " ++ condense state
@@ -185,6 +194,7 @@ dispatchTick tracer peers Tick {active = Peer pid state, duration} =
       trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
       threadDelay duration
       trace $ condense pid ++ "'s tick is now done."
+      traceWith stateTracer ()
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
     trace = traceUnitWith tracer "Scheduler"
@@ -197,14 +207,14 @@ dispatchTick tracer peers Tick {active = Peer pid state, duration} =
 runScheduler ::
   IOLike m =>
   Tracer m String ->
+  Tracer m () ->
   PointSchedule ->
   Map PeerId (PeerResources m) ->
   m ()
-runScheduler tracer PointSchedule {ticks=ps} peers = do
-  traceWith tracer "Schedule is:"
-  for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
+runScheduler tracer stateTracer ps@PointSchedule{ticks} peers = do
+  traceLinesWith tracer (prettyPointSchedule ps)
   traceStartOfTime
-  for_ ps (dispatchTick tracer peers)
+  for_ ticks (dispatchTick tracer stateTracer peers)
   traceEndOfTime
   where
     traceStartOfTime =
@@ -246,8 +256,15 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     -- otherwise, an internal assertion fails because getCandidates yields more
     -- peer fragments than registered clients.
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
+        getCurrentChain = ChainDB.getCurrentChain chainDb
+        mkStateTracer
+          | scTraceState schedulerConfig
+          = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates
+          | otherwise
+          = pure nullTracer
+    stateTracer <- mkStateTracer
     startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
-    runScheduler tracer pointSchedule (psrPeers resources)
+    runScheduler tracer stateTracer pointSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
     config = defaultCfg k

@@ -26,9 +26,10 @@ import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
-tests = testProperty "timeouts" prop_timeouts
+tests = adjustQuickCheckTests (`div` 10) $ testProperty "timeouts" prop_timeouts
 
 prop_timeouts :: QC.Gen QC.Property
 prop_timeouts = do
@@ -45,7 +46,7 @@ prop_timeouts = do
           (fromJust $ mustReplyTimeout (scChainSyncTimeouts schedulerConfig))
           (btTrunk $ gtBlockTree genesisTest)
 
-  pure $ withMaxSuccess 10 $ runSimOrThrow $
+  pure $ runSimOrThrow $
     runTest schedulerConfig genesisTest schedule $ \stateView ->
       case svChainSyncExceptions stateView of
         [] ->

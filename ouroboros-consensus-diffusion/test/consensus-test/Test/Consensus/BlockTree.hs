@@ -21,7 +21,7 @@ module Test.Consensus.BlockTree (
   , findFragment
   , findPath
   , mkTrunk
-  , prettyPrint
+  , prettyBlockTree
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
@@ -161,10 +161,9 @@ findPath source target blockTree = do
 --                      ╰─────3──4─────5
 --
 -- Returns a list of strings intended to be catenated with a newline.
-prettyPrint :: AF.HasHeader blk => BlockTree blk -> [String]
-prettyPrint blockTree = do
-  ["Block tree:"]
-    ++ ["  slots:   " ++ unwords (map (printf "%2d" . unSlotNo) [veryFirstSlot .. veryLastSlot])]
+prettyBlockTree :: AF.HasHeader blk => BlockTree blk -> [String]
+prettyBlockTree blockTree =
+  ["slots:   " ++ unwords (map (printf "%2d" . unSlotNo) [veryFirstSlot .. veryLastSlot])]
     ++ [printTrunk honestFragment]
     ++ (map printBranch adversarialFragments)
 
@@ -181,11 +180,11 @@ prettyPrint blockTree = do
           (honestFragment : adversarialFragments)
 
     printTrunk :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
-    printTrunk = printLine (\_ -> "  trunk:  ─")
+    printTrunk = printLine (\_ -> "trunk:  -")
 
     printBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
     printBranch = printLine $ \firstSlot ->
-      "        " ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " ╰─"
+      "      " ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " `-"
 
     printLine :: AF.HasHeader blk => (SlotNo -> String) -> AF.AnchoredFragment blk -> String
     printLine printHeader fragment =
@@ -203,7 +202,7 @@ prettyPrint blockTree = do
         & Vector.toList . (slotRange Vector.//)
         & map (maybe "  " (printf "%2d"))
         & unwords
-        & map (\c -> if c == ' ' then '─' else c)
+        & map (\c -> if c == ' ' then '-' else c)
       where
         -- Initialize a Vector with the length of the fragment containing only Nothings
         slotRange = Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot + 1)) Nothing
