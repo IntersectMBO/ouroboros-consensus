@@ -49,6 +49,7 @@ module Test.Consensus.PointSchedule (
   , onlyHonestWithMintingPointSchedule
   , peersOnlyHonest
   , pointSchedulePeers
+  , prettyGenesisTest
   , prettyPointSchedule
   ) where
 
@@ -74,7 +75,8 @@ import           Ouroboros.Network.Block (SlotNo, Tip (Tip, TipGenesis),
                      blockNo, blockSlot, getTipSlotNo, tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
 import           System.Random.Stateful (StatefulGen)
-import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
+import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
+                     prettyBlockTree)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
@@ -620,6 +622,15 @@ data GenesisTest = GenesisTest {
   gtGenesisWindow :: GenesisWindow,
   gtBlockTree     :: BlockTree TestBlock
   }
+
+prettyGenesisTest :: GenesisTest -> [String]
+prettyGenesisTest GenesisTest{gtHonestAsc, gtSecurityParam, gtGenesisWindow, gtBlockTree} =
+  [ "GenesisTest:"
+  , "  gtHonestAsc: " ++ show gtHonestAsc
+  , "  gtSecurityParam: " ++ show gtSecurityParam
+  , "  gtGenesisWindow: " ++ show gtGenesisWindow
+  , "  gtBlockTree:"
+  ] ++ (("    " ++) <$> prettyBlockTree gtBlockTree)
 
 -- | Create a point schedule from the given block tree.
 --
