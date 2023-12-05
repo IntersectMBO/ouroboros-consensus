@@ -20,6 +20,7 @@ import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Shrink (shrinkPointSchedule)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
@@ -54,10 +55,13 @@ newLRA = True
 
 prop_longRangeAttack :: Int -> [Int] -> Property
 prop_longRangeAttack honestFreq advFreqs =
-  forAllBlind
+  forAllShrinkBlind
 
     -- Generator
     (genChainsAndSchedule scheduleConfig (fromIntegral (length advFreqs)) sched)
+
+    -- Shrinker
+    (\(gt, ps) -> (gt,) <$> shrinkPointSchedule ps)
 
     -- Property
     (\(genesisTest, schedule) ->

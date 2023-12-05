@@ -48,6 +48,7 @@ module Test.Consensus.PointSchedule (
   , mkPeers
   , onlyHonestWithMintingPointSchedule
   , peersOnlyHonest
+  , pointSchedule
   , pointSchedulePeers
   , prettyGenesisTest
   , prettyPointSchedule
