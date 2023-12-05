@@ -24,8 +24,7 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.ChainSync.Codec
                      (ChainSyncTimeout (..))
-import qualified Test.Consensus.BlockTree as BT
-import           Test.Consensus.BlockTree (allFragments)
+import           Test.Consensus.BlockTree (allFragments, prettyBlockTree)
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
@@ -50,7 +49,7 @@ runTest schedulerConfig genesisTest schedule makeProperty = do
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
     for_ (allFragments gtBlockTree) \ bt -> traceWith tracer (terseFrag bt)
 
-    traceLinesWith tracer [
+    traceLinesWith tracer $ [
       "SchedulerConfig:",
       "  ChainSyncTimeouts:",
       "    canAwait = " ++ show (canAwaitTimeout scChainSyncTimeouts),
@@ -58,10 +57,9 @@ runTest schedulerConfig genesisTest schedule makeProperty = do
       "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts),
       "Security param k = " ++ show (maxRollbacks gtSecurityParam),
       "Honest active slot coefficient asc = " ++ show (ascVal gtHonestAsc),
-      "Genesis window scg = " ++ show (getGenesisWindow gtGenesisWindow)
-      ]
-
-    mapM_ (traceWith tracer) $ BT.prettyPrint gtBlockTree
+      "Genesis window scg = " ++ show (getGenesisWindow gtGenesisWindow),
+      "Block tree:"
+      ] ++ (("  " ++) <$> prettyBlockTree gtBlockTree)
 
     finalStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
     traceWith tracer (condense finalStateView)
