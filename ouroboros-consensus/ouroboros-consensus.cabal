@@ -345,6 +345,7 @@ library unstable-consensus-testlib
     Test.Util.TestBlock
     Test.Util.TestEnv
     Test.Util.Time
+    Test.Util.ToExpr
     Test.Util.Tracer
     Test.Util.WithEq
 
@@ -377,7 +378,7 @@ library unstable-consensus-testlib
     , ouroboros-network-mock
     , pretty-simple
     , QuickCheck
-    , quickcheck-state-machine                                ^>=0.7
+    , quickcheck-state-machine:no-vendored-treediff           ^>=0.8
     , quiet
     , random
     , serialise
@@ -518,7 +519,7 @@ test-suite consensus-test
     , ouroboros-network-mock
     , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
     , QuickCheck
-    , quickcheck-state-machine
+    , quickcheck-state-machine:no-vendored-treediff
     , quiet
     , random
     , serialise
@@ -609,8 +610,8 @@ test-suite storage-test
     , cborg
     , containers
     , contra-tracer
-    , fs-api                      ^>=0.2
-    , fs-sim                      ^>=0.2
+    , fs-api                                         ^>=0.2
+    , fs-sim                                         ^>=0.2
     , generics-sop
     , hashable
     , io-classes
@@ -622,7 +623,7 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-state-machine    ^>=0.7
+    , quickcheck-state-machine:no-vendored-treediff  ^>=0.8
     , random
     , serialise
     , tasty

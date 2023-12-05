@@ -43,7 +43,7 @@ import           Data.Kind (Type)
 import           Data.List (delete, sort)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.TreeDiff (defaultExprViaShow)
+import           Data.TreeDiff
 import           Data.Typeable
 import qualified Generics.SOP as SOP
 import           GHC.Generics (Generic, Generic1)
@@ -60,6 +60,7 @@ import           Test.Tasty hiding (after)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.QSM
 import           Test.Util.SOP
+import           Test.Util.ToExpr ()
 
 tests :: TestTree
 tests = testGroup "ResourceRegistry" [
