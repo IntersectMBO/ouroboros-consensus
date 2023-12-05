@@ -15,7 +15,7 @@ module Test.Consensus.PeerSimulator.Run (
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer, traceWith)
+import           Control.Tracer (Tracer)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
@@ -52,7 +52,7 @@ import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
                      Peer (Peer), PeerId, PointSchedule (PointSchedule),
                      PointScheduleConfig, TestFragH, Tick (Tick),
-                     pointSchedulePeers)
+                     pointSchedulePeers, prettyPointSchedule)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
@@ -200,11 +200,10 @@ runScheduler ::
   PointSchedule ->
   Map PeerId (PeerResources m) ->
   m ()
-runScheduler tracer PointSchedule {ticks=ps} peers = do
-  traceWith tracer "Schedule is:"
-  for_ ps  $ \tick -> traceWith tracer $ "  " ++ condense tick
+runScheduler tracer ps@PointSchedule{ticks} peers = do
+  traceLinesWith tracer (prettyPointSchedule ps)
   traceStartOfTime
-  for_ ps (dispatchTick tracer peers)
+  for_ ticks (dispatchTick tracer peers)
   traceEndOfTime
   where
     traceStartOfTime =

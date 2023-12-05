@@ -49,6 +49,7 @@ module Test.Consensus.PointSchedule (
   , onlyHonestWithMintingPointSchedule
   , peersOnlyHonest
   , pointSchedulePeers
+  , prettyPointSchedule
   ) where
 
 import           Data.Foldable (toList)
@@ -262,6 +263,10 @@ data PointSchedule =
 
 instance Condense PointSchedule where
   condense (PointSchedule ticks _) = unlines (condense <$> toList ticks)
+
+prettyPointSchedule :: PointSchedule -> [String]
+prettyPointSchedule PointSchedule{ticks} =
+  "PointSchedule:" : (("  " ++) <$> (condense <$> toList ticks))
 
 -- | Parameters that are significant for components outside of generators, like the peer
 -- simulator.
