@@ -204,36 +204,63 @@ test-suite consensus-test
   hs-source-dirs: test/consensus-test
   main-is:        Main.hs
   other-modules:
+    Test.Consensus.BlockTree
+    Test.Consensus.Genesis.Setup
+    Test.Consensus.Genesis.Setup.Classifiers
+    Test.Consensus.Genesis.Setup.GenChains
+    Test.Consensus.Genesis.Tests
+    Test.Consensus.Genesis.Tests.LongRangeAttack
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.Network.AnchoredFragment.Extras
+    Test.Consensus.Network.Driver.Limits.Extras
     Test.Consensus.Node
+    Test.Consensus.PeerSimulator.BlockFetch
+    Test.Consensus.PeerSimulator.Config
+    Test.Consensus.PeerSimulator.Handlers
+    Test.Consensus.PeerSimulator.Resources
+    Test.Consensus.PeerSimulator.Run
+    Test.Consensus.PeerSimulator.ScheduledChainSyncServer
+    Test.Consensus.PeerSimulator.Trace
+    Test.Consensus.PointSchedule
 
   build-depends:
     , base
     , binary
     , bytestring
+    , cardano-crypto-class
     , cardano-slotting
     , containers
+    , contra-tracer
     , directory
     , fs-api                                                                 ^>=0.2
     , fs-sim                                                                 ^>=0.2
+    , hashable
+    , io-classes
     , io-sim
     , mtl
     , nothunks
     , ouroboros-consensus-diffusion
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
+    , ouroboros-network
     , ouroboros-network-api
+    , ouroboros-network-framework
     , ouroboros-network-mock
+    , ouroboros-network-protocols
     , QuickCheck
     , quiet
     , serialise
     , si-timers
     , sop-extras
     , strict-sop-core
+    , strict-stm
     , tasty
     , tasty-hunit
     , tasty-quickcheck
     , temporary
     , time
+    , typed-protocols
+    , typed-protocols-examples
     , unstable-diffusion-testlib
+    , vector

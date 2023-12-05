@@ -298,6 +298,7 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.ChainGenerator.RaceIterator
     Test.Ouroboros.Consensus.ChainGenerator.Slot
     Test.Ouroboros.Consensus.ChainGenerator.Some
+    Test.QuickCheck.Extras
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
@@ -549,6 +550,7 @@ test-suite infra-test
     , random
     , tasty
     , tasty-quickcheck
+    , unstable-consensus-testlib
     , vector
 
 test-suite storage-test
