@@ -128,7 +128,7 @@ terseFragH frag =
   where
     renderBlocks = case frag of
       Empty _ -> ""
-      _       -> " ⚓ " ++ intercalate " " (terseHeader <$> toOldestFirst frag)
+      _       -> " | " ++ intercalate " " (terseHeader <$> toOldestFirst frag)
     renderAnchor = case anchor frag of
       AnchorGenesis -> "G"
       Anchor slot hash block -> terseSlotBlock slot block ++ renderAnchorHash hash
