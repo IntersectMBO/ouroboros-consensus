@@ -25,8 +25,7 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Honest as H
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg),
-                     genAscWithKcp)
+                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genAsc)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.RaceIterator as RI
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE))
@@ -121,7 +120,7 @@ instance QC.Arbitrary SomeTestAdversarial where
                 A.arHonest
               }
 
-        testAscA <- genAscWithKcp kcp scg
+        testAscA <- genAsc
 
         case Exn.runExcept $ A.checkAdversarialRecipe testRecipeA of
             Left e -> case e of

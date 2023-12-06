@@ -15,6 +15,7 @@ import qualified Control.Monad.Except as Exn
 import           Data.List (foldl')
 import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector.Unboxed as Vector
+import           Data.Word (Word8)
 import           Ouroboros.Consensus.Block.Abstract hiding (Header)
 import           Ouroboros.Consensus.Protocol.Abstract
                      (SecurityParam (SecurityParam))
@@ -42,8 +43,8 @@ import           Test.Util.TestBlock hiding (blockTree)
 -- | Random generator for an honest chain recipe and schema.
 genHonestChainSchema :: QC.Gen (Asc, H.HonestRecipe, H.SomeHonestChainSchema)
 genHonestChainSchema = do
-  honestRecipe <- H.genHonestRecipe
   asc <- genAsc
+  honestRecipe <- H.genHonestRecipe
 
   H.SomeCheckedHonestRecipe Proxy Proxy honestRecipe' <-
     case Exn.runExcept $ H.checkHonestRecipe honestRecipe of
@@ -73,7 +74,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
       A.arHonest
     }
 
-    alternativeAsc <- genAscWithKcp kcp scg
+    alternativeAsc <- ascFromBits <$> QC.choose (1 :: Word8, maxBound - 1)
 
     case Exn.runExcept $ A.checkAdversarialRecipe testRecipeA of
       Left e -> case e of

@@ -10,7 +10,6 @@ module Test.Ouroboros.Consensus.ChainGenerator.Params (
   , ascFromDouble
   , ascVal
   , genAsc
-  , genAscWithKcp
   , genKSD
   ) where
 
@@ -93,14 +92,6 @@ ascFromBits w = ascFromDouble $ toEnum (fromEnum w) / (2 ^ B.finiteBitSize w)
 -- | Interpret 'Asc' as a 'Double'
 ascVal :: Asc -> Double
 ascVal (Asc x) = x
-
--- | Provides an Asc with high probability to produce k slots in
--- a window of size s. Therefore, we chose @Asc >= 3k/s@.
-genAscWithKcp :: Kcp -> Scg -> QC.Gen Asc
-genAscWithKcp (Kcp k) (Scg s) =
-    let word8Max = fromEnum (maxBound :: Word8)
-        asc0Min = toEnum $ min (word8Max - 1) $ word8Max * 3 * k `div` s :: Word8
-     in ascFromBits <$> QC.choose (asc0Min, maxBound - 1)
 
 genAsc :: QC.Gen Asc
 genAsc = ascFromBits <$> QC.choose (1 :: Word8, maxBound - 1)
