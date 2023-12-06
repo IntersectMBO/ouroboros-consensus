@@ -16,7 +16,6 @@ import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
-import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -43,10 +42,7 @@ prop_rollback = do
   let SecurityParam k = gtSecurityParam genesisTest
       schedule = rollbackSchedule (fromIntegral k) (gtBlockTree genesisTest)
 
-  -- We consider the test case interesting if we can rollback
   pure $
-    alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
-    ==>
       runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
               GenesisHash    -> False
@@ -68,13 +64,7 @@ prop_cannotRollback = do
   let SecurityParam k = gtSecurityParam genesisTest
       schedule = rollbackSchedule (fromIntegral (k + 1)) (gtBlockTree genesisTest)
 
-  -- We consider the test case interesting if it allows to rollback even if
-  -- the implementation doesn't
   pure $
-    alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
-      &&
-    honestChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
-    ==>
       runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
               GenesisHash    -> False
@@ -103,27 +93,3 @@ rollbackSchedule n blockTree =
       peers = peersOnlyHonest states
       pointSchedule = balanced defaultPointScheduleConfig peers
    in fromJust pointSchedule
-
--- | Whether the honest chain has more than 'k' blocks after the
--- intersection with the alternative chain.
---
--- PRECONDITION: Block tree with exactly one alternative chain, otherwise
--- this property does not make sense. With no alternative chain, this will
--- even crash.
-honestChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
-honestChainIsLongEnough (SecurityParam k) blockTree =
-  let BlockTreeBranch{btbTrunkSuffix} = head $ btBranches blockTree
-      lengthTrunkSuffix = AF.length btbTrunkSuffix
-   in lengthTrunkSuffix > fromIntegral k
-
--- | Whether the alternative chain has more than 'k' blocks after the
--- intersection with the honest chain.
---
--- PRECONDITION: Block tree with exactly one alternative chain, otherwise
--- this property does not make sense. With no alternative chain, this will
--- even crash.
-alternativeChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
-alternativeChainIsLongEnough (SecurityParam k) blockTree =
-  let BlockTreeBranch{btbSuffix} = head $ btBranches blockTree
-      lengthSuffix = AF.length btbSuffix
-   in lengthSuffix > fromIntegral k
