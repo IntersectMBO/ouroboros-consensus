@@ -21,16 +21,35 @@
 -- an unexplained thunk in 'KnownIntersectionState' and thus a space leak. See
 -- #1356.
 
+-- | The ChainSync client logic
+--
+-- Its core specification is found in "The Shelley Networking Protocol",
+-- currently found at
+-- <https://input-output-hk.github.io/ouroboros-network/pdfs/network-spec/network-spec.pdf>.
+--
+-- It would be difficult to maintain or extrend this module without
+-- understanding the @typed-protocols@ architecture; eg see
+-- <https://github.com/input-output-hk/typed-protocols>.
+--
+-- This module is intended for qualified import, aliased as either CSC,
+-- CSClient, or CsClient.
+
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
-    ChainDbView (..)
+    -- * ChainSync client
+    bracketChainSyncClient
+  , chainSyncClient
+    -- * Arguments
+  , ChainDbView (..)
+  , ConfigEnv (..)
+  , DynamicEnv (..)
+  , defaultChainDbView
+    -- * Results
   , ChainSyncClientException (..)
   , ChainSyncClientResult (..)
+    -- * Misc
   , Consensus
   , Our (..)
   , Their (..)
-  , bracketChainSyncClient
-  , chainSyncClient
-  , defaultChainDbView
     -- * Trace events
   , InvalidBlockReason
   , TraceChainSyncClientEvent (..)
@@ -419,6 +438,29 @@ assertKnownIntersectionInvariants
 assertKnownIntersectionInvariants cfg kis =
     assertWithMsg (checkKnownIntersectionInvariants cfg kis) kis
 
+-- | Arguments determined by configuration
+--
+-- These are available before the diffusion layer is online.
+data ConfigEnv m blk = ConfigEnv {
+      mkPipelineDecision0     :: MkPipelineDecision
+      -- ^ The pipelining decider to use after 'MsgFoundIntersect' arrives
+    , tracer                  :: Tracer m (TraceChainSyncClientEvent blk)
+    , cfg                     :: TopLevelConfig blk
+    , someHeaderInFutureCheck :: InFutureCheck.SomeHeaderInFutureCheck m blk
+    , chainDbView             :: ChainDbView m blk
+    }
+
+-- | Arguments determined dynamically
+--
+-- These are available only after the diffusion layer is online and/or on per
+-- client basis.
+data DynamicEnv m blk = DynamicEnv {
+      version                 :: NodeToNodeVersion
+    , controlMessageSTM       :: ControlMessageSTM m
+    , headerMetricsTracer     :: HeaderMetricsTracer m
+    , varCandidate            :: StrictTVar m (AnchoredFragment (Header blk))
+    }
+
 -- | Chain sync client
 --
 -- This never terminates. In case of a failure, a 'ChainSyncClientException'
@@ -429,38 +471,47 @@ chainSyncClient
        ( IOLike m
        , LedgerSupportsProtocol blk
        )
-    => MkPipelineDecision
-    -> Tracer m (TraceChainSyncClientEvent blk)
-    -> TopLevelConfig blk
-    -> InFutureCheck.SomeHeaderInFutureCheck m blk
-    -> ChainDbView m blk
-    -> NodeToNodeVersion
-    -> ControlMessageSTM m
-    -> HeaderMetricsTracer m
-    -> StrictTVar m (AnchoredFragment (Header blk))
+    => ConfigEnv m blk
+    -> DynamicEnv m blk
     -> Consensus ChainSyncClientPipelined blk m
-chainSyncClient mkPipelineDecision0 tracer cfg
-                (InFutureCheck.SomeHeaderInFutureCheck
-                   InFutureCheck.HeaderInFutureCheck
-                   { -- these fields in order of use
-                     proxyArrival        = Proxy :: Proxy arrival
-                   , recordHeaderArrival
-                   , judgeHeaderArrival
-                   , handleHeaderArrival
-                   }
-                )
-                ChainDbView
-                { getCurrentChain
-                , getHeaderStateHistory
-                , getPastLedger
-                , getIsInvalidBlock
-                }
-                version
-                controlMessageSTM
-                headerMetricsTracer
-                varCandidate = ChainSyncClientPipelined $
-    continueWithState () $ initialise
+chainSyncClient
+    cfgEnv@(ConfigEnv {
+        someHeaderInFutureCheck =
+          InFutureCheck.SomeHeaderInFutureCheck 
+            headerInFutureCheck@(InFutureCheck.HeaderInFutureCheck {
+                InFutureCheck.proxyArrival = Proxy :: Proxy arrival
+              })
+      })
+    dynEnv
+  = ChainSyncClientPipelined $ continueWithState () $ initialise
   where
+    ConfigEnv {
+        mkPipelineDecision0
+      , tracer
+      , cfg
+      , chainDbView
+      } = cfgEnv
+
+    InFutureCheck.HeaderInFutureCheck {
+        handleHeaderArrival
+      , judgeHeaderArrival
+      , recordHeaderArrival
+      } = headerInFutureCheck 
+
+    ChainDbView {
+        getCurrentChain
+      , getHeaderStateHistory
+      , getPastLedger
+      , getIsInvalidBlock
+      } = chainDbView
+
+    DynamicEnv {
+        version
+      , controlMessageSTM
+      , headerMetricsTracer
+      , varCandidate
+      } = dynEnv
+
     -- | Start ChainSync by looking for an intersection between our current
     -- chain fragment and their chain.
     initialise :: Stateful m blk () (ClientPipelinedStIdle 'Z)
