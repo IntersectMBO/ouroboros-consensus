@@ -490,11 +490,18 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         Just asc -> S.genS asc `R.applySTGen` g
 
     -- ensure the adversarial leader schedule is not empty
-    do  void $ BV.fillInWindow
+    do -- Since the first active slot in the adversarial chain might determine
+       -- the position of the acceleration bound, we ensure it is early enough
+       -- so we can always fit k+1 blocks in the alternative schema.
+       let trailingSlots = s + k + d + 1
+           szFirstActive = sz C.- trailingSlots C.+ 1
+       when (szFirstActive <= C.Count 0) $
+         error "the adversarial schema is smaller than s+k+d+1"
+       void $ BV.fillInWindow
             S.notInverted
-            (BV.SomeDensityWindow (C.Count 1) (C.windowSize carWin))
+            (BV.SomeDensityWindow (C.Count 1) szFirstActive)
             g
-            mv
+            (C.sliceMV (C.UnsafeContains (C.Count 0) szFirstActive) mv)
 
     -- find the slot of the k+1 honest block
     let kPlus1st :: C.Index adv SlotE
