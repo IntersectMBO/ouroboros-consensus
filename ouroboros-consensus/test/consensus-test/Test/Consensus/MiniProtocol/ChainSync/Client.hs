@@ -389,7 +389,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               pure $ WithFingerprint isInvalidBlock fp
           }
 
-        headerInFutureCheck :: InFutureCheck.HeaderInFutureCheck m TestBlock
+        headerInFutureCheck :: InFutureCheck.SomeHeaderInFutureCheck m TestBlock
         headerInFutureCheck =
             InFutureCheck.realHeaderInFutureCheck skew clientSystemTime
             -- Note that this tests passes in the exact difference between the

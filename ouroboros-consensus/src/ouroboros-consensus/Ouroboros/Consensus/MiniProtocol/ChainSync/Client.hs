@@ -432,7 +432,7 @@ chainSyncClient
     => MkPipelineDecision
     -> Tracer m (TraceChainSyncClientEvent blk)
     -> TopLevelConfig blk
-    -> InFutureCheck.HeaderInFutureCheck m blk
+    -> InFutureCheck.SomeHeaderInFutureCheck m blk
     -> ChainDbView m blk
     -> NodeToNodeVersion
     -> ControlMessageSTM m
@@ -440,13 +440,15 @@ chainSyncClient
     -> StrictTVar m (AnchoredFragment (Header blk))
     -> Consensus ChainSyncClientPipelined blk m
 chainSyncClient mkPipelineDecision0 tracer cfg
-                InFutureCheck.HeaderInFutureCheck
-                { -- these fields in order of use
-                  proxyArrival        = Proxy :: Proxy arrival
-                , recordHeaderArrival
-                , judgeHeaderArrival
-                , handleHeaderArrival
-                }
+                (InFutureCheck.SomeHeaderInFutureCheck
+                   InFutureCheck.HeaderInFutureCheck
+                   { -- these fields in order of use
+                     proxyArrival        = Proxy :: Proxy arrival
+                   , recordHeaderArrival
+                   , judgeHeaderArrival
+                   , handleHeaderArrival
+                   }
+                )
                 ChainDbView
                 { getCurrentChain
                 , getHeaderStateHistory

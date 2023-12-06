@@ -8,6 +8,7 @@
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck (
     -- * Interface
     HeaderInFutureCheck (..)
+  , SomeHeaderInFutureCheck (..)
     -- * Real Implementation
   , HeaderArrivalException (..)
   , realHeaderInFutureCheck
@@ -40,12 +41,15 @@ import           Ouroboros.Network.Block (HasHeader)
   Interface
 -------------------------------------------------------------------------------}
 
+data SomeHeaderInFutureCheck m blk = forall arrival judgment.
+    SomeHeaderInFutureCheck (HeaderInFutureCheck m blk arrival judgment)
+
 -- | The interface a ChainSync client needs in order to check the arrival time
 -- of headers.
 --
 -- Instead of alphabetical, the fields are in the order in which the ChainSync
 -- client logic will invoke them for each header.
-data HeaderInFutureCheck m blk = forall arrival judgment. HeaderInFutureCheck {
+data HeaderInFutureCheck m blk arrival judgment = HeaderInFutureCheck {
     proxyArrival :: Proxy arrival
   ,
     -- | This is ideally called _immediately_ upon the header arriving.
@@ -109,8 +113,10 @@ realHeaderInFutureCheck ::
   , HasHardForkHistory blk
   , MonadDelay m
   )
-  => ClockSkew -> SystemTime m -> HeaderInFutureCheck m blk
-realHeaderInFutureCheck skew systemTime = HeaderInFutureCheck {
+  => ClockSkew -> SystemTime m -> SomeHeaderInFutureCheck m blk
+realHeaderInFutureCheck skew systemTime =
+    SomeHeaderInFutureCheck
+  $ HeaderInFutureCheck {
     proxyArrival        = Proxy
   , recordHeaderArrival = \hdr -> do
         (,) (headerRealPoint hdr) <$> systemTimeCurrent systemTime
