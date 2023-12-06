@@ -31,11 +31,12 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest as H
-import qualified Test.QuickCheck as QC
+import qualified Test.QuickCheck as QC hiding (elements)
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
+import qualified Test.Util.QuickCheck as QC
 
 -----
 
@@ -168,18 +169,21 @@ prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $
         pure $ calculateStability scg schedA
 
     pure $
-      (BV.countActivesInV S.notInverted vA >= C.Count (k + 1))
-      QC.==>
-      (QC.counterexample (unlines $
+      QC.counterexample (unlines $
                             H.prettyChainSchema schedH "H"
                             ++ H.prettyChainSchema schedA "A"
                           )
       $ QC.counterexample ("arPrefix = " <> show (A.arPrefix testRecipeA))
       $ QC.counterexample ("stabWin  = " <> show stabWin)
       $ QC.counterexample ("stabWin' = " <> show (C.joinWin winA stabWin))
-      $ BV.countActivesInV S.notInverted vH
-          >= C.toSize (C.Count (k + 1) + A.arPrefix testRecipeA)
-      )
+      $ QC.counterexample ("The honest chain has k+1 blocks after the intersection")
+          (BV.countActivesInV S.notInverted vH
+            `QC.ge` C.toSize (C.Count (k + 1) + A.arPrefix testRecipeA)
+          )
+        QC..&&.
+        QC.counterexample ("The alternative chain has k+1 blocks after the intersection")
+          (BV.countActivesInV S.notInverted vA `QC.ge` C.Count (k + 1))
+
 
 -- | No seed exists such that each 'A.checkAdversarialChain' rejects the result of 'A.uniformAdversarialChain'
 prop_adversarialChain :: SomeTestAdversarial -> QCGen -> QC.Property
