@@ -664,11 +664,12 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 -- REVIEW: why do we not allow forking off the block number 1?
 genPrefixBlockCount :: R.RandomGen g => g -> HonestRecipe -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
 genPrefixBlockCount g (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) schedH
-    | C.getCount validIntersections >= 0 =
-    if C.toVar numChoices < 2 then C.Count 0 {- can always pick genesis -} else do
-        C.toVar $ R.runSTGen_ g $ C.uniformIndex numChoices
-    | otherwise =
+    | C.getCount validIntersections < 0 =
         error "size of schema is smaller than s + k + d + 1"
+    |  C.toVar numChoices < 2 =
+        C.Count 0 {- can always pick genesis -}
+    | otherwise =
+        C.toVar $ R.runSTGen_ g $ C.uniformIndex numChoices
   where
     ChainSchema _slots v = schedH
 
