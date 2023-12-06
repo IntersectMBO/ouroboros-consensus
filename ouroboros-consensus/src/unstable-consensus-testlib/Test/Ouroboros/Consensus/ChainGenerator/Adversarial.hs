@@ -637,8 +637,9 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 --
 -- The count will be strictly smaller than the number of active slots in the given 'ChainSchema'.
 --
--- The following precondition ensures that there are enough slots to produce an
--- alternative chain schema with at least k+1 slots.
+-- The precondition allows the intersection to occur early enough (earlier than
+-- s+k+d+1 slots from the end), which should allow the generation algorithm to
+-- fit k+1 active slots in the alternative schema after the intersection.
 --
 -- PRECONDITION: @schemaSize schedH >= s + k + d + 1@
 --
@@ -658,6 +659,8 @@ genPrefixBlockCount g (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) schedH
     -- By leaving one block after the intersection in the first s slots, we
     -- ensure there are k+1 active slots in the honest chain after the
     -- intersection.
+    --
+    -- numChoices might be smaller than 0, in which case we just pick genesis
     numChoices = numBlocks C.- 1
     numBlocks = BV.countActivesInV S.notInverted $
            C.sliceV (C.UnsafeContains (C.Count 0) validIntersections) v

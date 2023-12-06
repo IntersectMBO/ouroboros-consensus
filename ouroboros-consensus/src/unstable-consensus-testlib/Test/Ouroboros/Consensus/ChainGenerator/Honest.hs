@@ -110,8 +110,9 @@ genHonestRecipe = sized1 $ \sz -> do
   -- only k blocks might be present.
   -- Therefore we enlarge the schema by one slot to get the size 2s-k+1
   --
-  -- If we then add k+d slots, we get enough room for alternative chains
-  -- to have k+1 blocks when they branch of blocks in the first s slots.
+  -- If we then add k+d slots (to get a total size of 2s+d+1), we get enough
+  -- room for alternative chains to have k+1 blocks when they branch before
+  -- the last s+d slots.
   l <- (+ (2*s + d + 1)) <$> QC.choose (0, 5 * sz)
   pure $ HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l)
 
