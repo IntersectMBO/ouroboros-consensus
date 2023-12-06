@@ -121,15 +121,20 @@ oneBenchRun
     client :: CSClient.Consensus ChainSyncClientPipelined B IO
     client =
         CSClient.chainSyncClient
-            (pipelineDecisionLowHighMark 10 20)
-            (nullTracer `asTypeOf` contramap show debugTracer)
-            topConfig
-            headerInFutureCheck
-            chainDbView
-            (maxBound :: NodeToNodeVersion)
-            (return Continue)
-            nullTracer
-            varCandidate
+            CSClient.ConfigEnv {
+                CSClient.chainDbView
+              , CSClient.cfg                     = topConfig
+              , CSClient.tracer                  = nullTracer `asTypeOf` contramap show debugTracer
+              , CSClient.someHeaderInFutureCheck = headerInFutureCheck
+              , CSClient.mkPipelineDecision0     =
+                    pipelineDecisionLowHighMark 10 20
+              }
+            CSClient.DynamicEnv {
+                CSClient.version             = maxBound :: NodeToNodeVersion
+              , CSClient.controlMessageSTM   = return Continue
+              , CSClient.headerMetricsTracer = nullTracer
+              , CSClient.varCandidate
+              }
 
     server :: ChainSyncServer H (Point B) (Tip B) IO ()
     server =

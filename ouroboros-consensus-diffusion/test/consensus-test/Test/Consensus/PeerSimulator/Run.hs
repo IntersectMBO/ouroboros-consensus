@@ -25,7 +25,8 @@ import           Data.Traversable (for)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     Consensus, chainSyncClient, defaultChainDbView)
+                     Consensus, chainSyncClient)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -90,18 +91,24 @@ basicChainSyncClient :: forall m.
   Consensus ChainSyncClientPipelined TestBlock m
 basicChainSyncClient tracer cfg chainDbView varCandidate =
   chainSyncClient
-    (pipelineDecisionLowHighMark 10 20)
-    (mkChainSyncClientTracer tracer)
-    cfg
-    dummyHeaderInFutureCheck
-    chainDbView
-    maxBound
-    (return Continue)
-    nullTracer
-    varCandidate
+    CSClient.ConfigEnv {
+        CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
+      , CSClient.tracer                  = mkChainSyncClientTracer tracer
+      , CSClient.cfg
+      , CSClient.chainDbView
+      , CSClient.someHeaderInFutureCheck = dummyHeaderInFutureCheck
+      }
+    CSClient.DynamicEnv {
+        CSClient.version             = maxBound
+      , CSClient.controlMessageSTM   = return Continue
+      , CSClient.headerMetricsTracer = nullTracer
+      , CSClient.varCandidate
+      }
   where
-    dummyHeaderInFutureCheck :: InFutureCheck.HeaderInFutureCheck m TestBlock
-    dummyHeaderInFutureCheck = InFutureCheck.HeaderInFutureCheck
+    dummyHeaderInFutureCheck ::
+      InFutureCheck.SomeHeaderInFutureCheck m TestBlock
+    dummyHeaderInFutureCheck =
+      InFutureCheck.SomeHeaderInFutureCheck InFutureCheck.HeaderInFutureCheck
       { InFutureCheck.proxyArrival = Proxy
       , InFutureCheck.recordHeaderArrival = \_ -> pure ()
       , InFutureCheck.judgeHeaderArrival = \_ _ _ -> pure ()
@@ -254,7 +261,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtHonestAsc =
     traceWith tracer $ "Security param k = " ++ show k
     chainDb <- mkChainDb tracer candidates config registry
     fetchClientRegistry <- newFetchClientRegistry
-    let chainDbView = defaultChainDbView chainDb
+    let chainDbView = CSClient.defaultChainDbView chainDb
     chainSyncRess <- for resources $ \PeerResources {prShared, prChainSync} -> do
       chainSyncRes <- startChainSyncConnectionThread registry tracer config asc chainDbView fetchClientRegistry prShared prChainSync schedulerConfig
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
