@@ -45,7 +45,7 @@ tests = testGroup "rollback" [
 -- blocks before the current selection.
 prop_rollback :: Bool -> QC.Gen QC.Property
 prop_rollback wantRollback = do
-  genesisTest <- genChains 1
+  genesisTest <- genChains (pure 1)
 
   let schedule = rollbackSchedule (gtBlockTree genesisTest)
 
