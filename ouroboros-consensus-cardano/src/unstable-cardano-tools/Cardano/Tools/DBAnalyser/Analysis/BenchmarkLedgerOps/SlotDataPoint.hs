@@ -1,16 +1,20 @@
+{-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint (
-    SlotDataPoint (..)
-  , showData
-  , showHeaders
+    BlockStats (BlockStats, unBlockStats)
+  , SlotDataPoint (..)
   ) where
 
-import           Cardano.Slotting.Slot (SlotNo (unSlotNo))
+import           Cardano.Slotting.Slot (SlotNo)
+import           Data.Aeson as Aeson
+import qualified Data.Aeson.Encoding as Aeson.Encoding
 import           Data.Int (Int64)
 import           Data.Word (Word32, Word64)
-import           Text.Builder (Builder, decimal, intercalate)
+import           GHC.Generics (Generic)
+import qualified Text.Builder as Builder
+import           Text.Builder (Builder)
 
 -- | Information about the time spent processing the block corresponding to
 -- 'slot', divided into the five major operations:
@@ -37,9 +41,15 @@ data SlotDataPoint =
         -- | Time spent in garbage collection while performing the 5 ledger
         -- operations at 'slot'.
       , gc              :: !Int64
-        -- | Total number of major garbage collections that took place while
+        -- | Total number of __major__ garbage collections that took place while
         -- performing the 5 ledger operations at 'slot'.
       , majGcCount      :: !Word32
+        -- | Total number of __minor__ garbage collections that took place while
+        -- performing the 5 ledger operations at 'slot'.
+      , minGcCount      :: !Word32
+        -- | Allocated bytes while performing the 5 ledger operations
+        -- at 'slot'.
+      , allocatedBytes  :: !Word64
         -- | Difference of the GC.mutator_elapsed_ns field when computing the
         -- forecast.
       , mut_forecast    :: !Int64
@@ -47,33 +57,18 @@ data SlotDataPoint =
       , mut_headerApply :: !Int64
       , mut_blockTick   :: !Int64
       , mut_blockApply  :: !Int64
-      }
+      -- | Free-form information about the block.
+      , blockStats      :: !BlockStats
+      } deriving (Generic, Show)
 
--- | Return the headers that correspond to the fields of 'SlotDataPoint'.
---
--- The position of each header matches the position in which the corresponding
--- field value is returned in 'showData'. Eg, if show headers returns:
---
--- > "slot slotGap totalTime" ...
---
--- then the third value returned by 'showData' will correspond to 'totalTime'.
-showHeaders :: Builder -> Builder
-showHeaders sep = intercalate sep $ fmap fst           showHeadersAndData
+newtype BlockStats = BlockStats { unBlockStats :: [Builder] }
+  deriving (Generic, Show)
 
-showData :: SlotDataPoint -> Builder -> Builder
-showData dp sep = intercalate sep $ fmap (($ dp) . snd) showHeadersAndData
+instance ToJSON BlockStats where
+  -- We convert the blocks stats to a 'Vector Text'.
+  toJSON = toJSON . fmap Builder.run . unBlockStats
 
-showHeadersAndData :: [(Builder, SlotDataPoint -> Builder)]
-showHeadersAndData =
-    [ ("slot"           , decimal . unSlotNo . slot)
-    , ("slotGap"        , decimal . slotGap)
-    , ("totalTime"      , decimal . totalTime)
-    , ("mut"            , decimal . mut)
-    , ("gc"             , decimal . gc)
-    , ("majGcCount"     , decimal . majGcCount)
-    , ("mut_forecast"   , decimal . mut_forecast)
-    , ("mut_headerTick" , decimal . mut_headerTick)
-    , ("mut_headerApply", decimal . mut_headerApply)
-    , ("mut_blockTick"  , decimal . mut_blockTick)
-    , ("mut_blockApply" , decimal . mut_blockApply)
-    ]
+  toEncoding = Aeson.Encoding.list (Aeson.Encoding.text . Builder.run) . unBlockStats
+
+instance ToJSON SlotDataPoint where
+  toEncoding = Aeson.genericToEncoding Aeson.defaultOptions

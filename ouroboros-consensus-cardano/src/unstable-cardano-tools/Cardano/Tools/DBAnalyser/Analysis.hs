@@ -18,6 +18,7 @@ module Cardano.Tools.DBAnalyser.Analysis (
   ) where
 
 import qualified Cardano.Slotting.Slot as Slotting
+import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
 import           Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
@@ -28,7 +29,6 @@ import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Int (Int64)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
-import qualified Data.Text.IO as Text.IO
 import           Data.Word (Word16, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
@@ -68,7 +68,6 @@ import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (SomeHasFS (..))
 import qualified System.IO as IO
-import qualified Text.Builder as Builder
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -492,32 +491,31 @@ benchmarkLedgerOps ::
      , LedgerSupportsProtocol blk
      )
   => Maybe FilePath -> Analysis blk
-benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
-    withFile mOutfile $ \outFileHandle -> do
-      let line = Builder.run $ DP.showHeaders separator
-                             <> separator
-                             <> "...era-specific stats"
-      Text.IO.hPutStrLn outFileHandle line
+benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} = do
+    -- We default to CSV when the no output file is provided (and thus the results are output to stdout).
+    outFormat <- F.getOutputFormat mOutfile
 
-      void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle)
+    withFile mOutfile $ \outFileHandle -> do
+      F.writeMetadata outFileHandle outFormat
+      F.writeHeader   outFileHandle outFormat
+
+      void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle outFormat)
       pure Nothing
   where
     withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
     withFile (Just outfile) = IO.withFile outfile IO.WriteMode
     withFile Nothing        = \f -> f IO.stdout
 
-    -- Separator for the data that is printed
-    separator = "\t"
-
     ccfg = topLevelConfigProtocol cfg
     lcfg = topLevelConfigLedger   cfg
 
     process ::
          IO.Handle
+      -> F.OutputFormat
       -> ExtLedgerState blk
       -> blk
       -> IO (ExtLedgerState blk)
-    process outFileHandle prevLedgerState blk = do
+    process outFileHandle outFormat prevLedgerState blk = do
         prevRtsStats <- GC.getRTSStats
         let
           -- Compute how many nanoseconds the mutator used from the last
@@ -542,6 +540,7 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
         currentRtsStats <- GC.getRTSStats
         let
           currentMinusPrevious f = f currentRtsStats - f prevRtsStats
+          major_gcs              = currentMinusPrevious GC.major_gcs
           slotDataPoint =
             DP.SlotDataPoint
             { slot            = realPointSlot rp
@@ -549,23 +548,22 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
             , totalTime       = currentMinusPrevious GC.elapsed_ns          `div` 1000
             , mut             = currentMinusPrevious GC.mutator_elapsed_ns  `div` 1000
             , gc              = currentMinusPrevious GC.gc_elapsed_ns       `div` 1000
-            , majGcCount      = currentMinusPrevious GC.major_gcs
+            , majGcCount      = major_gcs
+            , minGcCount      = currentMinusPrevious GC.gcs - major_gcs
+            , allocatedBytes  = currentMinusPrevious GC.allocated_bytes
             , mut_forecast    = tForecast `div` 1000
             , mut_headerTick  = tHdrTick  `div` 1000
             , mut_headerApply = tHdrApp   `div` 1000
             , mut_blockTick   = tBlkTick  `div` 1000
             , mut_blockApply  = tBlkApp   `div` 1000
+            , blockStats      = DP.BlockStats $ HasAnalysis.blockStats blk
             }
 
           slotCount (SlotNo i) = \case
             Slotting.Origin        -> i
             Slotting.At (SlotNo j) -> i - j
 
-          line = Builder.run $  DP.showData slotDataPoint separator
-                             <> separator
-                             <> Builder.intercalate separator (HasAnalysis.blockStats blk)
-
-        Text.IO.hPutStrLn outFileHandle line
+        F.writeDataPoint outFileHandle outFormat slotDataPoint
 
         pure $ ExtLedgerState ldgrSt' hdrSt'
       where

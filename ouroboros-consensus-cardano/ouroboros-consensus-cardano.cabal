@@ -452,6 +452,9 @@ library unstable-cardano-tools
     Cardano.Node.Protocol.Types
     Cardano.Node.Types
     Cardano.Tools.DBAnalyser.Analysis
+    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting
+    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata
+    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
     Cardano.Tools.DBAnalyser.Block.Byron
     Cardano.Tools.DBAnalyser.Block.Cardano
     Cardano.Tools.DBAnalyser.Block.Shelley
@@ -481,7 +484,6 @@ library unstable-cardano-tools
     Cardano.Node.Protocol.Cardano
     Cardano.Node.Protocol.Conway
     Cardano.Node.Protocol.Shelley
-    Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
 
   build-depends:
     , aeson
