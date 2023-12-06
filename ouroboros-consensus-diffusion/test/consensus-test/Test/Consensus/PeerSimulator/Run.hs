@@ -16,7 +16,7 @@ import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer)
+import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
@@ -49,6 +49,8 @@ import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient,
 import           Test.Consensus.PeerSimulator.ChainSync (runChainSyncClient)
 import           Test.Consensus.PeerSimulator.Config
 import           Test.Consensus.PeerSimulator.Resources
+import           Test.Consensus.PeerSimulator.StateDiagram
+                     (peerSimStateDiagramSTMTracerDebug)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
@@ -94,6 +96,10 @@ data SchedulerConfig =
     -- to 'maxBound', allowing the selection of any block beyond the LoE
     -- fragment.
     , scEnableGdd       :: Bool
+
+    -- Whether to trace only the current state of the candidates and selection,
+    -- which provides a less verbose view of the test progress.
+    , scTraceState      :: Bool
   }
 
 -- | Determine timeouts based on the 'Asc' and a slot length of 20 seconds.
@@ -104,7 +110,8 @@ defaultSchedulerConfig scSchedule asc =
     scSlotLength,
     scSchedule,
     scDebug = False,
-    scEnableGdd = True
+    scEnableGdd = True,
+    scTraceState = False
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -117,7 +124,8 @@ noTimeoutsSchedulerConfig scSchedule =
     scSlotLength,
     scSchedule,
     scDebug = False,
-    scEnableGdd = True
+    scEnableGdd = True,
+    scTraceState = False
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -193,10 +201,11 @@ startBlockFetchConnectionThread
 dispatchTick ::
   IOLike m =>
   Tracer m String ->
+  Tracer m () ->
   Map PeerId (PeerResources m) ->
   Tick ->
   m ()
-dispatchTick tracer peers Tick {active = Peer pid state, duration} =
+dispatchTick tracer stateTracer peers Tick {active = Peer pid state, duration} =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
       trace $ "Writing state " ++ condense state
@@ -204,6 +213,7 @@ dispatchTick tracer peers Tick {active = Peer pid state, duration} =
       trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
       threadDelay duration
       trace $ condense pid ++ "'s tick is now done."
+      traceWith stateTracer ()
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
     trace = traceUnitWith tracer "Scheduler"
@@ -216,13 +226,14 @@ dispatchTick tracer peers Tick {active = Peer pid state, duration} =
 runScheduler ::
   IOLike m =>
   Tracer m String ->
+  Tracer m () ->
   PointSchedule ->
   Map PeerId (PeerResources m) ->
   m ()
-runScheduler tracer ps@PointSchedule{ticks} peers = do
+runScheduler tracer stateTracer ps@PointSchedule{ticks} peers = do
   traceLinesWith tracer (prettyPointSchedule ps)
   traceStartOfTime
-  for_ ticks (dispatchTick tracer peers)
+  for_ ticks (dispatchTick tracer stateTracer peers)
   traceEndOfTime
   where
     traceStartOfTime =
@@ -264,6 +275,13 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree, 
     -- otherwise, an internal assertion fails because getCandidates yields more
     -- peer fragments than registered clients.
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
+        getCurrentChain = ChainDB.getCurrentChain chainDb
+        mkStateTracer
+          | scTraceState schedulerConfig
+          = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates
+          | otherwise
+          = pure nullTracer
+    stateTracer <- mkStateTracer
     startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
 
     when (scEnableGdd schedulerConfig) $ void $ forkLinkedThread registry "GenesisDensityGovernor" $
@@ -274,7 +292,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree, 
         (readTVar (psrCandidates resources))
         (readTVar (psrHandles resources))
 
-    runScheduler tracer pointSchedule (psrPeers resources)
+    runScheduler tracer stateTracer pointSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
     config = defaultCfg k gtGenesisWindow
