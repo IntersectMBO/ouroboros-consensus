@@ -641,7 +641,7 @@ mkNodeKernelArgs
   -> TopLevelConfig blk
   -> Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
   -> BlockchainTime m
-  -> InFutureCheck.HeaderInFutureCheck m blk
+  -> InFutureCheck.SomeHeaderInFutureCheck m blk
   -> ChainDB m blk
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
