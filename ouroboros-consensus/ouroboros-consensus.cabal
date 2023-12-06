@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            ouroboros-consensus
-version:         0.13.0.1
+version:         0.14.0.0
 synopsis:        Consensus layer for the Ouroboros blockchain protocol
 description:     Consensus layer for the Ouroboros blockchain protocol.
 license:         Apache-2.0
@@ -141,6 +141,7 @@ library
     Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface
     Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+    Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
@@ -275,12 +276,14 @@ library
     , strict-checked-vars          ^>=0.1.0.4
     , strict-sop-core              ^>=0.1
     , strict-stm                   ^>=1.3
-    , text                         ^>=2.0
     , these                        ^>=1.2
     , time
     , transformers
     , typed-protocols              ^>=0.1.1
     , vector                       ^>=0.13
+
+  -- GHC 8.10.7 on aarch64-darwin cannot use text-2
+  build-depends:   text >=1.2.5.0 && <2.2
 
 library unstable-consensus-testlib
   import:          common-lib
@@ -295,6 +298,7 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.ChainGenerator.RaceIterator
     Test.Ouroboros.Consensus.ChainGenerator.Slot
     Test.Ouroboros.Consensus.ChainGenerator.Some
+    Test.QuickCheck.Extras
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
@@ -481,6 +485,7 @@ test-suite consensus-test
   build-depends:
     , async
     , base
+    , base-deriving-via
     , cardano-binary
     , cardano-crypto-class
     , cardano-slotting
@@ -502,6 +507,7 @@ test-suite consensus-test
     , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
     , QuickCheck
     , quickcheck-state-machine
+    , quiet
     , random
     , serialise
     , si-timers
@@ -544,6 +550,7 @@ test-suite infra-test
     , random
     , tasty
     , tasty-quickcheck
+    , unstable-consensus-testlib
     , vector
 
 test-suite storage-test

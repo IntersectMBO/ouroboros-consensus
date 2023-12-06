@@ -4,10 +4,7 @@
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest (
     -- * Re-use
     TestHonest (TestHonest, testAsc, testRecipe, testRecipe')
-  , genKSD
-  , sized1
   , unlines'
-  , unsafeMapSuchThatJust
     -- * Tests
   , tests
   ) where
@@ -18,14 +15,14 @@ import           Data.Functor ((<&>))
 import           Data.Functor.Identity (runIdentity)
 import           Data.List (intercalate)
 import           Data.Proxy (Proxy (Proxy))
-import           Data.Word (Word8)
 import qualified System.Random as R
 import qualified System.Timeout as IO (timeout)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Honest as H
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg),
-                     ascFromBits)
+                     Delta (Delta), Kcp (Kcp), Len (Len), Scg (Scg), genAsc,
+                     genKSD)
 import qualified Test.QuickCheck as QC
+import           Test.QuickCheck.Extras (sized1, unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
@@ -41,18 +38,6 @@ tests = [
 
 -----
 
-sized1 :: (Int -> QC.Gen a) -> QC.Gen a
-sized1 f = QC.sized (f . succ)
-
--- | A generator that checks its own satisfaction
---
--- WARNING: 'QC.suchThat' et al often causes a /very/ confusing
--- non-termination when its argument is impossible/extremely unlikely
-unsafeMapSuchThatJust :: QC.Gen (Maybe a) -> QC.Gen a
-unsafeMapSuchThatJust m = QC.suchThatMap m id
-
------
-
 data TestHonest = TestHonest {
     testAsc     :: !Asc
   ,
@@ -62,24 +47,10 @@ data TestHonest = TestHonest {
   }
   deriving (Read, Show)
 
-genKSD :: QC.Gen (Kcp, Scg, Delta)
-genKSD = sized1 $ \sz -> do
-    d <- QC.choose (0, div sz 4)
-    k <- QC.choose (1, 2 * sz)
-    s <- (\x -> x + k) <$> QC.choose (0, 3 * sz)   -- ensures @k / s <= 1@
-    pure (Kcp k, Scg s, Delta d)
-
 instance QC.Arbitrary TestHonest where
-    arbitrary = sized1 $ \sz -> do
-        testAsc <- ascFromBits <$> QC.choose (1 :: Word8, maxBound - 1)
-
-        testRecipe <- do
-            (kcp, Scg s, delta) <- genKSD
-
-            -- s <= l, most of the time
-            l <- QC.frequency [(9, (+ s) <$> QC.choose (0, 5 * sz)), (1, QC.choose (1, s))]
-
-            pure $ H.HonestRecipe kcp (Scg s) delta (Len l)
+    arbitrary = do
+        testAsc <- genAsc
+        testRecipe <- H.genHonestRecipe
 
         testRecipe' <- case Exn.runExcept $ H.checkHonestRecipe testRecipe of
             Left e  -> error $ "impossible! " <> show (testRecipe, e)

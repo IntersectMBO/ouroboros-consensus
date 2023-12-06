@@ -1,10 +1,21 @@
 module Ouroboros.Consensus.Util.Time (
-    -- Conversions
-    nominalDelay
+    multipleNominalDelay
+  , nominalDelay
   , secondsToNominalDiffTime
   ) where
 
 import           Data.Time (DiffTime, NominalDiffTime)
+
+{-------------------------------------------------------------------------------
+  Operations
+-------------------------------------------------------------------------------}
+
+-- | Multiply a 'NominalDiffTime' by an integer
+--
+-- The right conversions to use are somewhat tricky. The key fact is that
+-- 'fromIntegral' interprets its argument as seconds.
+multipleNominalDelay :: Integral a => NominalDiffTime -> a -> NominalDiffTime
+multipleNominalDelay dur i = dur * fromIntegral i
 
 {-------------------------------------------------------------------------------
   Conversions

@@ -2,6 +2,21 @@
 
 # Changelog entries
 
+<a id='changelog-0.14.0.0'></a>
+## 0.14.0.0 — 2023-11-30
+
+### Non-Breaking
+
+- New internal testing module.
+
+- Update to `io-sim 1.3.1.0`.
+- Update index-state for `ouroboros-network 0.10.1.0` and
+  `ouroboros-network-api 0.6.1.0`.
+
+### Breaking
+
+ - ChainSync client: remove redundant `DoesntFit` exception
+
 <a id='changelog-0.13.0.1'></a>
 ## 0.13.0.1 — 2023-11-14
 
