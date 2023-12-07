@@ -29,12 +29,11 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, unTestHash)
-import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
   testGroup "long range attack" [
-    adjustQuickCheckTests (`div` 10) $
+    localOption (QuickCheckMaxSize 1) $
     testProperty "one adversary" (prop_longRangeAttack 1 [10])
     -- TODO we don't have useful classification logic for multiple adversaries yet – if a selectable
     -- adversary is slow, it might be discarded before it reaches critical length because the faster
@@ -67,7 +66,6 @@ prop_longRangeAttack honestFreq advFreqs =
     (\(genesisTest, schedule) ->
       let cls = classifiers genesisTest in
       -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
-      withMaxSuccess 10 $
       classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
       allAdversariesSelectable cls
       ==>
