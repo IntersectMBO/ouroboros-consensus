@@ -12,8 +12,8 @@ import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List (intercalate)
 import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
 import           Ouroboros.Consensus.Util.Condense (condense)
-import           Ouroboros.Network.AnchoredFragment (headAnchor)
-import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.AnchoredFragment
+                     (Anchor (Anchor, AnchorGenesis), anchor)
 import           System.Random.Stateful (runSTGen_)
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
@@ -76,9 +76,7 @@ prop_longRangeAttack honestFreq advFreqs =
           schedule
           $ exceptionCounterexample $ \StateView{svSelectedChain} killed ->
               killCounterexample killed $
-              -- This is the expected behavior of Praos to be reversed with Genesis.
-              -- But we are testing Praos for the moment
-              isHonestTestFragH svSelectedChain
+              isHonestImmutableTip svSelectedChain
     )
 
   where
@@ -91,10 +89,10 @@ prop_longRangeAttack honestFreq advFreqs =
       [] -> property
       killed -> counterexample ("Some peers were killed: " ++ intercalate ", " (condense <$> killed))
 
-    isHonestTestFragH :: TestFragH -> Bool
-    isHonestTestFragH frag = case headAnchor frag of
-        AF.AnchorGenesis   -> True
-        AF.Anchor _ hash _ -> isHonestTestHeaderHash hash
+    isHonestImmutableTip :: TestFragH -> Bool
+    isHonestImmutableTip frag = case anchor frag of
+        AnchorGenesis   -> True
+        Anchor _ hash _ -> isHonestTestHeaderHash hash
 
     isHonestTestHeaderHash :: HeaderHash TestBlock -> Bool
     isHonestTestHeaderHash = all (0 ==) . unTestHash
