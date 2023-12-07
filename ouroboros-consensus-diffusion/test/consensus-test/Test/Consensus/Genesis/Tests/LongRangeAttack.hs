@@ -60,7 +60,7 @@ prop_longRangeAttack honestFreq advFreqs =
     (genChainsAndSchedule scheduleConfig (fromIntegral (length advFreqs)) sched)
 
     -- Shrinker
-    (\(gt, ps) -> (gt,) <$> shrinkPointSchedule ps)
+    (\(gt, ps) -> (gt,) <$> shrinkPointSchedule (gtBlockTree gt) ps)
 
     -- Property
     (\(genesisTest, schedule) ->
