@@ -52,25 +52,32 @@ genChainsAndSchedule scheduleConfig numAdversaries scheduleType =
 newLRA :: Bool
 newLRA = True
 
-prop_longRangeAttack :: Int -> [Int] -> QC.Gen QC.Property
-prop_longRangeAttack honestFreq advFreqs = do
-  (genesisTest, schedule) <- genChainsAndSchedule scheduleConfig (fromIntegral (length advFreqs)) sched
-  let cls = classifiers genesisTest
+prop_longRangeAttack :: Int -> [Int] -> Property
+prop_longRangeAttack honestFreq advFreqs =
+  forAllBlind
 
-  -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
+    -- Generator
+    (genChainsAndSchedule scheduleConfig (fromIntegral (length advFreqs)) sched)
 
-  pure $
-    classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
-    allAdversariesSelectable cls
-    ==>
-    runSimOrThrow $
-      runTest
-        (noTimeoutsSchedulerConfig scheduleConfig)
-        genesisTest
-        schedule
-        $ exceptionCounterexample $ \StateView{svSelectedChain} killed ->
-            killCounterexample killed $
-            isHonestTestFragH svSelectedChain
+    -- Property
+    (\(genesisTest, schedule) ->
+      let cls = classifiers genesisTest in
+      -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
+      withMaxSuccess 10 $
+      classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
+      allAdversariesSelectable cls
+      ==>
+      runSimOrThrow $
+        runTest
+          (noTimeoutsSchedulerConfig scheduleConfig)
+          genesisTest
+          schedule
+          $ exceptionCounterexample $ \StateView{svSelectedChain} killed ->
+              killCounterexample killed $
+              -- This is the expected behavior of Praos to be reversed with Genesis.
+              -- But we are testing Praos for the moment
+              isHonestTestFragH svSelectedChain
+    )
 
   where
     sched | newLRA = NewLRA
