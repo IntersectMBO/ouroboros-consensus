@@ -42,9 +42,11 @@ module Test.Consensus.PointSchedule (
   , TipPoint (..)
   , balanced
   , banalStates
+  , blockPointPoint
   , defaultPointScheduleConfig
   , fromSchedulePoints
   , genSchedule
+  , headerPointPoint
   , mkPeers
   , onlyHonestWithMintingPointSchedule
   , peersOnlyHonest
@@ -64,6 +66,7 @@ import           Data.Maybe (fromMaybe, listToMaybe)
 import           Data.String (IsString (fromString))
 import           Data.Time (DiffTime)
 import           GHC.Generics (Generic)
+import           Ouroboros.Consensus.Block (Point (GenesisPoint), blockPoint)
 import           Ouroboros.Consensus.Block.Abstract (HasHeader, WithOrigin (..),
                      getHeader)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -84,7 +87,8 @@ import           Test.Consensus.PointSchedule.SinglePeer
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
                      peerScheduleFromTipPoints)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
-import           Test.Util.TestBlock (Header (TestHeader), TestBlock)
+import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
+                     testHeader)
 
 ----------------------------------------------------------------------------------------------------
 -- Data types
@@ -118,6 +122,11 @@ instance Condense HeaderPoint where
     HeaderPoint Origin ->
       "G"
 
+-- | Convert a 'HeaderPoint' to a 'Point'.
+headerPointPoint :: HeaderPoint -> Point TestBlock
+headerPointPoint (HeaderPoint Origin)      = GenesisPoint
+headerPointPoint (HeaderPoint (At header)) = blockPoint $ testHeader header
+
 -- | The latest block that should be sent to the client by the BlockFetch server
 -- in a tick.
 newtype BlockPoint =
@@ -130,6 +139,11 @@ instance Condense BlockPoint where
       "B:" <> condense (blockNo b) <> ",S:" <> condense (blockSlot b)
     BlockPoint Origin ->
       "G"
+
+-- | Convert a 'BlockPoint' to a 'Point'.
+blockPointPoint :: BlockPoint -> Point TestBlock
+blockPointPoint (BlockPoint Origin)     = GenesisPoint
+blockPointPoint (BlockPoint (At block)) = blockPoint block
 
 -- | The set of parameters that define the state that a peer should reach when it receives control
 -- by the scheduler in a single tick.
@@ -509,10 +523,10 @@ onlyHonestPointSchedule config BlockTree {btTrunk = _ :> tipBlock} =
   where
     tick = tickDefault config honestPeerState
     honestPeerState = Peer HonestPeer (NodeOnline points)
-    points = AdvertisedPoints tipPoint headerPoint blockPoint
-    tipPoint = TipPoint (tipFromHeader tipBlock)
-    headerPoint = HeaderPoint $ At (getHeader tipBlock)
-    blockPoint = BlockPoint (At tipBlock)
+    points = AdvertisedPoints tp hp bp
+    tp = TipPoint (tipFromHeader tipBlock)
+    hp = HeaderPoint $ At (getHeader tipBlock)
+    bp = BlockPoint (At tipBlock)
 
 -- | Generate a point schedule that consist of a single tick in which the honest peer advertises
 -- its entire chain as it becomes available.
@@ -538,10 +552,10 @@ onlyHonestWithMintingPointSchedule config initialSlotNo _ticksPerSlot fullFragme
       case fst $ splitFragmentAtSlotNo slotNo fullFragment of
         Empty _ -> error "onlyHonestWithMintingPointSchedule: there should be a block at that slot"
         (_ :> tipBlock) ->
-          let tipPoint = TipPoint $ tipFromHeader tipBlock
-              headerPoint = HeaderPoint $ At (getHeader tipBlock)
-              blockPoint = BlockPoint (At tipBlock)
-           in AdvertisedPoints tipPoint headerPoint blockPoint
+          let tp = TipPoint $ tipFromHeader tipBlock
+              hp = HeaderPoint $ At (getHeader tipBlock)
+              bp = BlockPoint (At tipBlock)
+           in AdvertisedPoints tp hp bp
 
     tickAtSlotNo :: SlotNo -> Tick
     tickAtSlotNo slotNo =
