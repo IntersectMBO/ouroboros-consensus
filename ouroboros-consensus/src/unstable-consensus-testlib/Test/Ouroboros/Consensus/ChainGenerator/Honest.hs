@@ -104,10 +104,13 @@ data NoSuchHonestChainSchema =
 
 genHonestRecipe :: QC.Gen HonestRecipe
 genHonestRecipe = sized1 $ \sz -> do
-  (kcp, Scg s, delta) <- genKSD
-  -- s <= l, most of the time
-  l <- QC.frequency [(9, (+ s) <$> QC.choose (0, 5 * sz)), (1, QC.choose (1, s))]
-  pure $ HonestRecipe kcp (Scg s) delta (Len l)
+    (Kcp k, Scg s, Delta d) <- genKSD
+    -- Ensure that there are k + 1 slots in the chain:
+    -- 2s has 2k blocks, but if the windows overlap as in 2s-k, then
+    -- only k blocks might be present.
+    -- Therefore we enlarge the schema by one slot to get the size 2s-k+1
+    l <- (+ (2*s - k + 1)) <$> QC.choose (0, 5 * sz)
+    pure $ HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l)
 
 -- | Checks whether the given 'HonestRecipe' determines a valid input to
 -- 'uniformTheHonestChain'
