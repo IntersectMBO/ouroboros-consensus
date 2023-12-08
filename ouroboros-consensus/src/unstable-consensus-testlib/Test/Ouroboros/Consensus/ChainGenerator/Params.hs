@@ -98,6 +98,8 @@ genAsc = ascFromBits <$> QC.choose (1 :: Word8, maxBound - 1)
 
 genKSD :: QC.Gen (Kcp, Scg, Delta)
 genKSD = sized1 $ \sz -> do
+    -- k > 1 so we can ensure an alternative schema loses the density comparison
+    -- without having to deactivate the first active slot
     k <- (+ 2) <$> QC.choose (0, 2 * sz)
     s <- (+ k) <$> QC.choose (0, 3 * sz)   -- ensures @k / s <= 1@
     d <- QC.choose (0, max 0 $ min (div sz 4) (s-1)) -- ensures @d < s@
