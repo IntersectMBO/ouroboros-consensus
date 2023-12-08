@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
 
@@ -14,7 +15,6 @@ import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -42,25 +42,26 @@ tests = testGroup "rollback" [
 -- @prop_rollback False@ tests that the selection of the node under test *does
 -- not* change branches when sent a rollback to a block strictly older than 'k'
 -- blocks before the current selection.
-prop_rollback :: Bool -> QC.Gen QC.Property
-prop_rollback wantRollback = do
-  genesisTest <- genChains 1
+prop_rollback :: Bool -> Property
+prop_rollback wantRollback =
+  forAllGenesisTest
 
-  let schedule = rollbackSchedule (gtBlockTree genesisTest)
+    (do
+      genesisTest@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains 1
+      -- | We consider the test case interesting if we want a rollback and we can
+      -- actually get one, or if we want no rollback and we cannot actually get one.
+      if wantRollback == canRollbackFromTrunkTip gtSecurityParam gtBlockTree
+        then pure (genesisTest, rollbackSchedule gtBlockTree)
+        else discard)
 
-  -- | We consider the test case interesting if we want a rollback and we can
-  -- actually get one, or if we want no rollback and we cannot actually get one.
-  pure $
-    wantRollback == canRollbackFromTrunkTip (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
-    ==>
-      runGenesisTest' schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
-        -- The test passes if we want a rollback and we actually end up on the
-        -- alternative chain or if we want no rollback and end up on the trunk.
-        wantRollback == headOnAlternativeChain svSelectedChain
+    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+
+    (\StateView{svSelectedChain} ->
+      -- The test passes if we want a rollback and we actually end up on the
+      -- alternative chain or if we want no rollback and end up on the trunk.
+      wantRollback == headOnAlternativeChain svSelectedChain)
 
   where
-    schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
-
     -- | Check whether the head of the given fragment is on an alternative chain
     -- of the block tree.
     headOnAlternativeChain fragment =
