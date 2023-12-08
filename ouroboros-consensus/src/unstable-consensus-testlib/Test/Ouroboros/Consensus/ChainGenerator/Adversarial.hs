@@ -475,9 +475,10 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         iterH =
             maybe (RI.initConservative vA) id
           $ RI.init kcp vA
-    unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
 
     ensureLowerDensityThanHonestSchema g mv
+
+    unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
 
     pure mv
   where
@@ -599,27 +600,20 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                 -- number of active slots in the first stability window after
                 -- the intersection in the honest schema
                 hCount = BV.countActivesInV S.notInverted (C.sliceV hScgWin vH)
-            firstActiveSlot <- BV.findIthEmptyInMV S.inverted mv (C.Count 0) >>= \case
-                BV.JustFound x -> pure x
-                BV.NothingFound -> error "dead code: there must be at least one empty slot in the alternative schema"
-            -- If density in the first stability window is 0, then the adversary can't win
-            when (firstActiveSlot < C.Count s) $ do
-                -- We avoid flipping the first active slot in the alternative
-                -- schema, since that could affect the expected youngest stable
-                -- slot, and therefore the races that are considered relevant.
-                let aScgWin = C.UnsafeContains (firstActiveSlot C.+ 1) (C.Count (s - C.getCount firstActiveSlot - 1))
-                    -- slice of the alternative schema for the first stability
-                    -- window after the intersection, skipping the first active slot
-                    aScgMv  = C.sliceMV aScgWin mv
-                    -- intended number of empty slots in the first stability window
-                    -- after the intersection in the alternative schema, skipping
-                    -- the first active slot
-                    emptyCountTarget = C.toVar $ S.complementActive S.notInverted (C.windowSize aScgWin) (hCount C.- 1) C.+ 1
-                void $ BV.fillInWindow
-                    S.inverted
-                    (BV.SomeDensityWindow emptyCountTarget (C.windowSize aScgWin))
-                    g
-                    aScgMv
+                -- first stability window after the intersection in the alternative
+                -- schema
+                aScgWin = C.UnsafeContains (C.Count 0) (C.Count s)
+                -- slice of the alternative schema for the first stability
+                -- window after the intersection
+                aScgMv  = C.sliceMV aScgWin mv
+                -- intended number of empty slots in the first stability window
+                -- after the intersection in the alternative schema
+                emptyCountTarget = C.toVar $ S.complementActive S.notInverted (C.windowSize aScgWin) hCount C.+ 1
+            void $ BV.fillInWindow
+                S.inverted
+                (BV.SomeDensityWindow emptyCountTarget (C.windowSize aScgWin))
+                g
+                aScgMv
 
 -- | The youngest stable slot
 --
