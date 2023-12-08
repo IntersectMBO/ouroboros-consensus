@@ -1,30 +1,17 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
-import           Control.Monad.IOSim (runSimOrThrow)
-import           Data.List (intercalate)
 import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
-import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Network.AnchoredFragment
                      (Anchor (Anchor, AnchorGenesis), anchor)
-import           System.Random.Stateful (runSTGen_)
 import           Test.Consensus.Genesis.Setup
-import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Shrink (shrinkPointSchedule)
-import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
-import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
-import           Test.QuickCheck.Random (QCGen)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -34,61 +21,26 @@ tests :: TestTree
 tests =
   testGroup "long range attack" [
     localOption (QuickCheckMaxSize 1) $
-    testProperty "one adversary" (prop_longRangeAttack 1 [10])
-    -- TODO we don't have useful classification logic for multiple adversaries yet – if a selectable
-    -- adversary is slow, it might be discarded before it reaches critical length because the faster
-    -- ones have served k blocks off the honest chain if their fork anchor is further down the line.
-    -- ,
-    -- testProperty "three adversaries" (prop_longRangeAttack 1 [2, 5, 10])
-  ]
+    testProperty "one adversary" prop_longRangeAttack
+    ]
 
-genChainsAndSchedule :: PointScheduleConfig -> Word -> ScheduleType -> QC.Gen (GenesisTest, PointSchedule)
-genChainsAndSchedule scheduleConfig numAdversaries scheduleType =
-  unsafeMapSuchThatJust do
-    gt <- genChains numAdversaries
-    seed :: QCGen <- arbitrary
-    pure ((gt,) <$> runSTGen_ seed (\ g -> genSchedule g scheduleConfig scheduleType (gtBlockTree gt)))
+prop_longRangeAttack :: Property
+prop_longRangeAttack =
+  forAllGenesisTest'
 
-newLRA :: Bool
-newLRA = True
+    -- number of alternative branches in the block tree
+    (pure 1)
 
-prop_longRangeAttack :: Int -> [Int] -> Property
-prop_longRangeAttack honestFreq advFreqs =
-  forAllShrinkBlind
+    -- type of schedule
+    NewLRA
 
-    -- Generator
-    (genChainsAndSchedule scheduleConfig (fromIntegral (length advFreqs)) sched)
+    -- scheduler config
+    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-    -- Shrinker
-    (\(gt, ps) -> (gt,) <$> shrinkPointSchedule (gtBlockTree gt) ps)
-
-    -- Property
-    (\(genesisTest, schedule) ->
-      let cls = classifiers genesisTest in
-      -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
-      classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
-      allAdversariesSelectable cls
-      ==>
-      runSimOrThrow $
-        runTest
-          (noTimeoutsSchedulerConfig scheduleConfig)
-          genesisTest
-          schedule
-          $ exceptionCounterexample $ \StateView{svSelectedChain} killed ->
-              killCounterexample killed $
-              isHonestImmutableTip svSelectedChain
-    )
+    -- property
+    (isHonestImmutableTip . svSelectedChain)
 
   where
-    sched | newLRA = NewLRA
-          | otherwise = Frequencies freqs
-
-    freqs = mkPeers honestFreq advFreqs
-
-    killCounterexample = \case
-      [] -> property
-      killed -> counterexample ("Some peers were killed: " ++ intercalate ", " (condense <$> killed))
-
     isHonestImmutableTip :: TestFragH -> Bool
     isHonestImmutableTip frag = case anchor frag of
         AnchorGenesis   -> True
@@ -96,5 +48,3 @@ prop_longRangeAttack honestFreq advFreqs =
 
     isHonestTestHeaderHash :: HeaderHash TestBlock -> Bool
     isHonestTestHeaderHash = all (0 ==) . unTestHash
-
-    scheduleConfig = defaultPointScheduleConfig

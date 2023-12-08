@@ -3,7 +3,6 @@
 
 module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
 
-import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.Maybe (fromJust)
 import           Ouroboros.Consensus.Block (getHeader)
@@ -46,8 +45,7 @@ prop_timeouts = do
           (fromJust $ mustReplyTimeout (scChainSyncTimeouts schedulerConfig))
           (btTrunk $ gtBlockTree genesisTest)
 
-  pure $ runSimOrThrow $
-    runTest schedulerConfig genesisTest schedule $ \stateView ->
+  pure $ runGenesisTest' schedulerConfig genesisTest schedule $ \stateView ->
       case svChainSyncExceptions stateView of
         [] ->
           counterexample ("result: " ++ condense (svSelectedChain stateView)) False

@@ -5,7 +5,6 @@
 
 module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
 
-import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.Maybe (fromJust)
 import           Ouroboros.Consensus.Block (ChainHash (..))
 import           Ouroboros.Consensus.Config.SecurityParam
@@ -54,7 +53,7 @@ prop_rollback wantRollback = do
   pure $
     wantRollback == canRollbackFromTrunkTip (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
     ==>
-      runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
+      runGenesisTest' schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
               GenesisHash    -> False
               BlockHash hash -> any (0 /=) $ unTestHash hash
