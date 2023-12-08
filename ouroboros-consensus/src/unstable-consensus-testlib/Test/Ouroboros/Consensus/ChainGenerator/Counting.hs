@@ -52,6 +52,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Counting (
   , createV
   , getMVector
   , getVector
+  , growMV
   , lengthMV
   , lengthV
   , modifyMV
@@ -360,6 +361,9 @@ modifyMV (MVector mv) f (Count i)   = MV.modify mv f i
 
 readV :: MV.Unbox a => Vector base elem a -> Index base elem -> a
 readV (Vector v) (Count i) = v V.! i
+
+growMV :: MV.Unbox a => MVector base elem s a -> Size base elem -> ST s (MVector base elem s a)
+growMV (MVector mv) (Count n) = fmap MVector $ MV.grow mv n
 
 -----
 

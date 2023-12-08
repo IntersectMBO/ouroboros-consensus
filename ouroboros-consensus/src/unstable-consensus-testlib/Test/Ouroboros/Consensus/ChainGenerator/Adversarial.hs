@@ -365,6 +365,9 @@ data AdvLbl
 -- | The interval of slots that have most recently attained their final value
 data SettledLbl
 
+-- | The interval of slots that are after the stable slots
+data UnstableLbl
+
 -- | Reject a bad 'AdversarialRecipe'
 checkAdversarialRecipe ::
   forall base hon.
@@ -460,7 +463,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- find the slot of the k+1 honest block
     let kPlus1st :: C.Index adv SlotE
         kPlus1st = case BV.findIthEmptyInV S.inverted (C.sliceV carWin vH) (C.Count k) of
-          BV.NothingFound -> maybe (error "dead code") id $ C.toWindow carWin $ C.windowLast carWin
+          BV.NothingFound -> error "there should be k+1 blocks in the honest chain after the intersection"
           BV.JustFound x  -> x
 
 
@@ -475,11 +478,14 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         iterH =
             maybe (RI.initConservative vA) id
           $ RI.init kcp vA
-    unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
+    mbYS <- unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
 
     ensureLowerDensityThanHonestSchema g mv
 
-    pure mv
+    mv' <- ensureKplus1Slots kPlus1st g mbYS mv
+
+    pure mv'
+
   where
     UnsafeCheckedAdversarialRecipe {
         carHonest
@@ -500,7 +506,9 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     vA = C.sliceV carWin vH
 
     -- ensure the adversary loses this 'RI.Race' and each subsequent race that ends before it can accelerate
-    unfillRaces kPlus1st !scope !mbYS !iter !g !mv = when (withinYS delta mbYS iter) $ do
+    unfillRaces kPlus1st !scope !mbYS !iter !g !mv
+      | not (withinYS delta mbYS iter) = pure mbYS
+      | otherwise = do
         C.SomeWindow Proxy rwin <- pure $ let RI.Race x = iter in x
 
         C.SomeWindow (Proxy :: Proxy skolem) win <-
@@ -561,7 +569,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                 (C.sliceMV touch mv)
 
         case RI.next vA iter <|> RI.nextConservative vA iter of
-            Nothing -> pure ()   -- there are no remaining honest active slots
+            Nothing -> pure mbYS   -- there are no remaining honest active slots
 
             Just iter' -> do
                 C.SomeWindow Proxy rwin' <- pure $ let RI.Race x = iter' in x
@@ -581,14 +589,8 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                         case mbFound of
                             BV.NothingFound -> pure UnknownYS
                             BV.JustFound x  ->
-                                -- x is the first settled adversarial slot, so
-                                -- the adversary can accelerate its growth as
-                                -- of x+s+1 (If s were 0, it could accelerate
-                                -- in the very next slot, thus the plus 1.)
                                 pure $! KnownYS $!
-                                  max
-                                    (kPlus1st C.+ d C.+ 1)
-                                    (C.fromWindow settledSlots x C.+ s C.+ 1)
+                                  firstUnstableSlot kPlus1st (C.fromWindow settledSlots x)
                 unfillRaces kPlus1st (C.windowLast win C.+ 1) mbYS' iter' g mv
 
     ensureLowerDensityThanHonestSchema g mv =
@@ -620,6 +622,54 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                     (BV.SomeDensityWindow emptyCountTarget (C.windowSize aScgWin))
                     g
                     aScgMv
+
+    ensureKplus1Slots kPlus1st g mbYS mv = do
+        C.Count actives <- BV.countActivesInMV S.notInverted mv
+        let missingBlocks = max 0 $ k + 1 - actives
+        if missingBlocks == 0 then pure mv else do
+          -- Get the first unstable slot in the alternative schema
+          firstUnstable <- case mbYS of
+              KnownYS ys -> pure ys
+              UnknownYS  ->
+                BV.findIthEmptyInMV S.inverted mv (C.Count 0) >>= \case
+                  BV.NothingFound -> error "dead code: there must be at least one empty slot in the alternative schema"
+                  BV.JustFound x -> pure $ firstUnstableSlot kPlus1st x
+          -- slots in the alternative schema that are after the stable slots
+          C.SomeWindow Proxy unstableSlots <-
+            pure $ C.withSuffixWindow (C.windowSize carWin) (C.Lbl @UnstableLbl) firstUnstable
+          C.Count inactiveUnstables <- BV.countActivesInMV S.inverted (C.sliceMV unstableSlots mv)
+          -- slots that need to be added to the schema in order to reach k+1 actives
+          let missingSlots =
+                max 0 (C.getCount firstUnstable - sz)
+                + max 0 (missingBlocks - inactiveUnstables)
+              C.Count sz = C.lengthMV mv
+          -- grow the schema if needed
+          mv' <- if missingSlots == 0 then pure mv else do
+            mv' <- C.growMV mv (C.Count missingSlots)
+            C.forRange_ (C.Count missingSlots) $ BV.setMV S.inverted mv' . (C.+ sz)
+            pure mv'
+          -- fill in enough of the unstable slots
+          C.SomeWindow Proxy augmentedUnstableSlots <- pure $
+            C.withSuffixWindow
+              (C.lengthMV mv')
+              (C.Lbl @UnstableLbl)
+              firstUnstable
+          let activeUnstables = C.getCount (C.windowSize unstableSlots) - inactiveUnstables
+          void $ BV.fillInWindow
+              S.notInverted
+              (BV.SomeDensityWindow
+                (C.Count (activeUnstables + missingBlocks))
+                (C.windowSize augmentedUnstableSlots)
+              )
+              g
+              (C.sliceMV augmentedUnstableSlots mv')
+          pure mv'
+
+    firstUnstableSlot kPlus1st firstActiveSlot =
+      -- x is the first settled adversarial slot, so the adversary can
+      -- accelerate its growth as of x+s+1 (If s were 0, it could accelerate
+      -- in the very next slot, thus the plus 1.)
+      max (kPlus1st C.+ d C.+ 1) (firstActiveSlot C.+ s C.+ 1)
 
 -- | The youngest stable slot
 --
