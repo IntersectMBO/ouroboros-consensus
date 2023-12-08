@@ -15,7 +15,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck (
   ) where
 
 import           Control.Exception (Exception)
-import           Control.Monad (guard, unless)
+import           Control.Monad (guard, unless, when)
 import           Control.Monad.Class.MonadTimer.SI (MonadDelay, threadDelay)
 import           Control.Monad.Except (Except, liftEither)
 import           Data.Proxy (Proxy (Proxy))
@@ -137,8 +137,8 @@ realHeaderInFutureCheck skew systemTime =
             now <- systemTimeCurrent systemTime
             let ageNow         = now `diffRelTime` onset
                 syntheticDelay = negate ageNow
-            threadDelay $ nominalDelay syntheticDelay   -- TODO leap seconds?
-               -- recall that threadDelay ignores negative arguments
+            when (0 < syntheticDelay) $ do   -- note https://github.com/input-output-hk/io-sim/issues/129
+                threadDelay $ nominalDelay syntheticDelay   -- TODO leap seconds?
 
         pure $ do
             guard tooEarly   -- no exception if within skew
