@@ -54,16 +54,19 @@ prop_rollback wantRollback = do
     wantRollback == canRollbackFromTrunkTip (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
     ==>
       runGenesisTest' schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
-        let headOnAlternativeChain = case AF.headHash svSelectedChain of
-              GenesisHash    -> False
-              BlockHash hash -> any (0 /=) $ unTestHash hash
-        in
         -- The test passes if we want a rollback and we actually end up on the
         -- alternative chain or if we want no rollback and end up on the trunk.
-        wantRollback == headOnAlternativeChain
+        wantRollback == headOnAlternativeChain svSelectedChain
 
   where
     schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
+
+    -- | Check whether the head of the given fragment is on an alternative chain
+    -- of the block tree.
+    headOnAlternativeChain fragment =
+      case AF.headHash fragment of
+        GenesisHash    -> False
+        BlockHash hash -> any (0 /=) $ unTestHash hash
 
     -- A schedule that advertises all the points of the trunk, then switches to
     -- the first alternative chain of the given block tree.

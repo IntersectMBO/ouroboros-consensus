@@ -1,6 +1,3 @@
-{-# LANGUAGE LambdaCase     #-}
-{-# LANGUAGE NamedFieldPuns #-}
-
 module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
 
 import           Data.List.NonEmpty (NonEmpty ((:|)))
@@ -35,13 +32,13 @@ prop_timeouts = do
   genesisTest <- genChains 0
 
   -- Use higher tick duration to avoid the test taking really long
-  let scSchedule = PointScheduleConfig {pscTickDuration = 1}
+  let scheduleConfig = PointScheduleConfig {pscTickDuration = 1}
 
-      schedulerConfig = defaultSchedulerConfig scSchedule (gtHonestAsc genesisTest)
+      schedulerConfig = defaultSchedulerConfig scheduleConfig (gtHonestAsc genesisTest)
 
       schedule =
         dullSchedule
-          scSchedule
+          scheduleConfig
           (fromJust $ mustReplyTimeout (scChainSyncTimeouts schedulerConfig))
           (btTrunk $ gtBlockTree genesisTest)
 

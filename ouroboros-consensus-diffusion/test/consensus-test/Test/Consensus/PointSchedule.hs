@@ -288,7 +288,7 @@ prettyPointSchedule PointSchedule{ticks} =
 
 -- | Parameters that are significant for components outside of generators, like the peer
 -- simulator.
-data PointScheduleConfig =
+newtype PointScheduleConfig =
   PointScheduleConfig {
     -- | Duration of a tick, for timeouts in the scheduler.
     pscTickDuration :: DiffTime
