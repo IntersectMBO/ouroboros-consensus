@@ -1,24 +1,37 @@
-{-# LANGUAGE DeriveAnyClass       #-}
-{-# LANGUAGE DeriveGeneric        #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE NamedFieldPuns       #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
--- TODO: forkers should be closed when the LedgerDB is closed
--- TODO: resource registry
-module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (newForker) where
+module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
+    -- * Main API
+    closeAllForkers
+  , newForkerAtFromTip
+  , newForkerAtPoint
+  , newForkerAtTip
+    -- * Acquire consistent views
+  , acquireAtFromTip
+  , acquireAtPoint
+  , acquireAtTip
+  ) where
 
 import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Semigroup
 import qualified Data.Set as Set
-import           GHC.Generics
+import           Data.Word
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (numDeletes,
@@ -27,96 +40,184 @@ import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.API as API
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
 import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API as BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding
+                     (ExceededRollback)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbCh
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
-                     (LedgerDBEnv (..))
 import           Ouroboros.Consensus.Util
-import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.ResourceRegistry
 
 {-------------------------------------------------------------------------------
-  Accessing the environment
+  Close
 -------------------------------------------------------------------------------}
 
-newtype ForkerHandle m l blk = ForkerHandle (StrictTVar m (ForkerState m l blk))
-  deriving Generic
+newForkerAtTip ::
+     ( IOLike m
+     , IsLedger l
+     , HasLedgerTables l
+     , LedgerSupportsProtocol blk
+     )
+  => LedgerDBHandle m l blk
+  -> ResourceRegistry m
+  -> m (Forker m l blk)
+newForkerAtTip h rr = getEnv h $ \ldbEnv -> do
+    acquireAtTip ldbEnv rr >>= newForker h ldbEnv
 
-data ForkerState m l blk =
-    ForkerOpen !(ForkerEnv m l blk)
-  | ForkerClosed
-  deriving Generic
+newForkerAtPoint ::
+     ( HeaderHash l ~ HeaderHash blk
+     , IOLike m
+     , IsLedger l
+     , StandardHash l
+     , HasLedgerTables l
+     , LedgerSupportsProtocol blk
+     )
+  => LedgerDBHandle m l blk
+  -> ResourceRegistry m
+  -> Point blk
+  -> m (Either (Point blk) (Forker m l blk))
+newForkerAtPoint h rr pt = getEnv h $ \ldbEnv -> do
+    acquireAtPoint ldbEnv rr pt >>= traverse (newForker h ldbEnv)
 
-deriving instance ( IOLike m
-                  , LedgerSupportsProtocol blk
-                  , NoThunks (l EmptyMK)
-                  , NoThunks (Key l)
-                  , NoThunks (Value l)
-                  ) => NoThunks (ForkerState m l blk)
+newForkerAtFromTip ::
+     ( IOLike m
+     , IsLedger l
+     , HasLedgerTables l
+     , LedgerSupportsProtocol blk
+     )
+  => LedgerDBHandle m l blk
+  -> ResourceRegistry m
+  -> Word64
+  -> m (Either ExceededRollback (Forker m l blk))
+newForkerAtFromTip h rr n = getEnv h $ \ldbEnv -> do
+    acquireAtFromTip ldbEnv rr n >>= traverse (newForker h ldbEnv)
 
-data ForkerEnv m l blk = ForkerEnv {
-    foeBackingStoreValueHandle :: !(LedgerBackingStoreValueHandle m l)
-  , foeChangelog               :: !(StrictTVar m (AnchorlessDbChangelog l))
-  , foeSecurityParam           :: !SecurityParam
-  , switchVar                  :: !(StrictTVar m (DbChangelog l))
-  }
-  deriving Generic
+-- | Close all open block and header 'Follower's.
+closeAllForkers ::
+     MonadSTM m
+  => LedgerDBEnv m l blk
+  -> m ()
+closeAllForkers ldbEnv = do
+    forkerEnvs <- atomically $ do
+      forkerEnvs <- Map.elems <$> readTVar forkersVar
+      writeTVar forkersVar Map.empty
+      return forkerEnvs
+    mapM_ closeForkerEnv forkerEnvs
+  where
+    forkersVar = ldbForkers ldbEnv
 
-deriving instance ( IOLike m
-                  , LedgerSupportsProtocol blk
-                  , NoThunks (l EmptyMK)
-                  , NoThunks (Key l)
-                  , NoThunks (Value l)
-                  ) => NoThunks (ForkerEnv m l blk)
-
-getEnv :: forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
-       => ForkerHandle m l blk
-       -> (ForkerEnv m l blk -> m r)
-       -> m r
-getEnv (ForkerHandle varState) f = readTVarIO varState >>= \case
-    ForkerOpen env -> f env
-    ForkerClosed   -> throwIO $ ClosedForkerError @blk prettyCallStack
-
-getEnv1 :: (IOLike m, HasCallStack, HasHeader blk)
-        => ForkerHandle m l blk
-        -> (ForkerEnv m l blk -> a -> m r)
-        -> a -> m r
-getEnv1 h f a = getEnv h (\env -> f env a)
-
-getEnvSTM :: forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
-          => ForkerHandle m l blk
-          -> (ForkerEnv m l blk -> STM m r)
-          -> STM m r
-getEnvSTM (ForkerHandle varState) f = readTVar varState >>= \case
-    ForkerOpen env -> f env
-    ForkerClosed   -> throwSTM $ ClosedForkerError @blk prettyCallStack
+closeForkerEnv :: ForkerEnv m l blk -> m ()
+closeForkerEnv ForkerEnv { foeBackingStoreValueHandle } = do
+        bsvhClose foeBackingStoreValueHandle
 
 {-------------------------------------------------------------------------------
-  Forkers
+  Acquiring consistent views
+-------------------------------------------------------------------------------}
+
+type Resources m l =
+    (LedgerBackingStoreValueHandle m l, AnchorlessDbChangelog l)
+
+-- Acquire both a value handle and a db changelog at the tip. Holds a read lock
+-- while doing so.
+acquireAtTip ::
+     IOLike m
+  => LedgerDBEnv m l blk
+  -> ResourceRegistry m
+  -> m (Resources m l)
+acquireAtTip ldbEnv rr =
+    withReadLock (ldbLock ldbEnv) $ do
+      dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
+      (,dblog) <$> acquire ldbEnv rr dblog
+
+-- Acquire both a value handle and a db changelog at the requested point. Holds
+-- a read lock while doing so.
+acquireAtPoint ::
+     forall m l blk. (
+       HeaderHash l ~ HeaderHash blk
+     , IOLike m
+     , IsLedger l
+     , StandardHash l
+     , HasLedgerTables l
+     , LedgerSupportsProtocol blk
+     )
+  => LedgerDBEnv m l blk
+  -> ResourceRegistry m
+  -> Point blk
+  -> m (Either (Point blk) (Resources m l))
+acquireAtPoint ldbEnv rr pt =
+    withReadLock (ldbLock ldbEnv) $ do
+      dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
+      case rollback pt dblog of
+        Nothing     -> pure $ Left $ castPoint $ getTip $ anchor dblog
+        Just dblog' -> Right . (,dblog') <$> acquire ldbEnv rr dblog'
+
+-- Acquire both a value handle and a db changelog at n blocks before the tip.
+-- Holds a read lock while doing so.
+acquireAtFromTip ::
+     forall m l blk. (
+       IOLike m
+     , IsLedger l
+     , HasLedgerTables l
+     )
+  => LedgerDBEnv m l blk
+  -> ResourceRegistry m
+  -> Word64
+  -> m (Either ExceededRollback (Resources m l))
+acquireAtFromTip ldbEnv rr n =
+    withReadLock (ldbLock ldbEnv) $ do
+      dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
+      case rollbackN n dblog of
+        Nothing ->
+          return $ Left $ ExceededRollback {
+              API.rollbackMaximum   = maxRollback dblog
+            , API.rollbackRequested = n
+            }
+        Just dblog' -> Right . (,dblog') <$> acquire ldbEnv rr dblog'
+
+acquire ::
+     IOLike m
+  => LedgerDBEnv m l blk
+  -> ResourceRegistry m
+  -> AnchorlessDbChangelog l
+  -> m (LedgerBackingStoreValueHandle m l)
+acquire ldbEnv rr dblog =  do
+  (_, vh) <- allocate rr (\_ -> bsValueHandle $ ldbBackingStore ldbEnv) bsvhClose
+  if bsvhAtSlot vh == adcLastFlushedSlot dblog
+    then pure vh
+    else error (  "Critical error: Value handles are created at "
+                <> show (bsvhAtSlot vh)
+                <> " while the db changelog is at "
+                <> show (adcLastFlushedSlot dblog)
+                <> ". There is either a race condition or a logic bug"
+                )
+
+{-------------------------------------------------------------------------------
+  Make forkers from consistent views
 -------------------------------------------------------------------------------}
 
 newForker ::
      ( IOLike m
      , HasLedgerTables l
-     , GetTip l
      , LedgerSupportsProtocol blk
      , NoThunks (l EmptyMK)
+     , GetTip l
      )
-  => LedgerDBEnv m l blk
-  -> LedgerBackingStoreValueHandle m l
-  -> AnchorlessDbChangelog l
+  => LedgerDBHandle m l blk
+  -> LedgerDBEnv m l blk
+  -> Resources m l
   -> m (Forker m l blk)
-newForker ldbEnv vh dblog = do
-    dblogVar <- newTVarIO dblog
-    h <- ForkerHandle <$> newTVarIO (ForkerOpen $ forkerEnv dblogVar)
-    pure $ mkForker h
-  where
-    forkerEnv dblogVar = ForkerEnv {
-        foeBackingStoreValueHandle = vh
-      , foeChangelog = dblogVar
-      , foeSecurityParam = ldbSecParam ldbEnv
-      , switchVar = ldbChangelog ldbEnv
-      }
+newForker h ldbEnv (vh, dblog) = do
+  dblogVar <- newTVarIO dblog
+  let forkerEnv = ForkerEnv {
+      foeBackingStoreValueHandle = vh
+    , foeChangelog               = dblogVar
+    , foeSwitchVar               = ldbChangelog ldbEnv
+    , foeSecurityParam           = ldbSecParam ldbEnv
+    , foeQueryBatchSize          = ldbQueryBatchSize ldbEnv
+    }
+  forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, succ r)
+  atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
+  pure $ mkForker h forkerKey
 
 mkForker ::
      ( IOLike m
@@ -124,36 +225,40 @@ mkForker ::
      , HasLedgerTables l
      , GetTip l
      )
-  => ForkerHandle m l blk
+  => LedgerDBHandle m l blk
+  -> ForkerKey
   -> Forker m l blk
-mkForker h = Forker {
-      forkerClose = forkerClose' h
-    , forkerReadTables = getEnv1 h forkerReadTables'
-    , forkerRangeReadTables = getEnv1 h forkerRangeReadTables'
-    , forkerGetLedgerState = getEnvSTM h forkerGetLedgerState'
-    , forkerReadStatistics = getEnv h forkerReadStatistics'
-    , forkerPush = getEnv1 h forkerPush'
-    , forkerCommit = getEnvSTM h forkerCommit'
+mkForker h forkerKey = Forker {
+      forkerClose                  = implForkerClose h forkerKey
+    , forkerReadTables             = getForkerEnv1   h forkerKey implForkerReadTables
+    , forkerRangeReadTables        = getForkerEnv1   h forkerKey implForkerRangeReadTables
+    , forkerRangeReadTablesDefault = getForkerEnv1   h forkerKey implForkerRangeReadTablesDefault
+    , forkerGetLedgerState         = getForkerEnvSTM h forkerKey implForkerGetLedgerState
+    , forkerReadStatistics         = getForkerEnv    h forkerKey implForkerReadStatistics
+    , forkerPush                   = getForkerEnv1   h forkerKey implForkerPush
+    , forkerCommit                 = getForkerEnvSTM h forkerKey implForkerCommit
     }
 
-forkerClose' :: MonadSTM m => ForkerHandle m l blk -> m ()
-forkerClose' (ForkerHandle varState) = do
+implForkerClose ::
+     MonadSTM m
+  => LedgerDBHandle m l blk
+  -> ForkerKey
+  -> m ()
+implForkerClose (LDBHandle varState) forkerKey = do
     envMay <- atomically $ readTVar varState >>= \case
-      ForkerClosed   -> pure Nothing
-      ForkerOpen env -> do
-        writeTVar varState ForkerClosed
-        pure $ Just env
-    whenJust envMay cleanup
-  where
-    cleanup ForkerEnv { foeBackingStoreValueHandle } =
-      bsvhClose foeBackingStoreValueHandle
+      LedgerDBClosed       -> pure Nothing
+      LedgerDBOpen ldbEnv -> do
+        stateTVar
+            (ldbForkers ldbEnv)
+            (Map.updateLookupWithKey (\_ _ -> Nothing) forkerKey)
+    whenJust envMay closeForkerEnv
 
-forkerReadTables' ::
+implForkerReadTables ::
      (MonadSTM m, HasLedgerTables l)
   => ForkerEnv m l blk
   -> LedgerTables l KeysMK
   -> m (LedgerTables l ValuesMK)
-forkerReadTables' env ks = do
+implForkerReadTables env ks = do
     ldb <- readTVarIO $ foeChangelog env
     let rew = rewindTableKeySets ldb ks
     unfwd <- readKeySetsWith lvh rew
@@ -163,12 +268,12 @@ forkerReadTables' env ks = do
   where
     lvh = foeBackingStoreValueHandle env
 
-forkerRangeReadTables' ::
+implForkerRangeReadTables ::
      (MonadSTM m, HasLedgerTables l)
   => ForkerEnv m l blk
   -> API.RangeQuery l
   -> m (LedgerTables l ValuesMK)
-forkerRangeReadTables' env rq0 = do
+implForkerRangeReadTables env rq0 = do
     ldb <- readTVarIO $ foeChangelog env
     let -- Get the differences without the keys that are greater or equal
         -- than the maximum previously seen key.
@@ -270,19 +375,29 @@ forkerRangeReadTables' env rq0 = do
               vs'
                (Diff.filterOnlyKey (< k) ds)
 
-forkerGetLedgerState' ::
+implForkerRangeReadTablesDefault ::
+     (MonadSTM m, HasLedgerTables l)
+  => ForkerEnv m l blk
+  -> Maybe (LedgerTables l KeysMK)
+  -> m (LedgerTables l ValuesMK)
+implForkerRangeReadTablesDefault env prev =
+    implForkerRangeReadTables env (API.RangeQuery prev (fromIntegral n))
+  where
+    n = defaultQueryBatchSize $ foeQueryBatchSize env
+
+implForkerGetLedgerState ::
      (MonadSTM m, GetTip l)
   => ForkerEnv m l blk
   -> STM m (l EmptyMK)
-forkerGetLedgerState' env = current <$> readTVar (foeChangelog env)
+implForkerGetLedgerState env = current <$> readTVar (foeChangelog env)
 
 -- | Obtain statistics for a combination of backing store value handle and
 -- changelog.
-forkerReadStatistics' ::
+implForkerReadStatistics ::
      (MonadSTM m, HasLedgerTables l)
   => ForkerEnv m l blk
   -> m (Maybe API.Statistics)
-forkerReadStatistics' env = do
+implForkerReadStatistics env = do
     dblog <- readTVarIO $ foeChangelog env
     let seqNo = adcLastFlushedSlot dblog
     BackingStore.Statistics{sequenceNumber = seqNo', numEntries = n} <- bsvhStat lbsvh
@@ -306,24 +421,24 @@ forkerReadStatistics' env = do
   where
     lbsvh = foeBackingStoreValueHandle env
 
-forkerPush' ::
+implForkerPush ::
      (MonadSTM m, GetTip l, HasLedgerTables l)
   => ForkerEnv m l blk
   -> l DiffMK
   -> m ()
-forkerPush' env newState = atomically $ do
+implForkerPush env newState = atomically $ do
   db <- readTVar (foeChangelog env)
   let db' = prune (foeSecurityParam env)
           $ extend (DbCh.ValidLedgerState newState) db
   writeTVar (foeChangelog env) db'
 
-forkerCommit' ::
+implForkerCommit ::
      (MonadSTM m, GetTip l, HasLedgerTables l)
   => ForkerEnv m l blk
   -> STM m ()
-forkerCommit' env = do
+implForkerCommit env = do
   dblog <- readTVar (foeChangelog env)
-  modifyTVar (switchVar env) (\pruned ->
+  modifyTVar (foeSwitchVar env) (\pruned ->
     let s = fromWithOrigin 0
           . pointSlot
           . getTip
