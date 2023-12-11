@@ -14,6 +14,7 @@ module Test.Consensus.Genesis.Setup (
   , runGenesisTest'
   , forAllGenesisTest
   , forAllGenesisTest'
+  , NumBranches(..)
   ) where
 
 import           Control.Exception (AsyncException (ThreadKilled))
@@ -135,12 +136,14 @@ forAllGenesisTest generator schedulerConfig mkProperty =
     killCounterexample [] = property
     killCounterexample killed = counterexample ("Some peers were killed: " ++ intercalate ", " (condense <$> killed))
 
+newtype NumBranches = NumBranches { getNumBranches :: Word }
+
 -- | Variant of 'forAllGenesisTest' that generate a 'GenesisTest' and a
 -- 'PointSchedule' given a number of alternative branches in the block tree and
 -- a schedule type.
 forAllGenesisTest' ::
   Testable prop =>
-  Gen Word -> -- ^ number of alternative branches in the block tree
+  Gen NumBranches -> -- ^ number of alternative branches in the block tree
   ScheduleType ->
   SchedulerConfig ->
   (StateView -> prop) ->
@@ -151,6 +154,6 @@ forAllGenesisTest' numBranches scheduleType schedulerConfig@SchedulerConfig{scSc
     genChainsAndSchedule :: Gen (GenesisTest, PointSchedule)
     genChainsAndSchedule =
       unsafeMapSuchThatJust do
-        gt@GenesisTest{gtBlockTree} <- genChains =<< numBranches
+        gt@GenesisTest{gtBlockTree} <- genChains . getNumBranches =<< numBranches
         seed :: QCGen <- arbitrary
         pure $ (gt,) <$> runSTGen_ seed (\g -> genSchedule g scSchedule scheduleType gtBlockTree)

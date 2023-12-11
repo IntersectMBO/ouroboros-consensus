@@ -27,17 +27,8 @@ tests =
 prop_longRangeAttack :: Property
 prop_longRangeAttack =
   forAllGenesisTest'
-
-    -- number of alternative branches in the block tree
-    (pure 1)
-
-    -- type of schedule
-    NewLRA
-
-    -- scheduler config
+    (pure $ NumBranches 1) NewLRA
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
-
-    -- property
     (isHonestImmutableTip . svSelectedChain)
 
   where
