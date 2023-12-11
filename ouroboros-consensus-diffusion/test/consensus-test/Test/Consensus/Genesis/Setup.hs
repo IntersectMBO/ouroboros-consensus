@@ -36,7 +36,7 @@ import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace (traceLinesWith, terseFrag)
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Shrink (shrinkPointSchedule)
+import           Test.Consensus.PointSchedule.Shrink (smartShrinkAlertPointSchedule)
 import           Test.QuickCheck
 import           Test.QuickCheck.Random (QCGen)
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
@@ -132,7 +132,8 @@ forAllGenesisTest generator schedulerConfig mkProperty =
 
   where
     runner = uncurry (runGenesisTest schedulerConfig)
-    shrinker (gt, ps) _ = (gt,) <$> shrinkPointSchedule (gtBlockTree gt) ps
+    shrinker (gt, ps) RunGenesisTestResult{rgtrStateView=sv} =
+      (gt,) <$> smartShrinkAlertPointSchedule (gtBlockTree gt) ps sv
     killCounterexample [] = property
     killCounterexample killed = counterexample ("Some peers were killed: " ++ intercalate ", " (condense <$> killed))
 

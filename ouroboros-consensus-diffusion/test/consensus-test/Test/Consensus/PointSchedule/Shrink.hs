@@ -1,6 +1,10 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Test.Consensus.PointSchedule.Shrink (shrinkPointSchedule) where
+module Test.Consensus.PointSchedule.Shrink (
+    shrinkAlertPointSchedule
+  , smartShrinkAlertPointSchedule
+  , smartShrinkPointSchedule
+  ) where
 
 import           Data.Function ((&))
 import           Data.List.NonEmpty (toList)
@@ -8,6 +12,7 @@ import           Data.Maybe (mapMaybe)
 import           Ouroboros.Network.AnchoredFragment (headPoint)
 import           Ouroboros.Network.Block (Point)
 import           Test.Consensus.BlockTree (BlockTree (btTrunk))
+import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule
 import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock)
@@ -35,10 +40,26 @@ isReasonablePointSchedule blockTree PointSchedule{ticks} =
     & filter (\Tick{active=Peer{name}} -> name == HonestPeer)
     & honestNodeIsAlert blockTree
 
--- | Shrink a 'PointSchedule' in a generic way; only yield “reasonable” point
--- schedules. See 'isReasonablePointSchedule'.
-shrinkPointSchedule :: BlockTree TestBlock -> PointSchedule -> [PointSchedule]
-shrinkPointSchedule blockTree PointSchedule{ticks, peerIds} =
+-- | Shrink an alert 'PointSchedule' in a generic way; we call a 'PointSchedule'
+-- “alert” when it contains an honest peer that behaves in an alert way. This
+-- shrinking function always yield alert 'PointSchedules'.
+shrinkAlertPointSchedule :: BlockTree TestBlock -> PointSchedule -> [PointSchedule]
+shrinkAlertPointSchedule blockTree PointSchedule{ticks, peerIds} =
   shrinkList (const []) (toList ticks)
     & mapMaybe (flip pointSchedule peerIds)
     & filter (isReasonablePointSchedule blockTree)
+
+-- | Shrink a 'PointSchedule' in a smart way: this function assumes nothing on
+-- the given 'PointSchedule' but it also gets a 'StateView' which allows it to
+-- inspect the run that this 'PointSchedule' triggered. This can help it take
+-- smart decisions of shrunk 'PointSchedule's which we know have big chances to
+-- trigger the same error.
+smartShrinkPointSchedule :: BlockTree TestBlock -> PointSchedule -> StateView -> [PointSchedule]
+smartShrinkPointSchedule _bt _ps _sv =
+  []
+
+-- | The best of both worlds: shrink a 'PointSchedule' in a smart way but fall
+-- back on generic shrinking of alert 'PointSchedule's if it does not work.
+smartShrinkAlertPointSchedule :: BlockTree TestBlock -> PointSchedule -> StateView -> [PointSchedule]
+smartShrinkAlertPointSchedule bt ps sv =
+  smartShrinkPointSchedule bt ps sv ++ shrinkAlertPointSchedule bt ps
