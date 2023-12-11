@@ -202,15 +202,18 @@ singleJumpRawPeerSchedule g psp slotOfB chainv = do
 data IsTrunk = IsTrunk | IsBranch
   deriving (Eq, Show)
 
--- | @peerScheduleFromTipPoints g params tps trunk branches@ generates a schedule for
--- a single peer that follows the given tip points.
+-- | @peerScheduleFromTipPoints g params tps trunk branches@ generates a
+-- schedule for a single peer that follows the given tip points.
 --
--- @tps@ contains the tip points for each fragment.
+-- @tps@ contains the tip points for each fragment. The indices correspond to
+-- the fragments in branches and go from @0@ to @length branch - 1@.
 --
 -- @trunk@ is the fragment for the honest chain
 --
 -- @branches@ contains the fragments for the alternative chains in ascending
--- order of their intersections with the honest chain.
+-- order of their intersections with the honest chain. Each fragment is anchored
+-- at the intersection, and therefore their first block must be the first block
+-- after the intersection.
 --
 peerScheduleFromTipPoints
   :: R.StatefulGen g m
