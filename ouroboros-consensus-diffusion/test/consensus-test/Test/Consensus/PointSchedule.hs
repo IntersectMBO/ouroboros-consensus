@@ -42,18 +42,22 @@ module Test.Consensus.PointSchedule (
   , TipPoint (..)
   , balanced
   , banalStates
+  , blockPointBlock
   , blockPointPoint
   , defaultPointScheduleConfig
   , fromSchedulePoints
   , genSchedule
+  , headerPointBlock
   , headerPointPoint
   , mkPeers
   , onlyHonestWithMintingPointSchedule
   , peersOnlyHonest
   , pointSchedule
+  , pointScheduleBlocks
   , pointSchedulePeers
   , prettyGenesisTest
   , prettyPointSchedule
+  , tipPointBlock
   ) where
 
 import           Data.Foldable (toList)
@@ -62,7 +66,7 @@ import           Data.List (mapAccumL, scanl', sortOn, transpose)
 import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, listToMaybe)
+import           Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import           Data.String (IsString (fromString))
 import           Data.Time (DiffTime)
 import           GHC.Generics (Generic)
@@ -88,7 +92,7 @@ import           Test.Consensus.PointSchedule.SinglePeer
                      peerScheduleFromTipPoints)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
-                     testHeader)
+                     Validity (Valid), testHeader, unsafeTestBlockWithPayload)
 
 ----------------------------------------------------------------------------------------------------
 -- Data types
@@ -109,6 +113,12 @@ instance Condense TipPoint where
   condense (TipPoint (Tip slot _ bno)) =
       "B:" <> condense bno <> ",S:" <> condense slot
 
+-- | Convert a 'TipPoint' to a 'TestBlock'.
+tipPointBlock :: TipPoint -> Maybe TestBlock
+tipPointBlock (TipPoint TipGenesis) = Nothing
+tipPointBlock (TipPoint (Tip slot hash _)) =
+  Just $ unsafeTestBlockWithPayload hash slot Valid ()
+
 -- | The latest header that should be sent to the client by the ChainSync server
 -- in a tick.
 newtype HeaderPoint =
@@ -127,6 +137,11 @@ headerPointPoint :: HeaderPoint -> Point TestBlock
 headerPointPoint (HeaderPoint Origin)      = GenesisPoint
 headerPointPoint (HeaderPoint (At header)) = blockPoint $ testHeader header
 
+-- | Convert a 'HeaderPoint' to a 'TestBlock'.
+headerPointBlock :: HeaderPoint -> Maybe TestBlock
+headerPointBlock (HeaderPoint Origin)      = Nothing
+headerPointBlock (HeaderPoint (At header)) = Just $ testHeader header
+
 -- | The latest block that should be sent to the client by the BlockFetch server
 -- in a tick.
 newtype BlockPoint =
@@ -144,6 +159,11 @@ instance Condense BlockPoint where
 blockPointPoint :: BlockPoint -> Point TestBlock
 blockPointPoint (BlockPoint Origin)     = GenesisPoint
 blockPointPoint (BlockPoint (At block)) = blockPoint block
+
+-- | Convert a 'BlockPoint' to a 'Point'.
+blockPointBlock :: BlockPoint -> Maybe TestBlock
+blockPointBlock (BlockPoint Origin)     = Nothing
+blockPointBlock (BlockPoint (At block)) = Just block
 
 -- | The set of parameters that define the state that a peer should reach when it receives control
 -- by the scheduler in a single tick.
@@ -347,6 +367,17 @@ mkPeers h as =
     advs [a] = [("adversary", a)]
     advs _   = zip enumAdvs as
     enumAdvs = (\ n -> PeerId ("adversary " ++ show n)) <$> [1 :: Int ..]
+
+-- | List of all blocks appearing in the schedule as tip point, header point or
+-- block point.
+pointScheduleBlocks :: PointSchedule -> [TestBlock]
+pointScheduleBlocks PointSchedule{ticks} =
+  catMaybes $ concatMap
+    (\Tick{active=Peer{value}} -> case value of
+         NodeOffline -> []
+         NodeOnline (AdvertisedPoints{tip, header, block}) ->
+           [tipPointBlock tip, headerPointBlock header, blockPointBlock block])
+    ticks
 
 ----------------------------------------------------------------------------------------------------
 -- Conversion to 'PointSchedule'
