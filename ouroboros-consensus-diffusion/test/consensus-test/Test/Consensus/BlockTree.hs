@@ -160,7 +160,7 @@ prettyBlockTree :: AF.HasHeader blk => BlockTree blk -> [String]
 prettyBlockTree blockTree =
   ["slots:   " ++ unwords (map (printf "%2d" . unSlotNo) [veryFirstSlot .. veryLastSlot])]
     ++ [printTrunk honestFragment]
-    ++ (map printBranch adversarialFragments)
+    ++ map printBranch adversarialFragments
 
   where
     honestFragment = btTrunk blockTree
@@ -175,7 +175,7 @@ prettyBlockTree blockTree =
           (honestFragment : adversarialFragments)
 
     printTrunk :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
-    printTrunk = printLine (\_ -> "trunk:  ─")
+    printTrunk = printLine (const "trunk:  ─")
 
     printBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
     printBranch = printLine $ \firstSlot ->
