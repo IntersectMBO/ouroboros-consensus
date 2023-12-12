@@ -106,10 +106,10 @@ genHonestRecipe :: QC.Gen HonestRecipe
 genHonestRecipe = sized1 $ \sz -> do
     (Kcp k, Scg s, Delta d) <- genKSD
     -- Ensure that there are k + 1 slots in the chain:
-    -- 2s has 2k blocks, but if the windows overlap as in 2s-k, then
-    -- only k blocks might be present.
-    -- Therefore we enlarge the schema by one slot to get the size 2s-k+1
-    l <- (+ (2*s - k + 1)) <$> QC.choose (0, 5 * sz)
+    -- 2s slots has at least 2k blocks. But that is ensuring k-1 more blocks
+    -- than we actually need. Thus it's safe to remove the k-1 last slots.
+    -- Therefore we set for a length of at least 2s - (k - 1).
+    l <- (+ (2*s - (k - 1))) <$> QC.choose (0, 5 * sz)
     pure $ HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l)
 
 -- | Checks whether the given 'HonestRecipe' determines a valid input to

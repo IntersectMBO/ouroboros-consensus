@@ -423,6 +423,10 @@ data TouchableLbl
 
 -- | Generate an adversarial 'ChainSchema' that satifies 'checkExtendedRaceAssumption'
 --
+-- The adversarial chain schema is at least as long as to reach the end of the
+-- honest chain schema. It might have a few more slots to ensure it contains
+-- at least k+1 active slots after the intersection.
+--
 -- The distribution this function samples from is not simple to describe. It
 -- begins by drawing a sample of length 'adv' from the Bernoulli process
 -- induced by the active slot coefficient 'Asc'. (IE 'adv' many i.i.d. samples
@@ -435,6 +439,10 @@ data TouchableLbl
 -- Finally, it ensures that the density of the alternative schema is
 -- less than the density of the honest schema in the first stability window
 -- after the intersection.
+--
+-- PRECONDITION: @let (k, _, _) = carParams car in k >= 2@
+-- We need k >= 2 so we can ensure an alternative schema loses the density
+-- comparison without having to deactivate the first active slot
 uniformAdversarialChain ::
   forall g base hon adv.
      R.RandomGen g
@@ -444,6 +452,9 @@ uniformAdversarialChain ::
   -> ChainSchema base adv
 {-# INLINABLE uniformAdversarialChain #-}
 uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
+    when (k < 2) $
+      error "k must be at least 2"
+
     g <- R.newSTGenM g0
 
     let sz = C.windowSize carWin :: C.Size adv SlotE
@@ -625,36 +636,50 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
 
     ensureKplus1Slots kPlus1st g mbYS mv = do
         C.Count actives <- BV.countActivesInMV S.notInverted mv
+
         let missingBlocks = max 0 $ k + 1 - actives
+
         if missingBlocks == 0 then pure mv else do
+
           -- Get the first unstable slot in the alternative schema
           firstUnstable <- case mbYS of
               KnownYS ys -> pure ys
               UnknownYS  ->
                 BV.findIthEmptyInMV S.inverted mv (C.Count 0) >>= \case
-                  BV.NothingFound -> error "dead code: there must be at least one empty slot in the alternative schema"
-                  BV.JustFound x -> pure $ firstUnstableSlot kPlus1st x
+                  BV.NothingFound -> error "there must be at least one active slot in the alternative schema"
+                  BV.JustFound firstActiveSlot -> pure (firstUnstableSlot kPlus1st firstActiveSlot)
+
           -- slots in the alternative schema that are after the stable slots
           C.SomeWindow Proxy unstableSlots <-
-            pure $ C.withSuffixWindow (C.windowSize carWin) (C.Lbl @UnstableLbl) firstUnstable
+              pure
+            $ C.withSuffixWindow
+                (C.windowSize carWin)
+                (C.Lbl @UnstableLbl)
+                firstUnstable
           C.Count inactiveUnstables <- BV.countActivesInMV S.inverted (C.sliceMV unstableSlots mv)
+
           -- slots that need to be added to the schema in order to reach k+1 actives
           let missingSlots =
-                max 0 (C.getCount firstUnstable - sz)
+                max 0 (C.getCount firstUnstable - oldSz)
                 + max 0 (missingBlocks - inactiveUnstables)
-              C.Count sz = C.lengthMV mv
+              C.Count oldSz = C.lengthMV mv
+
           -- grow the schema if needed
           mv' <- if missingSlots == 0 then pure mv else do
             mv' <- C.growMV mv (C.Count missingSlots)
-            C.forRange_ (C.Count missingSlots) $ BV.setMV S.inverted mv' . (C.+ sz)
+            C.forRange_ (C.Count missingSlots) $ BV.setMV S.inverted mv' . (C.+ oldSz)
             pure mv'
+
           -- fill in enough of the unstable slots
-          C.SomeWindow Proxy augmentedUnstableSlots <- pure $
-            C.withSuffixWindow
-              (C.lengthMV mv')
-              (C.Lbl @UnstableLbl)
-              firstUnstable
+          C.SomeWindow Proxy augmentedUnstableSlots <-
+              pure
+            $ C.withSuffixWindow
+                (C.lengthMV mv')
+                (C.Lbl @UnstableLbl)
+                firstUnstable
+
           let activeUnstables = C.getCount (C.windowSize unstableSlots) - inactiveUnstables
+
           void $ BV.fillInWindow
               S.notInverted
               (BV.SomeDensityWindow
@@ -663,12 +688,17 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
               )
               g
               (C.sliceMV augmentedUnstableSlots mv')
+
           pure mv'
 
     firstUnstableSlot kPlus1st firstActiveSlot =
       -- x is the first settled adversarial slot, so the adversary can
       -- accelerate its growth as of x+s+1 (If s were 0, it could accelerate
       -- in the very next slot, thus the plus 1.)
+      --
+      -- The first unstable slot cannot be earlier than the race to the k+1st
+      -- block after the intersection either, so we take take the first slot
+      -- to meet both conditions.
       max (kPlus1st C.+ d C.+ 1) (firstActiveSlot C.+ s C.+ 1)
 
 -- | The youngest stable slot
@@ -691,14 +721,15 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 -- intersection.
 genPrefixBlockCount :: R.RandomGen g => Kcp -> g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
 genPrefixBlockCount (Kcp k) g schedH
-    | C.getCount numChoices <= 0 = error "there should be at least k+1 blocks in the honest schema"
+    | C.getCount validIntersections < 0 = error "there should be at least k+1 blocks in the honest schema"
     | otherwise =
-        -- uniformIndex is going to pick a number between 0 and numChoices-1
-        C.toVar $ R.runSTGen_ g $ C.uniformIndex numChoices
+        -- @uniformIndex n@ picks a number between @0@ and @n - 1@
+        C.toVar $ R.runSTGen_ g $ C.uniformIndex (validIntersections C.+ 1)
   where
     ChainSchema _slots v = schedH
 
-    numChoices = actives C.- k
+    -- An intersection is valid if it has @k + 1@ blocks after it.
+    validIntersections = actives C.- (k + 1)
 
     -- 'H.uniformTheHonestChain' ensures k < active
     actives = BV.countActivesInV S.notInverted v

@@ -176,12 +176,12 @@ prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $
       $ QC.counterexample ("arPrefix = " <> show (A.arPrefix testRecipeA))
       $ QC.counterexample ("stabWin  = " <> show stabWin)
       $ QC.counterexample ("stabWin' = " <> show (C.joinWin winA stabWin))
-      $ QC.counterexample ("The honest chain has k+1 blocks after the intersection")
+      $ QC.counterexample ("The honest chain should have k+1 blocks after the intersection")
           (BV.countActivesInV S.notInverted vH
             `QC.ge` C.toSize (C.Count (k + 1) + A.arPrefix testRecipeA)
           )
         QC..&&.
-        QC.counterexample ("The alternative chain has k+1 blocks after the intersection")
+        QC.counterexample ("The alternative chain should have k+1 blocks after the intersection")
           (BV.countActivesInV S.notInverted vA `QC.ge` C.Count (k + 1))
 
 
