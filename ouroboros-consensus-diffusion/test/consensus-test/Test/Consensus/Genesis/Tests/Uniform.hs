@@ -25,12 +25,12 @@ import           Ouroboros.Network.Block (blockNo, unBlockNo)
 import           Test.Consensus.BlockTree (BlockTree (..))
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig,
-                     scTraceState)
+import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (scTrace),
+                     noTimeoutsSchedulerConfig, scTraceState)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.SinglePeer
-  (SchedulePoint(ScheduleBlockPoint, ScheduleTipPoint))
+                     (SchedulePoint (ScheduleBlockPoint, ScheduleTipPoint))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
@@ -132,7 +132,7 @@ prop_serveAdversarialBranches = QC.expectFailure <$> do
     makeProperty genesisTest schedulePoints
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scTraceState = False}
+    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scTraceState = False, scTrace = False}
 
     scheduleConfig = defaultPointScheduleConfig
 
@@ -176,7 +176,8 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
     makeProperty genesisTest schedulePoints
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scEnableGdd = True}
+    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
+      { scTrace = False }
 
     scheduleConfig = defaultPointScheduleConfig
 
@@ -222,7 +223,8 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
     makeProperty genesisTest schedulePoints
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scEnableGdd = True}
+    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
+      { scTrace = False }
 
     scheduleConfig = defaultPointScheduleConfig
 
@@ -266,7 +268,7 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
       mapMaybe fromBlockPoint
 
     fromTipPoint (t, ScheduleTipPoint bp) = Just (t, bp)
-    fromTipPoint _ = Nothing
+    fromTipPoint _                        = Nothing
 
 headCallStack :: HasCallStack => [a] -> a
 headCallStack xs = if null xs then error "headCallStack: empty list" else head xs

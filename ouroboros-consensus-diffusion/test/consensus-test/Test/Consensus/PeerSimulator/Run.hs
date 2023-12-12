@@ -77,11 +77,14 @@ data SchedulerConfig =
     -- | Config shared with point schedule generators.
     , scSchedule        :: PointScheduleConfig
 
-    -- | If 'True', 'Test.Consensus.Genesis.Setup.runTest' will enable full
-    -- tracing during the test.
+    -- | If 'True', 'Test.Consensus.Genesis.Setup.runTest' will print traces
+    -- to stderr.
     --
     -- Use 'debugScheduler' to toggle it conveniently.
     , scDebug           :: Bool
+
+    -- | Whether to trace when running the scheduler.
+    , scTrace           :: Bool
 
     -- Whether to trace only the current state of the candidates and selection,
     -- which provides a less verbose view of the test progress.
@@ -96,6 +99,7 @@ defaultSchedulerConfig scSchedule asc =
     scSlotLength,
     scSchedule,
     scDebug = False,
+    scTrace = True,
     scTraceState = False
   }
   where
@@ -109,6 +113,7 @@ noTimeoutsSchedulerConfig scSchedule =
     scSlotLength,
     scSchedule,
     scDebug = False,
+    scTrace = True,
     scTraceState = False
   }
   where
@@ -241,7 +246,7 @@ runPointSchedule ::
   PointSchedule ->
   Tracer m String ->
   m StateView
-runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} pointSchedule tracer =
+runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} pointSchedule tracer0 =
   withRegistry $ \registry -> do
     stateViewTracers <- defaultStateViewTracers
     resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
@@ -270,6 +275,8 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     snapshotStateView stateViewTracers chainDb
   where
     config = defaultCfg k
+
+    tracer = if scTrace schedulerConfig then tracer0 else nullTracer
 
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.
