@@ -38,6 +38,7 @@ module Test.Util.TestBlock (
   , successorBlockWithPayload
   , testHashFromList
   , unTestHash
+  , unsafeTestBlockWithPayload
     -- ** Test block without payload
   , TestBlock
   , firstBlock
@@ -217,6 +218,12 @@ data TestBlockWith ptype = TestBlockWith {
     }
   deriving stock    (Show, Eq, Ord, Generic)
   deriving anyclass (Serialise, NoThunks, ToExpr)
+
+-- | Create a block directly with the given parameters. This allows creating
+-- inconsistent blocks; prefer 'firstBlockWithPayload' or 'successorBlockWithPayload'.
+unsafeTestBlockWithPayload :: TestHash -> SlotNo -> Validity -> ptype -> TestBlockWith ptype
+unsafeTestBlockWithPayload tbHash tbSlot tbValid tbPayload =
+  TestBlockWith{tbHash, tbSlot, tbValid, tbPayload}
 
 -- | Create the first block in the given fork, @[fork]@, with the given payload.
 -- The 'SlotNo' will be 1.
