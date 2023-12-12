@@ -25,7 +25,7 @@ import           Test.Consensus.BlockTree (BlockTree (..))
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.Run
-                     (SchedulerConfig (scEnableGdd), noTimeoutsSchedulerConfig,
+                     (SchedulerConfig (scEnableGdd, scTrace), noTimeoutsSchedulerConfig,
                      scTraceState)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
@@ -173,7 +173,10 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
     makeProperty genesisTest (length (peerIds schedule) - 1)
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scEnableGdd = True}
+    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
+      { scEnableGdd = True
+      , scTrace = False
+      }
 
     scheduleConfig = defaultPointScheduleConfig
 
@@ -221,7 +224,10 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
     makeProperty genesisTest (length (peerIds schedule) - 1)
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scEnableGdd = True}
+    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
+      { scEnableGdd = True
+      , scTrace = False
+      }
 
     scheduleConfig = defaultPointScheduleConfig
 
