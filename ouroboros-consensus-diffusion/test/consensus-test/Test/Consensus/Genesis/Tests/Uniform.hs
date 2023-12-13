@@ -162,10 +162,8 @@ genUniformSchedulePoints gt =
 -- yet.
 prop_leashingAttackStalling :: QC.Gen QC.Property
 prop_leashingAttackStalling = QC.expectFailure <$> do
-  (genesisTest, schedule) <- qcFromSchedulePoints $ do
-    genesisTest <- genChains (QC.choose (1, 4))
-    schedule <- genLeashingSchedule genesisTest
-    pure (genesisTest, schedule)
+  genesisTest <- genChains (QC.choose (1, 4))
+  schedule <- fromSchedulePoints <$> genLeashingSchedule genesisTest
   pure $
     runSimOrThrow $
     runTest schedulerConfig genesisTest schedule $
@@ -213,10 +211,8 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
 -- See Note [Leashing attacks]
 prop_leashingAttackTimeLimited :: QC.Gen QC.Property
 prop_leashingAttackTimeLimited = QC.expectFailure <$> do
-  (genesisTest, schedule) <- qcFromSchedulePoints $ do
-    genesisTest <- genChains (QC.choose (1, 4))
-    schedule <- genTimeLimitedSchedule genesisTest
-    pure (genesisTest, schedule)
+  genesisTest <- genChains (QC.choose (1, 4))
+  schedule <- fromSchedulePoints <$> genTimeLimitedSchedule genesisTest
   pure $
     runSimOrThrow $
     runTest schedulerConfig genesisTest schedule $
