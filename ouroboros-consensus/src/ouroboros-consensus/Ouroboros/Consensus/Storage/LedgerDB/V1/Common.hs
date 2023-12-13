@@ -22,6 +22,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
   , getEnv2
   , getEnvSTM
   , getEnvSTM1
+    -- * Forkers
+  , ForkerEnv (..)
+  , ForkerKey (..)
+  , getForkerEnv
+  , getForkerEnv1
+  , getForkerEnvSTM
     -- * LedgerDB lock
   , LedgerDBLock
   , mkLedgerDBLock
@@ -34,8 +40,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
   ) where
 
 import           Codec.Serialise.Class
+import           Control.Arrow
 import           Control.Tracer
 import           Data.Kind
+import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
 import           Data.Word
 import           GHC.Generics
@@ -48,7 +57,8 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.LedgerDB.API as API
 import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog (DbChangelog)
+import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding
+                     (ResolveBlock)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
@@ -107,14 +117,18 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
     -- of the blocks eligible for garbage-collection should be removed from
     -- this set.
   , ldbPrevApplied    :: !(StrictTVar m (Set (RealPoint blk)))
-
+    -- | Open forkers.
+    --
+    -- INVARIANT: a forker is open iff its 'ForkerKey' is in this 'Map.
+  , ldbForkers        :: !(StrictTVar m (Map ForkerKey (ForkerEnv m l blk)))
+  , ldbNextForkerKey  :: !(StrictTVar m ForkerKey)
 
   , ldbDiskPolicy     :: !DiskPolicy
   , ldbTracer         :: !(Tracer m (TraceLedgerDBEvent blk))
   , ldbCfg            :: !(TopLevelConfig blk)
   , ldbHasFS          :: !(SomeHasFS m)
   , ldbShouldFlush    :: !(Word64 -> Bool)
-  , ldbQueryBatchSize :: !Word64
+  , ldbQueryBatchSize :: !QueryBatchSize
   , ldbResolveBlock   :: !(ResolveBlock m blk)
   , ldbSecParam       :: !SecurityParam
   , ldbBsTracer       :: !(Tracer m BackingStoreTraceByBackend)
@@ -127,36 +141,39 @@ deriving instance ( IOLike m
                   , NoThunks (Value l)
                   ) => NoThunks (LedgerDBEnv m l blk)
 
-
 -- | Check if the LedgerDB is open, if so, executing the given function on the
 -- 'LedgerDBEnv', otherwise, throw a 'CloseDBError'.
-getEnv :: forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
-       => LedgerDBHandle m l blk
-       -> (LedgerDBEnv m l blk -> m r)
-       -> m r
+getEnv ::
+     forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> (LedgerDBEnv m l blk -> m r)
+  -> m r
 getEnv (LDBHandle varState) f = readTVarIO varState >>= \case
     LedgerDBOpen env -> f env
     LedgerDBClosed   -> throwIO $ ClosedDBError @blk prettyCallStack
 
 -- | Variant 'of 'getEnv' for functions taking one argument.
-getEnv1 :: (IOLike m, HasCallStack, HasHeader blk)
-        => LedgerDBHandle m l blk
-        -> (LedgerDBEnv m l blk -> a -> m r)
-        -> a -> m r
+getEnv1 ::
+     (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> (LedgerDBEnv m l blk -> a -> m r)
+  -> a -> m r
 getEnv1 h f a = getEnv h (\env -> f env a)
 
 -- | Variant 'of 'getEnv' for functions taking two arguments.
-getEnv2 :: (IOLike m, HasCallStack, HasHeader blk)
-        => LedgerDBHandle m l blk
-        -> (LedgerDBEnv m l blk -> a -> b -> m r)
-        -> a -> b -> m r
+getEnv2 ::
+     (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> (LedgerDBEnv m l blk -> a -> b -> m r)
+  -> a -> b -> m r
 getEnv2 h f a b = getEnv h (\env -> f env a b)
 
 -- | Variant of 'getEnv' that works in 'STM'.
-getEnvSTM :: forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
-          => LedgerDBHandle m l blk
-          -> (LedgerDBEnv m l blk -> STM m r)
-          -> STM m r
+getEnvSTM ::
+     forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> (LedgerDBEnv m l blk -> STM m r)
+  -> STM m r
 getEnvSTM (LDBHandle varState) f = readTVar varState >>= \case
     LedgerDBOpen env -> f env
     LedgerDBClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
@@ -170,6 +187,70 @@ getEnvSTM1 ::
 getEnvSTM1 (LDBHandle varState) f a = readTVar varState >>= \case
     LedgerDBOpen env -> f env a
     LedgerDBClosed   -> throwSTM $ ClosedDBError @blk prettyCallStack
+
+{-------------------------------------------------------------------------------
+  Forkers
+-------------------------------------------------------------------------------}
+
+-- | An identifier for a 'Forker'. See 'ldbForkers'.
+newtype ForkerKey = ForkerKey Word16
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Enum, NoThunks)
+
+data ForkerEnv m l blk = ForkerEnv {
+    -- * Local, consistent view of ledger state
+    foeBackingStoreValueHandle :: !(LedgerBackingStoreValueHandle m l)
+  , foeChangelog               :: !(StrictTVar m (AnchorlessDbChangelog l))
+    -- * Communication with the LedgerDB
+    -- | Points to 'ldbChangelog'.
+  , foeSwitchVar               :: !(StrictTVar m (DbChangelog l))
+    -- * Config
+  , foeSecurityParam           :: !SecurityParam
+  , foeQueryBatchSize          :: !QueryBatchSize
+  }
+  deriving Generic
+
+deriving instance ( IOLike m
+                  , LedgerSupportsProtocol blk
+                  , NoThunks (l EmptyMK)
+                  , NoThunks (Key l)
+                  , NoThunks (Value l)
+                  ) => NoThunks (ForkerEnv m l blk)
+
+getForkerEnv ::
+     forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> ForkerKey
+  -> (ForkerEnv m l blk -> m r)
+  -> m r
+getForkerEnv (LDBHandle varState) forkerKey f = do
+    forkerEnv <- atomically $ readTVar varState >>= \case
+      LedgerDBClosed   -> throwIO $ ClosedDBError @blk prettyCallStack
+      LedgerDBOpen env -> readTVar (ldbForkers env) >>= (Map.lookup forkerKey >>> \case
+        Nothing        -> throwSTM $ ClosedForkerError @blk prettyCallStack
+        Just forkerEnv -> pure forkerEnv)
+
+    f forkerEnv
+
+getForkerEnv1 ::
+     (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> ForkerKey
+  -> (ForkerEnv m l blk -> a -> m r)
+  -> a -> m r
+getForkerEnv1 h forkerKey f a = getForkerEnv h forkerKey (`f` a)
+
+getForkerEnvSTM ::
+     forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> ForkerKey
+  -> (ForkerEnv m l blk -> STM m r)
+  -> STM m r
+getForkerEnvSTM (LDBHandle varState) forkerKey f = readTVar varState >>= \case
+    LedgerDBClosed   -> throwIO $ ClosedDBError @blk prettyCallStack
+    LedgerDBOpen env -> readTVar (ldbForkers env) >>= (Map.lookup forkerKey >>> \case
+      Nothing        -> throwSTM $ ClosedForkerError @blk prettyCallStack
+      Just forkerEnv -> f forkerEnv)
 
 {-------------------------------------------------------------------------------
   LedgerDB lock

@@ -3,17 +3,17 @@
 {-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE DeriveAnyClass           #-}
 {-# LANGUAGE DeriveGeneric            #-}
-{-# LANGUAGE DerivingStrategies       #-}
+{-# LANGUAGE DerivingVia              #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE FlexibleInstances        #-}
 {-# LANGUAGE FunctionalDependencies   #-}
 {-# LANGUAGE GADTs                    #-}
 {-# LANGUAGE LambdaCase               #-}
+{-# LANGUAGE NumericUnderscores       #-}
 {-# LANGUAGE QuantifiedConstraints    #-}
 {-# LANGUAGE RankNTypes               #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE UndecidableInstances     #-}
@@ -111,14 +111,21 @@
 module Ouroboros.Consensus.Storage.LedgerDB.API (
     -- * Main API
     LedgerDB (..)
+  , LedgerDB'
+  , currentPoint
     -- * Exceptions
   , LedgerDbError (..)
+    -- * Arguments
+  , QueryBatchSize (..)
+  , defaultQueryBatchSize
     -- * Forker
   , Forker (..)
+  , Forker'
   , PointNotFound (..)
   , RangeQuery (..)
   , Statistics (..)
-  , getTipForker
+  , forkerCurrentPoint
+  , getForker
   , getTipStatistics
   , readLedgerTablesAtFor
   , withTipForker
@@ -170,6 +177,7 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word
 import           GHC.Generics
+import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderStateHistory
@@ -180,10 +188,10 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
 import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
-import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.ResourceRegistry
 
 {-------------------------------------------------------------------------------
   Main API
@@ -203,26 +211,22 @@ data LedgerDB m l blk = LedgerDB {
   , getHeaderStateHistory  ::
          (l ~ ExtLedgerState blk)
       => STM m (HeaderStateHistory blk)
+    -- | Acquire a 'Forker' at the tip.
+  , getForkerAtTip  :: ResourceRegistry m -> m (Forker m l blk)
+    -- | Acquire a 'Forker' at the requested point. If the requested point
+    -- doesn't exist it will return a @StaticRight (Left pt)@.
+  , getForkerAtPoint ::
+         ResourceRegistry m
+      -> Point blk
+      -> m (Either (Point blk) (Forker m l blk))
     -- | Acquire a 'Forker' at a requested @n@ blocks back from the tip.
     --
     -- You could view this as a rollback of @n@ blocks, and acquiring the
     -- 'Forker' at that point.
-  , getForkerAtFromTip :: Word64 -> m (Either ExceededRollback (Forker m l blk))
-    -- | Acquire a 'Forker' at the requested point or at the tip. If the
-    -- requested point doesn't exist it will return a @StaticRight (Left pt)@.
-  , getForker  ::
-         forall a b.
-         StaticEither b () (Point blk)
-      -> STM m a
-#if __GLASGOW_HASKELL__ >= 902
-         -- ^ STM operation that we want to run in the same atomic block as the
-         -- acquisition of the LedgerDB
-#endif
-    -> m ( a
-         , StaticEither b
-            (Forker m l blk)
-            (Either (Point blk) (Forker m l blk))
-         )
+  , getForkerAtFromTip ::
+         ResourceRegistry m
+      -> Word64
+      -> m (Either ExceededRollback (Forker m l blk))
     -- | Get the references to blocks that have previously been applied.
   , getPrevApplied :: STM m (Set (RealPoint blk))
     -- | Add new references to blocks that have been applied.
@@ -230,8 +234,10 @@ data LedgerDB m l blk = LedgerDB {
     -- | Garbage collect references to old blocks that have been previously
     -- applied.
   , garbageCollect :: SlotNo -> STM m ()
-    -- | Get
+    -- | Get the 'ResolveBlock' that the LedgerDB was opened with
   , getResolveBlock :: STM m (ResolveBlock m blk)
+    -- | Get the top-level config that the LedgerDB was opened with
+  , getTopLevelConfig :: STM m (TopLevelConfig blk)
     -- | If the provided arguments indicate so (based on the DiskPolicy with
     -- which this LedgerDB was opened), take a snapshot and delete stale ones.
   , tryTakeSnapshot ::
@@ -249,7 +255,24 @@ data LedgerDB m l blk = LedgerDB {
     -- | Flush in-memory LedgerDB state to disk, if possible. This is a no-op
     -- for implementations that do not need an explicit flush function.
   , tryFlush :: m ()
+      -- | Close the ChainDB
+      --
+      -- Idempotent.
+      --
+      -- Should only be called on shutdown.
+  , closeDB :: m ()
   }
+  deriving NoThunks via OnlyCheckWhnfNamed "LedgerDB" (LedgerDB m l blk)
+
+type instance HeaderHash (LedgerDB m l blk) = HeaderHash blk
+
+type LedgerDB' m blk = LedgerDB m (ExtLedgerState blk) blk
+
+currentPoint ::
+     (GetTip l, HeaderHash l ~ HeaderHash blk, Functor (STM m))
+  => LedgerDB m l blk
+  -> STM m (Point blk)
+currentPoint ldb = castPoint . getTip <$> getVolatileTip ldb
 
 {-------------------------------------------------------------------------------
   Exceptions
@@ -268,6 +291,36 @@ data LedgerDbError blk =
     | ClosedForkerError PrettyCallStack
     deriving (Show)
     deriving anyclass (Exception)
+
+{-------------------------------------------------------------------------------
+  Arguments
+-------------------------------------------------------------------------------}
+
+-- | The /maximum/ number of keys to read in a backing store range query.
+--
+-- When performing a ledger state query that involves on-disk parts of the
+-- ledger state, we might have to read ranges of key-value pair data (e.g.,
+-- UTxO) from disk using backing store range queries. Instead of reading all
+-- data in one go, we read it in batches. 'QueryBatchSize' determines the size
+-- of these batches.
+--
+-- INVARIANT: Should be at least 1.
+--
+-- It is fine if the result of a range read contains less than this number of
+-- keys, but it should never return more.
+data QueryBatchSize =
+    -- | A default value, which is determined by a specific 'DiskPolicy'. See
+    -- 'defaultDiskPolicy' as an example.
+    DefaultQueryBatchSize
+    -- | A requested value: the number of keys to read from disk in each batch.
+  | RequestedQueryBatchSize Word64
+  deriving (Show, Eq, Generic)
+  deriving anyclass NoThunks
+
+defaultQueryBatchSize :: QueryBatchSize -> Word64
+defaultQueryBatchSize requestedQueryBatchSize = case requestedQueryBatchSize of
+    RequestedQueryBatchSize value -> value
+    DefaultQueryBatchSize         -> 100_000
 
 {-------------------------------------------------------------------------------
   Forker
@@ -292,6 +345,9 @@ data Forker m l blk = Forker {
   , forkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
     -- | Range-read ledger tables from disk.
   , forkerRangeReadTables :: !(RangeQuery l -> m (LedgerTables l ValuesMK))
+    -- | Like 'forkerRangeReadTables', but using the 'QueryBatchSize' that the
+    -- 'LedgerDB' was opened with.
+  , forkerRangeReadTablesDefault :: !(Maybe (LedgerTables l KeysMK) -> m (LedgerTables l ValuesMK))
     -- | Get the full ledger state without tables.
     --
     -- If empty ledger state is all you need, use 'getVolatileTip',
@@ -312,6 +368,10 @@ data Forker m l blk = Forker {
   , forkerCommit :: !(STM m ())
   }
 
+type instance HeaderHash (Forker m l blk) = HeaderHash l
+
+type Forker' m blk = Forker m (ExtLedgerState blk) blk
+
 -- TODO: document
 data RangeQuery l = RangeQuery {
     rqPrev  :: !(Maybe (LedgerTables l KeysMK))
@@ -323,25 +383,43 @@ newtype Statistics = Statistics {
     ledgerTableSize :: Int
   }
 
-getTipForker :: MonadSTM m => LedgerDB m l blk -> m (Forker m l blk)
-getTipForker ldb = fromStaticLeft . snd <$> getForker ldb (StaticLeft ()) (pure ())
+forkerCurrentPoint ::
+     (GetTip l, HeaderHash l ~ HeaderHash blk, Functor (STM m))
+  => Forker m l blk
+  -> STM m (Point blk)
+forkerCurrentPoint forker =
+      castPoint
+    . getTip
+    <$> forkerGetLedgerState forker
 
 withTipForker ::
-     (MonadSTM m, MonadThrow m)
-  => LedgerDB m l blk -> (Forker m l blk -> m a) -> m a
-withTipForker ldb = bracket (getTipForker ldb) forkerClose
+     IOLike m
+  => LedgerDB m l blk
+  -> (Forker m l blk -> m a) -> m a
+withTipForker ldb action = withRegistry $ \rr ->
+    bracket (getForkerAtTip ldb rr) forkerClose action
+
+getForker ::
+     MonadSTM m
+  => LedgerDB m l blk
+  -> ResourceRegistry m
+  -> Maybe (Point blk)
+  -> m (Either (Point blk) (Forker m l blk))
+getForker ldb rr = \case
+    Nothing -> Right <$> getForkerAtTip ldb rr
+    Just pt -> getForkerAtPoint ldb rr pt
 
 -- | Read a table of values at the requested point.
 readLedgerTablesAtFor ::
-     (Monad m, Applicative (STM m), StandardHash blk)
+     (IOLike m, StandardHash blk)
   => LedgerDB m l blk
   -> Point blk
   -> LedgerTables l KeysMK
   -> m (Either
           (PointNotFound blk)
           (LedgerTables l ValuesMK))
-readLedgerTablesAtFor ldb p ks = do
-    foEith <- fromStaticRight . snd <$> getForker ldb (StaticRight p) (pure ())
+readLedgerTablesAtFor ldb p ks = withRegistry $ \rr -> do
+    foEith <- getForkerAtPoint ldb rr p
     case foEith of
       Left e -> error $ show e
       Right fo -> do
@@ -354,8 +432,9 @@ newtype PointNotFound blk = PointNotFound (Point blk) deriving (Eq, Show)
 
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
-     (MonadSTM m, MonadThrow m)
-  => LedgerDB m l blk -> m (Maybe Statistics)
+     IOLike m
+  => LedgerDB m l blk
+  -> m (Maybe Statistics)
 getTipStatistics ldb = withTipForker ldb forkerReadStatistics
 
 {-------------------------------------------------------------------------------
@@ -415,7 +494,7 @@ data SnapshotFailure blk =
 -- TODO: add forker to ledger error
 data ValidateResult m l blk =
     ValidateSuccessful       (Forker m l blk)
-  | ValidateLedgerError      (AnnLedgerError l blk)
+  | ValidateLedgerError      (AnnLedgerError m l blk)
   | ValidateExceededRollBack ExceededRollback
 
 -- | Exceeded maximum rollback supported by the current ledger DB state
@@ -439,18 +518,20 @@ validate ::
      , MonadBase m m
      )
   => LedgerDB m l blk
+  -> ResourceRegistry m
   -> (TraceValidateEvent blk -> m ())
-  -> TopLevelConfig blk
   -> BlockCache blk
   -> Word64          -- ^ How many blocks to roll back
   -> [Header blk]
   -> m (ValidateResult m l blk)
-validate ldb trace config blockCache numRollbacks hdrs = do
+validate ldb rr trace blockCache numRollbacks hdrs = do
     resolve <- atomically $ getResolveBlock ldb
+    config <- atomically $ getTopLevelConfig ldb
     aps <- mkAps <$> atomically (getPrevApplied ldb)
     res <- fmap rewrap $ defaultResolveWithErrors resolve $
              switch
                ldb
+               rr
                (ExtLedgerCfg config)
                numRollbacks
                (lift . lift . trace)
@@ -458,17 +539,17 @@ validate ldb trace config blockCache numRollbacks hdrs = do
     liftBase $ atomically $ addPrevApplied ldb (validBlockPoints res (map headerRealPoint hdrs))
     return res
   where
-    rewrap :: Either (AnnLedgerError l blk) (Either ExceededRollback (Forker bm l blk))
-           -> ValidateResult bm l blk
+    rewrap :: Either (AnnLedgerError n l blk) (Either ExceededRollback (Forker n l blk))
+           -> ValidateResult n l blk
     rewrap (Left         e)  = ValidateLedgerError      e
     rewrap (Right (Left  e)) = ValidateExceededRollBack e
     rewrap (Right (Right l)) = ValidateSuccessful       l
 
-    mkAps :: forall n l'. l' ~ ExtLedgerState blk
+    mkAps :: forall bn n l'. l' ~ ExtLedgerState blk
           => Set (RealPoint blk)
-          -> [Ap n l blk ( ResolvesBlocks    n   blk
-                         , ThrowsLedgerError n l' blk
-                         )]
+          -> [Ap bn n l blk ( ResolvesBlocks       n   blk
+                            , ThrowsLedgerError bn n l' blk
+                            )]
     mkAps prev =
       [ case ( Set.member (headerRealPoint hdr) prev
              , BlockCache.lookup (headerHash hdr) blockCache
@@ -490,15 +571,17 @@ validate ldb trace config blockCache numRollbacks hdrs = do
 
 -- | Switch to a fork by rolling back a number of blocks and then pushing the
 -- new blocks.
-switch :: (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm)
-       => LedgerDB bm l blk
-       -> LedgerCfg l
-       -> Word64          -- ^ How many blocks to roll back
-       -> (TraceValidateEvent blk -> m ())
-       -> [Ap m l blk c]  -- ^ New blocks to apply
-       -> m (Either ExceededRollback (Forker bm l blk))
-switch ldb cfg numRollbacks trace newBlocks = do
-  foEith <- liftBase $ getForkerAtFromTip ldb numRollbacks
+switch ::
+     (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm)
+  => LedgerDB bm l blk
+  -> ResourceRegistry bm
+  -> LedgerCfg l
+  -> Word64          -- ^ How many blocks to roll back
+  -> (TraceValidateEvent blk -> m ())
+  -> [Ap bm m l blk c]  -- ^ New blocks to apply
+  -> m (Either ExceededRollback (Forker bm l blk))
+switch ldb rr cfg numRollbacks trace newBlocks = do
+  foEith <- liftBase $ getForkerAtFromTip ldb rr numRollbacks
   case foEith of
     Left rbExceeded -> pure $ Left rbExceeded
     Right fo -> do
@@ -536,21 +619,21 @@ newtype ValidLedgerState l = ValidLedgerState { getValidLedgerState :: l }
 --     1. If we are passing a block by reference, we must be able to resolve it.
 --
 --     2. If we are applying rather than reapplying, we might have ledger errors.
-type Ap :: (Type -> Type) -> LedgerStateKind -> Type -> Constraint -> Type
-data Ap m l blk c where
-  ReapplyVal ::           blk -> Ap m l blk ()
-  ApplyVal   ::           blk -> Ap m l blk ( ThrowsLedgerError m l blk )
-  ReapplyRef :: RealPoint blk -> Ap m l blk ( ResolvesBlocks    m   blk )
-  ApplyRef   :: RealPoint blk -> Ap m l blk ( ResolvesBlocks    m   blk
-                                            , ThrowsLedgerError m l blk )
+type Ap :: (Type -> Type) -> (Type -> Type) -> LedgerStateKind -> Type -> Constraint -> Type
+data Ap bm m l blk c where
+  ReapplyVal ::           blk -> Ap bm m l blk ()
+  ApplyVal   ::           blk -> Ap bm m l blk ( ThrowsLedgerError bm m l blk )
+  ReapplyRef :: RealPoint blk -> Ap bm m l blk ( ResolvesBlocks       m   blk )
+  ApplyRef   :: RealPoint blk -> Ap bm m l blk ( ResolvesBlocks       m   blk
+                                               , ThrowsLedgerError bm m l blk )
 
   -- | 'Weaken' increases the constraint on the monad @m@.
   --
   -- This is primarily useful when combining multiple 'Ap's in a single
   -- homogeneous structure.
-  Weaken :: (c' => c) => Ap m l blk c -> Ap m l blk c'
+  Weaken :: (c' => c) => Ap bm m l blk c -> Ap bm m l blk c'
 
-toRealPoint :: HasHeader blk => Ap m l blk c -> RealPoint blk
+toRealPoint :: HasHeader blk => Ap bm m l blk c -> RealPoint blk
 toRealPoint (ReapplyVal blk) = blockRealPoint blk
 toRealPoint (ApplyVal blk)   = blockRealPoint blk
 toRealPoint (ReapplyRef rp)  = rp
@@ -560,7 +643,7 @@ toRealPoint (Weaken ap)      = toRealPoint ap
 -- | Apply blocks to the given forker
 applyBlock :: forall m bm c l blk. (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm)
            => LedgerCfg l
-           -> Ap m l blk c
+           -> Ap bm m l blk c
            -> Forker bm l blk
            -> m (ValidLedgerState (l DiffMK))
 applyBlock cfg ap fo = case ap of
@@ -570,7 +653,7 @@ applyBlock cfg ap fo = case ap of
     ApplyVal b ->
           ValidLedgerState
       <$> withValues b
-          ( either (throwLedgerError (Proxy @l) (blockRealPoint b)) return
+          ( either (throwLedgerError fo (blockRealPoint b)) return
             . runExcept
             . tickThenApply cfg b
           )
@@ -597,7 +680,7 @@ applyBlock cfg ap fo = case ap of
 -- this sometimes can throw ledger errors.
 applyThenPush :: (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm)
               => LedgerCfg l
-              -> Ap m l blk c
+              -> Ap bm m l blk c
               -> Forker bm l blk
               -> m ()
 applyThenPush cfg ap fo =
@@ -608,7 +691,7 @@ applyThenPush cfg ap fo =
 applyThenPushMany :: (ApplyBlock l blk, MonadBase bm m, c, MonadSTM bm)
                   => (Pushing blk -> m ())
                   -> LedgerCfg l
-                  -> [Ap m l blk c]
+                  -> [Ap bm m l blk c]
                   -> Forker bm l blk
                   -> m ()
 applyThenPushMany trace cfg aps fo = mapM_ pushAndTrace aps
@@ -622,29 +705,32 @@ applyThenPushMany trace cfg aps fo = mapM_ pushAndTrace aps
 -------------------------------------------------------------------------------}
 
 -- | Annotated ledger errors
-data AnnLedgerError l blk = AnnLedgerError {
+data AnnLedgerError m l blk = AnnLedgerError {
+        -- | The ledger DB just /before/ this block was applied
+      annLedgerState  :: Forker m l blk
+
       -- | Reference to the block that had the error
-      annLedgerErrRef :: RealPoint blk
+    , annLedgerErrRef :: RealPoint blk
 
       -- | The ledger error itself
     , annLedgerErr    :: LedgerErr l
     }
 
-class Monad m => ThrowsLedgerError m l blk where
-  throwLedgerError :: proxy l -> RealPoint blk -> LedgerErr l -> m a
+class Monad m => ThrowsLedgerError bm m l blk where
+  throwLedgerError :: Forker bm l blk -> RealPoint blk -> LedgerErr l -> m a
 
-instance Monad m => ThrowsLedgerError (ExceptT (AnnLedgerError l blk) m) l blk where
-  throwLedgerError _ l r = throwError $ AnnLedgerError l r
+instance Monad m => ThrowsLedgerError bm (ExceptT (AnnLedgerError bm l blk) m) l blk where
+  throwLedgerError f l r = throwError $ AnnLedgerError f l r
 
-defaultThrowLedgerErrors :: ExceptT (AnnLedgerError l blk) m a
-                         -> m (Either (AnnLedgerError l blk) a)
+defaultThrowLedgerErrors :: ExceptT (AnnLedgerError bm l blk) m a
+                         -> m (Either (AnnLedgerError bm l blk) a)
 defaultThrowLedgerErrors = runExceptT
 
 defaultResolveWithErrors :: ResolveBlock m blk
-                         -> ExceptT (AnnLedgerError l blk)
+                         -> ExceptT (AnnLedgerError bm l blk)
                                     (ReaderT (ResolveBlock m blk) m)
                                     a
-                         -> m (Either (AnnLedgerError l blk) a)
+                         -> m (Either (AnnLedgerError bm l blk) a)
 defaultResolveWithErrors resolve =
       defaultResolveBlocks resolve
     . defaultThrowLedgerErrors

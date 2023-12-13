@@ -132,13 +132,17 @@
 
 -}
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots (
-    deleteSnapshot
+    decodeSnapshotBackwardsCompatible
+  , deleteSnapshot
   , diskSnapshotIsTemporary
+  , encodeSnapshot
   , listSnapshots
   , readSnapshot
+  , snapshotToStatePath
   , snapshotToTablesPath
   , takeSnapshot
   , trimSnapshots
+  , writeSnapshot
   ) where
 
 import           Codec.CBOR.Decoding
