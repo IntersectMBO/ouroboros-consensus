@@ -81,6 +81,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
         A.NoSuchAdversarialBlock -> pure Nothing
         A.NoSuchCompetitor       -> error $ "impossible! " <> show e
         A.NoSuchIntersection     -> error $ "impossible! " <> show e
+        A.KcpIs1                 -> error $ "impossible! " <> show e
 
       Right (A.SomeCheckedAdversarialRecipe _ testRecipeA'') -> do
         let Count prefixCount = arPrefix

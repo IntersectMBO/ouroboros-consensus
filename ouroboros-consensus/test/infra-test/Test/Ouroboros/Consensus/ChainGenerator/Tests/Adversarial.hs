@@ -128,6 +128,7 @@ instance QC.Arbitrary SomeTestAdversarial where
                 A.NoSuchAdversarialBlock -> pure Nothing
                 A.NoSuchCompetitor       -> error $ "impossible! " <> show e
                 A.NoSuchIntersection     -> error $ "impossible! " <> show e
+                A.KcpIs1                 -> error $ "impossible! " <> show e
 
             Right testRecipeA' -> do
                 pure $ Just $ SomeTestAdversarial Proxy Proxy $ TestAdversarial {
@@ -365,6 +366,7 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
                     A.NoSuchAdversarialBlock -> Nothing
                     A.NoSuchCompetitor       -> error $ "impossible! " <> show e
                     A.NoSuchIntersection     -> error $ "impossible! " <> show e
+                    A.KcpIs1                 -> error $ "impossible! " <> show e
 
                 Right recipeA' -> case Exn.runExcept $ A.checkAdversarialRecipe $ mutateAdversarial recipeA mut of
                     Left{} -> Nothing

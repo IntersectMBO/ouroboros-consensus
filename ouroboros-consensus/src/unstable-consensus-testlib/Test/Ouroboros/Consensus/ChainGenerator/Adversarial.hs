@@ -14,7 +14,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
     -- * Generating
     AdversarialRecipe (AdversarialRecipe, arHonest, arParams, arPrefix)
   , CheckedAdversarialRecipe (UnsafeCheckedAdversarialRecipe, carHonest, carParams, carWin)
-  , NoSuchAdversarialChainSchema (NoSuchAdversarialBlock, NoSuchCompetitor, NoSuchIntersection)
+  , NoSuchAdversarialChainSchema (NoSuchAdversarialBlock, NoSuchCompetitor, NoSuchIntersection, KcpIs1)
   , SomeCheckedAdversarialRecipe (SomeCheckedAdversarialRecipe)
   , checkAdversarialRecipe
   , uniformAdversarialChain
