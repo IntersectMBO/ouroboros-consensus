@@ -86,7 +86,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
       Right (A.SomeCheckedAdversarialRecipe _ testRecipeA'') -> do
         let Count prefixCount = arPrefix
         (seed :: QCGen) <- QC.arbitrary
-        let H.ChainSchema _ v = A.uniformAdversarialChain (Just alternativeAsc) testRecipeA'' seed
+        A.GrownChainSchema _ v <- pure $ A.uniformAdversarialChain (Just alternativeAsc) testRecipeA'' seed
         pure $ Just (prefixCount, Vector.toList (getVector v))
 
 -- | Random generator for a block tree. The block tree contains one trunk (the

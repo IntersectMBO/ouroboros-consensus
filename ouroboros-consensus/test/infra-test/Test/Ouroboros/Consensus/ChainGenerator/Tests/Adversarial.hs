@@ -161,8 +161,13 @@ prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $
     A.SomeCheckedAdversarialRecipe Proxy recipeA' <- pure testRecipeA'
 
     let A.AdversarialRecipe { A.arHonest = schedH } = testRecipeA
-        schedA = A.uniformAdversarialChain (Just testAscA) recipeA' testSeedA
-        H.ChainSchema winA vA = schedA
+        schedA0 = A.uniformAdversarialChain (Just testAscA) recipeA' testSeedA
+
+    A.GrownChainSchema _wA vA <- pure schedA0
+
+    let C.UnsafeContains off _len = A.carWin recipeA'
+        winA = C.UnsafeContains off (C.lengthV vA)
+        schedA = H.ChainSchema winA vA
         H.ChainSchema _winH vH = schedH
         A.AdversarialRecipe { A.arParams = (Kcp k, scg, _delta) } = testRecipeA
 
@@ -200,9 +205,14 @@ prop_adversarialChain someTestAdversarial testSeedA = runIdentity $ do
 
     let A.AdversarialRecipe { A.arHonest = schedH } = testRecipeA
 
-        schedA = A.uniformAdversarialChain (Just testAscA) recipeA' testSeedA
+        schedA0 = A.uniformAdversarialChain (Just testAscA) recipeA' testSeedA
 
-    let H.ChainSchema winA _vA = schedA
+    A.GrownChainSchema _wA vA <- pure schedA0
+
+    let C.UnsafeContains off _len = A.carWin recipeA'
+        H.ChainSchema winH _ = A.carHonest recipeA'
+        winA = C.UnsafeContains (C.fromWindow winH off) (C.lengthV vA)
+        schedA = H.ChainSchema winA vA
 
     C.SomeWindow Proxy stabWin <- do
         let A.AdversarialRecipe { A.arParams = (_kcp, scg, _delta) } = testRecipeA
@@ -444,16 +454,22 @@ prop_adversarialChainMutation (SomeTestAdversarialMutation Proxy Proxy testAdver
         let -- TODO is this a low quality random stream? Why is there no @'R.Random' 'QCGen'@ instance?
             (testSeedA, testSeedAsSeed') = R.split testSeedAsSeed
 
-            schedA = A.uniformAdversarialChain Nothing recipeA' (testSeedA :: QCGen)
-            m      = A.checkAdversarialChain mutatedRecipe schedA
+        A.GrownChainSchema _wA vA <-
+          pure $ A.uniformAdversarialChain Nothing recipeA' (testSeedA :: QCGen)
+
+        let C.UnsafeContains off _len = A.carWin recipeA'
+            H.ChainSchema winH _ = A.carHonest recipeA'
+            winA = C.UnsafeContains (C.fromWindow winH off) (C.lengthV vA)
+            schedA = H.ChainSchema winA vA
+            m = A.checkAdversarialChain mutatedRecipe schedA
+
         -- We discard tests where the first race ends past the acceleration bound
         -- as these race windows are unconstrained
         case Exn.runExcept m of
             Right () -> do
-                let A.UnsafeCheckedAdversarialRecipe { A.carWin } = recipeA'
-                    pretty = case calculateStability scg schedA of
+                let pretty = case calculateStability scg schedA of
                         C.SomeWindow Proxy win ->
-                            [H.prettyWindow (C.joinWin carWin win) "no accel"]
+                            [H.prettyWindow (C.joinWin winA win) "no accel"]
                          <> [show (H.countChainSchema schedA)]
                 writeIORef catch (testSeedA,  H.prettyChainSchema schedA "A" <> pretty)
                 go catch counter recipeA' testSeedAsSeed'
