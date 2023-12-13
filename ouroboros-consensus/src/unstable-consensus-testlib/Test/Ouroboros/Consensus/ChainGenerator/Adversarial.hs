@@ -253,8 +253,10 @@ checkAdversarialChain recipe adv = do
                                          --
                                          -- TODO hpc shows this never executes
     checkDensity :: Exn.Except (AdversarialViolation hon adv) ()
-    checkDensity =
-        when (C.Count s <= C.windowSize winA) $ do
+    checkDensity = do
+        let honestSuffixSize = C.getCount (C.windowLast winH) - C.getCount (C.windowStart winA) + 1
+
+        when (C.Count s <= C.windowSize winA && s <= honestSuffixSize) $ do
             let -- first stability window after the intersection in the honest
                 -- schema
                 hScgWin = C.UnsafeContains (C.Count $ C.getCount $ C.windowStart winA) (C.Count s)
