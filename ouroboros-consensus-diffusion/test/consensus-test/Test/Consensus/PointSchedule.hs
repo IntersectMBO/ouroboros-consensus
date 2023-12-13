@@ -63,7 +63,8 @@ import           Control.Monad.ST (ST)
 import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)
 import           Data.List (find, mapAccumL, partition, scanl', transpose)
-import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty)
+import           Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, listToMaybe)
@@ -95,7 +96,6 @@ import           Test.Consensus.PointSchedule.SinglePeer.Indices
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
                      Delta (Delta), ascVal)
 import           Test.QuickCheck (Gen, arbitrary)
-import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import           Test.Util.TestBlock (Header (TestHeader), TestBlock)
 import           Text.Printf (printf)
@@ -350,9 +350,10 @@ mkPeers h as =
 -- Conversion to 'PointSchedule'
 ----------------------------------------------------------------------------------------------------
 
--- | Ensure that a 'PointSchedule' isn't empty.
-pointSchedule :: [Tick] -> NonEmpty PeerId -> Maybe PointSchedule
-pointSchedule ticks nePeerIds = (`PointSchedule` nePeerIds) <$> nonEmpty ticks
+-- | Create a point schedule from a list of ticks
+pointSchedule :: [Tick] -> NonEmpty PeerId -> PointSchedule
+pointSchedule [] _nePeerIds = error "pointSchedule: no ticks"
+pointSchedule ticks nePeerIds = PointSchedule (NonEmpty.fromList ticks) nePeerIds
 
 -- | Convert a @SinglePeer@ schedule to a 'NodeState' schedule.
 --
@@ -389,7 +390,7 @@ type PeerSchedule = [(DiffTime, SchedulePoint)]
 --
 -- Call 'peerStates' for each peer, then merge all of them sorted by tick start times, then convert
 -- start times to relative tick durations.
-fromSchedulePoints :: Peers PeerSchedule -> Maybe PointSchedule
+fromSchedulePoints :: Peers PeerSchedule -> PointSchedule
 fromSchedulePoints peers = do
   pointSchedule (zipWith3 Tick states durations [0 ..]) peerIds
   where
@@ -423,7 +424,7 @@ banalStates frag@(_ :> tipBlock) =
 balanced ::
   PointScheduleConfig ->
   Peers [NodeState] ->
-  Maybe PointSchedule
+  PointSchedule
 balanced config states =
   pointSchedule (tickDefaults config activeSeq) (getPeerIds states)
   where
@@ -570,12 +571,9 @@ qcSchedule gen = do
 qcFromSchedulePoints ::
   (Gen (a, Peers PeerSchedule)) ->
   Gen (a, PointSchedule)
-qcFromSchedulePoints gen =
-  unsafeMapSuchThatJust $ do
+qcFromSchedulePoints gen = do
     (a, peers) <- gen
-    pure $ do
-      points <- fromSchedulePoints peers
-      pure (a, points)
+    pure (a, fromSchedulePoints peers)
 
 -- | Create a 'PointSchedule' from a leader schedule generator and a peer
 -- schedule generator.
