@@ -355,6 +355,12 @@ data NoSuchAdversarialChainSchema =
   |
     -- | @not (0 <= 'arPrefix' <= C)@ where @C@ is the number of active slots in 'arHonest'
     NoSuchIntersection
+  |
+    -- | @k=1@
+    --
+    -- This may technically be viable, but our current specification for
+    -- 'uniformAdversarialChain' requires @k>1@.
+    KcpIs1
   deriving (Eq, Show)
 
 -----
@@ -377,6 +383,8 @@ checkAdversarialRecipe ::
          (SomeCheckedAdversarialRecipe base hon)
 checkAdversarialRecipe recipe = do
     when (0 == k) $ Exn.throwError NoSuchAdversarialBlock
+
+    when (1 == k) $ Exn.throwError KcpIs1
 
     -- validate 'arPrefix'
     firstAdvSlot <- case compare arPrefix 0 of
