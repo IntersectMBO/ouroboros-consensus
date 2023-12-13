@@ -8,6 +8,7 @@ module Test.Util.TestEnv (
   , askTestEnv
   , defaultMainWithTestEnv
   , defaultTestEnvConfig
+  , replayTest
   ) where
 
 import           Cardano.Crypto.Init (cryptoInit)
@@ -99,3 +100,16 @@ adjustQuickCheckMaxSize :: (Int -> Int) -> TestTree -> TestTree
 adjustQuickCheckMaxSize f =
   adjustOption $ \(QuickCheckMaxSize n) ->
     QuickCheckMaxSize $ if n == 0 then 0 else max 1 (f n)
+
+-- | Adjust quickcheck args to simulate the seed replay CLI options that Tasty
+-- provides, like:
+--
+-- > -p '/some test/' --quickcheck-tests=10 --quickcheck-max-size=20  --quickcheck-replay=1234
+--
+-- This is useful if you run your test in GHCid and don't want to switch to Cabal
+-- or fiddle with @setArgs@ just for a replay.
+replayTest :: Int -> Int -> Int -> TestTree -> TestTree
+replayTest seed tests size =
+  adjustOption (const (QuickCheckReplay (Just seed))) .
+  adjustQuickCheckTests (const tests) .
+  adjustQuickCheckMaxSize (const size)
