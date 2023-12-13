@@ -61,6 +61,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Counting (
   , replicateMV
   , sliceMV
   , sliceV
+  , unsafeFreezeMV
   , unsafeThawV
   , writeMV
     -- * variables
@@ -323,6 +324,9 @@ sliceV win (Vector v) =
 
 unsafeThawV :: MV.Unbox a => Vector base elem a -> ST s (MVector base elem s a)
 unsafeThawV (Vector v) = MVector <$> V.unsafeThaw v
+
+unsafeFreezeMV :: MV.Unbox a => MVector base elem s a -> ST s (Vector base elem a)
+unsafeFreezeMV (MVector v) = Vector <$> V.unsafeFreeze v
 
 createV :: MV.Unbox a => (forall s. ST s (MVector base elem s a)) -> Vector base elem a
 createV m = Vector $ V.create (getMVector <$> m)
