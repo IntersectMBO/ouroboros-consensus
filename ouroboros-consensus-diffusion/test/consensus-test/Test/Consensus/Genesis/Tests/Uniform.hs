@@ -25,12 +25,12 @@ import           Test.Consensus.BlockTree (BlockTree (..))
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.Run
-                     (SchedulerConfig (scEnableGdd, scTrace), noTimeoutsSchedulerConfig,
-                     scTraceState)
+                     (SchedulerConfig (scEnableGdd, scTrace),
+                     noTimeoutsSchedulerConfig, scTraceState)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.SinglePeer
-  (SchedulePoint(ScheduleBlockPoint, ScheduleTipPoint))
+                     (SchedulePoint (ScheduleBlockPoint, ScheduleTipPoint))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
@@ -255,10 +255,10 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
               0.020 * lastBlockNo + 5 * fromIntegral peerCount)
 
     fromTipPoint (t, ScheduleTipPoint bp) = Just (t, bp)
-    fromTipPoint _ = Nothing
+    fromTipPoint _                        = Nothing
 
     fromBlockPoint (t, ScheduleBlockPoint bp) = Just (t, bp)
-    fromBlockPoint _ = Nothing
+    fromBlockPoint _                          = Nothing
 
 headCallStack :: HasCallStack => [a] -> a
 headCallStack xs = if null xs then error "headCallStack: empty list" else head xs

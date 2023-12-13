@@ -78,8 +78,8 @@ import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)), toOldestFirst)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block
-                     (Tip (Tip, TipGenesis), blockNo, blockSlot, tipFromHeader)
+import           Ouroboros.Network.Block (Tip (Tip, TipGenesis), blockNo,
+                     blockSlot, tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
