@@ -353,7 +353,7 @@ library unstable-consensus-testlib
     , binary
     , bytestring
     , cardano-crypto-class
-    , cardano-ledger-binary:{cardano-ledger-binary, testlib}
+    , cardano-ledger-binary:testlib
     , cardano-prelude
     , cardano-strict-containers
     , cborg
