@@ -53,8 +53,6 @@ module Test.Consensus.PointSchedule (
   , pointSchedulePeers
   , prettyGenesisTest
   , prettyPointSchedule
-  , qcFromSchedulePoints
-  , qcPointSchedule
   , qcSchedule
   , uniformPoints
   ) where
@@ -565,24 +563,3 @@ qcSchedule ::
 qcSchedule gen = do
   seed :: QCGen <- arbitrary
   pure (runSTGen_ seed gen)
-
--- | Convert a set of peer schedules into a 'PointSchedule' and compensate for
--- the 'Maybe' in 'fromSchedulePoints'.
-qcFromSchedulePoints ::
-  (Gen (a, Peers PeerSchedule)) ->
-  Gen (a, PointSchedule)
-qcFromSchedulePoints gen = do
-    (a, peers) <- gen
-    pure (a, fromSchedulePoints peers)
-
--- | Create a 'PointSchedule' from a leader schedule generator and a peer
--- schedule generator.
-qcPointSchedule ::
-  Gen GenesisTest ->
-  (forall s . GenesisTest -> STGenM QCGen s -> ST s (Peers PeerSchedule)) ->
-  Gen (GenesisTest, PointSchedule)
-qcPointSchedule genChains genSched =
-  qcFromSchedulePoints $ do
-    gt <- genChains
-    schedule <- qcSchedule (genSched gt)
-    pure (gt, schedule)
