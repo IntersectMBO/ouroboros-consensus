@@ -116,10 +116,8 @@ makeProperty genesisTest advCount StateView {svSelectedChain} killed =
 -- adversarial peers serving adversarial branches.
 prop_serveAdversarialBranches :: QC.Gen QC.Property
 prop_serveAdversarialBranches = do
-  (genesisTest, schedule) <- qcFromSchedulePoints $ do
-    genesisTest <- genChains (QC.choose (1, 4))
-    schedule <- genUniformSchedulePoints genesisTest
-    pure (genesisTest, schedule)
+  genesisTest <- genChains (QC.choose (1, 4))
+  schedule <- fromSchedulePoints <$> genUniformSchedulePoints genesisTest
   pure $
     runSimOrThrow $
     runTest schedulerConfig genesisTest schedule $
