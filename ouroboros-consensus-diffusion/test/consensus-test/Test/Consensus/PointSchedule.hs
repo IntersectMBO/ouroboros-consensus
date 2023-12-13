@@ -60,7 +60,7 @@ module Test.Consensus.PointSchedule (
 import           Control.Monad.ST (ST)
 import           Data.Foldable (toList)
 import           Data.Hashable (Hashable)
-import           Data.List (find, mapAccumL, partition, scanl', transpose)
+import           Data.List (mapAccumL, partition, scanl', transpose)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
@@ -78,8 +78,8 @@ import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)), toOldestFirst)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (BlockNo (BlockNo),
-                     Tip (Tip, TipGenesis), blockNo, blockSlot, tipFromHeader)
+import           Ouroboros.Network.Block
+                     (Tip (Tip, TipGenesis), blockNo, blockSlot, tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
@@ -458,17 +458,12 @@ longRangeAttack _ _ =
 --
 -- Include rollbacks in a percentage of adversaries, in which case that peer uses two branchs.
 --
--- If @multiTip@ is 'True', the first tip for each peer is chosen randomly in the second half
--- of the chain, followed by tip points for each subsequent block.
 uniformPoints ::
   StatefulGen g m =>
-  GenesisWindow ->
-  Delta ->
-  Bool ->
   BlockTree TestBlock ->
   g ->
   m (Peers PeerSchedule)
-uniformPoints (GenesisWindow s) (Delta d) multiTip BlockTree {btTrunk, btBranches} g = do
+uniformPoints BlockTree {btTrunk, btBranches} g = do
   honestTip0 <- firstTip btTrunk
   honest <- mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
   advs <- takeBranches btBranches
@@ -495,8 +490,7 @@ uniformPoints (GenesisWindow s) (Delta d) multiTip BlockTree {btTrunk, btBranche
 
     withRollback b1 b2 = do
       firstTips <- mkTips b1
-      let secondTips | multiTip = [0 .. AF.length (btbSuffix b2) - 1]
-                     | otherwise = [AF.length (btbSuffix b2) - 1]
+      let secondTips = [AF.length (btbSuffix b2) - 1]
       mkSchedule (firstTips ++ [(IsBranch, secondTips)]) [btbSuffix b1, btbSuffix b2]
 
     mkSchedule tips branches = do
@@ -513,20 +507,7 @@ uniformPoints (GenesisWindow s) (Delta d) multiTip BlockTree {btTrunk, btBranche
         lastBlock = AF.length full - 1
         full = btbFull branch
 
-    firstTip frag
-      | not multiTip
-      = pure (AF.length frag - 1)
-      | rectify
-      = pure rectified
-      | otherwise
-      = pure ((l + 1) `div` 2)
-      -- Random.uniformRM ((l + 1) `div` 2, l) g
-      where
-        rectified = min l (max (fromIntegral firstAfterS - 1) ((l + 1) `div` 2))
-        BlockNo firstAfterS = fromMaybe 1 (blockNo <$> find (\ b -> blockSlot b > fromIntegral s + fromIntegral d) (AF.toOldestFirst frag))
-        l = AF.length frag - 1
-
-    rectify = True
+    firstTip frag = pure (AF.length frag - 1)
 
     mkParams = do
       tipL <- uniformRMDiffTime (0, 0.5) g
