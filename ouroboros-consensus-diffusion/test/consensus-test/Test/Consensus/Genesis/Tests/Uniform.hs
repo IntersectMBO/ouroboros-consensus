@@ -132,7 +132,7 @@ prop_serveAdversarialBranches = do
 genUniformSchedulePoints
   :: GenesisTest -> QC.Gen (Peers PeerSchedule)
 genUniformSchedulePoints gt =
-  qcSchedule (uniformPoints (gtGenesisWindow gt) (gtDelay gt) False (gtBlockTree gt))
+  stToGen (uniformPoints (gtGenesisWindow gt) (gtDelay gt) False (gtBlockTree gt))
 
 -- Note [Leashing attacks]
 --
