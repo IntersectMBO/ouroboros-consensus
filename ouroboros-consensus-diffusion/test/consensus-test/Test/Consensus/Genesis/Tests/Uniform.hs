@@ -51,7 +51,7 @@ tests =
     testProperty "stalling leashing attack" prop_leashingAttackStalling,
     testProperty "time limited leashing attack" prop_leashingAttackTimeLimited,
   adjustQuickCheckTests (`div` 10) $
-    testProperty "uniform random schedule" prop_uniformSchedule
+    testProperty "serve adversarial branches" prop_serveAdversarialBranches
     ]
 
 makeProperty ::
@@ -112,8 +112,10 @@ makeProperty genesisTest advCount StateView {svSelectedChain} killed =
 
     Classifiers {genesisWindowAfterIntersection, longerThanGenesisWindow} = classifiers genesisTest
 
-prop_uniformSchedule :: QC.Gen QC.Property
-prop_uniformSchedule = do
+-- | Tests that the immutable tip is not delayed and stays honest with the
+-- adversarial peers serving adversarial branches.
+prop_serveAdversarialBranches :: QC.Gen QC.Property
+prop_serveAdversarialBranches = do
   (genesisTest, schedule) <- qcFromSchedulePoints $ do
     genesisTest <- genChains (QC.choose (1, 4))
     schedule <- genUniformSchedulePoints genesisTest
