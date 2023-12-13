@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiWayIf                #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE PolyKinds                 #-}
+{-# LANGUAGE RankNTypes                #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 {-# LANGUAGE TypeApplications          #-}
 
@@ -14,6 +15,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
     -- * Generating
     AdversarialRecipe (AdversarialRecipe, arHonest, arParams, arPrefix)
   , CheckedAdversarialRecipe (UnsafeCheckedAdversarialRecipe, carHonest, carParams, carWin)
+  , GrownChainSchema (GrownChainSchema)
   , NoSuchAdversarialChainSchema (NoSuchAdversarialBlock, NoSuchCompetitor, NoSuchIntersection, KcpIs1)
   , SomeCheckedAdversarialRecipe (SomeCheckedAdversarialRecipe)
   , checkAdversarialRecipe
@@ -30,6 +32,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
 import           Control.Applicative ((<|>))
 import           Control.Monad (void, when)
 import qualified Control.Monad.Except as Exn
+import           Control.Monad.ST (ST, runST)
 import           Data.Proxy (Proxy (Proxy))
 import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
@@ -429,6 +432,11 @@ data RaceAssumptionLbl
 data UntouchableLbl
 data TouchableLbl
 
+-- A schema that is guaranteed to contain the base window but may contain more
+-- slots
+data GrownChainSchema base = forall w.
+    GrownChainSchema (C.Contains SlotE w base) (C.Vector w SlotE S.S)
+
 -- | Generate an adversarial 'ChainSchema' that satifies 'checkExtendedRaceAssumption'
 --
 -- The adversarial chain schema is at least as long as to reach the end of the
@@ -457,9 +465,9 @@ uniformAdversarialChain ::
   => Maybe Asc   -- ^ 'Nothing' means @1@
   -> CheckedAdversarialRecipe base hon adv
   -> g
-  -> ChainSchema base adv
+  -> GrownChainSchema adv
 {-# INLINABLE uniformAdversarialChain #-}
-uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
+uniformAdversarialChain mbAsc recipe g0 = wrap $ do
     when (k < 2) $
       error "k must be at least 2"
 
@@ -514,13 +522,16 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         carWin
       } = recipe
 
-    wrap v = ChainSchema (C.joinWin winH carWin) v
+    wrap :: (forall s. ST s (C.GrownMVector adv SlotE s S.S)) -> GrownChainSchema adv
+    wrap mgmv = runST $ do
+      C.GrownMVector w mv <- mgmv
+      GrownChainSchema w <$> C.unsafeFreezeMV mv
 
     Kcp   k = kcp
     Scg   s = scg
     Delta d = delta
 
-    ChainSchema winH vH = carHonest
+    ChainSchema _winH vH = carHonest
 
     vA = C.sliceV carWin vH
 
@@ -642,12 +653,16 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                     g
                     aScgMv
 
+    ensureKplus1Slots :: C.Index adv SlotE -> R.STGenM g s -> MaybeYS adv -> C.MVector adv SlotE s S.S -> ST s (C.GrownMVector adv SlotE s S.S)
     ensureKplus1Slots kPlus1st g mbYS mv = do
         C.Count actives <- BV.countActivesInMV S.notInverted mv
 
-        let missingBlocks = max 0 $ k + 1 - actives
+        let
+          missingBlocks = max 0 $ k + 1 - actives
+          C.Count oldSz = C.lengthMV mv
+          gmv0 = C.GrownMVector (C.UnsafeContains (C.Count 0) (C.Count oldSz)) mv
 
-        if missingBlocks == 0 then pure mv else do
+        if missingBlocks == 0 then pure gmv0 else do
 
           -- Get the first unstable slot in the alternative schema
           firstUnstable <- case mbYS of
@@ -666,17 +681,18 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                 firstUnstable
           C.Count inactiveUnstables <- BV.countActivesInMV S.inverted (C.sliceMV unstableSlots mv)
 
-          -- slots that need to be added to the schema in order to reach k+1 actives
-          let missingSlots =
+          let
+            -- slots that need to be added to the schema in order to reach k+1 actives
+            missingSlots =
                 max 0 (C.getCount firstUnstable - oldSz)
                 + max 0 (missingBlocks - inactiveUnstables)
-              C.Count oldSz = C.lengthMV mv
 
           -- grow the schema if needed
-          mv' <- if missingSlots == 0 then pure mv else do
-            mv' <- C.growMV mv (C.Count missingSlots)
+          gmv@(C.GrownMVector w mv') <-
+              if missingSlots == 0 then pure gmv0 else do
+            gmv@(C.GrownMVector _ mv') <- C.growMV mv (C.Count missingSlots)
             C.forRange_ (C.Count missingSlots) $ BV.setMV S.inverted mv' . (C.+ oldSz)
-            pure mv'
+            pure gmv
 
           -- fill in enough of the unstable slots
           C.SomeWindow Proxy augmentedUnstableSlots <-
@@ -684,7 +700,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
             $ C.withSuffixWindow
                 (C.lengthMV mv')
                 (C.Lbl @UnstableLbl)
-                firstUnstable
+                (C.fromWindow w firstUnstable)
 
           let activeUnstables = C.getCount (C.windowSize unstableSlots) - inactiveUnstables
 
@@ -697,7 +713,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
               g
               (C.sliceMV augmentedUnstableSlots mv')
 
-          pure mv'
+          pure gmv
 
     firstUnstableSlot kPlus1st firstActiveSlot =
       -- x is the first settled adversarial slot, so the adversary can
