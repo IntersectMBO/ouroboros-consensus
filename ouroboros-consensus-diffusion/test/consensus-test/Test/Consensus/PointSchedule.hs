@@ -53,7 +53,7 @@ module Test.Consensus.PointSchedule (
   , pointSchedulePeers
   , prettyGenesisTest
   , prettyPointSchedule
-  , qcSchedule
+  , stToGen
   , uniformPoints
   ) where
 
@@ -557,9 +557,9 @@ prettyGenesisTest GenesisTest{gtHonestAsc, gtSecurityParam, gtGenesisWindow, gtD
   ] ++ (("    " ++) <$> prettyBlockTree gtBlockTree)
 
 -- | Wrap a 'ST' generator in 'Gen'.
-qcSchedule ::
+stToGen ::
   (forall s . STGenM QCGen s -> ST s a) ->
   Gen a
-qcSchedule gen = do
+stToGen gen = do
   seed :: QCGen <- arbitrary
   pure (runSTGen_ seed gen)
