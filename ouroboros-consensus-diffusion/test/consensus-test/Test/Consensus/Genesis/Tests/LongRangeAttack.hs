@@ -42,7 +42,7 @@ tests =
 prop_longRangeAttack :: QC.Gen QC.Property
 prop_longRangeAttack = do
   genesisTest <- genChains (pure 1)
-  schedule <- fromSchedulePoints <$> qcSchedule (longRangeAttack (gtBlockTree genesisTest))
+  schedule <- fromSchedulePoints <$> stToGen (longRangeAttack (gtBlockTree genesisTest))
   let cls = classifiers genesisTest
 
   -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
