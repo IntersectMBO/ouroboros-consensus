@@ -49,6 +49,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Counting (
     -- * vectors
   , MVector (MVector)
   , Vector (Vector)
+  , GrownMVector(GrownMVector)
   , createV
   , getMVector
   , getVector
@@ -366,8 +367,17 @@ modifyMV (MVector mv) f (Count i)   = MV.modify mv f i
 readV :: MV.Unbox a => Vector base elem a -> Index base elem -> a
 readV (Vector v) (Count i) = v V.! i
 
-growMV :: MV.Unbox a => MVector base elem s a -> Size base elem -> ST s (MVector base elem s a)
-growMV (MVector mv) (Count n) = fmap MVector $ MV.grow mv n
+-- A vector that is guaranteed to contain the base window but may contain more
+-- elements
+data GrownMVector base elem s a = forall w.
+    GrownMVector (Contains elem w base) (MVector w elem s a)
+
+growMV :: MV.Unbox a => MVector base elem s a -> Size base elem -> ST s (GrownMVector base elem s a)
+growMV (MVector mv) (Count n) = do
+    mv' <- MV.grow mv n
+    pure $ GrownMVector
+      (UnsafeContains (Count 0) (Count $ MV.length mv'))
+      (MVector mv')
 
 -----
 
