@@ -36,9 +36,9 @@ import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
 import           Ouroboros.Network.AnchoredFragment
-                     (Anchor (Anchor, AnchorGenesis), AnchoredSeq (Empty),
-                     anchor, mapAnchoredFragment, toOldestFirst)
-import           Test.Consensus.PointSchedule (TestFrag, TestFragH)
+                     (Anchor (Anchor, AnchorGenesis), AnchoredFragment,
+                     AnchoredSeq (Empty), anchor, mapAnchoredFragment,
+                     toOldestFirst)
 import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
                      TestHash (TestHash), unTestHash)
 import           Text.Printf (printf)
@@ -122,7 +122,7 @@ tersePoint = \case
   BlockPoint slot hash -> terseSlotBlockFork slot (BlockNo (fromIntegral (length (unTestHash hash)))) hash
   GenesisPoint -> "G"
 
-terseFragH :: TestFragH -> String
+terseFragH :: AnchoredFragment (Header TestBlock) -> String
 terseFragH frag =
   renderAnchor ++ renderBlocks
   where
@@ -136,6 +136,6 @@ terseFragH frag =
       | all (== 0) (unTestHash hash) = ""
       | otherwise = condense hash
 
-terseFrag :: TestFrag -> String
+terseFrag :: AnchoredFragment TestBlock -> String
 terseFrag =
   terseFragH . mapAnchoredFragment getHeader

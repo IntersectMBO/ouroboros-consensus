@@ -3,6 +3,7 @@
 -- | A @tasty@ command-line option for enabling nightly tests
 module Test.Util.TestEnv (
     TestEnv (..)
+  , adjustQuickCheckMaxSize
   , adjustQuickCheckTests
   , askTestEnv
   , defaultMainWithTestEnv
@@ -85,3 +86,16 @@ adjustQuickCheckTests :: (Int -> Int) -> TestTree -> TestTree
 adjustQuickCheckTests f =
   adjustOption $ \(QuickCheckTests n) ->
     QuickCheckTests $ if n == 0 then 0 else max 1 (f n)
+
+-- | Locally adjust the maximum size parameter of QuickCheck tests for the given
+-- test subtree, similar to 'adjustQuickCheckTests'.
+--
+-- The size parameter is varied across test runs from 0 to @maxSize - 1@
+-- cyclically, influencing the result of generators that make use of it, like
+-- those that call 'Test.QuickCheck.sized'.
+--
+-- The default is 100.
+adjustQuickCheckMaxSize :: (Int -> Int) -> TestTree -> TestTree
+adjustQuickCheckMaxSize f =
+  adjustOption $ \(QuickCheckMaxSize n) ->
+    QuickCheckMaxSize $ if n == 0 then 0 else max 1 (f n)
