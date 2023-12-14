@@ -30,7 +30,7 @@ import           Test.Consensus.PeerSimulator.Trace (traceLinesWith)
 import           Test.Consensus.PointSchedule
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TersePrinting (terseFrag)
+import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.Tracer (recordingTracerTVar)
 
 -- | Runs the given point schedule and evaluates the given property on the final
@@ -47,7 +47,7 @@ runTest schedulerConfig genesisTest schedule makeProperty = do
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
     -- FIXME: should also go in 'prettyGenesisTest' (or 'prettyBlockTree')
-    for_ (allFragments gtBlockTree) \ bt -> traceWith tracer (terseFrag bt)
+    for_ (allFragments gtBlockTree) (traceWith tracer . terseFragment)
 
     traceLinesWith tracer $ [
       "SchedulerConfig:",
