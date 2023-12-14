@@ -77,8 +77,7 @@ import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)))
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip (Tip, TipGenesis), blockNo,
-                     blockSlot, tipFromHeader)
+import           Ouroboros.Network.Block (Tip (TipGenesis), tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
@@ -94,7 +93,9 @@ import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
                      Delta (Delta), ascVal)
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
-import           Test.Util.TestBlock (Header (TestHeader), TestBlock)
+import           Test.Util.TersePrinting (terseBlock, terseHeader, terseTip,
+                     terseWithOrigin)
+import           Test.Util.TestBlock (Header, TestBlock)
 import           Text.Printf (printf)
 
 ----------------------------------------------------------------------------------------------------
@@ -112,9 +113,7 @@ newtype TipPoint =
   deriving (Eq, Show)
 
 instance Condense TipPoint where
-  condense (TipPoint TipGenesis) = "G"
-  condense (TipPoint (Tip slot _ bno)) =
-      "B:" <> condense bno <> ",S:" <> condense slot
+  condense (TipPoint tip) = terseTip tip
 
 -- | The latest header that should be sent to the client by the ChainSync server
 -- in a tick.
@@ -123,11 +122,7 @@ newtype HeaderPoint =
   deriving (Eq, Show)
 
 instance Condense HeaderPoint where
-  condense = \case
-    HeaderPoint (At (TestHeader b)) ->
-      "B:" <> condense (blockNo b) <> ",S:" <> condense (blockSlot b)
-    HeaderPoint Origin ->
-      "G"
+  condense (HeaderPoint header) = terseWithOrigin terseHeader header
 
 -- | The latest block that should be sent to the client by the BlockFetch server
 -- in a tick.
@@ -136,11 +131,7 @@ newtype BlockPoint =
   deriving (Eq, Show)
 
 instance Condense BlockPoint where
-  condense = \case
-    BlockPoint (At b) ->
-      "B:" <> condense (blockNo b) <> ",S:" <> condense (blockSlot b)
-    BlockPoint Origin ->
-      "G"
+  condense (BlockPoint block) = terseWithOrigin terseBlock block
 
 -- | The set of parameters that define the state that a peer should reach when it receives control
 -- by the scheduler in a single tick.

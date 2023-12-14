@@ -19,9 +19,10 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (SelectionChangedInfo (..), TraceAddBlockEvent (..))
-import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
+import           Test.Util.TersePrinting (terseHFragment, tersePoint,
+                     terseRealPoint)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
@@ -35,11 +36,11 @@ mkCdbTracer tracer =
       case event of
         AddedToCurrentChain _ SelectionChangedInfo {newTipPoint} _ _ -> do
           trace "Added to current chain"
-          trace $ "New tip: " ++ condense newTipPoint
+          trace $ "New tip: " ++ terseRealPoint newTipPoint
         SwitchedToAFork _ SelectionChangedInfo {newTipPoint} _ newFragment -> do
           trace "Switched to a fork"
-          trace $ "New tip: " ++ condense newTipPoint
-          trace $ "New fragment: " ++ condense newFragment
+          trace $ "New tip: " ++ terseRealPoint newTipPoint
+          trace $ "New fragment: " ++ terseHFragment newFragment
         _ -> pure ()
     _ -> pure ()
   where
@@ -52,9 +53,9 @@ mkChainSyncClientTracer ::
 mkChainSyncClientTracer tracer =
   Tracer $ \case
     TraceRolledBack point ->
-      trace $ "Rolled back to: " ++ condense point
+      trace $ "Rolled back to: " ++ tersePoint point
     TraceFoundIntersection point _ourTip _theirTip ->
-      trace $ "Found intersection at: " ++ condense point
+      trace $ "Found intersection at: " ++ tersePoint point
     _ -> pure ()
   where
     trace = traceUnitWith tracer "ChainSyncClient"
