@@ -28,13 +28,13 @@ import           Control.Monad.State.Strict (State, gets, modify', runState,
 import           Control.Tracer (Tracer (Tracer), debugTracer, traceWith)
 import           Data.Bifunctor (first)
 import           Data.Foldable (foldl', foldr')
-import           Data.List (intersperse, mapAccumL, sort, transpose)
+import           Data.List (find, intersperse, mapAccumL, sort, transpose)
 import           Data.List.NonEmpty (NonEmpty ((:|)), nonEmpty, (<|))
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map (Map)
 import           Data.Map.Strict ((!?))
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
+import           Data.Maybe (fromMaybe, mapMaybe)
 import           Data.String (IsString (fromString))
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
@@ -42,17 +42,21 @@ import qualified Data.Vector.Mutable as MV
 import           Data.Word (Word64)
 import qualified Debug.Trace as Debug
 import           GHC.Exts (IsList (..))
-import           Ouroboros.Consensus.Block (blockNo, blockSlot, getHeader)
+import           Ouroboros.Consensus.Block (ChainHash (BlockHash), blockNo,
+                     blockSlot, getHeader)
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
                      atomically, modifyTVar, readTVar, uncheckedNewTVarM)
 import           Ouroboros.Network.AnchoredFragment (anchor, anchorToSlotNo)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Block (HeaderHash, Tip (Tip))
 import           Test.Consensus.BlockTree (BlockTree (btBranches, btTrunk),
                      BlockTreeBranch (btbSuffix), prettyBlockTree)
-import           Test.Consensus.PointSchedule (PeerId (..), TestFrag, TestFragH)
-import           Test.Util.TestBlock (TestBlock)
+import qualified Test.Consensus.PointSchedule as PS
+import           Test.Consensus.PointSchedule (AdvertisedPoints, PeerId (..),
+                     TestFrag, TestFragH, genesisAdvertisedPoints)
+import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 
 enableDebug :: Bool
 enableDebug = False
@@ -151,12 +155,16 @@ getColor bg = \case
     c <- gets selection
     pure (Just (Bold : maybe [] (pure . mkColor) c))
   Candidate pid ->
-    fmap (pure . mkColor) <$> state (candidateColor pid)
+    peerColor pid
   Fork -> pure Nothing
   SlotNumber -> do
     c <- gets slotNumber
     pure (Just [mkColor c])
+  TipPoint pid ->
+    peerColor pid
   where
+    peerColor pid =
+      fmap (pure . mkColor) <$> state (candidateColor pid)
     mkColor | bg = BgColor
             | otherwise = Color
 
@@ -230,6 +238,8 @@ data Aspect =
   Candidate PeerId
   |
   SlotNumber
+  |
+  TipPoint PeerId
   deriving (Eq, Show, Ord)
 
 instance Condense Aspect where
@@ -238,6 +248,7 @@ instance Condense Aspect where
     Candidate _ -> "c"
     Fork -> "f"
     SlotNumber -> "n"
+    TipPoint _ -> "t"
 
 data AspectEdge =
   EdgeLeft
@@ -290,9 +301,10 @@ instance Condense Slot where
 
 data BranchSlots =
   BranchSlots {
-    frag  :: TestFragH,
-    slots :: Vector Slot,
-    cands :: [PeerId]
+    frag   :: TestFragH,
+    slots  :: Vector Slot,
+    cands  :: [PeerId],
+    forkNo :: Word64
   }
   deriving (Show)
 
@@ -313,8 +325,7 @@ addAspect slotAspect (Range l u) overFork slots =
 
     sub = Vector.slice l count (Vector.indexed slots)
 
-    count | u == l = 1
-          | otherwise = u - l + 1
+    count = u - l + 1
 
 initSlots :: Int -> Range -> TestFrag -> Vector Slot
 initSlots lastSlot (Range l u) blocks =
@@ -338,12 +349,22 @@ initSlots lastSlot (Range l u) blocks =
     mkSlot num capacity =
       Slot {num = At num, capacity, aspects = []}
 
+hashForkNo :: HeaderHash TestBlock -> Word64
+hashForkNo (TestHash h) =
+  fromMaybe 0 (find (/= 0) h)
+
+blockForkNo :: ChainHash TestBlock -> Word64
+blockForkNo = \case
+  BlockHash h -> hashForkNo h
+  _ -> 0
+
 initBranch :: Int -> Range -> TestFrag -> BranchSlots
 initBranch lastSlot fragRange fragment =
   BranchSlots {
     frag = AF.mapAnchoredFragment getHeader fragment,
     slots = initSlots lastSlot fragRange fragment,
-    cands = []
+    cands = [],
+    forkNo = blockForkNo (AF.headHash fragment)
   }
 
 data TreeSlots =
@@ -411,19 +432,22 @@ addFragRange aspect selection TreeSlots {lastSlot, branches} =
                      | otherwise = old
 
 addCandidateRange :: TreeSlots -> (PeerId, TestFragH) -> TreeSlots
-addCandidateRange ranges (pid, candidate) =
-  addFragRange (Candidate pid) candidate ranges
+addCandidateRange treeSlots (pid, candidate) =
+  addFragRange (Candidate pid) candidate treeSlots
 
 updateSlot :: Int -> (Slot -> Slot) -> Vector Slot -> Vector Slot
 updateSlot i f =
   Vector.modify (\ mv -> MV.modify mv f i)
 
 addForks :: TreeSlots -> TreeSlots
-addForks ranges@TreeSlots {branches} =
-  ranges {branches = addFork <$> branches}
+addForks treeSlots@TreeSlots {branches} =
+  treeSlots {branches = addFork <$> branches}
   where
-    addFork fr@BranchSlots {frag, slots} =
-      fr {slots = updateSlot s update slots}
+    addFork fr@BranchSlots {frag, slots, forkNo}
+      | forkNo == 0
+      = fr
+      | otherwise
+      = fr {slots = updateSlot s update slots}
       where
         update slot =
           slot {
@@ -431,6 +455,29 @@ addForks ranges@TreeSlots {branches} =
             aspects = SlotAspect {slotAspect = Fork, edge = NoEdge} : aspects slot
           }
         s = slotInt (withOrigin 0 (+ 1) (anchorToSlotNo (anchor frag)))
+
+addTipPoint :: PeerId -> PS.TipPoint -> TreeSlots -> TreeSlots
+addTipPoint pid (PS.TipPoint (Tip s h _)) TreeSlots {lastSlot, branches} =
+  TreeSlots {lastSlot, branches = tryBranch <$> branches}
+  where
+    tryBranch branch@BranchSlots {forkNo, slots}
+      | tipForkNo == forkNo
+      = branch {slots = updateSlot (slotInt (s + 1)) update slots}
+      | otherwise
+      = branch
+      where
+        update slot =
+          slot {aspects = SlotAspect {slotAspect = TipPoint pid, edge = NoEdge} : aspects slot}
+
+    tipForkNo = hashForkNo h
+
+addTipPoint _ _ treeSlots = treeSlots
+
+addPoints :: Map PeerId AdvertisedPoints -> TreeSlots -> TreeSlots
+addPoints peerPoints treeSlots =
+  foldl' step treeSlots (Map.toList peerPoints)
+  where
+    step z (pid, ap) = addTipPoint pid (PS.tip ap) z
 
 ----------------------------------------------------------------------------------------------------
 -- Cells
@@ -470,7 +517,7 @@ data Cell =
   |
   CellSlotNo (WithOrigin Int)
   |
-  CellLabels [PeerId]
+  CellPeers [PeerId]
   deriving (Show)
 
 instance Condense Cell where
@@ -478,7 +525,7 @@ instance Condense Cell where
     Cell c -> condense c
     CellEmpty -> "E"
     CellSlotNo n -> "S" ++ show n
-    CellLabels _ -> "L"
+    CellPeers _ -> "L"
 
 mainAspects :: [SlotAspect] -> Maybe (NonEmpty Aspect)
 mainAspects =
@@ -501,7 +548,7 @@ prependList = \case
 
 branchCells :: BranchSlots -> NonEmpty Cell
 branchCells BranchSlots {cands, slots} =
-  prependList (fragCell <$> Vector.toList slots) (pure labels)
+  prependList (fragCell <$> Vector.toList slots) (pure peers)
   where
     fragCell Slot {capacity, aspects}
       | SlotOutside <- capacity
@@ -515,7 +562,7 @@ branchCells BranchSlots {cands, slots} =
       SlotBlock num -> Just (show num)
       _ -> Nothing
 
-    labels = CellLabels cands
+    peers = CellPeers cands
 
 slotNoCells :: Int -> NonEmpty Cell
 slotNoCells lastSlot =
@@ -560,11 +607,19 @@ slotWidth =
   maximum . fmap cellWidth
   where
     cellWidth = \case
-      Cell FragCell {fcLabel = Just label} -> SlotWidth (length label)
-      CellLabels peerIds -> SlotWidth (sum (labelWidth <$> peerIds))
+      Cell FragCell {fcLabel = Just label, fcSort} -> SlotWidth (length label) + sortWidth fcSort
+      CellPeers peerIds -> SlotWidth (sum (labelWidth <$> peerIds))
       _ -> 1
 
     labelWidth pid = 2 + length (renderPeerId pid)
+
+    sortWidth = \case
+      CellHere as -> sum (pointWidth <$> as)
+      _ -> 0
+
+    pointWidth = \case
+      TipPoint _ -> 1
+      _ -> 0
 
 contiguous :: [(Int, Bool, a)] -> [[(Int, a)]]
 contiguous ((i0, _, a0) : rest) =
@@ -605,7 +660,7 @@ pruneCells branches =
       _ -> False
 
     forceNoEllipsis = \case
-      CellLabels _ -> True
+      CellPeers _ -> True
       _ -> False
 
     slotRange = Origin : (At <$> [0 ..])
@@ -656,6 +711,7 @@ colorAspects =
   filter $ \case
     Fork -> False
     Selection -> False
+    TipPoint _ -> False
     _ -> True
 
 renderLine :: RenderConfig -> SlotWidth -> [Aspect] -> Int -> Col
@@ -690,11 +746,21 @@ renderLabel label srt
   | otherwise
   = ""
 
+renderPoint :: CellSort -> Col
+renderPoint = \case
+  CellHere aspects ->
+    mconcat (mapMaybe pointMarker (toList aspects))
+  _ -> ""
+  where
+    pointMarker = \case
+      TipPoint pid -> Just (ColAspect (pure (TipPoint pid)) "↑")
+      _ -> Nothing
+
 renderFragCell :: RenderConfig -> SlotWidth -> FragCell -> Col
 renderFragCell config width FragCell {fcLabel, fcSort, fcLineAspects} =
   renderLine config width fcLineAspects (colLength label) <> label
   where
-    label = renderLabel fcLabel fcSort
+    label = renderLabel fcLabel fcSort <> renderPoint fcSort
 
 renderSlotNo :: RenderConfig -> SlotWidth -> WithOrigin Int -> Col
 renderSlotNo config width num =
@@ -704,8 +770,8 @@ renderSlotNo config width num =
       Origin -> "G"
       At s   -> show s
 
-renderLabels :: [PeerId] -> Col
-renderLabels peers =
+renderPeers :: [PeerId] -> Col
+renderPeers peers =
   ColCat [ColAspect (pure (Candidate p)) (ColString ("  " ++ renderPeerId p)) | p <- peers]
 
 renderCell :: RenderConfig -> RenderCell -> Col
@@ -713,7 +779,7 @@ renderCell config@RenderConfig {ellipsis} = \case
   RenderCell width (Cell cell) -> renderFragCell config width cell
   RenderCell width (CellEmpty) -> ColString (padCell config ' ' width "")
   RenderCell width (CellSlotNo n) -> renderSlotNo config width n
-  RenderCell _ (CellLabels peers) -> renderLabels peers
+  RenderCell _ (CellPeers peers) -> renderPeers peers
   CellEllipsis -> ColString ellipsis
 
 renderBranch :: RenderConfig -> [RenderCell] -> Col
@@ -768,7 +834,8 @@ data PeerSimState =
   PeerSimState {
     pssBlockTree  :: BlockTree TestBlock,
     pssSelection  :: TestFragH,
-    pssCandidates :: Map PeerId TestFragH
+    pssCandidates :: Map PeerId TestFragH,
+    pssPoints     :: Map PeerId AdvertisedPoints
   }
 
 -- TODO add an aspect for the last block of each branch?
@@ -777,7 +844,7 @@ data PeerSimState =
 -- the candidate fragments, selection, and forks in different colors, omitting
 -- uninteresting segments.
 peerSimStateDiagramWith :: RenderConfig -> PeerSimState -> (String, Map PeerId Word64)
-peerSimStateDiagramWith config PeerSimState {pssBlockTree, pssSelection, pssCandidates} =
+peerSimStateDiagramWith config PeerSimState {pssBlockTree, pssSelection, pssCandidates, pssPoints} =
   debugRender (unlines (prettyBlockTree pssBlockTree)) $
   (unlines blocks, cache)
   where
@@ -786,6 +853,7 @@ peerSimStateDiagramWith config PeerSimState {pssBlockTree, pssSelection, pssCand
     frags =
       pruneCells $
       treeCells $
+      addPoints pssPoints $
       addForks $
       flip (foldl' addCandidateRange) (Map.toList pssCandidates) $
       addFragRange Selection pssSelection $
@@ -832,15 +900,17 @@ peerSimStateDiagramSTMTracer ::
   BlockTree TestBlock ->
   STM m TestFragH ->
   STM m (Map PeerId TestFragH) ->
+  STM m (Map PeerId (Maybe AdvertisedPoints)) ->
   m (Tracer m ())
-peerSimStateDiagramSTMTracer stringTracer pssBlockTree selectionVar candidatesVar = do
+peerSimStateDiagramSTMTracer stringTracer pssBlockTree selectionVar candidatesVar pointsVar = do
   peerCache <- uncheckedNewTVarM mempty
   pure $ Tracer $ const $ do
     (s, cachedPeers) <- atomically $ do
       pssSelection <- selectionVar
       pssCandidates <- candidatesVar
+      pssPoints <- fmap (fromMaybe genesisAdvertisedPoints) <$> pointsVar
       cachedPeers <- readTVar peerCache
-      pure (PeerSimState {pssBlockTree, pssSelection, pssCandidates}, cachedPeers)
+      pure (PeerSimState {pssBlockTree, pssSelection, pssCandidates, pssPoints}, cachedPeers)
     let (blocks, newPeers) = peerSimStateDiagramWith (defaultRenderConfig {cachedPeers}) s
     atomically (modifyTVar peerCache (newPeers <>))
     traceWith stringTracer blocks
@@ -858,6 +928,7 @@ peerSimStateDiagramSTMTracerDebug ::
   BlockTree TestBlock ->
   STM m TestFragH ->
   STM m (Map PeerId TestFragH) ->
+  STM m (Map PeerId (Maybe AdvertisedPoints)) ->
   m (Tracer m ())
 peerSimStateDiagramSTMTracerDebug =
   peerSimStateDiagramSTMTracer debugTracer

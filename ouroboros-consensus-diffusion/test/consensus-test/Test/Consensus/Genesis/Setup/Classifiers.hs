@@ -1,11 +1,19 @@
+{-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeFamilies    #-}
+{-# LANGUAGE TypeOperators   #-}
 
 module Test.Consensus.Genesis.Setup.Classifiers (
     Classifiers (..)
   , classifiers
+  , simpleHash
   ) where
 
+import           Cardano.Slotting.Slot (WithOrigin (At))
+import qualified Data.List.NonEmpty as NonEmpty
+import           Data.Word (Word64)
+import           Ouroboros.Consensus.Block (ChainHash (BlockHash), HeaderHash)
 import           Ouroboros.Consensus.Block.Abstract (SlotNo (SlotNo),
                      withOrigin)
 import           Ouroboros.Consensus.Config
@@ -16,6 +24,7 @@ import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Network.AnchoredFragment.Extras (slotLength)
 import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TestBlock (TestHash (TestHash))
 
 -- | Interesting categories to classify test inputs
 data Classifiers =
@@ -31,13 +40,22 @@ data Classifiers =
     -- otherwise the Genesis node has no chance to advance the immutable tip past
     -- the Limit on Eagerness.
     --
-    genesisWindowAfterIntersection :: Bool
+    genesisWindowAfterIntersection :: Bool,
+    -- | The honest chain's slot count is greater than or equal to the Genesis window size.
+    longerThanGenesisWindow        :: Bool
   }
 
 classifiers :: GenesisTest -> Classifiers
 classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenesisWindow = GenesisWindow scg} =
-  Classifiers {existsSelectableAdversary, allAdversariesSelectable, genesisWindowAfterIntersection}
+  Classifiers {
+    existsSelectableAdversary,
+    allAdversariesSelectable,
+    genesisWindowAfterIntersection,
+    longerThanGenesisWindow
+  }
   where
+    longerThanGenesisWindow = AF.headSlot goodChain >= At (fromIntegral scg)
+
     genesisWindowAfterIntersection =
       any fragmentHasGenesis branches
 
@@ -60,3 +78,13 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
     branches = btBranches gtBlockTree
 
     goodChain = btTrunk gtBlockTree
+
+simpleHash ::
+  HeaderHash block ~ TestHash =>
+  ChainHash block ->
+  [Word64]
+simpleHash = \case
+  BlockHash (TestHash h) -> reverse (NonEmpty.toList h)
+  -- not matching on @GenesisHash@ because 8.10 can't prove exhaustiveness of
+  -- TestHash with the equality constraint
+  _ -> []
