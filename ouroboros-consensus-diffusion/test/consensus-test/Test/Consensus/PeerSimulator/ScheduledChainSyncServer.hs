@@ -24,7 +24,8 @@ import           Ouroboros.Network.Protocol.ChainSync.Server
                      ServerStNext (SendMsgRollBackward, SendMsgRollForward))
 import           Test.Consensus.PeerSimulator.ScheduledServer
                      (ScheduledServer (..), awaitOnlineState, runHandler)
-import           Test.Consensus.PeerSimulator.Trace (terseHeader, traceUnitWith)
+import           Test.Consensus.PeerSimulator.Trace (traceUnitWith)
+import           Test.Util.TersePrinting (terseHeader)
 import           Test.Util.TestBlock (Header (..), TestBlock)
 
 -- | Pure representation of the messages produced by the handler for the @StNext@
