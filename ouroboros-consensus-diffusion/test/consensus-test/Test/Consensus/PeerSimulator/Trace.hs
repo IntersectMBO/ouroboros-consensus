@@ -2,7 +2,6 @@
 {-# LANGUAGE NamedFieldPuns     #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE TypeFamilies       #-}
-{-# LANGUAGE TypeOperators      #-}
 
 -- | Helpers for tracing used by the peer simulator.
 module Test.Consensus.PeerSimulator.Trace (
@@ -20,7 +19,6 @@ module Test.Consensus.PeerSimulator.Trace (
 import           Cardano.Slotting.Block (BlockNo (BlockNo))
 import           Cardano.Slotting.Slot (SlotNo (SlotNo))
 import           Control.Tracer (Tracer (Tracer), traceWith)
-import           Data.Foldable (traverse_)
 import           Data.List (intercalate)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.Time.Clock (diffTimeToPicoseconds)
@@ -93,11 +91,10 @@ traceUnitWith tracer unit msg = do
        in printf "%02d:%02d.%03d" minutes seconds milliseconds
 
 traceLinesWith ::
-  Applicative m =>
   Tracer m String ->
   [String] ->
   m ()
-traceLinesWith = traverse_ . traceWith
+traceLinesWith tracer = traceWith tracer . unlines
 
 terseSlotBlock :: SlotNo -> BlockNo -> String
 terseSlotBlock (SlotNo slot) (BlockNo block) =
