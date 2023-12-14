@@ -104,10 +104,12 @@ data NoSuchHonestChainSchema =
 
 genHonestRecipe :: QC.Gen HonestRecipe
 genHonestRecipe = sized1 $ \sz -> do
-  (kcp, Scg s, delta) <- genKSD
-  -- s <= l, most of the time
-  l <- QC.frequency [(9, (+ s) <$> QC.choose (0, 5 * sz)), (1, QC.choose (1, s))]
-  pure $ HonestRecipe kcp (Scg s) delta (Len l)
+    (Kcp k, Scg s, Delta d) <- genKSD
+    -- 2s slots has at least 2k blocks. But that is ensuring k-1 more blocks
+    -- than we actually need. Thus it's safe to remove the k-1 last slots.
+    -- Therefore we set for a length of at least 2s - (k - 1).
+    l <- (+ (2*s - (k - 1))) <$> QC.choose (0, 5 * sz)
+    pure $ HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l)
 
 -- | Checks whether the given 'HonestRecipe' determines a valid input to
 -- 'uniformTheHonestChain'
