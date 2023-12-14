@@ -15,7 +15,7 @@ import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, SomeException,
                      atomically)
 import           Test.Consensus.PointSchedule (PeerId, TestFragH)
-import           Test.Util.TersePrinting (terseFragH)
+import           Test.Util.TersePrinting (terseHFragment)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
 
@@ -44,7 +44,7 @@ data StateView = StateView {
 
 instance Condense StateView where
   condense StateView {svSelectedChain, svChainSyncExceptions} =
-    "SelectedChain: " ++ terseFragH svSelectedChain ++ "\n"
+    "SelectedChain: " ++ terseHFragment svSelectedChain ++ "\n"
     ++ "ChainSyncExceptions:\n" ++ unlines (("  - " ++) . condense <$> svChainSyncExceptions)
 
 -- | State view tracers are a lightweight mechanism to record information that
