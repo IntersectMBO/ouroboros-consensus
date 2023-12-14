@@ -27,6 +27,10 @@ data ChainSyncException = ChainSyncException
        }
     deriving Show
 
+instance Condense ChainSyncException where
+  condense ChainSyncException{csePeerId, cseException} =
+    condense csePeerId ++ ": " ++ show cseException
+
 -- | A state view is a partial view of the state of the whole peer simulator.
 -- This includes information about the part of the code that is being tested
 -- (for instance the fragment that is selected by the ChainDB) but also
@@ -40,7 +44,8 @@ data StateView = StateView {
 
 instance Condense StateView where
   condense StateView {svSelectedChain, svChainSyncExceptions} =
-    "SelectedChain: " ++ terseFragH svSelectedChain ++ "\nChainSyncExceptions: " ++ show svChainSyncExceptions
+    "SelectedChain: " ++ terseFragH svSelectedChain ++ "\n"
+    ++ "ChainSyncExceptions:\n" ++ unlines (("  - " ++) . condense <$> svChainSyncExceptions)
 
 -- | State view tracers are a lightweight mechanism to record information that
 -- can later be used to produce a state view. This mechanism relies on
