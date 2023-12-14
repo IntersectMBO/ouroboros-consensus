@@ -194,16 +194,22 @@ dispatchTick ::
 dispatchTick tracer stateTracer peers Tick {active = Peer pid state, duration, number} =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
-      trace $ "Tick number " ++ show number
-      trace $ "Writing state " ++ condense state
+      time <- prettyTime
+      traceLinesWith tracer [
+        hline,
+        "Time is " ++ time,
+        "Tick:",
+        "  number: " ++ show number,
+        "  duration: " ++ show duration,
+        "  peer: " ++ condense pid,
+        "  state: " ++ condense state
+        ]
       atomically (prUpdateState state)
-      trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
       threadDelay duration
-      trace $ condense pid ++ "'s tick is now done."
       traceWith stateTracer ()
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
-    trace = traceUnitWith tracer "Scheduler"
+    hline = "--------------------------------------------------------------------------------"
 
 -- | Iterate over a 'PointSchedule', sending each tick to the associated peer in turn,
 -- giving each peer a chunk of computation time, sequentially, until it satisfies the
@@ -224,11 +230,7 @@ runScheduler tracer stateTracer ps@PointSchedule{ticks} peers = do
   traceEndOfTime
   where
     traceStartOfTime =
-      traceLinesWith tracer [
-        hline,
-        "Running point schedule ...",
-        hline
-        ]
+      traceWith tracer "Running point schedule ..."
     traceEndOfTime =
       traceLinesWith tracer [
         hline,
