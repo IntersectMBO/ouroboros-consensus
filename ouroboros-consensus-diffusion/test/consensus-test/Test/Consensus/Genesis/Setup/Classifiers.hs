@@ -57,7 +57,7 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
     longerThanGenesisWindow = AF.headSlot goodChain >= At (fromIntegral scg)
 
     genesisWindowAfterIntersection =
-      any fragmentHasGenesis branches
+      all fragmentHasGenesis branches
 
     fragmentHasGenesis btb =
       let
