@@ -1,5 +1,6 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
@@ -13,7 +14,6 @@ module Test.Consensus.Genesis.Tests.Uniform (tests) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -57,13 +57,12 @@ tests =
     testProperty "serve adversarial branches" prop_serveAdversarialBranches
     ]
 
-makeProperty ::
+theProperty ::
   GenesisTest ->
   Peers PeerSchedule ->
   StateView ->
-  [PeerId] ->
   Property
-makeProperty genesisTest schedule StateView {svSelectedChain} killed =
+theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
   classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
   label disconnected $
@@ -103,6 +102,8 @@ makeProperty genesisTest schedule StateView {svSelectedChain} killed =
     disconnected =
       printf "disconnected %.1f%% of adversaries" disconnectedPercent
 
+    killed = chainSyncKilled stateView
+
     disconnectedPercent :: Double
     disconnectedPercent =
       100 * fromIntegral (length killed) / fromIntegral advCount
@@ -123,20 +124,18 @@ fromBlockPoint _                          = Nothing
 
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.
-prop_serveAdversarialBranches :: QC.Gen QC.Property
-prop_serveAdversarialBranches = QC.expectFailure <$> do
-  genesisTest <- genChains (QC.choose (1, 4))
-  schedulePoints <- genUniformSchedulePoints genesisTest
-  pure $
-    runSimOrThrow $
-    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    exceptionCounterexample $
-    makeProperty genesisTest schedulePoints
+prop_serveAdversarialBranches :: Property
+prop_serveAdversarialBranches =
+  expectFailure $ forAllGenesisTest'
 
-  where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scTraceState = False, scTrace = False}
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- genUniformSchedulePoints gt
+        pure (gt, ps))
 
-    scheduleConfig = defaultPointScheduleConfig
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+       {scTraceState = False, scTrace = False})
+
+    theProperty
 
 genUniformSchedulePoints :: GenesisTest -> QC.Gen (Peers PeerSchedule)
 genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
@@ -167,22 +166,20 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 --
 -- This test is expected to fail because we don't test a genesis implementation
 -- yet.
-prop_leashingAttackStalling :: QC.Gen QC.Property
-prop_leashingAttackStalling = QC.expectFailure <$> do
-  genesisTest <- genChains (QC.choose (1, 4))
-  schedulePoints <- genLeashingSchedule genesisTest
-  pure $
-    runSimOrThrow $
-    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    exceptionCounterexample $
-    makeProperty genesisTest schedulePoints
+prop_leashingAttackStalling :: Property
+prop_leashingAttackStalling =
+  expectFailure $ forAllGenesisTest'
+
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- genLeashingSchedule gt
+        pure (gt, ps))
+
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+      {scTrace = False})
+
+    theProperty
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
-      { scTrace = False }
-
-    scheduleConfig = defaultPointScheduleConfig
-
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
@@ -214,22 +211,20 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
 -- yet.
 --
 -- See Note [Leashing attacks]
-prop_leashingAttackTimeLimited :: QC.Gen QC.Property
-prop_leashingAttackTimeLimited = QC.expectFailure <$> do
-  genesisTest <- genChains (QC.choose (1, 4))
-  schedulePoints <- genTimeLimitedSchedule genesisTest
-  pure $
-    runSimOrThrow $
-    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    exceptionCounterexample $
-    makeProperty genesisTest schedulePoints
+prop_leashingAttackTimeLimited :: Property
+prop_leashingAttackTimeLimited =
+  expectFailure $ forAllGenesisTest'
+
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- genTimeLimitedSchedule gt
+        pure (gt, ps))
+
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+      {scTrace = False})
+
+    theProperty
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
-      { scTrace = False }
-
-    scheduleConfig = defaultPointScheduleConfig
-
     -- | A schedule which doesn't run past the last event of the honest peer
     genTimeLimitedSchedule :: GenesisTest -> QC.Gen (Peers PeerSchedule)
     genTimeLimitedSchedule genesisTest = do
