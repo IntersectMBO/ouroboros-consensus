@@ -33,7 +33,7 @@ tests = adjustQuickCheckTests (`div` 10) $ testProperty "timeouts" prop_timeouts
 
 prop_timeouts :: QC.Gen QC.Property
 prop_timeouts = do
-  genesisTest <- genChains 0
+  genesisTest <- genChains (pure 0)
 
   -- Use higher tick duration to avoid the test taking really long
   let scSchedule = PointScheduleConfig {pscTickDuration = 1}
@@ -69,7 +69,7 @@ prop_timeouts = do
           headerPoint = HeaderPoint $ At (getHeader tipBlock)
           blockPoint = BlockPoint (At tipBlock)
           state = Peer HonestPeer $ NodeOnline $ AdvertisedPoints tipPoint headerPoint blockPoint
-          tick = Tick { active = state, duration = pscTickDuration scheduleConfig }
+          tick = Tick { active = state, duration = pscTickDuration scheduleConfig, number = 0 }
           maximumNumberOfTicks = round $ timeout / pscTickDuration scheduleConfig
       in
       PointSchedule (tick :| replicate maximumNumberOfTicks tick) (HonestPeer :| [])

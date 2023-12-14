@@ -19,6 +19,7 @@ module Test.Consensus.PointSchedule.SinglePeer.Indices (
   , rollbacksTipPoints
   , singleJumpTipPoints
   , tipPointSchedule
+  , uniformRMDiffTime
   ) where
 
 import           Control.Monad (forM, replicateM)

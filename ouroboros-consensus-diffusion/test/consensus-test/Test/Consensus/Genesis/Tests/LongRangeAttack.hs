@@ -14,7 +14,6 @@ import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           System.Random.Stateful (runSTGen_)
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
@@ -22,8 +21,6 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
-import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
-import           Test.QuickCheck.Random (QCGen)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -34,7 +31,7 @@ tests :: TestTree
 tests =
   testGroup "long range attack" [
     adjustQuickCheckTests (`div` 10) $
-    testProperty "one adversary" (prop_longRangeAttack 1 [10])
+    testProperty "one adversary" prop_longRangeAttack
     -- TODO we don't have useful classification logic for multiple adversaries yet – if a selectable
     -- adversary is slow, it might be discarded before it reaches critical length because the faster
     -- ones have served k blocks off the honest chain if their fork anchor is further down the line.
@@ -42,19 +39,10 @@ tests =
     -- testProperty "three adversaries" (prop_longRangeAttack 1 [2, 5, 10])
   ]
 
-genChainsAndSchedule :: PointScheduleConfig -> Word -> ScheduleType -> QC.Gen (GenesisTest, PointSchedule)
-genChainsAndSchedule scheduleConfig numAdversaries scheduleType =
-  unsafeMapSuchThatJust do
-    gt <- genChains numAdversaries
-    seed :: QCGen <- arbitrary
-    pure ((gt,) <$> runSTGen_ seed (\ g -> genSchedule g scheduleConfig scheduleType (gtBlockTree gt)))
-
-newLRA :: Bool
-newLRA = True
-
-prop_longRangeAttack :: Int -> [Int] -> QC.Gen QC.Property
-prop_longRangeAttack honestFreq advFreqs = do
-  (genesisTest, schedule) <- genChainsAndSchedule scheduleConfig (fromIntegral (length advFreqs)) sched
+prop_longRangeAttack :: QC.Gen QC.Property
+prop_longRangeAttack = do
+  genesisTest <- genChains (pure 1)
+  schedule <- fromSchedulePoints <$> stToGen (longRangeAttack (gtBlockTree genesisTest))
   let cls = classifiers genesisTest
 
   -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
@@ -75,11 +63,6 @@ prop_longRangeAttack honestFreq advFreqs = do
             not (isHonestTestFragH svSelectedChain)
 
   where
-    sched | newLRA = NewLRA
-          | otherwise = Frequencies freqs
-
-    freqs = mkPeers honestFreq advFreqs
-
     killCounterexample = \case
       [] -> property
       killed -> counterexample ("Some peers were killed: " ++ intercalate ", " (condense <$> killed))
