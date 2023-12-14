@@ -12,7 +12,6 @@ module Test.Consensus.Genesis.Tests.Uniform (tests) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List (group, intercalate, sort)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
@@ -126,8 +125,7 @@ prop_serveAdversarialBranches = QC.expectFailure <$> do
   genesisTest <- genChains (QC.choose (1, 4))
   schedulePoints <- genUniformSchedulePoints genesisTest
   pure $
-    runSimOrThrow $
-    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
+    runGenesisTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
     exceptionCounterexample $
     makeProperty genesisTest schedulePoints
 
@@ -170,8 +168,7 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
   genesisTest <- genChains (QC.choose (1, 4))
   schedulePoints <- genLeashingSchedule genesisTest
   pure $
-    runSimOrThrow $
-    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
+    runGenesisTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
     exceptionCounterexample $
     makeProperty genesisTest schedulePoints
 
@@ -217,8 +214,7 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
   genesisTest <- genChains (QC.choose (1, 4))
   schedulePoints <- genTimeLimitedSchedule genesisTest
   pure $
-    runSimOrThrow $
-    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
+    runGenesisTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
     exceptionCounterexample $
     makeProperty genesisTest schedulePoints
 

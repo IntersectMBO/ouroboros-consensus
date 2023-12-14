@@ -8,7 +8,6 @@
 
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
-import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List (intercalate)
 import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
 import           Ouroboros.Consensus.Util.Condense (condense)
@@ -51,8 +50,7 @@ prop_longRangeAttack = do
     classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
     allAdversariesSelectable cls
     ==>
-    runSimOrThrow $
-      runTest
+    runGenesisTest
         (noTimeoutsSchedulerConfig scheduleConfig)
         genesisTest
         schedule
