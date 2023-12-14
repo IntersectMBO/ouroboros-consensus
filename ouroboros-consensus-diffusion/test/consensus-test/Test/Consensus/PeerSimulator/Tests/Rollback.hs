@@ -6,7 +6,6 @@
 module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
 
 import           Control.Monad.IOSim (runSimOrThrow)
-import           Data.Maybe (fromJust)
 import           Ouroboros.Consensus.Block (ChainHash (..))
 import           Ouroboros.Consensus.Config.SecurityParam
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -47,7 +46,7 @@ prop_rollback :: Bool -> QC.Gen QC.Property
 prop_rollback wantRollback = do
   -- | Create a block tree with @1@ alternative chain, such that we can rollback
   -- from the trunk to that chain.
-  genesisTest <- genChains 1
+  genesisTest <- genChains (pure 1)
 
   let schedule = rollbackSchedule (gtBlockTree genesisTest)
 
@@ -81,7 +80,7 @@ prop_rollback wantRollback = do
           states = banalStates trunk ++ banalStates branch
           peers = peersOnlyHonest states
           pointSchedule = balanced defaultPointScheduleConfig peers
-       in fromJust pointSchedule
+       in pointSchedule
 
     -- | Whether it is possible to roll back from the trunk after having served
     -- it fully, that is whether there is an alternative chain that forks of the
