@@ -14,7 +14,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
     -- * Generating
     AdversarialRecipe (AdversarialRecipe, arHonest, arParams, arPrefix)
   , CheckedAdversarialRecipe (UnsafeCheckedAdversarialRecipe, carHonest, carParams, carWin)
-  , NoSuchAdversarialChainSchema (NoSuchAdversarialBlock, NoSuchCompetitor, NoSuchIntersection)
+  , NoSuchAdversarialChainSchema (NoSuchAdversarialBlock, NoSuchCompetitor, NoSuchIntersection, KcpIs1)
   , SomeCheckedAdversarialRecipe (SomeCheckedAdversarialRecipe)
   , checkAdversarialRecipe
   , uniformAdversarialChain
@@ -355,6 +355,12 @@ data NoSuchAdversarialChainSchema =
   |
     -- | @not (0 <= 'arPrefix' <= C)@ where @C@ is the number of active slots in 'arHonest'
     NoSuchIntersection
+  |
+    -- | @k=1@
+    --
+    -- This may technically be viable, but our current specification for
+    -- 'uniformAdversarialChain' requires @k>1@.
+    KcpIs1
   deriving (Eq, Show)
 
 -----
@@ -374,6 +380,8 @@ checkAdversarialRecipe ::
          (SomeCheckedAdversarialRecipe base hon)
 checkAdversarialRecipe recipe = do
     when (0 == k) $ Exn.throwError NoSuchAdversarialBlock
+
+    when (1 == k) $ Exn.throwError KcpIs1
 
     -- validate 'arPrefix'
     firstAdvSlot <- case compare arPrefix 0 of
@@ -631,15 +639,18 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 --
 -- The count will be strictly smaller than the number of active slots in the given 'ChainSchema'.
 --
--- REVIEW: why do we not allow forking off the block number 1?
-genPrefixBlockCount :: R.RandomGen g => g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
-genPrefixBlockCount g schedH =
-    if C.toVar numChoices < 2 then C.Count 0 {- can always pick genesis -} else do
+-- The result is guaranteed to leave more than k active slots after the
+-- intersection.
+genPrefixBlockCount :: R.RandomGen g => Kcp -> g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
+genPrefixBlockCount (Kcp k) g schedH
+    | C.getCount numChoices <= 0 = error "there should be at least k+1 blocks in the honest schema"
+    | otherwise =
+        -- uniformIndex is going to pick a number between 0 and numChoices-1
         C.toVar $ R.runSTGen_ g $ C.uniformIndex numChoices
   where
     ChainSchema _slots v = schedH
 
-    numChoices = pc C.- 1   -- can't pick the last active slot
+    numChoices = actives C.- k
 
-    -- 'H.uniformTheHonestChain' ensures 0 < pc
-    pc = BV.countActivesInV S.notInverted v
+    -- 'H.uniformTheHonestChain' ensures k < active
+    actives = BV.countActivesInV S.notInverted v

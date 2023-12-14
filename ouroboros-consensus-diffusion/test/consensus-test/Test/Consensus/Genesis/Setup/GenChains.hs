@@ -66,7 +66,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
     let H.HonestRecipe kcp scg delta _len = testRecipeH
 
     (seedPrefix :: QCGen) <- QC.arbitrary
-    let arPrefix = genPrefixBlockCount seedPrefix arHonest
+    let arPrefix = genPrefixBlockCount kcp seedPrefix arHonest
 
     let testRecipeA = A.AdversarialRecipe {
       A.arPrefix,
@@ -81,6 +81,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
         A.NoSuchAdversarialBlock -> pure Nothing
         A.NoSuchCompetitor       -> error $ "impossible! " <> show e
         A.NoSuchIntersection     -> error $ "impossible! " <> show e
+        A.KcpIs1                 -> error $ "impossible! " <> show e
 
       Right (A.SomeCheckedAdversarialRecipe _ testRecipeA'') -> do
         let Count prefixCount = arPrefix
