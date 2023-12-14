@@ -31,16 +31,19 @@ import qualified Test.Ouroboros.Consensus.ChainGenerator.Slot as S
 import           Test.Ouroboros.Consensus.ChainGenerator.Slot (E (SlotE))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Some as Some
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest as H
-import qualified Test.QuickCheck as QC
+import qualified Test.QuickCheck as QC hiding (elements)
 import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.QuickCheck.Random (QCGen)
 import qualified Test.Tasty as TT
 import qualified Test.Tasty.QuickCheck as TT
+import qualified Test.Util.QuickCheck as QC
 
 -----
 
 tests :: [TT.TestTree]
 tests = [
+    TT.testProperty "k+1 blocks after the intersection" prop_kPlus1BlocksAfterIntersection
+  ,
     TT.testProperty "Adversarial chains lose density and race comparisons" prop_adversarialChain
   ,
     TT.localOption (TT.QuickCheckMaxSize 14) $ TT.testProperty "Adversarial chains win if checked with relaxed parameters" prop_adversarialChainMutation
@@ -106,9 +109,9 @@ instance QC.Arbitrary SomeTestAdversarial where
 
         testSeedPrefix <- QC.arbitrary @QCGen
 
-        let arPrefix = genPrefixBlockCount testSeedPrefix arHonest
+        let arPrefix = genPrefixBlockCount kcp testSeedPrefix arHonest
 
-        let H.HonestRecipe kcp scg delta _len = testRecipeH
+            H.HonestRecipe kcp scg delta _len = testRecipeH
 
             testRecipeA = A.AdversarialRecipe {
                 A.arPrefix
@@ -125,6 +128,7 @@ instance QC.Arbitrary SomeTestAdversarial where
                 A.NoSuchAdversarialBlock -> pure Nothing
                 A.NoSuchCompetitor       -> error $ "impossible! " <> show e
                 A.NoSuchIntersection     -> error $ "impossible! " <> show e
+                A.KcpIs1                 -> error $ "impossible! " <> show e
 
             Right testRecipeA' -> do
                 pure $ Just $ SomeTestAdversarial Proxy Proxy $ TestAdversarial {
@@ -142,6 +146,45 @@ instance QC.Arbitrary SomeTestAdversarial where
                   ,
                     testSeedH
                   }
+
+-- | The honest schema has k+1 blocks after the intersection.
+prop_kPlus1BlocksAfterIntersection :: SomeTestAdversarial -> QCGen -> QC.Property
+prop_kPlus1BlocksAfterIntersection someTestAdversarial testSeedA = runIdentity $ do
+    SomeTestAdversarial Proxy Proxy TestAdversarial {
+        testAscA
+      ,
+        testRecipeA
+      ,
+        testRecipeA'
+      } <- pure someTestAdversarial
+    A.SomeCheckedAdversarialRecipe Proxy recipeA' <- pure testRecipeA'
+
+    let A.AdversarialRecipe { A.arHonest = schedH } = testRecipeA
+        schedA = A.uniformAdversarialChain (Just testAscA) recipeA' testSeedA
+        H.ChainSchema winA _vA = schedA
+        H.ChainSchema _winH vH = schedH
+        A.AdversarialRecipe { A.arParams = (Kcp k, scg, _delta) } = testRecipeA
+
+    C.SomeWindow Proxy stabWin <- do
+        pure $ calculateStability scg schedA
+
+    pure $
+      QC.counterexample (unlines $
+                            H.prettyChainSchema schedH "H"
+                            ++ H.prettyChainSchema schedA "A"
+                          )
+      $ QC.counterexample ("arPrefix = " <> show (A.arPrefix testRecipeA))
+      $ QC.counterexample ("stabWin  = " <> show stabWin)
+      $ QC.counterexample ("stabWin' = " <> show (C.joinWin winA stabWin))
+      $ QC.counterexample ("The honest chain should have k+1 blocks after the intersection")
+          (BV.countActivesInV S.notInverted vH
+            `QC.ge` C.toSize (C.Count (k + 1) + A.arPrefix testRecipeA)
+          )
+-- TODO: uncomment this after ensuring the same for the alternative schema
+--        QC..&&.
+--        QC.counterexample ("The alternative chain should have k+1 blocks after the intersection")
+--          (BV.countActivesInV S.notInverted vA `QC.ge` C.Count (k + 1))
+
 
 -- | No seed exists such that each 'A.checkAdversarialChain' rejects the result of 'A.uniformAdversarialChain'
 prop_adversarialChain :: SomeTestAdversarial -> QCGen -> QC.Property
@@ -308,7 +351,7 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
 
             testSeedPrefix <- QC.arbitrary @QCGen
 
-            let arPrefix = genPrefixBlockCount testSeedPrefix arHonest
+            let arPrefix = genPrefixBlockCount kcp testSeedPrefix arHonest
 
             let recipeA = A.AdversarialRecipe {
                     A.arPrefix
@@ -323,6 +366,7 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
                     A.NoSuchAdversarialBlock -> Nothing
                     A.NoSuchCompetitor       -> error $ "impossible! " <> show e
                     A.NoSuchIntersection     -> error $ "impossible! " <> show e
+                    A.KcpIs1                 -> error $ "impossible! " <> show e
 
                 Right recipeA' -> case Exn.runExcept $ A.checkAdversarialRecipe $ mutateAdversarial recipeA mut of
                     Left{} -> Nothing
