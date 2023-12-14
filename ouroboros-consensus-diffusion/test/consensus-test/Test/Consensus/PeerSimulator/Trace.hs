@@ -7,6 +7,7 @@
 module Test.Consensus.PeerSimulator.Trace (
     mkCdbTracer
   , mkChainSyncClientTracer
+  , prettyTime
   , terseBlock
   , terseFrag
   , terseFragH
@@ -75,20 +76,20 @@ mkChainSyncClientTracer tracer =
   where
     trace = traceUnitWith tracer "ChainSyncClient"
 
+prettyTime :: MonadMonotonicTime m => m String
+prettyTime = do
+  Time time <- getMonotonicTime
+  let ps = diffTimeToPicoseconds time
+      milliseconds = (ps `div` 1_000_000_000) `mod` 1_000
+      seconds = (ps `div` 1_000_000_000_000) `rem` 60
+      minutes = (ps `div` 1_000_000_000_000) `quot` 60
+  pure $ printf "%02d:%02d.%03d" minutes seconds milliseconds
+
 -- | Trace using the given tracer, printing the current time (typically the time
 -- of the simulation) and the unit name.
-traceUnitWith :: MonadMonotonicTime m => Tracer m String -> String -> String -> m ()
-traceUnitWith tracer unit msg = do
-  time <- getMonotonicTime
-  traceWith tracer $ printf "%s %s | %s" (showTime time) unit msg
-  where
-    showTime :: Time -> String
-    showTime (Time time) =
-      let ps = diffTimeToPicoseconds time
-          milliseconds = (ps `div` 1_000_000_000) `mod` 1_000
-          seconds = (ps `div` 1_000_000_000_000) `rem` 60
-          minutes = (ps `div` 1_000_000_000_000) `quot` 60
-       in printf "%02d:%02d.%03d" minutes seconds milliseconds
+traceUnitWith :: Tracer m String -> String -> String -> m ()
+traceUnitWith tracer unit msg =
+  traceWith tracer $ printf "%s | %s" unit msg
 
 traceLinesWith ::
   Tracer m String ->
