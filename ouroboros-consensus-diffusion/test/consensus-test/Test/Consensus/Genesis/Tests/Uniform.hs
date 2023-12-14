@@ -21,7 +21,7 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockNo, unBlockNo)
-import           Test.Consensus.BlockTree (BlockTree (..))
+import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.Run
@@ -66,9 +66,11 @@ makeProperty genesisTest advCount StateView {svSelectedChain} killed =
   label disconnected $
   classify (advCount < length (btBranches gtBlockTree)) "Some adversaries performed rollbacks" $
   counterexample killedPeers $
-  -- We require the honest chain to fit a Genesis window, because otherwise its tip may suggest
-  -- to the governor that the density is too low.
-  longerThanGenesisWindow ==>
+  -- We require the honest chain to extend a Genesis window after the
+  -- intersection or to have the last block at a higher slot than the other
+  -- chains, otherwise the governor that we have at the moment might disconnect
+  -- the honest peer.
+  genesisWindowAfterIntersection || honestChainHasHigherSlot ==>
   conjoin [
     counterexample "The honest peer was disconnected" (not (HonestPeer `elem` killed)),
     counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
@@ -110,7 +112,9 @@ makeProperty genesisTest advCount StateView {svSelectedChain} killed =
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
-    Classifiers {genesisWindowAfterIntersection, longerThanGenesisWindow} = classifiers genesisTest
+    Classifiers {genesisWindowAfterIntersection} = classifiers genesisTest
+
+    honestChainHasHigherSlot = all (AF.headSlot (btTrunk gtBlockTree) >=) (AF.headSlot . btbSuffix <$> btBranches gtBlockTree)
 
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.
