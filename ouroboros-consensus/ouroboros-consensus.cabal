@@ -283,7 +283,7 @@ library
     , sop-core                     ^>=0.5
     , sop-extras                   ^>=0.1
     , streaming
-    , strict-checked-vars          ^>=0.1.0.4
+    , strict-checked-vars          ^>=0.2
     , strict-sop-core              ^>=0.1
     , strict-stm                   ^>=1.3
     , these                        ^>=1.2
@@ -382,7 +382,9 @@ library unstable-consensus-testlib
     , serialise
     , sop-core
     , sop-extras
+    , strict-checked-vars
     , strict-sop-core
+    , strict-stm
     , tasty
     , tasty-expected-failure
     , tasty-golden
