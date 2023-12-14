@@ -186,9 +186,10 @@ dispatchTick ::
   Map PeerId (PeerResources m) ->
   Tick ->
   m ()
-dispatchTick tracer stateTracer peers Tick {active = Peer pid state, duration} =
+dispatchTick tracer stateTracer peers Tick {active = Peer pid state, duration, number} =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
+      trace $ "Tick number " ++ show number
       trace $ "Writing state " ++ condense state
       atomically (prUpdateState state)
       trace $ "Waiting for full resolution of " ++ condense pid ++ "'s tick..."
@@ -257,9 +258,10 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     -- peer fragments than registered clients.
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
         getCurrentChain = ChainDB.getCurrentChain chainDb
+        getPoints = traverse readTVar (srCurrentState . prShared <$> (psrPeers resources))
         mkStateTracer
           | scTraceState schedulerConfig
-          = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates
+          = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates getPoints
           | otherwise
           = pure nullTracer
     stateTracer <- mkStateTracer

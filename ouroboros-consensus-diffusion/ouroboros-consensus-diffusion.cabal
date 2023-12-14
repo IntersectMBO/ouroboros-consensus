@@ -214,6 +214,7 @@ test-suite consensus-test
     Test.Consensus.Genesis.Setup.GenChains
     Test.Consensus.Genesis.Tests
     Test.Consensus.Genesis.Tests.LongRangeAttack
+    Test.Consensus.Genesis.Tests.Uniform
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
