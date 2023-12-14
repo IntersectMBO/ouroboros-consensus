@@ -39,11 +39,10 @@ import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
                      (FindIntersect (..),
                      RequestNext (AwaitReply, RollBackward, RollForward))
-import           Test.Consensus.PeerSimulator.Trace (terseFrag, tersePoint)
 import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TersePrinting (terseFragment, tersePoint)
 import           Test.Util.TestBlock (TestBlock, TestHash)
-
 
 toPoint :: (HasHeader block, HeaderHash block ~ TestHash) => WithOrigin block -> Point TestBlock
 toPoint = castPoint . withOrigin GenesisPoint blockPoint
@@ -89,7 +88,7 @@ handlerRequestNext ::
 handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
-    trace $ "  last intersection is " ++ condense intersection
+    trace $ "  last intersection is " ++ tersePoint intersection
     withHeader intersection (coerce (header points))
   where
     withHeader :: Point TestBlock -> WithOrigin (Header TestBlock) -> WriterT [String] (STM m) (Maybe RequestNext)
@@ -117,7 +116,7 @@ handlerRequestNext currentIntersection blockTree points =
       -- we have something to serve.
       (BT.PathAnchoredAtSource True, fragmentAhead@(next AF.:< _)) -> do
         trace "  intersection is before our header point"
-        trace $ "  fragment ahead: " ++ terseFrag fragmentAhead
+        trace $ "  fragment ahead: " ++ terseFragment fragmentAhead
         lift $ writeTVar currentIntersection $ blockPoint next
         pure $ Just (RollForward (getHeader next) (coerce (tip points)))
       -- If the anchor is not the intersection but the fragment is empty, then
@@ -167,7 +166,7 @@ handlerBlockFetch blockTree (ChainRange from to) AdvertisedPoints {header = Head
     -- We may only serve the full range; if the server has only some of the blocks, it must refuse.
     serveFromBpFragment = \case
       Just slice -> do
-        trace ("Sending slice " ++ terseFrag slice)
+        trace ("Starting batch for slice " ++ terseFragment slice)
         pure (Just (StartBatch (AF.toOldestFirst slice)))
       Nothing    -> do
         -- If we cannot serve blocks from the BP chain, decide whether to yield control to the scheduler

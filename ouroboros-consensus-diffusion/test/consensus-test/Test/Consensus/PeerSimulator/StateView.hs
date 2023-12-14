@@ -14,8 +14,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, SomeException,
                      atomically)
-import           Test.Consensus.PeerSimulator.Trace (terseFragH)
 import           Test.Consensus.PointSchedule (PeerId, TestFragH)
+import           Test.Util.TersePrinting (terseHFragment)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
 
@@ -26,6 +26,10 @@ data ChainSyncException = ChainSyncException
        , cseException :: SomeException
        }
     deriving Show
+
+instance Condense ChainSyncException where
+  condense ChainSyncException{csePeerId, cseException} =
+    condense csePeerId ++ ": " ++ show cseException
 
 -- | A state view is a partial view of the state of the whole peer simulator.
 -- This includes information about the part of the code that is being tested
@@ -40,7 +44,8 @@ data StateView = StateView {
 
 instance Condense StateView where
   condense StateView {svSelectedChain, svChainSyncExceptions} =
-    "SelectedChain: " ++ terseFragH svSelectedChain ++ "\nChainSyncExceptions: " ++ show svChainSyncExceptions
+    "SelectedChain: " ++ terseHFragment svSelectedChain ++ "\n"
+    ++ "ChainSyncExceptions:\n" ++ unlines (("  - " ++) . condense <$> svChainSyncExceptions)
 
 -- | State view tracers are a lightweight mechanism to record information that
 -- can later be used to produce a state view. This mechanism relies on
