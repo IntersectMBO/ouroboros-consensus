@@ -71,8 +71,6 @@ prop_cannotRollback = do
   -- the implementation doesn't
   pure $
     alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
-      &&
-    honestChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
     ==>
       runSimOrThrow $ runTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
@@ -102,18 +100,6 @@ rollbackSchedule n blockTree =
       peers = peersOnlyHonest states
       pointSchedule = balanced defaultPointScheduleConfig peers
    in pointSchedule
-
--- | Whether the honest chain has more than 'k' blocks after the
--- intersection with the alternative chain.
---
--- PRECONDITION: Block tree with exactly one alternative chain, otherwise
--- this property does not make sense. With no alternative chain, this will
--- even crash.
-honestChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
-honestChainIsLongEnough (SecurityParam k) blockTree =
-  let BlockTreeBranch{btbTrunkSuffix} = firstBranch blockTree
-      lengthTrunkSuffix = AF.length btbTrunkSuffix
-   in lengthTrunkSuffix > fromIntegral k
 
 -- | Whether the alternative chain has more than 'k' blocks after the
 -- intersection with the honest chain.
