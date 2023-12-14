@@ -1,28 +1,26 @@
 {-# LANGUAGE BlockArguments            #-}
 {-# LANGUAGE DerivingStrategies        #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE LambdaCase                #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE RankNTypes                #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 
 module Test.Consensus.Genesis.Setup (
     module Test.Consensus.Genesis.Setup.GenChains
-  , exceptionCounterexample
-  , runTest
+  , forAllGenesisTest
+  , forAllGenesisTest'
+  , runGenesisTest
+  , runGenesisTest'
   ) where
 
-import           Control.Exception (AsyncException (ThreadKilled))
-import           Control.Monad.Class.MonadTime (MonadTime)
-import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (debugTracer, traceWith)
-import           Data.Either (partitionEithers)
 import           Data.Foldable (for_)
 import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.ChainSync.Codec
                      (ChainSyncTimeout (..))
 import           Test.Consensus.BlockTree (allFragments)
+import           Test.Consensus.Genesis.Setup.Classifiers (classifiers, Classifiers (..))
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
@@ -33,16 +31,21 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.Tracer (recordingTracerTVar)
 
--- | Runs the given point schedule and evaluates the given property on the final
--- state view.
-runTest ::
-  (IOLike m, MonadTime m, MonadTimer m, Testable a) =>
+-- | See 'runGenesisTest'.
+data RunGenesisTestResult = RunGenesisTestResult {
+  rgtrTrace :: String,
+  rgtrStateView :: StateView
+  }
+
+-- | Runs the given 'GenesisTest' and 'PointSchedule' and evaluates the given
+-- property on the final 'StateView'.
+runGenesisTest ::
   SchedulerConfig ->
   GenesisTest ->
   PointSchedule ->
-  (StateView -> a) ->
-  m Property
-runTest schedulerConfig genesisTest schedule makeProperty = do
+  RunGenesisTestResult
+runGenesisTest schedulerConfig genesisTest schedule =
+  runSimOrThrow $ do
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
@@ -57,24 +60,64 @@ runTest schedulerConfig genesisTest schedule makeProperty = do
       "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts)
       ] ++ prettyGenesisTest genesisTest
 
-    finalStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
-    traceWith tracer (condense finalStateView)
-    trace <- unlines <$> getTrace
+    rgtrStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
+    traceWith tracer (condense rgtrStateView)
+    rgtrTrace <- unlines <$> getTrace
 
-    pure $ counterexample trace $ makeProperty finalStateView
+    pure $ RunGenesisTestResult {rgtrTrace, rgtrStateView}
   where
     SchedulerConfig {scChainSyncTimeouts} = schedulerConfig
     GenesisTest {gtBlockTree} = genesisTest
 
--- | Print counterexamples if the test result contains exceptions.
-exceptionCounterexample :: Testable a => (StateView -> [PeerId] -> a) -> StateView -> Property
-exceptionCounterexample makeProperty stateView =
-  case svChainSyncExceptions stateView of
-    exns | ([], killed) <- partitionEithers (genesisException <$> exns) ->
-      property $ makeProperty stateView killed
-    exns ->
-      counterexample ("exceptions: " <> show exns) False
+-- | Variant of 'runGenesisTest' that also takes a property on the final
+-- 'StateView' and returns a QuickCheck property. The trace is printed in case
+-- of counter-example.
+runGenesisTest' ::
+  Testable prop =>
+  SchedulerConfig ->
+  GenesisTest ->
+  PointSchedule ->
+  (StateView -> prop) ->
+  Property
+runGenesisTest' schedulerConfig genesisTest schedule makeProperty =
+    counterexample rgtrTrace $ makeProperty rgtrStateView
   where
-    genesisException = \case
-      (ChainSyncException peer e) | Just ThreadKilled <- fromException e -> Right peer
-      exc -> Left exc
+    RunGenesisTestResult{rgtrTrace, rgtrStateView} =
+      runGenesisTest schedulerConfig genesisTest schedule
+
+-- | All-in-one helper that generates a 'GenesisTest' and a 'PointSchedule',
+-- runs them with 'runGenesisTest', check whether the given property holds on
+-- the resulting 'StateView'.
+forAllGenesisTest ::
+  Testable prop =>
+  Gen (GenesisTest, PointSchedule) ->
+  SchedulerConfig ->
+  (GenesisTest -> PointSchedule -> StateView -> prop) ->
+  Property
+forAllGenesisTest = mkForAllGenesisTest id
+
+-- | Same as 'forAllGenesisTest' but the schedule is a 'Peers PeerSchedule'.
+forAllGenesisTest' ::
+  Testable prop =>
+  Gen (GenesisTest, Peers PeerSchedule) ->
+  SchedulerConfig ->
+  (GenesisTest -> Peers PeerSchedule -> StateView -> prop) ->
+  Property
+forAllGenesisTest' = mkForAllGenesisTest fromSchedulePoints
+
+-- | Common code shared between flavours of 'forAllGenesisTest'.
+mkForAllGenesisTest ::
+  Testable prop =>
+  (schedule -> PointSchedule) ->
+  Gen (GenesisTest, schedule) ->
+  SchedulerConfig ->
+  (GenesisTest -> schedule -> StateView -> prop) ->
+  Property
+mkForAllGenesisTest mkPointSchedule generator schedulerConfig mkProperty =
+  forAllBlind generator $ \(genesisTest, schedule) ->
+    let cls = classifiers genesisTest
+        result = runGenesisTest schedulerConfig genesisTest (mkPointSchedule schedule)
+     in classify (allAdversariesSelectable cls) "All adversaries selectable" $
+        classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
+        counterexample (rgtrTrace result) $
+        mkProperty genesisTest schedule (rgtrStateView result)
