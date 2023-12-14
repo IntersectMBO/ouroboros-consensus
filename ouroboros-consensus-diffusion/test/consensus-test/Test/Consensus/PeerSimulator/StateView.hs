@@ -14,8 +14,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, SomeException,
                      atomically)
-import           Test.Consensus.PeerSimulator.Trace (terseFragH)
 import           Test.Consensus.PointSchedule (PeerId, TestFragH)
+import           Test.Util.TersePrinting (terseFragH)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
 

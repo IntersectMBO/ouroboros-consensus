@@ -26,10 +26,11 @@ import           Test.Consensus.BlockTree (allFragments)
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
-import           Test.Consensus.PeerSimulator.Trace (traceLinesWith, terseFrag)
+import           Test.Consensus.PeerSimulator.Trace (traceLinesWith)
 import           Test.Consensus.PointSchedule
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TersePrinting (terseFrag)
 import           Test.Util.Tracer (recordingTracerTVar)
 
 -- | Runs the given point schedule and evaluates the given property on the final

@@ -44,12 +44,10 @@ import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
                      (FindIntersect (..),
                      RequestNext (AwaitReply, RollBackward, RollForward))
-import           Test.Consensus.PeerSimulator.Trace (terseBlock, terseFrag,
-                     tersePoint)
 import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.TersePrinting (terseBlock, terseFrag, tersePoint)
 import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
-
 
 toPoint :: (HasHeader block, HeaderHash block ~ TestHash) => WithOrigin block -> Point TestBlock
 toPoint = castPoint . withOrigin GenesisPoint blockPoint

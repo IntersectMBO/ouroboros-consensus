@@ -11,7 +11,6 @@ module Test.Consensus.PeerSimulator.ScheduledBlockFetchServer (
   ) where
 
 import           Control.Tracer
-import           Data.List (intercalate)
 import           Ouroboros.Consensus.Block (Point)
 import           Ouroboros.Consensus.Util.Condense (Condense)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM))
@@ -20,6 +19,7 @@ import           Ouroboros.Network.Protocol.BlockFetch.Server
 import           Test.Consensus.PeerSimulator.ScheduledServer
                      (ScheduledServer (..), awaitOnlineState, runHandler)
 import           Test.Consensus.PeerSimulator.Trace
+import           Test.Util.TersePrinting (terseBlock)
 import           Test.Util.TestBlock (TestBlock)
 
 data SendBlocks =
@@ -63,7 +63,7 @@ scheduledBlockFetchServer ScheduledBlockFetchServer {sbfsServer, sbfsHandlers} =
     blockFetch range =
       runHandler sbfsServer "BlockFetch" (bfshBlockFetch range) $ \case
         StartBatch blocks -> do
-          trace $ "  sending blocks: " ++ intercalate " " (terseBlock <$> blocks)
+          trace $ "  sending blocks: " ++ unwords (terseBlock <$> blocks)
           trace "done handling BlockFetch"
           pure $ SendMsgStartBatch (sendBlocks blocks)
         NoBlocks -> do
