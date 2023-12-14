@@ -9,12 +9,11 @@
 module Test.Consensus.Genesis.Setup (
     module Test.Consensus.Genesis.Setup.GenChains
   , exceptionCounterexample
-  , runTest
+  , runGenesisTest
   ) where
 
 import           Control.Exception (AsyncException (ThreadKilled))
-import           Control.Monad.Class.MonadTime (MonadTime)
-import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
+import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (debugTracer, traceWith)
 import           Data.Either (partitionEithers)
 import           Data.Foldable (for_)
@@ -33,16 +32,17 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.Tracer (recordingTracerTVar)
 
--- | Runs the given point schedule and evaluates the given property on the final
--- state view.
-runTest ::
-  (IOLike m, MonadTime m, MonadTimer m, Testable a) =>
+-- | Runs the given 'GenesisTest' and 'PointSchedule' and evaluates the given
+-- property on the final 'StateView'.
+runGenesisTest ::
+  Testable prop =>
   SchedulerConfig ->
   GenesisTest ->
   PointSchedule ->
-  (StateView -> a) ->
-  m Property
-runTest schedulerConfig genesisTest schedule makeProperty = do
+  (StateView -> prop) ->
+  Property
+runGenesisTest schedulerConfig genesisTest schedule makeProperty =
+  runSimOrThrow $ do
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
