@@ -5,7 +5,7 @@ module Ouroboros.Consensus.Node.ExitPolicy (
   , ReturnPolicy
   ) where
 
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Network.ExitPolicy
 
 
@@ -13,7 +13,7 @@ import           Ouroboros.Network.ExitPolicy
 -- `chain-sync` results.
 --
 data NodeToNodeInitiatorResult =
-    ChainSyncInitiatorResult !ChainSyncClientResult
+    ChainSyncInitiatorResult !CSClient.ChainSyncClientResult
   | NoInitiatorResult
 
 
@@ -22,10 +22,10 @@ returnPolicy NoInitiatorResult = ReconnectDelay 10
 returnPolicy (ChainSyncInitiatorResult result) = case result of
   -- TODO: it would be nice to have additional context to predict when we will
   -- be ready to reconnect.
-  ForkTooDeep      _ _ourTip _theirTip -> ReconnectDelay 120
-  NoMoreIntersection _ourTip _theirTip -> ReconnectDelay 120
-  RolledBackPastIntersection
-                   _ _ourTip _theirTip -> ReconnectDelay 180
+  CSClient.ForkTooDeep      _ _ourTip _theirTip -> ReconnectDelay 120
+  CSClient.NoMoreIntersection _ourTip _theirTip -> ReconnectDelay 120
+  CSClient.RolledBackPastIntersection
+                            _ _ourTip _theirTip -> ReconnectDelay 180
   -- the outbound-governor asked for hot to warm demotion; it's up to the
   -- governor to decide to promote the peer to hot.
-  AskedToTerminate                     -> ReconnectDelay 10
+  CSClient.AskedToTerminate                     -> ReconnectDelay 10

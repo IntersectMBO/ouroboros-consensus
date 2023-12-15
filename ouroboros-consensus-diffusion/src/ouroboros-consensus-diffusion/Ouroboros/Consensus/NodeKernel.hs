@@ -56,7 +56,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
-                     (HeaderInFutureCheck)
+                     (SomeHeaderInFutureCheck)
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -134,7 +134,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , btime                   :: BlockchainTime m
     , chainDB                 :: ChainDB m blk
     , initChainDB             :: StorageConfig blk -> InitChainDB m blk -> m ()
-    , chainSyncFutureCheck    :: HeaderInFutureCheck m blk
+    , chainSyncFutureCheck    :: SomeHeaderInFutureCheck m blk
     , blockFetchSize          :: Header blk -> SizeInBytes
     , mempoolCapacityOverride :: MempoolCapacityBytesOverride
     , miniProtocolParameters  :: MiniProtocolParameters

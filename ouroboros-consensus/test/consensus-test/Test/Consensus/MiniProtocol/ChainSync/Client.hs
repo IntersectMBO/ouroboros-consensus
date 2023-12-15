@@ -389,7 +389,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               pure $ WithFingerprint isInvalidBlock fp
           }
 
-        headerInFutureCheck :: InFutureCheck.HeaderInFutureCheck m TestBlock
+        headerInFutureCheck :: InFutureCheck.SomeHeaderInFutureCheck m TestBlock
         headerInFutureCheck =
             InFutureCheck.realHeaderInFutureCheck skew clientSystemTime
             -- Note that this tests passes in the exact difference between the
@@ -399,15 +399,22 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client = chainSyncClient
-                   (pipelineDecisionLowHighMark 10 20)
-                   chainSyncTracer
-                   nodeCfg
-                   headerInFutureCheck
-                   chainDbView
-                   (maxBound :: NodeToNodeVersion)
-                   (return Continue)
-                   nullTracer
+        client varCandidate =
+            chainSyncClient
+              ConfigEnv {
+                  chainDbView
+                , cfg                     = nodeCfg
+                , tracer                  = chainSyncTracer
+                , someHeaderInFutureCheck = headerInFutureCheck
+                , mkPipelineDecision0     =
+                    pipelineDecisionLowHighMark 10 20
+                }
+              DynamicEnv {
+                  version             = maxBound :: NodeToNodeVersion
+                , controlMessageSTM   = return Continue
+                , headerMetricsTracer = nullTracer
+                , varCandidate
+                }
 
     -- Set up the server
     varChainProducerState <- uncheckedNewTVarM $ initChainProducerState Genesis

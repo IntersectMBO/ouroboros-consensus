@@ -8,6 +8,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE PatternSynonyms            #-}
@@ -71,6 +72,7 @@ module Test.Util.TestBlock (
     -- * Support for tests
   , Permutation (..)
   , permute
+  , updateToNextNumeral
   ) where
 
 import           Cardano.Crypto.DSIGN
@@ -823,3 +825,66 @@ instance Serialise ptype => HasBinaryBlockInfo (TestBlockWith ptype) where
       }
 
 instance (Serialise ptype, PayloadSemantics ptype) => SerialiseDiskConstraints (TestBlockWith ptype)
+
+-----
+
+-- | Given a point to a chain of length L, generates a 'SwitchFork' that
+-- switches to the "next" block of length L, where "next" is determined by
+-- interpreting the "forks" in the 'TestHash' as binary digits (except the
+-- deepest, which is a simple counter).
+--
+-- For example, the following are input and outputs for a chains of length 3,
+-- where the 'TestHash'es and 'Point's are denoted by numerals (the 'SlotNo' is
+-- merely the number of digits).
+--
+-- @
+-- 000 :-> [RollBack 00, AddBlock 001]
+-- 001 :-> [RollBack 0 , AddBlock 01 , AddBlock 010]
+-- 010 :-> [RollBack 01, AddBlock 011]
+-- 011 :-> [RollBack G , AddBlock 1  , AddBlock 10 , AddBlock 100]
+--
+-- 100 :-> [RollBack 10, AddBlock 101]
+-- 101 :-> [RollBack 1 , AddBlock 11 , AddBlock 110]
+-- 110 :-> [RollBack 11, AddBlock 111]
+-- 111 :-> [RollBack G , AddBlock 2  , AddBlock 20 , AddBlock 200]
+--
+-- 200 :-> [RollBack 20, AddBlock 201]
+-- 201 :-> [RollBack 2 , AddBlock 21 , AddBlock 210]
+-- 210 :-> [RollBack 21, AddBlock 211]
+-- 211 :-> [RollBack G , AddBlock 3  , AddBlock 30 , AddBlock 300]
+--
+-- etc
+-- @
+updateToNextNumeral :: RealPoint TestBlock -> (Point TestBlock, NonEmpty TestBlock)
+updateToNextNumeral rp0 =
+    let TestHash (fork :| forks) = hash0 in go (0 :: Int) fork forks
+  where
+    RealPoint slot0 hash0 = rp0
+
+    go !depth fork = \case
+        []            -> rebuild depth (fork + 1) []
+        fork2 : forks ->
+            if 0 == fork then rebuild depth 1 (fork2 : forks) else
+                go (depth + 1) fork2 forks
+
+    rebuild depth fork' forks =
+        let islot  = slot0 - fromIntegral depth - 1
+            ipoint = case NE.nonEmpty forks of
+                Nothing -> GenesisPoint
+                Just ne -> BlockPoint islot (TestHash ne)
+
+            next = TestBlockWith {
+                tbHash    = TestHash (fork' :| forks)
+              , tbSlot    = islot + 1
+              , tbValid   = Valid
+              , tbPayload = ()
+              }
+        in
+        (ipoint, go' (next :| []) depth)
+
+    go' ne = \case
+        0     -> NE.reverse ne
+        depth ->
+            go'
+                (successorBlock (NE.head ne) `NE.cons` ne)
+                (depth - 1)

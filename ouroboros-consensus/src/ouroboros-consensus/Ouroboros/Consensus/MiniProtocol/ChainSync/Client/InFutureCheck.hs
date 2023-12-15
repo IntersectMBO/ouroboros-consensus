@@ -8,13 +8,14 @@
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck (
     -- * Interface
     HeaderInFutureCheck (..)
+  , SomeHeaderInFutureCheck (..)
     -- * Real Implementation
   , HeaderArrivalException (..)
   , realHeaderInFutureCheck
   ) where
 
 import           Control.Exception (Exception)
-import           Control.Monad (guard, unless)
+import           Control.Monad (guard, unless, when)
 import           Control.Monad.Class.MonadTimer.SI (MonadDelay, threadDelay)
 import           Control.Monad.Except (Except, liftEither)
 import           Data.Proxy (Proxy (Proxy))
@@ -40,12 +41,15 @@ import           Ouroboros.Network.Block (HasHeader)
   Interface
 -------------------------------------------------------------------------------}
 
+data SomeHeaderInFutureCheck m blk = forall arrival judgment.
+    SomeHeaderInFutureCheck (HeaderInFutureCheck m blk arrival judgment)
+
 -- | The interface a ChainSync client needs in order to check the arrival time
 -- of headers.
 --
 -- Instead of alphabetical, the fields are in the order in which the ChainSync
 -- client logic will invoke them for each header.
-data HeaderInFutureCheck m blk = forall arrival judgment. HeaderInFutureCheck {
+data HeaderInFutureCheck m blk arrival judgment = HeaderInFutureCheck {
     proxyArrival :: Proxy arrival
   ,
     -- | This is ideally called _immediately_ upon the header arriving.
@@ -109,8 +113,10 @@ realHeaderInFutureCheck ::
   , HasHardForkHistory blk
   , MonadDelay m
   )
-  => ClockSkew -> SystemTime m -> HeaderInFutureCheck m blk
-realHeaderInFutureCheck skew systemTime = HeaderInFutureCheck {
+  => ClockSkew -> SystemTime m -> SomeHeaderInFutureCheck m blk
+realHeaderInFutureCheck skew systemTime =
+    SomeHeaderInFutureCheck
+  $ HeaderInFutureCheck {
     proxyArrival        = Proxy
   , recordHeaderArrival = \hdr -> do
         (,) (headerRealPoint hdr) <$> systemTimeCurrent systemTime
@@ -131,8 +137,8 @@ realHeaderInFutureCheck skew systemTime = HeaderInFutureCheck {
             now <- systemTimeCurrent systemTime
             let ageNow         = now `diffRelTime` onset
                 syntheticDelay = negate ageNow
-            threadDelay $ nominalDelay syntheticDelay   -- TODO leap seconds?
-               -- recall that threadDelay ignores negative arguments
+            when (0 < syntheticDelay) $ do   -- note https://github.com/input-output-hk/io-sim/issues/129
+                threadDelay $ nominalDelay syntheticDelay   -- TODO leap seconds?
 
         pure $ do
             guard tooEarly   -- no exception if within skew

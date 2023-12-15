@@ -55,7 +55,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import           Ouroboros.Consensus.Node.ExitPolicy
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -69,7 +69,6 @@ import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
                      decodeTip, encodePoint, encodeTip)
 import           Ouroboros.Network.BlockFetch
@@ -85,8 +84,7 @@ import           Ouroboros.Network.Mux
 import           Ouroboros.Network.NodeToNode
 import           Ouroboros.Network.NodeToNode.Version (isPipeliningEnabled)
 import           Ouroboros.Network.PeerSelection.PeerMetric.Type
-                     (FetchedMetricsTracer, HeaderMetricsTracer,
-                     ReportPeerMetrics (..))
+                     (FetchedMetricsTracer, ReportPeerMetrics (..))
 import qualified Ouroboros.Network.PeerSelection.PeerSharing as PSTypes
 import           Ouroboros.Network.PeerSharing (PeerSharingController,
                      bracketPeerSharingClient, peerSharingClient,
@@ -131,15 +129,14 @@ data Handlers m addr blk = Handlers {
       hChainSyncClient
         :: ConnectionId addr
         -> IsBigLedgerPeer
-        -> NodeToNodeVersion
-        -> ControlMessageSTM m
-        -> HeaderMetricsTracer m
-        -> StrictTVar m (AnchoredFragment (Header blk))
-        -> ChainSyncClientPipelined (Header blk) (Point blk) (Tip blk) m ChainSyncClientResult
-        -- TODO: we should consider either bundling these context parameters
-        -- into a record, or extending the protocol handler representation
-        -- to support bracket-style initialisation so that we could have the
-        -- closure include these and not need to be explicit about them here.
+        -> CsClient.DynamicEnv m blk
+        -> ChainSyncClientPipelined (Header blk) (Point blk) (Tip blk) m
+             CsClient.ChainSyncClientResult
+        -- TODO: we should reconsider bundling these context parameters into a
+        -- record, perhaps instead extending the protocol handler
+        -- representation to support bracket-style initialisation so that we
+        -- could have the closure include these and not need to be explicit
+        -- about them here.
 
     , hChainSyncServer
         :: ConnectionId addr
@@ -217,15 +214,20 @@ mkHandlers
       NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers}
       computePeers =
     Handlers {
-        hChainSyncClient = \peer _isBigLedgerpeer ->
-          chainSyncClient
-            (pipelineDecisionLowHighMark
-              (chainSyncPipeliningLowMark  miniProtocolParameters)
-              (chainSyncPipeliningHighMark miniProtocolParameters))
-            (contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers))
-            getTopLevelConfig
-            chainSyncFutureCheck
-            (defaultChainDbView getChainDB)
+        hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
+          CsClient.chainSyncClient
+            CsClient.ConfigEnv {
+                CsClient.cfg                     = getTopLevelConfig
+              , CsClient.someHeaderInFutureCheck = chainSyncFutureCheck
+              , CsClient.chainDbView             =
+                  CsClient.defaultChainDbView getChainDB
+              , CsClient.mkPipelineDecision0     = pipelineDecisionLowHighMark
+                  (chainSyncPipeliningLowMark  miniProtocolParameters)
+                  (chainSyncPipeliningHighMark miniProtocolParameters)
+              , CsClient.tracer                  =
+                  contramap (TraceLabelPeer peer) (Node.chainSyncClientTracer tracers)
+              }
+            dynEnv
       , hChainSyncServer = \peer _version ->
           chainSyncHeadersServer
             (contramap (TraceLabelPeer peer) (Node.chainSyncServerHeaderTracer tracers))
@@ -562,9 +564,9 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
       -- can be used to fetch blocks for that chain.
       bracketSyncWithFetchClient
         (getFetchClientRegistry kernel) them $
-        bracketChainSyncClient
+        CsClient.bracketChainSyncClient
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
-            (defaultChainDbView (getChainDB kernel))
+            (CsClient.defaultChainDbView (getChainDB kernel))
             (getNodeCandidates kernel)
             them
             version $ \varCandidate -> do
@@ -577,9 +579,15 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
                   (timeLimitsChainSync chainSyncTimeout)
                   channel
                   $ chainSyncClientPeerPipelined
-                  $ hChainSyncClient them isBigLedgerPeer version controlMessageSTM
-                      (TraceLabelPeer them `contramap` reportHeader)
-                      varCandidate
+                  $ hChainSyncClient
+                      them
+                      isBigLedgerPeer
+                      CsClient.DynamicEnv {
+                          CsClient.version
+                        , CsClient.controlMessageSTM
+                        , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
+                        , CsClient.varCandidate
+                        }
               return (ChainSyncInitiatorResult r, trailing)
 
     aChainSyncServer
