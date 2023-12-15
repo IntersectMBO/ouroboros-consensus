@@ -10,6 +10,7 @@ module Test.Consensus.Genesis.Setup (
     module Test.Consensus.Genesis.Setup.GenChains
   , exceptionCounterexample
   , runGenesisTest
+  , runGenesisTest'
   ) where
 
 import           Control.Exception (AsyncException (ThreadKilled))
@@ -32,16 +33,20 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.Tracer (recordingTracerTVar)
 
+-- | See 'runGenesisTest'.
+data RunGenesisTestResult = RunGenesisTestResult {
+  rgtrTrace :: String,
+  rgtrStateView :: StateView
+  }
+
 -- | Runs the given 'GenesisTest' and 'PointSchedule' and evaluates the given
 -- property on the final 'StateView'.
 runGenesisTest ::
-  Testable prop =>
   SchedulerConfig ->
   GenesisTest ->
   PointSchedule ->
-  (StateView -> prop) ->
-  Property
-runGenesisTest schedulerConfig genesisTest schedule makeProperty =
+  RunGenesisTestResult
+runGenesisTest schedulerConfig genesisTest schedule =
   runSimOrThrow $ do
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
@@ -57,14 +62,30 @@ runGenesisTest schedulerConfig genesisTest schedule makeProperty =
       "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts)
       ] ++ prettyGenesisTest genesisTest
 
-    finalStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
-    traceWith tracer (condense finalStateView)
-    trace <- unlines <$> getTrace
+    rgtrStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
+    traceWith tracer (condense rgtrStateView)
+    rgtrTrace <- unlines <$> getTrace
 
-    pure $ counterexample trace $ makeProperty finalStateView
+    pure $ RunGenesisTestResult {rgtrTrace, rgtrStateView}
   where
     SchedulerConfig {scChainSyncTimeouts} = schedulerConfig
     GenesisTest {gtBlockTree} = genesisTest
+
+-- | Variant of 'runGenesisTest' that also takes a property on the final
+-- 'StateView' and returns a QuickCheck property. The trace is printed in case
+-- of counter-example.
+runGenesisTest' ::
+  Testable prop =>
+  SchedulerConfig ->
+  GenesisTest ->
+  PointSchedule ->
+  (StateView -> prop) ->
+  Property
+runGenesisTest' schedulerConfig genesisTest schedule makeProperty =
+    counterexample rgtrTrace $ makeProperty rgtrStateView
+  where
+    RunGenesisTestResult{rgtrTrace, rgtrStateView} =
+      runGenesisTest schedulerConfig genesisTest schedule
 
 -- | Print counterexamples if the test result contains exceptions.
 exceptionCounterexample :: Testable a => (StateView -> [PeerId] -> a) -> StateView -> Property

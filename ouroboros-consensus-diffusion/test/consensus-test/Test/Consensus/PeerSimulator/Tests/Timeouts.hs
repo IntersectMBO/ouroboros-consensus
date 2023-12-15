@@ -43,7 +43,7 @@ prop_timeouts = do
           (btTrunk $ gtBlockTree genesisTest)
 
   pure $
-    runGenesisTest schedulerConfig genesisTest schedule $ \stateView ->
+    runGenesisTest' schedulerConfig genesisTest schedule $ \stateView ->
       case svChainSyncExceptions stateView of
         [] ->
           counterexample ("result: " ++ condense (svSelectedChain stateView)) False
