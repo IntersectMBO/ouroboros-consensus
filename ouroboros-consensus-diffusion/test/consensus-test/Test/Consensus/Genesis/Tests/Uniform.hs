@@ -1,12 +1,8 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE TypeOperators       #-}
 
 module Test.Consensus.Genesis.Tests.Uniform (tests) where
 
@@ -71,7 +67,7 @@ makeProperty genesisTest schedule StateView {svSelectedChain} killed =
   -- to the governor that the density is too low.
   longerThanGenesisWindow ==>
   conjoin [
-    counterexample "The honest peer was disconnected" (not (HonestPeer `elem` killed)),
+    counterexample "The honest peer was disconnected" (HonestPeer `notElem` killed),
     counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
     property (isHonest immutableTipHash),
     immutableTipIsRecent

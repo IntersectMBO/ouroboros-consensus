@@ -2,9 +2,7 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
