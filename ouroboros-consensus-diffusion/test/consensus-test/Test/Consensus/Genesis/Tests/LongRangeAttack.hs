@@ -29,11 +29,6 @@ tests =
   testGroup "long range attack" [
     adjustQuickCheckTests (`div` 10) $
     testProperty "one adversary" prop_longRangeAttack
-    -- TODO we don't have useful classification logic for multiple adversaries yet – if a selectable
-    -- adversary is slow, it might be discarded before it reaches critical length because the faster
-    -- ones have served k blocks off the honest chain if their fork anchor is further down the line.
-    -- ,
-    -- testProperty "three adversaries" (prop_longRangeAttack 1 [2, 5, 10])
   ]
 
 prop_longRangeAttack :: QC.Gen QC.Property
@@ -48,7 +43,7 @@ prop_longRangeAttack = do
     classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
     allAdversariesSelectable cls
     ==>
-    runGenesisTest
+    runGenesisTest'
         (noTimeoutsSchedulerConfig scheduleConfig)
         genesisTest
         schedule

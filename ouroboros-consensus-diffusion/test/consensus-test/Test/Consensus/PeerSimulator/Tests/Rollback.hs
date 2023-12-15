@@ -45,7 +45,7 @@ prop_rollback = do
   pure $
     alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
     ==>
-      runGenesisTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
+      runGenesisTest' schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
               GenesisHash    -> False
               BlockHash hash -> any (0 /=) $ unTestHash hash
@@ -71,7 +71,7 @@ prop_cannotRollback = do
   pure $
     alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
     ==>
-      runGenesisTest schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
+      runGenesisTest' schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
         let headOnAlternativeChain = case AF.headHash svSelectedChain of
               GenesisHash    -> False
               BlockHash hash -> any (0 /=) $ unTestHash hash
