@@ -117,18 +117,18 @@ fromBlockPoint _                          = Nothing
 
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.
-prop_serveAdversarialBranches :: QC.Gen QC.Property
-prop_serveAdversarialBranches = QC.expectFailure <$> do
-  genesisTest <- genChains (QC.choose (1, 4))
-  schedule <- fromSchedulePoints <$> genUniformSchedulePoints genesisTest
-  pure $
-    runGenesisTest' schedulerConfig genesisTest schedule $
-    theProperty genesisTest schedule
+prop_serveAdversarialBranches :: Property
+prop_serveAdversarialBranches =
+  expectFailure $ forAllGenesisTest
 
-  where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scTraceState = False, scTrace = False}
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- fromSchedulePoints <$> genUniformSchedulePoints gt
+        pure (gt, ps))
 
-    scheduleConfig = defaultPointScheduleConfig
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+       {scTraceState = False, scTrace = False})
+
+    theProperty
 
 genUniformSchedulePoints :: GenesisTest -> QC.Gen (Peers PeerSchedule)
 genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
@@ -159,20 +159,20 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 --
 -- This test is expected to fail because we don't test a genesis implementation
 -- yet.
-prop_leashingAttackStalling :: QC.Gen QC.Property
-prop_leashingAttackStalling = QC.expectFailure <$> do
-  genesisTest <- genChains (QC.choose (1, 4))
-  schedule <- fromSchedulePoints <$> genLeashingSchedule genesisTest
-  pure $
-    runGenesisTest' schedulerConfig genesisTest schedule $
-    theProperty genesisTest schedule
+prop_leashingAttackStalling :: Property
+prop_leashingAttackStalling =
+  expectFailure $ forAllGenesisTest
+
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- fromSchedulePoints <$> genLeashingSchedule gt
+        pure (gt, ps))
+
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+      {scTrace = False})
+
+    theProperty
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
-      { scTrace = False }
-
-    scheduleConfig = defaultPointScheduleConfig
-
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
@@ -204,20 +204,20 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
 -- yet.
 --
 -- See Note [Leashing attacks]
-prop_leashingAttackTimeLimited :: QC.Gen QC.Property
-prop_leashingAttackTimeLimited = QC.expectFailure <$> do
-  genesisTest <- genChains (QC.choose (1, 4))
-  schedule <- fromSchedulePoints <$> genTimeLimitedSchedule genesisTest
-  pure $
-    runGenesisTest' schedulerConfig genesisTest schedule $
-    theProperty genesisTest schedule
+prop_leashingAttackTimeLimited :: Property
+prop_leashingAttackTimeLimited =
+  expectFailure $ forAllGenesisTest
+
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- fromSchedulePoints <$> genTimeLimitedSchedule gt
+        pure (gt, ps))
+
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+      {scTrace = False})
+
+    theProperty
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
-      { scTrace = False }
-
-    scheduleConfig = defaultPointScheduleConfig
-
     -- | A schedule which doesn't run past the last event of the honest peer
     genTimeLimitedSchedule :: GenesisTest -> QC.Gen (Peers PeerSchedule)
     genTimeLimitedSchedule genesisTest = do
