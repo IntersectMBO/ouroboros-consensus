@@ -38,7 +38,6 @@
 module Test.Consensus.BlockchainTime.Simple (tests) where
 
 import           Control.Applicative (Alternative (..))
-import           Control.Concurrent.Class.MonadSTM.Strict.TVar
 import           Control.Monad (MonadPlus, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as LazySTM
 import           Control.Monad.Class.MonadTime
@@ -53,7 +52,7 @@ import qualified Data.Time.Clock as Time
 import           NoThunks.Class (AllowThunk (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
-import           Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
+import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (withWatcher)

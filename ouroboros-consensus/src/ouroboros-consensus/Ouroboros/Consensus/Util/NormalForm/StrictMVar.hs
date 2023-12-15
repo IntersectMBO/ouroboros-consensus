@@ -1,5 +1,4 @@
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE TypeApplications  #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -13,45 +12,25 @@
 -- checks at compile time.
 --
 -- The exports of this module (should) mirror the exports of the
--- "Control.Concurrent.Class.MonadMVar.Strict.Checked.Switch" module from the
+-- "Control.Concurrent.Class.MonadMVar.Strict.Checked" module from the
 -- @strict-checked-vars@ package.
 module Ouroboros.Consensus.Util.NormalForm.StrictMVar (
     -- * StrictMVar
-    LazyMVar
-  , StrictMVar
-  , castStrictMVar
-  , fromLazyMVar
-  , isEmptyMVar
-  , modifyMVar
-  , modifyMVarMasked
-  , modifyMVarMasked_
-  , modifyMVar_
-  , newEmptyMVar
+    newEmptyMVar
   , newEmptyMVarWithInvariant
   , newMVar
   , newMVarWithInvariant
-  , putMVar
-  , readMVar
-  , swapMVar
-  , takeMVar
-  , toLazyMVar
-  , tryPutMVar
-  , tryReadMVar
-  , tryTakeMVar
-  , withMVar
-  , withMVarMasked
     -- * Invariant
-  , checkInvariant
   , noThunksInvariant
     -- * Re-exports
-  , MonadMVar
+  , module Control.Concurrent.Class.MonadMVar.Strict.Checked
   ) where
 
 import           Control.Concurrent.Class.MonadMVar (MonadInspectMVar (..))
-import           Control.Concurrent.Class.MonadMVar.Strict.Checked.Switch hiding
+import           Control.Concurrent.Class.MonadMVar.Strict.Checked hiding
                      (newEmptyMVar, newEmptyMVarWithInvariant, newMVar,
                      newMVarWithInvariant)
-import qualified Control.Concurrent.Class.MonadMVar.Strict.Checked.Switch as Switch
+import qualified Control.Concurrent.Class.MonadMVar.Strict.Checked as Checked
 import           Data.Proxy (Proxy (..))
 import           GHC.Stack (HasCallStack)
 import           NoThunks.Class (NoThunks (..), unsafeNoThunks)
@@ -62,11 +41,11 @@ import           NoThunks.Class (NoThunks (..), unsafeNoThunks)
 
 -- | Create a 'StrictMVar' with a 'NoThunks' invariant.
 newMVar :: (HasCallStack, MonadMVar m, NoThunks a) => a -> m (StrictMVar m a)
-newMVar = Switch.newMVarWithInvariant noThunksInvariant
+newMVar = Checked.newMVarWithInvariant noThunksInvariant
 
 -- | Create an empty 'StrictMVar' with a 'NoThunks' invariant.
 newEmptyMVar :: (MonadMVar m, NoThunks a) => m (StrictMVar m a)
-newEmptyMVar = Switch.newEmptyMVarWithInvariant noThunksInvariant
+newEmptyMVar = Checked.newEmptyMVarWithInvariant noThunksInvariant
 
 -- | Create a 'StrictMVar' with a custom invariant /and/ a 'NoThunks' invariant.
 --
@@ -78,7 +57,7 @@ newMVarWithInvariant ::
   -> a
   -> m (StrictMVar m a)
 newMVarWithInvariant inv =
-    Switch.newMVarWithInvariant (\x -> inv x <> noThunksInvariant x)
+    Checked.newMVarWithInvariant (\x -> inv x <> noThunksInvariant x)
 
 -- | Create an empty 'StrictMVar' with a custom invariant /and/ a 'NoThunks'
 -- invariant.
@@ -90,7 +69,7 @@ newEmptyMVarWithInvariant ::
   => (a -> Maybe String)
   -> m (StrictMVar m a)
 newEmptyMVarWithInvariant inv =
-    Switch.newEmptyMVarWithInvariant (\x -> inv x <> noThunksInvariant x)
+    Checked.newEmptyMVarWithInvariant (\x -> inv x <> noThunksInvariant x)
 
 {-------------------------------------------------------------------------------
   Invariant
@@ -106,5 +85,5 @@ noThunksInvariant = fmap show . unsafeNoThunks
 instance NoThunks a => NoThunks (StrictMVar IO a) where
   showTypeOf _ = "StrictMVar IO"
   wNoThunks ctxt mvar = do
-      aMay <- inspectMVar (Proxy @IO) (toLazyMVar mvar)
+      aMay <- inspectMVar (Proxy :: Proxy IO) (toLazyMVar mvar)
       noThunks ctxt aMay

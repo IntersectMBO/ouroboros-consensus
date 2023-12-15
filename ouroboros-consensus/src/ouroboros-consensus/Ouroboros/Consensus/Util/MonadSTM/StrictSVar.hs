@@ -31,7 +31,7 @@ module Ouroboros.Consensus.Util.MonadSTM.StrictSVar (
 
 import           Control.Concurrent.Class.MonadSTM
 import qualified Control.Concurrent.Class.MonadSTM as Lazy
-import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked.Switch
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
                      (checkInvariant)
 import           Control.Monad (when)
 import           Control.Monad.Class.MonadThrow (ExitCase (..), MonadCatch,

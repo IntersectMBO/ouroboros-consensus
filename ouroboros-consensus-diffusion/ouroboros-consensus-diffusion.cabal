@@ -84,6 +84,7 @@ library
     , random
     , serialise                    ^>=0.2
     , si-timers                    ^>=1.3
+    , strict-stm                   ^>=1.3
     , time
     , transformers
     , typed-protocols

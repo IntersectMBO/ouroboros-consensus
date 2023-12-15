@@ -14,10 +14,10 @@ module Ouroboros.Consensus.Util.MonadSTM.NormalForm (
 
 import           Control.Concurrent.Class.MonadSTM.Strict.TMVar as StrictSTM hiding
                      (newTMVar, newTMVarIO, traceTMVar, traceTMVarIO)
-import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked.Switch as StrictSTM hiding
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked as StrictSTM hiding
                      (newTVar, newTVarIO, newTVarWithInvariantIO, traceTVar,
                      traceTVarIO)
-import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked.Switch as Strict
+import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked as Strict
 import           Control.Concurrent.Class.MonadSTM.TBQueue as LazySTM
 import           Control.Concurrent.Class.MonadSTM.TQueue as LazySTM
 import           Control.Monad.Class.MonadSTM as StrictSTM

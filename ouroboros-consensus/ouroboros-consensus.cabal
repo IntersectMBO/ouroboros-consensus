@@ -272,7 +272,7 @@ library
     , measures
     , mtl
     , nothunks                     ^>=0.1.2
-    , ouroboros-network-api        ^>=0.6.0
+    , ouroboros-network-api        ^>=0.6.2
     , ouroboros-network-mock       ^>=0.1.0.1
     , ouroboros-network-protocols  ^>=0.6
     , psqueues                     ^>=0.2.3
@@ -283,7 +283,7 @@ library
     , sop-core                     ^>=0.5
     , sop-extras                   ^>=0.1
     , streaming
-    , strict-checked-vars          ^>=0.1.0.4
+    , strict-checked-vars          ^>=0.2
     , strict-sop-core              ^>=0.1
     , strict-stm                   ^>=1.3
     , these                        ^>=1.2
@@ -383,6 +383,7 @@ library unstable-consensus-testlib
     , serialise
     , sop-core
     , sop-extras
+    , strict-checked-vars
     , strict-sop-core
     , tasty
     , tasty-expected-failure
@@ -527,7 +528,6 @@ test-suite consensus-test
     , sop-extras
     , strict-mvar
     , strict-sop-core
-    , strict-stm
     , tasty
     , tasty-hunit
     , tasty-quickcheck
