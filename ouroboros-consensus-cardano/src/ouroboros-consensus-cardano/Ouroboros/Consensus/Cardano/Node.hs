@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                      #-}
 {-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE FlexibleInstances        #-}
@@ -12,11 +13,16 @@
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE TypeOperators            #-}
-{-# OPTIONS_GHC -Wno-orphans
-                -Wno-incomplete-patterns
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+-- Disable completeness checks on GHC versions pre-9.6, where this can be
+-- exceptionally slow:
+#if __GLASGOW_HASKELL__ <= 906
+{-# OPTIONS_GHC -Wno-incomplete-patterns
                 -Wno-incomplete-uni-patterns
                 -Wno-incomplete-record-updates
                 -Wno-overlapping-patterns #-}
+#endif
 
 -- TODO: this is required for ghc-8.10.7, because using NamedFieldPuns and
 -- PatternSynonyms with record syntax results in warnings related to shadowing.
