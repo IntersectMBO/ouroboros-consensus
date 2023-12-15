@@ -9,7 +9,7 @@ module Ouroboros.Consensus.Mempool.Update (
   , implSyncWithLedger
   ) where
 
-import           Control.Concurrent.Class.MonadMVar (MVar, MonadMVar, withMVar)
+import           Control.Concurrent.Class.MonadMVar (MVar, withMVar)
 import           Control.Exception (assert)
 import           Control.Tracer
 import           Data.Maybe (isJust, isNothing)
@@ -23,7 +23,7 @@ import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Util (whenJust)
-import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.IOLike hiding (withMVar)
 
 {-------------------------------------------------------------------------------
   Add transactions

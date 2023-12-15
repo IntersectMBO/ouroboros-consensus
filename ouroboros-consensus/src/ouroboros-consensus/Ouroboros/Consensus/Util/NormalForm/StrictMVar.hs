@@ -22,6 +22,9 @@ module Ouroboros.Consensus.Util.NormalForm.StrictMVar (
   , newMVarWithInvariant
     -- * Invariant
   , noThunksInvariant
+    -- * Unchecked
+  , uncheckedNewEmptyMVar
+  , uncheckedNewMVar
     -- * Re-exports
   , module Control.Concurrent.Class.MonadMVar.Strict.Checked
   ) where
@@ -87,3 +90,15 @@ instance NoThunks a => NoThunks (StrictMVar IO a) where
   wNoThunks ctxt mvar = do
       aMay <- inspectMVar (Proxy :: Proxy IO) (toLazyMVar mvar)
       noThunks ctxt aMay
+
+{-------------------------------------------------------------------------------
+  Unchecked
+-------------------------------------------------------------------------------}
+
+-- | Like 'newMVar', but without a 'NoThunks' invariant.
+uncheckedNewMVar :: MonadMVar m => a -> m (StrictMVar m a)
+uncheckedNewMVar = Checked.newMVar
+
+-- | Like 'newEmptyMVar', but without a 'NoThunks' invariant.
+uncheckedNewEmptyMVar :: MonadMVar m => m (StrictMVar m a)
+uncheckedNewEmptyMVar = Checked.newEmptyMVar

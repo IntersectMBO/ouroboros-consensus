@@ -240,6 +240,7 @@ library
     Ouroboros.Consensus.Util.MonadSTM.RAWLock
     Ouroboros.Consensus.Util.MonadSTM.StrictSVar
     Ouroboros.Consensus.Util.NormalForm.StrictMVar
+    Ouroboros.Consensus.Util.NormalForm.StrictTVar
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.ResourceRegistry
@@ -526,7 +527,6 @@ test-suite consensus-test
     , si-timers
     , sop-core
     , sop-extras
-    , strict-mvar
     , strict-sop-core
     , tasty
     , tasty-hunit

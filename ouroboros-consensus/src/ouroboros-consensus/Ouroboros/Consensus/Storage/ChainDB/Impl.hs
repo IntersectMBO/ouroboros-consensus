@@ -64,7 +64,6 @@ import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
                      allocate, runInnerWithTempRegistry, runWithTempRegistry)
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),

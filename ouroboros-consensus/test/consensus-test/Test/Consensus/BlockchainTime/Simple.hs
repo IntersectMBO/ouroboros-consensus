@@ -53,7 +53,6 @@ import           NoThunks.Class (AllowThunk (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (withWatcher)
 import           Ouroboros.Consensus.Util.Time

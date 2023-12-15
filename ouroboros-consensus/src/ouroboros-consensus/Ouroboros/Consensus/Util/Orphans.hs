@@ -28,7 +28,6 @@ import           NoThunks.Class (InspectHeap (..), InspectHeapNamed (..),
                      noThunksInKeysAndValues)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Mock.Chain (Chain (..))
@@ -73,14 +72,6 @@ instance ShowProxy SlotNo where
 {-------------------------------------------------------------------------------
   NoThunks
 -------------------------------------------------------------------------------}
-
-instance NoThunks a => NoThunks (StrictTVar IO a) where
-  showTypeOf _ = "StrictTVar IO"
-  wNoThunks ctxt tv = do
-      -- We can't use @atomically $ readTVar ..@ here, as that will lead to a
-      -- "Control.Concurrent.STM.atomically was nested" exception.
-      a <- readTVarIO tv
-      noThunks ctxt a
 
 instance (NoThunks k, NoThunks v)
       => NoThunks (Bimap k v) where

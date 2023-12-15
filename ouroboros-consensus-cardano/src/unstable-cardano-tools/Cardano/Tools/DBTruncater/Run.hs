@@ -24,7 +24,6 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import           Ouroboros.Consensus.Util.ResourceRegistry (runWithTempRegistry,
                      withRegistry)
 import           Prelude hiding (truncate)
