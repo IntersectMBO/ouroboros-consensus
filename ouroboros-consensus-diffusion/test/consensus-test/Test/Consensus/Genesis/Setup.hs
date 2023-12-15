@@ -16,6 +16,7 @@ module Test.Consensus.Genesis.Setup (
 
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (debugTracer, traceWith)
+import           Data.Bifunctor (second)
 import           Data.Foldable (for_)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Network.Protocol.ChainSync.Codec
@@ -31,6 +32,7 @@ import           Test.Consensus.PointSchedule.Peers (Peers)
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TersePrinting (terseFragment)
+import           Test.Util.QuickCheck (forAllGenRunShrinkCheck)
 import           Test.Util.Tracer (recordingTracerTVar)
 
 -- | See 'runGenesisTest'.
@@ -116,10 +118,12 @@ mkForAllGenesisTest ::
   (GenesisTest -> schedule -> StateView -> prop) ->
   Property
 mkForAllGenesisTest mkPointSchedule generator schedulerConfig mkProperty =
-  forAllBlind generator $ \(genesisTest, schedule) ->
+  forAllGenRunShrinkCheck generator runner shrinker $ \(genesisTest, schedule) result ->
     let cls = classifiers genesisTest
-        result = runGenesisTest schedulerConfig genesisTest (mkPointSchedule schedule)
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
         counterexample (rgtrTrace result) $
         mkProperty genesisTest schedule (rgtrStateView result)
+  where
+    runner = uncurry (runGenesisTest schedulerConfig) . second mkPointSchedule
+    shrinker _ _ = []
