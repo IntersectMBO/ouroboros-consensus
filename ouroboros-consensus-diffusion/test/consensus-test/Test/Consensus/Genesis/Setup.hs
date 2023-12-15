@@ -1,27 +1,21 @@
 {-# LANGUAGE BlockArguments            #-}
 {-# LANGUAGE DerivingStrategies        #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE LambdaCase                #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE RankNTypes                #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 
 module Test.Consensus.Genesis.Setup (
     module Test.Consensus.Genesis.Setup.GenChains
-  , exceptionCounterexample
   , forAllGenesisTest
   , runGenesisTest
   , runGenesisTest'
   ) where
 
-import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (debugTracer, traceWith)
-import           Data.Either (partitionEithers)
 import           Data.Foldable (for_)
-import           Data.List (intercalate)
 import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.ChainSync.Codec
                      (ChainSyncTimeout (..))
 import           Test.Consensus.BlockTree (allFragments)
@@ -90,19 +84,6 @@ runGenesisTest' schedulerConfig genesisTest schedule makeProperty =
     RunGenesisTestResult{rgtrTrace, rgtrStateView} =
       runGenesisTest schedulerConfig genesisTest schedule
 
--- | Print counterexamples if the test result contains exceptions.
-exceptionCounterexample :: Testable a => (StateView -> [PeerId] -> a) -> StateView -> Property
-exceptionCounterexample makeProperty stateView =
-  case svChainSyncExceptions stateView of
-    exns | ([], killed) <- partitionEithers (genesisException <$> exns) ->
-      property $ makeProperty stateView killed
-    exns ->
-      counterexample ("exceptions: " <> show exns) False
-  where
-    genesisException = \case
-      (ChainSyncException peer e) | Just ThreadKilled <- fromException e -> Right peer
-      exc -> Left exc
-
 -- | All-in-one helper that generates a 'GenesisTest' and a point schedule, runs
 -- them with 'runGenesisTest', check whether the given property holds on the
 -- resulting 'StateView'.
@@ -119,11 +100,4 @@ forAllGenesisTest generator schedulerConfig mkProperty =
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
         counterexample (rgtrTrace result) $
-        exceptionCounterexample
-          (\stateView' killed ->
-            killCounterexample killed $
-            mkProperty stateView')
-          (rgtrStateView result)
-  where
-    killCounterexample [] = property
-    killCounterexample killed = counterexample ("Some peers were killed: " ++ intercalate ", " (condense <$> killed))
+        mkProperty (rgtrStateView result)

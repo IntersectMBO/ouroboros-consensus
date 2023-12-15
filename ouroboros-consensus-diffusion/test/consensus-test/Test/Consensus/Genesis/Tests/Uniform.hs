@@ -54,9 +54,8 @@ makeProperty ::
   GenesisTest ->
   Peers PeerSchedule ->
   StateView ->
-  [PeerId] ->
   Property
-makeProperty genesisTest schedule StateView {svSelectedChain} killed =
+makeProperty genesisTest schedule stateView@StateView{svSelectedChain} =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
   classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
   label disconnected $
@@ -96,6 +95,8 @@ makeProperty genesisTest schedule StateView {svSelectedChain} killed =
     disconnected =
       printf "disconnected %.1f%% of adversaries" disconnectedPercent
 
+    killed = chainSyncKilled stateView
+
     disconnectedPercent :: Double
     disconnectedPercent =
       100 * fromIntegral (length killed) / fromIntegral advCount
@@ -122,7 +123,6 @@ prop_serveAdversarialBranches = QC.expectFailure <$> do
   schedulePoints <- genUniformSchedulePoints genesisTest
   pure $
     runGenesisTest' schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    exceptionCounterexample $
     makeProperty genesisTest schedulePoints
 
   where
@@ -165,7 +165,6 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
   schedulePoints <- genLeashingSchedule genesisTest
   pure $
     runGenesisTest' schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    exceptionCounterexample $
     makeProperty genesisTest schedulePoints
 
   where
@@ -211,7 +210,6 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
   schedulePoints <- genTimeLimitedSchedule genesisTest
   pure $
     runGenesisTest' schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    exceptionCounterexample $
     makeProperty genesisTest schedulePoints
 
   where
