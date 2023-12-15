@@ -357,9 +357,10 @@ library unstable-consensus-testlib
     , base16-bytestring
     , binary
     , bytestring
+    , cardano-binary:testlib
     , cardano-crypto-class
-    , cardano-ledger-binary:testlib
     , cardano-prelude
+    , cardano-slotting:testlib
     , cardano-strict-containers
     , cborg
     , containers
@@ -381,6 +382,7 @@ library unstable-consensus-testlib
     , ouroboros-network-mock
     , pretty-simple
     , QuickCheck
+    , quickcheck-instances
     , quickcheck-state-machine:no-vendored-treediff           ^>=0.8
     , quiet
     , random

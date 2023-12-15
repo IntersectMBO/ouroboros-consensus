@@ -50,6 +50,7 @@ import qualified Data.ByteString.UTF8 as BS.UTF8
 import           Data.List (nub)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
+import           Data.TreeDiff
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block (CodecConfig)
 import           Ouroboros.Consensus.Ledger.Extended (encodeExtLedgerState)
@@ -69,7 +70,7 @@ import           Ouroboros.Consensus.Util.CBOR (decodeAsFlatTerm)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           System.Directory (createDirectoryIfMissing)
 import           System.FilePath (takeDirectory, (</>))
-import           Test.Cardano.Ledger.Binary.TreeDiff (CBORBytes (..), diffExpr)
+import           Test.Cardano.Binary.TreeDiff (CBORBytes (..))
 import           Test.Tasty
 import           Test.Tasty.Golden.Advanced (goldenTest)
 import           Test.Util.Serialisation.Examples (Examples (..), Labelled)
@@ -152,7 +153,7 @@ goldenTestCBOR testName example enc goldenFile =
             | actual == golden -> Nothing
             | otherwise -> Just $ unlines [
                 "Golden term /= actual term, diff golden actual:"
-              , diffExpr (CBORBytes golden) (CBORBytes actual)
+              , show (ansiWlEditExpr (ediff (CBORBytes golden) (CBORBytes actual)))
               ]
 
           (Right actualFlatTerm, Left _) -> Just $ unlines [

@@ -156,8 +156,10 @@ library unstable-mock-testlib
     , base
     , bytestring
     , cardano-crypto-class
+    , cardano-crypto-tests
     , containers
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block}
+    , ouroboros-network-protocols:testlib
     , QuickCheck
     , serialise
     , unstable-diffusion-testlib
