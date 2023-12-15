@@ -37,6 +37,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.QuickCheck (le)
+import           Test.Util.TestBlock (TestBlock, tbSlot)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
                      adjustQuickCheckTests)
 import           Text.Printf (printf)
@@ -55,11 +56,11 @@ tests =
 
 makeProperty ::
   GenesisTest ->
-  Int ->
+  Peers PeerSchedule ->
   StateView ->
   [PeerId] ->
   Property
-makeProperty genesisTest advCount StateView {svSelectedChain} killed =
+makeProperty genesisTest schedule StateView {svSelectedChain} killed =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
   classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
   label disconnected $
@@ -75,6 +76,8 @@ makeProperty genesisTest advCount StateView {svSelectedChain} killed =
     immutableTipIsRecent
   ]
   where
+    advCount = Map.size (others schedule)
+
     immutableTipIsRecent =
       counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
       immutableTipAge `le` s + fromIntegral d + 1
@@ -105,23 +108,27 @@ makeProperty genesisTest advCount StateView {svSelectedChain} killed =
       [] -> "No peers were killed"
       peers -> "Some peers were killed: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = AF.headSlot (btTrunk gtBlockTree)
+    honestTipSlot = At $ tbSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest schedule
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
     Classifiers {genesisWindowAfterIntersection, longerThanGenesisWindow} = classifiers genesisTest
+
+fromBlockPoint :: (DiffTime, SchedulePoint) -> Maybe (DiffTime, TestBlock)
+fromBlockPoint (t, ScheduleBlockPoint bp) = Just (t, bp)
+fromBlockPoint _                          = Nothing
 
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.
 prop_serveAdversarialBranches :: QC.Gen QC.Property
 prop_serveAdversarialBranches = QC.expectFailure <$> do
   genesisTest <- genChains (QC.choose (1, 4))
-  schedule <- fromSchedulePoints <$> genUniformSchedulePoints genesisTest
+  schedulePoints <- genUniformSchedulePoints genesisTest
   pure $
     runSimOrThrow $
-    runTest schedulerConfig genesisTest schedule $
+    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
     exceptionCounterexample $
-    makeProperty genesisTest (length (peerIds schedule) - 1)
+    makeProperty genesisTest schedulePoints
 
   where
     schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scTraceState = False, scTrace = False}
@@ -160,12 +167,12 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 prop_leashingAttackStalling :: QC.Gen QC.Property
 prop_leashingAttackStalling = QC.expectFailure <$> do
   genesisTest <- genChains (QC.choose (1, 4))
-  schedule <- fromSchedulePoints <$> genLeashingSchedule genesisTest
+  schedulePoints <- genLeashingSchedule genesisTest
   pure $
     runSimOrThrow $
-    runTest schedulerConfig genesisTest schedule $
+    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
     exceptionCounterexample $
-    makeProperty genesisTest (length (peerIds schedule) - 1)
+    makeProperty genesisTest schedulePoints
 
   where
     schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
@@ -207,12 +214,12 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
 prop_leashingAttackTimeLimited :: QC.Gen QC.Property
 prop_leashingAttackTimeLimited = QC.expectFailure <$> do
   genesisTest <- genChains (QC.choose (1, 4))
-  schedule <- fromSchedulePoints <$> genTimeLimitedSchedule genesisTest
+  schedulePoints <- genTimeLimitedSchedule genesisTest
   pure $
     runSimOrThrow $
-    runTest schedulerConfig genesisTest schedule $
+    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
     exceptionCounterexample $
-    makeProperty genesisTest (length (peerIds schedule) - 1)
+    makeProperty genesisTest schedulePoints
 
   where
     schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
@@ -251,9 +258,6 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
 
     fromTipPoint (t, ScheduleTipPoint bp) = Just (t, bp)
     fromTipPoint _                        = Nothing
-
-    fromBlockPoint (t, ScheduleBlockPoint bp) = Just (t, bp)
-    fromBlockPoint _                          = Nothing
 
 headCallStack :: HasCallStack => [a] -> a
 headCallStack xs = if null xs then error "headCallStack: empty list" else head xs
