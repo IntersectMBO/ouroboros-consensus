@@ -92,7 +92,7 @@ forAllGenesisTest ::
   Testable prop =>
   Gen (GenesisTest, PointSchedule) ->
   SchedulerConfig ->
-  (StateView -> prop) ->
+  (GenesisTest -> PointSchedule -> StateView -> prop) ->
   Property
 forAllGenesisTest generator schedulerConfig mkProperty =
   forAllBlind generator $ \(genesisTest, pointSchedule) ->
@@ -101,4 +101,4 @@ forAllGenesisTest generator schedulerConfig mkProperty =
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
         counterexample (rgtrTrace result) $
-        mkProperty (rgtrStateView result)
+        mkProperty genesisTest pointSchedule (rgtrStateView result)

@@ -44,7 +44,7 @@ prop_rollback = do
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-    (not . hashOnTrunk . AF.headHash . svSelectedChain)
+    (\_ _ -> not . hashOnTrunk . AF.headHash . svSelectedChain)
 
 -- @prop_cannotRollback@ tests that the selection of the node under test *does
 -- not* change branches when sent a rollback to a block strictly older than 'k'
@@ -60,7 +60,7 @@ prop_cannotRollback =
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-    (hashOnTrunk . AF.headHash . svSelectedChain)
+    (\_ _ -> hashOnTrunk . AF.headHash . svSelectedChain)
 
 -- | A schedule that advertises all the points of the trunk up until the nth
 -- block after the intersection, then switches to the first alternative
