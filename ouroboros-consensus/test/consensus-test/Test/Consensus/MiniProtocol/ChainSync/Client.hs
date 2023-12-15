@@ -420,7 +420,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     varChainProducerState <- uncheckedNewTVarM $ initChainProducerState Genesis
     let server :: ChainSyncServer (Header TestBlock) (Point TestBlock)
                                   (Tip TestBlock) m ()
-        server = chainSyncServerExample () varChainProducerState getHeader
+        server = chainSyncServerExample () (unsafeToUncheckedStrictTVar varChainProducerState) getHeader
 
     let advanceWallClockForTick :: Tick -> m ()
         advanceWallClockForTick tick = do

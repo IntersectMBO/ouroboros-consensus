@@ -12,8 +12,10 @@ module Ouroboros.Consensus.Util.IOLike (
   , MonadMask (..)
   , MonadThrow (..)
   , SomeException
-    -- *** MonadSTM
+    -- *** Variables with NoThunks invariants
   , module Ouroboros.Consensus.Util.MonadSTM.NormalForm
+  , module Ouroboros.Consensus.Util.NormalForm.StrictMVar
+  , module Ouroboros.Consensus.Util.NormalForm.StrictTVar
     -- *** MonadFork, TODO: Should we hide this in favour of MonadAsync?
   , MonadFork (..)
   , MonadThread (..)
@@ -55,7 +57,8 @@ import           Control.Monad.Class.MonadTimer.SI
 import           Data.Functor (void)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar)
+import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
+import           Ouroboros.Consensus.Util.NormalForm.StrictTVar
 import           Ouroboros.Consensus.Util.Orphans ()
 
 {-------------------------------------------------------------------------------

@@ -821,7 +821,7 @@ semantics env@ImmutableDBEnv {..} (At cmdErr) =
 
       CmdErr (Just errors) cmd -> do
         tipBefore <- getImmutableDB env >>= atomically . getTip
-        res       <- withErrors varErrors errors $
+        res       <- withErrors (unsafeToUncheckedStrictTVar varErrors) errors $
                        tryImmutableDB (Proxy @TestBlock) $ run env cmd
         case res of
           -- If the command resulted in a 'ApiMisuse', we didn't even get the
@@ -1196,7 +1196,7 @@ test cacheConfig chunkInfo cmds = do
     (tracer, getTrace) <- recordingTracerIORef
 
     withRegistry $ \registry -> do
-      let hasFS = mkSimErrorHasFS fsVar varErrors
+      let hasFS = mkSimErrorHasFS (unsafeToUncheckedStrictTVar fsVar) (unsafeToUncheckedStrictTVar varErrors)
           args  = ImmutableDbArgs {
               immCacheConfig      = cacheConfig
             , immCheckIntegrity   = testBlockIsValid

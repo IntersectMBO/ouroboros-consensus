@@ -27,7 +27,6 @@ import           Ouroboros.Consensus.Mock.Protocol.Praos
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 
 type MockPraosBlock = SimplePraosBlock SimpleMockCrypto PraosMockCrypto
 

@@ -1,12 +1,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns    #-}
-{-# LANGUAGE TypeApplications  #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
-{-# LANGUAGE InstanceSigs      #-}
 module Test.Util.Orphans.NoThunks () where
 
-
 import           Control.Concurrent.Class.MonadMVar
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked
 import           Control.Monad.IOSim
 import           Control.Monad.ST.Lazy
 import           Control.Monad.ST.Unsafe (unsafeSTToIO)
@@ -26,3 +24,9 @@ instance NoThunks a => NoThunks (StrictMVar (IOSim s) a) where
   wNoThunks ctxt mvar = do
       aMay <- unsafeSTToIO $ lazyToStrictST $ inspectMVar (Proxy :: Proxy (IOSim s)) (toLazyMVar mvar)
       noThunks ctxt aMay
+
+instance NoThunks a => NoThunks (StrictTVar (IOSim s) a) where
+  showTypeOf _ = "StrictTVar IOSim"
+  wNoThunks ctxt tvar = do
+      a <- unsafeSTToIO $ lazyToStrictST $ inspectTVar (Proxy :: Proxy (IOSim s)) $ toLazyTVar tvar
+      noThunks ctxt a

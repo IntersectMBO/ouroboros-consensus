@@ -33,8 +33,6 @@ import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Forging (UpdateInfo (..))
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar,
-                     modifyMVar, newMVar, readMVar)
 
 {-------------------------------------------------------------------------------
   KES Info

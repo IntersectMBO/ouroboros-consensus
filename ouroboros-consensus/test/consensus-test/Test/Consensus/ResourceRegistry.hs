@@ -30,7 +30,6 @@
 --
 module Test.Consensus.ResourceRegistry (tests) where
 
-import           Control.Concurrent.Class.MonadMVar.Strict
 import           Control.Monad ((>=>))
 import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Except (Except, MonadError, runExcept,
@@ -294,7 +293,7 @@ data QueuedInstr m = forall a. QueuedInstr (ThreadInstr m a) (StrictMVar m a)
 
 runInThread :: IOLike m => TestThread m -> ThreadInstr m a -> m a
 runInThread TestThread{..} instr = do
-    result <- newEmptyMVar
+    result <- uncheckedNewEmptyMVar
     atomically $ writeTQueue threadComms (QueuedInstr instr result)
     takeMVar result
 
@@ -316,7 +315,7 @@ newThread :: forall m. IOLike m
           -> m (TestThread m)
 newThread alive parentReg = \shouldLink -> do
     comms      <- atomically $ newTQueue
-    spawned    <- newEmptyMVar
+    spawned    <- uncheckedNewEmptyMVar
 
     thread <- forkThread parentReg "newThread" $
                 withRegistry $ \childReg ->
