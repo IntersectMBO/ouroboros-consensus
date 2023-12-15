@@ -1,14 +1,19 @@
+{-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Consensus.PeerSimulator.StateView (
     ChainSyncException (..)
   , StateView (..)
   , StateViewTracers (..)
+  , chainSyncKilled
   , defaultStateViewTracers
   , snapshotStateView
   ) where
 
+import           Control.Exception (AsyncException (ThreadKilled),
+                     fromException)
 import           Control.Tracer (Tracer)
+import           Data.Maybe (mapMaybe)
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
@@ -46,6 +51,22 @@ instance Condense StateView where
   condense StateView {svSelectedChain, svChainSyncExceptions} =
     "SelectedChain: " ++ terseHFragment svSelectedChain ++ "\n"
     ++ "ChainSyncExceptions:\n" ++ unlines (("  - " ++) . condense <$> svChainSyncExceptions)
+
+-- | Return the list of peer ids for all peers whose ChainSync thread was killed
+-- by the node under test (that is it received 'ThreadKilled').
+chainSyncKilled :: StateView -> [PeerId]
+chainSyncKilled stateView =
+  mapMaybe
+    (\ChainSyncException{csePeerId, cseException} ->
+       if wasKilled cseException
+         then Just csePeerId
+         else Nothing)
+    (svChainSyncExceptions stateView)
+  where
+    wasKilled :: SomeException -> Bool
+    wasKilled e = case fromException e of
+      Just ThreadKilled -> True
+      _                 -> False
 
 -- | State view tracers are a lightweight mechanism to record information that
 -- can later be used to produce a state view. This mechanism relies on
