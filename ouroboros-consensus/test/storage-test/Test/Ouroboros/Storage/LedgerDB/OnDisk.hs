@@ -798,7 +798,7 @@ runDB standalone@DB{..} cmd =
 
     -- We don't currently test the case where the LedgerDB cannot support
     -- the full rollback range. See also
-    -- <https://github.com/input-output-hk/ouroboros-network/issues/1025>
+    -- <https://github.com/IntersectMBO/ouroboros-network/issues/1025>
     ignoreExceedRollback :: Either ExceededRollback a -> a
     ignoreExceedRollback (Left  _) = error "unexpected ExceededRollback"
     ignoreExceedRollback (Right a) = a

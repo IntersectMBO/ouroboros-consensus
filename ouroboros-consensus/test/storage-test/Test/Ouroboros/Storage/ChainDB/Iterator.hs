@@ -111,7 +111,7 @@ e = mkNextBlock d 4 TestBody { tbForkNo = 0, tbIsValid = True }
 -- condition is triggered because the tip of the ImmutableDB is not B but D.
 --
 -- For more details, see:
--- https://github.com/input-output-hk/ouroboros-network/pull/773#issuecomment-513128004
+-- https://github.com/IntersectMBO/ouroboros-network/pull/773#issuecomment-513128004
 prop_773_bug :: Property
 prop_773_bug = prop_general_test
     TestSetup

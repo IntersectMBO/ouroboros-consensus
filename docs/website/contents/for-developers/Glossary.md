@@ -88,7 +88,7 @@ Chain sync is a mini protocol to exchange chains of headers.
 
    - maintains a *candidate fragment* of headers for each peer with the following properties (might not be satisfied transiently):
 
-      - validated (detail: currently, it is *not* checked whether the headers come from the future, but that [might change soon](https://github.com/input-output-hk/ouroboros-network/issues/4251)). Note that this places a bound on its length as header validation is limited by how far we can forecast.
+      - validated (detail: currently, it is *not* checked whether the headers come from the future, but that [might change soon](https://github.com/IntersectMBO/ouroboros-network/issues/4251)). Note that this places a bound on its length as header validation is limited by how far we can forecast.
 
       - selectable (ie forks off at most `k` from the node's selection).
 
@@ -347,7 +347,7 @@ If a peer tries to send blocks that diverges deeper than that, the node disconne
 
 Nodes communicate with other nodes via a set of two-party protocols in which one node is the *client* and the other is the *server*.
 
-   - The dynamics are specified by a state machine, which is enforced by the [typed-protocols](https://github.com/input-output-hk/typed-protocols) library. [List of all mini protocol state machines](https://input-output-hk.github.io/ouroboros-network/pdfs/network-spec/network-spec.pdf#chapter.3).
+   - The dynamics are specified by a state machine, which is enforced by the [typed-protocols](https://github.com/IntersectMBO/typed-protocols) library. [List of all mini protocol state machines](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf#chapter.3).
 
    - The client can *pipeline* its messages.
 
@@ -452,7 +452,7 @@ Peers that were discovered via the Peer Sharing protocol. These can be any kind 
 
 All eras apart from Byron share most of their code.
 They are sometimes just referred as “Shelley” eras.
-[For instance, the `ShelleyBlock` type has two arguments: protocol and actual era, giving eg. `ShelleyBlock (TPraos c) (AllegraEra c)`](https://github.com/input-output-hk/ouroboros-consensus/blob/4c0a421d187478f9f740d27521b682988d843596/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Block.hs#L97-L106).
+[For instance, the `ShelleyBlock` type has two arguments: protocol and actual era, giving eg. `ShelleyBlock (TPraos c) (AllegraEra c)`](https://github.com/IntersectMBO/ouroboros-consensus/blob/4c0a421d187478f9f740d27521b682988d843596/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Block.hs#L97-L106).
 
 _For a table on phases, eras, protocols, etc., see [the Cardano features table in CIP 59](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0059/feature-table.md)_.
 

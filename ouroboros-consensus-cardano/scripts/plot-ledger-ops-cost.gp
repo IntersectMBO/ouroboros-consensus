@@ -59,7 +59,7 @@ unset multiplot
 # there are 10k/f = 2160 * 10 * 20 = 432000 slots in each Shelley epoch
 
 # these are the first epoches of each ledger era
-# (see https://github.com/input-output-hk/cardano-ledger/wiki/First-Block-of-Each-Era)
+# (see https://github.com/IntersectMBO/cardano-ledger/wiki/First-Block-of-Each-Era)
 # Byron		0
 # Shelley	208
 # Allegra 	236

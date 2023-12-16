@@ -66,7 +66,7 @@ newtype SimplePraosExt c c' = SimplePraosExt {
 -- | Part of the block that gets signed
 --
 -- TODO: Right now we sign all of the extra Praos fields. This may or may not
--- be needed. <https://github.com/input-output-hk/cardano-ledger-specs/issues/530>
+-- be needed. <https://github.com/IntersectMBO/cardano-ledger/issues/530>
 -- Of course, this Praos is merely a proof of concept so it doesn't really
 -- matter either way; we include them here primarily to show that we can.
 data SignedSimplePraos c c' = SignedSimplePraos {

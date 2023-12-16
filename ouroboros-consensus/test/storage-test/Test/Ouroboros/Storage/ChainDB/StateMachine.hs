@@ -589,7 +589,7 @@ newtype MaxClockSkew = MaxClockSkew Word64
 
 instance Arbitrary MaxClockSkew where
   -- TODO make sure no blocks from the future exceed the max clock skew:
-  -- <https://github.com/input-output-hk/ouroboros-network/issues/2232>
+  -- <https://github.com/IntersectMBO/ouroboros-network/issues/2232>
   arbitrary = return $ MaxClockSkew 100000
   -- arbitrary = MaxClockSkew <$> choose (0, 3)
   -- -- We're only interested in 0 or 1
@@ -656,7 +656,7 @@ runPure cfg = \case
     -- the way the 'UpdateLedgerSnapshots' command is handled in the model and
     -- in the system under test. It would be better if we modelled the
     -- snapshots so that this aspect of the system would be explicitly
-    -- specified. See https://github.com/input-output-hk/ouroboros-network/issues/3375
+    -- specified. See https://github.com/IntersectMBO/ouroboros-network/issues/3375
     --
     UpdateLedgerSnapshots    -> ok  Unit                $ ((), )
     Close                    -> openOrClosed            $ update_  Model.closeDB
@@ -1096,7 +1096,7 @@ precondition Model {..} (At cmd) =
      -- the real implementation might have to switch between forks when they
      -- are no longer in the future, whereas the model will pick the right
      -- chain directly. This causes followers to go out of sync.
-     -- https://github.com/input-output-hk/ouroboros-network/issues/2234
+     -- https://github.com/IntersectMBO/ouroboros-network/issues/2234
      AddFutureBlock blk s     -> s .>= Model.currentSlot dbModel .&&
                                  blockSlot blk .> s .&&
                                  Not (futureBlockWithSameBlockNo (blockNo blk))

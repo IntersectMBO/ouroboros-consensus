@@ -46,7 +46,7 @@ live in this repository.
 
 Consensus can be built using [Nix](https://nixos.org/download.html). The
 installation and configuration instructions are taken from
-[cardano-node](https://github.com/input-output-hk/cardano-node-wiki/blob/main/docs/getting-started/building-the-node-using-nix.md),
+[cardano-node](https://github.com/IntersectMBO/cardano-node-wiki/blob/main/docs/getting-started/building-the-node-using-nix.md),
 and detailed below. To install `nix` run:
 
 ```sh
@@ -81,7 +81,7 @@ EOF
 
 An alternative to using `nix` is to set up the development
 environment yourself. Follow [these
-instructions](https://github.com/input-output-hk/cardano-node-wiki/blob/main/docs/getting-started/install.md)
+instructions](https://github.com/IntersectMBO/cardano-node-wiki/blob/main/docs/getting-started/install.md)
 to properly configure your system.
 
 # Building the project
@@ -290,7 +290,7 @@ consumers would not be able to build such package.
 
 If we are stuck in a situation where we need a long-running fork of a
 package, we should release it to CHaP instead (see the
-[CHaP README](https://github.com/input-output-hk/cardano-haskell-packages)
+[CHaP README](https://github.com/IntersectMBO/cardano-haskell-packages)
 for more).
 
 If you do add a temporary `source-repository-package` stanza, you need to
@@ -335,9 +335,9 @@ pkgs.hsPkgs.ouroboros-consensus-cardano.components.exes.db-analyser     pkgs.hsP
 
 If you happen to encounter what you think is a bug or you wish there was some
 feature that was added to Consensus, please
-[open](https://github.com/input-output-hk/ouroboros-consensus/issues/new/choose) an
+[open](https://github.com/IntersectMBO/ouroboros-consensus/issues/new/choose) an
 issue in our [issue
-tracker](https://github.com/input-output-hk/ouroboros-consensus/issues/).
+tracker](https://github.com/IntersectMBO/ouroboros-consensus/issues/).
 
 # Submitting pull requests
 
@@ -366,8 +366,8 @@ The core contributors to consensus codebase are:
 # Code of conduct
 
 See [Cardano engineering
-handbook](https://github.com/input-output-hk/cardano-engineering-handbook/blob/main/CODE-OF-CONDUCT.md)'s
+handbook](https://github.com/IntersectMBO/cardano-engineering-handbook/blob/main/CODE-OF-CONDUCT.md)'s
 code of conduct.
 
 [haddock-site]: https://haskell-haddock.readthedocs.io/en/latest/
-[chap]: https://github.com/input-output-hk/cardano-haskell-packages
+[chap]: https://github.com/IntersectMBO/cardano-haskell-packages

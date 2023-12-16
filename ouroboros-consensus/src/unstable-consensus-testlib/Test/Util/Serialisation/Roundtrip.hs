@@ -224,7 +224,7 @@ roundtrip_all = roundtrip_all_skipping (const CheckCBORValidity)
 -- being tested. At the moment we consider for exclusion:
 --
 -- - Node to client tests due to
---   [this issue](https://github.com/input-output-hk/cardano-ledger/issues/3800).
+--   [this issue](https://github.com/IntersectMBO/cardano-ledger/issues/3800).
 --
 roundtrip_all_skipping
   :: forall blk.
@@ -758,7 +758,7 @@ examplesRoundtrip codecConfig examples =
                 testProperty (fromMaybe "" exampleName)
               $ once
               $ roundtrip' enc dec example
-            _3740 = "https://github.com/input-output-hk/cardano-ledger/issues/3740"
+            _3740 = "https://github.com/IntersectMBO/cardano-ledger/issues/3740"
           in
           case (testLabel, exampleName) of
             -- We case on Cardano specific test names here to avoid introducing parameters to 'examplesRoundtrip' that will be removed once #3740 is fixed. This is a temporary workaround.

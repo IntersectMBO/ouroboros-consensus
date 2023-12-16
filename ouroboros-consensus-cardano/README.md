@@ -163,9 +163,9 @@ Lastly the user can provide the analysis that should be run on the chain:
   - Total number of major (oldest generation) garbage collections that took place when applying the block (using [`RTSStats.major_gcs`](https://hackage.haskell.org/package/base-4.18.1.0/docs/GHC-Stats.html#t:RTSStats)).
   - Total time spent in the mutator, in microseconds, when:
       - Forecasting.
-      - Ticking the [chain dependent state](https://github.com/input-output-hk/ouroboros-consensus/blob/51da3876c01edc2eec250fdc998f6cb33cdc4367/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L55).
+      - Ticking the [chain dependent state](https://github.com/IntersectMBO/ouroboros-consensus/blob/51da3876c01edc2eec250fdc998f6cb33cdc4367/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Protocol/Abstract.hs#L55).
       - Applying a header.
-      - Ticking the [ledger state](https://github.com/input-output-hk/ouroboros-consensus/blob/51da3876c01edc2eec250fdc998f6cb33cdc4367/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs#L174).
+      - Ticking the [ledger state](https://github.com/IntersectMBO/ouroboros-consensus/blob/51da3876c01edc2eec250fdc998f6cb33cdc4367/ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Ledger/Basics.hs#L174).
       - Applying a block.
 
 * `--repro-mempool-and-forge NUM` populates the mempool with the transactions

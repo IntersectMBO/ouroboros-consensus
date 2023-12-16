@@ -118,7 +118,7 @@ type StandardConway = ConwayEra StandardCrypto
 -- TODO Currently we include some constraints on the update state which are
 -- needed to determine the hard fork point. In the future this should be
 -- replaced with an appropriate API - see
--- https://github.com/input-output-hk/ouroboros-network/issues/2890
+-- https://github.com/IntersectMBO/ouroboros-network/issues/2890
 class ( Core.EraSegWits era
       , Core.EraGov era
       , SL.ApplyTx era
@@ -165,7 +165,7 @@ class ( Core.EraSegWits era
   -- | Get the protocol version out of a 'Core.PParamsUpdate', used to detect
   -- whether we should perform a HF. This will likely be removed/changed once we
   -- implement HF enactment in Conway (see
-  -- <https://github.com/input-output-hk/ouroboros-consensus/issues/61>).
+  -- <https://github.com/IntersectMBO/ouroboros-consensus/issues/61>).
   --
   -- For now, this always returns 'Nothing' for Conway (see the instance below).
   getProposedProtocolVersion :: Core.PParamsUpdate era -> Maybe ProtVer

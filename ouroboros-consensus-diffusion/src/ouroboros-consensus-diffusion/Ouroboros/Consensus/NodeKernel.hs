@@ -552,7 +552,7 @@ mkCurrentBlockContext currentSlot c = case c of
       --    very heavy load (e.g., if a lot of blocks have been produced
       --    after @currentTime@).
       --
-      -- See <https://github.com/input-output-hk/ouroboros-network/issues/1462>
+      -- See <https://github.com/IntersectMBO/ouroboros-network/issues/1462>
       GT -> Left $ TraceBlockFromFuture currentSlot (blockSlot hdr)
 
       -- The block at the tip has the same slot as the block we're going to

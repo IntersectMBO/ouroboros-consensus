@@ -22,7 +22,7 @@ if [[ ! $(git tag -l "release-consensus-$consensus_last_version") || ! $(git tag
 fi
 
 if [[ ! -d chap ]]; then
-  git clone git@github.com:input-output-hk/cardano-haskell-packages chap
+  git clone git@github.com:IntersectMBO/cardano-haskell-packages chap
 else
   ( cd chap
     git checkout main
@@ -41,19 +41,19 @@ fi
   git checkout -b release-consensus
 
   if [[ ! -d _sources/ouroboros-consensus/$consensus_last_version ]]; then
-      ./scripts/add-from-github.sh https://github.com/input-output-hk/ouroboros-consensus $(cd ..; git rev-list -n 1 release-consensus-$consensus_last_version) ouroboros-consensus
+      ./scripts/add-from-github.sh https://github.com/IntersectMBO/ouroboros-consensus $(cd ..; git rev-list -n 1 release-consensus-$consensus_last_version) ouroboros-consensus
   fi
 
   if [[ ! -d _sources/ouroboros-consensus-protocol/$protocol_last_version ]]; then
-      ./scripts/add-from-github.sh https://github.com/input-output-hk/ouroboros-consensus $(cd ..; git rev-list -n 1 release-protocol-$protocol_last_version) ouroboros-consensus-protocol
+      ./scripts/add-from-github.sh https://github.com/IntersectMBO/ouroboros-consensus $(cd ..; git rev-list -n 1 release-protocol-$protocol_last_version) ouroboros-consensus-protocol
   fi
 
   if [[ ! -d _sources/ouroboros-consensus-cardano/$cardano_last_version ]]; then
-      ./scripts/add-from-github.sh https://github.com/input-output-hk/ouroboros-consensus $(cd ..; git rev-list -n 1 release-cardano-$cardano_last_version) ouroboros-consensus-cardano
+      ./scripts/add-from-github.sh https://github.com/IntersectMBO/ouroboros-consensus $(cd ..; git rev-list -n 1 release-cardano-$cardano_last_version) ouroboros-consensus-cardano
   fi
 
   if [[ ! -d _sources/ouroboros-consensus-cardano-test/$cardano_test_last_version ]]; then
-      ./scripts/add-from-github.sh https://github.com/input-output-hk/ouroboros-consensus $(cd ..; git rev-list -n 1 release-diffusion-$diffusion_last_version) ouroboros-consensus-diffusion
+      ./scripts/add-from-github.sh https://github.com/IntersectMBO/ouroboros-consensus $(cd ..; git rev-list -n 1 release-diffusion-$diffusion_last_version) ouroboros-consensus-diffusion
   fi
 
   echo "I have created a branch named \"release-consensus\" here: $(pwd)"

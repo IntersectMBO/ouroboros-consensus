@@ -142,7 +142,7 @@ tests = testGroup "Byron" $
       -- introduces the InvalidRollForward exception
       --
       -- See a related discussion at
-      -- https://github.com/input-output-hk/ouroboros-network/pull/773#issuecomment-522192097
+      -- https://github.com/IntersectMBO/ouroboros-network/pull/773#issuecomment-522192097
       testProperty "addressed by InvalidRollForward exception (PR #773)" $
           once $
           let ncn = NumCoreNodes 3 in

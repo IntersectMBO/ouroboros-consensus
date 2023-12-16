@@ -63,7 +63,7 @@ This is the point of the "Node start-up" pseudo state in the diagram above.
 
 ## Anticipated Interface
 
-See [input-output-hk/ouroboros-network#4555](https://github.com/input-output-hk/ouroboros-network/pull/4555) for the definition/implementation of this interface on the Network side.
+See [IntersectMBO/ouroboros-network#4555](https://github.com/IntersectMBO/ouroboros-network/pull/4555) for the definition/implementation of this interface on the Network side.
 
 - The Diffusion Layer should monitor a `TVar State` (maybe via a `STM State` action).
   The Consensus Layer will update that state promptly.

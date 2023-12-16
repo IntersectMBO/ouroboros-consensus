@@ -109,7 +109,7 @@ data PraosNonces = PraosNonces {
 --
 -- The interface being used for that has grown and needs review, but we're
 -- adding to it here under time pressure. See
--- <https://github.com/input-output-hk/cardano-node/issues/3864>
+-- <https://github.com/IntersectMBO/cardano-node/issues/3864>
 class ConsensusProtocol p => PraosProtocolSupportsNode p where
   type PraosProtocolSupportsNodeCrypto p
 

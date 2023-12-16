@@ -137,7 +137,7 @@ realHeaderInFutureCheck skew systemTime =
             now <- systemTimeCurrent systemTime
             let ageNow         = now `diffRelTime` onset
                 syntheticDelay = negate ageNow
-            when (0 < syntheticDelay) $ do   -- note https://github.com/input-output-hk/io-sim/issues/129
+            when (0 < syntheticDelay) $ do   -- note https://github.com/IntersectMBO/io-sim/issues/129
                 threadDelay $ nominalDelay syntheticDelay   -- TODO leap seconds?
 
         pure $ do

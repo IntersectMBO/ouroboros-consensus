@@ -1,11 +1,11 @@
 # Ouroboros Consensus
 
-[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.14.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-0.14.0.0/)
-[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.9.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-diffusion-0.9.0.0/)
-[![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.6.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-protocol-0.6.0.0/)
-[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.12.1.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/ouroboros-consensus-cardano-0.12.1.0/)
-[![sop-extras](https://img.shields.io/badge/sop--extras-0.1.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/sop-extras-0.1.0.0/)
-[![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.0.0-blue)](https://input-output-hk.github.io/cardano-haskell-packages/package/strict-sop-core-0.1.0.0/)
+[![consensus](https://img.shields.io/badge/ouroboros--consensus-0.14.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-0.14.0.0/)
+[![diffusion](https://img.shields.io/badge/ouroboros--consensus--diffusion-0.9.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-diffusion-0.9.0.0/)
+[![protocol](https://img.shields.io/badge/ouroboros--consensus--protocol-0.6.0.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-protocol-0.6.0.0/)
+[![cardano](https://img.shields.io/badge/ouroboros--consensus--cardano-0.12.1.0-blue)](https://chap.intersectmbo.org/package/ouroboros-consensus-cardano-0.12.1.0/)
+[![sop-extras](https://img.shields.io/badge/sop--extras-0.1.0.0-blue)](https://chap.intersectmbo.org/package/sop-extras-0.1.0.0/)
+[![strict-sop-core](https://img.shields.io/badge/strict--sop--core-0.1.0.0-blue)](https://chap.intersectmbo.org/package/strict-sop-core-0.1.0.0/)
 
 [![docs](https://img.shields.io/badge/Documentation-yellow)][webpage]
 
@@ -91,7 +91,7 @@ test-suite.
 ## Using Consensus as a dependency
 
 We make releases to the [Cardano Haskell
-Package](https://input-output-hk.github.io/cardano-haskell-packages/all-packages/)
+Package](https://chap.intersectmbo.org/all-packages/)
 repository from where you should pull new releases.
 
 To use CHaP, follow their Readme, but in short:
@@ -100,7 +100,7 @@ To use CHaP, follow their Readme, but in short:
 
   ```
   repository cardano-haskell-packages
-    url: https://input-output-hk.github.io/cardano-haskell-packages
+    url: https://chap.intersectmbo.org
     secure: True
     root-keys:
       3e0cce471cf09815f930210f7827266fd09045445d65923e6d0238a6cd15126f
@@ -126,7 +126,7 @@ At this point, you should be able to declare our libraries as dependencies in
 your `build-depends` list on your cabal files.
 
 If you use Nix, see the [CHaP
-website](https://input-output-hk.github.io/cardano-haskell-packages/) on how to
+website](https://chap.intersectmbo.org/) on how to
 configure CHaP for haskell.nix.
 
 The Consensus sublibraries---which are used for our internal testing---are
@@ -145,19 +145,19 @@ document](CONTRIBUTING.md).
 ## How to submit an issue
 
 Issues can be filled in our [GitHub issue
-tracker](https://github.com/input-output-hk/ouroboros-consensus/issues). Please
+tracker](https://github.com/IntersectMBO/ouroboros-consensus/issues). Please
 use the provided issue templates.
 
 ## Documentation
 
 We have several sources of documentation:
 
-- [Haddocks](https://input-output-hk.github.io/ouroboros-consensus/haddocks/):
+- [Haddocks](https://ouroboros-consensus.cardano.intersectmbo.org/haddocks/):
   our code is full of haddock annotations and comments that try to clarify
   expected behaviors and subtleties. Reading through the code should provide
   most of the information on how is Consensus implemented.
 
-- [Website](https://input-output-hk.github.io/ouroboros-consensus/): this
+- [Website](https://ouroboros-consensus.cardano.intersectmbo.org/): this
   website provides access to the markdown documentation to which step by step we
   want to move the bulk of the "higher level documentation" as well as
   achitectural documentation.
@@ -168,7 +168,7 @@ We have several sources of documentation:
   perspired to the implementation. Although incomplete in some sections, it is a
   mandatory reading for anyone looking to understand why Consensus does what it
   does.
-  ([rendered](https://input-output-hk.github.io/ouroboros-consensus/pdfs/report.pdf))
+  ([rendered](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf))
 
 
-[webpage]: https://input-output-hk.github.io/ouroboros-consensus/
+[webpage]: https://ouroboros-consensus.cardano.intersectmbo.org/

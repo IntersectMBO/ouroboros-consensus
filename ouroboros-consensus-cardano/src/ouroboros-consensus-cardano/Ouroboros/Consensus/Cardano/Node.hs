@@ -157,7 +157,7 @@ instance SerialiseConstraintsHFC ByronBlock
 -- 6. etc.
 --
 -- For more details, see:
--- <https://github.com/input-output-hk/ouroboros-network/pull/1175#issuecomment-558147194>
+-- <https://github.com/IntersectMBO/ouroboros-network/pull/1175#issuecomment-558147194>
 instance CardanoHardForkConstraints c => SerialiseHFC (CardanoEras c) where
   encodeDiskHfcBlock (CardanoCodecConfig ccfgByron ccfgShelley ccfgAllegra ccfgMary ccfgAlonzo ccfgBabbage ccfgConway) = \case
       -- We are backwards compatible with Byron and thus use the exact same

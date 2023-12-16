@@ -14,4 +14,4 @@ The following artifacts influence and/or describe the Consensus implementation.
 
 
 <!-- Links -->
-[network-report]: https://input-output-hk.github.io/ouroboros-network/pdfs/network-design/
+[network-report]: https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-design/

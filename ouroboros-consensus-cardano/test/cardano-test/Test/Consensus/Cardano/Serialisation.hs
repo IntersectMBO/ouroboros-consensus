@@ -34,7 +34,7 @@ tests = testGroup "Cardano"
     , testProperty "BinaryBlockInfo sanity check" prop_CardanoBinaryBlockInfo
     ]
   where
-    -- See https://github.com/input-output-hk/cardano-ledger/issues/3800
+    -- See https://github.com/IntersectMBO/cardano-ledger/issues/3800
     result "roundtrip Result" = DoNotCheckCBORValidity
     result _                  = CheckCBORValidity
 

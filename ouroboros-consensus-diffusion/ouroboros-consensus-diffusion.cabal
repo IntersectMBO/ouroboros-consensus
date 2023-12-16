@@ -19,7 +19,7 @@ extra-doc-files: CHANGELOG.md
 
 source-repository head
   type:     git
-  location: https://github.com/input-output-hk/ouroboros-consensus
+  location: https://github.com/IntersectMBO/ouroboros-consensus
 
 flag asserts
   description: Enable assertions

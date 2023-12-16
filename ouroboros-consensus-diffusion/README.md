@@ -1,7 +1,7 @@
 # Consensus diffusion layer
 
 This packages glues together the [Network
-layer](https://github.com/input-output-hk/ouroboros-network) and the [Consensus
+layer](https://github.com/IntersectMBO/ouroboros-network) and the [Consensus
 core package](../ouroboros-consensus) to be able to initialize the node and
 start all the networking protocols. The main module is
 `Ouroboros.Consensus.NodeKernel`.

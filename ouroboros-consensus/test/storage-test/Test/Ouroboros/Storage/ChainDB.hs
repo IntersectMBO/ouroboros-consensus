@@ -42,5 +42,5 @@ tests = testGroup "ChainDB" $ [
     , Unit.tests
     ] <>
     -- The ChainDB q-s-m test is flaky on Windows, see
-    -- https://github.com/input-output-hk/ouroboros-network/issues/3874
+    -- https://github.com/IntersectMBO/ouroboros-network/issues/3874
     [ StateMachine.tests | os /= "mingw32" ]
