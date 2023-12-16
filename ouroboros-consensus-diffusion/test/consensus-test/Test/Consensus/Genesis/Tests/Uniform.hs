@@ -17,6 +17,7 @@ import           Data.List (group, intercalate, sort)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Time.Clock (DiffTime)
+import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -224,18 +225,19 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
     genTimeLimitedSchedule :: GenesisTest -> QC.Gen (Peers PeerSchedule)
     genTimeLimitedSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
-      let timeLimit = estimateTimeBound (value honest) (Map.size advs0 + 1)
+      let timeLimit = estimateTimeBound (value honest) (map value $ Map.elems advs0)
           advs = fmap (fmap (takePointsUntil timeLimit)) advs0
       pure (Peers honest advs)
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 
-    estimateTimeBound :: [(DiffTime, SchedulePoint)] -> Int -> DiffTime
-    estimateTimeBound honest peerCount =
+    estimateTimeBound :: PeerSchedule -> [PeerSchedule] -> DiffTime
+    estimateTimeBound honest advs =
       let firstTipPointBlock = headCallStack (mapMaybe fromTipPoint honest)
           lastBlockPoint = last (mapMaybe fromBlockPoint honest)
-          lastBlockNo = fromIntegral $ unBlockNo $ blockNo $ snd lastBlockPoint
-          -- 0.020s is the amount of time LoP returns per interesting header
+          peerCount = length advs + 1
+          maxBlockNo = maximum $ 0 : blockPointNos honest ++ concatMap blockPointNos advs
+          -- 0.020s is the amount of time LoP grants per interesting header
           -- 5s is the initial fill of the LoP bucket
           --
           -- Since the moment the honest peer offers the first tip, LoP should
@@ -244,10 +246,19 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
           -- the syncing time is the time bound for the test. If dispatching
           -- all the ticks takes longer, then the dispatching time becomes
           -- the time bound.
+          --
+          -- Adversarial peers might cause more ticks to be sent as well. We
+          -- bound it all by considering the highest block number that is ever
+          -- sent.
       in max
           (fst lastBlockPoint)
           (fst firstTipPointBlock +
-              0.020 * lastBlockNo + 5 * fromIntegral peerCount)
+              0.020 * fromIntegral maxBlockNo + 5 * fromIntegral peerCount)
+
+    blockPointNos :: [(DiffTime, SchedulePoint)] -> [Word64]
+    blockPointNos =
+      map (unBlockNo . blockNo . snd) .
+      mapMaybe fromBlockPoint
 
     fromTipPoint (t, ScheduleTipPoint bp) = Just (t, bp)
     fromTipPoint _                        = Nothing
