@@ -47,7 +47,7 @@ The mapping from `NodeToClientVersion`s to `CardanoNodeToClientVersion`s is [`su
 Each `ShelleyNodeToClientVersion` has a set of queries it supports. Assume the maximum version is $X$, and that it has queries $Q_0, \dots, Q_{n-1}$ associated to it. If no node was released that supports version $X$, ie `ShelleyNodeToClientVersionX`, we have a reasonable degree of certainty that no client will send any $Q_i$, $x \in [0, n - 1]$ to older nodes (since no such node was yet released). Therefore, if we add a new query $Q_n$ we can associate it to the unreleased version $X$ (`ShelleyNodeToClientVersionX`).
 
 On the other hand, the node that supports version `X` has been released, then we
-need to increase the maximum Shelley node-to-client version, by adding one more constructor to `ShelleyNodeToClientVersion`, which is defined in module [Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion](https://github.com/input-output-hk/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs). By adding this new version the node is able to detect if other Cardano clients that respect this versioning mechanism support said query.
+need to increase the maximum Shelley node-to-client version, by adding one more constructor to `ShelleyNodeToClientVersion`, which is defined in module [Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs). By adding this new version the node is able to detect if other Cardano clients that respect this versioning mechanism support said query.
 
 Henceforth, we call an unreleased version "experimental" (ie only used for demo purposes/specific to an unreleased era).
 
@@ -59,7 +59,7 @@ As an example, consider a query $Q$ that is enabled after version $x$, and consi
 
 ### On newly added golden files
 
-When adding a new `ShelleyNodeToClientVersion` or a new `CardanoNodeToClientVersions` new golden files will be generated. Because serialization is [version dependent](https://github.com/input-output-hk/ouroboros-consensus/pull/95), a new `ShelleyNodeToClientVersion` could also introduce a different serialization. See how function [`decodeShelleyResult`][decodeShelleyResult] uses `ShelleyNodeToClientVersion`. Therefore we have to test the serialization for the new versions.
+When adding a new `ShelleyNodeToClientVersion` or a new `CardanoNodeToClientVersions` new golden files will be generated. Because serialization is [version dependent](https://github.com/IntersectMBO/ouroboros-consensus/pull/95), a new `ShelleyNodeToClientVersion` could also introduce a different serialization. See how function [`decodeShelleyResult`][decodeShelleyResult] uses `ShelleyNodeToClientVersion`. Therefore we have to test the serialization for the new versions.
 
 The golden tests only generate golden files for queries that have examples. So if a newly added query does not have an example, no golden files will be generated for it.
 
@@ -91,18 +91,18 @@ The golden tests only generate golden files for queries that have examples. So i
 
 ## Sample pull requests
 
-Old pull-requests that added new queries serve as good reference material when adding new queries. For instance see [#191](https://github.com/input-output-hk/ouroboros-consensus/pull/191). Be aware that these PRs they can get out of date. If you detect this please delete old links and add those corresponding to newer pull requests.
+Old pull-requests that added new queries serve as good reference material when adding new queries. For instance see [#191](https://github.com/IntersectMBO/ouroboros-consensus/pull/191). Be aware that these PRs they can get out of date. If you detect this please delete old links and add those corresponding to newer pull requests.
 
-[n2c]: https://input-output-hk.github.io/ouroboros-network/ouroboros-network/Ouroboros-Network-NodeToClient.html#t:NodeToClientVersion
-[network-spec]: https://input-output-hk.github.io/ouroboros-network/pdfs/network-spec/network-spec.pdf
-[shelley-n2c]: https://github.com/input-output-hk/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs#L17
-[cardano-n2c]: https://github.com/input-output-hk/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L341-L527
-[query-supported-version]: https://github.com/input-output-hk/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L537-L574
+[n2c]: https://ouroboros-network.cardano.intersectmbo.org/ouroboros-network/Ouroboros-Network-NodeToClient.html#t:NodeToClientVersion
+[network-spec]: https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf
+[shelley-n2c]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs#L17
+[cardano-n2c]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L341-L527
+[query-supported-version]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L537-L574
 [feature-table]: https://github.com/cardano-foundation/CIPs/blob/master/CIP-0059/feature-table.md
-[supportedNodeToClientVersions]: https://github.com/input-output-hk/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L540
-[latestReleasedNodeVersion]: https://github.com/input-output-hk/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L551
-[limitToLatestReleasedVersion]: https://github.com/input-output-hk/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node.hs#L896-L897
-[shelley-encodeNodeToClient]: https://github.com/input-output-hk/ouroboros-consensus/blob/3d55ae3ca7a9e1c63a19266d35ef5512bbef13ab/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Node/Serialisation.hs#L180-L185
-[network-repo]: https://github.com/input-output-hk/ouroboros-network
-[shelley-supportedNodeToClientVersions]: https://github.com/input-output-hk/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs#L56-L65
-[decodeShelleyResult]: https://github.com/input-output-hk/ouroboros-consensus/blob/3d55ae3ca7a9e1c63a19266d35ef5512bbef13ab/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L733
+[supportedNodeToClientVersions]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L540
+[latestReleasedNodeVersion]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/Node.hs#L551
+[limitToLatestReleasedVersion]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-diffusion/src/ouroboros-consensus-diffusion/Ouroboros/Consensus/Node.hs#L896-L897
+[shelley-encodeNodeToClient]: https://github.com/IntersectMBO/ouroboros-consensus/blob/3d55ae3ca7a9e1c63a19266d35ef5512bbef13ab/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Node/Serialisation.hs#L180-L185
+[network-repo]: https://github.com/IntersectMBO/ouroboros-network
+[shelley-supportedNodeToClientVersions]: https://github.com/IntersectMBO/ouroboros-consensus/blob/35e444f1440cef34e0989519f025231241397674/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/NetworkProtocolVersion.hs#L56-L65
+[decodeShelleyResult]: https://github.com/IntersectMBO/ouroboros-consensus/blob/3d55ae3ca7a9e1c63a19266d35ef5512bbef13ab/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L733

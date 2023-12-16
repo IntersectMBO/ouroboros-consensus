@@ -52,7 +52,7 @@ import           Ouroboros.Consensus.Util.RedundantConstraints
 -- This is the key data structure that drives all layout functions.
 --
 -- TODO: Add support for non-uniform 'ChunkInfo'
--- <https://github.com/input-output-hk/ouroboros-network/issues/1754>
+-- <https://github.com/IntersectMBO/ouroboros-network/issues/1754>
 data ChunkInfo =
     -- | A single, uniform, chunk size
     --

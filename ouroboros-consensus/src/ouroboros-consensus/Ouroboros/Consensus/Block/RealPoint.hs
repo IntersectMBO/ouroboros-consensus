@@ -45,7 +45,7 @@ data RealPoint blk = RealPoint !SlotNo !(HeaderHash blk)
   deriving (Generic)
 
 -- TODO: The Ord instance should go
--- <https://github.com/input-output-hk/ouroboros-network/issues/1693>
+-- <https://github.com/IntersectMBO/ouroboros-network/issues/1693>
 deriving instance StandardHash blk => Eq   (RealPoint blk)
 deriving instance StandardHash blk => Ord  (RealPoint blk)
 deriving instance StandardHash blk => Show (RealPoint blk)

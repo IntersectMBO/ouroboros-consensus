@@ -112,7 +112,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsProtocol (TPraos c) where
   -- As this is the leader VRF value, which is used for slot election in the
   -- first place, it gives an advantage to smaller pools in a multi-leader slot.
   -- This was not an intentional decision, see
-  -- https://github.com/input-output-hk/ouroboros-network/issues/4051 for a more
+  -- https://github.com/IntersectMBO/ouroboros-network/issues/4051 for a more
   -- detailed discussion.
   pTieBreakVRFValue = certifiedOutput . SL.bheaderL . SL.bhbody
 

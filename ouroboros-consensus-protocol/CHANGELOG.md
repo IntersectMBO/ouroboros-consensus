@@ -80,4 +80,4 @@ packages with `ouroboros-consensus`, thus the changelog was the same.
 
 Before following a more structured release process, we tracked most significant
 changes affecting downstream users in the
-[interface-CHANGELOG.md](https://github.com/input-output-hk/ouroboros-consensus/blob/8d8329e4dd41404439b7cd30629fcce427679212/docs/website/docs/interface-CHANGELOG.md).
+[interface-CHANGELOG.md](https://github.com/IntersectMBO/ouroboros-consensus/blob/8d8329e4dd41404439b7cd30629fcce427679212/docs/website/docs/interface-CHANGELOG.md).

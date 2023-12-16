@@ -342,7 +342,7 @@ In particular, `Cabal` will happily pick `2.2.2.0` when the downstream user has 
 In this case, because the commit that defines `2.2.2.0` adds a feature, `Cabal`'s naive inference based on `2.2.2.0 < 2.3.0` is unsound.
 One could also dismiss this concern about tooling, though, because only devs (here or downstream) should ever be building dev versions, and they should only do so explicitly (eg building from source by building a git worktree or by listing a specific git commit as the dependency).
 As long as no one installs a dev version package into a repository, there's no risk of a tool that picks amongst versions from some repository even considering a dev version.
-Dev versions are never _released_, and so should never be in any public package repository such as Hackage or [CHaP](https://github.com/input-output-hk/cardano-haskell-packages).
+Dev versions are never _released_, and so should never be in any public package repository such as Hackage or [CHaP](https://github.com/IntersectMBO/cardano-haskell-packages).
 The most likely way we can imagine a dev version might end up in a repository would be if a developer/user who doesn't know any better builds from source and installs a dev version into their machine's local package database.
 That single risk seems manageable.
 
@@ -574,7 +574,7 @@ TODO discuss how to maintain the extra `.0` component, including a risk assessme
   A typo in your commit message, forgetting to the annotation in your commit message, etc could all lead to surprises.
   However, its clean specification supplies good inspiration for a human-friendly checklist.
 
-- We realized the correspondence (obvious in hindsight) with the maintenance of changelogs when reviewing the process documented at https://github.com/input-output-hk/plutus/blob/master/RELEASE.adoc, especially the scripts.
+- We realized the correspondence (obvious in hindsight) with the maintenance of changelogs when reviewing the process documented at https://github.com/IntersectMBO/plutus/blob/master/RELEASE.adoc, especially the scripts.
 
 
 

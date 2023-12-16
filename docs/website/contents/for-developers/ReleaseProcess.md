@@ -7,7 +7,7 @@ Two is enough to explain the complexities.
 The resulting rules can be generalized to any number of packages, as explained at the end of the document.
 
 *Remark*.
-If you disagree with the decisions in this document, please consider reviewing our brainstorming notes and discussions, available at [this document's PR](https://github.com/input-output-hk/ouroboros-network/pull/4207).
+If you disagree with the decisions in this document, please consider reviewing our brainstorming notes and discussions, available at [this document's PR](https://github.com/IntersectMBO/ouroboros-network/pull/4207).
 Even if you choose not to do so, please share your concern with us.
 
 ## Notation
@@ -234,7 +234,7 @@ To manage the workflow described above, we will use the `scriv` tool slightly
 modified to support cabal files.. If you use `nix` then you will find `scriv` in
 the Nix shell. Otherwise, the way to install it from source is:
 
-1. Clone [our fork of scriv](https://github.com/input-output-hk/scriv/) and `cd`
+1. Clone [our fork of scriv](https://github.com/IntersectMBO/scriv/) and `cd`
    into it.
 2. Run `pip install -e $(pwd)`
 
@@ -319,7 +319,7 @@ git pull
 ```
 
 [contributing-to-a-project]: https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project#Commit-Guidelines
-[chap]: https://github.com/input-output-hk/cardano-haskell-packages
+[chap]: https://github.com/IntersectMBO/cardano-haskell-packages
 
 # The first time we had to break this release process
 
@@ -382,7 +382,7 @@ and publishing a release for `ouroboros-consensus-diffusion` to allow for a
 `0.4.0.0` `ouroboros-consensus` package. But we used this opportunity to propose
 a new organization, and also migrate to a new repository.
 
-[solution]: https://github.com/input-output-hk/cardano-haskell-packages/pull/207
+[solution]: https://github.com/IntersectMBO/cardano-haskell-packages/pull/207
 
 # The new organization
 

@@ -19,7 +19,7 @@ let
       ghc810 = { compiler-nix-name = lib.mkForce "ghc8107"; };
     };
     inputMap = {
-      "https://input-output-hk.github.io/cardano-haskell-packages" = inputs.CHaP;
+      "https://chap.intersectmbo.org/" = inputs.CHaP;
     };
     modules = [
       (forAllProjectPackages ({ ... }: {

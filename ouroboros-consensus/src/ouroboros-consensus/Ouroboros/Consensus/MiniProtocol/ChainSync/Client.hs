@@ -26,11 +26,11 @@
 --
 -- Its core specification is found in "The Shelley Networking Protocol",
 -- currently found at
--- <https://input-output-hk.github.io/ouroboros-network/pdfs/network-spec/network-spec.pdf>.
+-- <https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf>.
 --
 -- It would be difficult to maintain or extrend this module without
 -- understanding the @typed-protocols@ architecture; eg see
--- <https://github.com/input-output-hk/typed-protocols>.
+-- <https://github.com/IntersectMBO/typed-protocols>.
 --
 -- This module is intended for qualified import, aliased as either CSC,
 -- CSClient, or CsClient.

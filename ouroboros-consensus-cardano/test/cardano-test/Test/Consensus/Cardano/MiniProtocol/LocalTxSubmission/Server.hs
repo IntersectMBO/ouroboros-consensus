@@ -89,7 +89,7 @@ tests =
 
           mempool `should_process` [ _137 ]
       where
-        -- Reported in https://github.com/input-output-hk/ouroboros-consensus/issues/137
+        -- Reported in https://github.com/IntersectMBO/ouroboros-consensus/issues/137
         _137 :: GenTx (CardanoBlock StandardCrypto)
         _137 = either (error . show) snd (deserialiseTx _137_bs)
           where

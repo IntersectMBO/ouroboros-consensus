@@ -231,7 +231,7 @@ mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } =
 -- slots the test can run without needing new ocerts.
 --
 -- TODO This limitation may be lifted by PR #2107, see
--- <https://github.com/input-output-hk/ouroboros-network/issues/2107>.
+-- <https://github.com/IntersectMBO/ouroboros-network/issues/2107>.
 data KesConfig = KesConfig
   { maxEvolutions     :: Word64
   , slotsPerEvolution :: Word64

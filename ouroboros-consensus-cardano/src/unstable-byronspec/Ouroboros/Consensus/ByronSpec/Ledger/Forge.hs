@@ -34,7 +34,7 @@ forgeByronSpecBlock curBlockNo curSlotNo (TickedByronSpecLedgerState _ st) txs v
           (map (unByronSpecGenTx . forgetValidatedByronSpecGenTx) txs)
 
     -- TODO: Don't take protocol version from ledger state
-    -- <https://github.com/input-output-hk/ouroboros-network/issues/1495>
+    -- <https://github.com/IntersectMBO/ouroboros-network/issues/1495>
     block :: Spec.Block
     block = Spec.mkBlock
               (getChainStateHash st)

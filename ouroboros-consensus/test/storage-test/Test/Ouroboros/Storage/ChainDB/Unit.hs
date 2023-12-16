@@ -125,7 +125,7 @@ followerSwitchesToNewChain =
 ouroborosNetworkIssue :: Int -> String
 ouroborosNetworkIssue n
   | n <= 0 = error "Issue number should be positive"
-  | otherwise = "https://github.com/input-output-hk/ouroboros-network/issues/" <> show n
+  | otherwise = "https://github.com/IntersectMBO/ouroboros-network/issues/" <> show n
 
 
 ouroboros_network_4183 :: (

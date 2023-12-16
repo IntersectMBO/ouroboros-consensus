@@ -204,7 +204,7 @@ data TraceForgeEvent blk
     -- We record both the current slot number as well as the tip of the
     -- ImmutableDB.
     --
-    -- See also <https://github.com/input-output-hk/ouroboros-network/issues/1462>
+    -- See also <https://github.com/IntersectMBO/ouroboros-network/issues/1462>
   | TraceSlotIsImmutable SlotNo (Point blk) BlockNo
 
     -- | Leadership check failed: the current chain contains a block from a slot
@@ -215,7 +215,7 @@ data TraceForgeEvent blk
     -- We record both the current slot number as well as the slot number of the
     -- block at the tip of the chain.
     --
-    -- See also <https://github.com/input-output-hk/ouroboros-network/issues/1462>
+    -- See also <https://github.com/IntersectMBO/ouroboros-network/issues/1462>
   | TraceBlockFromFuture SlotNo SlotNo
 
     -- | We found out to which block we are going to connect the block we are about

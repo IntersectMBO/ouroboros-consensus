@@ -233,7 +233,7 @@ tickLedgerState  cfg (ForgeInUnknownSlot st) =
     -- in the next available slot
     --
     -- TODO: We should use time here instead
-    -- <https://github.com/input-output-hk/ouroboros-network/issues/1298>
+    -- <https://github.com/IntersectMBO/ouroboros-network/issues/1298>
     -- Once we do, the ValidateEnvelope constraint can go.
     slot :: SlotNo
     slot = case ledgerTipSlot st of

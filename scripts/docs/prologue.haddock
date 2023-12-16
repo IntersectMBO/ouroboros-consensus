@@ -87,31 +87,31 @@ We run these tests for
 * A mock ledger (containing bare bones UTxO style transactions) using a variety
     of consensus protocols: BFT, PBFT, Praos, and a version of Praos where we
     override the leader schedule. See [this
-    library](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus/src/unstable-mock-block/Ouroboros/Consensus/Mock)
+    library](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus/src/unstable-mock-block/Ouroboros/Consensus/Mock)
     and the corresponding
-    [tests](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion/test/mock-test/Test/ThreadNet).
+    [tests](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion/test/mock-test/Test/ThreadNet).
 
 * Byron/PBFT. See
-    [Test.ThreadNet.Byron](https://github.com/input-output-hk/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/test/byron-test/Test/ThreadNet/Byron.hs).
+    [Test.ThreadNet.Byron](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/test/byron-test/Test/ThreadNet/Byron.hs).
 
 * DualByron. Running Byron specification and Byron implementation at the same time. See
-    [Test.ThreadNet.DualByron](https://github.com/input-output-hk/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/test/byron-test/Test/ThreadNet/DualByron.hs).
+    [Test.ThreadNet.DualByron](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/test/byron-test/Test/ThreadNet/DualByron.hs).
 
 * Shelley/TPraos. See
-    [Test.ThreadNet.Shelley](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/shelley-test/Test/ThreadNet).
+    [Test.ThreadNet.Shelley](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/shelley-test/Test/ThreadNet).
 
 * Cardano. Testing transitions between several Cardano eras. See
-    [Test.ThreadNet.Cardano](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/cardano-test/Test/ThreadNet).
+    [Test.ThreadNet.Cardano](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-cardano/test/cardano-test/Test/ThreadNet).
 
 * The hard fork combinator transitioning from a mock ledger @A@ to a mock ledger
     @B@; these mock ledgers are absolutely minimal ledgers: the only transaction
     supported on the @A@ ledger is "initiate transition to @B@", and the @B@
     ledger can only contain blocks with a header only, no body at all. See [this
-    directory](https://github.com/input-output-hk/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/HardFork).
+    directory](https://github.com/IntersectMBO/ouroboros-consensus/tree/main/ouroboros-consensus-diffusion/test/consensus-test/Test/Consensus/HardFork).
 
 * @HardForkBlock '[Byron, Shelley]@: the hard fork combinator instantiated with
     the Byron and Shelley ledgers, running @PBFT@ before the transition and
-    @TPraos@ after. See [this file](https://github.com/input-output-hk/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/test/cardano-test/Test/ThreadNet/Cardano.hs).
+    @TPraos@ after. See [this file](https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/test/cardano-test/Test/ThreadNet/Cardano.hs).
 
 == Note about the documentation
 

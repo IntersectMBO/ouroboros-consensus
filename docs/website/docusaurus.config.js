@@ -8,7 +8,7 @@ const math = require('remark-math');
 const katex = require('rehype-katex');
 
 // generic edition URL that will be used by all parts of the documentation
-const editUrl = 'https://github.com/input-output-hk/ouroboros-consensus/tree/main/docs/';
+const editUrl = 'https://github.com/IntersectMBO/ouroboros-consensus/tree/main/docs/';
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -17,13 +17,13 @@ const config = {
   favicon: 'img/cardano_icon.ico',
 
   // Set the production url of your site here
-  url: 'https://input-output-hk.github.io/',
+  url: 'https://ouroboros-consensus.cardano.intersectmbo.org/',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
-  baseUrl: '/ouroboros-consensus',
+  baseUrl: '/',
 
   // GitHub pages deployment config.
-  organizationName: 'input-output-hk',
+  organizationName: 'IntersectMBO',
   projectName: 'ouroboros-consensus',
 
   onBrokenLinks: 'throw',
@@ -105,7 +105,7 @@ const config = {
             label: 'For Developers',
           },
           {
-            href: 'https://github.com/input-output-hk/ouroboros-consensus',
+            href: 'https://github.com/IntersectMBO/ouroboros-consensus',
             label: 'GitHub',
             position: 'right',
           },
@@ -132,7 +132,7 @@ const config = {
             items: [
               {
                 label: 'Cardano Updates',
-                href: 'https://input-output-hk.github.io/cardano-updates',
+                href: 'https://cardano-updates.cardano.intersectmbo.org',
               },
               {
                 label: 'Stack Overflow',
@@ -149,7 +149,7 @@ const config = {
             items: [
               {
                 label: 'GitHub',
-                href: 'https://github.com/input-output-hk/ouroboros-consensus',
+                href: 'https://github.com/IntersectMBO/ouroboros-consensus',
               },
               {
                 label: 'Haddocks',

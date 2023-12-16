@@ -3,7 +3,7 @@
 This package constitutes the cornerstone of the Consensus Layer of Cardano. It
 implements the Ouroboros family of blockchain protocols. The best way to
 understand this repository is by reading our
-[documentation](https://input-output-hk.github.io/ouroboros-consensus/).
+[documentation](https://ouroboros-consensus.cardano.intersectmbo.org/).
 
 This package contains:
 

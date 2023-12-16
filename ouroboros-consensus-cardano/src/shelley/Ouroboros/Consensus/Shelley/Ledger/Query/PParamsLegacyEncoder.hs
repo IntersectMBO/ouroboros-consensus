@@ -7,7 +7,7 @@
 
 -- | Ledger fixed/changed the serialisation of @PParams@ in a
 -- backwards-incompatible way in
--- <https://github.com/input-output-hk/ouroboros-network/pull/4349/>.
+-- <https://github.com/IntersectMBO/ouroboros-network/pull/4349/>.
 --
 -- This module contains the legacy serialisation in order to keep compatibility
 -- with applications (like cardano-cli or Ogmios) that still use the old

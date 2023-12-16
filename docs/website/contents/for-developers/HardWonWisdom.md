@@ -313,7 +313,7 @@ The best resource we have for motivating this constraint is [Edsko de Vries' IOG
 
 - From 30m46s to 38m52s, he explains the justification for cross-chain translations (and off-handedly that it's technically optional).
 
-For example, [Shelley the `PPUP` ledger rule](https://github.com/input-output-hk/cardano-ledger/blob/180271602640bcac1214084b6de61d0468332f00/eras/shelley/impl/src/Cardano/Ledger/Shelley/Rules/Ppup.hs#L192) requires update proposals to be settled at least two stability windows before the end of the epoch (ie `6k/f`, not just `3k/f`).
+For example, [Shelley the `PPUP` ledger rule](https://github.com/IntersectMBO/cardano-ledger/blob/180271602640bcac1214084b6de61d0468332f00/eras/shelley/impl/src/Cardano/Ledger/Shelley/Rules/Ppup.hs#L192) requires update proposals to be settled at least two stability windows before the end of the epoch (ie `6k/f`, not just `3k/f`).
 (That links to the tip of the `master` branch at the time of writing this, although this constraint is not new.)
 
 (TODO Frisby wonders whether, instead of double-stability in the ledger rules, we could instead only draw conclusions that should not be subject to roll back (such as time translations) from the youngest immutable ledger state.)
@@ -380,7 +380,7 @@ To run the Consensus Layer instead on the hard fork combinator that sequences `F
     - A function `LedgerConfig F -> LedgerConfig G -> EpochNo {- start of G -} -> LedgerState F -> LedgerState G`.
       This function will be applied to the ledger state immediately after the last `F` block.
       Then the ledger rules for `G` will be used to tick that state to the slot of the first `G` block.
-      This use of `G`'s ticking rules instead of `F`'s to cross the end of the last epoch of `F` is subtle and somewhat counter-intuitive (eg see Issue <https://github.com/input-output-hk/cardano-ledger/issues/3491>).
+      This use of `G`'s ticking rules instead of `F`'s to cross the end of the last epoch of `F` is subtle and somewhat counter-intuitive (eg see Issue <https://github.com/IntersectMBO/cardano-ledger/issues/3491>).
     - Instances of `SingleEraBlock` for `F` and `G`, which decomposes as the following for `F` and `G` individually.
         - Types that represent the ledger and protocol configuration _without_ any `EpochInfo` (see `HasPartialLedgerConfig` and `HasPartialConsensusConfig`).
         - A function `singleEraTransition :: PartialLedgerConfig blk -> EraParams -> Bound {- era's start -} -> LedgerState blk -> Maybe EpochNo` which must return `Just e` if any extension of this ledger state will end between epoch `e` and its predecessor (ie epoch `e-1` when `0<e` and "genesis" otherwise).
@@ -466,7 +466,7 @@ However, there are a total of three possible trajectories of the `singleEraTrans
 
 Every era of Cardano mainnet today uses the EXTENSIBLE trajectory.
 However, other Cardano chains used for testing and/or benchmarking instead use the IMMEDIATE era for some prefix of eras in order to "skip" them, starting the chain in a later era (see the next subsection).
-Lastly, due to bugs, some mainnet eras were previously using the NEVER trajectory by accident (eg see PR <https://github.com/input-output-hk/ouroboros-network/pull/3754>).
+Lastly, due to bugs, some mainnet eras were previously using the NEVER trajectory by accident (eg see PR <https://github.com/IntersectMBO/ouroboros-network/pull/3754>).
 
 The intended use of each trajectory is as follows.
 
@@ -483,7 +483,7 @@ The intended use of each trajectory is as follows.
 The HFC interface currently requires the user to specify the `EraParams`'s safe zone and the `singleEraTransition` function separately.
 As such, it is possible to accidentally specify an indefinite safe zone alongside a `singleEraTransition` that sometimes returns `Just`.
 It's also possible to accidentally use the NEVER trajectory for what is not actually the final era.
-These violations do not necessarily lead to irrevocable disaster, but they are likely to cause confusion and/or require eg some patches to the the ledger rules of preceding eras when releasing a new one (eg see PR <https://github.com/input-output-hk/cardano-ledger/pull/2785>).
+These violations do not necessarily lead to irrevocable disaster, but they are likely to cause confusion and/or require eg some patches to the the ledger rules of preceding eras when releasing a new one (eg see PR <https://github.com/IntersectMBO/cardano-ledger/pull/2785>).
 
 ### Eras that contain no slots
 
@@ -512,4 +512,4 @@ Or more directly: require that `singleEraTransition` returns `Nothing` for the i
 
 TODO The current code, Edsko's chapter in the report, and the "the precisely-worded high-level rule" for the safe zone semantics sometimes applies the safe zone from the first slot of the era.
 Perhaps this suggests that the translated-but-not-actually-ticked state is indeed kind of summary of everything that came before, a la the "genesis block"?
-In which case it does in some sense require ticking at least parts of the last ledger state of the previous era across the epoch boundary (as in the minimal Babbage->Conway bugfix PR <https://github.com/input-output-hk/ouroboros-consensus/pull/366>).
+In which case it does in some sense require ticking at least parts of the last ledger state of the previous era across the epoch boundary (as in the minimal Babbage->Conway bugfix PR <https://github.com/IntersectMBO/ouroboros-consensus/pull/366>).

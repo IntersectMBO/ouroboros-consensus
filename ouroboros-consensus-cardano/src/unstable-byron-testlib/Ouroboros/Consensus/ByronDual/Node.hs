@@ -159,7 +159,7 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
       where
         -- TODO: Take (spec) protocol version and (spec) software version
         -- as arguments instead, and then translate /those/ to Impl types.
-        -- <https://github.com/input-output-hk/ouroboros-network/issues/1495>
+        -- <https://github.com/IntersectMBO/ouroboros-network/issues/1495>
         protocolVersion :: Impl.ProtocolVersion
         protocolVersion =
             Impl.adoptedProtocolVersion $
@@ -194,7 +194,7 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
         -- TODO: We should be able to use keys that are /not/ in genesis
         -- (so that we can start the node with new delegated keys that aren't
         -- present in the genesis config).
-        -- <https://github.com/input-output-hk/ouroboros-network/issues/1495>
+        -- <https://github.com/IntersectMBO/ouroboros-network/issues/1495>
         keyHash :: PBftVerKeyHash PBftByronCrypto
         keyHash = fromMaybe
                     (error $ "mkCredentials: invalid " ++ show nid)
