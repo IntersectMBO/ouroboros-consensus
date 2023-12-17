@@ -30,7 +30,10 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
 import           Control.Applicative ((<|>))
 import           Control.Monad (void, when)
 import qualified Control.Monad.Except as Exn
+import           Control.Monad.ST (ST)
+import           Data.Maybe (fromJust)
 import           Data.Proxy (Proxy (Proxy))
+import qualified Data.Vector.Unboxed as Vector
 import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
@@ -249,20 +252,44 @@ checkAdversarialChain recipe adv = do
                 Nothing     -> pure ()   -- there are no remaining honest active slots
                                          --
                                          -- TODO hpc shows this never executes
-    checkDensity :: Exn.Except (AdversarialViolation hon adv) ()
-    checkDensity =
-        when (C.Count s <= C.windowSize winA) $ do
-            let -- first stability window after the intersection in the honest
-                -- schema
-                hScgWin = C.UnsafeContains (C.Count $ C.getCount $ C.windowStart winA) (C.Count s)
-                -- first stability window after the intersection in the
-                -- alternative schema
-                aScgWin = C.UnsafeContains (C.Count 0) (C.Count s)
-                -- number of active slots in the first stability window after
-                -- the intersection in the honest schema
-                hCount = C.getCount $ BV.countActivesInV S.notInverted (C.sliceV hScgWin vH)
-                aCount = C.getCount $ BV.countActivesInV S.notInverted (C.sliceV aScgWin vA)
-            when (aCount >= hCount) $ Exn.throwError $ BadDensity hCount aCount
+
+    -- | Check that the density of the adversarial schema is less than the
+    -- density of the honest schema in the first stability window after the
+    -- intersection and in any subwindow that contains the first race to the
+    -- k+1st block.
+    --
+    -- See description of @ensureLowerDensityInWindows@
+    checkDensity = do
+        let
+          -- window of the honest schema after the intersection
+          winHAfterIntersection =
+              C.UnsafeContains
+                  (fromJust $ C.toWindow winH $ C.windowStart winA)
+                  (C.Count $ C.getCount (C.windowSize winA))
+          -- honest schema after the intersection
+          vHAfterIntersection = C.sliceV winHAfterIntersection vH
+          iterH :: RI.Race adv
+          iterH =
+              maybe (RI.initConservative vHAfterIntersection) id
+            $ RI.init (Kcp k) vHAfterIntersection
+
+        -- first race window after the intersection
+        C.SomeWindow _ w0 <- let RI.Race x = iterH in pure x
+
+        let
+          w0' = C.UnsafeContains (C.windowStart w0) (min (C.Count s) (C.windowSize w0))
+          vvH = C.getVector vHAfterIntersection
+          vvA = C.getVector vA
+          -- cumulative sums of active slots per slot after the intersection
+          hSum = Vector.scanl (+) 0 (Vector.map (\x -> if S.test S.notInverted x then 1 else 0) vvH)
+          aSum = Vector.scanl (+) 0 (Vector.map (\x -> if S.test S.notInverted x then 1 else 0) vvA)
+          -- cumulative sums of active slots per slot until the first stability
+          -- window after the intersection
+          hwSum = Vector.toList $ Vector.drop (C.getCount $ C.windowSize w0') $ Vector.take (s + 1) hSum
+          awSum = Vector.toList $ Vector.drop (C.getCount $ C.windowSize w0') $ Vector.take (s + 1) aSum
+        case filter (\(x, y) -> x < y) (zip hwSum awSum) of
+          []         -> pure ()
+          ((x, y):_) -> Exn.throwError $ BadDensity x y
 
 -----
 
@@ -484,7 +511,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
             maybe (RI.initConservative vA) id
           $ RI.init kcp vA
 
-    ensureLowerDensityThanHonestSchema g mv
+    ensureLowerDensityInWindows iterH g mv
 
     unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
 
@@ -600,28 +627,84 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                                     (C.fromWindow settledSlots x C.+ s C.+ 1)
                 unfillRaces kPlus1st (C.windowLast win C.+ 1) mbYS' iter' g mv
 
-    ensureLowerDensityThanHonestSchema g mv =
-        when (C.Count s <= C.windowSize carWin) $ do
-            let -- first stability window after the intersection in the honest
-                -- schema
-                hScgWin = C.UnsafeContains (C.windowStart carWin) (C.Count s)
-                -- number of active slots in the first stability window after
-                -- the intersection in the honest schema
-                hCount = BV.countActivesInV S.notInverted (C.sliceV hScgWin vH)
-                -- first stability window after the intersection in the alternative
-                -- schema
-                aScgWin = C.UnsafeContains (C.Count 0) (C.Count s)
-                -- slice of the alternative schema for the first stability
-                -- window after the intersection
-                aScgMv  = C.sliceMV aScgWin mv
-                -- intended number of empty slots in the first stability window
-                -- after the intersection in the alternative schema
-                emptyCountTarget = C.toVar $ S.complementActive S.notInverted (C.windowSize aScgWin) hCount C.+ 1
-            void $ BV.fillInWindow
-                S.inverted
-                (BV.SomeDensityWindow emptyCountTarget (C.windowSize aScgWin))
-                g
-                aScgMv
+    -- | Ensure the density of the adversarial schema is less than the density
+    -- of the honest schema in the first stability window after the intersection
+    -- and in any subwindow that contains the first race to the k+1st block.
+    --
+    -- Ensuring lower density of the subwindows is necessary to avoid chains like
+    --
+    -- > k: 3
+    -- > s: 9
+    -- > H: 0111100
+    -- > A: 1110011
+    --
+    -- where the honest chain wins the race to the k+1st block, might win the
+    -- density comparison if the chains are extended to include a full stability
+    -- window after the intersection, but loses the density comparison if the
+    -- chains aren't extended.
+    --
+    -- For the sake of shrinking test inputs, we also prevent the above scenario
+    -- to occur in any intersection, not just the intersections near the end of
+    -- the chains.
+    --
+    ensureLowerDensityInWindows
+      :: R.StatefulGen sg (ST s) => RI.Race adv -> sg -> C.MVector adv SlotE s S.S -> ST s ()
+    ensureLowerDensityInWindows (RI.Race (C.SomeWindow _ w0)) g mv = do
+        let
+          -- A window after the intersection as short as the shortest of the
+          -- stability window or the first race to the k+1st block.
+          w0' = C.UnsafeContains (C.windowStart w0) (min (C.Count s) (C.windowSize w0))
+          hCount = BV.countActivesInV S.notInverted (C.sliceV w0' vA)
+
+        aCount <- ensureLowerDensityInWindow w0' g mv hCount
+
+        go w0' (C.toVar hCount) aCount
+      where
+        -- Ensure low densities in all windows containing @w@ until the first
+        -- stability window after the intersection.
+        --
+        -- @hc@ is the number of active slots in the honest schema in @w@
+        -- @ac@ is the number of active slots in the adversarial schema in @w@
+        go w hc ac =
+          when (C.windowSize w C.+ 1 <= C.Count s
+                && C.windowLast w C.+ 1 < C.toIndex (C.toVar $ C.lengthMV mv)) $ do
+              let w' = increaseSizeW w
+
+              sA <- BV.testMV S.notInverted mv (C.windowLast w')
+
+              let
+                ac' = if sA then ac C.+ 1 else ac
+                sH = BV.testV S.notInverted vA (C.windowLast w')
+                hc' = if sH then hc C.+ 1 else hc
+
+              ac'' <-
+                  if ac' >= hc' then
+                    ensureLowerDensityInWindow w' g mv hc'
+                  else
+                    pure ac'
+
+              go w' hc' ac''
+
+    -- | Increase the size of a window by one slot
+    increaseSizeW (C.UnsafeContains start size) =
+        C.UnsafeContains start (size C.+ 1)
+
+    -- | Ensure the density of the adversarial schema is less than the density
+    -- of the honest schema in the given window.
+    --
+    -- @hCount@ is the number of active slots in the honest schema in the
+    -- given window.
+    ensureLowerDensityInWindow w g mv hCount = do
+        let emptyCountTarget = C.toVar $ S.complementActive S.notInverted (C.windowSize w) hCount C.+ 1
+
+        ec <- BV.fillInWindow
+            S.inverted
+            (BV.SomeDensityWindow emptyCountTarget (C.windowSize w))
+            g
+            (C.sliceMV w mv)
+
+        pure $ C.toVar $ S.complementActive S.inverted (C.windowSize w) ec
+
 
 -- | The youngest stable slot
 --
