@@ -39,6 +39,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Counting (
   , joinWin
   , toWindow
   , toWindowVar
+  , truncateWin
   , windowLast
   , windowSize
   , windowStart
@@ -224,6 +225,9 @@ windowStart win = fromWindow win (Count 0)
 
 windowLast :: Contains elem outer inner -> Index outer elem
 windowLast win = fromWindow win $ lastIndex $ windowSize win
+
+truncateWin :: Contains elem outer inner -> Size inner elem -> Contains elem outer inner
+truncateWin (UnsafeContains start len) x = UnsafeContains start (min len x)
 
 -- | 'Contains' is a 'Data.Semigroupoid.Semigroupoid'
 joinWin :: Contains elem outer mid -> Contains elem mid inner -> Contains elem outer inner
