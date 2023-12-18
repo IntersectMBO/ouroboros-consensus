@@ -6,17 +6,21 @@
 module Test.Consensus.PointSchedule.FullTable (
     FullTablePointSchedule (..)
   , FullTableRow (..)
+  , activeFromFullTablePointSchedule
   , fullTableFromActivePointSchedule
   ) where
 
-import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime)
+import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
+                     diffTime)
+import           Control.Monad.Class.MonadTimer.SI (DiffTime)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import           Test.Consensus.PointSchedule (NodeState (..),
                      PointSchedule (..), Tick (..))
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..),
-                     Peers (..), peersFromPeerIdList, peersList)
+                     Peers (..), peerValue, peersFromPeerIdList, peersList,
+                     toMap)
 
 -- | A row in a full-table point schedule. It contains states for all peers and
 -- an absolute time at which this state starts holding.
@@ -67,3 +71,45 @@ fullTableFromActivePointSchedule PointSchedule{ticks, peerIds} =
     isDummyBeginningOfTime FullTableRow{ftrStates, ftrTime} =
       ftrTime == Time 0 &&
         all (\(Peer _ s) -> s == NodeOffline) (NonEmpty.toList (peersList ftrStates))
+
+-- | Transform a 'FullTablePointSchedule' into its regular “active” equivalent.
+activeFromFullTablePointSchedule :: FullTablePointSchedule -> PointSchedule
+activeFromFullTablePointSchedule FullTablePointSchedule{ftpsRows, ftpsPeerIds} =
+    PointSchedule {
+      ticks = go beginningOfTimeRow beginningOfTimeHonestPeer [] (NonEmpty.toList ftpsRows),
+      peerIds = ftpsPeerIds
+    }
+  where
+    beginningOfTimeRow = (peersFromPeerIdList ftpsPeerIds NodeOffline, Time 0)
+    beginningOfTimeHonestPeer = Peer HonestPeer NodeOffline
+
+    -- | Process all the rows and turn them into ticks. Ticks are first
+    -- generated without numbers and numbering is added at the end. We keep the
+    -- last states and time to compute the difference with the current row. The
+    -- difference of times gives us the duration of the tick; the difference of
+    -- states gives us which tick/s to add in the future. If there is more than
+    -- one, all the others are added as zero-duration ticks.
+    go :: (Peers NodeState, Time) -> Peer NodeState -> [Tick] -> [FullTableRow] -> NonEmpty Tick
+    go _ active ticks [] =
+      NonEmpty.reverse (Tick active lastTickDuration :| ticks)
+    go (states, time) active ticks (FullTableRow{ftrStates=states', ftrTime=time'} : rows) =
+      case onlyUpdatedStates states' states of
+        [] -> go (states, time) active ticks rows
+        updatedPeer : otherUpdatedPeers ->
+          let tick = Tick active (diffTime time' time)
+              ticks' = if duration tick == 0 && peerValue active == NodeOffline then ticks else tick : ticks
+              zeroDurationTicks = map (\peer -> Tick peer 0) otherUpdatedPeers
+           in go (states', time') updatedPeer (zeroDurationTicks ++ ticks') rows
+
+    -- | Duration of the last tick. This information is not included in a
+    -- full-table point schedule so we have to make it up.
+    lastTickDuration = 1 :: DiffTime
+
+    -- | Compute the peers whose states have changed in between two set of
+    -- states. Return these and their new state as a list.
+    onlyUpdatedStates :: Eq a => Peers a -> Peers a -> [Peer a]
+    onlyUpdatedStates after before =
+      Map.elems $ Map.differenceWith
+        (\a b -> if a == b then Nothing else Just a)
+        (toMap after)
+        (toMap before)
