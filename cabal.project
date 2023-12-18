@@ -31,3 +31,11 @@ tests: true
 benchmarks: true
 
 import: ./asserts.cabal
+
+-- Remove once QSM 0.9 is released, see
+-- https://github.com/stevana/quickcheck-state-machine/pull/31
+source-repository-package
+  type: git
+  location: https://github.com/stevana/quickcheck-state-machine
+  tag: 8e2bfb2214c7af1dae728180f2092effea6fbeb7
+  --sha256: sha256-SRcuyKs0Sz+GBsCKE16LSnH14p3q8ZLxkcVyfErvfPQ=

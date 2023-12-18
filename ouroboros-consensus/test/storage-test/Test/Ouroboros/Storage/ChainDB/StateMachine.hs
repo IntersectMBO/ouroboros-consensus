@@ -95,6 +95,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Ord (Down (..))
 import           Data.Proxy
+import           Data.TreeDiff
 import           Data.Typeable
 import           Data.Void (Void)
 import           Data.Word (Word16, Word64)
@@ -164,6 +165,7 @@ import qualified Test.Util.RefEnv as RE
 import           Test.Util.RefEnv (RefEnv)
 import           Test.Util.SOP
 import           Test.Util.TestEnv (adjustQuickCheckTests)
+import           Test.Util.ToExpr ()
 import           Test.Util.Tracer (recordingTracerIORef)
 import           Test.Util.WithEq
 

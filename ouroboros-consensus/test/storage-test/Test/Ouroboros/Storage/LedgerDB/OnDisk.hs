@@ -57,6 +57,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.TreeDiff
 import           Data.Word
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
@@ -86,6 +87,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.Range
 import           Test.Util.TestBlock hiding (TestBlock, TestBlockCodecConfig,
                      TestBlockStorageConfig)
+import           Test.Util.ToExpr ()
 
 {-------------------------------------------------------------------------------
   Top-level tests

@@ -43,6 +43,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, listToMaybe, mapMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.TreeDiff
 import           Data.Word
 import qualified Generics.SOP as SOP
 import           GHC.Generics
@@ -77,6 +78,7 @@ import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.QuickCheck
 import           Test.Util.SOP
+import           Test.Util.ToExpr ()
 import           Test.Util.Tracer (recordingTracerIORef)
 import           Text.Show.Pretty (ppShow)
 

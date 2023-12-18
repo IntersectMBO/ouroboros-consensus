@@ -31,6 +31,7 @@ import           Prelude hiding (filter, lookup, null)
 import qualified Prelude
 import           Test.StateMachine (Reference)
 import qualified Test.StateMachine.Types.Rank2 as Rank2
+import           Test.Util.ToExpr ()
 
 data RefEnv k a r = RefEnv { toList :: [(Reference k r, a)] }
   deriving (Generic, ToExpr, Show)

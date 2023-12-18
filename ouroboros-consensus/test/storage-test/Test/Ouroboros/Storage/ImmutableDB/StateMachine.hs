@@ -59,7 +59,7 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe)
-import           Data.TreeDiff (Expr (App), defaultExprViaShow)
+import           Data.TreeDiff (Expr (App), ToExpr (..), defaultExprViaShow)
 import           Data.Typeable (Typeable)
 import           Data.Word (Word16, Word64)
 import qualified Generics.SOP as SOP
@@ -105,6 +105,7 @@ import           Test.Util.QuickCheck (collects)
 import qualified Test.Util.RefEnv as RE
 import           Test.Util.RefEnv (RefEnv)
 import           Test.Util.SOP
+import           Test.Util.ToExpr ()
 import           Test.Util.Tracer (recordingTracerIORef)
 import           Test.Util.WithEq
 import           Text.Show.Pretty (ppShow)
