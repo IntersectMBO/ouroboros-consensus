@@ -40,6 +40,7 @@ import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
                      (runScheduledBlockFetchServer)
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 

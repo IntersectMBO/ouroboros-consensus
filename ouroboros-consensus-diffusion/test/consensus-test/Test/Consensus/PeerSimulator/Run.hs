@@ -52,9 +52,10 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
-                     Peer (Peer), PeerId, PointSchedule (PointSchedule),
-                     PointScheduleConfig, TestFragH, Tick (Tick),
-                     pointSchedulePeers, prettyPointSchedule)
+                     PointSchedule (PointSchedule), PointScheduleConfig,
+                     TestFragH, Tick (Tick), pointSchedulePeers,
+                     prettyPointSchedule)
+import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()

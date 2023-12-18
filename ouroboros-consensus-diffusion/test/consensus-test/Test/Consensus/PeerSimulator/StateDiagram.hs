@@ -54,8 +54,9 @@ import           Ouroboros.Network.Block (HeaderHash, Tip (Tip))
 import           Test.Consensus.BlockTree (BlockTree (btBranches, btTrunk),
                      BlockTreeBranch (btbSuffix), prettyBlockTree)
 import qualified Test.Consensus.PointSchedule as PS
-import           Test.Consensus.PointSchedule (AdvertisedPoints, PeerId (..),
-                     TestFrag, TestFragH, genesisAdvertisedPoints)
+import           Test.Consensus.PointSchedule (AdvertisedPoints, TestFrag,
+                     TestFragH, genesisAdvertisedPoints)
+import           Test.Consensus.PointSchedule.Peers (PeerId (..))
 import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 
 enableDebug :: Bool
