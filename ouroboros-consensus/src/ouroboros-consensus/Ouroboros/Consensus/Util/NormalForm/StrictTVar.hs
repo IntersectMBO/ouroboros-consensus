@@ -8,8 +8,8 @@
 -- 'NoThunks' invariant. See 'newTVarWithInvariant' and
 -- 'newTVarWithInvariantIO'.
 --
--- Use the @checktvarinvariants@ cabal flag to enable or disable invariant
--- checks at compile time.
+-- Use the @checktvarinvariants@ cabal flag from the @strict-checked-vars@
+-- package to enable or disable invariant checks at compile time.
 --
 -- The exports of this module (should) mirror the exports of the
 -- "Control.Concurrent.Class.MonadSTM.Strict.TVar.Checked" module from the
