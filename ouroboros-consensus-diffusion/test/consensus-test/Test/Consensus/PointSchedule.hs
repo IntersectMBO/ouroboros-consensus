@@ -179,6 +179,7 @@ data Tick =
     active   :: Peer NodeState,
     -- | The duration of this tick, for the scheduler to pass to @threadDelay@.
     duration :: DiffTime,
+    -- | The number of this tick, starting at @0@.
     number   :: Word
   }
   deriving (Eq, Show)
