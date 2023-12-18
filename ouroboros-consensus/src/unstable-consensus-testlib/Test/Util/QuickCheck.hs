@@ -27,6 +27,7 @@ module Test.Util.QuickCheck (
   , shrinkNP
     -- * Convenience
   , collects
+  , forAllGenRunShrinkCheck
   ) where
 
 import           Control.Monad.Except
@@ -71,6 +72,31 @@ checkShrinker p =
 -- | Check invariant
 checkInvariant :: (a -> Except String ()) -> (a -> Property)
 checkInvariant f = expectRight () . runExcept . f
+
+-- | Explicit quantification using the “gen-run-shrink-check” pattern.
+--
+-- Instead of the usual two stages where one generates an input and then checks
+-- the property for that input, we rely on three stages: one generates an input,
+-- then transforms it into an output, and then checks the output.
+--
+-- When adding a shrinker to the mix, we can allow it to inspect the output
+-- value as well, which increases its expressivity. This makes sense if the
+-- “run” phase is particularly expensive.
+forAllGenRunShrinkCheck ::
+  Testable prop =>
+  Gen input ->
+  (input -> output) ->
+  (input -> output -> [input]) ->
+  (input -> output -> prop) ->
+  Property
+forAllGenRunShrinkCheck gen run shrink_ check =
+  forAllBlind gen $ \input ->
+    shrinking
+      (map run' . uncurry shrink_)
+      (run' input)
+      (uncurry check)
+  where
+    run' inp = (inp, run inp)
 
 {-------------------------------------------------------------------------------
   Comparison functions
