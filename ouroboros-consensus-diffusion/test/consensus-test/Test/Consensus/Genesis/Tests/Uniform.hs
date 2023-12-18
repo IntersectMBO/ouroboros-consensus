@@ -24,6 +24,8 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (scTrace),
                      noTimeoutsSchedulerConfig, scTraceState)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
+                     value)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (SchedulePoint (ScheduleBlockPoint, ScheduleTipPoint))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))

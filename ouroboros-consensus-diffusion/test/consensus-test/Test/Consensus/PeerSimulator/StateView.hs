@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Consensus.PeerSimulator.StateView (
@@ -19,7 +18,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, SomeException,
                      atomically)
-import           Test.Consensus.PointSchedule (PeerId, TestFragH)
+import           Test.Consensus.PointSchedule (TestFragH)
+import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.TersePrinting (terseHFragment)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
