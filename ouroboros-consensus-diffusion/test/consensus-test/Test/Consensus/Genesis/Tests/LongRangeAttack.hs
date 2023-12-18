@@ -14,6 +14,7 @@ import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -29,18 +30,20 @@ tests =
 
 prop_longRangeAttack :: Property
 prop_longRangeAttack =
-  forAllGenesisTest
+  forAllGenesisTest'
 
     (do
         -- Create a block tree with @1@ alternative chain.
         gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
         -- Create a 'longRangeAttack' schedule based on the generated chains.
-        ps <- fromSchedulePoints <$> stToGen (longRangeAttack gtBlockTree)
+        ps <- stToGen (longRangeAttack gtBlockTree)
         if allAdversariesSelectable (classifiers gt)
           then pure (gt, ps)
           else discard)
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+
+    shrinkPeerSchedules
 
     -- NOTE: This is the expected behaviour of Praos to be reversed with
     -- Genesis. But we are testing Praos for the moment
