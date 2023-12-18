@@ -14,6 +14,8 @@ module Test.Consensus.PointSchedule.Peers (
     Peer (..)
   , PeerId (..)
   , Peers (..)
+  , fromMap
+  , fromMap'
   , getPeerIds
   , mkPeers
   , mkPeers'
@@ -22,6 +24,8 @@ module Test.Consensus.PointSchedule.Peers (
   , peersFromPeerList
   , peersList
   , peersOnlyHonest
+  , toMap
+  , toMap'
   ) where
 
 import           Data.Hashable (Hashable)
@@ -149,3 +153,20 @@ peersFromPeerIdList = flip $ \val -> peersFromPeerList . fmap (flip Peer val)
 -- | Like 'peersFromPeerIdList' with @()@.
 peersFromPeerIdList' :: NonEmpty PeerId -> Peers ()
 peersFromPeerIdList' = flip peersFromPeerIdList ()
+
+toMap :: Peers a -> Map PeerId (Peer a)
+toMap Peers{honest, others} = Map.insert HonestPeer honest others
+
+-- | Same as 'toMap' but the map contains unwrapped values.
+toMap' :: Peers a -> Map PeerId a
+toMap' = fmap (\(Peer _ v) -> v) . toMap
+
+fromMap :: Map PeerId (Peer a) -> Peers a
+fromMap peers = Peers{
+    honest = peers Map.! HonestPeer,
+    others = Map.delete HonestPeer peers
+  }
+
+-- | Same as 'fromMap' but the map contains unwrapped values.
+fromMap' :: Map PeerId a -> Peers a
+fromMap' = fromMap . Map.mapWithKey Peer
