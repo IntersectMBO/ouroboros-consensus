@@ -16,6 +16,7 @@ module Test.Consensus.Genesis.Setup (
 
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (debugTracer, traceWith)
+import           Data.Bifunctor (second)
 import           Data.Foldable (for_)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Network.Protocol.ChainSync.Codec
@@ -27,9 +28,11 @@ import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace (traceLinesWith)
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Peers (Peers)
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TersePrinting (terseFragment)
+import           Test.Util.QuickCheck (forAllGenRunShrinkCheck)
 import           Test.Util.Tracer (recordingTracerTVar)
 
 -- | See 'runGenesisTest'.
@@ -93,6 +96,7 @@ forAllGenesisTest ::
   Testable prop =>
   Gen (GenesisTest, PointSchedule) ->
   SchedulerConfig ->
+  (GenesisTest -> PointSchedule -> StateView -> [(GenesisTest, PointSchedule)]) ->
   (GenesisTest -> PointSchedule -> StateView -> prop) ->
   Property
 forAllGenesisTest = mkForAllGenesisTest id
@@ -102,6 +106,7 @@ forAllGenesisTest' ::
   Testable prop =>
   Gen (GenesisTest, Peers PeerSchedule) ->
   SchedulerConfig ->
+  (GenesisTest -> Peers PeerSchedule -> StateView -> [(GenesisTest, Peers PeerSchedule)]) ->
   (GenesisTest -> Peers PeerSchedule -> StateView -> prop) ->
   Property
 forAllGenesisTest' = mkForAllGenesisTest fromSchedulePoints
@@ -112,13 +117,16 @@ mkForAllGenesisTest ::
   (schedule -> PointSchedule) ->
   Gen (GenesisTest, schedule) ->
   SchedulerConfig ->
+  (GenesisTest -> schedule -> StateView -> [(GenesisTest, schedule)]) ->
   (GenesisTest -> schedule -> StateView -> prop) ->
   Property
-mkForAllGenesisTest mkPointSchedule generator schedulerConfig mkProperty =
-  forAllBlind generator $ \(genesisTest, schedule) ->
+mkForAllGenesisTest mkPointSchedule generator schedulerConfig shrinker mkProperty =
+  forAllGenRunShrinkCheck generator runner shrinker' $ \(genesisTest, schedule) result ->
     let cls = classifiers genesisTest
-        result = runGenesisTest schedulerConfig genesisTest (mkPointSchedule schedule)
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
         counterexample (rgtrTrace result) $
         mkProperty genesisTest schedule (rgtrStateView result)
+  where
+    runner = uncurry (runGenesisTest schedulerConfig) . second mkPointSchedule
+    shrinker' (gt, ps) = shrinker gt ps . rgtrStateView

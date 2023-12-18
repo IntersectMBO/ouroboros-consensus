@@ -13,6 +13,7 @@ import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -44,6 +45,8 @@ prop_rollback = do
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
+    (\_ _ _ -> [])
+
     (\_ _ -> not . hashOnTrunk . AF.headHash . svSelectedChain)
 
 -- @prop_cannotRollback@ tests that the selection of the node under test *does
@@ -59,6 +62,8 @@ prop_cannotRollback =
           else discard)
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+
+    (\_ _ _ -> [])
 
     (\_ _ -> hashOnTrunk . AF.headHash . svSelectedChain)
 
