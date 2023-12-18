@@ -14,12 +14,12 @@ import           Cardano.Binary (toCBOR)
 import           Cardano.Crypto.Hash (hashWithSerialiser)
 import           Codec.Serialise (Serialise (..), serialise)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Mock.Ledger.Block
 import           Ouroboros.Consensus.Protocol.Abstract
+import           Ouroboros.Network.SizeInBytes
 
 -- | Construct the protocol specific part of the block
 --
@@ -65,5 +65,5 @@ forgeSimple ForgeExt { forgeExt } cfg curBlock curSlot tickedLedger txs proof =
         , simpleBodySize = bodySize
         }
 
-    bodySize :: Word32
-    bodySize = fromIntegral $ Lazy.length $ serialise body
+    bodySize :: SizeInBytes
+    bodySize = SizeInBytes $ fromIntegral $ Lazy.length $ serialise body

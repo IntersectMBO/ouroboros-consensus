@@ -94,11 +94,12 @@ import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Mock.Ledger.Address
 import           Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
-import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
+import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
+                     SizeInBytes)
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE,
                      (..:), (.:))
 import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.Orphans ()
+import           Test.Util.Orphans.Serialise ()
 
 {-------------------------------------------------------------------------------
   Definition of a block
@@ -168,8 +169,7 @@ data SimpleStdHeader c ext = SimpleStdHeader {
     , simpleSlotNo   :: SlotNo
     , simpleBlockNo  :: BlockNo
     , simpleBodyHash :: Hash (SimpleHash c) SimpleBody
-      -- TODO: use SizeInBytes
-    , simpleBodySize :: Word32
+    , simpleBodySize :: SizeInBytes
     }
   deriving stock    (Generic, Show, Eq)
   deriving anyclass (Serialise, NoThunks)

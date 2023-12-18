@@ -61,7 +61,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe)
 import           Data.TreeDiff (Expr (App), defaultExprViaShow)
 import           Data.Typeable (Typeable)
-import           Data.Word (Word16, Word32, Word64)
+import           Data.Word (Word16, Word64)
 import qualified Generics.SOP as SOP
 import           GHC.Generics (Generic, Generic1)
 import           GHC.Stack (HasCallStack)
@@ -193,7 +193,7 @@ type AllComponents blk =
   , HeaderHash blk
   , SlotNo
   , IsEBB
-  , Word32
+  , SizeInBytes
   , Word16
   , SomeSecond (NestedCtxt Header) blk
   )

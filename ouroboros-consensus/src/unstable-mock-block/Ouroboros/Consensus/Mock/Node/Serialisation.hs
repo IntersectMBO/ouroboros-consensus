@@ -72,7 +72,7 @@ instance Serialise ext => SerialiseNodeToNodeConstraints (MockBlock ext) where
       7 {- CBOR-in-CBOR -} + 1 {- encodeListLen 2 -} + hdrSize + bodySize
     where
       hdrSize  = fromIntegral (Lazy.length (serialise hdr))
-      bodySize = fromIntegral (simpleBodySize (simpleHeaderStd hdr))
+      bodySize = simpleBodySize (simpleHeaderStd hdr)
 
 instance Serialise ext => SerialiseNodeToNode (MockBlock ext) (MockBlock ext) where
   encodeNodeToNode _ _ = defaultEncodeCBORinCBOR
