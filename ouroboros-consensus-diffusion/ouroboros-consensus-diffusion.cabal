@@ -233,6 +233,7 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.Tests.Timeouts
     Test.Consensus.PeerSimulator.Trace
     Test.Consensus.PointSchedule
+    Test.Consensus.PointSchedule.FullTable
     Test.Consensus.PointSchedule.Peers
     Test.Consensus.PointSchedule.SinglePeer
     Test.Consensus.PointSchedule.SinglePeer.Indices
