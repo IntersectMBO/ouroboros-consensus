@@ -16,12 +16,17 @@ module Test.Consensus.PointSchedule.Peers (
   , Peers (..)
   , getPeerIds
   , mkPeers
+  , mkPeers'
+  , peersFromPeerIdList
+  , peersFromPeerIdList'
+  , peersFromPeerList
   , peersList
   , peersOnlyHonest
   ) where
 
 import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String (IsString (fromString))
@@ -111,3 +116,36 @@ mkPeers h as =
     advs [a] = [("adversary", a)]
     advs _   = zip enumAdvs as
     enumAdvs = (\ n -> PeerId ("adversary " ++ show n)) <$> [1 :: Int ..]
+
+-- | Make a 'Peers' structure from the honest value and the other peers. Fail if
+-- one of the other peers is the 'HonestPeer'.
+mkPeers' :: a -> [Peer a] -> Peers a
+mkPeers' value prs =
+    Peers (Peer HonestPeer value) (Map.fromList $ dupAdvPeerId <$> prs)
+  where
+    -- | Duplicate an adversarial peer id; fail if honest.
+    dupAdvPeerId :: Peer a -> (PeerId, Peer a)
+    dupAdvPeerId (Peer HonestPeer _) = error "cannot be the honest peer"
+    dupAdvPeerId peer@(Peer pid _)   = (pid, peer)
+
+-- | Make a 'Peers' structure from a non-empty list of peers. Fail if the honest
+-- peer is not exactly once in the list.
+peersFromPeerList :: NonEmpty (Peer a) -> Peers a
+peersFromPeerList =
+    uncurry mkPeers' . extractHonestPeer . NonEmpty.toList
+  where
+    -- | Return the value associated with the honest peer and the list of peers
+    -- excluding the honest one.
+    extractHonestPeer :: [Peer a] -> (a, [Peer a])
+    extractHonestPeer [] = error "could not find honest peer"
+    extractHonestPeer (Peer HonestPeer value : peers) = (value, peers)
+    extractHonestPeer (peer : peers) = (peer :) <$> extractHonestPeer peers
+
+-- | Make a 'Peers' structure from a non-empty list of peer ids and a default
+-- value. Fails if the honest peer is not exactly once in the list.
+peersFromPeerIdList :: NonEmpty PeerId -> a -> Peers a
+peersFromPeerIdList = flip $ \val -> peersFromPeerList . fmap (flip Peer val)
+
+-- | Like 'peersFromPeerIdList' with @()@.
+peersFromPeerIdList' :: NonEmpty PeerId -> Peers ()
+peersFromPeerIdList' = flip peersFromPeerIdList ()
