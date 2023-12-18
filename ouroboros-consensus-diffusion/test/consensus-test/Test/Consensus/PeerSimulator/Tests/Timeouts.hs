@@ -17,6 +17,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..))
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
