@@ -498,7 +498,7 @@ semanticsImpl env@VolatileDBEnv { varDB, varErrors }  (At (CmdErr cmd mbErrors))
     At . Resp <$> case mbErrors of
       Nothing     -> tryVolatileDB (Proxy @Block) (runDB env cmd)
       Just errors -> do
-        _ <- withErrors varErrors errors $
+        _ <- withErrors (unsafeToUncheckedStrictTVar varErrors) errors $
           tryVolatileDB (Proxy @Block) (runDB env cmd)
         -- As all operations on the VolatileDB are idempotent, close (not
         -- idempotent by default!), reopen it, and run the command again.
@@ -583,7 +583,7 @@ test cmds = do
     varFs              <- uncheckedNewTVarM Mock.empty
     (tracer, getTrace) <- recordingTracerIORef
 
-    let hasFS = mkSimErrorHasFS varFs varErrors
+    let hasFS = mkSimErrorHasFS (unsafeToUncheckedStrictTVar varFs) (unsafeToUncheckedStrictTVar varErrors)
         args = VolatileDbArgs {
                    volCheckIntegrity   = testBlockIsValid
                  , volCodecConfig      = TestBlockCodecConfig

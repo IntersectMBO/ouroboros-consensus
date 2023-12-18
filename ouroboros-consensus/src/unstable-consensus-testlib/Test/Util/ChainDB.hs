@@ -83,9 +83,9 @@ fromMinimalChainDbArgs ::
      )
   => MinimalChainDbArgs m blk -> ChainDbArgs Identity m blk
 fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
-    cdbHasFSImmutableDB       = SomeHasFS $ simHasFS (nodeDBsImm mcdbNodeDBs)
-  , cdbHasFSVolatileDB        = SomeHasFS $ simHasFS (nodeDBsVol mcdbNodeDBs)
-  , cdbHasFSLgrDB             = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
+    cdbHasFSImmutableDB       = SomeHasFS $ simHasFS (nodeDBsImm mcdbNodeDBs')
+  , cdbHasFSVolatileDB        = SomeHasFS $ simHasFS (nodeDBsVol mcdbNodeDBs')
+  , cdbHasFSLgrDB             = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs')
   , cdbImmutableDbValidation  = ImmutableDB.ValidateAllChunks
   , cdbVolatileDbValidation   = VolatileDB.ValidateAll
   , cdbMaxBlocksPerFile       = VolatileDB.mkBlocksPerFile 4
@@ -111,3 +111,5 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
   , cdbGcInterval             = 1
   , cdbBlocksToAddSize        = 1
   }
+  where
+    mcdbNodeDBs' = unsafeToUncheckedStrictTVar <$> mcdbNodeDBs

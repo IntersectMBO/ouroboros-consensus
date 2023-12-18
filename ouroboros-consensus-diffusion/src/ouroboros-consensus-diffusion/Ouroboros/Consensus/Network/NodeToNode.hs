@@ -42,6 +42,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.CBOR.Read (DeserialiseFailure)
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer
@@ -172,7 +173,7 @@ data Handlers m addr blk = Handlers {
         :: NodeToNodeVersion
         -> ControlMessageSTM m
         -> ConnectionId addr
-        -> StrictTVar m (Map (ConnectionId addr) PeerGSV)
+        -> TVar.Unchecked.StrictTVar m (Map (ConnectionId addr) PeerGSV)
         -> KeepAliveInterval
         -> KeepAliveClient m ()
 

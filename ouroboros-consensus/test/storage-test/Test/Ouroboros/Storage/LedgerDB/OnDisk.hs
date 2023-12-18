@@ -1096,7 +1096,7 @@ propCmds :: SecurityParam
 propCmds secParam cmds = do
     fs <- QC.run $ uncheckedNewTVarM MockFS.empty
     let dbEnv :: DbEnv IO
-        dbEnv = DbEnv (SomeHasFS (simHasFS fs)) secParam
+        dbEnv = DbEnv (SomeHasFS (simHasFS (unsafeToUncheckedStrictTVar fs))) secParam
     db <- QC.run $ initStandaloneDB dbEnv
     let sm' = sm secParam db
     (hist, _model, res) <- runCommands sm' cmds
