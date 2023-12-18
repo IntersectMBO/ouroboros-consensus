@@ -116,7 +116,7 @@ type AllComponents blk =
   , HeaderHash blk
   , SlotNo
   , IsEBB
-  , Word32
+  , SizeInBytes
   , Word16
   , SomeSecond (NestedCtxt Header) blk
   )

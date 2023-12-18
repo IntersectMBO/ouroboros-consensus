@@ -582,7 +582,7 @@ extractBlockComponent hasFS chunkInfo chunk ccfg checkIntegrity eHnd
         GetHash          -> return headerHash
         GetSlot          -> return slotNo
         GetIsEBB         -> return $ isBlockOrEBB blockOrEBB
-        GetBlockSize     -> return blockSize
+        GetBlockSize     -> return $ SizeInBytes blockSize
         GetHeaderSize    -> return $ fromIntegral $ Secondary.unHeaderSize headerSize
         GetRawBlock      -> readBlock
         GetRawHeader     -> readHeader

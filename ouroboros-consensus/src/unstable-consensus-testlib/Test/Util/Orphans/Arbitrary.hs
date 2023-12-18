@@ -1,14 +1,15 @@
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE DerivingVia          #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE NumericUnderscores   #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE NumericUnderscores         #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE UndecidableInstances       #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Util.Orphans.Arbitrary (
@@ -54,6 +55,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (ChunkNo (..), ChunkSize (..), RelativeSlot (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Network.SizeInBytes
 import           Test.Cardano.Ledger.Binary.Arbitrary ()
 import           Test.QuickCheck hiding (Fixed (..))
 import           Test.Util.Time (dawnOfTime)
@@ -152,6 +154,8 @@ instance Arbitrary ClockSkew where
       skew0, skew1 :: ClockSkew
       skew0 = InFuture.clockSkewInSeconds 0
       skew1 = InFuture.clockSkewInSeconds 1
+
+deriving newtype instance Arbitrary SizeInBytes
 
 {-------------------------------------------------------------------------------
   SmallDiffTime

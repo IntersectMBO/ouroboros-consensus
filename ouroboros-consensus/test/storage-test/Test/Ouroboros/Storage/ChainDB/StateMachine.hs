@@ -97,7 +97,7 @@ import           Data.Ord (Down (..))
 import           Data.Proxy
 import           Data.Typeable
 import           Data.Void (Void)
-import           Data.Word (Word16, Word32, Word64)
+import           Data.Word (Word16, Word64)
 import qualified Generics.SOP as SOP
 import           GHC.Generics (Generic)
 import           NoThunks.Class (AllowThunk (..))
@@ -116,6 +116,7 @@ import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
+import           Ouroboros.Consensus.Storage.Common (SizeInBytes)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
@@ -305,7 +306,7 @@ type AllComponents blk =
   , HeaderHash blk
   , SlotNo
   , IsEBB
-  , Word32
+  , SizeInBytes
   , Word16
   , SomeSecond (NestedCtxt Header) blk
   )

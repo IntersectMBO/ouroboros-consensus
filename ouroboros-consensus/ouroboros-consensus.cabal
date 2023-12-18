@@ -323,6 +323,7 @@ library unstable-consensus-testlib
     Test.Util.Orphans.Arbitrary
     Test.Util.Orphans.IOLike
     Test.Util.Orphans.NoThunks
+    Test.Util.Orphans.Serialise
     Test.Util.Orphans.SignableRepresentation
     Test.Util.Orphans.ToExpr
     Test.Util.Paths
@@ -439,6 +440,7 @@ library unstable-mock-block
     , ouroboros-network-mock
     , serialise
     , time
+    , unstable-consensus-testlib
 
 library unstable-mempool-test-utils
   import:          common-lib
