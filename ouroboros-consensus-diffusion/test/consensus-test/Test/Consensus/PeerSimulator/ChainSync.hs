@@ -39,7 +39,8 @@ import           Test.Consensus.PeerSimulator.StateView
                      StateViewTracers (StateViewTracers, svtChainSyncExceptionsTracer))
 import           Test.Consensus.PeerSimulator.Trace (mkChainSyncClientTracer,
                      traceUnitWith)
-import           Test.Consensus.PointSchedule (PeerId, TestFragH)
+import           Test.Consensus.PointSchedule (TestFragH)
+import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 

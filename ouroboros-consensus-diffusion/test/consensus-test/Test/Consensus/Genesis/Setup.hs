@@ -26,6 +26,7 @@ import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace (traceLinesWith)
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Peers (Peers)
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TersePrinting (terseFragment)
