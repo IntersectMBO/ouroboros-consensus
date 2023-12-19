@@ -15,7 +15,7 @@ module Test.Util.TersePrinting (
   ) where
 
 import           Cardano.Slotting.Block (BlockNo (BlockNo))
-import           Data.List (intercalate)
+import           Data.List (group, intercalate)
 import           Data.List.NonEmpty (NonEmpty ((:|)), toList)
 import           Ouroboros.Consensus.Block (Header,
                      Point (BlockPoint, GenesisPoint), RealPoint,
@@ -28,18 +28,12 @@ import           Ouroboros.Network.Point (WithOrigin (..))
 import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
                      TestHash (TestHash), unTestHash)
 
--- | Group consecutive duplicate elements, counting them. Only the first element
--- of the equality is kept. For instance:
+-- | Run-length encoding of a list. This groups consecutive duplicate elements,
+-- counting them. Only the first element of the equality is kept. For instance:
 --
--- > groupDuplicates [0, 0, 1, 0, 2, 2, 2] = [(2, 0), (1, 1), (1, 0), (3, 2)]
-groupDuplicates :: Eq a => [a] -> [(Int, a)]
-groupDuplicates [] = []
-groupDuplicates (z : zs) = go 1 z zs
-  where
-    go n x [] = [(n, x)]
-    go n x (y : ys)
-      | x == y = go (n + 1) x ys
-      | otherwise = (n, x) : go 1 y ys
+-- > runLengthEncoding [0, 0, 1, 0, 2, 2, 2] = [(2, 0), (1, 1), (1, 0), (3, 2)]
+runLengthEncoding :: Eq a => [a] -> [(Int, a)]
+runLengthEncoding xs = [(length ys, head ys) | ys <- group xs]
 
 -- | Print the given 'BlockNo', 'SlotNo' and 'TestHash' in a terse way:
 -- @block-slot[hash]@. @hash@ only shows if there is a non-zero element in it.
@@ -50,7 +44,7 @@ terseBlockSlotHash :: BlockNo -> SlotNo -> TestHash -> String
 terseBlockSlotHash (BlockNo bno) (SlotNo sno) (TestHash hash) =
     show bno ++ "-" ++ show sno ++ renderHash
   where
-    renderHash = case groupDuplicates (reverse (toList hash)) of
+    renderHash = case runLengthEncoding (reverse (toList hash)) of
       [(_, 0)]    -> ""
       hashGrouped -> "[" ++ intercalate "," (map renderGroup hashGrouped) ++ "]"
     renderGroup (1, e) = show e
