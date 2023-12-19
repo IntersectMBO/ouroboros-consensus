@@ -1,0 +1,10 @@
+- modules:
+  - { name: Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+    , importStyle: explicitOrQualified
+    , as: [CSC, CsClient, CSClient]
+    , message: "Exports fields with very common names"
+    }
+
+- ignore: {}
+
+- warn: {name: Ouroboros.Consensus.MiniProtocol.ChainSync.Client should be imported qualified or with an explicit import list}

@@ -41,14 +41,6 @@ db-byron-proxy-*
 index-byron-proxy-*
 launch-*
 
-# This project doesn't currently use hlint.  To avoid spurious warnings
-# generate an hlint config to suppress all hlint warnings:
-#
-#   hlint . --ignore-glob='dist-newstyle/**' --default > .hlint.yaml
-#
-# The hlint config is listed here to prevent accidental checkin.
-/.hlint.yaml
-
 # Documentation
 /docs/**/*.aux
 /docs/**/*.bbl
