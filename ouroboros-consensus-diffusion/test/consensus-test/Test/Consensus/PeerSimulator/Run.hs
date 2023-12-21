@@ -18,6 +18,7 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
+import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
@@ -190,9 +191,10 @@ dispatchTick ::
   Tracer m String ->
   Tracer m () ->
   Map PeerId (PeerResources m) ->
+  Int ->
   Tick ->
   m ()
-dispatchTick tracer stateTracer peers Tick {active = Peer pid state, duration, number} =
+dispatchTick tracer stateTracer peers number Tick {active = Peer pid state, duration} =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
       time <- prettyTime
@@ -227,9 +229,10 @@ runScheduler ::
 runScheduler tracer stateTracer ps@PointSchedule{ticks} peers = do
   traceLinesWith tracer (prettyPointSchedule ps)
   traceStartOfTime
-  for_ ticks (dispatchTick tracer stateTracer peers)
+  for_ numberedTicks (uncurry (dispatchTick tracer stateTracer peers))
   traceEndOfTime
   where
+    numberedTicks = zip [0..] (NonEmpty.toList ticks)
     traceStartOfTime =
       traceWith tracer "Running point schedule ..."
     traceEndOfTime =

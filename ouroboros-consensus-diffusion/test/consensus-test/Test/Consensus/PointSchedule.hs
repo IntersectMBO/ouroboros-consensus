@@ -178,25 +178,22 @@ data Tick =
   Tick {
     active   :: Peer NodeState,
     -- | The duration of this tick, for the scheduler to pass to @threadDelay@.
-    duration :: DiffTime,
-    -- | The number of this tick, starting at @0@.
-    number   :: Word
+    duration :: DiffTime
   }
   deriving (Eq, Show)
 
 instance Condense Tick where
-  condense Tick {active, duration, number} =
-    show number ++ ": " ++ condense active ++ " | " ++ showDT duration
+  condense Tick {active, duration} =
+    condense active ++ " | " ++ showDT duration
     where
       showDT t = printf "%.6f" (realToFrac t :: Double)
 
-tickDefault :: PointScheduleConfig -> Word -> Peer NodeState -> Tick
-tickDefault PointScheduleConfig {pscTickDuration} number active =
-  Tick {active, duration = pscTickDuration, number}
+tickDefault :: PointScheduleConfig -> Peer NodeState -> Tick
+tickDefault PointScheduleConfig {pscTickDuration} active =
+  Tick {active, duration = pscTickDuration}
 
 tickDefaults :: PointScheduleConfig -> [Peer NodeState] -> [Tick]
-tickDefaults psc states =
-  uncurry (tickDefault psc) <$> zip [0 ..] states
+tickDefaults psc states = tickDefault psc <$> states
 
 -- | A point schedule is a series of states for a set of peers.
 --
@@ -289,7 +286,7 @@ type PeerSchedule = [(DiffTime, SchedulePoint)]
 -- start times to relative tick durations.
 fromSchedulePoints :: Peers PeerSchedule -> PointSchedule
 fromSchedulePoints peers = do
-  pointSchedule (zipWith3 Tick states durations [0 ..]) peerIds
+  pointSchedule (zipWith Tick states durations) peerIds
   where
     peerIds = getPeerIds peers
 
