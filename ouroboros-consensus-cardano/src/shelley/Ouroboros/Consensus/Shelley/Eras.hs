@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass          #-}
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE LambdaCase              #-}
 {-# LANGUAGE MultiParamTypeClasses   #-}
 {-# LANGUAGE OverloadedStrings       #-}
 {-# LANGUAGE ScopedTypeVariables     #-}
@@ -34,8 +35,6 @@ module Ouroboros.Consensus.Shelley.Eras (
   , EraCrypto
     -- * Re-exports
   , StandardCrypto
-    -- * Exceptions
-  , UnexpectedAlonzoLedgerErrors
   ) where
 
 import           Cardano.Ledger.Allegra (AllegraEra)
@@ -65,11 +64,9 @@ import qualified Cardano.Ledger.Shelley.LedgerState as SL
 import qualified Cardano.Ledger.Shelley.Rules as SL
 import qualified Cardano.Ledger.Shelley.Transition as SL
 import qualified Cardano.Protocol.TPraos.API as SL
-import           Control.Exception (Exception, throw)
 import           Control.Monad.Except
 import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
-import qualified Data.Set as Set
 import           Data.Text (Text)
 import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
@@ -264,18 +261,14 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
             ledgerEnv
             mempoolState
             wti
-            tx
+            tx{Alonzo.isValid = Alonzo.IsValid True}
 
       pure (mempoolState', vtx)
     where
-      nubOrd = Set.toList . Set.fromList
-
       handler e = case (wti, e) of
-        (DoNotIntervene, SL.ApplyTxError errs)
-          | flag:flags <- nubOrd [b | Just b <- incorrectClaimedFlag (Proxy @era) <$> errs] ->
-            if not (null flags)
-            then throw $ UnexpectedAlonzoLedgerErrors (flag:flags)
-            else
+        (DoNotIntervene, SL.ApplyTxError [err])
+          | isIncorrectClaimedFlag (Proxy @era) err
+          ->
             -- rectify the flag and include the transaction
             --
             -- This either lets the ledger punish the script author for sending
@@ -290,35 +283,31 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
               ledgerEnv
               mempoolState
               wti
-              tx{Alonzo.isValid = Alonzo.IsValid (not flag)}
+              tx{Alonzo.isValid = Alonzo.IsValid False}
         _ -> throwError e
                -- reject the transaction, protecting the local wallet
--- not exported
---
--- The ledger failure we see when the transaction's claimed 'IsValid'
--- flag was incorrect
 
 class SupportsTwoPhaseValidation era where
-  incorrectClaimedFlag :: proxy era -> SL.PredicateFailure (Core.EraRule "LEDGER" era) -> Maybe Bool
+  isIncorrectClaimedFlag :: proxy era -> SL.PredicateFailure (Core.EraRule "LEDGER" era) -> Bool
 
 instance SupportsTwoPhaseValidation (AlonzoEra c) where
-  incorrectClaimedFlag _ pf = case pf of
+  isIncorrectClaimedFlag _ = \case
     SL.UtxowFailure
       ( Alonzo.ShelleyInAlonzoUtxowPredFailure
           ( SL.UtxoFailure
               ( Alonzo.UtxosFailure
                   ( Alonzo.ValidationTagMismatch
-                      (Alonzo.IsValid claimedFlag)
+                      (Alonzo.IsValid _claimedFlag)
                       _validationErrs
                     )
                 )
             )
         ) ->
-        Just claimedFlag
-    _ -> Nothing
+        True
+    _ -> False
 
 instance SupportsTwoPhaseValidation (BabbageEra c) where
-  incorrectClaimedFlag _ pf = case pf of
+  isIncorrectClaimedFlag _ = \case
     SL.UtxowFailure
       ( Babbage.AlonzoInBabbageUtxowPredFailure
           ( Alonzo.ShelleyInAlonzoUtxowPredFailure
@@ -326,18 +315,18 @@ instance SupportsTwoPhaseValidation (BabbageEra c) where
                   ( Babbage.AlonzoInBabbageUtxoPredFailure
                       ( Alonzo.UtxosFailure
                           ( Alonzo.ValidationTagMismatch
-                              (Alonzo.IsValid claimedFlag)
+                              (Alonzo.IsValid _claimedFlag)
                               _validationErrs
                             )
                         )
                     )
                 )
             )
-        ) -> Just claimedFlag
-    _ -> Nothing
+        ) -> True
+    _ -> False
 
 instance SupportsTwoPhaseValidation (ConwayEra c) where
-  incorrectClaimedFlag _ pf = case pf of
+  isIncorrectClaimedFlag _ = \case
     SL.ConwayUtxowFailure
       ( Babbage.AlonzoInBabbageUtxowPredFailure
           ( Alonzo.ShelleyInAlonzoUtxowPredFailure
@@ -345,23 +334,16 @@ instance SupportsTwoPhaseValidation (ConwayEra c) where
                   ( Babbage.AlonzoInBabbageUtxoPredFailure
                       ( Alonzo.UtxosFailure
                           ( Alonzo.ValidationTagMismatch
-                              (Alonzo.IsValid claimedFlag)
+                              (Alonzo.IsValid _claimedFlag)
                               _validationErrs
                             )
                         )
                     )
                 )
             )
-        ) -> Just claimedFlag
-    _ -> Nothing
+        ) -> True
+    _ -> False
 
--- | The ledger responded with Alonzo errors we were not expecting
-data UnexpectedAlonzoLedgerErrors =
-    -- | We received more than one 'Alonzo.ValidationTagMismatch'
-    --
-    -- The exception lists the 'Alonzo.IsValid' flags we saw.
-    UnexpectedAlonzoLedgerErrors [Bool]
-  deriving (Show, Exception)
 
 {-------------------------------------------------------------------------------
   Tx family wrapper
