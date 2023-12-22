@@ -39,6 +39,8 @@ prop_longRangeAttack =
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
+    (\_ _ _ -> [])
+
     -- NOTE: This is the expected behaviour of Praos to be reversed with
     -- Genesis. But we are testing Praos for the moment
     (\_ _ -> not . isHonestTestFragH . svSelectedChain)
