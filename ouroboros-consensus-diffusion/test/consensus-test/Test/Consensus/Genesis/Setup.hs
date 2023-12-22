@@ -95,6 +95,7 @@ forAllGenesisTest ::
   Testable prop =>
   Gen (GenesisTest, PointSchedule) ->
   SchedulerConfig ->
+  (GenesisTest -> PointSchedule -> StateView -> [(GenesisTest, PointSchedule)]) ->
   (GenesisTest -> PointSchedule -> StateView -> prop) ->
   Property
 forAllGenesisTest = mkForAllGenesisTest id
@@ -104,6 +105,7 @@ forAllGenesisTest' ::
   Testable prop =>
   Gen (GenesisTest, Peers PeerSchedule) ->
   SchedulerConfig ->
+  (GenesisTest -> Peers PeerSchedule -> StateView -> [(GenesisTest, Peers PeerSchedule)]) ->
   (GenesisTest -> Peers PeerSchedule -> StateView -> prop) ->
   Property
 forAllGenesisTest' = mkForAllGenesisTest fromSchedulePoints
@@ -114,10 +116,11 @@ mkForAllGenesisTest ::
   (schedule -> PointSchedule) ->
   Gen (GenesisTest, schedule) ->
   SchedulerConfig ->
+  (GenesisTest -> schedule -> StateView -> [(GenesisTest, schedule)]) ->
   (GenesisTest -> schedule -> StateView -> prop) ->
   Property
-mkForAllGenesisTest mkPointSchedule generator schedulerConfig mkProperty =
-  forAllGenRunShrinkCheck generator runner shrinker $ \(genesisTest, schedule) result ->
+mkForAllGenesisTest mkPointSchedule generator schedulerConfig shrinker mkProperty =
+  forAllGenRunShrinkCheck generator runner shrinker' $ \(genesisTest, schedule) result ->
     let cls = classifiers genesisTest
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
@@ -125,4 +128,4 @@ mkForAllGenesisTest mkPointSchedule generator schedulerConfig mkProperty =
         mkProperty genesisTest schedule (rgtrStateView result)
   where
     runner = uncurry (runGenesisTest schedulerConfig) . second mkPointSchedule
-    shrinker _ _ = []
+    shrinker' (gt, ps) = shrinker gt ps . rgtrStateView
