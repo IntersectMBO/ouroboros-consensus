@@ -23,7 +23,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
 
 import           Control.Exception (assert)
 import           Control.Monad (forM, forM_, unless, void, when)
-import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Except ()
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
@@ -99,7 +98,7 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 --
 -- See "## Initialization" in ChainDB.md.
 initialChainSelection
-  :: forall m blk. (IOLike m, LedgerSupportsProtocol blk, MonadBase m m)
+  :: forall m blk. (IOLike m, LedgerSupportsProtocol blk)
   => ImmutableDB m blk
   -> VolatileDB m blk
   -> LedgerDB' m blk
@@ -273,7 +272,6 @@ addBlockSync
      , InspectLedger blk
      , HasHardForkHistory blk
      , HasCallStack
-     , MonadBase m m
      )
   => ChainDbEnv m blk
   -> BlockToAdd m blk
@@ -401,7 +399,6 @@ chainSelectionForFutureBlocks
      , InspectLedger blk
      , HasHardForkHistory blk
      , HasCallStack
-     , MonadBase m m
      )
   => ChainDbEnv m blk -> BlockCache blk -> m (Point blk)
 chainSelectionForFutureBlocks cdb@CDB{..} blockCache = do
@@ -459,7 +456,6 @@ chainSelectionForBlock
      , InspectLedger blk
      , HasHardForkHistory blk
      , HasCallStack
-     , MonadBase m m
      )
   => ChainDbEnv m blk
   -> BlockCache blk
@@ -902,7 +898,6 @@ chainSelection
      ( IOLike m
      , LedgerSupportsProtocol blk
      , HasCallStack
-     , MonadBase m m
      )
   => ChainSelEnv m blk
   -> ResourceRegistry m
@@ -1086,7 +1081,6 @@ ledgerValidateCandidate
      ( IOLike m
      , LedgerSupportsProtocol blk
      , HasCallStack
-     , MonadBase m m
      )
   => ChainSelEnv m blk
   -> ResourceRegistry m
@@ -1168,7 +1162,7 @@ ledgerValidateCandidate chainSelEnv rr chainDiff@(ChainDiff rollback suffix) =
 --
 -- When truncation happened, 'Left' is returned, otherwise 'Right'.
 futureCheckCandidate
-  :: forall m blk. (IOLike m, LedgerSupportsProtocol blk, MonadBase m m)
+  :: forall m blk. (IOLike m, LedgerSupportsProtocol blk)
   => ChainSelEnv m blk
   -> ValidatedChainDiff (Header blk) (Forker' m blk)
   -> m (Either (ChainDiff (Header blk))
@@ -1247,7 +1241,6 @@ validateCandidate
   :: ( IOLike m
      , LedgerSupportsProtocol blk
      , HasCallStack
-     , MonadBase m m
      )
   => ChainSelEnv m blk
   -> ResourceRegistry m

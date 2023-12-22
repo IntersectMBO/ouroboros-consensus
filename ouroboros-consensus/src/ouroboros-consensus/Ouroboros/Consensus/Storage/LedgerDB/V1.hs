@@ -97,6 +97,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1 (
 import           Codec.CBOR.Decoding
 import           Codec.Serialise.Class
 import           Control.Monad
+import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Tracer
 import           Data.Foldable
@@ -113,10 +114,13 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
+                     (BlockCache)
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate as Impl
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
@@ -131,6 +135,7 @@ import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import           Ouroboros.Network.AnchoredFragment (AnchoredSeq)
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           System.FS.API
@@ -207,6 +212,7 @@ openDB :: forall m l blk.
           , InspectLedger blk
           , HasCallStack
           , l ~ ExtLedgerState blk
+          , MonadBase m m
           )
        => LedgerDBArgs Identity m blk
        -- ^ Stateless initializaton arguments
@@ -239,6 +245,7 @@ openDBInternal :: forall m l blk.
           , InspectLedger blk
           , HasCallStack
           , l ~ ExtLedgerState blk
+          , MonadBase m m
           )
        => LedgerDBArgs Identity m blk
        -> Tracer m BackingStoreTraceByBackend
@@ -338,6 +345,7 @@ mkLedgerDB ::
      , HeaderHash l ~ HeaderHash blk
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
+     , MonadBase m m
      )
   => LedgerDBHandle m l blk
   -> LedgerDB m l blk
@@ -349,11 +357,9 @@ mkLedgerDB h = LedgerDB {
     , getForkerAtTip         = newForkerAtTip h
     , getForkerAtPoint       = newForkerAtPoint h
     , getForkerAtFromTip     = newForkerAtFromTip h
+    , validate               = getEnv5 h  $ implValidate h
     , getPrevApplied         = getEnvSTM  h implGetPrevApplied
-    , addPrevApplied         = getEnvSTM1 h implAddPrevApplied
     , garbageCollect         = getEnvSTM1 h implGarbageCollect
-    , getResolveBlock        = getEnvSTM  h implGetResolveBlock
-    , getTopLevelConfig      = getEnvSTM  h implGetTopLevelConfig
     , tryTakeSnapshot        = getEnv2    h implTryTakeSnapshot
     , tryFlush               = getEnv     h implTryFlush
     , closeDB                = implCloseDB h
@@ -389,28 +395,42 @@ implGetHeaderStateHistory env = toHeaderStateHistory . adcStates . anchorlessCha
           HeaderStateHistory
         . AS.bimap headerState headerState
 
+implValidate ::
+     forall m l blk. ( IOLike m
+     , LedgerSupportsProtocol blk
+     , HasCallStack
+     , l ~ ExtLedgerState blk
+     , MonadBase m m
+     )
+  => LedgerDBHandle m l blk
+  -> LedgerDBEnv m l blk
+  -> ResourceRegistry m
+  -> (TraceValidateEvent blk -> m ())
+  -> BlockCache blk
+  -> Word64
+  -> [Header blk]
+  -> m (ValidateResult m l blk)
+implValidate h env =
+    Impl.validate
+      (ldbResolveBlock env)
+      (ldbCfg env)
+      addPrevApplied
+      (implGetPrevApplied env)
+      (newForkerAtFromTip h)
+  where
+    addPrevApplied hs0 = modifyTVar (ldbPrevApplied env) (addPoints hs0)
+      where
+        addPoints :: [RealPoint blk] -> Set (RealPoint blk) -> Set (RealPoint blk)
+        addPoints hs set = foldl' (flip Set.insert) set hs
+
 implGetPrevApplied :: MonadSTM m => LedgerDBEnv m l blk -> STM m (Set (RealPoint blk))
 implGetPrevApplied env = readTVar (ldbPrevApplied env)
-
-implAddPrevApplied ::
-     forall m l blk. (MonadSTM m, StandardHash blk)
-  => LedgerDBEnv m l blk -> [RealPoint blk] -> STM m ()
-implAddPrevApplied env hs0 = modifyTVar (ldbPrevApplied env) (addPoints hs0)
-  where
-    addPoints :: [RealPoint blk] -> Set (RealPoint blk) -> Set (RealPoint blk)
-    addPoints hs set = foldl' (flip Set.insert) set hs
 
 -- | Remove all points with a slot older than the given slot from the set of
 -- previously applied points.
 implGarbageCollect :: MonadSTM m => LedgerDBEnv m l blk -> SlotNo -> STM m ()
 implGarbageCollect env slotNo = modifyTVar (ldbPrevApplied env) $
     Set.dropWhileAntitone ((< slotNo) . realPointSlot)
-
-implGetResolveBlock :: MonadSTM m => LedgerDBEnv m l blk -> STM m (ResolveBlock m blk)
-implGetResolveBlock = pure . ldbResolveBlock
-
-implGetTopLevelConfig :: MonadSTM m => LedgerDBEnv m l blk -> STM m (TopLevelConfig blk)
-implGetTopLevelConfig = pure . ldbCfg
 
 implTryTakeSnapshot ::
      ( l ~ ExtLedgerState blk

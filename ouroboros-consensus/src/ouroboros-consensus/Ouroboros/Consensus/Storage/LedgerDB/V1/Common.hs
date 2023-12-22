@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
   , getEnv
   , getEnv1
   , getEnv2
+  , getEnv5
   , getEnvSTM
   , getEnvSTM1
     -- * Forkers
@@ -57,6 +58,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.LedgerDB.API as API
 import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
                      (ResolveBlock)
@@ -168,6 +170,14 @@ getEnv2 ::
   -> (LedgerDBEnv m l blk -> a -> b -> m r)
   -> a -> b -> m r
 getEnv2 h f a b = getEnv h (\env -> f env a b)
+
+-- | Variant 'of 'getEnv' for functions taking five arguments.
+getEnv5 ::
+     (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> (LedgerDBEnv m l blk -> a -> b -> c -> d -> e -> m r)
+  -> a -> b -> c -> d -> e -> m r
+getEnv5 h f a b c d e = getEnv h (\env -> f env a b c d e)
 
 -- | Variant of 'getEnv' that works in 'STM'.
 getEnvSTM ::
