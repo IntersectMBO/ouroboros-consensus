@@ -134,6 +134,8 @@ prop_serveAdversarialBranches =
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
        {scTraceState = False, scTrace = False})
 
+    (\_ _ _ -> [])
+
     theProperty
 
 genUniformSchedulePoints :: GenesisTest -> QC.Gen (Peers PeerSchedule)
@@ -175,6 +177,8 @@ prop_leashingAttackStalling =
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
       {scTrace = False})
+
+    (\_ _ _ -> [])
 
     theProperty
 
@@ -220,6 +224,8 @@ prop_leashingAttackTimeLimited =
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
       {scTrace = False})
+
+    (\_ _ _ -> [])
 
     theProperty
 
