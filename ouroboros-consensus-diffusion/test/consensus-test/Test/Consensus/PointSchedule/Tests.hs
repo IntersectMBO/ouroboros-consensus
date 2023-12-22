@@ -20,6 +20,7 @@ import           Ouroboros.Network.Block (blockHash)
 import           System.Random.Stateful (runSTGen_)
 import           Test.Consensus.PointSchedule.SinglePeer
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
+import qualified Test.Consensus.PointSchedule.Tests.FullTable as FullTableTests
 import qualified Test.QuickCheck as QC hiding (elements)
 import           Test.QuickCheck
 import           Test.QuickCheck.Random
@@ -30,18 +31,19 @@ import           Test.Util.TestBlock (TestBlock, TestHash (unTestHash),
                      firstBlock, modifyFork, successorBlock, tbSlot)
 import           Test.Util.TestEnv
 
-
 tests :: TestTree
-tests =
-    adjustQuickCheckTests (* 100) $
+tests = testGroup "PointSchedule"
+  [ FullTableTests.tests
+  , adjustQuickCheckTests (* 100) $
     adjustOption (\(QuickCheckMaxSize n) -> QuickCheckMaxSize (n `div` 10)) $
-    testGroup "PointSchedule"
+    testGroup "SinglePeer"
       [ testProperty "zipMany" prop_zipMany
       , testProperty "singleJumpTipPoints" prop_singleJumpTipPoints
       , testProperty "tipPointSchedule" prop_tipPointSchedule
       , testProperty "headerPointSchedule" prop_headerPointSchedule
       , testProperty "peerScheduleFromTipPoints" prop_peerScheduleFromTipPoints
       ]
+  ]
 
 prop_zipMany :: [[Int]] -> QC.Property
 prop_zipMany xss =

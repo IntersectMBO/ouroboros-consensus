@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveFoldable        #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts      #-}
@@ -92,10 +93,14 @@ data Peers a =
     honest :: Peer a,
     others :: Map PeerId (Peer a)
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Foldable)
 
 instance Functor Peers where
   fmap f Peers {honest, others} = Peers {honest = f <$> honest, others = fmap f <$> others}
+
+instance Traversable Peers where
+  sequenceA (Peers{honest, others}) =
+    (Peers <$> sequenceA honest) <*> traverse sequenceA others
 
 -- | A set of peers with only one honest peer carrying the given value.
 peersOnlyHonest :: a -> Peers a

@@ -38,6 +38,7 @@ module Test.Util.TestBlock (
   , successorBlockWithPayload
   , testHashFromList
   , unTestHash
+  , unsafeBlockWithPayload
     -- ** Test block without payload
   , TestBlock
   , firstBlock
@@ -217,6 +218,10 @@ data TestBlockWith ptype = TestBlockWith {
     }
   deriving stock    (Show, Eq, Ord, Generic)
   deriving anyclass (Serialise, NoThunks, ToExpr)
+
+unsafeBlockWithPayload :: TestHash -> SlotNo -> Validity -> ptype -> TestBlockWith ptype
+unsafeBlockWithPayload tbHash tbSlot tbValid tbPayload =
+  TestBlockWith{tbHash, tbSlot, tbValid, tbPayload}
 
 -- | Create the first block in the given fork, @[fork]@, with the given payload.
 -- The 'SlotNo' will be 1.
