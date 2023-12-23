@@ -50,12 +50,12 @@ tests =
     testProperty "serve adversarial branches" prop_serveAdversarialBranches
     ]
 
-makeProperty ::
+theProperty ::
   GenesisTest ->
-  Peers PeerSchedule ->
+  PointSchedule ->
   StateView ->
   Property
-makeProperty genesisTest schedule stateView@StateView{svSelectedChain} =
+theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
   classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
   label disconnected $
@@ -71,7 +71,7 @@ makeProperty genesisTest schedule stateView@StateView{svSelectedChain} =
     immutableTipIsRecent
   ]
   where
-    advCount = Map.size (others schedule)
+    advCount = length (peerIds schedule) - 1
 
     immutableTipIsRecent =
       counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
@@ -105,7 +105,7 @@ makeProperty genesisTest schedule stateView@StateView{svSelectedChain} =
       [] -> "No peers were killed"
       peers -> "Some peers were killed: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = At $ tbSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest schedule
+    honestTipSlot = tbSlot <$> lastHonestBlockPoint schedule
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
@@ -120,10 +120,10 @@ fromBlockPoint _                          = Nothing
 prop_serveAdversarialBranches :: QC.Gen QC.Property
 prop_serveAdversarialBranches = QC.expectFailure <$> do
   genesisTest <- genChains (QC.choose (1, 4))
-  schedulePoints <- genUniformSchedulePoints genesisTest
+  schedule <- fromSchedulePoints <$> genUniformSchedulePoints genesisTest
   pure $
-    runGenesisTest' schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    makeProperty genesisTest schedulePoints
+    runGenesisTest' schedulerConfig genesisTest schedule $
+    theProperty genesisTest schedule
 
   where
     schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scTraceState = False, scTrace = False}
@@ -162,10 +162,10 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 prop_leashingAttackStalling :: QC.Gen QC.Property
 prop_leashingAttackStalling = QC.expectFailure <$> do
   genesisTest <- genChains (QC.choose (1, 4))
-  schedulePoints <- genLeashingSchedule genesisTest
+  schedule <- fromSchedulePoints <$> genLeashingSchedule genesisTest
   pure $
-    runGenesisTest' schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    makeProperty genesisTest schedulePoints
+    runGenesisTest' schedulerConfig genesisTest schedule $
+    theProperty genesisTest schedule
 
   where
     schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
@@ -207,10 +207,10 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
 prop_leashingAttackTimeLimited :: QC.Gen QC.Property
 prop_leashingAttackTimeLimited = QC.expectFailure <$> do
   genesisTest <- genChains (QC.choose (1, 4))
-  schedulePoints <- genTimeLimitedSchedule genesisTest
+  schedule <- fromSchedulePoints <$> genTimeLimitedSchedule genesisTest
   pure $
-    runGenesisTest' schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    makeProperty genesisTest schedulePoints
+    runGenesisTest' schedulerConfig genesisTest schedule $
+    theProperty genesisTest schedule
 
   where
     schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
