@@ -1,23 +1,19 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
-import           Data.List (intercalate)
 import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
-import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
+                     (allAdversariesSelectable, classifiers)
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import qualified Test.QuickCheck as QC
-import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -31,33 +27,23 @@ tests =
     testProperty "one adversary" prop_longRangeAttack
   ]
 
-prop_longRangeAttack :: QC.Gen QC.Property
-prop_longRangeAttack = do
-  genesisTest <- genChains (pure 1)
-  schedule <- fromSchedulePoints <$> stToGen (longRangeAttack (gtBlockTree genesisTest))
-  let cls = classifiers genesisTest
+prop_longRangeAttack :: Property
+prop_longRangeAttack =
+  forAllGenesisTest
 
-  -- TODO: not existsSelectableAdversary ==> immutableTipBeforeFork svSelectedChain
+    (do gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
+        ps <- fromSchedulePoints <$> stToGen (longRangeAttack gtBlockTree)
+        if allAdversariesSelectable (classifiers gt)
+          then pure (gt, ps)
+          else discard)
 
-  pure $
-    classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
-    allAdversariesSelectable cls
-    ==>
-    runGenesisTest'
-        (noTimeoutsSchedulerConfig scheduleConfig)
-        genesisTest
-        schedule
-        $ exceptionCounterexample $ \StateView{svSelectedChain} killed ->
-            killCounterexample killed $
-            -- This is the expected behavior of Praos to be reversed with Genesis.
-            -- But we are testing Praos for the moment
-            not (isHonestTestFragH svSelectedChain)
+    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+
+    -- NOTE: This is the expected behaviour of Praos to be reversed with
+    -- Genesis. But we are testing Praos for the moment
+    (not . isHonestTestFragH . svSelectedChain)
 
   where
-    killCounterexample = \case
-      [] -> property
-      killed -> counterexample ("Some peers were killed: " ++ intercalate ", " (condense <$> killed))
-
     isHonestTestFragH :: TestFragH -> Bool
     isHonestTestFragH frag = case headAnchor frag of
         AF.AnchorGenesis   -> True
@@ -65,5 +51,3 @@ prop_longRangeAttack = do
 
     isHonestTestHeaderHash :: HeaderHash TestBlock -> Bool
     isHonestTestHeaderHash = all (0 ==) . unTestHash
-
-    scheduleConfig = defaultPointScheduleConfig
