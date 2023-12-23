@@ -5,7 +5,7 @@
 
 module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
 
-import           Ouroboros.Consensus.Block (ChainHash (..))
+import           Ouroboros.Consensus.Block (ChainHash (..), Header)
 import           Ouroboros.Consensus.Config.SecurityParam
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
@@ -13,7 +13,6 @@ import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -34,53 +33,34 @@ tests = testGroup "rollback" [
 -- | @prop_rollback@ tests that the selection of the node under test
 -- changes branches when sent a rollback to a block no older than 'k' blocks
 -- before the current selection.
-prop_rollback :: QC.Gen QC.Property
+prop_rollback :: Property
 prop_rollback = do
-  genesisTest <- genChains (pure 1)
+  forAllGenesisTest
 
-  let SecurityParam k = gtSecurityParam genesisTest
-      schedule = rollbackSchedule (fromIntegral k) (gtBlockTree genesisTest)
+    (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
+        if alternativeChainIsLongEnough gtSecurityParam gtBlockTree
+          then pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree)
+          else discard)
 
-  -- We consider the test case interesting if we can rollback
-  pure $
-    alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
-    ==>
-      runGenesisTest' schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
-        let headOnAlternativeChain = case AF.headHash svSelectedChain of
-              GenesisHash    -> False
-              BlockHash hash -> any (0 /=) $ unTestHash hash
-        in
-        -- The test passes if we end up on the alternative chain
-        headOnAlternativeChain
+    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-  where
-    schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
+    (not . hashOnTrunk . AF.headHash . svSelectedChain)
 
 -- @prop_cannotRollback@ tests that the selection of the node under test *does
 -- not* change branches when sent a rollback to a block strictly older than 'k'
 -- blocks before the current selection.
-prop_cannotRollback :: QC.Gen QC.Property
-prop_cannotRollback = do
-  genesisTest <- genChains (pure 1)
+prop_cannotRollback :: Property
+prop_cannotRollback =
+  forAllGenesisTest
 
-  let SecurityParam k = gtSecurityParam genesisTest
-      schedule = rollbackSchedule (fromIntegral (k + 1)) (gtBlockTree genesisTest)
+    (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
+        if alternativeChainIsLongEnough gtSecurityParam gtBlockTree
+          then pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree)
+          else discard)
 
-  -- We consider the test case interesting if it allows to rollback even if
-  -- the implementation doesn't
-  pure $
-    alternativeChainIsLongEnough (gtSecurityParam genesisTest) (gtBlockTree genesisTest)
-    ==>
-      runGenesisTest' schedulerConfig genesisTest schedule $ \StateView{svSelectedChain} ->
-        let headOnAlternativeChain = case AF.headHash svSelectedChain of
-              GenesisHash    -> False
-              BlockHash hash -> any (0 /=) $ unTestHash hash
-        in
-        -- The test passes if we end up on the trunk.
-        not headOnAlternativeChain
+    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-  where
-    schedulerConfig = noTimeoutsSchedulerConfig defaultPointScheduleConfig
+    (hashOnTrunk . AF.headHash . svSelectedChain)
 
 -- | A schedule that advertises all the points of the trunk up until the nth
 -- block after the intersection, then switches to the first alternative
@@ -111,3 +91,9 @@ alternativeChainIsLongEnough (SecurityParam k) blockTree =
   let BlockTreeBranch{btbSuffix} = head $ btBranches blockTree
       lengthSuffix = AF.length btbSuffix
    in lengthSuffix > fromIntegral k
+
+-- | Given a hash, checks whether it is on the trunk of the block tree, that is
+-- if it only contains zeroes.
+hashOnTrunk :: ChainHash (Header TestBlock) -> Bool
+hashOnTrunk GenesisHash      = True
+hashOnTrunk (BlockHash hash) = all (== 0) $ unTestHash hash
