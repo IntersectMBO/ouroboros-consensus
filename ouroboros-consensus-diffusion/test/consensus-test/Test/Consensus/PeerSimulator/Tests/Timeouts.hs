@@ -20,7 +20,6 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -30,7 +29,7 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 tests :: TestTree
 tests = adjustQuickCheckTests (`div` 10) $ testProperty "timeouts" prop_timeouts
 
-prop_timeouts :: QC.Gen QC.Property
+prop_timeouts :: Gen Property
 prop_timeouts = do
   genesisTest <- genChains (pure 0)
 
@@ -45,6 +44,9 @@ prop_timeouts = do
           (fromJust $ mustReplyTimeout (scChainSyncTimeouts schedulerConfig))
           (btTrunk $ gtBlockTree genesisTest)
 
+  -- NOTE: Because the scheduler configuration depends on the generated
+  -- 'GenesisTest' itself, we cannot rely on helpers such as
+  -- 'forAllGenesisTest'.
   pure $
     runGenesisTest' schedulerConfig genesisTest schedule $ \stateView ->
       case svChainSyncExceptions stateView of
