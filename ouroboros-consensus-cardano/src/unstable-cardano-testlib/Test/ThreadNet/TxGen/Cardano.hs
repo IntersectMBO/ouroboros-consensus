@@ -19,7 +19,6 @@ import qualified Cardano.Ledger.Keys.Bootstrap as SL (makeBootstrapWitness)
 import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as SL
-import qualified Cardano.Ledger.Shelley.TxCert as SL
 import           Cardano.Ledger.Val ((<->))
 import           Control.Exception (assert)
 import           Data.Map.Strict (Map)
