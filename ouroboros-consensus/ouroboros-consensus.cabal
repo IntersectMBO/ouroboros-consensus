@@ -369,8 +369,8 @@ library unstable-consensus-testlib
     , directory
     , file-embed
     , filepath
-    , fs-api                                                  ^>=0.2
-    , fs-sim                                                  ^>=0.2
+    , fs-api                                         ^>=0.2
+    , fs-sim                                         ^>=0.2
     , generics-sop
     , io-classes
     , io-sim
@@ -383,7 +383,7 @@ library unstable-consensus-testlib
     , pretty-simple
     , QuickCheck
     , quickcheck-instances
-    , quickcheck-state-machine:no-vendored-treediff           ^>=0.8
+    , quickcheck-state-machine:no-vendored-treediff  ^>=0.8
     , quiet
     , random
     , serialise

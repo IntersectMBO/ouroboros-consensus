@@ -67,10 +67,10 @@ library
     , Ouroboros.Consensus.Node.NetworkProtocolVersion
 
   build-depends:
-    , base                         >=4.14    && <4.19
-    , bytestring                   >=0.10    && <0.12
+    , base                         >=4.14     && <4.19
+    , bytestring                   >=0.10     && <0.12
     , cborg                        ^>=0.2.2
-    , containers                   >=0.5     && <0.7
+    , containers                   >=0.5      && <0.7
     , contra-tracer
     , deepseq
     , filepath
