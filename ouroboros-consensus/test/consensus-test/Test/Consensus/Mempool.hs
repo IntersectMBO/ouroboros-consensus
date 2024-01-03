@@ -611,7 +611,7 @@ withTestMempool setup@TestSetup {..} prop =
                       $ map getTransactionKeySets txs
                 st <- atomically $ readTVar varCurrentLedgerState
                 if castPoint (getTip st) == pt
-                  then pure $ Just $ restrictValues (projectLedgerTables st) keys
+                  then pure $ Just $ restrictValues' st keys
                   else pure Nothing
             }
 

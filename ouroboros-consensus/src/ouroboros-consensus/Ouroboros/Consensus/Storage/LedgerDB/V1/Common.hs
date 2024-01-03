@@ -6,10 +6,12 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE StandaloneKindSignatures   #-}
 {-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
@@ -37,7 +39,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
     -- * Constraints
   , LedgerDbSerialiseConstraints
     -- * Exposed internals for testing purposes
-  , TestInternals (..)
+  , Internals (..)
+  , Internals'
   ) where
 
 import           Codec.Serialise.Class
@@ -54,6 +57,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.LedgerDB.API as API
@@ -326,6 +330,13 @@ type LedgerDbSerialiseConstraints blk =
   Exposed internals for testing purposes
 -------------------------------------------------------------------------------}
 
+type Internals' m blk = Internals m (ExtLedgerState blk) blk
+
 -- TODO: fill in as required
-type TestInternals :: (Type -> Type) -> LedgerStateKind -> Type -> Type
-data TestInternals m l blk = TestInternals
+type Internals :: (Type -> Type) -> LedgerStateKind -> Type -> Type
+data Internals m l blk = Internals {
+    intTakeSnapshot         :: (l ~ ExtLedgerState blk) => DiskSnapshot -> m ()
+    -- | Reapplies a block to the tip of the LedgerDB, and adds the result as
+    -- the new tip of the LedgerDB.
+  , intReapplyThenPushBlock :: (l ~ ExtLedgerState blk) => blk -> m ()
+  }

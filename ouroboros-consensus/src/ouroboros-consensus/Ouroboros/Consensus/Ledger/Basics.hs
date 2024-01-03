@@ -217,7 +217,7 @@ applyChainTick = lrResult ..: applyChainTickLedgerResult
 -- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
 type LedgerState :: Type -> LedgerStateKind
 data family LedgerState blk mk
-type TickedLedgerState blk mk = Ticked1   (LedgerState blk) mk
+type TickedLedgerState blk = Ticked1 (LedgerState blk)
 
 type instance HeaderHash (LedgerState blk) = HeaderHash blk
 

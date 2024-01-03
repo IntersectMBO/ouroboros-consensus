@@ -401,11 +401,13 @@ forkBlockForging IS{..} blockForging =
             h = castHash $ snapshotTipHash snap
         pure (h, snapshotSlotNo snap)
 
+      let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+
       mempoolSnapshot <- lift $ getSnapshotFor
                                   mempool
                                   currentSlot
                                   tickedLedgerState
-                                  forker
+                                  readTables
 
       lift $ roforkerClose forker
 

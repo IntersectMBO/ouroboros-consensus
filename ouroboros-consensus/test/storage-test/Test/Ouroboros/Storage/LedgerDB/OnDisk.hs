@@ -813,7 +813,7 @@ runMock cmd initMock =
       else
         case L.find (\(_, st) -> castPoint (getTip st) == pt) (mockLedger mock) of
           Nothing      -> Tables $ Left PointNotOnChain
-          Just (_, st) -> Tables $ Right $ restrictValues st keys
+          Just (_, st) -> Tables $ Right $ restrictValues' st keys
 
     push :: TestBlock -> StateT MockLedger (Except (ExtValidationError TestBlock)) ()
     push b = do
@@ -1071,6 +1071,7 @@ runDB standalone@DB{..} cmd =
             nullTracer
             hasFS
             bs
+            Nothing
     go hasFS Restore = do
         old_db <- atomically . readTVar $ dbBackingStore
         HD.bsClose old_db

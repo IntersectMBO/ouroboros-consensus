@@ -13,6 +13,9 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate (
     validate
+    -- * Apply blocks
+  , Ap (..)
+  , applyThenPush
     -- * Finding blocks
   , ResolveBlock
   ) where

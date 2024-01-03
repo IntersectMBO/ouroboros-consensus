@@ -38,7 +38,6 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
 import           Ouroboros.Consensus.Mempool.TxSeq (TicketNo, zeroTicketNo)
-import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.TxSubmission2.Type (TxSizeInBytes)
 
@@ -205,7 +204,11 @@ data Mempool m blk = Mempool {
 #if __GLASGOW_HASKELL__ >= 902
            -- ^ The ledger state ticked to the given slot number
 #endif
-        -> ReadOnlyForker' m blk
+        -> (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK))
+#if __GLASGOW_HASKELL__ >= 902
+        -- ^ A function that returns values corresponding to the given keys for
+        -- the unticked ledger state.
+#endif
         -> m (MempoolSnapshot blk)
 
       -- | Get the mempool's capacity in bytes.

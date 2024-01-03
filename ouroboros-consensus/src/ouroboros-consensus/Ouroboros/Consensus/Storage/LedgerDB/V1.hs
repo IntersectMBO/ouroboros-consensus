@@ -3,10 +3,8 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
@@ -90,7 +88,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1 (
     -- ** Constraints
   , LedgerDbSerialiseConstraints
     -- * Exposed internals for testing purposes
-  , TestInternals (..)
+  , Internals (..)
+  , Internals'
   , openDBInternal
   ) where
 
@@ -124,7 +123,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate as Impl
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
-                     (ExceededRollback, ResolveBlock)
+                     (ExceededRollback, ReapplyVal, ResolveBlock, applyThenPush)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbCh
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
@@ -135,7 +134,8 @@ import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
+import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry,
+                     bracketWithPrivateRegistry)
 import           Ouroboros.Network.AnchoredFragment (AnchoredSeq)
 import qualified Ouroboros.Network.AnchoredSeq as AS
 import           System.FS.API
@@ -252,7 +252,7 @@ openDBInternal :: forall m l blk.
        -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
        -> ImmutableDB m blk
        -> (RealPoint blk -> m blk)
-       -> m (LedgerDB m l blk, Word64, TestInternals m l blk)
+       -> m (LedgerDB m l blk, Word64, Internals m l blk)
 openDBInternal args@LedgerDBArgs { lgrHasFS = SomeHasFS fs } bsTracer replayTracer immutableDB getBlock = do
     createDirectoryIfMissing fs True (mkFsPath [])
     (_initLog, db, replayCounter, lgrBackingStore) <-
@@ -310,7 +310,7 @@ openDBInternal args@LedgerDBArgs { lgrHasFS = SomeHasFS fs } bsTracer replayTrac
                , ldbBsTracer       = lgrBsTracer
                }
     h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
-    return (mkLedgerDB h, replayCounter, TestInternals)
+    return (mkLedgerDB h, replayCounter, mkInternals h)
 
   where
     LedgerDBArgs {
@@ -446,6 +446,7 @@ implTryTakeSnapshot env mTime nrBlocks =
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
                 (ldbHasFS env)
                 (ldbBackingStore env)
+                Nothing
       void $ trimSnapshots
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
                 (ldbHasFS env)
@@ -481,3 +482,53 @@ implCloseDB (LDBHandle varState) = do
     whenJust mbOpenEnv $ \env -> do
       closeAllForkers env
       bsClose (ldbBackingStore env)
+
+{-------------------------------------------------------------------------------
+  Implementing Internals
+-------------------------------------------------------------------------------}
+
+mkInternals ::
+     ( IOLike m
+     , LedgerDbSerialiseConstraints blk
+     , LedgerSupportsProtocol blk
+     , ApplyBlock l blk
+     , MonadBase m m
+
+     )
+  => LedgerDBHandle m l blk
+  -> Internals m l blk
+mkInternals h = Internals {
+      intTakeSnapshot = getEnv1 h implIntTakeSnapshot
+    , intReapplyThenPushBlock = getEnv1 h $ implIntReapplyThenPushBlock h
+    }
+
+implIntTakeSnapshot ::
+     ( IOLike m
+     , LedgerDbSerialiseConstraints blk
+     , LedgerSupportsProtocol blk
+     , l ~ ExtLedgerState blk
+     )
+  => LedgerDBEnv m l blk -> DiskSnapshot -> m ()
+implIntTakeSnapshot env diskSnapshot = void $
+    takeSnapshot
+      (ldbChangelog env)
+      (ldbLock env)
+      (configCodec $ ldbCfg env)
+      (LedgerDBSnapshotEvent >$< ldbTracer env)
+      (ldbHasFS env)
+      (ldbBackingStore env)
+      (Just diskSnapshot)
+
+implIntReapplyThenPushBlock ::
+     ( IOLike m
+     , LedgerSupportsProtocol blk
+     , ApplyBlock l blk
+     , MonadBase m m
+     , l ~ ExtLedgerState blk
+     )
+  => LedgerDBHandle m l blk -> LedgerDBEnv m l blk -> blk -> m ()
+implIntReapplyThenPushBlock h env blk =
+    bracketWithPrivateRegistry (newForkerAtTip h) forkerClose $ \forker -> do
+      Impl.applyThenPush (ExtLedgerCfg $ ldbCfg env) (Impl.ReapplyVal blk) forker
+      atomically $ forkerCommit forker
+      forkerClose forker

@@ -26,7 +26,7 @@ import           Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as Ledger
 import           Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables,
-                     restrictValues)
+                     restrictValues')
 import           Ouroboros.Consensus.Mempool (Mempool)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Mempool.API (AddTxOnBehalfOf,
@@ -73,7 +73,7 @@ openMempoolWithMockedLedgerItf capacityOverride tracer txSizeImpl params = do
             let keys = foldMap' Ledger.getTransactionKeySets txs
             st <- readTVarIO currentLedgerStateTVar
             if castPoint (getTip st) == pt
-              then pure $ Just $ restrictValues (projectLedgerTables st) keys
+              then pure $ Just $ restrictValues' st keys
               else pure Nothing
         }
     mempool <- Mempool.openMempoolWithoutSyncThread

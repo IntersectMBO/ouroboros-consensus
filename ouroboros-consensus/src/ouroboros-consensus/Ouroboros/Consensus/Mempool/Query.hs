@@ -16,8 +16,6 @@ import           Ouroboros.Consensus.Mempool.API
 import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
-import           Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util.IOLike
 
 implGetSnapshotFor ::
@@ -28,9 +26,11 @@ implGetSnapshotFor ::
   => MempoolEnv m blk
   -> SlotNo -- ^ Get snapshot for this slot number (usually the current slot)
   -> TickedLedgerState blk DiffMK -- ^ The ledger state at 'pt' ticked to 'slot'
-  -> ReadOnlyForker' m blk
+  -> (LedgerTables (LedgerState blk) KeysMK -> m (LedgerTables (LedgerState blk) ValuesMK))
+      -- ^ A function that returns values corresponding to the given keys for
+      -- the unticked ledger state at 'pt'.
   -> m (MempoolSnapshot blk)
-implGetSnapshotFor mpEnv slot ticked forker = do
+implGetSnapshotFor mpEnv slot ticked readUntickedTables = do
   is <- atomically $ readTMVar istate
   if pointHash (isTip is) == castHash (getTipHash ticked) &&
      isSlotNo is == slot
@@ -44,8 +44,8 @@ implGetSnapshotFor mpEnv slot ticked forker = do
                 $ [ txForgetValidated . TxSeq.txTicketTx $ tx
                   | tx <- TxSeq.toList $ isTxs is
                   ]
-       values <- LedgerDB.roforkerReadTables forker (castLedgerTables keys)
-       pure $ getSnap is (castLedgerTables values)
+       values <- readUntickedTables keys
+       pure $ getSnap is values
   where
     getSnap is tbs = pureGetSnapshotFor
                        capacityOverride

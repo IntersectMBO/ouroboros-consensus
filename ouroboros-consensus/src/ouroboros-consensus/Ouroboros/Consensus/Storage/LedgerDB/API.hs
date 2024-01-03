@@ -128,6 +128,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
   , forkerCurrentPoint
   , getForker
   , getTipStatistics
+  , readLedgerStateAtTipFor
   , readLedgerTablesAtFor
   , withPrivateTipForker
   , withTipForker
@@ -457,6 +458,16 @@ getTipStatistics ::
   => LedgerDB m l blk
   -> m (Maybe Statistics)
 getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
+
+readLedgerStateAtTipFor ::
+     (IOLike m, HasLedgerTables l)
+  => LedgerDB m l blk
+  -> LedgerTables l KeysMK
+  -> m (l ValuesMK)
+readLedgerStateAtTipFor ldb ks = withPrivateTipForker ldb $ \forker -> do
+    state <- atomically $ forkerGetLedgerState forker
+    tables <- forkerReadTables forker ks
+    pure $ state `withLedgerTables` tables
 
 {-------------------------------------------------------------------------------
   Read-only forkers

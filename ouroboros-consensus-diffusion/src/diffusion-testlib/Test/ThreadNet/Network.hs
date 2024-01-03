@@ -637,11 +637,12 @@ runThreadNetwork systemTime ThreadNetworkArgs
               -- This node would include these crucial txs if it leads in
               -- this slot.
               let ledger' = applyChainTick lcfg slot ledger
-              snap1 <- getSnapshotFor mempool slot ledger' forker
+                  readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+              snap1 <- getSnapshotFor mempool slot ledger' readTables
               -- Other nodes might include these crucial txs when leading
               -- in the next slot.
               let ledger'' = applyChainTick lcfg (succ slot) ledger
-              snap2 <- getSnapshotFor mempool (succ slot) ledger'' forker
+              snap2 <- getSnapshotFor mempool (succ slot) ledger'' readTables
               roforkerClose forker
 
 

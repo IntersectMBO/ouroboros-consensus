@@ -240,8 +240,9 @@ takeSnapshot ::
   -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
   -> BackingStore' m blk
+  -> Maybe DiskSnapshot -- ^ Override for snapshot numbering
   -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore =
+takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore dsOverride =
   withReadLock lock $ do
     state <- changelogLastFlushedState <$> readTVarIO ldbvar
     case pointToWithOriginRealPoint (castPoint (getTip state)) of
@@ -249,7 +250,7 @@ takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore =
         return Nothing
       NotOrigin t -> do
         let number   = unSlotNo (realPointSlot t)
-            snapshot = DiskSnapshot number Nothing
+            snapshot = fromMaybe (DiskSnapshot number Nothing) dsOverride
         diskSnapshots <- listSnapshots hasFS
         if List.any ((== number) . dsNumber) diskSnapshots then
           return Nothing

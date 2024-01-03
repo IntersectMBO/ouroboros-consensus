@@ -315,7 +315,7 @@ revalidateTxsFor
   -> RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
   let ReapplyTxsResult err val st' =
-        reapplyTxs cfg slot (map txTicketTx txTickets) (st `withLedgerTables` castLedgerTables values)
+        reapplyTxs cfg slot (map txTicketTx txTickets) (values `applyDiffs` st)
 
       -- TODO: This is ugly, but I couldn't find a way to sneak the 'TxTicket' into
       -- 'reapplyTxs'.
