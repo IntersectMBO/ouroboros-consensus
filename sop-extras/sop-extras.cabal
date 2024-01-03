@@ -11,7 +11,8 @@ license-files:
   LICENSE
   NOTICE
 
-author:          IOHK Engineering Team
+copyright:       2023 Input Output Global Inc (IOG), INTERSECT 2023-2024.
+author:          IOG Engineering Team
 maintainer:      operations@iohk.io
 category:        Data
 build-type:      Simple
