@@ -347,7 +347,7 @@ If a peer tries to send blocks that diverges deeper than that, the node disconne
 
 Nodes communicate with other nodes via a set of two-party protocols in which one node is the *client* and the other is the *server*.
 
-   - The dynamics are specified by a state machine, which is enforced by the [typed-protocols](https://github.com/IntersectMBO/typed-protocols) library. [List of all mini protocol state machines](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf#chapter.3).
+   - The dynamics are specified by a state machine, which is enforced by the [typed-protocols](https://github.com/input-output-hk/typed-protocols) library. [List of all mini protocol state machines](https://ouroboros-network.cardano.intersectmbo.org/pdfs/network-spec/network-spec.pdf#chapter.3).
 
    - The client can *pipeline* its messages.
 

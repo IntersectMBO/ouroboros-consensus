@@ -30,7 +30,7 @@
 --
 -- It would be difficult to maintain or extrend this module without
 -- understanding the @typed-protocols@ architecture; eg see
--- <https://github.com/IntersectMBO/typed-protocols>.
+-- <https://github.com/input-output-hk/typed-protocols>.
 --
 -- This module is intended for qualified import, aliased as either CSC,
 -- CSClient, or CsClient.

@@ -46,7 +46,7 @@ live in this repository.
 
 Consensus can be built using [Nix](https://nixos.org/download.html). The
 installation and configuration instructions are taken from
-[cardano-node](https://github.com/IntersectMBO/cardano-node-wiki/blob/main/docs/getting-started/building-the-node-using-nix.md),
+[cardano-node](https://github.com/input-output-hk/cardano-node-wiki/blob/main/docs/getting-started/building-the-node-using-nix.md),
 and detailed below. To install `nix` run:
 
 ```sh
@@ -81,7 +81,7 @@ EOF
 
 An alternative to using `nix` is to set up the development
 environment yourself. Follow [these
-instructions](https://github.com/IntersectMBO/cardano-node-wiki/blob/main/docs/getting-started/install.md)
+instructions](https://github.com/input-output-hk/cardano-node-wiki/blob/main/docs/getting-started/install.md)
 to properly configure your system.
 
 # Building the project
@@ -366,7 +366,7 @@ The core contributors to consensus codebase are:
 # Code of conduct
 
 See [Cardano engineering
-handbook](https://github.com/IntersectMBO/cardano-engineering-handbook/blob/main/CODE-OF-CONDUCT.md)'s
+handbook](https://github.com/input-output-hk/cardano-engineering-handbook/blob/main/CODE-OF-CONDUCT.md)'s
 code of conduct.
 
 [haddock-site]: https://haskell-haddock.readthedocs.io/en/latest/

@@ -17,7 +17,7 @@ package cardano-ledger-shelley
 package io-classes
   flags: +asserts
 
--- https://github.com/IntersectMBO/io-sim/issues/94
+-- https://github.com/input-output-hk/io-sim/issues/94
 -- package io-sim
 --   flags: +asserts
 
