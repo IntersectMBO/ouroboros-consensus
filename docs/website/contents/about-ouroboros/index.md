@@ -63,7 +63,7 @@ Layer, while the Consensus Layer reports back to it if a neighbor has misbehaved
 etc. The Network Layer also provides the library used to define the Consensus
 Layer's _client_ and _server_ state machines that let each connected pair of
 nodes exchange messages according to the various _mini protocols_ (cf
-[typed-protocols](https://github.com/IntersectMBO/typed-protocols) package).
+[typed-protocols](https://github.com/input-output-hk/typed-protocols) package).
 
 The Consensus Layer uses the ledger rules to validate blocks and transactions
 and apply them in order to maintain _the ledger state_. The Consensus Layer in

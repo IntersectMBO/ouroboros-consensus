@@ -12,8 +12,10 @@ license-files:
   LICENSE
   NOTICE
 
-copyright:       2019-2023 Input Output Global Inc (IOG)
-author:          IOHK Engineering Team
+copyright:
+  2019-2023 Input Output Global Inc (IOG), INTERSECT 2023-2024.
+
+author:          IOG Engineering Team
 maintainer:      operations@iohk.io
 category:        Network
 build-type:      Simple
