@@ -231,12 +231,12 @@ A - ...
 # Installing `scriv`
 
 To manage the workflow described above, we will use the `scriv` tool slightly
-modified to support cabal files.. If you use `nix` then you will find `scriv` in
+modified to support cabal files. If you use `nix` then you will find `scriv` in
 the Nix shell. Otherwise, the way to install it from source is:
 
-1. Clone [our fork of scriv](https://github.com/IntersectMBO/scriv/) and `cd`
-   into it.
-2. Run `pip install -e $(pwd)`
+```
+pip install scriv
+```
 
 If you encounter an error mentioning:
 `pkg_resources.extern.packaging.version.InvalidVersion: Invalid version: ...` we
@@ -248,7 +248,7 @@ installation complains with the error `error: externally-managed-environment`,
 pass in the flag `--break-system-packages`:
 
 ```
-pip install --break-system-packages -e $(pwd)
+pip install --break-system-packages scriv
 ```
 
 # Adding a changelog fragment
