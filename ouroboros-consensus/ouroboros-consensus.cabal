@@ -685,8 +685,8 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-dynamic
-    , quickcheck-lockstep
+    , quickcheck-dynamic        >=3.3.1
+    , quickcheck-lockstep       >=0.3
     , quickcheck-state-machine  >=0.7.2
     , random
     , serialise
