@@ -542,7 +542,6 @@ library cardano-tools
     , ouroboros-network-api
     , ouroboros-network-framework
     , ouroboros-network-protocols
-    , serialise                      >=0.2   && <0.3
     , text
     , text-builder
     , transformers
