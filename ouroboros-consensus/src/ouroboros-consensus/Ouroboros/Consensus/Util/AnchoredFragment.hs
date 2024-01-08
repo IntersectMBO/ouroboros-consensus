@@ -8,12 +8,16 @@
 module Ouroboros.Consensus.Util.AnchoredFragment (
     compareAnchoredFragments
   , compareHeadBlockNo
+  , cross
   , forksAtMostKBlocks
   , preferAnchoredCandidate
+  , stripCommonPrefix
   ) where
 
 import           Control.Monad.Except (throwError)
+import           Data.Foldable (toList)
 import           Data.Function (on)
+import qualified Data.List as L
 import           Data.Maybe (isJust)
 import           Data.Word (Word64)
 import           GHC.Stack
@@ -134,3 +138,56 @@ preferAnchoredCandidate ::
   -> Bool
 preferAnchoredCandidate cfg ours cand =
     compareAnchoredFragments cfg ours cand == LT
+
+-- | If the two fragments `c1` and `c2` intersect, return the intersection
+-- point and join the prefix of `c1` before the intersection with the suffix
+-- of `c2` after the intersection. The resulting fragment has the same
+-- anchor as `c1` and the same head as `c2`.
+cross ::
+     HasHeader block
+  => AnchoredFragment block
+  -> AnchoredFragment block
+  -> Maybe (Point block, AnchoredFragment block)
+cross c1 c2 = do
+    (p1, _p2, _s1, s2) <- AF.intersect c1 c2
+    -- Note that the head of `p1` and `_p2` is the intersection point, and
+    -- `_s1` and `s2` are anchored in the intersection point.
+    let crossed = case AF.join p1 s2 of
+          Just c  -> c
+          Nothing -> error "invariant violation of AF.intersect"
+    pure (AF.anchorPoint s2, crossed)
+
+-- | Strip the common prefix of multiple fragments.
+--
+-- PRECONDITION: all fragments have the given anchor as their anchor.
+stripCommonPrefix ::
+     forall f blk.
+     (Functor f, Foldable f, HasHeader blk) -- TODO: this uses the lazy 'map' for 'Map'...
+  => AF.Anchor blk
+  -> f (AnchoredFragment blk)
+  -> (AnchoredFragment blk, f (AnchoredFragment blk))
+stripCommonPrefix sharedAnchor frags
+  | all ((sharedAnchor ==) . AF.anchor) frags
+  = (commonPrefix, splitAfterCommonPrefix <$> frags)
+  | otherwise
+  = error "Not all fragments are anchored in the given anchor"
+  where
+    -- Return the common prefix of two fragments with the same anchor
+    -- 'sharedAnchor'.
+    computeCommonPrefix ::
+         AnchoredFragment blk
+      -> AnchoredFragment blk
+      -> AnchoredFragment blk
+    computeCommonPrefix frag1 frag2 = case AF.intersect frag1 frag2 of
+      Just (cp, _, _, _) -> cp
+      Nothing            -> error "unreachable"
+
+    commonPrefix
+      | null frags = AF.Empty sharedAnchor
+      -- TODO use Foldable1 once all our GHCs support it
+      | otherwise = L.foldl1' computeCommonPrefix (toList frags)
+
+    splitAfterCommonPrefix frag =
+      case AF.splitAfterPoint frag (AF.headPoint commonPrefix) of
+        Just (_, afterCommonPrefix) -> afterCommonPrefix
+        Nothing                     -> error "unreachable"

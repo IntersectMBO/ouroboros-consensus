@@ -19,6 +19,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (SelectionChangedInfo (..), TraceAddBlockEvent (..))
+import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
 import           Test.Util.TersePrinting (terseHFragment, tersePoint,
@@ -41,6 +42,9 @@ mkCdbTracer tracer =
           trace "Switched to a fork"
           trace $ "New tip: " ++ terseRealPoint newTipPoint
           trace $ "New fragment: " ++ terseHFragment newFragment
+        StoreButDontChange block -> do
+          trace "Did not add block due to LoE"
+          trace $ "Block: " ++ condense block
         _ -> pure ()
     _ -> pure ()
   where

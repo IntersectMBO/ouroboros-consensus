@@ -91,6 +91,7 @@ import           Ouroboros.Consensus.Storage.ChainDB (ChainDB,
                      InvalidBlockReason)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util
+import           Ouroboros.Consensus.Util.AnchoredFragment (cross)
 import           Ouroboros.Consensus.Util.Assert (assertWithMsg)
 import           Ouroboros.Consensus.Util.EarlyExit (WithEarlyExit, exitEarly)
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
@@ -1471,24 +1472,6 @@ ourTipFromChain ::
   => AnchoredFragment (Header blk)
   -> Our (Tip blk)
 ourTipFromChain = Our . AF.anchorToTip . AF.headAnchor
-
--- | If the two fragments `c1` and `c2` intersect, return the intersection
--- point and join the prefix of `c1` before the intersection with the suffix of
--- `c2` after the intersection. The resulting fragment has the same anchor as
--- `c1` and the same head as `c2`.
-cross ::
-     HasHeader blk
-  => AnchoredFragment blk
-  -> AnchoredFragment blk
-  -> Maybe (Point blk, AnchoredFragment blk)
-cross c1 c2 = do
-    (p1, _p2, _s1, s2) <- AF.intersect c1 c2
-    -- Note that the head of `p1` and `_p2` is the intersection point, and
-    -- `_s1` and `s2` are anchored in the intersection point.
-    let crossed = case AF.join p1 s2 of
-            Just c  -> c
-            Nothing -> error "invariant violation of AF.intersect"
-    pure (AF.anchorPoint s2, crossed)
 
 -- | A type-legos auxillary function used in 'readLedgerState'.
 castM :: Monad m => m (WithEarlyExit m x) -> WithEarlyExit m x
