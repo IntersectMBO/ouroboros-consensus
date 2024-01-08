@@ -25,8 +25,7 @@ import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.IOSim
-import           Control.Monad.Reader (ReaderT, runReaderT)
-import           Control.Monad.Trans (lift)
+import           Control.Monad.Reader (runReaderT)
 import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Diff.Strict.Internal as Diff
 import qualified Data.Map.Strict as Map
@@ -53,6 +52,7 @@ import qualified Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock as Mock
 import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Registry
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Property, Testable)
+import           Test.QuickCheck.Extras
 import           Test.QuickCheck.Gen.Unsafe
 import qualified Test.QuickCheck.Monadic as QC
 import           Test.QuickCheck.Monadic (PropertyM)
@@ -282,22 +282,7 @@ instance Mock.HasOps K V D
 
 {-------------------------------------------------------------------------------
   Utilities
-
-  TODO: these definitions are duplicated code, and they should become available
-  in @quickcheck-dynamic-0.3.0@. We should remove these duplicates once that
-  version is released.
 -------------------------------------------------------------------------------}
-
--- | Copied from the @Test.QuickCheck.Extras@ module in the @quickcheck-dynamic@
--- package.
-runPropertyReaderT ::
-     Monad m
-  => PropertyM (ReaderT e m) a
-  -> e
-  -> PropertyM m a
-runPropertyReaderT p e = QC.MkPropertyM $ \k -> do
-  m <- QC.unPropertyM p $ fmap lift . k
-  return $ runReaderT m e
 
 runPropertyIOLikeMonad ::
      IOLikeMonadC m
