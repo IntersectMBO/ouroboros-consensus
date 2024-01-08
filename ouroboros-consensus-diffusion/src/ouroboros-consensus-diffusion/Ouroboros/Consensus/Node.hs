@@ -96,6 +96,7 @@ import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.NodeKernel
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
+import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (LoEDisabled))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo,
                      ValidationPolicy (..))
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
@@ -679,7 +680,7 @@ mkChainDbArgs
     , ChainDB.cdbCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
     , ChainDB.cdbGenesis        = return initLedger
     , ChainDB.cdbCheckInFuture  = inFuture
-
+    , ChainDB.cdbLoE            = LoEDisabled
     , ChainDB.cdbRegistry       = registry
     }
 
