@@ -17,11 +17,16 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockNo, unBlockNo)
-import           Test.Consensus.BlockTree (BlockTree (..))
+import           Ouroboros.Network.Protocol.ChainSync.Codec
+                     (ChainSyncTimeout (..))
+import           Ouroboros.Network.Protocol.Limits (shortWait)
+import           Test.Consensus.BlockTree (BlockTree (..), btbSuffix)
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (scTrace),
-                     noTimeoutsSchedulerConfig, scTraceState)
+import           Test.Consensus.Network.Driver.Limits.Extras
+                     (chainSyncNoTimeouts)
+import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
+                     noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
@@ -49,8 +54,10 @@ tests =
     -- See Note [Leashing attacks]
     testProperty "stalling leashing attack" prop_leashingAttackStalling,
     testProperty "time limited leashing attack" prop_leashingAttackTimeLimited,
-  adjustQuickCheckTests (`div` 10) $
-    testProperty "serve adversarial branches" prop_serveAdversarialBranches
+    adjustQuickCheckTests (`div` 10) $
+    testProperty "serve adversarial branches" prop_serveAdversarialBranches,
+    adjustQuickCheckTests (`div` 100) $
+    testProperty "the LoE stalls the chain, but the immutable tip is honest" prop_loeStalling
     ]
 
 theProperty ::
@@ -271,3 +278,45 @@ prop_leashingAttackTimeLimited =
 
 headCallStack :: HasCallStack => [a] -> a
 headCallStack xs = if null xs then error "headCallStack: empty list" else head xs
+
+-- | Test that enabling the LoE using the updater that sets the LoE fragment to
+-- the shared prefix (as used by the GDDG) causes the selection to remain at
+-- the first fork intersection (keeping the immutable tip honest).
+--
+-- This is pretty slow since it relies on timeouts to terminate the test.
+prop_loeStalling :: Property
+prop_loeStalling =
+  forAllGenesisTest'
+
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- genUniformSchedulePoints gt
+        pure (gt, ps))
+
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig) {
+      scTrace = False,
+      scEnableLoE = True,
+      scChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}
+    })
+
+    (\_ _ _ -> [])
+
+    prop
+  where
+    prop GenesisTest {gtBlockTree = BlockTree {btTrunk, btBranches}} _ StateView{svSelectedChain} =
+      classify (any (== selectionTip) allTips) "The selection is at a branch tip" $
+      classify (any anchorIsImmutableTip suffixes) "The immutable tip is at a fork intersection" $
+      property (isHonest immutableTipHash)
+      where
+        anchorIsImmutableTip branch = simpleHash (AF.anchorToHash (AF.anchor branch)) == immutableTipHash
+
+        isHonest = all (0 ==)
+
+        immutableTipHash = simpleHash (AF.anchorToHash immutableTip)
+
+        immutableTip = AF.anchor svSelectedChain
+
+        selectionTip = simpleHash (AF.headHash svSelectedChain)
+
+        allTips = simpleHash . AF.headHash <$> (btTrunk : suffixes)
+
+        suffixes = btbSuffix <$> btBranches

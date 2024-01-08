@@ -30,10 +30,9 @@ import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..),
                      validateGenesis)
-import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (defaultArgs,
-                     getTipPoint)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (cdbTracer,
-                     withDB)
+import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
+                     (ChainDbArgs (..), defaultArgs, getTipPoint)
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (withDB)
 import           Ouroboros.Consensus.Storage.LedgerDB (SnapshotInterval (..),
                      defaultDiskPolicy)
 import           Ouroboros.Consensus.Util.IOLike (atomically)
