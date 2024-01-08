@@ -109,6 +109,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
   , cdbGcDelay                = 1
   , cdbGcInterval             = 1
   , cdbBlocksToAddSize        = 1
+  , cdbLoE                    = LoEDisabled
   }
   where
     mcdbNodeDBs' = unsafeToUncheckedStrictTVar <$> mcdbNodeDBs
