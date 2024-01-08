@@ -19,6 +19,7 @@
 module Ouroboros.Consensus.Storage.ChainDB.API (
     -- * Main ChainDB API
     ChainDB (..)
+  , getCurrentImmTipPoint
   , getCurrentLedger
   , getCurrentTip
   , getHeaderStateHistory
@@ -347,6 +348,11 @@ data ChainDB m blk = ChainDB {
 getCurrentTip :: (Monad (STM m), HasHeader (Header blk))
               => ChainDB m blk -> STM m (Network.Tip blk)
 getCurrentTip = fmap (AF.anchorToTip . AF.headAnchor) . getCurrentChain
+
+getCurrentImmTipPoint :: Monad (STM m)
+                      => ChainDB m blk -> STM m (Point blk)
+getCurrentImmTipPoint =
+    fmap (castPoint . AF.anchorToPoint . AF.anchor) . getCurrentChain
 
 getTipBlockNo :: (Monad (STM m), HasHeader (Header blk))
               => ChainDB m blk -> STM m (WithOrigin BlockNo)

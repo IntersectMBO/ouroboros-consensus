@@ -10,7 +10,7 @@ import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
-                     (AcquireFailure (..))
+                     (AcquireFailure (..), Target (..))
 
 localStateQueryServer ::
      forall m blk. (IOLike m, QueryLedger blk, ConfigSupportsNode blk, HasAnnTip blk)
@@ -31,11 +31,14 @@ localStateQueryServer cfg getTipPoint getPastLedger getImmutablePoint =
         , recvMsgDone    = return ()
         }
 
-    handleAcquire :: Maybe (Point blk)
+    handleAcquire :: Target (Point blk)
                   -> m (ServerStAcquiring blk (Point blk) (Query blk) m ())
-    handleAcquire mpt = do
+    handleAcquire tgt = do
         (pt, mPastLedger, immutablePoint) <- atomically $ do
-          pt <- maybe getTipPoint pure mpt
+          pt <- case tgt of
+            ImmutableTip    -> getImmutablePoint
+            SpecificPoint x -> pure x
+            VolatileTip     -> getTipPoint
           (pt,,) <$> getPastLedger pt <*> getImmutablePoint
 
         return $ case mPastLedger of

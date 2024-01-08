@@ -50,7 +50,7 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Examples
                      (localStateQueryClient)
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
-                     (AcquireFailure (..))
+                     (AcquireFailure (..), Target (..))
 import           System.FS.API (HasFS, SomeHasFS (..))
 import           Test.QuickCheck hiding (Result)
 import           Test.Tasty
@@ -83,16 +83,18 @@ prop_localStateQueryServer
   -> BlockTree
   -> Permutation
   -> Positive (Small Int)
+  -> Positive (Small Int)
   -> Property
-prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain actualOutcome
+prop_localStateQueryServer k bt p (Positive (Small nv)) (Positive (Small ni)) = checkOutcome k chain actualOutcome
   where
     chain :: Chain TestBlock
     chain = treePreferredChain bt
 
-    points :: [Maybe (Point TestBlock)]
+    points :: [Target (Point TestBlock)]
     points = permute p $
-         replicate n Nothing
-      ++ (Just . blockPoint <$> (treeToBlocks bt))
+         replicate nv VolatileTip
+      ++ replicate ni ImmutableTip
+      ++ (SpecificPoint . blockPoint <$> (treeToBlocks bt))
 
     actualOutcome = runSimOrThrow $ do
       let client = mkClient points
@@ -119,7 +121,7 @@ prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain ac
 checkOutcome
   :: SecurityParam
   -> Chain TestBlock
-  -> [(Maybe (Point TestBlock), Either AcquireFailure (Point TestBlock))]
+  -> [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
   -> Property
 checkOutcome k chain = conjoin . map (uncurry checkResult)
   where
@@ -128,10 +130,10 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
       Chain.drop (fromIntegral (maxRollbacks k)) chain
 
     checkResult
-      :: Maybe (Point TestBlock)
+      :: Target (Point TestBlock)
       -> Either AcquireFailure (Point TestBlock)
       -> Property
-    checkResult (Just pt) = \case
+    checkResult (SpecificPoint pt) = \case
       Right result
         -> tabulate "Acquired" ["Success"] $ result === pt
       Left AcquireFailurePointNotOnChain
@@ -150,20 +152,23 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
            (property False)
         | otherwise
         -> tabulate "Acquired" ["AcquireFailurePointTooOld"] $ property True
-    checkResult Nothing = \case
+    checkResult VolatileTip = \case
       Right _result -> tabulate "Acquired" ["Success"] True
-      Left  failure -> counterexample ("acuire tip point resulted in " ++ show failure) False
+      Left  failure -> counterexample ("acuire volatile tip point resulted in " ++ show failure) False
+    checkResult ImmutableTip = \case
+      Right _result -> tabulate "Acquired" ["Success"] True
+      Left  failure -> counterexample ("acuire immutable tip point resulted in " ++ show failure) False
 
 mkClient
   :: Monad m
-  => [Maybe (Point TestBlock)]
+  => [Target (Point TestBlock)]
   -> LocalStateQueryClient
        TestBlock
        (Point TestBlock)
        (Query TestBlock)
        m
-       [(Maybe (Point TestBlock), Either AcquireFailure (Point TestBlock))]
-mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <- points]
+       [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
+mkClient targets = localStateQueryClient [(tgt, BlockQuery QueryLedgerTip) | tgt <- targets]
 
 mkServer
   :: IOLike m
