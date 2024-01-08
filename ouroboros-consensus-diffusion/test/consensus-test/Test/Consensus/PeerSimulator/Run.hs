@@ -21,12 +21,14 @@ import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
+import           Ouroboros.Consensus.Genesis.Governor (updateLoEFragStall,
+                     updateLoEFragUnconditional)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
-                     (ChainDbArgs (cdbTracer))
+                     (ChainDbArgs (cdbTracer), cdbLoELimit, cdbUpdateLoEFrag)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike,
@@ -87,9 +89,17 @@ data SchedulerConfig =
     -- | Whether to trace when running the scheduler.
     , scTrace           :: Bool
 
-    -- Whether to trace only the current state of the candidates and selection,
+    -- | Whether to trace only the current state of the candidates and selection,
     -- which provides a less verbose view of the test progress.
     , scTraceState      :: Bool
+
+    -- | The LoE is degenerate at the moment, so when this is enabled, we use
+    -- the stalling version of the fragment updater, which sets it to the shared
+    -- prefix of all candidates, in anticipation of the GDDG killing peers,
+    -- which never happens.
+    -- Just for the purpose of testing that the selection indeed doesn't
+    -- advance.
+    , scEnableLoE       :: Bool
   }
 
 -- | Determine timeouts based on the 'Asc' and a slot length of 20 seconds.
@@ -101,7 +111,8 @@ defaultSchedulerConfig scSchedule asc =
     scSchedule,
     scDebug = False,
     scTrace = True,
-    scTraceState = False
+    scTraceState = False,
+    scEnableLoE = False
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -115,7 +126,8 @@ noTimeoutsSchedulerConfig scSchedule =
     scSchedule,
     scDebug = False,
     scTrace = True,
-    scTraceState = False
+    scTraceState = False,
+    scEnableLoE = False
   }
   where
     scSlotLength = slotLengthFromSec 20
@@ -253,7 +265,9 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
   withRegistry $ \registry -> do
     stateViewTracers <- defaultStateViewTracers
     resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
-    chainDb <- mkChainDb tracer config registry
+    let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
+        updateLoEFrag = updateLoEFragStall k getCandidates
+    chainDb <- mkChainDb schedulerConfig tracer config registry updateLoEFrag
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = CSClient.defaultChainDbView chainDb
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
@@ -264,8 +278,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
     -- The block fetch logic needs to be started after the block fetch clients
     -- otherwise, an internal assertion fails because getCandidates yields more
     -- peer fragments than registered clients.
-    let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
-        getCurrentChain = ChainDB.getCurrentChain chainDb
+    let getCurrentChain = ChainDB.getCurrentChain chainDb
         getPoints = traverse readTVar (srCurrentState . prShared <$> (psrPeers resources))
         mkStateTracer
           | scTraceState schedulerConfig
@@ -285,11 +298,13 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
 -- candidate fragments.
 mkChainDb ::
   IOLike m =>
+  SchedulerConfig ->
   Tracer m String ->
   TopLevelConfig TestBlock ->
   ResourceRegistry m ->
+  UpdateLoEFrag m TestBlock ->
   m (ChainDB m TestBlock)
-mkChainDb tracer nodeCfg registry = do
+mkChainDb schedulerConfig tracer nodeCfg registry updateLoEFrag = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
       pure $ (
@@ -301,7 +316,9 @@ mkChainDb tracer nodeCfg registry = do
           , mcdbNodeDBs
           }
         ) {
-            cdbTracer = mkCdbTracer tracer
+            cdbTracer = mkCdbTracer tracer,
+            cdbLoELimit,
+            cdbUpdateLoEFrag
         }
     (_, (chainDB, ChainDB.Impl.Internal{intAddBlockRunner})) <-
       allocate
@@ -310,3 +327,7 @@ mkChainDb tracer nodeCfg registry = do
         (ChainDB.closeDB . fst)
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
     pure chainDB
+  where
+    (cdbLoELimit, cdbUpdateLoEFrag)
+      | scEnableLoE schedulerConfig = (LoEDefault, updateLoEFrag)
+      | otherwise = (LoEUnlimited, updateLoEFragUnconditional)

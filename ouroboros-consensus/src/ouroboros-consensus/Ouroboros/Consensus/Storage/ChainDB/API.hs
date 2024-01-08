@@ -63,6 +63,9 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , IsEBB (..)
     -- * Exceptions
   , ChainDbError (..)
+    -- * Genesis
+  , LoELimit (..)
+  , UpdateLoEFrag (..)
   ) where
 
 import           Control.Monad (void)
@@ -330,6 +333,9 @@ data ChainDB m blk = ChainDB {
       -- which rechecks the blocks in all candidate chains whenever a new
       -- invalid block is detected. These blocks are likely to be valid.
     , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
+
+    , setLoEFrag :: AnchoredFragment (Header blk) -> STM m ()
+      -- ^ Update the LoE fragment, which is anchored in a recent immutable tip.
 
       -- | Close the ChainDB
       --
@@ -858,3 +864,42 @@ instance (Typeable blk, StandardHash blk) => Exception (ChainDbError blk) where
       "The block/header follower was used after it was closed"
     InvalidIteratorRange {} ->
       "An invalid range of blocks was requested"
+
+-- | The Limit on Eagerness is a mechanism for keeping ChainSel from advancing
+-- the current selection in the case of competing chains.
+-- It requires a resolution mechanism to prevent indefinite stalling, which
+-- will be implemented by the Genesis Density Disconnection principle soon,
+-- a condition applied via 'UpdateLoEFrag' that disconnects from peers with forks
+-- it considers inferior.
+--
+-- This type indicates whether the feature is enabled.
+data LoELimit =
+  -- | The LoE is enabled, using the security parameter @k@ as the limit.
+  -- When the selection's tip is @k@ blocks after the earliest intersection of
+  -- of all candidate fragments, ChainSel will not add new blocks to the
+  -- selection.
+  LoEDefault
+  |
+  -- | The LoE is disabled, so ChainSel will not keep the selection from
+  -- advancing.
+  LoEUnlimited
+  deriving stock (Generic)
+  deriving anyclass (NoThunks)
+
+-- | This callback is a hook into ChainSync that is called right before deciding
+-- whether a block can be added to the current selection.
+--
+-- Its purpose is to update the fragment whose tip provides the reference point
+-- for the Limit on Eagerness, described in the docs of 'LoELimit'.
+--
+-- The callback is applied to the current chain, the current ledger state and
+-- an STM action that writes the new LoE fragment to the state.
+data UpdateLoEFrag m blk = UpdateLoEFrag {
+    updateLoEFrag ::
+         AnchoredFragment (Header blk)
+      -> ExtLedgerState blk
+      -> (AnchoredFragment (Header blk) -> STM m ())
+      -> m ()
+  }
+  deriving stock (Generic)
+  deriving anyclass (NoThunks)

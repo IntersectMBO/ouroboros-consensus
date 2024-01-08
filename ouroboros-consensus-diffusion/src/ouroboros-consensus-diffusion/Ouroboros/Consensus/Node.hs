@@ -73,6 +73,8 @@ import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
+import           Ouroboros.Consensus.Genesis.Governor
+                     (updateLoEFragUnconditional)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
@@ -91,6 +93,7 @@ import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.NodeKernel
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
+import           Ouroboros.Consensus.Storage.ChainDB.API (LoELimit (LoEDefault))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo,
                      ValidationPolicy (..))
 import           Ouroboros.Consensus.Storage.LedgerDB (SnapshotInterval (..),
@@ -629,7 +632,8 @@ mkChainDbArgs
     , ChainDB.cdbCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
     , ChainDB.cdbGenesis        = return initLedger
     , ChainDB.cdbCheckInFuture  = inFuture
-
+    , ChainDB.cdbLoELimit       = LoEDefault
+    , ChainDB.cdbUpdateLoEFrag  = updateLoEFragUnconditional
     , ChainDB.cdbRegistry       = registry
     }
 

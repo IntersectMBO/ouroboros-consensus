@@ -8,6 +8,7 @@
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Operations involving chain selection: the initial chain selection and
@@ -39,6 +40,7 @@ import           Data.Maybe.Strict (StrictMaybe (..), isSNothing,
                      strictMaybeToMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -59,7 +61,8 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..), ChainType (..),
-                     InvalidBlockReason (..))
+                     InvalidBlockReason (..), LoELimit (..),
+                     UpdateLoEFrag (updateLoEFrag))
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -105,9 +108,10 @@ initialChainSelection
   -> StrictTVar m (WithFingerprint (InvalidBlocks blk))
   -> StrictTVar m (FutureBlocks m blk)
   -> CheckInFuture m blk
+  -> LoELimit
   -> m (ChainAndLedger blk)
 initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
-                      varFutureBlocks futureCheck = do
+                      varFutureBlocks futureCheck loELimit = do
     -- We follow the steps from section "## Initialization" in ChainDB.md
 
     (i :: Anchor blk, succsOf, ledger) <- atomically $ do
@@ -133,6 +137,8 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
   where
     bcfg :: BlockConfig blk
     bcfg = configBlock cfg
+
+    SecurityParam k = configSecurityParam cfg
 
     -- | Turn the 'ValidatedChainDiff' into a 'ChainAndLedger'.
     --
@@ -160,8 +166,18 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
     constructChains i succsOf = flip evalStateT Map.empty $
         mapM constructChain suffixesAfterI
       where
+        -- We now prevent selecting more than k blocks in maximalCandidates
+        -- when the LoE is enabled to avoid circumventing the LoE on startup.
+        -- Shutting down a syncing node and then restarting it should not cause
+        -- it to select the longest chain the VolDB, since that chain might be
+        -- adversarial (ie the LoE did not allow the node to select it when it
+        -- arrived).
         suffixesAfterI :: [NonEmpty (HeaderHash blk)]
-        suffixesAfterI = Paths.maximalCandidates succsOf (AF.anchorToPoint i)
+        suffixesAfterI = Paths.maximalCandidates succsOf limit (AF.anchorToPoint i)
+          where
+            limit = case loELimit of
+              LoEDefault -> k
+              LoEUnlimited -> maxBound
 
         constructChain ::
              NonEmpty (HeaderHash blk)
@@ -453,14 +469,32 @@ chainSelectionForBlock
   -> InvalidBlockPunishment m
   -> m (Point blk)
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
-    (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB)
-      <- atomically $ (,,,,,)
-          <$> (forgetFingerprint <$> readTVar cdbInvalid)
-          <*> VolatileDB.filterByPredecessor  cdbVolatileDB
-          <*> VolatileDB.getBlockInfo         cdbVolatileDB
-          <*> Query.getCurrentChain           cdb
-          <*> Query.getTipPoint               cdb
-          <*> LgrDB.getCurrent                cdbLgrDB
+    (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeFrag)
+      <- atomically $ do
+          (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB, loeFrag) <-
+                (,,,,,,)
+            <$> (forgetFingerprint <$> readTVar cdbInvalid)
+            <*> VolatileDB.filterByPredecessor  cdbVolatileDB
+            <*> VolatileDB.getBlockInfo         cdbVolatileDB
+            <*> Query.getCurrentChain           cdb
+            <*> Query.getTipPoint               cdb
+            <*> LgrDB.getCurrent                cdbLgrDB
+            <*> readTVar                        cdbLoEFrag
+
+          -- Let these two functions ignore invalid blocks
+          let lookupBlockInfo' = ignoreInvalid    cdb invalid lookupBlockInfo
+              succsOf'         = ignoreInvalidSuc cdb invalid succsOf
+
+              loeFrag' = case cross curChain loeFrag of
+                Just (_, frag) -> frag
+                -- We don't crash if the LoE fragment doesn't intersect with the selection
+                -- because we update the selection _after_ updating the LoE fragment, which
+                -- means it could move to another fork or beyond the end of the LF, depending
+                -- on the implementation of @updateLoEFrag@.
+                Nothing        -> AF.Empty (AF.anchor curChain)
+
+          pure (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeFrag')
+
     let curChainAndLedger :: ChainAndLedger blk
         curChainAndLedger =
           -- The current chain we're working with here is not longer than @k@
@@ -472,12 +506,10 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         immBlockNo :: WithOrigin BlockNo
         immBlockNo = AF.anchorBlockNo curChain
 
-        -- Let these two functions ignore invalid blocks
-        lookupBlockInfo' = ignoreInvalid    cdb invalid lookupBlockInfo
-        succsOf'         = ignoreInvalidSuc cdb invalid succsOf
-
     -- The preconditions
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
+
+    updateLoEFrag cdbUpdateLoEFrag curChain (LgrDB.ledgerDbCurrent ledgerDB) (writeTVar cdbLoEFrag)
 
     if
       -- The chain might have grown since we added the block such that the
@@ -499,15 +531,23 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         return tipPoint
 
       -- The block @b@ fits onto the end of our current chain
-      | pointHash tipPoint == headerPrevHash hdr -> do
+      | pointHash tipPoint == headerPrevHash hdr
+        -- TODO could be optimized if necessary/easy enough
+      , let newBlockFrag = curChain AF.:> hdr
+      , Just maxExtra <- computeLoEMaxExtra loELimit loeFrag newBlockFrag -> do
         -- ### Add to current chain
         traceWith addBlockTracer (TryAddToCurrentChain p)
-        addToCurrentChain succsOf' curChainAndLedger
+        addToCurrentChain succsOf' curChainAndLedger maxExtra
 
-      | Just diff <- Paths.isReachable lookupBlockInfo' curChain p -> do
+      | Just diff <- Paths.isReachable lookupBlockInfo' curChain p
+        -- TODO could be optimized if necessary/easy enough
+      , let curChain' =
+              AF.mapAnchoredFragment (castHeaderFields . getHeaderFields) curChain
+      , Just newBlockFrag <- Diff.apply curChain' diff
+      , Just maxExtra <- computeLoEMaxExtra loELimit loeFrag newBlockFrag -> do
         -- ### Switch to a fork
         traceWith addBlockTracer (TrySwitchToAFork p diff)
-        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger diff
+        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger maxExtra diff
 
       | otherwise -> do
         -- ### Store but don't change the current chain
@@ -519,6 +559,10 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     -- will first copy the blocks/headers to trim (from the end of the
     -- fragment) from the VolatileDB to the ImmutableDB.
   where
+    loELimit = case cdbLoELimit of
+      LoEDefault   -> k
+      LoEUnlimited -> maxBound
+
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 
     p :: RealPoint blk
@@ -558,9 +602,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
+      -> Word64
+         -- ^ How many extra blocks to select after @b@ at most.
       -> m (Point blk)
-    addToCurrentChain succsOf curChainAndLedger = do
-        let suffixesAfterB = Paths.maximalCandidates succsOf (realPointToPoint p)
+    addToCurrentChain succsOf curChainAndLedger maxExtra = do
+        -- Extensions of @B@ that do not exceed the LoE
+        let suffixesAfterB = Paths.maximalCandidates succsOf maxExtra (realPointToPoint p)
 
         -- Fragments that are anchored at @curHead@, i.e. suffixes of the
         -- current chain.
@@ -625,10 +672,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
       -> LookupBlockInfo blk
       -> ChainAndLedger blk
          -- ^ The current chain (anchored at @i@) and ledger
+      -> Word64
+         -- ^ How many extra blocks to select after @b@ at most.
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
       -> m (Point blk)
-    switchToAFork succsOf lookupBlockInfo curChainAndLedger diff = do
+    switchToAFork succsOf lookupBlockInfo curChainAndLedger maxExtra diff = do
         -- We use a cache to avoid reading the headers from disk multiple
         -- times in case they're part of multiple forks that go through @b@.
         let initCache = Map.singleton (headerHash hdr) hdr
@@ -652,8 +701,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
             -- chain. We don't want to needlessly read the headers from disk
             -- for those candidates.
           . NE.filter (not . Diff.rollbackExceedsSuffix)
-            -- 1. Extend the diff with candidates fitting on @B@
-          . Paths.extendWithSuccessors succsOf lookupBlockInfo
+            -- 1. Extend the diff with candidates fitting on @B@ and not exceeding the LoE
+          . Paths.extendWithSuccessors succsOf lookupBlockInfo maxExtra
           $ diff
 
         case NE.nonEmpty chainDiffs of
@@ -672,6 +721,27 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         chainSelEnv = mkChainSelEnv curChainAndLedger
         curChain    = VF.validatedFragment curChainAndLedger
         curTip      = castPoint $ AF.headPoint curChain
+
+    -- | How many extra blocks to select at most after the block @b@ that is
+    -- currently being processed, according to the LoE. If not even @b@ is
+    -- allowed to be selected, return 'Nothing'.
+    computeLoEMaxExtra ::
+         (HasHeader x, HeaderHash x ~ HeaderHash blk)
+      => Word64
+         -- ^ How many blocks can be selected beyond the LoE.
+      -> AnchoredFragment (Header blk)
+         -- ^ The fragment with the LoE as its tip, with the same anchor as
+         -- @curChain@.
+      -> AnchoredFragment x
+         -- ^ The fragment with the new block @b@ as its tip, with the same
+         -- anchor as @curChain@.
+      -> Maybe Word64
+    computeLoEMaxExtra loeLimit loeFrag newBlockFrag
+      | budgetAlreadyUsed > loeLimit = Nothing
+      | otherwise                    = Just $ loeLimit - budgetAlreadyUsed
+      where
+        -- How many blocks did we already select beyond the LoE, including @b@.
+        budgetAlreadyUsed = Diff.getRollback $ Diff.diff newBlockFrag loeFrag
 
     mkSelectionChangedInfo ::
          AnchoredFragment (Header blk) -- ^ old chain
