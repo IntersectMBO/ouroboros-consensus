@@ -295,6 +295,12 @@ To cut a release we rely on a script. Simply run:
 After the script is run, check the diff for coherence and make sure that the
 packages build locally.
 
+As a sanity check, run:
+
+```sh
+./scripts/release/cabal-plan-diff
+```
+
 Now open a pull request and ask for review. It is
 recommended to already open a draft PR to [CHaP][chap] and make sure that CI
 passes to avoid later surprises (eg due to missing bounds). Once the Consensus
