@@ -81,7 +81,8 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), ChainDbError (..), ChainType,
-                     InvalidBlockReason, StreamFrom, StreamTo, UnknownRange)
+                     InvalidBlockReason, LoELimit, StreamFrom, StreamTo,
+                     UnknownRange, UpdateLoEFrag)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB',
@@ -270,6 +271,16 @@ data ChainDbEnv m blk = CDB
     -- The number of blocks from the future is bounded by the number of
     -- upstream peers multiplied by the max clock skew divided by the slot
     -- length.
+  , cdbLoEFrag         :: !(StrictTVar m (AnchoredFragment (Header blk)))
+    -- ^ Fragment whose tip indicates the Limit on Eagerness, i.e. we are not
+    -- allowed to select a chain from which we could not switch back to a chain
+    -- containing it. The fragment is usually anchored at a recent immutable
+    -- tip; if it does not, it will conservatively be treated as the empty
+    -- fragment anchored in the current immutable tip.
+  , cdbLoELimit        :: LoELimit
+    -- ^ See 'Args.cdbLoELimit'.
+  , cdbUpdateLoEFrag   :: UpdateLoEFrag m blk
+    -- ^ See 'Args.cdbUpdateLoEFrag'.
   } deriving (Generic)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families

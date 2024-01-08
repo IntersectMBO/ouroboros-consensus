@@ -19,6 +19,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Storage.ChainDB.API
+                     (LoELimit (LoEUnlimited), UpdateLoEFrag)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -74,6 +76,12 @@ data ChainDbArgs f m blk = ChainDbArgs {
       -- is the maximum number of blocks that could be kept in memory at the
       -- same time when the background thread processing the blocks can't keep
       -- up.
+
+      -- Limit on Eagerness
+    , cdbLoELimit               :: LoELimit
+      -- ^ Whether the LoE is active.
+    , cdbUpdateLoEFrag          :: HKD f (UpdateLoEFrag m blk)
+      -- ^ The callback for advancing the LoE fragment.
     }
 
 -- | Arguments specific to the ChainDB, not to the ImmutableDB, VolatileDB, or
@@ -93,6 +101,8 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
       -- 'cdbsGcInterval'.
     , cdbsRegistry        :: HKD f (ResourceRegistry m)
     , cdbsTracer          :: Tracer m (TraceEvent blk)
+    , cdbsLoELimit        :: LoELimit
+    , cdbsUpdateLoEFrag   :: HKD f (UpdateLoEFrag m blk)
     }
 
 -- | Default arguments
@@ -125,6 +135,8 @@ defaultSpecificArgs = ChainDbSpecificArgs {
     , cdbsGcInterval      = secondsToDiffTime 10
     , cdbsRegistry        = NoDefault
     , cdbsTracer          = nullTracer
+    , cdbsLoELimit        = LoEUnlimited
+    , cdbsUpdateLoEFrag   = NoDefault
     }
 
 -- | Default arguments
@@ -194,6 +206,8 @@ fromChainDbArgs ChainDbArgs{..} = (
         , cdbsGcInterval      = cdbGcInterval
         , cdbsCheckInFuture   = cdbCheckInFuture
         , cdbsBlocksToAddSize = cdbBlocksToAddSize
+        , cdbsLoELimit        = cdbLoELimit
+        , cdbsUpdateLoEFrag        = cdbUpdateLoEFrag
         }
     )
 
@@ -234,6 +248,8 @@ toChainDbArgs ImmutableDB.ImmutableDbArgs {..}
     , cdbGcDelay                = cdbsGcDelay
     , cdbGcInterval             = cdbsGcInterval
     , cdbBlocksToAddSize        = cdbsBlocksToAddSize
+    , cdbLoELimit               = cdbsLoELimit
+    , cdbUpdateLoEFrag          = cdbsUpdateLoEFrag
     }
 
 {-------------------------------------------------------------------------------

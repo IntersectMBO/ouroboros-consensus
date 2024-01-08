@@ -21,6 +21,8 @@ import           Ouroboros.Consensus.Config
                      configSecurityParam)
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture (..))
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
+import           Ouroboros.Consensus.Genesis.Governor
+                     (updateLoEFragUnconditional)
 import           Ouroboros.Consensus.HardFork.History.EraParams (EraParams,
                      eraEpochSize)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
@@ -110,6 +112,8 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
   , cdbGcDelay                = 1
   , cdbGcInterval             = 1
   , cdbBlocksToAddSize        = 1
+  , cdbLoELimit               = LoEUnlimited
+  , cdbUpdateLoEFrag          = updateLoEFragUnconditional
   }
   where
     mcdbNodeDBs' = unsafeToUncheckedStrictTVar <$> mcdbNodeDBs
