@@ -171,10 +171,13 @@ toMap' :: Peers a -> Map PeerId a
 toMap' = fmap (\(Peer _ v) -> v) . toMap
 
 fromMap :: Map PeerId (Peer a) -> Peers a
-fromMap peers = Peers{
-    honest = peers Map.! HonestPeer,
-    others = Map.delete HonestPeer peers
-  }
+fromMap peers =
+  case Map.lookup HonestPeer peers of
+    Nothing -> error "Peers.fromMap: missing HonestPeer"
+    Just honestPeer -> Peers {
+      honest = honestPeer,
+      others = Map.delete HonestPeer peers
+      }
 
 -- | Same as 'fromMap' but the map contains unwrapped values.
 fromMap' :: Map PeerId a -> Peers a
