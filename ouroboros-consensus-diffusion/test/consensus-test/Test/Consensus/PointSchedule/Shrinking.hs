@@ -40,13 +40,13 @@ shrinkViaFullTable shrinkFullTable ps@PointSchedule{ticks} =
 -- the peers, which makes it a safe “blind” shrinker.
 shrinkFullTableExceptLast :: FullTablePointSchedule -> [FullTablePointSchedule]
 shrinkFullTableExceptLast FullTablePointSchedule{ftpsRows, ftpsPeerIds} =
-    let (rows, lastRow) = extractLast ftpsRows
+    let (rows, lastRow) = nonEmptyUnsnoc ftpsRows
      in map (flip FullTablePointSchedule ftpsPeerIds . NonEmpty.fromList . (++ [lastRow])) (shrinkList (const []) rows)
   where
-    extractLast :: NonEmpty a -> ([a], a)
-    extractLast = go . NonEmpty.toList
+    nonEmptyUnsnoc :: NonEmpty a -> ([a], a)
+    nonEmptyUnsnoc = unsnoc . NonEmpty.toList
       where
-        go :: [a] -> ([a], a)
-        go []       = error "extractLast"
-        go [x]      = ([], x)
-        go (x : xs) = first (x :) (go xs)
+        unsnoc :: [a] -> ([a], a)
+        unsnoc []       = error "nonEmptyUnsnoc"
+        unsnoc [x]      = ([], x)
+        unsnoc (x : xs) = first (x :) (unsnoc xs)
