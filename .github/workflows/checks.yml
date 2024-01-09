@@ -75,3 +75,36 @@ jobs:
           echo "Checking badge for $pkg-$ver"
           grep "$(echo $pkg | sed 's/-/--/g')-$ver" README.md
         done
+
+  check-build-plans:
+
+    name: Check build plans (dev vs release)
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install Haskell
+      uses: input-output-hk/actions/haskell@latest
+      id: setup-haskell
+      with:
+        cabal-version: "3.10.1.0"
+        ghc-version: "9.2.8"
+
+    - name: Install base libraries
+      uses: input-output-hk/actions/base@latest
+      with:
+        use-sodium-vrf: false
+
+    - name: Install cabal-plan
+      run: |
+        wget -q https://github.com/haskell-hvr/cabal-plan/releases/download/v0.7.3.0/cabal-plan-0.7.3.0-x86_64-linux.xz
+        xz -d cabal-plan-0.7.3.0-x86_64-linux.xz
+        mv cabal-plan-0.7.3.0-x86_64-linux cabal-plan
+        chmod +x cabal-plan
+        mkdir -p ${HOME}/.local/bin
+        mv cabal-plan ${HOME}/.local/bin/cabal-plan
+
+    - uses: actions/checkout@v4
+
+    - name: Diff plans
+      run: GH=1 ./scripts/release/cabal-plan-diff.sh
