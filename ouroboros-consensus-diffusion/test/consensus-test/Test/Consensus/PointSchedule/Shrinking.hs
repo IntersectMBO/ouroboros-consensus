@@ -41,7 +41,9 @@ shrinkViaFullTable shrinkFullTable ps@PointSchedule{ticks} =
 shrinkFullTableExceptLast :: FullTablePointSchedule -> [FullTablePointSchedule]
 shrinkFullTableExceptLast FullTablePointSchedule{ftpsRows, ftpsPeerIds} =
     let (rows, lastRow) = nonEmptyUnsnoc ftpsRows
-     in map (flip FullTablePointSchedule ftpsPeerIds . NonEmpty.fromList . (++ [lastRow])) (shrinkList (const []) rows)
+     in [ FullTablePointSchedule (NonEmpty.fromList (rows' ++ [lastRow])) ftpsPeerIds
+        | rows' <- shrinkList (const []) rows
+        ]
   where
     nonEmptyUnsnoc :: NonEmpty a -> ([a], a)
     nonEmptyUnsnoc = unsnoc . NonEmpty.toList
