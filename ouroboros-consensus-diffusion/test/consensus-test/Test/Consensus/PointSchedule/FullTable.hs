@@ -19,8 +19,7 @@ import qualified Data.Map.Strict as Map
 import           Test.Consensus.PointSchedule (NodeState (..),
                      PointSchedule (..), Tick (..))
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..),
-                     Peers (..), peerValue, peersFromPeerIdList, peersList,
-                     toMap)
+                     Peers (..), peersFromPeerIdList, peersList, toMap)
 
 -- | A row in a full-table point schedule. It contains states for all peers and
 -- an absolute time at which this state starts holding.
@@ -97,7 +96,7 @@ activeFromFullTablePointSchedule FullTablePointSchedule{ftpsRows, ftpsPeerIds} =
         [] -> go (states, time) active ticks rows
         updatedPeer : otherUpdatedPeers ->
           let tick = Tick active (diffTime time' time)
-              ticks' = if duration tick == 0 && peerValue active == NodeOffline then ticks else tick : ticks
+              ticks' = if duration tick == 0 && value active == NodeOffline then ticks else tick : ticks
               zeroDurationTicks = map (\peer -> Tick peer 0) otherUpdatedPeers
            in go (states', time') updatedPeer (zeroDurationTicks ++ ticks') rows
 

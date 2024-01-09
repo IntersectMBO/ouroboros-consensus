@@ -20,7 +20,6 @@ module Test.Consensus.PointSchedule.Peers (
   , getPeerIds
   , mkPeers
   , mkPeers'
-  , peerValue
   , peersFromPeerIdList
   , peersFromPeerIdList'
   , peersFromPeerList
@@ -77,9 +76,6 @@ instance Traversable Peer where
 
 instance Condense a => Condense (Peer a) where
   condense Peer {name, value} = condense name ++ ": " ++ condense value
-
-peerValue :: Peer a -> a
-peerValue (Peer _ x) = x
 
 -- | General-purpose functor for a set of peers.
 --
