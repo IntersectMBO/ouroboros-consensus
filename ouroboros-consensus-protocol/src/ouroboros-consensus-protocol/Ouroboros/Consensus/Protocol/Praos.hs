@@ -377,6 +377,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ValidateView (Praos c) = PraosValidateView c
 
   protocolSecurityParam = praosSecurityParam . praosParams
+  protocolSecurityParamConsistencyCheck _ = Nothing
 
   checkIsLeader
     cfg

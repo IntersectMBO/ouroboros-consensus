@@ -97,8 +97,10 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Recovery
 import           Ouroboros.Consensus.Node.RethrowPolicy
 import           Ouroboros.Consensus.Node.Run
+import           Ouroboros.Consensus.Node.StartupWarning
 import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.NodeKernel
+import           Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParamConsistencyCheck)
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
@@ -431,6 +433,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                      (  maybeValidateAll
                       . llrnCustomiseChainDbArgs
                      )
+
+        case protocolSecurityParamConsistencyCheck (topLevelConfigProtocol cfg) of
+          Nothing -> pure ()
+          Just ks -> traceWith (consensusSanityCheckTracer rnTraceConsensus) $
+            InconsistentSecurityParam ks
 
         continueWithCleanChainDB chainDB $ do
           btime <-

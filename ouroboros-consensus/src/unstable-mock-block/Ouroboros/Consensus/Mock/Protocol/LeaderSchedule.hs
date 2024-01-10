@@ -46,6 +46,8 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
   type CanBeLeader   (WithLeaderSchedule p) = ()
 
   protocolSecurityParam = protocolSecurityParam . wlsConfigP
+  protocolSecurityParamConsistencyCheck =
+    protocolSecurityParamConsistencyCheck . wlsConfigP
 
   checkIsLeader WLSConfig{..} () slot _ =
     case Map.lookup slot $ getLeaderSchedule wlsConfigSchedule of

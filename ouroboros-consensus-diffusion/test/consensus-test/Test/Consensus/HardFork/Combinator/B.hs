@@ -101,6 +101,7 @@ instance ConsensusProtocol ProtocolB where
       else Nothing
 
   protocolSecurityParam = cfgB_k
+  protocolSecurityParamConsistencyCheck _ = Nothing
 
   tickChainDepState     _ _ _ _ = TickedTrivial
   updateChainDepState   _ _ _ _ = return ()

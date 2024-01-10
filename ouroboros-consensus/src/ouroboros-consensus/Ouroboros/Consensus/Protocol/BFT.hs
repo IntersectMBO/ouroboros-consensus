@@ -129,6 +129,7 @@ instance BftCrypto c => ConsensusProtocol (Bft c) where
   type CanBeLeader   (Bft c) = CoreNodeId
 
   protocolSecurityParam = bftSecurityParam . bftParams
+  protocolSecurityParamConsistencyCheck _ = Nothing
 
   checkIsLeader BftConfig{..} (CoreNodeId i) (SlotNo n) _ =
       if n `mod` numCoreNodes == i

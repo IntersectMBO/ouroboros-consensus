@@ -11,6 +11,7 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -28,9 +29,11 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol (
   , Ticked (..)
   ) where
 
+import           Data.List.NonEmpty (NonEmpty (..), nub)
 import           Control.Monad.Except
 import           Data.Functor.Product
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.Index
 import           Data.SOP.InPairs (InPairs (..))
 import qualified Data.SOP.InPairs as InPairs
@@ -126,6 +129,13 @@ instance CanHardFork xs => ConsensusProtocol (HardForkProtocol xs) where
 
   -- Security parameter must be equal across /all/ eras
   protocolSecurityParam = hardForkConsensusConfigK
+
+  protocolSecurityParamConsistencyCheck HardForkConsensusConfig {..} = do
+    let allSecurityParams = hardForkConsensusConfigK :|
+          perEraConsensusConfigSecurityParams hardForkConsensusConfigPerEra
+    case nub allSecurityParams of
+      _ :| [] -> Nothing
+      _ -> Just allSecurityParams
 
 {-------------------------------------------------------------------------------
   BlockSupportsProtocol
@@ -386,6 +396,16 @@ injectValidationErr index =
     . OneEraValidationErr
     . injectNS index
     . WrapValidationErr
+
+perEraConsensusConfigSecurityParams :: All SingleEraBlock xs
+                                    => PerEraConsensusConfig xs -> [SecurityParam]
+perEraConsensusConfigSecurityParams (PerEraConsensusConfig xs) =
+  unK $ hctraverse_ (Proxy @SingleEraBlock) go xs
+    where
+      go :: forall a . SingleEraBlock a
+         => WrapPartialConsensusConfig a -> K [SecurityParam] ()
+      go (WrapPartialConsensusConfig c) =
+        K [ partialConsensusConfigSecurityParam (Proxy @(BlockProtocol a)) c ]
 
 {-------------------------------------------------------------------------------
   Instances

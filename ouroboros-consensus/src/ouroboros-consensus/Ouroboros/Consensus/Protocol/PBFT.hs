@@ -299,6 +299,7 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
   type CanBeLeader   (PBft c) = PBftCanBeLeader c
 
   protocolSecurityParam = pbftSecurityParam . pbftParams
+  protocolSecurityParamConsistencyCheck _ = Nothing
 
   checkIsLeader PBftConfig{pbftParams}
                 PBftCanBeLeader{..}
