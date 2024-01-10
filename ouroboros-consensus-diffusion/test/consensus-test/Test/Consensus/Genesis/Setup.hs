@@ -8,6 +8,7 @@
 module Test.Consensus.Genesis.Setup (
     module Test.Consensus.Genesis.Setup.GenChains
   , forAllGenesisTest
+  , forAllGenesisTest'
   , runGenesisTest
   , runGenesisTest'
   ) where
@@ -84,20 +85,32 @@ runGenesisTest' schedulerConfig genesisTest schedule makeProperty =
     RunGenesisTestResult{rgtrTrace, rgtrStateView} =
       runGenesisTest schedulerConfig genesisTest schedule
 
--- | All-in-one helper that generates a 'GenesisTest' and a point schedule, runs
--- them with 'runGenesisTest', check whether the given property holds on the
--- resulting 'StateView'.
-forAllGenesisTest ::
-  Testable prop =>
-  Gen (GenesisTest, PointSchedule) ->
+type ForAllGenesisTest schedule prop =
+  Gen (GenesisTest, schedule) ->
   SchedulerConfig ->
-  (GenesisTest -> PointSchedule -> StateView -> prop) ->
+  (GenesisTest -> schedule -> StateView -> prop) ->
   Property
-forAllGenesisTest generator schedulerConfig mkProperty =
-  forAllBlind generator $ \(genesisTest, pointSchedule) ->
+
+-- | All-in-one helper that generates a 'GenesisTest' and a 'PointSchedule',
+-- runs them with 'runGenesisTest', check whether the given property holds on
+-- the resulting 'StateView'.
+forAllGenesisTest :: Testable prop => ForAllGenesisTest PointSchedule prop
+forAllGenesisTest = mkForAllGenesisTest id
+
+-- | Same as 'forAllGenesisTest' but the schedule is a 'Peers PeerSchedule'.
+forAllGenesisTest' :: Testable prop => ForAllGenesisTest (Peers PeerSchedule) prop
+forAllGenesisTest' = mkForAllGenesisTest fromSchedulePoints
+
+-- | Common code shared between flavours of 'forAllGenesisTest'.
+mkForAllGenesisTest ::
+  Testable prop =>
+  (schedule -> PointSchedule) ->
+  ForAllGenesisTest schedule prop
+mkForAllGenesisTest mkPointSchedule generator schedulerConfig mkProperty =
+  forAllBlind generator $ \(genesisTest, schedule) ->
     let cls = classifiers genesisTest
-        result = runGenesisTest schedulerConfig genesisTest pointSchedule
+        result = runGenesisTest schedulerConfig genesisTest (mkPointSchedule schedule)
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
         counterexample (rgtrTrace result) $
-        mkProperty genesisTest pointSchedule (rgtrStateView result)
+        mkProperty genesisTest schedule (rgtrStateView result)
