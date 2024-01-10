@@ -85,27 +85,34 @@ runGenesisTest' schedulerConfig genesisTest schedule makeProperty =
     RunGenesisTestResult{rgtrTrace, rgtrStateView} =
       runGenesisTest schedulerConfig genesisTest schedule
 
-type ForAllGenesisTest schedule prop =
-  Gen (GenesisTest, schedule) ->
-  SchedulerConfig ->
-  (GenesisTest -> schedule -> StateView -> prop) ->
-  Property
-
 -- | All-in-one helper that generates a 'GenesisTest' and a 'PointSchedule',
 -- runs them with 'runGenesisTest', check whether the given property holds on
 -- the resulting 'StateView'.
-forAllGenesisTest :: Testable prop => ForAllGenesisTest PointSchedule prop
+forAllGenesisTest ::
+  Testable prop =>
+  Gen (GenesisTest, PointSchedule) ->
+  SchedulerConfig ->
+  (GenesisTest -> PointSchedule -> StateView -> prop) ->
+  Property
 forAllGenesisTest = mkForAllGenesisTest id
 
 -- | Same as 'forAllGenesisTest' but the schedule is a 'Peers PeerSchedule'.
-forAllGenesisTest' :: Testable prop => ForAllGenesisTest (Peers PeerSchedule) prop
+forAllGenesisTest' ::
+  Testable prop =>
+  Gen (GenesisTest, Peers PeerSchedule) ->
+  SchedulerConfig ->
+  (GenesisTest -> Peers PeerSchedule -> StateView -> prop) ->
+  Property
 forAllGenesisTest' = mkForAllGenesisTest fromSchedulePoints
 
 -- | Common code shared between flavours of 'forAllGenesisTest'.
 mkForAllGenesisTest ::
   Testable prop =>
   (schedule -> PointSchedule) ->
-  ForAllGenesisTest schedule prop
+  Gen (GenesisTest, schedule) ->
+  SchedulerConfig ->
+  (GenesisTest -> schedule -> StateView -> prop) ->
+  Property
 mkForAllGenesisTest mkPointSchedule generator schedulerConfig mkProperty =
   forAllBlind generator $ \(genesisTest, schedule) ->
     let cls = classifiers genesisTest
