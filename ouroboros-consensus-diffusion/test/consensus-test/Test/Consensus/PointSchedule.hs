@@ -47,7 +47,6 @@ module Test.Consensus.PointSchedule (
   , defaultPointScheduleConfig
   , fromSchedulePoints
   , genesisAdvertisedPoints
-  , lastHonestBlockPoint
   , longRangeAttack
   , mkPeers
   , peersOnlyHonest
@@ -542,17 +541,3 @@ stToGen ::
 stToGen gen = do
   seed :: QCGen <- arbitrary
   pure (runSTGen_ seed gen)
-
--- | Return the last block point served by the honest peer. Fails if the honest
--- peer never sends a block, that is if they have no ticks or they only have
--- 'NodeOffline' ticks.
-lastHonestBlockPoint :: PointSchedule -> WithOrigin TestBlock
-lastHonestBlockPoint = go Nothing . toList . ticks
-  where
-    go :: Maybe (WithOrigin TestBlock) -> [Tick] -> WithOrigin TestBlock
-    go Nothing [] = error "lastHonestBlockPoint"
-    go (Just bp) [] = bp
-    go _ (Tick{active=Peer HonestPeer (NodeOnline points)} : ticks) =
-      let AdvertisedPoints{block = BlockPoint bp} = points
-       in go (Just bp) ticks
-    go bp (_ : ticks) = go bp ticks
