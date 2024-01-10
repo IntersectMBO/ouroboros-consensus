@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Protocol.Abstract (
   , SecurityParam (..)
   ) where
 
+import           Data.List.NonEmpty
 import           Control.Monad.Except
 import           Data.Kind (Type)
 import           Data.Typeable (Typeable)
@@ -169,6 +170,9 @@ class ( Show (ChainDepState   p)
 
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
+
+  protocolSecurityParamConsistencyCheck :: ConsensusConfig p
+                                        -> Maybe (NonEmpty SecurityParam)
 
 -- | Compare a candidate chain to our own
 --

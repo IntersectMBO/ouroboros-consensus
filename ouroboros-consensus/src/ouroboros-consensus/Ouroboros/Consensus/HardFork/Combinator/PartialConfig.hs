@@ -62,6 +62,8 @@ class ( ConsensusProtocol p
     -> PartialConsensusConfig p
   toPartialConsensusConfig _ = id
 
+  partialConsensusConfigSecurityParam :: proxy p -> PartialConsensusConfig p -> SecurityParam
+
 -- | Partial ledger config
 class ( UpdateLedger blk
       , NoThunks (PartialLedgerConfig blk)

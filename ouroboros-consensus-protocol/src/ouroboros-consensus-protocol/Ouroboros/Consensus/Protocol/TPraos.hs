@@ -293,6 +293,7 @@ instance SL.PraosCrypto c => ConsensusProtocol (TPraos c) where
   type ValidateView  (TPraos c) = TPraosValidateView c
 
   protocolSecurityParam = tpraosSecurityParam . tpraosParams
+  protocolSecurityParamConsistencyCheck _ = Nothing
 
   checkIsLeader cfg PraosCanBeLeader{..} slot cs = do
       -- First, check whether we're in the overlay schedule
