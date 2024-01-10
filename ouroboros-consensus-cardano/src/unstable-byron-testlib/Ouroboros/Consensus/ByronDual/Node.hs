@@ -249,6 +249,9 @@ instance NodeInitStorage DualByronBlock where
 instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
+instance BlockSupportsSanityCheck DualByronBlock where
+  configAllSecurityParams = pure . configSecurityParam
+
 deriving via SelectViewDiffusionPipelining DualByronBlock
   instance BlockSupportsDiffusionPipelining DualByronBlock
 

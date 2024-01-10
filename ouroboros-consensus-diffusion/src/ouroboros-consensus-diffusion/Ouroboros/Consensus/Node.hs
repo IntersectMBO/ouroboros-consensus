@@ -60,7 +60,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (NFData)
-import           Control.Monad (when)
+import           Control.Monad (forM_, when)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, contramap, traceWith)
@@ -421,6 +421,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 -- When the last shutdown was not clean, validate the complete
                 -- ChainDB to detect and recover from any disk corruption.
               = ChainDB.ensureValidateAll
+
+        forM_ (sanityCheckConfig cfg) $ \issue ->
+          traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
 
         (chainDB, finalArgs) <- openChainDB
                      registry
