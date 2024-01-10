@@ -147,6 +147,8 @@ Next, we instantiate the `ConsensusProtocol` for `SP`:
 >
 >   protocolSecurityParam _cfg = k
 >
+>   protocolSecurityParamConsistencyCheck _cfg = Nothing
+>
 >   tickChainDepState _ _ _ _ = TickedTrivial
 >
 >   updateChainDepState _ _ _ _ = return ()

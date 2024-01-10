@@ -67,6 +67,7 @@ library
     Ouroboros.Consensus.Node.GSM
     Ouroboros.Consensus.Node.Recovery
     Ouroboros.Consensus.Node.RethrowPolicy
+    Ouroboros.Consensus.Node.StartupWarning
     Ouroboros.Consensus.Node.Tracers
     Ouroboros.Consensus.NodeKernel
 
