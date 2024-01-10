@@ -52,7 +52,7 @@ tests =
 
 theProperty ::
   GenesisTest ->
-  PointSchedule ->
+  Peers PeerSchedule ->
   StateView ->
   Property
 theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
@@ -71,7 +71,7 @@ theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
     immutableTipIsRecent
   ]
   where
-    advCount = length (peerIds schedule) - 1
+    advCount = Map.size (others schedule)
 
     immutableTipIsRecent =
       counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
@@ -105,7 +105,7 @@ theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
       [] -> "No peers were killed"
       peers -> "Some peers were killed: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = tbSlot <$> lastHonestBlockPoint schedule
+    honestTipSlot = At $ tbSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest schedule
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
@@ -119,10 +119,10 @@ fromBlockPoint _                          = Nothing
 -- adversarial peers serving adversarial branches.
 prop_serveAdversarialBranches :: Property
 prop_serveAdversarialBranches =
-  expectFailure $ forAllGenesisTest
+  expectFailure $ forAllGenesisTest'
 
     (do gt <- genChains (QC.choose (1, 4))
-        ps <- fromSchedulePoints <$> genUniformSchedulePoints gt
+        ps <- genUniformSchedulePoints gt
         pure (gt, ps))
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
@@ -161,10 +161,10 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 -- yet.
 prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
-  expectFailure $ forAllGenesisTest
+  expectFailure $ forAllGenesisTest'
 
     (do gt <- genChains (QC.choose (1, 4))
-        ps <- fromSchedulePoints <$> genLeashingSchedule gt
+        ps <- genLeashingSchedule gt
         pure (gt, ps))
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
@@ -206,10 +206,10 @@ prop_leashingAttackStalling =
 -- See Note [Leashing attacks]
 prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
-  expectFailure $ forAllGenesisTest
+  expectFailure $ forAllGenesisTest'
 
     (do gt <- genChains (QC.choose (1, 4))
-        ps <- fromSchedulePoints <$> genTimeLimitedSchedule gt
+        ps <- genTimeLimitedSchedule gt
         pure (gt, ps))
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
