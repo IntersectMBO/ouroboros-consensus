@@ -1,10 +1,11 @@
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
 -- | Business logic of the ChainSync and BlockFetch protocol handlers that operate
--- on the 'AdvertisedPoints' of a point schedule.
+-- on the 'NodeState' of a point schedule.
 --
 -- These are separated from the scheduling related mechanics of the
 -- server mocks that the peer simulator uses, in
@@ -21,11 +22,10 @@ import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Control.Monad.Trans (lift)
 import           Control.Monad.Writer.Strict (MonadWriter (tell),
                      WriterT (runWriterT))
-import           Data.Coerce (coerce)
 import           Data.List (isSuffixOf)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (fromJust, fromMaybe)
-import           Ouroboros.Consensus.Block (HasHeader, Header, HeaderHash,
+import           Ouroboros.Consensus.Block (HasHeader, HeaderHash,
                      Point (GenesisPoint), blockHash, castPoint, getHeader,
                      withOrigin)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -33,7 +33,8 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (blockPoint, getTipPoint)
+import           Ouroboros.Network.Block (Tip (TipGenesis), blockPoint,
+                     getTipPoint, tipFromHeader)
 import           Ouroboros.Network.BlockFetch.ClientState
                      (ChainRange (ChainRange))
 import qualified Test.Consensus.BlockTree as BT
@@ -82,10 +83,10 @@ handlerFindIntersection ::
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
   [Point TestBlock] ->
-  AdvertisedPoints ->
+  NodeState TestBlock ->
   STM m (Maybe FindIntersect, [String])
 handlerFindIntersection currentIntersection blockTree clientPoints points = do
-  let TipPoint tip' = tip points
+  let tip' = nsTipTip points
       tipPoint = getTipPoint tip'
       fragment = fromJust $ BT.findFragment tipPoint blockTree
   case intersectWith fragment clientPoints of
@@ -109,15 +110,15 @@ handlerRequestNext ::
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
-  AdvertisedPoints ->
+  NodeState TestBlock ->
   STM m (Maybe RequestNext, [String])
 handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
     trace $ "  last intersection is " ++ tersePoint intersection
-    withHeader intersection (coerce (header points))
+    withHeader intersection (nsHeader points)
   where
-    withHeader :: Point TestBlock -> WithOrigin (Header TestBlock) -> WriterT [String] (STM m) (Maybe RequestNext)
+    withHeader :: Point TestBlock -> WithOrigin TestBlock -> WriterT [String] (STM m) (Maybe RequestNext)
     withHeader intersection h =
       maybe noPathError (analysePath hp) (BT.findPath intersection hp blockTree)
       where
@@ -144,7 +145,7 @@ handlerRequestNext currentIntersection blockTree points =
         trace "  intersection is before our header point"
         trace $ "  fragment ahead: " ++ terseFragment fragmentAhead
         lift $ writeTVar currentIntersection $ blockPoint next
-        pure $ Just (RollForward (getHeader next) (coerce (tip points)))
+        pure $ Just (RollForward (getHeader next) (nsTipTip points))
       -- If the anchor is not the intersection but the fragment is empty, then
       -- the intersection is further than the tip that we can serve.
       (BT.PathAnchoredAtSource False, AF.Empty _) -> do
@@ -169,7 +170,7 @@ handlerRequestNext currentIntersection blockTree points =
         lift $ writeTVar currentIntersection point
         pure $ Just (RollBackward point tip')
 
-    TipPoint tip' = tip points
+    tip' = withOrigin TipGenesis tipFromHeader $ nsTip points
 
     trace = tell . pure
 
@@ -197,11 +198,11 @@ handlerBlockFetch ::
   -- ^ A requested range of blocks. If the client behaves correctly, they
   -- correspond to headers that have been sent before, and if the scheduled
   -- ChainSync server behaves correctly, then they are all in the block tree.
-  AdvertisedPoints ->
+  NodeState TestBlock ->
   -- ^ The current advertised points (tip point, header point and block point).
   -- They are in the block tree.
   STM m (Maybe BlockFetch, [String])
-handlerBlockFetch blockTree (ChainRange from to) AdvertisedPoints {header = HeaderPoint hp} =
+handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
   runWriterT (serveFromBpFragment (AF.sliceRange hpChain from to))
   where
     -- Check whether the requested range is contained in the fragment before the header point.
@@ -215,7 +216,7 @@ handlerBlockFetch blockTree (ChainRange from to) AdvertisedPoints {header = Head
         trace ("Waiting for next tick for range: " ++ tersePoint from ++ " -> " ++ tersePoint to)
         pure Nothing
 
-    hpChain = fragmentUpTo blockTree "header point" (toPoint hp)
+    hpChain = fragmentUpTo blockTree "header point" (toPoint nsHeader)
 
     trace = tell . pure
 
@@ -302,9 +303,9 @@ handlerSendBlocks ::
   forall m .
   IOLike m =>
   [TestBlock] ->
-  AdvertisedPoints ->
+  NodeState TestBlock ->
   STM m (Maybe SendBlocks, [String])
-handlerSendBlocks blocks AdvertisedPoints {header = HeaderPoint hp, block = BlockPoint bp} =
+handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
   runWriterT (checkDone blocks)
   where
     checkDone = \case
@@ -315,7 +316,7 @@ handlerSendBlocks blocks AdvertisedPoints {header = HeaderPoint hp, block = Bloc
         blocksLeft next future
 
     blocksLeft next future
-      | isAncestorOf (At next) bp
+      | isAncestorOf (At next) nsBlock
       || compensateForScheduleRollback next
       = do
         trace ("Sending " ++ terseBlock next)
@@ -344,6 +345,8 @@ handlerSendBlocks blocks AdvertisedPoints {header = HeaderPoint hp, block = Bloc
     --
     -- Precondition: @not (isAncestorOf (At next) bp)@
     compensateForScheduleRollback next =
-      not (isAncestorOf (At next) hp) && isAncestorOf bp hp && not (isAncestorOf bp (At next))
+      not (isAncestorOf (At next) nsHeader)
+        && isAncestorOf nsBlock nsHeader
+        && not (isAncestorOf nsBlock (At next))
 
     trace = tell . pure

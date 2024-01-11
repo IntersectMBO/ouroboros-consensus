@@ -5,13 +5,14 @@
 
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
-import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
+import           Data.Functor (($>))
+import           Ouroboros.Consensus.Block.Abstract (Header, HeaderHash)
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
                      (allAdversariesSelectable, classifiers)
-import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
+import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
@@ -30,7 +31,7 @@ tests =
 
 prop_longRangeAttack :: Property
 prop_longRangeAttack =
-  forAllGenesisTest'
+  forAllGenesisTest
 
     (do
         -- Create a block tree with @1@ alternative chain.
@@ -38,19 +39,19 @@ prop_longRangeAttack =
         -- Create a 'longRangeAttack' schedule based on the generated chains.
         ps <- stToGen (longRangeAttack gtBlockTree)
         if allAdversariesSelectable (classifiers gt)
-          then pure (gt, ps)
+          then pure $ gt $> ps
           else discard)
 
-    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    defaultSchedulerConfig
 
     shrinkPeerSchedules
 
     -- NOTE: This is the expected behaviour of Praos to be reversed with
     -- Genesis. But we are testing Praos for the moment
-    (\_ _ -> not . isHonestTestFragH . svSelectedChain)
+    (\_ -> not . isHonestTestFragH . svSelectedChain)
 
   where
-    isHonestTestFragH :: TestFragH -> Bool
+    isHonestTestFragH :: AF.AnchoredFragment (Header TestBlock) -> Bool
     isHonestTestFragH frag = case headAnchor frag of
         AF.AnchorGenesis   -> True
         AF.Anchor _ hash _ -> isHonestTestHeaderHash hash

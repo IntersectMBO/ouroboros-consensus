@@ -18,6 +18,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), StrictTVar, uncheckedNewTVarM)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (createConnectedChannels)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
@@ -40,7 +41,6 @@ import           Test.Consensus.PeerSimulator.StateView
                      StateViewTracers (StateViewTracers, svtChainSyncExceptionsTracer))
 import           Test.Consensus.PeerSimulator.Trace (mkChainSyncClientTracer,
                      traceUnitWith)
-import           Test.Consensus.PointSchedule (TestFragH)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
@@ -53,7 +53,7 @@ basicChainSyncClient :: forall m.
   Tracer m String ->
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
-  StrictTVar m TestFragH ->
+  StrictTVar m (AnchoredFragment (Header TestBlock)) ->
   -- ^ A TVar containing the fragment of headers for that peer, kept up to date
   -- by the ChainSync client.
   (m (), m ()) ->
@@ -103,7 +103,7 @@ runChainSyncClient ::
   -- ^ Timeouts for this client.
   StateViewTracers m ->
   -- ^ Tracers used to record information for the future 'StateView'.
-  StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
+  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header TestBlock)))) ->
   -- ^ A TVar containing a map of fragments of headers for each peer. This
   -- function will (via 'bracketChainSyncClient') register and de-register a
   -- TVar for the fragment of the peer.

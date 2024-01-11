@@ -42,20 +42,20 @@ import qualified Data.Vector.Mutable as MV
 import           Data.Word (Word64)
 import qualified Debug.Trace as Debug
 import           GHC.Exts (IsList (..))
-import           Ouroboros.Consensus.Block (ChainHash (BlockHash), blockNo,
-                     blockSlot, getHeader)
+import           Ouroboros.Consensus.Block (ChainHash (BlockHash), Header,
+                     WithOrigin (NotOrigin), blockHash, blockNo, blockSlot,
+                     getHeader)
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
                      atomically, modifyTVar, readTVar, uncheckedNewTVarM)
 import           Ouroboros.Network.AnchoredFragment (anchor, anchorToSlotNo)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (HeaderHash, Tip (Tip))
+import           Ouroboros.Network.Block (HeaderHash)
 import           Test.Consensus.BlockTree (BlockTree (btBranches, btTrunk),
                      BlockTreeBranch (btbSuffix), prettyBlockTree)
 import qualified Test.Consensus.PointSchedule as PS
-import           Test.Consensus.PointSchedule (AdvertisedPoints, TestFrag,
-                     TestFragH, genesisAdvertisedPoints)
+import           Test.Consensus.PointSchedule (NodeState, genesisNodeState)
 import           Test.Consensus.PointSchedule.Peers (PeerId (..))
 import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 
@@ -302,7 +302,7 @@ instance Condense Slot where
 
 data BranchSlots =
   BranchSlots {
-    frag   :: TestFragH,
+    frag   :: AF.AnchoredFragment (Header TestBlock),
     slots  :: Vector Slot,
     cands  :: [PeerId],
     forkNo :: Word64
@@ -328,7 +328,7 @@ addAspect slotAspect (Range l u) overFork slots =
 
     count = u - l + 1
 
-initSlots :: Int -> Range -> TestFrag -> Vector Slot
+initSlots :: Int -> Range -> AF.AnchoredFragment TestBlock -> Vector Slot
 initSlots lastSlot (Range l u) blocks =
   Vector.fromList (snd (mapAccumL step (AF.toOldestFirst blocks) [-1 .. lastSlot]))
   where
@@ -359,7 +359,7 @@ blockForkNo = \case
   BlockHash h -> hashForkNo h
   _ -> 0
 
-initBranch :: Int -> Range -> TestFrag -> BranchSlots
+initBranch :: Int -> Range -> AF.AnchoredFragment TestBlock -> BranchSlots
 initBranch lastSlot fragRange fragment =
   BranchSlots {
     frag = AF.mapAnchoredFragment getHeader fragment,
@@ -399,7 +399,7 @@ initTree blockTree =
         l = withOrigin 0 slotInt (AF.lastSlot f)
         u = withOrigin 0 slotInt (AF.headSlot f)
 
-commonRange :: TestFragH -> TestFragH -> Maybe (Range, Bool)
+commonRange :: AF.AnchoredFragment (Header TestBlock) -> AF.AnchoredFragment (Header TestBlock) -> Maybe (Range, Bool)
 commonRange branch segment = do
   (preB, preS, _, _) <- AF.intersect branch segment
   lower <- findLower (AF.toNewestFirst preB) (AF.toNewestFirst preS)
@@ -420,7 +420,7 @@ commonRange branch segment = do
     step prev (b1, b2) | b1 == b2 = Just b1
                        | otherwise = prev
 
-addFragRange :: Aspect -> TestFragH -> TreeSlots -> TreeSlots
+addFragRange :: Aspect -> AF.AnchoredFragment (Header TestBlock) -> TreeSlots -> TreeSlots
 addFragRange aspect selection TreeSlots {lastSlot, branches} =
   TreeSlots {lastSlot, branches = forBranch <$> branches}
   where
@@ -432,7 +432,7 @@ addFragRange aspect selection TreeSlots {lastSlot, branches} =
     addCandidate old | Candidate peerId <- aspect = peerId : old
                      | otherwise = old
 
-addCandidateRange :: TreeSlots -> (PeerId, TestFragH) -> TreeSlots
+addCandidateRange :: TreeSlots -> (PeerId, AF.AnchoredFragment (Header TestBlock)) -> TreeSlots
 addCandidateRange treeSlots (pid, candidate) =
   addFragRange (Candidate pid) candidate treeSlots
 
@@ -457,28 +457,28 @@ addForks treeSlots@TreeSlots {branches} =
           }
         s = slotInt (withOrigin 0 (+ 1) (anchorToSlotNo (anchor frag)))
 
-addTipPoint :: PeerId -> PS.TipPoint -> TreeSlots -> TreeSlots
-addTipPoint pid (PS.TipPoint (Tip s h _)) TreeSlots {lastSlot, branches} =
+addTipPoint :: PeerId -> WithOrigin TestBlock -> TreeSlots -> TreeSlots
+addTipPoint pid (NotOrigin b) TreeSlots {lastSlot, branches} =
   TreeSlots {lastSlot, branches = tryBranch <$> branches}
   where
     tryBranch branch@BranchSlots {forkNo, slots}
       | tipForkNo == forkNo
-      = branch {slots = updateSlot (slotInt (s + 1)) update slots}
+      = branch {slots = updateSlot (slotInt (blockSlot b + 1)) update slots}
       | otherwise
       = branch
       where
         update slot =
           slot {aspects = SlotAspect {slotAspect = TipPoint pid, edge = NoEdge} : aspects slot}
 
-    tipForkNo = hashForkNo h
+    tipForkNo = hashForkNo (blockHash b)
 
 addTipPoint _ _ treeSlots = treeSlots
 
-addPoints :: Map PeerId AdvertisedPoints -> TreeSlots -> TreeSlots
+addPoints :: Map PeerId (NodeState TestBlock) -> TreeSlots -> TreeSlots
 addPoints peerPoints treeSlots =
   foldl' step treeSlots (Map.toList peerPoints)
   where
-    step z (pid, ap) = addTipPoint pid (PS.tip ap) z
+    step z (pid, ap) = addTipPoint pid (PS.nsTip ap) z
 
 ----------------------------------------------------------------------------------------------------
 -- Cells
@@ -834,9 +834,9 @@ renderColBlocks RenderConfig {candidateColors, selectionColor, slotNumberColor, 
 data PeerSimState =
   PeerSimState {
     pssBlockTree  :: BlockTree TestBlock,
-    pssSelection  :: TestFragH,
-    pssCandidates :: Map PeerId TestFragH,
-    pssPoints     :: Map PeerId AdvertisedPoints
+    pssSelection  :: AF.AnchoredFragment (Header TestBlock),
+    pssCandidates :: Map PeerId (AF.AnchoredFragment (Header TestBlock)),
+    pssPoints     :: Map PeerId (NodeState TestBlock)
   }
 
 -- TODO add an aspect for the last block of each branch?
@@ -899,9 +899,9 @@ peerSimStateDiagramSTMTracer ::
   IOLike m =>
   Tracer m String ->
   BlockTree TestBlock ->
-  STM m TestFragH ->
-  STM m (Map PeerId TestFragH) ->
-  STM m (Map PeerId (Maybe AdvertisedPoints)) ->
+  STM m (AF.AnchoredFragment (Header TestBlock)) ->
+  STM m (Map PeerId (AF.AnchoredFragment (Header TestBlock))) ->
+  STM m (Map PeerId (Maybe (NodeState TestBlock))) ->
   m (Tracer m ())
 peerSimStateDiagramSTMTracer stringTracer pssBlockTree selectionVar candidatesVar pointsVar = do
   peerCache <- uncheckedNewTVarM mempty
@@ -909,7 +909,7 @@ peerSimStateDiagramSTMTracer stringTracer pssBlockTree selectionVar candidatesVa
     (s, cachedPeers) <- atomically $ do
       pssSelection <- selectionVar
       pssCandidates <- candidatesVar
-      pssPoints <- fmap (fromMaybe genesisAdvertisedPoints) <$> pointsVar
+      pssPoints <- fmap (fromMaybe genesisNodeState) <$> pointsVar
       cachedPeers <- readTVar peerCache
       pure (PeerSimState {pssBlockTree, pssSelection, pssCandidates, pssPoints}, cachedPeers)
     let (blocks, newPeers) = peerSimStateDiagramWith (defaultRenderConfig {cachedPeers}) s
@@ -927,9 +927,9 @@ peerSimStateDiagramSTMTracer stringTracer pssBlockTree selectionVar candidatesVa
 peerSimStateDiagramSTMTracerDebug ::
   IOLike m =>
   BlockTree TestBlock ->
-  STM m TestFragH ->
-  STM m (Map PeerId TestFragH) ->
-  STM m (Map PeerId (Maybe AdvertisedPoints)) ->
+  STM m (AF.AnchoredFragment (Header TestBlock)) ->
+  STM m (Map PeerId (AF.AnchoredFragment (Header TestBlock))) ->
+  STM m (Map PeerId (Maybe (NodeState TestBlock))) ->
   m (Tracer m ())
 peerSimStateDiagramSTMTracerDebug =
   peerSimStateDiagramSTMTracer debugTracer

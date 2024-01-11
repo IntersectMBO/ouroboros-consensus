@@ -35,7 +35,9 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String (IsString (fromString))
 import           GHC.Generics (Generic)
-import           Ouroboros.Consensus.Util.Condense (Condense (condense))
+import           Ouroboros.Consensus.Util.Condense (Condense (..),
+                     CondenseList (..), PaddingDirection (..),
+                     condenseListWithPadding)
 
 -- | Identifier used to index maps and specify which peer is active during a tick.
 data PeerId =
@@ -52,6 +54,9 @@ instance Condense PeerId where
   condense = \case
     HonestPeer -> "honest"
     PeerId name -> name
+
+instance CondenseList PeerId where
+  condenseList = condenseListWithPadding PadRight
 
 instance Hashable PeerId
 
@@ -75,6 +80,13 @@ instance Traversable Peer where
 
 instance Condense a => Condense (Peer a) where
   condense Peer {name, value} = condense name ++ ": " ++ condense value
+
+instance CondenseList a => CondenseList (Peer a) where
+  condenseList peers =
+    zipWith
+      (\name value -> name ++ ": " ++ value)
+      (condenseList $ name <$> peers)
+      (condenseList $ value <$> peers)
 
 -- | General-purpose functor for a set of peers.
 --
