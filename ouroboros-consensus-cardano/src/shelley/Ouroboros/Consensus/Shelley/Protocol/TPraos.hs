@@ -19,7 +19,7 @@ import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Cardano.Protocol.TPraos.OCert (ocertKESPeriod, ocertVkHot)
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.Slot (unSlotNo)
-import           Control.Monad (unless)
+import           Control.Monad (when)
 import           Control.Monad.Except (liftEither, throwError)
 import           Data.Bifunctor (first)
 import           Data.Either (isRight)
@@ -71,7 +71,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
         (SL.lvChainChecks lv)
         (SL.makeHeaderView $ protocolHeaderView @(TPraos c) hdr)
     whenJust (Map.lookup (pHeaderBlock hdr) checkpoints) $ \checkpoint ->
-      unless (checkpoint == pHeaderHash hdr) $
+      when (checkpoint /= pHeaderHash hdr) $
         throwError InvalidCheckpoint
     where
       MaxMajorProtVer maxPV = tpraosMaxMajorPV $ tpraosParams cfg

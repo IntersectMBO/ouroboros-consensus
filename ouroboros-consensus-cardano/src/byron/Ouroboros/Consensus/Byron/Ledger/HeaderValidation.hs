@@ -11,7 +11,7 @@ module Ouroboros.Consensus.Byron.Ledger.HeaderValidation (
   ) where
 
 import qualified Cardano.Chain.Slotting as CC
-import           Control.Monad (unless, when)
+import           Control.Monad (when)
 import           Control.Monad.Except (throwError)
 import qualified Data.Map.Strict as Map
 import           Data.Word
@@ -62,9 +62,9 @@ instance ValidateEnvelope ByronBlock where
   additionalEnvelopeChecks cfg _ledgerView hdr = do
       when (fromIsEBB newIsEBB && not (canBeEBB actualSlotNo)) $
         throwError $ UnexpectedEBBInSlot actualSlotNo
-      unless (fromIsEBB newIsEBB) $ -- TODO fine to ignore EBBs?
+      when (not (fromIsEBB newIsEBB)) $ -- TODO fine to ignore EBBs?
         whenJust (Map.lookup (blockNo hdr) checkpoints) $ \checkpoint ->
-          unless (checkpoint == blockHash hdr) $
+          when (checkpoint /= blockHash hdr) $
             throwError InvalidCheckpoint
     where
       actualSlotNo :: SlotNo

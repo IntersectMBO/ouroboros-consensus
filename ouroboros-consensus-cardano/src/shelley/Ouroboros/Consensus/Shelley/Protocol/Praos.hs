@@ -19,7 +19,7 @@ import           Cardano.Ledger.Slot (SlotNo (unSlotNo))
 import           Cardano.Protocol.TPraos.OCert
                      (OCert (ocertKESPeriod, ocertVkHot))
 import qualified Cardano.Protocol.TPraos.OCert as SL
-import           Control.Monad (unless)
+import           Control.Monad (unless, when)
 import           Control.Monad.Except (throwError)
 import           Data.Either (isRight)
 import qualified Data.Map.Strict as Map
@@ -115,7 +115,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
       throwError $
         BlockSizeTooLarge (bhviewBSize bhv) maxBodySize
     whenJust (Map.lookup (pHeaderBlock hdr) checkpoints) $ \checkpoint ->
-      unless (checkpoint == pHeaderHash hdr) $
+      when (checkpoint /= pHeaderHash hdr) $
         throwError InvalidCheckpoint
     where
       pp = praosParams cfg
