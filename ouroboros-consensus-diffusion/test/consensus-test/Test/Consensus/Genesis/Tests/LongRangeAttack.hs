@@ -7,6 +7,7 @@
 
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
+import           Data.Functor (($>))
 import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -37,7 +38,7 @@ prop_longRangeAttack =
     (do gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
         ps <- stToGen (longRangeAttack gtBlockTree)
         if allAdversariesSelectable (classifiers gt)
-          then pure (gt, ps)
+          then pure $ gt $> ps
           else discard)
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
@@ -46,7 +47,7 @@ prop_longRangeAttack =
 
     -- NOTE: This is the expected behaviour of Praos to be reversed with
     -- Genesis. But we are testing Praos for the moment
-    (\_ _ -> not . isHonestTestFragH . svSelectedChain)
+    (\_ -> not . isHonestTestFragH . svSelectedChain)
 
   where
     isHonestTestFragH :: TestFragH -> Bool

@@ -66,11 +66,10 @@ tests =
     ]
 
 theProperty ::
-  GenesisTest ->
-  Peers PeerSchedule ->
+  GenesisTest (Peers PeerSchedule) ->
   StateView ->
   Property
-theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
+theProperty genesisTest stateView@StateView{svSelectedChain} =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
   classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
   label disconnected $
@@ -86,7 +85,7 @@ theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
     immutableTipIsRecent
   ]
   where
-    advCount = Map.size (others schedule)
+    advCount = Map.size (others (gtSchedule genesisTest))
 
     immutableTipIsRecent =
       counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
@@ -120,7 +119,7 @@ theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
       [] -> "No peers were killed"
       peers -> "Some peers were killed: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = At $ tbSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest schedule
+    honestTipSlot = At $ tbSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest $ gtSchedule genesisTest
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
@@ -136,9 +135,7 @@ prop_serveAdversarialBranches :: Property
 prop_serveAdversarialBranches =
   expectFailure $ forAllGenesisTest'
 
-    (do gt <- genChains (QC.choose (1, 4))
-        ps <- genUniformSchedulePoints gt
-        pure (gt, ps))
+    (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
        {scTraceState = False, scTrace = False})
@@ -147,7 +144,7 @@ prop_serveAdversarialBranches =
 
     theProperty
 
-genUniformSchedulePoints :: GenesisTest -> QC.Gen (Peers PeerSchedule)
+genUniformSchedulePoints :: GenesisTest schedule -> QC.Gen (Peers PeerSchedule)
 genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 
 -- Note [Leashing attacks]
@@ -180,9 +177,7 @@ prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
   expectFailure $ forAllGenesisTest'
 
-    (do gt <- genChains (QC.choose (1, 4))
-        ps <- genLeashingSchedule gt
-        pure (gt, ps))
+    (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
       {scTrace = False})
@@ -195,11 +190,11 @@ prop_leashingAttackStalling =
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
-    genLeashingSchedule :: GenesisTest -> QC.Gen (Peers PeerSchedule)
+    genLeashingSchedule :: GenesisTest () -> QC.Gen (Peers PeerSchedule)
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       advs <- mapM (mapM dropRandomPoints) advs0
-      pure (Peers honest advs)
+      pure $ Peers honest advs
 
     dropRandomPoints :: [(DiffTime, SchedulePoint)] -> QC.Gen [(DiffTime, SchedulePoint)]
     dropRandomPoints ps = do
@@ -227,9 +222,7 @@ prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
   expectFailure $ forAllGenesisTest'
 
-    (do gt <- genChains (QC.choose (1, 4))
-        ps <- genTimeLimitedSchedule gt
-        pure (gt, ps))
+    (genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
       {scTrace = False})
@@ -240,12 +233,12 @@ prop_leashingAttackTimeLimited =
 
   where
     -- | A schedule which doesn't run past the last event of the honest peer
-    genTimeLimitedSchedule :: GenesisTest -> QC.Gen (Peers PeerSchedule)
+    genTimeLimitedSchedule :: GenesisTest () -> QC.Gen (Peers PeerSchedule)
     genTimeLimitedSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       let timeLimit = estimateTimeBound (value honest) (map value $ Map.elems advs0)
           advs = fmap (fmap (takePointsUntil timeLimit)) advs0
-      pure (Peers honest advs)
+      pure $ Peers honest advs
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 
@@ -295,9 +288,7 @@ prop_loeStalling :: Property
 prop_loeStalling =
   forAllGenesisTest'
 
-    (do gt <- genChains (QC.choose (1, 4))
-        ps <- genUniformSchedulePoints gt
-        pure (gt, ps))
+    (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig) {
       scTrace = False,
@@ -305,11 +296,11 @@ prop_loeStalling =
       scChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}
     })
 
-    (\_ _ _ -> [])
+    shrinkPeerSchedules
 
     prop
   where
-    prop GenesisTest {gtBlockTree = BlockTree {btTrunk, btBranches}} _ StateView{svSelectedChain} =
+    prop GenesisTest {gtBlockTree = BlockTree {btTrunk, btBranches}} StateView{svSelectedChain} =
       classify (any (== selectionTip) allTips) "The selection is at a branch tip" $
       classify (any anchorIsImmutableTip suffixes) "The immutable tip is at a fork intersection" $
       property (isHonest immutableTipHash)
