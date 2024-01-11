@@ -180,11 +180,11 @@ prettyBlockTree blockTree =
           (honestFragment : adversarialFragments)
 
     printTrunk :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
-    printTrunk = printLine (\_ -> "trunk:  -")
+    printTrunk = printLine (\_ -> "trunk:  ─")
 
     printBranch :: AF.HasHeader blk => AF.AnchoredFragment blk -> String
     printBranch = printLine $ \firstSlot ->
-      "      " ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " `-"
+      "      " ++ replicate (3 * fromIntegral (unSlotNo (firstSlot - veryFirstSlot))) ' ' ++ " ╰─"
 
     printLine :: AF.HasHeader blk => (SlotNo -> String) -> AF.AnchoredFragment blk -> String
     printLine printHeader fragment =
@@ -202,7 +202,7 @@ prettyBlockTree blockTree =
         & Vector.toList . (slotRange Vector.//)
         & map (maybe "  " (printf "%2d"))
         & unwords
-        & map (\c -> if c == ' ' then '-' else c)
+        & map (\c -> if c == ' ' then '─' else c)
       where
         -- Initialize a Vector with the length of the fragment containing only Nothings
         slotRange = Vector.replicate (fromIntegral (unSlotNo lastSlot - unSlotNo firstSlot + 1)) Nothing
