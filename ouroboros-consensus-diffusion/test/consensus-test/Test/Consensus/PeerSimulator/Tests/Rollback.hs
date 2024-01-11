@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 
 module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
 
@@ -14,6 +15,8 @@ import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
+import           Test.Consensus.PointSchedule.Shrinking
+                     (shrinkFullTableExceptLast, shrinkViaFullTable)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -45,7 +48,7 @@ prop_rollback = do
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-    (\_ _ _ -> [])
+    (\gt ps _ -> map (gt,) (shrinkViaFullTable shrinkFullTableExceptLast ps))
 
     (\_ _ -> not . hashOnTrunk . AF.headHash . svSelectedChain)
 
@@ -63,7 +66,7 @@ prop_cannotRollback =
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-    (\_ _ _ -> [])
+    (\gt ps _ -> map (gt,) (shrinkViaFullTable shrinkFullTableExceptLast ps))
 
     (\_ _ -> hashOnTrunk . AF.headHash . svSelectedChain)
 
