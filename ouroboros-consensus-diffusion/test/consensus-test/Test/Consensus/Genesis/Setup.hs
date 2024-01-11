@@ -8,30 +8,23 @@
 module Test.Consensus.Genesis.Setup (
     module Test.Consensus.Genesis.Setup.GenChains
   , forAllGenesisTest
-  , forAllGenesisTest'
   , runGenesisTest
   , runGenesisTest'
   ) where
 
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (debugTracer, traceWith)
-import           Data.Bifunctor (second)
-import           Data.Foldable (for_)
 import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Network.Protocol.ChainSync.Codec
-                     (ChainSyncTimeout (..))
-import           Test.Consensus.BlockTree (allFragments)
 import           Test.Consensus.Genesis.Setup.Classifiers (classifiers, Classifiers (..))
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace (traceLinesWith)
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers)
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.QuickCheck (forAllGenRunShrinkCheck)
+import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
 
 -- | See 'runGenesisTest'.
@@ -44,33 +37,20 @@ data RunGenesisTestResult = RunGenesisTestResult {
 -- property on the final 'StateView'.
 runGenesisTest ::
   SchedulerConfig ->
-  GenesisTest ->
-  PointSchedule ->
+  GenesisTestFull TestBlock ->
   RunGenesisTestResult
-runGenesisTest schedulerConfig genesisTest schedule =
+runGenesisTest schedulerConfig genesisTest =
   runSimOrThrow $ do
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
-    -- TODO: should also go in 'prettyGenesisTest' (or 'prettyBlockTree')
-    for_ (allFragments gtBlockTree) (traceWith tracer . terseFragment)
+    traceLinesWith tracer $ prettyGenesisTest genesisTest
 
-    traceLinesWith tracer $ [
-      "SchedulerConfig:",
-      "  ChainSyncTimeouts:",
-      "    canAwait = " ++ show (canAwaitTimeout scChainSyncTimeouts),
-      "    intersect = " ++ show (intersectTimeout scChainSyncTimeouts),
-      "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts)
-      ] ++ prettyGenesisTest genesisTest
-
-    rgtrStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
+    rgtrStateView <- runPointSchedule schedulerConfig genesisTest tracer
     traceWith tracer (condense rgtrStateView)
     rgtrTrace <- unlines <$> getTrace
 
     pure $ RunGenesisTestResult {rgtrTrace, rgtrStateView}
-  where
-    SchedulerConfig {scChainSyncTimeouts} = schedulerConfig
-    GenesisTest {gtBlockTree} = genesisTest
 
 -- | Variant of 'runGenesisTest' that also takes a property on the final
 -- 'StateView' and returns a QuickCheck property. The trace is printed in case
@@ -78,54 +58,32 @@ runGenesisTest schedulerConfig genesisTest schedule =
 runGenesisTest' ::
   Testable prop =>
   SchedulerConfig ->
-  GenesisTest ->
-  PointSchedule ->
+  GenesisTestFull TestBlock ->
   (StateView -> prop) ->
   Property
-runGenesisTest' schedulerConfig genesisTest schedule makeProperty =
+runGenesisTest' schedulerConfig genesisTest makeProperty =
     counterexample rgtrTrace $ makeProperty rgtrStateView
   where
     RunGenesisTestResult{rgtrTrace, rgtrStateView} =
-      runGenesisTest schedulerConfig genesisTest schedule
+      runGenesisTest schedulerConfig genesisTest
 
--- | All-in-one helper that generates a 'GenesisTest' and a 'PointSchedule',
--- runs them with 'runGenesisTest', check whether the given property holds on
--- the resulting 'StateView'.
+-- | All-in-one helper that generates a 'GenesisTest' and a 'Peers
+-- PeerSchedule', runs them with 'runGenesisTest', check whether the given
+-- property holds on the resulting 'StateView'.
 forAllGenesisTest ::
   Testable prop =>
-  Gen (GenesisTest, PointSchedule) ->
+  Gen (GenesisTestFull TestBlock) ->
   SchedulerConfig ->
-  (GenesisTest -> PointSchedule -> StateView -> [(GenesisTest, PointSchedule)]) ->
-  (GenesisTest -> PointSchedule -> StateView -> prop) ->
+  (GenesisTestFull TestBlock -> StateView -> [GenesisTestFull TestBlock]) ->
+  (GenesisTestFull TestBlock -> StateView -> prop) ->
   Property
-forAllGenesisTest = mkForAllGenesisTest id
-
--- | Same as 'forAllGenesisTest' but the schedule is a 'Peers PeerSchedule'.
-forAllGenesisTest' ::
-  Testable prop =>
-  Gen (GenesisTest, Peers PeerSchedule) ->
-  SchedulerConfig ->
-  (GenesisTest -> Peers PeerSchedule -> StateView -> [(GenesisTest, Peers PeerSchedule)]) ->
-  (GenesisTest -> Peers PeerSchedule -> StateView -> prop) ->
-  Property
-forAllGenesisTest' = mkForAllGenesisTest fromSchedulePoints
-
--- | Common code shared between flavours of 'forAllGenesisTest'.
-mkForAllGenesisTest ::
-  Testable prop =>
-  (schedule -> PointSchedule) ->
-  Gen (GenesisTest, schedule) ->
-  SchedulerConfig ->
-  (GenesisTest -> schedule -> StateView -> [(GenesisTest, schedule)]) ->
-  (GenesisTest -> schedule -> StateView -> prop) ->
-  Property
-mkForAllGenesisTest mkPointSchedule generator schedulerConfig shrinker mkProperty =
-  forAllGenRunShrinkCheck generator runner shrinker' $ \(genesisTest, schedule) result ->
+forAllGenesisTest generator schedulerConfig shrinker mkProperty =
+  forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->
     let cls = classifiers genesisTest
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
         counterexample (rgtrTrace result) $
-        mkProperty genesisTest schedule (rgtrStateView result)
+        mkProperty genesisTest (rgtrStateView result)
   where
-    runner = uncurry (runGenesisTest schedulerConfig) . second mkPointSchedule
-    shrinker' (gt, ps) = shrinker gt ps . rgtrStateView
+    runner = runGenesisTest schedulerConfig
+    shrinker' gt = shrinker gt . rgtrStateView

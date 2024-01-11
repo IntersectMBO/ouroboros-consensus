@@ -14,16 +14,17 @@ module Test.Consensus.Genesis.Tests.Uniform (tests) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
+import           Control.Monad.Class.MonadTime.SI (Time, addTime)
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
-import           Data.Time.Clock (DiffTime)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
+import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (blockNo, unBlockNo)
+import           Ouroboros.Network.Block (blockNo, blockSlot, unBlockNo)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
                      (ChainSyncTimeout (..))
 import           Ouroboros.Network.Protocol.Limits (shortWait)
@@ -33,7 +34,7 @@ import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.Network.Driver.Limits.Extras
                      (chainSyncNoTimeouts)
 import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
-                     noTimeoutsSchedulerConfig)
+                     defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
@@ -48,7 +49,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.QuickCheck (le)
-import           Test.Util.TestBlock (TestBlock, tbSlot)
+import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
                      adjustQuickCheckTests)
 import           Text.Printf (printf)
@@ -68,11 +69,10 @@ tests =
     ]
 
 theProperty ::
-  GenesisTest ->
-  Peers PeerSchedule ->
+  GenesisTestFull TestBlock ->
   StateView ->
   Property
-theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
+theProperty genesisTest stateView@StateView{svSelectedChain} =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
   classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
   label disconnected $
@@ -88,7 +88,7 @@ theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
     immutableTipIsRecent
   ]
   where
-    advCount = Map.size (others schedule)
+    advCount = Map.size (others (gtSchedule genesisTest))
 
     immutableTipIsRecent =
       counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
@@ -122,34 +122,31 @@ theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
       [] -> "No peers were killed"
       peers -> "Some peers were killed: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = At $ tbSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest schedule
+    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest $ gtSchedule genesisTest
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
     Classifiers {genesisWindowAfterIntersection, longerThanGenesisWindow} = classifiers genesisTest
 
-fromBlockPoint :: (DiffTime, SchedulePoint) -> Maybe (DiffTime, TestBlock)
-fromBlockPoint (t, ScheduleBlockPoint bp) = Just (t, bp)
-fromBlockPoint _                          = Nothing
+fromBlockPoint :: (Time, SchedulePoint blk) -> Maybe (Time, blk)
+fromBlockPoint (t, ScheduleBlockPoint (NotOrigin bp)) = Just (t, bp)
+fromBlockPoint _                                      = Nothing
 
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.
 prop_serveAdversarialBranches :: Property
 prop_serveAdversarialBranches =
-  expectFailure $ forAllGenesisTest'
+  expectFailure $ forAllGenesisTest
 
-    (do gt <- genChains (QC.choose (1, 4))
-        ps <- genUniformSchedulePoints gt
-        pure (gt, ps))
+    (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
-    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
-       {scTraceState = False, scTrace = False})
+    (defaultSchedulerConfig {scTraceState = False, scTrace = False})
 
     shrinkPeerSchedules
 
     theProperty
 
-genUniformSchedulePoints :: GenesisTest -> QC.Gen (Peers PeerSchedule)
+genUniformSchedulePoints :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
 genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 
 -- Note [Leashing attacks]
@@ -180,14 +177,11 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 -- yet.
 prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
-  expectFailure $ forAllGenesisTest'
+  expectFailure $ forAllGenesisTest
 
-    (do gt <- genChains (QC.choose (1, 4))
-        ps <- genLeashingSchedule gt
-        pure (gt, ps))
+    (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
-    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
-      {scTrace = False})
+    (defaultSchedulerConfig {scTrace = False})
 
     shrinkPeerSchedules
 
@@ -197,13 +191,13 @@ prop_leashingAttackStalling =
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
-    genLeashingSchedule :: GenesisTest -> QC.Gen (Peers PeerSchedule)
+    genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       advs <- mapM (mapM dropRandomPoints) advs0
-      pure (Peers honest advs)
+      pure $ Peers honest advs
 
-    dropRandomPoints :: [(DiffTime, SchedulePoint)] -> QC.Gen [(DiffTime, SchedulePoint)]
+    dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
       let lenps = length ps
       dropCount <- QC.choose (0, max 1 $ div lenps 5)
@@ -227,14 +221,11 @@ prop_leashingAttackStalling =
 -- See Note [Leashing attacks]
 prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
-  expectFailure $ forAllGenesisTest'
+  expectFailure $ forAllGenesisTest
 
-    (do gt <- genChains (QC.choose (1, 4))
-        ps <- genTimeLimitedSchedule gt
-        pure (gt, ps))
+    (genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
 
-    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
-      {scTrace = False})
+    (defaultSchedulerConfig {scTrace = False})
 
     shrinkPeerSchedules
 
@@ -242,16 +233,16 @@ prop_leashingAttackTimeLimited =
 
   where
     -- | A schedule which doesn't run past the last event of the honest peer
-    genTimeLimitedSchedule :: GenesisTest -> QC.Gen (Peers PeerSchedule)
+    genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genTimeLimitedSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       let timeLimit = estimateTimeBound (value honest) (map value $ Map.elems advs0)
           advs = fmap (fmap (takePointsUntil timeLimit)) advs0
-      pure (Peers honest advs)
+      pure $ Peers honest advs
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 
-    estimateTimeBound :: PeerSchedule -> [PeerSchedule] -> DiffTime
+    estimateTimeBound :: AF.HasHeader blk => PeerSchedule blk -> [PeerSchedule blk] -> Time
     estimateTimeBound honest advs =
       let firstTipPointBlock = headCallStack (mapMaybe fromTipPoint honest)
           lastBlockPoint = last (mapMaybe fromBlockPoint honest)
@@ -272,10 +263,9 @@ prop_leashingAttackTimeLimited =
           -- sent.
       in max
           (fst lastBlockPoint)
-          (fst firstTipPointBlock +
-              0.020 * fromIntegral maxBlockNo + 5 * fromIntegral peerCount)
+          (addTime (0.020 * fromIntegral maxBlockNo + 5 * fromIntegral peerCount) (fst firstTipPointBlock))
 
-    blockPointNos :: [(DiffTime, SchedulePoint)] -> [Word64]
+    blockPointNos :: AF.HasHeader blk => [(Time, SchedulePoint blk)] -> [Word64]
     blockPointNos =
       map (unBlockNo . blockNo . snd) .
       mapMaybe fromBlockPoint
@@ -295,23 +285,21 @@ headCallStack = \case
 -- This is pretty slow since it relies on timeouts to terminate the test.
 prop_loeStalling :: Property
 prop_loeStalling =
-  forAllGenesisTest'
+  forAllGenesisTest
 
     (do gt <- genChains (QC.choose (1, 4))
-        ps <- genUniformSchedulePoints gt
-        pure (gt, ps))
+                `enrichedWith`
+              genUniformSchedulePoints
+        pure gt {gtChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}}
+    )
 
-    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig) {
-      scTrace = False,
-      scEnableLoE = True,
-      scChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}
-    })
+    (defaultSchedulerConfig {scTrace = False, scEnableLoE = True})
 
-    (\_ _ _ -> [])
+    shrinkPeerSchedules
 
     prop
   where
-    prop GenesisTest {gtBlockTree = BlockTree {btTrunk, btBranches}} _ StateView{svSelectedChain} =
+    prop GenesisTest {gtBlockTree = BlockTree {btTrunk, btBranches}} StateView{svSelectedChain} =
       classify (any (== selectionTip) allTips) "The selection is at a branch tip" $
       classify (any anchorIsImmutableTip suffixes) "The immutable tip is at a fork intersection" $
       property (isHonest immutableTipHash)
