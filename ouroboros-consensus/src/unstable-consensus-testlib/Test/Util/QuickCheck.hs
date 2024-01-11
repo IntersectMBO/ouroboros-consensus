@@ -92,12 +92,11 @@ forAllGenRunShrinkCheck ::
 forAllGenRunShrinkCheck gen run shrink_ check =
   forAllBlind gen $ \input ->
     shrinking
-      (run' <.> uncurry shrink_)
+      (map run' . uncurry shrink_)
       (run' input)
       (uncurry check)
   where
     run' inp = (inp, run inp)
-    (<.>) f g x = f <$> g x
 
 {-------------------------------------------------------------------------------
   Comparison functions
