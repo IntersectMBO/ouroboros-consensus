@@ -37,7 +37,7 @@ instance HasAnnTip ByronBlock where
 
 data ByronOtherHeaderEnvelopeError =
     UnexpectedEBBInSlot !SlotNo
-  | InvalidCheckpoint -- TODO args
+  | CheckpointMismatch -- TODO args
   deriving (Eq, Show, Generic, NoThunks)
 
 instance BasicEnvelopeValidation ByronBlock where
@@ -65,7 +65,7 @@ instance ValidateEnvelope ByronBlock where
       when (not (fromIsEBB newIsEBB)) $ -- TODO fine to ignore EBBs?
         whenJust (Map.lookup (blockNo hdr) checkpoints) $ \checkpoint ->
           when (checkpoint /= blockHash hdr) $
-            throwError InvalidCheckpoint
+            throwError CheckpointMismatch
     where
       actualSlotNo :: SlotNo
       actualSlotNo = blockSlot hdr

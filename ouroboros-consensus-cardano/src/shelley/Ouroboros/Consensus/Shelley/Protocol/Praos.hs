@@ -90,7 +90,7 @@ data PraosEnvelopeError
     -- <https://github.com/IntersectMBO/ouroboros-consensus/issues/325>.
   | HeaderSizeTooLarge Int Word16
   | BlockSizeTooLarge Word32 Word32
-  | InvalidCheckpoint -- TODO args
+  | CheckpointMismatch -- TODO args
   deriving (Eq, Generic, Show)
 
 instance NoThunks PraosEnvelopeError
@@ -116,7 +116,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
         BlockSizeTooLarge (bhviewBSize bhv) maxBodySize
     whenJust (Map.lookup (pHeaderBlock hdr) checkpoints) $ \checkpoint ->
       when (checkpoint /= pHeaderHash hdr) $
-        throwError InvalidCheckpoint
+        throwError CheckpointMismatch
     where
       pp = praosParams cfg
       (MaxMajorProtVer maxpv) = praosMaxMajorPV pp
