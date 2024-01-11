@@ -98,7 +98,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
 --     trunk: O─────1──2──3──4─────5──6──7
 --                     │           ╰─────6
 --                     ╰─────3──4─────5
-genChains :: QC.Gen Word -> QC.Gen GenesisTest
+genChains :: QC.Gen Word -> QC.Gen (GenesisTest ())
 genChains genNumForks = do
   (asc, honestRecipe, someHonestChainSchema) <- genHonestChainSchema
 
@@ -117,7 +117,8 @@ genChains genNumForks = do
     gtSecurityParam = SecurityParam (fromIntegral kcp),
     gtGenesisWindow = GenesisWindow (fromIntegral scg),
     gtDelay = delta,
-    gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas
+    gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
+    gtSchedule = ()
     }
 
   where

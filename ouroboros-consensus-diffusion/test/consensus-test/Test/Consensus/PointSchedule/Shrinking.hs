@@ -11,8 +11,9 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
-import           Test.Consensus.PointSchedule (GenesisTest (gtBlockTree),
-                     PeerSchedule, peerSchedulesBlocks)
+import           Test.Consensus.PointSchedule
+                     (GenesisTest (gtBlockTree, gtSchedule), PeerSchedule,
+                     peerSchedulesBlocks)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock, isAncestorOf,
@@ -23,14 +24,13 @@ import           Test.Util.TestBlock (TestBlock, isAncestorOf,
 -- block tree is trimmed to keep only parts that are necessary for the shrunk
 -- schedule.
 shrinkPeerSchedules ::
-  GenesisTest ->
-  Peers PeerSchedule ->
+  GenesisTest (Peers PeerSchedule) ->
   StateView ->
-  [(GenesisTest, Peers PeerSchedule)]
-shrinkPeerSchedules genesisTest schedule _stateView =
-  shrinkOtherPeers shrinkPeerSchedule schedule <&> \shrunkSchedule ->
+  [GenesisTest (Peers PeerSchedule)]
+shrinkPeerSchedules genesisTest _stateView =
+  shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&> \shrunkSchedule ->
     let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
-     in (genesisTest{gtBlockTree = trimmedBlockTree}, shrunkSchedule)
+     in genesisTest{gtSchedule = shrunkSchedule, gtBlockTree = trimmedBlockTree}
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
 -- unchanged.

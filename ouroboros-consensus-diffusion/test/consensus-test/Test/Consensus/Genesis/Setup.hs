@@ -15,7 +15,6 @@ module Test.Consensus.Genesis.Setup (
 
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (debugTracer, traceWith)
-import           Data.Bifunctor (second)
 import           Data.Foldable (for_)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Network.Protocol.ChainSync.Codec
@@ -44,10 +43,9 @@ data RunGenesisTestResult = RunGenesisTestResult {
 -- property on the final 'StateView'.
 runGenesisTest ::
   SchedulerConfig ->
-  GenesisTest ->
-  PointSchedule ->
+  GenesisTest PointSchedule ->
   RunGenesisTestResult
-runGenesisTest schedulerConfig genesisTest schedule =
+runGenesisTest schedulerConfig genesisTest =
   runSimOrThrow $ do
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
@@ -63,7 +61,7 @@ runGenesisTest schedulerConfig genesisTest schedule =
       "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts)
       ] ++ prettyGenesisTest genesisTest
 
-    rgtrStateView <- runPointSchedule schedulerConfig genesisTest schedule tracer
+    rgtrStateView <- runPointSchedule schedulerConfig genesisTest tracer
     traceWith tracer (condense rgtrStateView)
     rgtrTrace <- unlines <$> getTrace
 
@@ -78,35 +76,34 @@ runGenesisTest schedulerConfig genesisTest schedule =
 runGenesisTest' ::
   Testable prop =>
   SchedulerConfig ->
-  GenesisTest ->
-  PointSchedule ->
+  GenesisTest PointSchedule ->
   (StateView -> prop) ->
   Property
-runGenesisTest' schedulerConfig genesisTest schedule makeProperty =
+runGenesisTest' schedulerConfig genesisTest makeProperty =
     counterexample rgtrTrace $ makeProperty rgtrStateView
   where
     RunGenesisTestResult{rgtrTrace, rgtrStateView} =
-      runGenesisTest schedulerConfig genesisTest schedule
+      runGenesisTest schedulerConfig genesisTest
 
 -- | All-in-one helper that generates a 'GenesisTest' and a 'PointSchedule',
 -- runs them with 'runGenesisTest', check whether the given property holds on
 -- the resulting 'StateView'.
 forAllGenesisTest ::
   Testable prop =>
-  Gen (GenesisTest, PointSchedule) ->
+  Gen (GenesisTest PointSchedule) ->
   SchedulerConfig ->
-  (GenesisTest -> PointSchedule -> StateView -> [(GenesisTest, PointSchedule)]) ->
-  (GenesisTest -> PointSchedule -> StateView -> prop) ->
+  (GenesisTest PointSchedule -> StateView -> [GenesisTest PointSchedule]) ->
+  (GenesisTest PointSchedule -> StateView -> prop) ->
   Property
 forAllGenesisTest = mkForAllGenesisTest id
 
 -- | Same as 'forAllGenesisTest' but the schedule is a 'Peers PeerSchedule'.
 forAllGenesisTest' ::
   Testable prop =>
-  Gen (GenesisTest, Peers PeerSchedule) ->
+  Gen (GenesisTest (Peers PeerSchedule)) ->
   SchedulerConfig ->
-  (GenesisTest -> Peers PeerSchedule -> StateView -> [(GenesisTest, Peers PeerSchedule)]) ->
-  (GenesisTest -> Peers PeerSchedule -> StateView -> prop) ->
+  (GenesisTest (Peers PeerSchedule) -> StateView -> [GenesisTest (Peers PeerSchedule)]) ->
+  (GenesisTest (Peers PeerSchedule) -> StateView -> prop) ->
   Property
 forAllGenesisTest' = mkForAllGenesisTest fromSchedulePoints
 
@@ -114,18 +111,18 @@ forAllGenesisTest' = mkForAllGenesisTest fromSchedulePoints
 mkForAllGenesisTest ::
   Testable prop =>
   (schedule -> PointSchedule) ->
-  Gen (GenesisTest, schedule) ->
+  Gen (GenesisTest schedule) ->
   SchedulerConfig ->
-  (GenesisTest -> schedule -> StateView -> [(GenesisTest, schedule)]) ->
-  (GenesisTest -> schedule -> StateView -> prop) ->
+  (GenesisTest schedule -> StateView -> [GenesisTest schedule]) ->
+  (GenesisTest schedule -> StateView -> prop) ->
   Property
 mkForAllGenesisTest mkPointSchedule generator schedulerConfig shrinker mkProperty =
-  forAllGenRunShrinkCheck generator runner shrinker' $ \(genesisTest, schedule) result ->
+  forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->
     let cls = classifiers genesisTest
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
         counterexample (rgtrTrace result) $
-        mkProperty genesisTest schedule (rgtrStateView result)
+        mkProperty genesisTest (rgtrStateView result)
   where
-    runner = uncurry (runGenesisTest schedulerConfig) . second mkPointSchedule
-    shrinker' (gt, ps) = shrinker gt ps . rgtrStateView
+    runner = runGenesisTest schedulerConfig . fmap mkPointSchedule
+    shrinker' gt = shrinker gt . rgtrStateView

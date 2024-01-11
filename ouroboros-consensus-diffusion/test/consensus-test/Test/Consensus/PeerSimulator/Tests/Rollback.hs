@@ -38,13 +38,13 @@ prop_rollback = do
   forAllGenesisTest
 
     (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
-        pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree))
+        pure gt {gtSchedule =  rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree})
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-    (\_ _ _ -> [])
+    (\_ _ -> [])
 
-    (\_ _ -> not . hashOnTrunk . AF.headHash . svSelectedChain)
+    (\_ -> not . hashOnTrunk . AF.headHash . svSelectedChain)
 
 -- @prop_cannotRollback@ tests that the selection of the node under test *does
 -- not* change branches when sent a rollback to a block strictly older than 'k'
@@ -54,13 +54,13 @@ prop_cannotRollback =
   forAllGenesisTest
 
     (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
-        pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree))
+        pure gt {gtSchedule = rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree})
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-    (\_ _ _ -> [])
+    (\_ _ -> [])
 
-    (\_ _ -> hashOnTrunk . AF.headHash . svSelectedChain)
+    (\_ -> hashOnTrunk . AF.headHash . svSelectedChain)
 
 -- | A schedule that advertises all the points of the trunk up until the nth
 -- block after the intersection, then switches to the first alternative

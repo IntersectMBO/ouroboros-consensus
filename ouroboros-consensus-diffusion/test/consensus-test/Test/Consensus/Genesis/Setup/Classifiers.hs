@@ -45,7 +45,7 @@ data Classifiers =
     longerThanGenesisWindow        :: Bool
   }
 
-classifiers :: GenesisTest -> Classifiers
+classifiers :: GenesisTest schedule -> Classifiers
 classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenesisWindow = GenesisWindow scg} =
   Classifiers {
     existsSelectableAdversary,

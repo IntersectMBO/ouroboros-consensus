@@ -256,14 +256,13 @@ runPointSchedule ::
   forall m.
   (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
-  GenesisTest ->
-  PointSchedule ->
+  GenesisTest PointSchedule ->
   Tracer m String ->
   m StateView
-runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} pointSchedule tracer0 =
+runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree, gtSchedule} tracer0 =
   withRegistry $ \registry -> do
     stateViewTracers <- defaultStateViewTracers
-    resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
+    resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers gtSchedule)
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
         updateLoEFrag = updateLoEFragStall k getCandidates
     chainDb <- mkChainDb schedulerConfig tracer config registry updateLoEFrag
@@ -286,7 +285,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
           = pure nullTracer
     stateTracer <- mkStateTracer
     startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
-    runScheduler tracer stateTracer pointSchedule (psrPeers resources)
+    runScheduler tracer stateTracer gtSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
     config = defaultCfg k

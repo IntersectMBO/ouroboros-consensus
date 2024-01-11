@@ -42,6 +42,7 @@ module Test.Consensus.PointSchedule (
   , banalStates
   , blockPointBlock
   , defaultPointScheduleConfig
+  , enrichedWith
   , fromSchedulePoints
   , genesisAdvertisedPoints
   , headerPointBlock
@@ -58,6 +59,7 @@ module Test.Consensus.PointSchedule (
 
 import           Control.Monad.ST (ST)
 import           Data.Foldable (toList)
+import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl', transpose)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -465,15 +467,16 @@ newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
   deriving (Show)
 
 -- | All the data used by point schedule tests.
-data GenesisTest = GenesisTest {
+data GenesisTest schedule = GenesisTest {
   gtHonestAsc     :: Asc,
   gtSecurityParam :: SecurityParam,
   gtGenesisWindow :: GenesisWindow,
   gtDelay         :: Delta,
-  gtBlockTree     :: BlockTree TestBlock
+  gtBlockTree     :: BlockTree TestBlock,
+  gtSchedule      :: schedule
   }
 
-prettyGenesisTest :: GenesisTest -> [String]
+prettyGenesisTest :: GenesisTest schedule -> [String]
 prettyGenesisTest GenesisTest{gtHonestAsc, gtSecurityParam, gtGenesisWindow, gtDelay = Delta delta, gtBlockTree} =
   [ "GenesisTest:"
   , "  gtHonestAsc: " ++ show (ascVal gtHonestAsc)
@@ -482,6 +485,12 @@ prettyGenesisTest GenesisTest{gtHonestAsc, gtSecurityParam, gtGenesisWindow, gtD
   , "  gtDelay: " ++ show delta
   , "  gtBlockTree:"
   ] ++ (("    " ++) <$> prettyBlockTree gtBlockTree)
+
+instance Functor GenesisTest where
+  fmap f gt@GenesisTest{gtSchedule} = gt {gtSchedule = f gtSchedule}
+
+enrichedWith :: (Functor f, Monad m) => m (f a) -> (f a -> m b) -> m (f b)
+enrichedWith mfa convert = mfa >>= \fa -> (fa $>) <$> convert fa
 
 -- | Wrap a 'ST' generator in 'Gen'.
 stToGen ::
