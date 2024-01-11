@@ -8,12 +8,11 @@ module Test.Consensus.PeerSimulator.Run (
     SchedulerConfig (..)
   , debugScheduler
   , defaultSchedulerConfig
-  , noTimeoutsSchedulerConfig
   , runPointSchedule
   ) where
 
-import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Monad.Class.MonadTime (MonadTime)
+import           Control.Monad.Class.MonadTime.SI (DiffTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Foldable (for_)
@@ -34,12 +33,12 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike,
                      MonadDelay (threadDelay), MonadSTM (atomically),
                      StrictTVar, readTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
                      bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
                      ControlMessageSTM)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
-import           Test.Consensus.Genesis.Setup.GenChains (GenesisTest)
 import           Test.Consensus.Network.Driver.Limits.Extras
 import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
 import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient,
@@ -53,11 +52,10 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
-                     PointSchedule (PointSchedule), PointScheduleConfig,
-                     TestFragH, Tick (Tick), pointSchedulePeers,
-                     prettyPointSchedule)
-import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId)
-import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
+                     GenesisTestFull, NodeState, PeersSchedule,
+                     peersStatesRelative, prettyPeersSchedule)
+import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
+                     getPeerIds)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
@@ -65,32 +63,22 @@ import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
 -- | Behavior config for the scheduler.
 data SchedulerConfig =
   SchedulerConfig {
-    -- | Timeouts for the ChainSync protocol. These apply when the client sends
-    -- a 'MsgRequestNext' or a 'MsgFindIntersect' and the server doesn't reply.
-    -- Because the point schedule cannot yet handle the case where a slow peer
-    -- has a header point that's behind the latest header that another peer has
-    -- sent, we need to be able to control or disable them.
-    scChainSyncTimeouts :: ChainSyncTimeout
-
-    -- | The duration of a single slot, used by the peer simulator to wait
-    -- between ticks.
-    , scSlotLength      :: SlotLength
-
-    -- | Config shared with point schedule generators.
-    , scSchedule        :: PointScheduleConfig
+    -- | Whether to enable timeouts for the ChainSync protocol. The value of
+    -- timeouts themselves is defined in 'GenesisTest'.
+      scEnableChainSyncTimeouts :: Bool
 
     -- | If 'True', 'Test.Consensus.Genesis.Setup.runTest' will print traces
     -- to stderr.
     --
     -- Use 'debugScheduler' to toggle it conveniently.
-    , scDebug           :: Bool
+    , scDebug                   :: Bool
 
     -- | Whether to trace when running the scheduler.
-    , scTrace           :: Bool
+    , scTrace                   :: Bool
 
     -- | Whether to trace only the current state of the candidates and selection,
     -- which provides a less verbose view of the test progress.
-    , scTraceState      :: Bool
+    , scTraceState              :: Bool
 
     -- | The LoE is degenerate at the moment, so when this is enabled, we use
     -- the stalling version of the fragment updater, which sets it to the shared
@@ -98,38 +86,19 @@ data SchedulerConfig =
     -- which never happens.
     -- Just for the purpose of testing that the selection indeed doesn't
     -- advance.
-    , scEnableLoE       :: Bool
+    , scEnableLoE               :: Bool
   }
 
--- | Determine timeouts based on the 'Asc' and a slot length of 20 seconds.
-defaultSchedulerConfig :: PointScheduleConfig -> Asc -> SchedulerConfig
-defaultSchedulerConfig scSchedule asc =
+-- | Default scheduler config
+defaultSchedulerConfig :: SchedulerConfig
+defaultSchedulerConfig =
   SchedulerConfig {
-    scChainSyncTimeouts = chainSyncTimeouts scSlotLength asc,
-    scSlotLength,
-    scSchedule,
+    scEnableChainSyncTimeouts = False,
     scDebug = False,
     scTrace = True,
     scTraceState = False,
     scEnableLoE = False
   }
-  where
-    scSlotLength = slotLengthFromSec 20
-
--- | Config with no timeouts and a slot length of 20 seconds.
-noTimeoutsSchedulerConfig :: PointScheduleConfig -> SchedulerConfig
-noTimeoutsSchedulerConfig scSchedule =
-  SchedulerConfig {
-    scChainSyncTimeouts = chainSyncNoTimeouts,
-    scSlotLength,
-    scSchedule,
-    scDebug = False,
-    scTrace = True,
-    scTraceState = False,
-    scEnableLoE = False
-  }
-  where
-    scSlotLength = slotLengthFromSec 20
 
 -- | Enable debug tracing during a scheduler test.
 debugScheduler :: SchedulerConfig -> SchedulerConfig
@@ -152,9 +121,9 @@ startChainSyncConnectionThread ::
   FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
   SharedResources m ->
   ChainSyncResources m ->
-  SchedulerConfig ->
+  ChainSyncTimeout ->
   StateViewTracers m ->
-  StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
+  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header TestBlock)))) ->
   m ()
 startChainSyncConnectionThread
   registry
@@ -164,13 +133,13 @@ startChainSyncConnectionThread
   fetchClientRegistry
   SharedResources {srPeerId}
   ChainSyncResources {csrServer}
-  SchedulerConfig {scChainSyncTimeouts}
+  chainSyncTimeouts_
   tracers
   varCandidates =
     void $
     forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-    runChainSyncClient tracer cfg chainDbView srPeerId csrServer scChainSyncTimeouts tracers varCandidates
+    runChainSyncClient tracer cfg chainDbView srPeerId csrServer chainSyncTimeouts_ tracers varCandidates
 
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
 -- register it for synchronization with the ChainSync client.
@@ -201,9 +170,9 @@ dispatchTick ::
   Tracer m String ->
   Tracer m () ->
   Map PeerId (PeerResources m) ->
-  Tick ->
+  (Int, (DiffTime, Peer (NodeState TestBlock))) ->
   m ()
-dispatchTick tracer stateTracer peers Tick {active = Peer pid state, duration, number} =
+dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
       time <- prettyTime
@@ -232,13 +201,13 @@ runScheduler ::
   IOLike m =>
   Tracer m String ->
   Tracer m () ->
-  PointSchedule ->
+  PeersSchedule TestBlock ->
   Map PeerId (PeerResources m) ->
   m ()
-runScheduler tracer stateTracer ps@PointSchedule{ticks} peers = do
-  traceLinesWith tracer (prettyPointSchedule ps)
+runScheduler tracer stateTracer ps peers = do
+  traceLinesWith tracer ("Point schedule:" : map ("  " ++) (prettyPeersSchedule ps))
   traceStartOfTime
-  for_ ticks (dispatchTick tracer stateTracer peers)
+  mapM_ (dispatchTick tracer stateTracer peers) (zip [0..] (peersStatesRelative ps))
   traceEndOfTime
   where
     traceStartOfTime =
@@ -256,21 +225,20 @@ runPointSchedule ::
   forall m.
   (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
-  GenesisTest ->
-  PointSchedule ->
+  GenesisTestFull TestBlock ->
   Tracer m String ->
   m StateView
-runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} pointSchedule tracer0 =
+runPointSchedule schedulerConfig genesisTest tracer0 =
   withRegistry $ \registry -> do
     stateViewTracers <- defaultStateViewTracers
-    resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers pointSchedule)
+    resources <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
         updateLoEFrag = updateLoEFragStall k getCandidates
     chainDb <- mkChainDb schedulerConfig tracer config registry updateLoEFrag
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = CSClient.defaultChainDbView chainDb
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
-      startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync schedulerConfig stateViewTracers (psrCandidates resources)
+      startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ stateViewTracers (psrCandidates resources)
       PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
     for_ (psrPeers resources) $ \PeerResources {prShared, prBlockFetch} ->
       startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared prBlockFetch
@@ -286,12 +254,24 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree} 
           = pure nullTracer
     stateTracer <- mkStateTracer
     startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
-    runScheduler tracer stateTracer pointSchedule (psrPeers resources)
+    runScheduler tracer stateTracer gtSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
+    GenesisTest {
+        gtSecurityParam = k
+      , gtBlockTree
+      , gtSchedule
+      , gtChainSyncTimeouts
+      } = genesisTest
+
     config = defaultCfg k
 
     tracer = if scTrace schedulerConfig then tracer0 else nullTracer
+
+    chainSyncTimeouts_ =
+      if scEnableChainSyncTimeouts schedulerConfig
+        then gtChainSyncTimeouts
+        else chainSyncNoTimeouts
 
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.

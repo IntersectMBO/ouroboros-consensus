@@ -7,7 +7,11 @@
 module Ouroboros.Consensus.Util.Condense (
     Condense (..)
   , Condense1 (..)
+  , CondenseList (..)
+  , PaddingDirection (..)
   , condense1
+  , condenseListWithPadding
+  , padListWith
   ) where
 
 import           Cardano.Crypto.DSIGN (Ed25519DSIGN, Ed448DSIGN, MockDSIGN,
@@ -28,7 +32,7 @@ import           Control.Monad.Class.MonadTime.SI (Time (..))
 import qualified Data.ByteString as BS.Strict
 import qualified Data.ByteString.Lazy as BS.Lazy
 import           Data.Int
-import           Data.List (intercalate)
+import           Data.List (intercalate, maximumBy)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
@@ -50,6 +54,29 @@ import           Text.Printf (printf)
 -- | Condensed but human-readable output
 class Condense a where
   condense :: a -> String
+
+-- | Human-readable list of condensed strings.
+-- All result strings have the same length, for alignment purposes.
+class CondenseList a where
+  condenseList :: [a] -> [String]
+
+condenseListWithPadding :: Condense a => PaddingDirection -> [a] -> [String]
+condenseListWithPadding padding as = padListWith padding $ condense <$> as
+
+padListWith :: PaddingDirection -> [String] -> [String]
+padListWith padding strings =
+  let maxLength = maximumBy compare $ length <$> strings
+  in
+    fmap
+      (\c ->
+        let spaces = replicate (maxLength - length c) ' '
+        in case padding of
+          PadLeft  -> spaces ++ c
+          PadRight -> c ++ spaces
+      )
+      strings
+
+data PaddingDirection = PadLeft | PadRight
 
 {-------------------------------------------------------------------------------
   Rank-1 types

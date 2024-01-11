@@ -8,7 +8,9 @@ module Test.Consensus.PointSchedule.Tests (tests) where
 import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..),
                      withOrigin)
 import           Control.Monad (forM, replicateM)
+import           Control.Monad.Class.MonadTime.SI (Time (Time))
 import           Data.Bifunctor (second)
+import           Data.Coerce (coerce)
 import           Data.List (foldl', group, isSuffixOf, partition, sort)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (isNothing)
@@ -26,10 +28,10 @@ import           Test.QuickCheck.Random
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import qualified Test.Util.QuickCheck as QC
+import           Test.Util.TersePrinting (terseBlock, terseWithOrigin)
 import           Test.Util.TestBlock (TestBlock, TestHash (unTestHash),
                      firstBlock, modifyFork, successorBlock, tbSlot)
 import           Test.Util.TestEnv
-
 
 tests :: TestTree
 tests =
@@ -55,7 +57,6 @@ prop_zipMany xss =
           map (map snd) ys QC.=== xss
         QC..&&.
           concatMap (map fst) ys QC.=== xs
-
 
 data SingleJumpTipPointsInput = SingleJumpTipPointsInput
   { sjtpMin :: Int
@@ -112,7 +113,7 @@ prop_tipPointSchedule seed (TipPointScheduleInput slotLength msgInterval slots) 
 
 data HeaderPointScheduleInput = HeaderPointScheduleInput
   { hpsMsgInterval :: (DiffTime, DiffTime)
-  , hpsTipPoints   :: [(Maybe Int, [(DiffTime, Int)])]
+  , hpsTipPoints   :: [(Maybe Int, [(Time, Int)])]
   } deriving (Show)
 
 instance QC.Arbitrary HeaderPointScheduleInput where
@@ -121,7 +122,7 @@ instance QC.Arbitrary HeaderPointScheduleInput where
     branchTips <- genTipPoints
     let branchCount = length branchTips
         tpCount = sum $ map length branchTips
-    ts <- scanl1 (+) . sort <$> replicateM tpCount (chooseDiffTime (7, 12))
+    ts <- coerce <$> scanl1 (+) . sort <$> replicateM tpCount (chooseDiffTime (7, 12))
     let tpts = zipMany ts branchTips
     intersectionBlocks <- genIntersections branchCount
     maybes <- QC.infiniteList @(Maybe Int)
@@ -236,7 +237,7 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
       pure $
           (QC.counterexample ("hps = " ++ show (map (second showPoint) hps)) $
            QC.counterexample ("tps' = " ++ show (map (second showPoint) tps')) $
-             headerPointsFollowTipPoints isAncestorBlock
+             headerPointsFollowTipPoints isAncestorBlock'
                (map (second schedulePointToBlock) hps)
                (map (second schedulePointToBlock) tps')
           )
@@ -254,20 +255,20 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
             noReturnToAncestors (filter isBlockPoint $ map snd ss)
           )
   where
-    showPoint :: SchedulePoint -> String
-    showPoint (ScheduleTipPoint b)    = "TP " ++ show (blockHash b)
-    showPoint (ScheduleHeaderPoint b) = "HP " ++ show (blockHash b)
-    showPoint (ScheduleBlockPoint b)  = "BP " ++ show (blockHash b)
+    showPoint :: SchedulePoint TestBlock -> String
+    showPoint (ScheduleTipPoint b)    = "TP " ++ terseWithOrigin terseBlock b
+    showPoint (ScheduleHeaderPoint b) = "HP " ++ terseWithOrigin terseBlock b
+    showPoint (ScheduleBlockPoint b)  = "BP " ++ terseWithOrigin terseBlock b
 
-    isTipPoint :: SchedulePoint -> Bool
+    isTipPoint :: SchedulePoint blk -> Bool
     isTipPoint (ScheduleTipPoint _) = True
     isTipPoint _                    = False
 
-    isHeaderPoint :: SchedulePoint -> Bool
+    isHeaderPoint :: SchedulePoint blk -> Bool
     isHeaderPoint (ScheduleHeaderPoint _) = True
     isHeaderPoint _                       = False
 
-    isBlockPoint :: SchedulePoint -> Bool
+    isBlockPoint :: SchedulePoint blk -> Bool
     isBlockPoint (ScheduleBlockPoint _) = True
     isBlockPoint _                      = False
 
@@ -281,21 +282,27 @@ isAncestorBlock b0 b1 =
       else Just LT
     else Nothing
 
-noReturnToAncestors :: [SchedulePoint] -> QC.Property
+isAncestorBlock' :: WithOrigin TestBlock -> WithOrigin TestBlock -> Maybe Ordering
+isAncestorBlock' Origin Origin   = Just EQ
+isAncestorBlock' Origin _        = Just LT
+isAncestorBlock' _ Origin        = Just GT
+isAncestorBlock' (At b0) (At b1) = isAncestorBlock b0 b1
+
+noReturnToAncestors :: [SchedulePoint TestBlock] -> QC.Property
 noReturnToAncestors = go []
   where
     go _ [] = QC.property True
     go ancestors (p : ss) =
       let b = schedulePointToBlock p
        in   foldr (QC..&&.) (QC.property True)
-              (map (isNotAncestorOf b) ancestors)
+              (map (isNotAncestorOf' b) ancestors)
           QC..&&.
             go (b : ancestors) ss
 
-    isNotAncestorOf :: TestBlock -> TestBlock -> QC.Property
-    isNotAncestorOf b0 b1 =
-      QC.counterexample ("return to ancestor: " ++ show (blockHash b0) ++ " -> " ++ show (blockHash b1)) $
-        QC.property $ isNothing $ isAncestorBlock b0 b1
+    isNotAncestorOf' :: WithOrigin TestBlock -> WithOrigin TestBlock -> QC.Property
+    isNotAncestorOf' b0 b1 =
+      QC.counterexample ("return to ancestor: " ++ terseWithOrigin terseBlock b0 ++ " -> " ++ terseWithOrigin terseBlock b1) $
+        QC.property $ isNothing $ isAncestorBlock' b0 b1
 
 genTimeInterval :: DiffTime -> QC.Gen (DiffTime, DiffTime)
 genTimeInterval trange = do
@@ -335,7 +342,7 @@ headCallStack = \case
   x:_ -> x
   _   -> error "headCallStack: empty list"
 
-headerPointsFollowTipPoints :: Show a => (a -> a -> Maybe Ordering) -> [(DiffTime, a)] -> [(DiffTime, a)] -> QC.Property
+headerPointsFollowTipPoints :: Show a => (a -> a -> Maybe Ordering) -> [(Time, a)] -> [(Time, a)] -> QC.Property
 headerPointsFollowTipPoints _ [] [] = QC.property True
 headerPointsFollowTipPoints isAncestor ((t0, i0) : ss) ((t1, i1) : ps) =
       QC.counterexample "schedule times follow tip points" (QC.ge t0 t1)
