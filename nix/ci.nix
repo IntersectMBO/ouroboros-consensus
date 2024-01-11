@@ -31,6 +31,8 @@ let
     } // lib.optionalAttrs noCross {
       devShell =
         import ./shell.nix { inherit pkgs hsPkgs; };
+      devShellProfiled =
+        import ./shell.nix { inherit pkgs; hsPkgs = hsPkgs.projectVariants.profiled; };
     };
 
   jobs = lib.filterAttrsRecursive (n: v: n != "recurseForDerivations") ({
@@ -43,7 +45,7 @@ let
       # ensure we can still build on 8.10, can be removed soon
       haskell810 = builtins.removeAttrs
         (mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc810)
-        [ "checks" "devShell" ];
+        [ "checks" "devShell" "devShellProfiled" ];
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {

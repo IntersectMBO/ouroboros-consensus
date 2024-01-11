@@ -196,4 +196,23 @@ package plutus-core
 ...
 ```
 
+## Entering a profiled Nix shell
 
+We have cached profiled Nix shells built on CI so you don't have to locally recompile all dependencies with profiling.
+To use them, enter the `.#ghc96-profiled` shell, eg via
+```shell
+nix develop .#ghc96-profiled
+```
+and create a `cabal.project.local` like this:
+```cabal
+profiling: True
+-- https://well-typed.com/blog/2023/03/prof-late/
+profiling-detail: late
+```
+Now, any built executable will have profiling support.
+
+For example, to find out where time is spent in some test, you could use
+```shell
+cabal run ouroboros-consensus:test:storage-test -- -p 'ChainDB q-s-m' +RTS -pj
+```
+and eg load the resulting `.prof` file into [speedscope](https://speedscope.app).
