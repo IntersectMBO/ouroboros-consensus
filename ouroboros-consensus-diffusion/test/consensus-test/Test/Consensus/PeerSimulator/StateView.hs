@@ -13,12 +13,13 @@ import           Control.Exception (AsyncException (ThreadKilled),
                      fromException)
 import           Control.Tracer (Tracer)
 import           Data.Maybe (mapMaybe)
+import           Ouroboros.Consensus.Block (Header)
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, SomeException,
                      atomically)
-import           Test.Consensus.PointSchedule (TestFragH)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.TersePrinting (terseHFragment)
 import           Test.Util.TestBlock (TestBlock)
@@ -42,7 +43,7 @@ instance Condense ChainSyncException where
 -- information about the mocked peers (for instance the exceptions raised in the
 -- mocked ChainSync server threads).
 data StateView = StateView {
-    svSelectedChain       :: TestFragH,
+    svSelectedChain       :: AnchoredFragment (Header TestBlock),
     svChainSyncExceptions :: [ChainSyncException]
   }
   deriving Show

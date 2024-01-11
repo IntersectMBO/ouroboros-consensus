@@ -17,6 +17,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), StrictTVar)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (createConnectedChannels)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
@@ -39,7 +40,6 @@ import           Test.Consensus.PeerSimulator.StateView
                      StateViewTracers (StateViewTracers, svtChainSyncExceptionsTracer))
 import           Test.Consensus.PeerSimulator.Trace (mkChainSyncClientTracer,
                      traceUnitWith)
-import           Test.Consensus.PointSchedule (TestFragH)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
@@ -50,7 +50,7 @@ basicChainSyncClient :: forall m.
   Tracer m String ->
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
-  StrictTVar m TestFragH ->
+  StrictTVar m (AnchoredFragment (Header TestBlock)) ->
   Consensus ChainSyncClientPipelined TestBlock m
 basicChainSyncClient tracer cfg chainDbView varCandidate =
   chainSyncClient
@@ -87,7 +87,7 @@ runChainSyncClient ::
   ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m () ->
   ChainSyncTimeout ->
   StateViewTracers m ->
-  StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
+  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header TestBlock)))) ->
   m ()
 runChainSyncClient
   tracer

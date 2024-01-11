@@ -1,19 +1,17 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 
--- | Data types and generators that convert a 'BlockTree' to a 'PointSchedule'.
+-- | Data types and generators for point schedules.
 --
--- Point schedules can have arbitrary configurations that model different behaviors
--- we want to use for tests.
---
--- Each generator takes a set of 'AnchoredFragment's corresponding to the tested peers'
--- chains, and converts them to a 'PointSchedule' consisting of a sequence of states
--- ('AdvertisedPoints'), each of which is associated with a single peer.
+-- Each generator takes a set of 'AnchoredFragment's corresponding to the tested
+-- peers' chains, and converts them to a point schedule consisting of a sequence
+-- of 'NodeState's, each of which is associated with a single peer.
 --
 -- When a schedule is executed in a test, each tick is processed in order.
 -- The peer associated with the current tick is considered "active", which means that
@@ -22,267 +20,133 @@
 -- The state in the current tick determines the actions that the peer is allowed to perform,
 -- and once it fulfills the state's criteria, it yields control back to the scheduler,
 -- who then activates the next tick's peer.
---
--- /Note/: At the moment this implementation is experimental.
 module Test.Consensus.PointSchedule (
-    AdvertisedPoints (..)
-  , BlockPoint (..)
-  , GenesisTest (..)
+    GenesisTest (..)
+  , GenesisTestFull
   , GenesisWindow (..)
-  , HeaderPoint (..)
   , NodeState (..)
   , PeerSchedule
-  , PointSchedule (..)
-  , PointScheduleConfig (..)
-  , TestFrag
-  , TestFragH
-  , Tick (..)
-  , TipPoint (..)
-  , balanced
-  , banalStates
-  , blockPointBlock
-  , defaultPointScheduleConfig
-  , fromSchedulePoints
-  , genesisAdvertisedPoints
-  , headerPointBlock
+  , PeersSchedule
+  , enrichedWith
+  , genesisNodeState
   , longRangeAttack
+  , nsTipTip
   , peerSchedulesBlocks
-  , pointScheduleBlocks
-  , pointSchedulePeers
+  , peerStates
+  , peersStates
+  , peersStatesRelative
   , prettyGenesisTest
-  , prettyPointSchedule
+  , prettyPeersSchedule
   , stToGen
-  , tipPointBlock
   , uniformPoints
   ) where
 
+import           Cardano.Slotting.Time (SlotLength)
+import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
+                     diffTime)
 import           Control.Monad.ST (ST)
 import           Data.Foldable (toList)
-import           Data.List (mapAccumL, partition, scanl', transpose)
-import           Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromMaybe, listToMaybe)
+import           Data.Functor (($>))
+import           Data.List (mapAccumL, partition, scanl')
+import           Data.Maybe (mapMaybe)
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
-import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
+import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..),
+                     withOriginToMaybe)
+import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
-import           Ouroboros.Consensus.Util.Condense (Condense (condense))
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     AnchoredSeq (Empty, (:>)))
+import           Ouroboros.Consensus.Util.Condense (Condense (..),
+                     CondenseList (..), PaddingDirection (..),
+                     condenseListWithPadding, padListWith)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..), tipFromHeader)
-import           Ouroboros.Network.Point (WithOrigin (At))
+import           Ouroboros.Network.Point (withOrigin)
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
-                     prettyBlockTree)
-import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..),
-                     Peers (..), getPeerIds, mkPeers, peersList)
+                     allFragments, prettyBlockTree)
+import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
+                     mkPeers, peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
                      peerScheduleFromTipPoints, schedulePointToBlock)
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
                      (uniformRMDiffTime)
-import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), ascVal)
+import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
-import           Test.Util.TersePrinting (terseBlock, terseHeader, terseTip,
+import           Test.Util.TersePrinting (terseBlock, terseFragment,
                      terseWithOrigin)
-import           Test.Util.TestBlock (Header, TestBlock, Validity (Valid),
-                     testHeader, unsafeTestBlockWithPayload)
+import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
 ----------------------------------------------------------------------------------------------------
 -- Data types
 ----------------------------------------------------------------------------------------------------
 
-type TestFrag = AnchoredFragment TestBlock
-
-type TestFragH = AnchoredFragment (Header TestBlock)
-
--- | The current tip that a ChainSync server should advertise to the client in
--- a tick.
-newtype TipPoint =
-  TipPoint (Tip TestBlock)
-  deriving (Eq, Show)
-
-instance Condense TipPoint where
-  condense (TipPoint tip) = terseTip tip
-
--- | Convert a 'TipPoint' to a 'TestBlock'.
-tipPointBlock :: TipPoint -> Maybe TestBlock
-tipPointBlock (TipPoint TipGenesis) = Nothing
-tipPointBlock (TipPoint (Tip slot hash _)) =
-  Just $ unsafeTestBlockWithPayload hash slot Valid ()
-
--- | The latest header that should be sent to the client by the ChainSync server
--- in a tick.
-newtype HeaderPoint =
-  HeaderPoint (WithOrigin (Header TestBlock))
-  deriving (Eq, Show)
-
-instance Condense HeaderPoint where
-  condense (HeaderPoint header) = terseWithOrigin terseHeader header
-
--- | Convert a 'HeaderPoint' to a 'TestBlock'.
-headerPointBlock :: HeaderPoint -> Maybe TestBlock
-headerPointBlock (HeaderPoint Origin)      = Nothing
-headerPointBlock (HeaderPoint (At header)) = Just $ testHeader header
-
--- | The latest block that should be sent to the client by the BlockFetch server
--- in a tick.
-newtype BlockPoint =
-  BlockPoint (WithOrigin TestBlock)
-  deriving (Eq, Show)
-
-instance Condense BlockPoint where
-  condense (BlockPoint block) = terseWithOrigin terseBlock block
-
--- | Convert a 'BlockPoint' to a 'Point'.
-blockPointBlock :: BlockPoint -> Maybe TestBlock
-blockPointBlock (BlockPoint Origin)     = Nothing
-blockPointBlock (BlockPoint (At block)) = Just block
-
--- | The set of parameters that define the state that a peer should reach when it receives control
--- by the scheduler in a single tick.
---
--- REVIEW: I find this rather poorly named. If it is really what is advertised
--- then isn't it weird to have the fragment in it? If it is the whole internal
--- state of the (online) node, then maybe we can call it that?
-data AdvertisedPoints =
-  AdvertisedPoints {
-    tip    :: TipPoint,
-    header :: HeaderPoint,
-    block  :: BlockPoint
+-- | The state of a peer at a given point in time.
+data NodeState blk =
+  NodeState {
+    nsTip    :: WithOrigin blk,
+    nsHeader :: WithOrigin blk,
+    nsBlock  :: WithOrigin blk
   }
   deriving (Eq, Show)
 
-instance Condense AdvertisedPoints where
-  condense AdvertisedPoints {tip, header, block} =
-    "TP " ++ condense tip ++
-    " | HP " ++ condense header ++
-    " | BP " ++ condense block
+nsTipTip :: AF.HasHeader blk => NodeState blk -> Tip blk
+nsTipTip = withOrigin TipGenesis tipFromHeader . nsTip
 
-genesisAdvertisedPoints :: AdvertisedPoints
-genesisAdvertisedPoints =
-  AdvertisedPoints {
-    tip = TipPoint TipGenesis,
-    header = HeaderPoint Origin,
-    block = BlockPoint Origin
+instance Condense (NodeState TestBlock) where
+  condense NodeState {nsTip, nsHeader, nsBlock} =
+    "TP " ++ terseWithOrigin terseBlock nsTip ++
+    " | HP " ++ terseWithOrigin terseBlock nsHeader ++
+    " | BP " ++ terseWithOrigin terseBlock nsBlock
+
+instance CondenseList (NodeState TestBlock) where
+  condenseList points =
+    zipWith3
+      (\tip header block ->
+        "TP " ++ tip ++
+          " | HP " ++ header ++
+          " | BP " ++ block
+      )
+      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsTip) points)
+      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsHeader) points)
+      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsBlock) points)
+
+genesisNodeState :: NodeState blk
+genesisNodeState =
+  NodeState {
+    nsTip = Origin,
+    nsHeader = Origin,
+    nsBlock = Origin
   }
 
--- | The state of a peer in a single tick.
---
--- At the moment, this is only used to encode the fact that a peer does not have a current state
--- before it has been active for the first time.
---
--- REVIEW: Is that necessary/useful?
-data NodeState =
-  -- | The peer is online and advertises the given points.
-  NodeOnline AdvertisedPoints
-  |
-  -- | The peer should not respond to messages.
-  NodeOffline
-  deriving (Eq, Show)
+prettyPeersSchedule ::
+  forall blk.
+  (CondenseList (NodeState blk)) =>
+  PeersSchedule blk ->
+  [String]
+prettyPeersSchedule peers =
+  zipWith3
+    (\number time peerState ->
+      number ++ ": " ++ peerState ++ " @ " ++ time
+    )
+    (condenseListWithPadding PadLeft $ fst <$> numberedPeersStates)
+    (showDT . fst . snd <$> numberedPeersStates)
+    (condenseList $ (snd . snd) <$> numberedPeersStates)
+  where
+    numberedPeersStates :: [(Int, (Time, Peer (NodeState blk)))]
+    numberedPeersStates = zip [0..] (peersStates peers)
 
-instance Condense NodeState where
-  condense = \case
-    NodeOnline points -> condense points
-    NodeOffline -> "*chrrrk* <signal lost>"
-
--- | A tick is an entry in a 'PointSchedule', containing the peer that is
--- going to change state.
-data Tick =
-  Tick {
-    active   :: Peer NodeState,
-    -- | The duration of this tick, for the scheduler to pass to @threadDelay@.
-    duration :: DiffTime,
-    number   :: Word
-  }
-  deriving (Eq, Show)
-
-instance Condense Tick where
-  condense Tick {active, duration, number} =
-    show number ++ ": " ++ condense active ++ " | " ++ showDT duration
-    where
-      showDT t = printf "%.6f" (realToFrac t :: Double)
-
-tickDefault :: PointScheduleConfig -> Word -> Peer NodeState -> Tick
-tickDefault PointScheduleConfig {pscTickDuration} number active =
-  Tick {active, duration = pscTickDuration, number}
-
-tickDefaults :: PointScheduleConfig -> [Peer NodeState] -> [Tick]
-tickDefaults psc states =
-  uncurry (tickDefault psc) <$> zip [0 ..] states
-
--- | A point schedule is a series of states for a set of peers.
---
--- Each state defines which parts of the peer's chain are supposed to be served in the
--- given tick.
--- Each tick gives agency to only a single peer, which should process messages regularly
--- until the given state is reached, while the other peers block.
-data PointSchedule =
-  PointSchedule
-    { ticks   :: NonEmpty Tick
-    , peerIds :: NonEmpty PeerId -- ^ The peer ids that are involved in this point schedule.
-                                 -- Ticks can only refer to these peers.
-    }
-  deriving (Eq, Show)
-
-instance Condense PointSchedule where
-  condense (PointSchedule ticks _) = unlines (condense <$> toList ticks)
-
-prettyPointSchedule :: PointSchedule -> [String]
-prettyPointSchedule PointSchedule{ticks} =
-  "PointSchedule:" : (("  " ++) <$> (condense <$> toList ticks))
-
--- | Parameters that are significant for components outside of generators, like the peer
--- simulator.
-data PointScheduleConfig =
-  PointScheduleConfig {
-    -- | Duration of a tick, for timeouts in the scheduler.
-    pscTickDuration :: DiffTime
-  }
-  deriving (Eq, Show)
-
-defaultPointScheduleConfig :: PointScheduleConfig
-defaultPointScheduleConfig =
-  PointScheduleConfig {pscTickDuration = 0.1}
-
-----------------------------------------------------------------------------------------------------
--- Accessors
-----------------------------------------------------------------------------------------------------
-
--- | Get the names of the peers involved in this point schedule.
--- This is the main motivation for requiring the point schedule to be
--- nonempty, so we don't have to carry around another value for the
--- 'PeerId's.
-pointSchedulePeers :: PointSchedule -> NonEmpty PeerId
-pointSchedulePeers = peerIds
-
--- | List of all blocks appearing in the schedule as tip point, header point or
--- block point.
-pointScheduleBlocks :: PointSchedule -> [TestBlock]
-pointScheduleBlocks PointSchedule{ticks} =
-  catMaybes $ concatMap
-    (\Tick{active=Peer{value}} -> case value of
-         NodeOffline -> []
-         NodeOnline (AdvertisedPoints{tip, header, block}) ->
-           [tipPointBlock tip, headerPointBlock header, blockPointBlock block])
-    ticks
+    showDT :: Time -> String
+    showDT (Time dt) = printf "%.6f" (realToFrac dt :: Double)
 
 ----------------------------------------------------------------------------------------------------
 -- Conversion to 'PointSchedule'
 ----------------------------------------------------------------------------------------------------
-
--- | Create a point schedule from a list of ticks
-pointSchedule :: [Tick] -> NonEmpty PeerId -> PointSchedule
-pointSchedule [] _nePeerIds = error "pointSchedule: no ticks"
-pointSchedule ticks nePeerIds = PointSchedule (NonEmpty.fromList ticks) nePeerIds
 
 -- | Convert a @SinglePeer@ schedule to a 'NodeState' schedule.
 --
@@ -298,80 +162,52 @@ pointSchedule ticks nePeerIds = PointSchedule (NonEmpty.fromList ticks) nePeerId
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
-peerStates :: Peer PeerSchedule -> [(DiffTime, Peer NodeState)]
+peerStates :: Peer (PeerSchedule blk) -> [(Time, Peer (NodeState blk))]
 peerStates Peer {name, value = schedulePoints} =
-  drop 1 (zip (0 : (shiftTime <$> times)) (Peer name . NodeOnline <$> scanl' modPoint genesisAdvertisedPoints points))
+  drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisNodeState points))
   where
-    shiftTime t = t - firstTipOffset
+    shiftTime :: Time -> Time
+    shiftTime t = addTime (- firstTipOffset) t
+
+    firstTipOffset :: DiffTime
+    firstTipOffset = case times of [] -> 0; (Time dt : _) -> dt
 
     modPoint z = \case
-      ScheduleTipPoint tip -> z {tip = TipPoint (tipFromHeader tip)}
-      ScheduleHeaderPoint h -> z {header = HeaderPoint (At (getHeader h))}
-      ScheduleBlockPoint b -> z {block = BlockPoint (At b)}
-
-    firstTipOffset = fromMaybe 0 (listToMaybe times)
+      ScheduleTipPoint nsTip -> z {nsTip}
+      ScheduleHeaderPoint nsHeader -> z {nsHeader}
+      ScheduleBlockPoint nsBlock -> z {nsBlock}
 
     (times, points) = unzip schedulePoints
 
-type PeerSchedule = [(DiffTime, SchedulePoint)]
-
--- | Convert a set of @SinglePeer@ schedules to a 'PointSchedule'.
+-- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
 --
--- Call 'peerStates' for each peer, then merge all of them sorted by tick start times, then convert
--- start times to relative tick durations.
-fromSchedulePoints :: Peers PeerSchedule -> PointSchedule
-fromSchedulePoints peers = do
-  pointSchedule (zipWith3 Tick states durations [0 ..]) peerIds
-  where
-    peerIds = getPeerIds peers
+-- The resulting schedule contains all the peers. Items are sorted by time.
+peersStates :: PeersSchedule blk -> [(Time, Peer (NodeState blk))]
+peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
 
-    durations = snd (mapAccumL (\ prev start -> (start, start - prev)) 0 (drop 1 starts)) ++ [0.1]
+-- | Same as 'peersStates' but returns the duration of a state instead of the
+-- absolute time at which it starts holding.
+peersStatesRelative :: PeersSchedule blk -> [(DiffTime, Peer (NodeState blk))]
+peersStatesRelative peers =
+  let (starts, states) = unzip $ peersStates peers
+      durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
+   in zip durations states
 
-    (starts, states) = unzip $ foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
+type PeerSchedule blk = [(Time, SchedulePoint blk)]
 
 -- | List of all blocks appearing in the schedule.
-peerScheduleBlocks :: PeerSchedule -> [TestBlock]
-peerScheduleBlocks = map (schedulePointToBlock . snd)
+peerScheduleBlocks :: (PeerSchedule blk) -> [blk]
+peerScheduleBlocks = mapMaybe (withOriginToMaybe . schedulePointToBlock . snd)
+
+type PeersSchedule blk = Peers (PeerSchedule blk)
 
 -- | List of all blocks appearing in the schedules.
-peerSchedulesBlocks :: Peers PeerSchedule -> [TestBlock]
+peerSchedulesBlocks :: PeersSchedule blk -> [blk]
 peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList
 
 ----------------------------------------------------------------------------------------------------
 -- Schedule generators
 ----------------------------------------------------------------------------------------------------
-
--- | Create a peer schedule by serving one header in each tick.
-banalStates :: TestFrag -> [NodeState]
-banalStates (Empty _) = []
-banalStates frag@(_ :> tipBlock) =
-  spin [] frag
-  where
-    spin z (Empty _) = z
-    spin z (pre :> block) =
-      let header = HeaderPoint $ At (getHeader block)
-       in spin
-            (NodeOnline AdvertisedPoints {tip, header, block = BlockPoint (At block)} : z)
-            pre
-    tip = TipPoint $ tipFromHeader tipBlock
-
--- | Generate a point schedule from a set of peer schedules by taking one element from each peer in
--- turn.
---
--- Implemented by concatenating the peers' schedules and transposing the result.
---
--- REVIEW: I see the point of this point schedule as an exercice to manipulate
--- them but I otherwise find it rather useless.
-balanced ::
-  PointScheduleConfig ->
-  Peers [NodeState] ->
-  PointSchedule
-balanced config states =
-  pointSchedule (tickDefaults config activeSeq) (getPeerIds states)
-  where
-    -- Sequence containing the first state of all the nodes in order, then the
-    -- second in order, etc.
-    activeSeq = concat $ transpose $ sequenceA (honest states) : (sequenceA <$> Map.elems (others states))
 
 -- | Produce a schedule similar to @Frequencies (Peers 1 [10])@, using the new @SinglePeer@
 -- generator.
@@ -380,10 +216,10 @@ balanced config states =
 -- The honest peer gets a substantially larger (and disconnected) delay interval to ensure
 -- that k+1 blocks are sent fast enough to trigger selection of a fork.
 longRangeAttack ::
-  StatefulGen g m =>
-  BlockTree TestBlock ->
+  (StatefulGen g m, AF.HasHeader blk) =>
+  BlockTree blk ->
   g ->
-  m (Peers PeerSchedule)
+  m (PeersSchedule blk)
 longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
   adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
@@ -402,10 +238,10 @@ longRangeAttack _ _ =
 -- Include rollbacks in a percentage of adversaries, in which case that peer uses two branchs.
 --
 uniformPoints ::
-  StatefulGen g m =>
-  BlockTree TestBlock ->
+  (StatefulGen g m, AF.HasHeader blk) =>
+  BlockTree blk ->
   g ->
-  m (Peers PeerSchedule)
+  m (PeersSchedule blk)
 uniformPoints BlockTree {btTrunk, btBranches} g = do
   honestTip0 <- firstTip btTrunk
   honest <- mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
@@ -465,23 +301,48 @@ newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
   deriving (Show)
 
 -- | All the data used by point schedule tests.
-data GenesisTest = GenesisTest {
-  gtHonestAsc     :: Asc,
-  gtSecurityParam :: SecurityParam,
-  gtGenesisWindow :: GenesisWindow,
-  gtDelay         :: Delta,
-  gtBlockTree     :: BlockTree TestBlock
+data GenesisTest blk schedule = GenesisTest {
+  gtSecurityParam     :: SecurityParam,
+  gtGenesisWindow     :: GenesisWindow,
+  gtDelay             :: Delta,
+  gtBlockTree         :: BlockTree blk,
+  gtChainSyncTimeouts :: ChainSyncTimeout,
+  gtSlotLength        :: SlotLength,
+  gtSchedule          :: schedule
   }
 
-prettyGenesisTest :: GenesisTest -> [String]
-prettyGenesisTest GenesisTest{gtHonestAsc, gtSecurityParam, gtGenesisWindow, gtDelay = Delta delta, gtBlockTree} =
+type GenesisTestFull blk = GenesisTest blk (PeersSchedule blk)
+
+prettyGenesisTest :: GenesisTest TestBlock schedule -> [String]
+prettyGenesisTest genesisTest =
   [ "GenesisTest:"
-  , "  gtHonestAsc: " ++ show (ascVal gtHonestAsc)
   , "  gtSecurityParam: " ++ show (maxRollbacks gtSecurityParam)
   , "  gtGenesisWindow: " ++ show (unGenesisWindow gtGenesisWindow)
   , "  gtDelay: " ++ show delta
+  , "  gtSlotLength: " ++ show gtSlotLength
+  , "  gtChainSyncTimeouts: "
+  , "    canAwait = " ++ show canAwaitTimeout
+  , "    intersect = " ++ show intersectTimeout
+  , "    mustReply = " ++ show mustReplyTimeout
   , "  gtBlockTree:"
-  ] ++ (("    " ++) <$> prettyBlockTree gtBlockTree)
+  ] ++ map (("    " ++) . terseFragment) (allFragments gtBlockTree)
+    ++ map ("    " ++) (prettyBlockTree gtBlockTree)
+  where
+    GenesisTest {
+        gtSecurityParam
+      , gtGenesisWindow
+      , gtDelay = Delta delta
+      , gtBlockTree
+      , gtChainSyncTimeouts = ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout}
+      , gtSlotLength
+      , gtSchedule = _
+      } = genesisTest
+
+instance Functor (GenesisTest blk) where
+  fmap f gt@GenesisTest{gtSchedule} = gt {gtSchedule = f gtSchedule}
+
+enrichedWith :: (Functor f, Monad m) => m (f a) -> (f a -> m b) -> m (f b)
+enrichedWith mfa convert = mfa >>= \fa -> (fa $>) <$> convert fa
 
 -- | Wrap a 'ST' generator in 'Gen'.
 stToGen ::

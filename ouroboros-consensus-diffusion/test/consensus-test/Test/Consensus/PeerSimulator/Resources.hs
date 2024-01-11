@@ -59,7 +59,7 @@ data SharedResources m =
     -- | The currently active schedule point.
     --
     -- This is 'Maybe' because we cannot wait for the initial state otherwise.
-    srCurrentState :: StrictTVar m (Maybe AdvertisedPoints),
+    srCurrentState :: StrictTVar m (Maybe (NodeState TestBlock)),
 
     srTracer       :: Tracer m String
   }
@@ -104,7 +104,7 @@ data PeerResources m =
 
     -- | An action used by the scheduler to update the peer's advertised points and
     -- resume processing for the ChainSync and BlockFetch servers.
-    prUpdateState :: NodeState -> STM m ()
+    prUpdateState :: NodeState TestBlock -> STM m ()
   }
 
 -- | Resources for the peer simulator.
@@ -114,15 +114,15 @@ data PeerSimulatorResources m =
     psrPeers      :: Map PeerId (PeerResources m),
 
     -- | The shared candidate fragments used by ChainDB, ChainSync and BlockFetch.
-    psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m TestFragH))
+    psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m (AF.AnchoredFragment (Header TestBlock))))
   }
 
--- | Create 'ChainSyncServerHandlers' for our default implementation using 'AdvertisedPoints'.
+-- | Create 'ChainSyncServerHandlers' for our default implementation using 'NodeState'.
 makeChainSyncServerHandlers ::
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
-  ChainSyncServerHandlers m AdvertisedPoints
+  ChainSyncServerHandlers m (NodeState TestBlock)
 makeChainSyncServerHandlers currentIntersection blockTree =
   ChainSyncServerHandlers {
     csshFindIntersection = handlerFindIntersection currentIntersection blockTree,
@@ -163,7 +163,6 @@ makeBlockFetchResources bfrTickStarted SharedResources {srPeerId, srTracer, srBl
     }
     bfrServer = runScheduledBlockFetchServer (condense srPeerId) bfrTickStarted (readTVar srCurrentState) srTracer handlers
 
-
 -- | Create the concurrency transactions for communicating the begin of a peer's
 -- tick and its new state to the ChainSync and BlockFetch servers.
 --
@@ -181,29 +180,27 @@ makeBlockFetchResources bfrTickStarted SharedResources {srPeerId, srTracer, srBl
 -- TVar.
 updateState ::
   IOLike m =>
-  StrictTVar m (Maybe AdvertisedPoints) ->
-  m (NodeState -> STM m (), STM m (), STM m ())
+  StrictTVar m (Maybe (NodeState TestBlock)) ->
+  m (NodeState TestBlock -> STM m (), STM m (), STM m ())
 updateState srCurrentState =
   atomically $ do
     publisher <- newBroadcastTChan
     consumer1 <- dupTChan publisher
     consumer2 <- dupTChan publisher
     let
-      newState s = do
-        writeTVar srCurrentState =<< case s of
-          NodeOffline     -> pure Nothing
-          NodeOnline tick -> do
+      newState points = do
+        writeTVar srCurrentState =<< do
             -- REVIEW: Is it ok to only unblock the peer when it is online?
             -- So far we've handled Nothing in the ChainSync server by skipping the tick.
             writeTChan publisher ()
-            pure (Just tick)
+            pure (Just points)
     pure (newState, readTChan consumer1, readTChan consumer2)
 
 -- | Create all concurrency resources and the ChainSync protocol server used
 -- for a single peer.
 --
 -- A peer performs BlockFetch and ChainSync using a state of
--- type 'AdvertisedPoints' that is updated by a separate scheduler, waking up
+-- type 'NodeState' that is updated by a separate scheduler, waking up
 -- the protocol handlers to process messages until the conditions of the new
 -- state are satisfied.
 --
