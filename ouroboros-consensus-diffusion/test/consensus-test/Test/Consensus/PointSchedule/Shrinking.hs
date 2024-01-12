@@ -21,17 +21,23 @@ import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock, TestHash (unTestHash))
 
 -- | Shrink a 'Peers PeerSchedule'. This does not affect the honest peer; it
--- does, however, attempt to remove other peers. The block tree is trimmed to
--- keep only parts that are necessary for the shrunk schedule.
+-- does, however, attempt to remove other peers or ticks of other peers. The
+-- block tree is trimmed to keep only parts that are necessary for the shrunk
+-- schedule.
 shrinkPeerSchedules ::
   GenesisTest ->
   Peers PeerSchedule ->
   StateView ->
   [(GenesisTest, Peers PeerSchedule)]
 shrinkPeerSchedules genesisTest schedule _stateView =
-  shrinkOtherPeers (const []) schedule <&> \shrunkSchedule ->
+  shrinkOtherPeers shrinkPeerSchedule schedule <&> \shrunkSchedule ->
     let trimmedBlockTree = trimBlockTree (gtBlockTree genesisTest) (fromSchedulePoints shrunkSchedule)
      in (genesisTest{gtBlockTree = trimmedBlockTree}, shrunkSchedule)
+
+-- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
+-- unchanged.
+shrinkPeerSchedule :: PeerSchedule -> [PeerSchedule]
+shrinkPeerSchedule = shrinkList (const [])
 
 -- | Shrink the 'others' field of a 'Peers' structure by attempting to remove
 -- peers or by shrinking their values using the given shrinking function.
