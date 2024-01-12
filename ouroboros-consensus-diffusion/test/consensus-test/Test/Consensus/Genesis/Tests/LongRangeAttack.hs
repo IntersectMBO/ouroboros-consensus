@@ -29,10 +29,10 @@ tests =
 
 prop_longRangeAttack :: Property
 prop_longRangeAttack =
-  forAllGenesisTest
+  forAllGenesisTest'
 
     (do gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
-        ps <- fromSchedulePoints <$> stToGen (longRangeAttack gtBlockTree)
+        ps <- stToGen (longRangeAttack gtBlockTree)
         if allAdversariesSelectable (classifiers gt)
           then pure (gt, ps)
           else discard)
