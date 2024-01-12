@@ -7,7 +7,7 @@ This file is written in a `markdown+lhs` style understood by `pandoc`.  To
 generate a document from this file - it is as simple as:
 
 ```
- pandoc -s -f markdown+lhs Tutorial.lhs -o <output file>
+ pandoc -s -f markdown+lhs Simple.lhs -o <output file>
 ```
 
 Which will work for many of the the output types supported by `pandoc`.
@@ -309,7 +309,7 @@ Further reading about Consensus
 
 The `ConsensusProtocol` class is also dealt with in some detail and with
 additional context in the [Cardano Consensus and Storage
-Layer](https://hydra.iohk.io/build/15874054/download/1/report.pdf) report.
+Layer](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf) report.
 
 The `Ouroboros.Consensus.Protocol.Praos` module contains the instantiation of
 `ConsensusProtocol` for Praos.
