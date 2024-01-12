@@ -16,6 +16,7 @@ import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -41,7 +42,7 @@ prop_longRangeAttack =
 
     (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
 
-    (\_ _ _ -> [])
+    shrinkPeerSchedules
 
     -- NOTE: This is the expected behaviour of Praos to be reversed with
     -- Genesis. But we are testing Praos for the moment
