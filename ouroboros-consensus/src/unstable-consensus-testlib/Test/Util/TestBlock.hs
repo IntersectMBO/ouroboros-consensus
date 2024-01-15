@@ -70,6 +70,8 @@ module Test.Util.TestBlock (
   , testInitLedgerWithState
     -- * Support for tests
   , Permutation (..)
+  , isAncestorOf
+  , isDescendentOf
   , permute
   , unsafeTestBlockWithPayload
   ) where
@@ -85,7 +87,7 @@ import qualified Data.ByteString.Lazy as BL
 import           Data.Foldable (for_)
 import           Data.Int
 import           Data.Kind (Type)
-import           Data.List (transpose)
+import           Data.List (isSuffixOf, transpose)
 import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -247,6 +249,33 @@ successorBlockWithPayload hash slot payload = TestBlockWith
     , tbValid   = Valid
     , tbPayload = payload
     }
+
+-- | A block @b1@ is the ancestor of another block @b2@ if there exists a chain
+-- of blocks from @b1@ to @b2@. For test blocks in particular, this can be seen
+-- in the hash: the hash of @b1@ should be a prefix of the hash of @b2@.
+--
+-- Note that this is a partial comparison function. In particular, it does hold
+-- that for all @b1@ and @b2@, @b1 `isDescendentOf` b2 === b2 `isAncestorOf` b1@
+-- but it does not hold that for all @b1@ and @b2@, @b1 `isDescendentOf` b2 ===
+-- not (b1 `isAncestorOf` b2) || b1 == b2@.
+isAncestorOf :: TestBlock -> TestBlock -> Bool
+isAncestorOf b1 b2 =
+  -- NOTE: 'unTestHash' returns the list of hash components _in reverse
+  -- order_ so we need to test that one hash is the _suffix_ of the other.
+  NE.toList (unTestHash (blockHash b1))
+    `isSuffixOf`
+  NE.toList (unTestHash (blockHash b2))
+
+-- | A block @b1@ is the descendent of another block @b2@ if there exists a
+-- chain of blocks from @b2@ to @b1@. For test blocks in particular, this can be
+-- seen in the hash: the hash of @b2@ should be a prefix of the hash of @b1@.
+--
+-- Note that this is a partial comparison function. In particular, it does hold
+-- that for all @b1@ and @b2@, @b1 `isDescendentOf` b2 === b2 `isAncestorOf` b1@
+-- but it does not hold that for all @b1@ and @b2@, @b1 `isDescendentOf` b2 ===
+-- not (b1 `isAncestorOf` b2) || b1 == b2@.
+isDescendentOf :: TestBlock -> TestBlock -> Bool
+isDescendentOf = flip isAncestorOf
 
 instance ShowProxy TestBlock where
 
