@@ -697,13 +697,13 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     ensureLowerDensityInWindow w g mv hCount = do
         let emptyCountTarget = C.toVar $ S.complementActive S.notInverted (C.windowSize w) hCount C.+ 1
 
-        ec <- BV.fillInWindow
+        emptyCount <- BV.fillInWindow
             S.inverted
             (BV.SomeDensityWindow emptyCountTarget (C.windowSize w))
             g
             (C.sliceMV w mv)
 
-        pure $ C.toVar $ S.complementActive S.inverted (C.windowSize w) ec
+        pure $ C.toVar $ S.complementActive S.inverted (C.windowSize w) emptyCount
 
 
 -- | The youngest stable slot
