@@ -265,7 +265,7 @@ checkAdversarialChain recipe adv = do
           winHAfterIntersection =
               C.UnsafeContains
                   (fromJust $ C.toWindow winH $ C.windowStart winA)
-                  (C.Count $ C.getCount (C.windowSize winA))
+                  (C.windowSize winA)
           -- honest schema after the intersection
           vHAfterIntersection = C.sliceV winHAfterIntersection vH
           iterH :: RI.Race adv
