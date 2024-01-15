@@ -3,13 +3,12 @@
 module Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules) where
 
 import           Data.Functor ((<&>))
-import           Data.List (isSuffixOf, sortOn)
-import qualified Data.List.NonEmpty as NonEmpty
+import           Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty), takeWhileOldest)
-import           Ouroboros.Network.Block (blockHash, blockSlot)
+import           Ouroboros.Network.Block (blockSlot)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
@@ -17,7 +16,7 @@ import           Test.Consensus.PointSchedule (GenesisTest (gtBlockTree),
                      PeerSchedule, peerSchedulesBlocks)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.QuickCheck (shrinkList)
-import           Test.Util.TestBlock (TestBlock, TestHash (unTestHash))
+import           Test.Util.TestBlock (TestBlock, isAncestorOf)
 
 -- | Shrink a 'Peers PeerSchedule'. This does not affect the honest peer; it
 -- does, however, attempt to remove other peers or ticks of other peers. The
@@ -84,13 +83,3 @@ keepOnlyAncestorsOf blocks bt =
                  then leafs
                  else block : leafs)
             []
-
-    -- | Partial comparison of blocks. A block is older than another block if it
-    -- is its ancestor. For test blocks, this can be seen in the hash.
-    isAncestorOf :: TestBlock -> TestBlock -> Bool
-    isAncestorOf b1 b2 =
-      -- NOTE: 'unTestHash' returns the list of hash components _in reverse
-      -- order_ so we need to test that one hash is the _suffix_ of the other.
-      NonEmpty.toList (unTestHash (blockHash b1))
-        `isSuffixOf`
-      NonEmpty.toList (unTestHash (blockHash b2))
