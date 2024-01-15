@@ -51,9 +51,9 @@ shrinkOtherPeers shrink Peers{honest, others} =
 -- trunk is unused, then it remains as an empty anchored fragment.
 trimBlockTree :: BlockTree TestBlock -> PointSchedule -> BlockTree TestBlock
 trimBlockTree bt ps =
-    let youngest = selectYoungest (pointScheduleBlocks ps)
-        trunk = keepOnlyAncestorsOf youngest (btTrunk bt)
-        branches = mapMaybe (fragmentToMaybe . keepOnlyAncestorsOf youngest . btbSuffix) (btBranches bt)
+    let leafs = blocksWithoutDescendents (pointScheduleBlocks ps)
+        trunk = keepOnlyAncestorsOf leafs (btTrunk bt)
+        branches = mapMaybe (fragmentToMaybe . keepOnlyAncestorsOf leafs . btbSuffix) (btBranches bt)
      in foldr addBranch' (mkTrunk trunk) branches
   where
     fragmentToMaybe (Empty _) = Nothing
@@ -62,21 +62,24 @@ trimBlockTree bt ps =
     -- | Given some blocks and a fragment, keep only the prefix of the fragment
     -- that contains ancestors of the given blocks.
     keepOnlyAncestorsOf :: [TestBlock] -> AnchoredFragment TestBlock -> AnchoredFragment TestBlock
-    keepOnlyAncestorsOf youngest = takeWhileOldest (\block -> (block `isAncestorOf`) `any` youngest)
+    keepOnlyAncestorsOf leafs = takeWhileOldest (\block -> (block `isAncestorOf`) `any` leafs)
 
-    -- | Return a subset of the given block containing youngest elements. It is
-    -- not guaranteed that this set is minimal. It is however guaranteed that
-    -- any block in the input list is an ancestor of a block in the output list.
-    selectYoungest :: [TestBlock] -> [TestBlock]
-    selectYoungest =
+    -- | Return a subset of the given blocks containing only the ones that do
+    -- not have any other descendents in the set.
+    blocksWithoutDescendents :: [TestBlock] -> [TestBlock]
+    blocksWithoutDescendents =
         -- NOTE: We process blocks from the biggest slot to the smallest; this
         -- should make us select only the tip of each chain.
-        go [] . reverse . sortOn blockSlot
+        blocksWithoutPreviousDescendents . reverse . sortOn blockSlot
       where
-        go youngest [] = youngest
-        go youngest (block : blocks)
-          | any (`isDescendentOf` block) youngest = go youngest blocks
-          | otherwise = go (block : youngest) blocks
+        -- | Blocks that do not have any descendents earlier in the list.
+        blocksWithoutPreviousDescendents =
+          foldl
+            (\leafs block ->
+               if (block `isAncestorOf`) `any` leafs
+                 then leafs
+                 else block : leafs)
+            []
 
     -- | Partial comparison of blocks. A block is older than another block if it
     -- is its ancestor. For test blocks, this can be seen in the hash.
@@ -87,7 +90,3 @@ trimBlockTree bt ps =
       NonEmpty.toList (unTestHash (blockHash b1))
         `isSuffixOf`
       NonEmpty.toList (unTestHash (blockHash b2))
-
-    -- | Partial comparison of blocks. @isDescendentOf = flip isAncestorOf@.
-    isDescendentOf :: TestBlock -> TestBlock -> Bool
-    isDescendentOf = flip isAncestorOf
