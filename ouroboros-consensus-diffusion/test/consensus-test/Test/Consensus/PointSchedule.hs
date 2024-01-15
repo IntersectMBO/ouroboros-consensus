@@ -46,6 +46,7 @@ module Test.Consensus.PointSchedule (
   , genesisAdvertisedPoints
   , headerPointBlock
   , longRangeAttack
+  , peerSchedulesBlocks
   , pointScheduleBlocks
   , pointSchedulePeers
   , prettyGenesisTest
@@ -82,7 +83,7 @@ import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..),
 import           Test.Consensus.PointSchedule.SinglePeer
                      (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
-                     peerScheduleFromTipPoints)
+                     peerScheduleFromTipPoints, schedulePointToBlock)
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
                      (uniformRMDiffTime)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
@@ -327,6 +328,14 @@ fromSchedulePoints peers = do
     durations = snd (mapAccumL (\ prev start -> (start, start - prev)) 0 (drop 1 starts)) ++ [0.1]
 
     (starts, states) = unzip $ foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
+
+-- | List of all blocks appearing in the schedule.
+peerScheduleBlocks :: PeerSchedule -> [TestBlock]
+peerScheduleBlocks = map (schedulePointToBlock . snd)
+
+-- | List of all blocks appearing in the schedules.
+peerSchedulesBlocks :: Peers PeerSchedule -> [TestBlock]
+peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList
 
 ----------------------------------------------------------------------------------------------------
 -- Schedule generators
