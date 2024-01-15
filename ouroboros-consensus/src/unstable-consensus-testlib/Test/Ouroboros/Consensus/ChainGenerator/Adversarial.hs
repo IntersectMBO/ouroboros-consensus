@@ -277,7 +277,7 @@ checkAdversarialChain recipe adv = do
         C.SomeWindow pw0 w0 <- let RI.Race x = iterH in pure x
 
         let
-          w0' = C.UnsafeContains (C.windowStart w0) (min (C.Count s) (C.windowSize w0))
+          w0' = C.truncateWin w0 (C.Count s)
           vvH = C.getVector vHAfterIntersection
           vvA = C.getVector vA
           -- cumulative sums of active slots per slot after the intersection
@@ -660,7 +660,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         let
           -- A window after the intersection as short as the shortest of the
           -- stability window or the first race to the k+1st block.
-          w0' = C.UnsafeContains (C.windowStart w0) (min (C.Count s) (C.windowSize w0))
+          w0' = C.truncateWin w0 (C.Count s)
           hCount = C.toVar $ BV.countActivesInV S.notInverted (C.sliceV w0' vA)
 
         aCount <- ensureLowerDensityInWindow w0' g mv hCount
