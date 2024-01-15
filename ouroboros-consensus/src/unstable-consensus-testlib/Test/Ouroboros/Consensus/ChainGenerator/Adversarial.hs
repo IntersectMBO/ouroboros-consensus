@@ -513,6 +513,9 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
 
     ensureLowerDensityInWindows iterH g mv
 
+    -- While densities are lower in the adversarial schema, the adversarial
+    -- schema could still win races to the k+1st block by less than 1+delta
+    -- slots. Therefore, we call @unfillRaces@ to deactivate further slots.
     unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
 
     pure mv
