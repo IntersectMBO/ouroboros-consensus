@@ -79,14 +79,14 @@ data AdversarialViolation hon adv =
   |
     BadRace !(RaceViolation hon adv)
   |
-    -- | The density of the adversarial schema is not less than the density of
+    -- | The density of the adversarial schema is higher than the density of
     -- the honest schema in the first stability window after the intersection.
     --
-    -- In @BadDensity h a@, @h@ is the amount of active slots in the first
-    -- stability window after the intersection in the honest schema and @a@ is
-    -- the amount of active slots in the first stability window after the
-    -- intersection in the adversarial schema.
-    BadDensity Int Int
+    -- In @BadDensity w h a@, @w@ is a prefix of the first stability window
+    -- after the intersection where the density is higher in the adversarial
+    -- schema. @h@ is the amount of active slots in @w@ in the honest schema.
+    -- @a@ is the amount of active slots in @w@ in the adversarial schema.
+    BadDensity (C.SomeWindow RI.RaceLbl adv SlotE) Int Int
   deriving (Eq, Read, Show)
 
 -- | Check the chain matches the given 'AdversarialRecipe'.
@@ -274,7 +274,7 @@ checkAdversarialChain recipe adv = do
             $ RI.init (Kcp k) vHAfterIntersection
 
         -- first race window after the intersection
-        C.SomeWindow _ w0 <- let RI.Race x = iterH in pure x
+        C.SomeWindow pw0 w0 <- let RI.Race x = iterH in pure x
 
         let
           w0' = C.UnsafeContains (C.windowStart w0) (min (C.Count s) (C.windowSize w0))
@@ -287,9 +287,13 @@ checkAdversarialChain recipe adv = do
           -- window after the intersection
           hwSum = Vector.toList $ Vector.drop (C.getCount $ C.windowSize w0') $ Vector.take (s + 1) hSum
           awSum = Vector.toList $ Vector.drop (C.getCount $ C.windowSize w0') $ Vector.take (s + 1) aSum
-        case filter (\(x, y) -> x <= y) (zip hwSum awSum) of
+        case [ cmp | cmp@(_, (x, y)) <- zip [0..] (zip hwSum awSum), x <= y ] of
           []         -> pure ()
-          ((x, y):_) -> Exn.throwError $ BadDensity x y
+          ((i, (x, y)):_) ->
+            let
+              w0'' = C.UnsafeContains (C.windowStart w0') (C.windowSize w0' C.+ i)
+            in
+              Exn.throwError $ BadDensity (C.SomeWindow pw0 w0'') x y
 
 -----
 
