@@ -54,9 +54,9 @@ trimBlockTree' = keepOnlyAncestorsOf . peerSchedulesBlocks
 -- that contains ancestors of the given blocks.
 keepOnlyAncestorsOf :: [TestBlock] -> BlockTree TestBlock -> BlockTree TestBlock
 keepOnlyAncestorsOf blocks bt =
-    let leafs = blocksWithoutDescendents blocks
-        trunk = keepOnlyAncestorsOf' leafs (btTrunk bt)
-        branches = mapMaybe (fragmentToMaybe . keepOnlyAncestorsOf' leafs . btbSuffix) (btBranches bt)
+    let leaves = blocksWithoutDescendents blocks
+        trunk = keepOnlyAncestorsOf' leaves (btTrunk bt)
+        branches = mapMaybe (fragmentToMaybe . keepOnlyAncestorsOf' leaves . btbSuffix) (btBranches bt)
      in foldr addBranch' (mkTrunk trunk) branches
   where
     fragmentToMaybe (Empty _) = Nothing
@@ -65,7 +65,7 @@ keepOnlyAncestorsOf blocks bt =
     -- | Given some blocks and a fragment, keep only the prefix of the fragment
     -- that contains ancestors of the given blocks.
     keepOnlyAncestorsOf' :: [TestBlock] -> AnchoredFragment TestBlock -> AnchoredFragment TestBlock
-    keepOnlyAncestorsOf' leafs = takeWhileOldest (\block -> (block `isAncestorOf`) `any` leafs)
+    keepOnlyAncestorsOf' leaves = takeWhileOldest (\block -> (block `isAncestorOf`) `any` leaves)
 
     -- | Return a subset of the given blocks containing only the ones that do
     -- not have any other descendents in the set.
@@ -78,8 +78,8 @@ keepOnlyAncestorsOf blocks bt =
         -- | Blocks that do not have any descendents earlier in the list.
         blocksWithoutPreviousDescendents =
           foldl
-            (\leafs block ->
-               if (block `isAncestorOf`) `any` leafs
-                 then leafs
-                 else block : leafs)
+            (\leaves block ->
+               if (block `isAncestorOf`) `any` leaves
+                 then leaves
+                 else block : leaves)
             []
