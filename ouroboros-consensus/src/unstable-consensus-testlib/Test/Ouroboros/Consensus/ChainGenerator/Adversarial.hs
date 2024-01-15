@@ -255,7 +255,7 @@ checkAdversarialChain recipe adv = do
 
     -- | Check that the density of the adversarial schema is less than the
     -- density of the honest schema in the first stability window after the
-    -- intersection and in any subwindow that contains the first race to the
+    -- intersection and in any prefix that contains the first race to the
     -- k+1st block.
     --
     -- See description of @ensureLowerDensityInWindows@
@@ -629,9 +629,9 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
 
     -- | Ensure the density of the adversarial schema is less than the density
     -- of the honest schema in the first stability window after the intersection
-    -- and in any subwindow that contains the first race to the k+1st block.
+    -- and in any prefix window that contains the first race to the k+1st block.
     --
-    -- Ensuring lower density of the subwindows is necessary to avoid chains like
+    -- Ensuring lower density of the prefix windows is necessary to avoid chains like
     --
     -- > k: 3
     -- > s: 9
