@@ -28,7 +28,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
   ) where
 
 import           Control.Applicative ((<|>))
-import           Control.Monad (void, when)
+import           Control.Monad (foldM, void, when)
 import qualified Control.Monad.Except as Exn
 import           Control.Monad.ST (ST)
 import           Data.Maybe (fromJust)
@@ -654,36 +654,50 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
           -- A window after the intersection as short as the shortest of the
           -- stability window or the first race to the k+1st block.
           w0' = C.UnsafeContains (C.windowStart w0) (min (C.Count s) (C.windowSize w0))
-          hCount = BV.countActivesInV S.notInverted (C.sliceV w0' vA)
+          hCount = C.toVar $ BV.countActivesInV S.notInverted (C.sliceV w0' vA)
 
         aCount <- ensureLowerDensityInWindow w0' g mv hCount
 
-        go w0' (C.toVar hCount) aCount
+        void $ foldM
+          updateDensityOfMv
+          (hCount, aCount)
+          (stablePrefixWindowsContaining w0')
+
       where
-        -- Ensure low densities in all windows containing @w@ until the first
-        -- stability window after the intersection.
+        -- Yields all windows of the adversarial schema with proper prefix @w@
+        -- that are prefixes of the first stability window after the
+        -- intersection.
+        stablePrefixWindowsContaining w =
+          let
+            stableSlotsAfterIntersection =
+              min s (C.getCount (C.lengthMV mv) - C.getCount (C.windowStart w))
+            n = stableSlotsAfterIntersection - C.getCount (C.windowSize w)
+          in
+            take n $ drop 1 $ iterate increaseSizeW w
+
+        -- Updates mv to ensure the density of the adversarial schema is lower
+        -- than the density of the honest schema in @increaseSizeW w@.
         --
-        -- @hc@ is the number of active slots in the honest schema in @w@
+        -- @hc@ is the number of active slots in the honest schema in @w@ minus
+        -- the last slot
+        --
         -- @ac@ is the number of active slots in the adversarial schema in @w@
-        go w hc ac =
-          when (C.windowSize w C.+ 1 <= C.Count s
-                && C.windowLast w C.+ 1 < C.toIndex (C.toVar $ C.lengthMV mv)) $ do
-              let w' = increaseSizeW w
+        -- minus the last slot
+        updateDensityOfMv (hc, ac) w = do
+          sA <- BV.testMV S.notInverted mv (C.windowLast w)
 
-              sA <- BV.testMV S.notInverted mv (C.windowLast w')
+          let
+            ac' = if sA then ac C.+ 1 else ac
+            sH = BV.testV S.notInverted vA (C.windowLast w)
+            hc' = if sH then hc C.+ 1 else hc
 
-              let
-                ac' = if sA then ac C.+ 1 else ac
-                sH = BV.testV S.notInverted vA (C.windowLast w')
-                hc' = if sH then hc C.+ 1 else hc
+          ac'' <-
+              if ac' >= hc' then
+                ensureLowerDensityInWindow w g mv hc'
+              else
+                pure ac'
 
-              ac'' <-
-                  if ac' >= hc' then
-                    ensureLowerDensityInWindow w' g mv hc'
-                  else
-                    pure ac'
-
-              go w' hc' ac''
+          return (hc', ac'')
 
     -- | Increase the size of a window by one slot
     increaseSizeW (C.UnsafeContains start size) =
