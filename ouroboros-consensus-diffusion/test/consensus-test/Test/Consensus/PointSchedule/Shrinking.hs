@@ -64,7 +64,7 @@ trimBlockTree bt ps =
     trimFragment :: [TestBlock] -> AnchoredFragment TestBlock -> AnchoredFragment TestBlock
     trimFragment _ fragment@(Empty _) = fragment
     trimFragment youngest (fragment :> block)
-      | any (block `isOlderThan`) youngest = fragment :> block
+      | any (block `isAncestorOf`) youngest = fragment :> block
       | otherwise = trimFragment youngest fragment
 
     -- | Return a subset of the given block containing youngest elements. It is
@@ -78,19 +78,19 @@ trimBlockTree bt ps =
       where
         go youngest [] = youngest
         go youngest (block : blocks)
-          | any (`isYoungerThan` block) youngest = go youngest blocks
+          | any (`isDescendentOf` block) youngest = go youngest blocks
           | otherwise = go (block : youngest) blocks
 
     -- | Partial comparison of blocks. A block is older than another block if it
     -- is its ancestor. For test blocks, this can be seen in the hash.
-    isOlderThan :: TestBlock -> TestBlock -> Bool
-    isOlderThan b1 b2 =
+    isAncestorOf :: TestBlock -> TestBlock -> Bool
+    isAncestorOf b1 b2 =
       -- NOTE: 'unTestHash' returns the list of hash components _in reverse
       -- order_ so we need to test that one hash is the _suffix_ of the other.
       NonEmpty.toList (unTestHash (blockHash b1))
         `isSuffixOf`
       NonEmpty.toList (unTestHash (blockHash b2))
 
-    -- | Partial comparison of blocks. @isYoungerThan = flip isOlderThan@.
-    isYoungerThan :: TestBlock -> TestBlock -> Bool
-    isYoungerThan = flip isOlderThan
+    -- | Partial comparison of blocks. @isDescendentOf = flip isAncestorOf@.
+    isDescendentOf :: TestBlock -> TestBlock -> Bool
+    isDescendentOf = flip isAncestorOf
