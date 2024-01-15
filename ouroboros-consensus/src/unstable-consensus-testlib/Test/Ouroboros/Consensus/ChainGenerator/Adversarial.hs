@@ -287,7 +287,7 @@ checkAdversarialChain recipe adv = do
           -- window after the intersection
           hwSum = Vector.toList $ Vector.drop (C.getCount $ C.windowSize w0') $ Vector.take (s + 1) hSum
           awSum = Vector.toList $ Vector.drop (C.getCount $ C.windowSize w0') $ Vector.take (s + 1) aSum
-        case filter (\(x, y) -> x < y) (zip hwSum awSum) of
+        case filter (\(x, y) -> x <= y) (zip hwSum awSum) of
           []         -> pure ()
           ((x, y):_) -> Exn.throwError $ BadDensity x y
 
