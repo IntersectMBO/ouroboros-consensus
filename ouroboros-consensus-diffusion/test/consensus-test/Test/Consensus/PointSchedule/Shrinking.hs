@@ -14,8 +14,7 @@ import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule (GenesisTest (gtBlockTree),
-                     PeerSchedule, PointSchedule, fromSchedulePoints,
-                     pointScheduleBlocks)
+                     PeerSchedule, peerSchedulesBlocks)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock, TestHash (unTestHash))
@@ -31,7 +30,7 @@ shrinkPeerSchedules ::
   [(GenesisTest, Peers PeerSchedule)]
 shrinkPeerSchedules genesisTest schedule _stateView =
   shrinkOtherPeers shrinkPeerSchedule schedule <&> \shrunkSchedule ->
-    let trimmedBlockTree = trimBlockTree (gtBlockTree genesisTest) (fromSchedulePoints shrunkSchedule)
+    let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
      in (genesisTest{gtBlockTree = trimmedBlockTree}, shrunkSchedule)
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
@@ -47,13 +46,18 @@ shrinkOtherPeers shrink Peers{honest, others} =
     shrinkList (traverse (traverse shrink)) $ Map.toList others
 
 -- | Remove blocks from the given block tree that are not necessary for the
--- given point schedule. If entire branches are unused, they are removed. If the
+-- given peer schedules. If entire branches are unused, they are removed. If the
 -- trunk is unused, then it remains as an empty anchored fragment.
-trimBlockTree :: BlockTree TestBlock -> PointSchedule -> BlockTree TestBlock
-trimBlockTree bt ps =
-    let leafs = blocksWithoutDescendents (pointScheduleBlocks ps)
-        trunk = keepOnlyAncestorsOf leafs (btTrunk bt)
-        branches = mapMaybe (fragmentToMaybe . keepOnlyAncestorsOf leafs . btbSuffix) (btBranches bt)
+trimBlockTree' :: Peers PeerSchedule -> BlockTree TestBlock -> BlockTree TestBlock
+trimBlockTree' = keepOnlyAncestorsOf . peerSchedulesBlocks
+
+-- | Given some blocks and a block tree, keep only the prefix of the block tree
+-- that contains ancestors of the given blocks.
+keepOnlyAncestorsOf :: [TestBlock] -> BlockTree TestBlock -> BlockTree TestBlock
+keepOnlyAncestorsOf blocks bt =
+    let leafs = blocksWithoutDescendents blocks
+        trunk = keepOnlyAncestorsOf' leafs (btTrunk bt)
+        branches = mapMaybe (fragmentToMaybe . keepOnlyAncestorsOf' leafs . btbSuffix) (btBranches bt)
      in foldr addBranch' (mkTrunk trunk) branches
   where
     fragmentToMaybe (Empty _) = Nothing
@@ -61,8 +65,8 @@ trimBlockTree bt ps =
 
     -- | Given some blocks and a fragment, keep only the prefix of the fragment
     -- that contains ancestors of the given blocks.
-    keepOnlyAncestorsOf :: [TestBlock] -> AnchoredFragment TestBlock -> AnchoredFragment TestBlock
-    keepOnlyAncestorsOf leafs = takeWhileOldest (\block -> (block `isAncestorOf`) `any` leafs)
+    keepOnlyAncestorsOf' :: [TestBlock] -> AnchoredFragment TestBlock -> AnchoredFragment TestBlock
+    keepOnlyAncestorsOf' leafs = takeWhileOldest (\block -> (block `isAncestorOf`) `any` leafs)
 
     -- | Return a subset of the given blocks containing only the ones that do
     -- not have any other descendents in the set.
