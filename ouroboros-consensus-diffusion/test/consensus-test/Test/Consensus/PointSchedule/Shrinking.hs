@@ -8,7 +8,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     AnchoredSeq (Empty, (:>)))
+                     AnchoredSeq (Empty), takeWhileOldest)
 import           Ouroboros.Network.Block (blockHash, blockSlot)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
@@ -52,20 +52,17 @@ shrinkOtherPeers shrink Peers{honest, others} =
 trimBlockTree :: BlockTree TestBlock -> PointSchedule -> BlockTree TestBlock
 trimBlockTree bt ps =
     let youngest = selectYoungest (pointScheduleBlocks ps)
-        trunk = trimFragment youngest (btTrunk bt)
-        branches = mapMaybe (fragmentToMaybe . trimFragment youngest . btbSuffix) (btBranches bt)
+        trunk = keepOnlyAncestorsOf youngest (btTrunk bt)
+        branches = mapMaybe (fragmentToMaybe . keepOnlyAncestorsOf youngest . btbSuffix) (btBranches bt)
      in foldr addBranch' (mkTrunk trunk) branches
   where
     fragmentToMaybe (Empty _) = Nothing
     fragmentToMaybe fragment  = Just fragment
 
-    -- | Given a list of blocks and a fragment, cut the fragment such that it
-    -- contains only blocks that are ancestors of blocks in the list.
-    trimFragment :: [TestBlock] -> AnchoredFragment TestBlock -> AnchoredFragment TestBlock
-    trimFragment _ fragment@(Empty _) = fragment
-    trimFragment youngest (fragment :> block)
-      | any (block `isAncestorOf`) youngest = fragment :> block
-      | otherwise = trimFragment youngest fragment
+    -- | Given some blocks and a fragment, keep only the prefix of the fragment
+    -- that contains ancestors of the given blocks.
+    keepOnlyAncestorsOf :: [TestBlock] -> AnchoredFragment TestBlock -> AnchoredFragment TestBlock
+    keepOnlyAncestorsOf youngest = takeWhileOldest (\block -> (block `isAncestorOf`) `any` youngest)
 
     -- | Return a subset of the given block containing youngest elements. It is
     -- not guaranteed that this set is minimal. It is however guaranteed that
