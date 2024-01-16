@@ -38,7 +38,7 @@ import           Data.Kind (Type)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
-import           Data.SOP.Dict
+import           Data.SOP.Dict (Dict (..))
 import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Data.Word

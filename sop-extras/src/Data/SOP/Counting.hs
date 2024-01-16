@@ -43,7 +43,7 @@ import qualified Data.Foldable as Foldable
 import           Data.Kind
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
-import           Data.SOP.Dict
+import           Data.SOP.Dict (Dict (..), all_NP)
 import           Data.SOP.NonEmpty
 import           Data.SOP.Strict
 

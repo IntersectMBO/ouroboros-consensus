@@ -191,6 +191,7 @@ test-suite mock-test
     , base
     , bytestring
     , cborg
+    , constraints
     , containers
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block}
     , ouroboros-network-mock

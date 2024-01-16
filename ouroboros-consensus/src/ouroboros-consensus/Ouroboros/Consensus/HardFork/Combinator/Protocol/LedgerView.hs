@@ -17,7 +17,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView (
 
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
-import           Data.SOP.Dict
+import           Data.SOP.Dict (Dict (..), all_NP)
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract
 import           Ouroboros.Consensus.HardFork.Combinator.State.Instances ()

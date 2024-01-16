@@ -8,6 +8,7 @@ module Test.Consensus.Shelley.Serialisation (tests) where
 import           Cardano.Crypto.Hash (ShortHash)
 import qualified Codec.CBOR.Write as CBOR
 import qualified Data.ByteString.Lazy as Lazy
+import           Data.Constraint
 import           Data.Proxy (Proxy (..))
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -18,7 +19,6 @@ import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
-import           Ouroboros.Consensus.Util (Dict (..))
 import           Test.Consensus.Shelley.Generators ()
 import           Test.Consensus.Shelley.MockCrypto
 import           Test.Tasty

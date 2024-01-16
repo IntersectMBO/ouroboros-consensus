@@ -247,6 +247,7 @@ test-suite byron-test
     , cardano-ledger-byron
     , cardano-ledger-byron-test
     , cborg
+    , constraints
     , containers
     , filepath
     , hedgehog-quickcheck
@@ -328,6 +329,7 @@ test-suite shelley-test
     , cardano-protocol-tpraos
     , cardano-slotting
     , cborg
+    , constraints
     , containers
     , filepath
     , microlens
@@ -420,6 +422,7 @@ test-suite cardano-test
     , cardano-protocol-tpraos
     , cardano-slotting
     , cborg
+    , constraints
     , containers
     , contra-tracer
     , filepath

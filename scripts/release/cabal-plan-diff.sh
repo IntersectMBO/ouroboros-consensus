@@ -31,6 +31,7 @@ if [[ -d "./tmp" ]]; then
   rm -r tmp
 fi
 mkdir tmp
+trap rm -r ./tmp EXIT
 
 cabal update &>/dev/null
 
@@ -72,82 +73,79 @@ cabal build all --dry-run --minimize-conflict-set --project-file='./tmp/cabal.pr
 
 retVal=$?
 if [ $retVal -ne 0 ]; then
-  echo "error: Your project will fail to build in CHaP/Hackage"
+  echo "warning: Your project will fail to build in CHaP/Hackage"
   if [[ -n $GH ]]; then
-    echo "::error title=Unbuildable project::Your project will fail to build in CHaP/Hackage"
+    echo "::warning title=Unbuildable project::Your project will fail to build in CHaP/Hackage"
   fi
-  exit $retVal
+else
+  cp ./dist-newstyle/cache/plan.json ./tmp/plan-libs.json
+
+  cabal-plan diff --plan-json='tmp/plan-full.json' --plan-json='tmp/plan-libs.json' | awk "/Package versions/{f=1} /Dependency graph/{f=0} f" > ./tmp/the-diff-1
+
+  for i in "$@" ; do [[ $i == "--show-diff" ]] && cat ./tmp/the-diff-1 && break ; done
+
+  awk '/^$/{f=!f} f' ./tmp/the-diff-1 > ./tmp/the-diff
+
+  grep "^\-" ./tmp/the-diff | cut -d'-' -f2- | cut -d' ' -f1 > ./tmp/only-in-full
+  grep "^\+" ./tmp/the-diff | cut -d'+' -f2- | cut -d' ' -f1 > ./tmp/only-in-libs
+
+  echo -e "\n=== TEST ONLY DEPENDENCIES"
+
+  comm -2 -3 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | uniq) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | uniq)
+
+  echo -e "\n=== FULL-BUILD ONLY DEPENDENCIES"
+
+  comm -1 -3 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | uniq) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | uniq)
+
+  echo -e "\n=== VERSION BUMPS FROM TESTS ONLY TO FULL-BUILD"
+
+  common=$(comm -1 -2 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | uniq) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | uniq))
+
+  major=()
+  minor=()
+  patch=()
+
+  for dep in $common; do
+    full=$(grep -E "^$dep-([0-9]+\.)*[0-9]" ./tmp/only-in-full | rev | cut -d'-' -f1 | rev)
+    if [[ $(echo $full | awk -F. '{print NF-1}') -lt 3 ]]; then
+      n=$(((3 - $(echo $full | awk -F. '{print NF-1}'))*2))
+      sff=".0.0.0.0"
+      full="$full${sff:0:$n}"
+    fi
+    libs=$(grep -E "^$dep-([0-9]+\.)*[0-9]" ./tmp/only-in-libs | rev | cut -d'-' -f1 | rev)
+    if [[ $(echo $libs | awk -F. '{print NF-1}') -lt 3 ]]; then
+      n=$(((3 - $(echo $libs | awk -F. '{print NF-1}'))*2))
+      sff=".0.0.0.0"
+      libs="$libs${sff:0:$n}"
+    fi
+    verDiff=$(printf "%s\n" "$full" "$libs" | sed -e 'N;s/^\(.*\).*\n\1.*$/\1/' | awk -F. '{print NF-1}')
+    case $verDiff in
+      0)
+        major+=("$dep $full -> $libs")
+        ;;
+      1)
+        major+=("$dep $full -> $libs")
+        ;;
+      2)
+        minor+=("$dep $full -> $libs")
+        ;;
+      *)
+        patch+=("$dep $full -> $libs")
+        ;;
+    esac
+  done
+
+  echo -e "- MAJOR BUMPS"
+  printf '%s\n' "${major[@]}" | sed 's/^\(.\+\)/   - \1/g'
+
+  echo -e "- MINOR BUMPS"
+  printf '%s\n' "${minor[@]}" | sed 's/^\(.\+\)/   - \1/g'
+
+  echo -e "- PATCH BUMPS"
+  printf '%s\n' "${patch[@]}" | sed 's/^\(.\+\)/   - \1/g'
+
+  if [[ -n $GH && ${#major[@]} ]]; then
+    str=$(printf '%s\n' "${major[@]}")
+    echo "::warning title=Major bumps detected::$str"
+  fi
 fi
-
-cp ./dist-newstyle/cache/plan.json ./tmp/plan-libs.json
-
-cabal-plan diff --plan-json='tmp/plan-full.json' --plan-json='tmp/plan-libs.json' | awk "/Package versions/{f=1} /Dependency graph/{f=0} f" > ./tmp/the-diff-1
-
-for i in "$@" ; do [[ $i == "--show-diff" ]] && cat ./tmp/the-diff-1 && break ; done
-
-awk '/^$/{f=!f} f' ./tmp/the-diff-1 > ./tmp/the-diff
-
-grep "^\-" ./tmp/the-diff | cut -d'-' -f2- | cut -d' ' -f1 > ./tmp/only-in-full
-grep "^\+" ./tmp/the-diff | cut -d'+' -f2- | cut -d' ' -f1 > ./tmp/only-in-libs
-
-echo -e "\n=== TEST ONLY DEPENDENCIES"
-
-comm -2 -3 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | uniq) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | uniq)
-
-echo -e "\n=== FULL-BUILD ONLY DEPENDENCIES"
-
-comm -1 -3 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | uniq) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | uniq)
-
-echo -e "\n=== VERSION BUMPS FROM TESTS ONLY TO FULL-BUILD"
-
-common=$(comm -1 -2 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | uniq) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | uniq))
-
-major=()
-minor=()
-patch=()
-
-for dep in $common; do
-  full=$(grep -E "^$dep-([0-9]+\.)*[0-9]" ./tmp/only-in-full | rev | cut -d'-' -f1 | rev)
-  if [[ $(echo $full | awk -F. '{print NF-1}') -lt 3 ]]; then
-    n=$(((3 - $(echo $full | awk -F. '{print NF-1}'))*2))
-    sff=".0.0.0.0"
-    full="$full${sff:0:$n}"
-  fi
-  libs=$(grep -E "^$dep-([0-9]+\.)*[0-9]" ./tmp/only-in-libs | rev | cut -d'-' -f1 | rev)
-  if [[ $(echo $libs | awk -F. '{print NF-1}') -lt 3 ]]; then
-    n=$(((3 - $(echo $libs | awk -F. '{print NF-1}'))*2))
-    sff=".0.0.0.0"
-    libs="$libs${sff:0:$n}"
-  fi
-  verDiff=$(printf "%s\n" "$full" "$libs" | sed -e 'N;s/^\(.*\).*\n\1.*$/\1/' | awk -F. '{print NF-1}')
-  case $verDiff in
-    0)
-      major+=("$dep $full -> $libs")
-      ;;
-    1)
-      major+=("$dep $full -> $libs")
-      ;;
-    2)
-      minor+=("$dep $full -> $libs")
-      ;;
-    *)
-      patch+=("$dep $full -> $libs")
-      ;;
-  esac
-done
-
-echo -e "- MAJOR BUMPS"
-printf '%s\n' "${major[@]}" | sed 's/^\(.\+\)/   - \1/g'
-
-echo -e "- MINOR BUMPS"
-printf '%s\n' "${minor[@]}" | sed 's/^\(.\+\)/   - \1/g'
-
-echo -e "- PATCH BUMPS"
-printf '%s\n' "${patch[@]}" | sed 's/^\(.\+\)/   - \1/g'
-
-if [[ -n $GH && ${#major[@]} ]]; then
-  str=$(printf '%s\n' "${major[@]}")
-  echo "::warning title=Major bumps detected::$str"
-fi
-
-rm -r ./tmp

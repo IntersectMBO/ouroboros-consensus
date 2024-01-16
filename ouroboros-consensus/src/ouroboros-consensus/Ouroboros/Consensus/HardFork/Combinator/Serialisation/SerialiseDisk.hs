@@ -10,7 +10,7 @@ import           Codec.CBOR.Encoding (Encoding)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
-import           Data.SOP.Dict
+import           Data.SOP.Dict (Dict (..), all_NP)
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras

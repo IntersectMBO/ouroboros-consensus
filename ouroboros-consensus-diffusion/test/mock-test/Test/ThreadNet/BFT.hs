@@ -5,6 +5,7 @@
 
 module Test.ThreadNet.BFT (tests) where
 
+import           Data.Constraint
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config.SecurityParam
@@ -13,7 +14,6 @@ import           Ouroboros.Consensus.Mock.Ledger
 import           Ouroboros.Consensus.Mock.Node ()
 import           Ouroboros.Consensus.Mock.Node.BFT
 import           Ouroboros.Consensus.Mock.Node.Serialisation
-import           Ouroboros.Consensus.Util (Dict (..))
 import           Test.Consensus.Ledger.Mock.Generators ()
 import           Test.QuickCheck
 import           Test.Tasty

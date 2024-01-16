@@ -4,7 +4,12 @@
     , as: [CSC, CsClient, CSClient]
     , message: "Exports fields with very common names"
     }
+  - { name: Data.SOP.Dict
+    , importStyle: explicitOrQualified
+    , message: "Avoid confusion with Data.Constraint (Dict)"
+    }
 
 - ignore: {}
 
 - warn: {name: Ouroboros.Consensus.MiniProtocol.ChainSync.Client should be imported qualified or with an explicit import list}
+- error: {name: Data.SOP.Dict should be imported qualified or with an explicit import list}
