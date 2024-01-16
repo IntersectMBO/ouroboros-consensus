@@ -2,13 +2,12 @@
 
 module Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules) where
 
+import           Data.Containers.ListUtils (nubOrd)
 import           Data.Functor ((<&>))
-import           Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty), takeWhileOldest)
-import           Ouroboros.Network.Block (blockSlot)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
@@ -16,7 +15,8 @@ import           Test.Consensus.PointSchedule (GenesisTest (gtBlockTree),
                      PeerSchedule, peerSchedulesBlocks)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.QuickCheck (shrinkList)
-import           Test.Util.TestBlock (TestBlock, isAncestorOf)
+import           Test.Util.TestBlock (TestBlock, isAncestorOf,
+                     isStrictAncestorOf)
 
 -- | Shrink a 'Peers PeerSchedule'. This does not affect the honest peer; it
 -- does, however, attempt to remove other peers or ticks of other peers. The
@@ -70,16 +70,6 @@ keepOnlyAncestorsOf blocks bt =
     -- | Return a subset of the given blocks containing only the ones that do
     -- not have any other descendents in the set.
     blocksWithoutDescendents :: [TestBlock] -> [TestBlock]
-    blocksWithoutDescendents =
-        -- NOTE: We process blocks from the biggest slot to the smallest; this
-        -- should make us select only the tip of each chain.
-        blocksWithoutPreviousDescendents . reverse . sortOn blockSlot
-      where
-        -- | Blocks that do not have any descendents earlier in the list.
-        blocksWithoutPreviousDescendents =
-          foldl
-            (\leaves block ->
-               if (block `isAncestorOf`) `any` leaves
-                 then leaves
-                 else block : leaves)
-            []
+    blocksWithoutDescendents bs =
+      let bs' = nubOrd bs
+       in [ b | b <- bs', not ((b `isStrictAncestorOf`) `any` bs') ]
