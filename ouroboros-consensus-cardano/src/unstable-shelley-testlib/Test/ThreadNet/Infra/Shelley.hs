@@ -548,6 +548,7 @@ mkMASetDecentralizationParamTxs ::
      forall proto era.
      ( ShelleyBasedEra era
      , SL.AllegraEraTxBody era
+     , SL.ShelleyEraTxBody era
      , SL.AtMostEra AlonzoEra era
      , SL.AtMostEra BabbageEra era
      )

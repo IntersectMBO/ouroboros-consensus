@@ -42,7 +42,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
   pHeaderSlot = SL.bheaderSlotNo . SL.bhbody
   pHeaderBlock = SL.bheaderBlockNo . SL.bhbody
   pHeaderSize = fromIntegral . SL.bHeaderSize
-  pHeaderBlockSize = SL.bsize . SL.bhbody
+  pHeaderBlockSize = fromIntegral . SL.bsize . SL.bhbody
 
   type EnvelopeCheckError _ = ChainPredicateFailure
 
