@@ -165,6 +165,8 @@ data ChainDB m blk = ChainDB {
       -- fragment will move as the chain grows.
     , getCurrentChain    :: STM m (AnchoredFragment (Header blk))
 
+    , getCurrentChainIO  :: m (AnchoredFragment (Header blk))
+
       -- | Return the LedgerDB containing the last @k@ ledger states.
     , getLedgerDB        :: STM m (LedgerDB' blk)
 
