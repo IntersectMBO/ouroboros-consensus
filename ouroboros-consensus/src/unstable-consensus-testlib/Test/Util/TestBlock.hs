@@ -72,6 +72,8 @@ module Test.Util.TestBlock (
   , Permutation (..)
   , isAncestorOf
   , isDescendentOf
+  , isStrictAncestorOf
+  , isStrictDescendentOf
   , permute
   , unsafeTestBlockWithPayload
   ) where
@@ -266,6 +268,11 @@ isAncestorOf b1 b2 =
     `isSuffixOf`
   NE.toList (unTestHash (blockHash b2))
 
+-- | Variant of 'isAncestorOf' that returns @False@ when the two blocks are
+-- equal.
+isStrictAncestorOf :: TestBlock -> TestBlock -> Bool
+isStrictAncestorOf b1 b2 = b1 `isAncestorOf` b2 && b1 /= b2
+
 -- | A block @b1@ is the descendent of another block @b2@ if there exists a
 -- chain of blocks from @b2@ to @b1@. For test blocks in particular, this can be
 -- seen in the hash: the hash of @b2@ should be a prefix of the hash of @b1@.
@@ -276,6 +283,11 @@ isAncestorOf b1 b2 =
 -- not (b1 `isAncestorOf` b2) || b1 == b2@.
 isDescendentOf :: TestBlock -> TestBlock -> Bool
 isDescendentOf = flip isAncestorOf
+
+-- | Variant of 'isDescendentOf' that returns @False@ when the two blocks are
+-- equal.
+isStrictDescendentOf :: TestBlock -> TestBlock -> Bool
+isStrictDescendentOf b1 b2 = b1 `isDescendentOf` b2 && b1 /= b2
 
 instance ShowProxy TestBlock where
 
