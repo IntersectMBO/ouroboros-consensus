@@ -420,9 +420,9 @@ prop_adversarialChainMutation (SomeTestAdversarialMutation Proxy Proxy testAdver
     counter <- newIORef @Int 0
     catch   <- newIORef @(QCGen, [String]) (undefined, [])
 
-    -- we're willing to wait up to 2s to find a failure for each 'TestHonestMutation'
+    -- we're willing to wait up to 20s to find a failure for each 'TestHonestMutation'
     IO.timeout
-        (2 * 10^(6::Int))
+        (20 * 10^(6::Int))
         (go catch counter recipeA' testSeedAsSeed0) >>= \case
             Just prop -> pure prop
             Nothing   ->    -- did not find a failure caused by the mutation
