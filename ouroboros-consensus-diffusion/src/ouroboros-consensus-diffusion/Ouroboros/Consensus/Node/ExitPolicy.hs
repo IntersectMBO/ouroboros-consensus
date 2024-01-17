@@ -18,14 +18,14 @@ data NodeToNodeInitiatorResult =
 
 
 returnPolicy :: ReturnPolicy NodeToNodeInitiatorResult
-returnPolicy NoInitiatorResult = ReconnectDelay 10
+returnPolicy NoInitiatorResult = RepromoteDelay 10
 returnPolicy (ChainSyncInitiatorResult result) = case result of
   -- TODO: it would be nice to have additional context to predict when we will
   -- be ready to reconnect.
-  CSClient.ForkTooDeep      _ _ourTip _theirTip -> ReconnectDelay 120
-  CSClient.NoMoreIntersection _ourTip _theirTip -> ReconnectDelay 120
+  CSClient.ForkTooDeep      _ _ourTip _theirTip -> RepromoteDelay 120
+  CSClient.NoMoreIntersection _ourTip _theirTip -> RepromoteDelay 120
   CSClient.RolledBackPastIntersection
-                            _ _ourTip _theirTip -> ReconnectDelay 180
+                            _ _ourTip _theirTip -> RepromoteDelay 180
   -- the outbound-governor asked for hot to warm demotion; it's up to the
   -- governor to decide to promote the peer to hot.
-  CSClient.AskedToTerminate                     -> ReconnectDelay 10
+  CSClient.AskedToTerminate                     -> RepromoteDelay 10
