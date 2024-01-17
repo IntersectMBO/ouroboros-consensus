@@ -13,7 +13,7 @@ Thus, when a client sends a query to a node, it is important that the node is aw
 
 At the beginning of every connection from a client to a node, the Network layer will negotiate a [`NodeToClientVersion`][n2c]. Before the client sends a query, it can now check that the negotiated version is not older than the associated version number of the query, and act accordingly (i.e. display an indicative error message, or use a different/fallback mechanism to do its job).
 
-Custom implementation of the Cardano node client can choose to bypass this check before submitting the query. This does not constitute a problem for the node integrity, but is, instead, an inconvenience for the user as she will be presented with an obscure CBOR decoding error when an old node tries to answer a query it does not support.
+Custom implementations of the Cardano node client are free to bypass this check before submitting the query. This does not constitute a problem for the node integrity, but is, instead, an inconvenience for the user. When querying an older node, such an inconsiderate client will simply be disconnected from without explanation. If the user has access to the node's logs, she'll find there an obscure CBOR decoding error.
 
 ## Implementation
 
@@ -21,8 +21,8 @@ Custom implementation of the Cardano node client can choose to bypass this check
 
 Our code does not use the negotiated [`NodeToClientVersion`][n2c] directly, but translates them first to a [`CardanoNodeToClientVersion`][cardano-n2c] and then to [`ShelleyNodeToClientVersion`][shelley-n2c].
 
- - A [`ShelleyNodeToClientVersion`][shelley-n2c] is what is associated with every query in [`querySupportedVersion`][query-supported-version].
- - A [`CardanoNodeToClientVersion`][cardano-n2c] specifies the [`ShelleyNodeToClientVersion`][shelley-n2c] for each era, or indicates that a specific [era][feature-table] is not supported. As an example, consider
+ - The [`querySupportedVersion`][query-supported-version] function assigns a [`ShelleyNodeToClientVersion`][shelley-n2c] to each Shelley-based query.
+ - Each [`CardanoNodeToClientVersionX`][cardano-n2c] specifies the [`ShelleyNodeToClientVersion`][shelley-n2c] for each era, or indicates that a specific [era][feature-table] is not supported. As an example, consider
    ```haskell
    pattern CardanoNodeToClientVersion10 :: BlockNodeToClientVersion (CardanoBlock c)
    pattern CardanoNodeToClientVersion10 =
@@ -40,9 +40,9 @@ Our code does not use the negotiated [`NodeToClientVersion`][n2c] directly, but 
    ```
    This tells us that in Shelley, Allegra, Mary, Alonzo and Babbage, we use `ShelleyNodeToClientVersion6`, and Conway is disabled. This means that no queries that were introduced in `ShelleyNodeToClientVersion7` can be used, and no queries in the Conway era are possible at all.
 
-   In order to reduce the number of possible version combinations, we currently follow the convention that all `ShelleyNodeToClientVersion`s in one `CardanoNodeToClientVersionX` are equal. This means that users (like `cardano-api`) can rely on the fact that once a `NodeToClient` version has been negotiated, all enabled Shelley-based eras support exactly the same queries.[^conway-queries] We might weaken this guarantee in the future, see [#864](https://github.com/IntersectMBO/ouroboros-consensus/issues/864).
+   In order to reduce the number of possible version combinations, we currently follow the convention that all `ShelleyNodeToClientVersion`s in one `CardanoNodeToClientVersionX` are equal. This means that the developers of clients (like `cardano-api`, etc) can rely on the fact that once a `NodeToClient` version has been negotiated, all enabled Shelley-based eras support exactly the same queries.[^conway-queries] We might weaken this guarantee in the future, see [#864](https://github.com/IntersectMBO/ouroboros-consensus/issues/864).
 
-The mapping from `NodeToClientVersion`s to `CardanoNodeToClientVersion`s is [`supportedNodeToClientVersions`][supportedNodeToClientVersions]. Additionally, all versions larger than a certain `NodeToClientVersion` (see [`latestReleasedNodeVersion`][latestReleasedNodeVersion]) are considered experimental, which means that queries newly enabled by them can be added and changed at will, without compatibility guarantees. They are only offered in the initial version negotiation when a flag (currently, `ExperimentalProtocolsEnabled`) is set; also see [`limitToLatestReleasedVersion`][limitToLatestReleasedVersion] and its call/usage sites.
+The mapping from `NodeToClientVersion`s to `CardanoNodeToClientVersion`s is [`supportedNodeToClientVersions`][supportedNodeToClientVersions]. Additionally, all versions larger than a certain `NodeToClientVersion` (see [`latestReleasedNodeVersion`][latestReleasedNodeVersion]) are considered experimental, which means that queries newly enabled by them can be added and changed at will, without compatibility guarantees. They are only offered in the version negotiation when a flag (currently, `ExperimentalProtocolsEnabled`) is set; also see [`limitToLatestReleasedVersion`][limitToLatestReleasedVersion] and its call/usage sites.
 
 #### Shelly node-to-client version
 
