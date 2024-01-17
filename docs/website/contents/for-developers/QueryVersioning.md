@@ -10,6 +10,7 @@ Local state queries allow clients (like `cardano-cli`, `ogmios`, etc) to fetch i
 
 In general, we can't assume that every node operator is running on the same/latest version, so a query might be available in one node, but not in another.
 Thus, when a client sends a query to a node, it is important that the node is aware of whether it supports a given query.
+Morever, beyond mere availability of the query, the exact details of the on-the-wire codec used for each query and its arguments and its response may change over time. The negotiated version is therefore sometimes also necessary to simply select the correct codec to use when communicating with the node.
 
 At the beginning of every connection from a client to a node, the Network layer will negotiate a [`NodeToClientVersion`][n2c]. Before the client sends a query, it can now check that the negotiated version is not older than the associated version number of the query, and act accordingly (i.e. display an indicative error message, or use a different/fallback mechanism to do its job).
 
