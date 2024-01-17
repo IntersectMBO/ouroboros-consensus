@@ -82,22 +82,25 @@ prop_localStateQueryServer
   :: SecurityParam
   -> BlockTree
   -> Permutation
-  -> Positive (Small Int)
-  -> Positive (Small Int)
   -> Property
-prop_localStateQueryServer k bt p (Positive (Small nv)) (Positive (Small ni)) = checkOutcome k chain actualOutcome
+prop_localStateQueryServer k bt p = checkOutcome k chain actualOutcome
   where
     chain :: Chain TestBlock
     chain = treePreferredChain bt
 
-    points :: [Target (Point TestBlock)]
-    points = permute p $
-         replicate nv VolatileTip
-      ++ replicate ni ImmutableTip
-      ++ (SpecificPoint . blockPoint <$> (treeToBlocks bt))
+    -- A random sequence of targets: one for each block in the tree and also a
+    -- random number of immtip/voltip queries
+    --
+    -- The fact that the queries are ordered /shouldn't/ ultimately matter,
+    -- since the server has selected the same chain the entire time.
+    targets :: [Target (Point TestBlock)]
+    targets = permute p $
+        VolatileTip
+      : ImmutableTip
+      : (SpecificPoint . blockPoint <$> treeToBlocks bt)
 
     actualOutcome = runSimOrThrow $ do
-      let client = mkClient points
+      let client = mkClient targets
       server <- mkServer k chain
       (\(a, _, _) -> a) <$>
         connect
@@ -145,7 +148,7 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
         | otherwise
         -> tabulate "Acquired" ["AcquireFailurePointNotOnChain"] $ property True
       Left AcquireFailurePointTooOld
-        | pointSlot pt >= immutableSlot
+        | pointSlot pt >= immutableSlot   -- TODO what if the immtip is a multi-leader slot?
         -> counterexample
            ("Point " <> show pt <>
             " newer than the immutable tip, but got AcquireFailurePointTooOld")
@@ -154,10 +157,10 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
         -> tabulate "Acquired" ["AcquireFailurePointTooOld"] $ property True
     checkResult VolatileTip = \case
       Right _result -> tabulate "Acquired" ["Success"] True
-      Left  failure -> counterexample ("acuire volatile tip point resulted in " ++ show failure) False
+      Left  failure -> counterexample ("Acquiring the volatile tip resulted in " ++ show failure) False
     checkResult ImmutableTip = \case
       Right _result -> tabulate "Acquired" ["Success"] True
-      Left  failure -> counterexample ("acuire immutable tip point resulted in " ++ show failure) False
+      Left  failure -> counterexample ("Acquiring the immutable tip resulted in " ++ show failure) False
 
 mkClient
   :: Monad m
