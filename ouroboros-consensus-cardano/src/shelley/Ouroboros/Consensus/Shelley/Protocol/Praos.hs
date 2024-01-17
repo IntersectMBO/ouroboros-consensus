@@ -1,6 +1,7 @@
-{-# LANGUAGE DeriveGeneric  #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE TypeFamilies   #-}
+{-# LANGUAGE DeriveGeneric    #-}
+{-# LANGUAGE NamedFieldPuns   #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies     #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- See https://gitlab.haskell.org/ghc/ghc/-/issues/14630. GHC currently warns
 -- (erroneously) about name shadowing for record field selectors defined by
@@ -65,7 +66,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
 
   envelopeChecks cfg lv hdr = do
     unless (m <= maxpv) $ throwError (ObsoleteNode m maxpv)
-    unless (fromIntegral (bhviewHSize bhv) <= maxHeaderSize) $
+    unless (bhviewHSize bhv <= fromIntegral @Word16 @Int maxHeaderSize) $
       throwError $
         HeaderSizeTooLarge (bhviewHSize bhv) maxHeaderSize
     unless (bhviewBSize bhv <= maxBodySize) $

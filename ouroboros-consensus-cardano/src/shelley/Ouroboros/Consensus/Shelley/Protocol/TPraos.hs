@@ -17,6 +17,8 @@ import           Cardano.Protocol.TPraos.OCert (ocertKESPeriod, ocertVkHot)
 import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Cardano.Slotting.Slot (unSlotNo)
 import           Data.Either (isRight)
+import           Data.Word (Word32)
+import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Protocol.Signed (Signed,
                      SignedHeader (headerSigned))
 import           Ouroboros.Consensus.Protocol.TPraos
@@ -42,7 +44,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (TPraos c) where
   pHeaderSlot = SL.bheaderSlotNo . SL.bhbody
   pHeaderBlock = SL.bheaderBlockNo . SL.bhbody
   pHeaderSize = fromIntegral . SL.bHeaderSize
-  pHeaderBlockSize = fromIntegral . SL.bsize . SL.bhbody
+  pHeaderBlockSize = fromIntegral @Word32 @Natural . SL.bsize . SL.bhbody
 
   type EnvelopeCheckError _ = ChainPredicateFailure
 

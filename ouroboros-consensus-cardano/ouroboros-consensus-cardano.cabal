@@ -122,7 +122,7 @@ library
     , cardano-ledger-api            ^>=1.8
     , cardano-ledger-babbage        ^>=1.6
     , cardano-ledger-binary         ^>=1.3
-    , cardano-ledger-byron          ^>=1.0.0.4
+    , cardano-ledger-byron          ^>=1.0
     , cardano-ledger-conway         ^>=1.12
     , cardano-ledger-core           ^>=1.10
     , cardano-ledger-mary           ^>=1.5
@@ -283,7 +283,7 @@ library unstable-shelley-testlib
     , cardano-ledger-alonzo
     , cardano-ledger-alonzo-test
     , cardano-ledger-babbage-test
-    , cardano-ledger-conway-test                                                              >=1.2.1.3
+    , cardano-ledger-conway-test                                                              >=1.2.1
     , cardano-ledger-core:{cardano-ledger-core, testlib}
     , cardano-ledger-mary
     , cardano-ledger-shelley-ma-test
@@ -366,7 +366,7 @@ library unstable-cardano-testlib
     , cardano-ledger-alonzo-test
     , cardano-ledger-api
     , cardano-ledger-byron
-    , cardano-ledger-conway-test                                                                 ^>=1.2.1.1
+    , cardano-ledger-conway-test                                                                 ^>=1.2.1
     , cardano-ledger-conway:testlib
     , cardano-ledger-core:{cardano-ledger-core, testlib}
     , cardano-ledger-shelley
@@ -488,9 +488,9 @@ library unstable-cardano-tools
 
   build-depends:
     , aeson
-    , base                           >=4.14     && <4.19
+    , base                           >=4.14   && <4.19
     , base16-bytestring              >=1.0
-    , bytestring                     >=0.10     && <0.12
+    , bytestring                     >=0.10   && <0.12
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
@@ -506,11 +506,11 @@ library unstable-cardano-tools
     , cardano-ledger-mary
     , cardano-ledger-shelley
     , cardano-prelude
-    , cardano-protocol-tpraos        ^>=1.0.3.5
+    , cardano-protocol-tpraos        ^>=1.0.3
     , cardano-slotting
     , cardano-strict-containers
     , cborg                          ^>=0.2.2
-    , containers                     >=0.5      && <0.7
+    , containers                     >=0.5    && <0.7
     , contra-tracer
     , directory
     , filepath
@@ -523,7 +523,7 @@ library unstable-cardano-tools
     , ouroboros-consensus            ^>=0.14
     , ouroboros-consensus-cardano
     , ouroboros-consensus-diffusion  ^>=0.9
-    , ouroboros-consensus-protocol   ^>=0.6.0.0
+    , ouroboros-consensus-protocol   ^>=0.6
     , ouroboros-network
     , ouroboros-network-api
     , ouroboros-network-framework
