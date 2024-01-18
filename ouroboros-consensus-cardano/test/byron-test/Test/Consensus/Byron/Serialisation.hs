@@ -18,6 +18,7 @@ import qualified Cardano.Chain.Block as CC.Block
 import qualified Cardano.Chain.Update as CC.Update
 import           Codec.CBOR.Write (toLazyByteString)
 import qualified Data.ByteString.Lazy as Lazy
+import           Data.Constraint
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Config
@@ -25,7 +26,6 @@ import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Serialisation ()
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
-import           Ouroboros.Consensus.Util (Dict (..))
 import qualified Test.Cardano.Chain.Genesis.Dummy as CC
 import           Test.Consensus.Byron.Generators
 import           Test.QuickCheck hiding (Result)

@@ -10,8 +10,7 @@
 -- | Miscellaneous utilities
 module Ouroboros.Consensus.Util (
     -- * Type-level utility
-    Dict (..)
-  , Empty
+    Empty
   , ShowProxy (..)
   , Some (..)
   , SomePair (..)
@@ -75,7 +74,7 @@ import           Data.Foldable (asum, toList)
 import           Data.Function (on)
 import           Data.Functor.Identity
 import           Data.Functor.Product
-import           Data.Kind (Constraint, Type)
+import           Data.Kind (Type)
 import           Data.List (foldl', maximumBy)
 import           Data.List.NonEmpty (NonEmpty (..), (<|))
 import           Data.Maybe (fromMaybe)
@@ -89,9 +88,6 @@ import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 {-------------------------------------------------------------------------------
   Type-level utility
 -------------------------------------------------------------------------------}
-
-data Dict :: Constraint -> Type where
-  Dict :: a => Dict a
 
 class Empty a
 instance Empty a

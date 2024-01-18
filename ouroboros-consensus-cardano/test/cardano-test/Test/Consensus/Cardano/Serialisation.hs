@@ -8,6 +8,7 @@ module Test.Consensus.Cardano.Serialisation (tests) where
 
 import qualified Codec.CBOR.Write as CBOR
 import qualified Data.ByteString.Lazy as Lazy
+import           Data.Constraint
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node ()
@@ -17,7 +18,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Util (Dict (..))
 import           Ouroboros.Network.Block (Serialised (..))
 import qualified Test.Consensus.Cardano.Examples as Cardano.Examples
 import           Test.Consensus.Cardano.Generators (epochSlots)

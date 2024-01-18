@@ -246,7 +246,6 @@ library
     Ouroboros.Consensus.Util.Orphans
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.ResourceRegistry
-    Ouroboros.Consensus.Util.Singletons
     Ouroboros.Consensus.Util.STM
     Ouroboros.Consensus.Util.TentativeState
     Ouroboros.Consensus.Util.Time
@@ -362,6 +361,7 @@ library unstable-consensus-testlib
     , cardano-prelude
     , cardano-strict-containers
     , cborg
+    , constraints
     , containers
     , contra-tracer
     , deepseq
@@ -381,7 +381,7 @@ library unstable-consensus-testlib
     , ouroboros-network-mock
     , pretty-simple
     , QuickCheck
-    , quickcheck-state-machine:no-vendored-treediff           ^>=0.8
+    , quickcheck-state-machine:no-vendored-treediff           ^>=0.9
     , quiet
     , random
     , serialise
@@ -625,7 +625,7 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-state-machine:no-vendored-treediff  ^>=0.8
+    , quickcheck-state-machine:no-vendored-treediff  ^>=0.9
     , random
     , serialise
     , tasty

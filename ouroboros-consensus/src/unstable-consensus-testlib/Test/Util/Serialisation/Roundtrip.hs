@@ -48,6 +48,7 @@ import qualified Data.ByteString.Base16.Lazy as Base16
 import qualified Data.ByteString.Lazy as Lazy
 import qualified Data.ByteString.Lazy.Char8 as Char8
 import qualified Data.ByteString.Short as Short
+import           Data.Constraint
 import           Data.Function (on)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Text.Lazy as T
@@ -72,7 +73,6 @@ import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import           Ouroboros.Consensus.Storage.ChainDB (SerialiseDiskConstraints)
 import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Util (Dict (..))
 import           Ouroboros.Network.Block (Serialised (..), fromSerialised,
                      mkSerialised)
 import           Quiet (Quiet (..))

@@ -23,7 +23,7 @@ import           Data.List (intercalate)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
-import           Data.SOP.Dict
+import           Data.SOP.Dict (Dict (..), all_NP, unAll_NP)
 import           Data.SOP.Match (Mismatch)
 import           Data.SOP.OptNP (OptNP (..))
 import           Data.SOP.Sing
