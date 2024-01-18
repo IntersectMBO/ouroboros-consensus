@@ -65,6 +65,7 @@ import           Cardano.Chain.Slotting (EpochSlots)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
+import           Cardano.Ledger.Conway.Transition (ConwayEraTransition)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
@@ -1037,21 +1038,42 @@ protocolInfoCardano paramsCardano
           :* register transitionConfigMary
           :* register transitionConfigAlonzo
           :* register transitionConfigBabbage
-          :* register transitionConfigConway
+          :* registerConway transitionConfigConway
           :* Nil
 
         register ::
              L.EraTransition era
           => L.TransitionConfig era
           -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
-        register cfg = fn $ \st -> st {
+        register cfg = fn $ registerInitialFundsThenStaking cfg
+
+        registerInitialFundsThenStaking ::
+             L.EraTransition era
+          => L.TransitionConfig era
+          -> LedgerState (ShelleyBlock proto era)
+          -> LedgerState (ShelleyBlock proto era)
+        registerInitialFundsThenStaking cfg st = st {
             Shelley.shelleyLedgerState =
               -- We must first register the initial funds, because the stake
               -- information depends on it.
                 L.registerInitialStaking cfg
-              . L.registerInitialFunds cfg
+              . L.registerInitialFunds   cfg
               $ Shelley.shelleyLedgerState st
           }
+
+        registerConway ::
+             ConwayEraTransition era
+          => L.TransitionConfig era
+          -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
+        registerConway cfg = fn $ registerDRepsThenDelegs         cfg
+                                . registerInitialFundsThenStaking cfg
+          where
+            registerDRepsThenDelegs cfg st = st {
+              Shelley.shelleyLedgerState =
+                   L.registerDRepDelegs   cfg
+                 . L.registerInitialDReps cfg -- FIXME: we need to figure out the right order. I'm asumming the DReps need to be registered before participants can delegate to them.
+                 $ Shelley.shelleyLedgerState st
+              }
 
     -- | For each element in the list, a block forging thread will be started.
     --
