@@ -4,7 +4,7 @@
 
 The abstract Consensus layer currently implements the chain order like this:
 From every header, one can extract a `SelectView`, which has an `Ord` instance.
-A chain `C` is _preferrable_ to a chain `C'` if `selectView(H) > selectView(C')` where `C` and `C'` are the tip headers of `C` and `C'`, respectively.
+A chain `C` is _preferable_ to a chain `C'` if `selectView(C) > selectView(C')` where `C` and `C'` are the tip headers of `C` and `C'`, respectively.
 
 ## Examples for intransitive orders
 
