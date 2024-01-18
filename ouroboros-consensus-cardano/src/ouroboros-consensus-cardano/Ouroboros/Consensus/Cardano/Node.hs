@@ -1070,8 +1070,8 @@ protocolInfoCardano paramsCardano
           where
             registerDRepsThenDelegs cfg st = st {
               Shelley.shelleyLedgerState =
-                   L.registerDRepDelegs   cfg
-                 . L.registerInitialDReps cfg -- FIXME: we need to figure out the right order. I'm asumming the DReps need to be registered before participants can delegate to them.
+                   L.registerDRepDelegs   cfg -- NOTE: The order of registration does not matter.
+                 . L.registerInitialDReps cfg
                  $ Shelley.shelleyLedgerState st
               }
 
