@@ -88,7 +88,9 @@ Still, there are some potential complications of non-transitivity:
     - Having a non-transitive order could turn out to be very confusing for reasoning about anything that is related to the chain order.
       This is because transitivity is so ingrained when thinking about orders that it is hard to not implicitly assume.
     - Certain "obvious" properties suddenly fail to hold, for example:
+
       > Repeatedly observing the selection of a node over a period of time yields a sequence that is strictly improving for every two adjacent selections.
+
       In particular, this might have practical effects for diffusion pipelining, which requires such a condition.
 
 ## Possible solutions
@@ -139,7 +141,12 @@ Proposed chain order with similar properties as Duncan's rule.
 
 As this is a lexicographic combination of total orders, it is a total order, so in particular transitive.
 
-TODO elaborate properties
+ - SPOs can't influence the slots they are elected, just their VRF tiebreakers, so it is still random.
+ - Arrival times don't matter, so we keep the VRF benefit of discouraging centralization.
+ - If a node forges a block `B`, and another block forges another block several (eg `Δ = 5` slots) later, but does not extend `B`, then we will now prefer `B`.
+   This was one of the motivations of Duncan's tiebreaker, compared to the status quo.
+
+TODO elaborate on properties a bit more
 
 [^vrf-tpraos-vs-praos]: TPraos used the leader VRF, while Praos uses the VRF prior to range extension, see [ouroboros-network#4051](https://github.com/IntersectMBO/ouroboros-network/issues/4051), but this shouldn't matter for this discussion.
 
