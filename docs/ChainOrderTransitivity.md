@@ -42,6 +42,8 @@ So we have `A < B < C < A < B < C < ...`.
 
 ### "Duncan's rule" is non-transitive
 
+For context, see [this comment](https://github.com/IntersectMBO/ouroboros-network/issues/2913#issuecomment-816953407) and [ouroboros-consensus#524](https://github.com/IntersectMBO/ouroboros-consensus/issues/524).
+
 Consider the following alternative rule, for simplicity without the issuer/opcert rule as it is not relevant for the point:
 
  1. Chain length, the longer chain is preferred.
@@ -145,7 +147,7 @@ Remarks:
 
 ### Regarding Duncan's rule
 
-Proposed chain order with similar properties as Duncan's rule.
+We propose the following chain order with similar properties as Duncan's rule:
 
  1. Chain length, preferring longer chains.
  2. Slot number, preferring earlier slots.
@@ -154,12 +156,16 @@ Proposed chain order with similar properties as Duncan's rule.
 
 As this is a lexicographic combination of total orders, it is a total order, so in particular transitive.
 
- - SPOs can't influence the slots they are elected, just their VRF tiebreakers, so it is still random.
- - Arrival times don't matter, so we keep the VRF benefit of discouraging centralization.
- - If a node forges a block `B`, and another block forges another block several (eg `Δ = 5` slots) later, but does not extend `B`, then we will now prefer `B`.
-   This was one of the motivations of Duncan's tiebreaker, compared to the status quo.
+A few remarks about this rule:
 
-TODO elaborate on properties a bit more
+ - SPOs can't influence in which slots they are elected, just as they can't influence their VRF tiebreakers.
+
+   For example, if node `X` forges block `B` in slot `s` and node `X'` forges `B'` in slot `s+1` with `blockNo(B) = blockNo(B')`, then with both Duncan's rule and the status quo, the VRF tiebreaker would decide probabilistically who wins the "battle" and will hence likely be extended by future blocks.
+   With the rule proposed here, however, `B` will always win against `B'`. Note that any node will on average end up in the role of `X` just as often as in that of `X'`.
+ - The proposed rule has the potential advantage of favoring blocks that (due to their earlier slot) had more time to diffuse through the network and hence reach the next block issuer.
+ - Arrival times don't matter, so we keep the benefit of discouraging centralization that using VRFs as the sole tiebreaker (apart from opcert numbers) had.
+ - If a node forges a block `B`, and another block forges another block several (eg `Δ = 5` slots) later, but does not extend `B` as it should have, then we will now prefer `B`.
+   This was one of the motivations of Duncan's tiebreaker, compared to the status quo.
 
 [^vrf-tpraos-vs-praos]: TPraos used the leader VRF, while Praos uses the VRF prior to range extension, see [ouroboros-network#4051](https://github.com/IntersectMBO/ouroboros-network/issues/4051), but this shouldn't matter for this discussion.
 
