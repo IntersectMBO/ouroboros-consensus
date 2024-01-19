@@ -164,8 +164,11 @@ A few remarks about this rule:
    With the rule proposed here, however, `B` will always win against `B'`. Note that any node will on average end up in the role of `X` just as often as in that of `X'`.
  - The proposed rule has the potential advantage of favoring blocks that (due to their earlier slot) had more time to diffuse through the network and hence reach the next block issuer.
  - Arrival times don't matter (as long as all blocks arrive at the next block issuer before they mint), so we keep the benefit of discouraging centralization that using VRFs as the sole tiebreaker (apart from opcert numbers) had.
- - If a node mints a block `B`, and another block mints another block several (eg `Δ = 5` slots) later, but does not extend `B` as it should have (empirically, this seems to be due to underresourced nodes/relays), then we will now prefer `B`.
+ - If a node mints a block `B`, and another node mints another block several (eg more than `Δ = 5` slots) later, but does not extend `B` as it should have (empirically, this seems to be due to underresourced nodes/relays), then we will now prefer `B`.
    This was one of the motivations of Duncan's tiebreaker, compared to the status quo.
+ - For comparison, we mention two other proposed mechanisms for judging chains against each other that involve slot numbers:
+    - In [ouroboros-network#2315](https://github.com/IntersectMBO/ouroboros-network/issues/2913), it is proposed to prefer *higher* slot numbers to discourage certain behavior.
+    - In ["Longest Chain Consensus Under Bandwidth Constraint"][tse-paper], it is proposed to prioritize downloading blocks for the header chain with the *highest* slot number.
 
 [^vrf-tpraos-vs-praos]: TPraos used the leader VRF, while Praos uses the VRF prior to range extension, see [ouroboros-network#4051](https://github.com/IntersectMBO/ouroboros-network/issues/4051), but this shouldn't matter for this discussion.
 
@@ -173,3 +176,4 @@ A few remarks about this rule:
 
 [ledger-readme]: https://github.com/IntersectMBO/cardano-ledger/blob/master/README.md
 [vrf-rfc-collision]: https://www.rfc-editor.org/rfc/rfc9381.html#name-trusted-uniqueness-and-trus
+[tse-paper]: https://eprint.iacr.org/2021/1545.pdf
