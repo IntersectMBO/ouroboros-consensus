@@ -678,11 +678,11 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         -- intersection.
         stablePrefixWindowsContaining w =
           let
-            stableSlotsAfterIntersection =
-              min s (C.getCount (C.lengthMV mv) - C.getCount (C.windowStart w))
-            n = stableSlotsAfterIntersection - C.getCount (C.windowSize w)
-          in
-            take n $ drop 1 $ iterate increaseSizeW w
+            start = C.windowStart w
+            size  = C.getCount (C.windowSize w)
+            end   = s `min` C.getCount (C.lengthMV mv)
+           in
+            [ C.UnsafeContains start (C.Count size') | size' <- [ size+1 .. end ] ]
 
         -- Updates mv to ensure the density of the adversarial schema is lower
         -- than the density of the honest schema in @increaseSizeW w@.
@@ -707,10 +707,6 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                 pure ac'
 
           return (hc', ac'')
-
-    -- | Increase the size of a window by one slot
-    increaseSizeW (C.UnsafeContains start size) =
-        C.UnsafeContains start (size C.+ 1)
 
     -- | Ensure the density of the adversarial schema is less than the density
     -- of the honest schema in the given window.
