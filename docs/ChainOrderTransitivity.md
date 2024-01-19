@@ -113,12 +113,12 @@ The motivation for the opcert number tiebreaker is described in the ["Design Spe
 We describe our understanding of this use case for the opcert number tiebreaker:
 
 Consider an attacker who corrupts an SPO's node with a specific issuer identity, including the hot key, but not the cold key.
-They can now forge blocks on behalf of this issuer identity, deciding which transactions are included in the block, potentially spoiling the reputation of the SPO in the process.
+They can now mint blocks on behalf of this issuer identity, deciding which transactions are included in the block, potentially spoiling the reputation of the SPO in the process.
 (Rewards still go to the account of the issuer identity, which the attacker can not access.)
 The attacked SPO can now issue a new hot key with a higher opcert number, and start a new node with it installed.
-Now, in every slot where this issuer identity is elected, both the attacker and the attacked SPO can forge a block.
+Now, in every slot where this issuer identity is elected, both the attacker and the attacked SPO can mint a block.
 
- - If the SPO forges a strictly longer or shorter chain, the opcert tiebreaker does not matter, citing from the aforementioned specification:
+ - If the SPO mints a strictly longer or shorter chain, the opcert tiebreaker does not matter, citing from the aforementioned specification:
    > Note that nodes take the precedence amongst operational key certificates into account only after comparing the length of the chains.
    > When the node is already up to date and receives two conflicting blocks that add to its current chain, the length will of course always be the same.
    > But this rule is important: if we did not compare the lengths of the chains before giving preference to the block with the newer operational certificate, it would be possible to force a node to do a rollback of arbitrary length, by sending it a block from a past slot, signed using a newer certificate than the block that the node already has in its chain for that slot.
@@ -130,7 +130,7 @@ An important observation is that the VRF is the same for both blocks, as the VRF
 This means _swapping_ the order of the opcert number and the VRF tiebreaker also satisfies the requirements of the opcert number mechanism as just described (again, this _was_ the original implementation before [ouroboros-network#2348](https://github.com/IntersectMBO/ouroboros-network/pull/2348)).
 
 Note that there is a difference: With the current chain order, a block `B` with a higher opcert number will be preferred over an attacker's block `B'` with the same block number even if it is in a different slot, as opposed to a random tiebreak using the VRF when using the proposed order with these two tiebreakers swapped to restore transitivity.
-However, this difference is irrelevant since the scenario implies that one party can just forge in the larger of the two slots on top of the other block, superseding the tiebreaker due to having a longer chain.
+However, this difference is irrelevant since the scenario implies that one party can just mint in the larger of the two slots on top of the other block, superseding the tiebreaker due to having a longer chain.
 
 Remarks:
  - Given that the VRF also has all the nice properties (in particular [collision resistance][vrf-rfc-collision]) of a cryptographic hash, we could also elide the check that the issuers are the same.
@@ -160,11 +160,11 @@ A few remarks about this rule:
 
  - SPOs can't influence in which slots they are elected, just as they can't influence their VRF tiebreakers.
 
-   For example, if node `X` forges block `B` in slot `s` and node `X'` forges `B'` in slot `s+1` with `blockNo(B) = blockNo(B')`, then with both Duncan's rule and the status quo, the VRF tiebreaker would decide probabilistically who wins the "battle" and will hence likely be extended by future blocks.
+   For example, if node `X` mints block `B` in slot `s` and node `X'` mints `B'` in slot `s+1` with `blockNo(B) = blockNo(B')`, then with both Duncan's rule and the status quo, the VRF tiebreaker would decide probabilistically who wins the "battle" and will hence likely be extended by future blocks.
    With the rule proposed here, however, `B` will always win against `B'`. Note that any node will on average end up in the role of `X` just as often as in that of `X'`.
  - The proposed rule has the potential advantage of favoring blocks that (due to their earlier slot) had more time to diffuse through the network and hence reach the next block issuer.
  - Arrival times don't matter, so we keep the benefit of discouraging centralization that using VRFs as the sole tiebreaker (apart from opcert numbers) had.
- - If a node forges a block `B`, and another block forges another block several (eg `Δ = 5` slots) later, but does not extend `B` as it should have, then we will now prefer `B`.
+ - If a node mints a block `B`, and another block mints another block several (eg `Δ = 5` slots) later, but does not extend `B` as it should have (empirically, this seems to be due to underresourced nodes/relays), then we will now prefer `B`.
    This was one of the motivations of Duncan's tiebreaker, compared to the status quo.
 
 [^vrf-tpraos-vs-praos]: TPraos used the leader VRF, while Praos uses the VRF prior to range extension, see [ouroboros-network#4051](https://github.com/IntersectMBO/ouroboros-network/issues/4051), but this shouldn't matter for this discussion.
