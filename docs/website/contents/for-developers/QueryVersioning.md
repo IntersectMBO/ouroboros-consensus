@@ -10,10 +10,11 @@ Local state queries allow clients (like `cardano-cli`, `ogmios`, etc) to fetch i
 
 In general, we can't assume that every node operator is running on the same/latest version, so a query might be available in one node, but not in another.
 Thus, when a client sends a query to a node, it is important that the node is aware of whether it supports a given query.
+Morever, beyond mere availability of the query, the exact details of the on-the-wire codec used for each query and its arguments and its response may change over time. The negotiated version is therefore sometimes also necessary to simply select the correct codec to use when communicating with the node.
 
 At the beginning of every connection from a client to a node, the Network layer will negotiate a [`NodeToClientVersion`][n2c]. Before the client sends a query, it can now check that the negotiated version is not older than the associated version number of the query, and act accordingly (i.e. display an indicative error message, or use a different/fallback mechanism to do its job).
 
-Custom implementation of the Cardano node client can choose to bypass this check before submitting the query. This does not constitute a problem for the node integrity, but is, instead, an inconvenience for the user as she will be presented with an obscure CBOR decoding error when an old node tries to answer a query it does not support.
+Custom implementations of the Cardano node client are free to bypass this check before submitting the query. This does not constitute a problem for the node integrity, but is, instead, an inconvenience for the user. When querying an older node, such an inconsiderate client will simply be disconnected from without explanation. If the user has access to the node's logs, she'll find there an obscure CBOR decoding error.
 
 ## Implementation
 
@@ -21,8 +22,8 @@ Custom implementation of the Cardano node client can choose to bypass this check
 
 Our code does not use the negotiated [`NodeToClientVersion`][n2c] directly, but translates them first to a [`CardanoNodeToClientVersion`][cardano-n2c] and then to [`ShelleyNodeToClientVersion`][shelley-n2c].
 
- - A [`ShelleyNodeToClientVersion`][shelley-n2c] is what is associated with every query in [`querySupportedVersion`][query-supported-version].
- - A [`CardanoNodeToClientVersion`][cardano-n2c] specifies the [`ShelleyNodeToClientVersion`][shelley-n2c] for each era, or indicates that a specific [era][feature-table] is not supported. As an example, consider
+ - The [`querySupportedVersion`][query-supported-version] function assigns a [`ShelleyNodeToClientVersion`][shelley-n2c] to each Shelley-based query.
+ - Each [`CardanoNodeToClientVersionX`][cardano-n2c] specifies the [`ShelleyNodeToClientVersion`][shelley-n2c] for each era, or indicates that a specific [era][feature-table] is not supported. As an example, consider
    ```haskell
    pattern CardanoNodeToClientVersion10 :: BlockNodeToClientVersion (CardanoBlock c)
    pattern CardanoNodeToClientVersion10 =
@@ -40,9 +41,15 @@ Our code does not use the negotiated [`NodeToClientVersion`][n2c] directly, but 
    ```
    This tells us that in Shelley, Allegra, Mary, Alonzo and Babbage, we use `ShelleyNodeToClientVersion6`, and Conway is disabled. This means that no queries that were introduced in `ShelleyNodeToClientVersion7` can be used, and no queries in the Conway era are possible at all.
 
-   In order to reduce the number of possible version combinations, we currently follow the convention that all `ShelleyNodeToClientVersion`s in one `CardanoNodeToClientVersionX` are equal. This means that users (like `cardano-api`) can rely on the fact that once a `NodeToClient` version has been negotiated, all enabled Shelley-based eras support exactly the same queries.[^conway-queries] We might weaken this guarantee in the future, see [#864](https://github.com/IntersectMBO/ouroboros-consensus/issues/864).
+   In order to reduce the number of possible version combinations, we currently follow the convention that all `ShelleyNodeToClientVersion`s in one `CardanoNodeToClientVersionX` are equal. This means that the developers of clients (like `cardano-api`, etc) can rely on the fact that once a `NodeToClient` version has been negotiated, all enabled Shelley-based eras support exactly the same queries.[^conway-queries] We might weaken this guarantee in the future, see [#864](https://github.com/IntersectMBO/ouroboros-consensus/issues/864).
 
-The mapping from `NodeToClientVersion`s to `CardanoNodeToClientVersion`s is [`supportedNodeToClientVersions`][supportedNodeToClientVersions]. Additionally, all versions larger than a certain `NodeToClientVersion` (see [`latestReleasedNodeVersion`][latestReleasedNodeVersion]) are considered experimental, which means that queries newly enabled by them can be added and changed at will, without compatibility guarantees. They are only offered in the initial version negotiation when a flag (currently, `ExperimentalProtocolsEnabled`) is set; also see [`limitToLatestReleasedVersion`][limitToLatestReleasedVersion] and its call/usage sites.
+The mapping from `NodeToClientVersion`s to `CardanoNodeToClientVersion`s is [`supportedNodeToClientVersions`][supportedNodeToClientVersions]. Additionally, all versions larger than a certain `NodeToClientVersion` (see [`latestReleasedNodeVersion`][latestReleasedNodeVersion]) are considered experimental, which means that queries newly enabled by them can be added and changed at will, without compatibility guarantees. They are only offered in the version negotiation when a flag (currently, `ExperimentalProtocolsEnabled`) is set; also see [`limitToLatestReleasedVersion`][limitToLatestReleasedVersion] and its call/usage sites.
+
+#### Why have a separate version type per block?
+
+At the moment, all genuine chains using the abstract Ouroboros code (ie the Diffusion and Consensus Layers) are maintained by the same people that maintain the Ouroboros code, and moreover those chains are all instances of `CardanoBlock`. Thus, it has so far been a convenient simplification to merely increment `NodeToClientVersion` whenever `BlockNodeToClientVersion (CardanoBlock c)` needs a new increment (in addition to when the mini protocols' code changes require such an increment). This approach would be untenable if there were multiple genuine chains with different block types and their own queries evolving independently, sharing the common Ouroboros code as a dependency. That is especially true if some of those chains were maintained by someone other than the Cardano team maintaining the Ouroboros code. In that case, the Diffusion Layer would either need to negotiate the two versions separately or else negotiate the block-specific version `CardanoNodeToClientVersionX` and derive the `NodeToClientVersion` from that (via a callback passed by the owner of the block-specific code) instead of the opposite, which is what the current code does.
+
+That same fundamental hypothetical of genuine chains with different block types motivates defining the `BlockNodeToClientVersion` abstractly, instead of only for `CardanoBlock`. In particular, it's technically possible that some chain could exist that only uses `ByronBlock`, or the `ShelleyBlock`s without Byron, or some other "incomplete" subset of the `ShelleyBlocks`, etc. The block-specific version for such a chain should not necessarily advance in lock-step with the Cardano chain's, since some Cardano changes might not apply to that hypothetical chain [^non-Cardano-block-types]. Via the `BlockNodeToClientVersion` type family, the Consensus Layer is already positioned to properly support multiple block types, once the Diffusion Layer eventually negotiates the versions in a way that allows non-Cardano chains to properly evolve. But for now, the only genuine chain uses all of the `ShelleyBlock` eras, and so we version as a single bundle, pretending that they are inseparable.
 
 #### Shelly node-to-client version
 
@@ -110,3 +117,5 @@ Old pull-requests that added new queries serve as good reference material when a
 [decodeShelleyResult]: https://github.com/IntersectMBO/ouroboros-consensus/blob/3d55ae3ca7a9e1c63a19266d35ef5512bbef13ab/ouroboros-consensus-cardano/src/shelley/Ouroboros/Consensus/Shelley/Ledger/Query.hs#L733
 
 [^conway-queries]: There are already queries that morally are Conway-specific, but still work in older eras, returning something along the lines of `mempty` in that case.
+
+[^non-Cardano-block-types]: The opposite is only true if that chain has some block types that Cardano doesn't.
