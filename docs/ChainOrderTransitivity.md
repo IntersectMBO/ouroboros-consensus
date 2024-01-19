@@ -94,7 +94,7 @@ Still, there are some potential complications of non-transitivity:
 
       > Repeatedly observing the selection of a node over a period of time yields a sequence that is strictly improving for every two adjacent observations of the selection.
 
-      For example, two parties might observe two different subsequences of selections of a node over time (eg via ChainSync), and disagree whether every selection was strictly better than the one they immediately observed before.
+      For example, two parties might observe two different subsequences of selections of a node over time (eg via ChainSync), and disagree whether every selection is strictly better than the one they observed immediately before.
 
       In particular, this might have practical effects for diffusion pipelining, which requires objectivity in this case.
 
@@ -105,7 +105,7 @@ One solution is to change the chain order in such a way that it is transitive an
 ### Regarding opcert numbers
 
 There is a simple fix for the non-transitivity caused by the opcert numbers: swap the orders in which opcert numbers and VRFs are compared, back to what it was before [ouroboros-network#2348](https://github.com/IntersectMBO/ouroboros-network/pull/2348).
-The resulting order is transitive, hence total,
+The resulting order is transitive, hence total.
 
 The motivation for the opcert number tiebreaker is described in the ["Design Specification for Delegation and Incentives in Cardano"][ledger-readme].
 We describe our understanding of this use case for the opcert number tiebreaker:
@@ -131,8 +131,16 @@ Note that there is a difference: With the current chain order, a block `B` with 
 However, this difference is irrelevant since the scenario implies that one party can just forge in the larger of the two slots on top of the other block, superseding the tiebreaker due to having a longer chain.
 
 Remarks:
- - Given that the VRF also has all the nice properties of a cryptographic hash, we could also elide the check that the issuers are the same.
-   The observation is that it is very unlikely that two headers contain the same VRF, especially in the same slot.
+ - Given that the VRF also has all the nice properties (in particular [collision resistance][vrf-rfc-collision]) of a cryptographic hash, we could also elide the check that the issuers are the same.
+   Concretely, it is computationally infeasible to construct two headers that do not agree on both their slot and issuer, but do agree on their VRF.
+
+   The resulting chain order would then look like this:
+
+    1. Chain length, preferring longer chains.
+    2. VRF tiebreaker[^vrf-tpraos-vs-praos], preferring lower values.
+    3. Opcert number, preferring higher values.
+
+   As this is a lexicographic combination of total orders, it is a total order, so in particular transitive.
  - Both we and (more importantly) the Networking team are unaware of the opcert number mechanism ever being actually used, in particular as various entities pay close attention to blocks that are issued by the same pool in the same slot (this happened in the past, but likely for other reasons).
 
 ### Regarding Duncan's rule
@@ -158,3 +166,4 @@ TODO elaborate on properties a bit more
 [^lexicographic-ish]: Usually, one only considers the lexicographic order constructed out of orders that are at least partial. However, the order "compare opcert numbers when the issuers are identical, otherwise, consider equal" on pairs of issuer identities and opcert numbers is not a partial order as it is non-transitive. Still, the same general principle applies.
 
 [ledger-readme]: https://github.com/IntersectMBO/cardano-ledger/blob/master/README.md
+[vrf-rfc-collision]: https://www.rfc-editor.org/rfc/rfc9381.html#name-trusted-uniqueness-and-trus
