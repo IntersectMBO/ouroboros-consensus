@@ -512,8 +512,8 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- you can't have >k in the interval [0, C.frWindow adv n] either?
     let iterH :: RI.Race adv
         iterH =
-            maybe (RI.initConservative vA) id
-          $ RI.init kcp vA
+            maybe (RI.initConservative vHAfterIntersection) id
+          $ RI.init kcp vHAfterIntersection
 
     ensureLowerDensityInWindows iterH g mv
 
@@ -540,7 +540,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
 
     ChainSchema winH vH = carHonest
 
-    vA = C.sliceV carWin vH
+    vHAfterIntersection = C.sliceV carWin vH
 
     -- ensure the adversary loses this 'RI.Race' and each subsequent race that ends before it can accelerate
     unfillRaces kPlus1st !scope !mbYS !iter !g !mv = when (withinYS delta mbYS iter) $ do
@@ -603,7 +603,8 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                 g
                 (C.sliceMV touch mv)
 
-        case RI.next vA iter <|> RI.nextConservative vA iter of
+        case RI.next vHAfterIntersection iter
+              <|> RI.nextConservative vHAfterIntersection iter of
             Nothing -> pure ()   -- there are no remaining honest active slots
 
             Just iter' -> do
@@ -661,7 +662,8 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
           -- A window after the intersection as short as the shortest of the
           -- stability window or the first race to the k+1st block.
           w0' = C.truncateWin w0 (C.Count s)
-          hCount = C.toVar $ BV.countActivesInV S.notInverted (C.sliceV w0' vA)
+          hCount = C.toVar $
+            BV.countActivesInV S.notInverted (C.sliceV w0' vHAfterIntersection)
 
         aCount <- ensureLowerDensityInWindow w0' g mv hCount
 
@@ -695,7 +697,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
 
           let
             ac' = if sA then ac C.+ 1 else ac
-            sH = BV.testV S.notInverted vA (C.windowLast w)
+            sH = BV.testV S.notInverted vHAfterIntersection (C.windowLast w)
             hc' = if sH then hc C.+ 1 else hc
 
           ac'' <-
