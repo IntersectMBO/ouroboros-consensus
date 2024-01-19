@@ -163,7 +163,7 @@ A few remarks about this rule:
    For example, if node `X` mints block `B` in slot `s` and node `X'` mints `B'` in slot `s+1` with `blockNo(B) = blockNo(B')`, then with both Duncan's rule and the status quo, the VRF tiebreaker would decide probabilistically who wins the "battle" and will hence likely be extended by future blocks.
    With the rule proposed here, however, `B` will always win against `B'`. Note that any node will on average end up in the role of `X` just as often as in that of `X'`.
  - The proposed rule has the potential advantage of favoring blocks that (due to their earlier slot) had more time to diffuse through the network and hence reach the next block issuer.
- - Arrival times don't matter, so we keep the benefit of discouraging centralization that using VRFs as the sole tiebreaker (apart from opcert numbers) had.
+ - Arrival times don't matter (as long as all blocks arrive at the next block issuer before they mint), so we keep the benefit of discouraging centralization that using VRFs as the sole tiebreaker (apart from opcert numbers) had.
  - If a node mints a block `B`, and another block mints another block several (eg `Δ = 5` slots) later, but does not extend `B` as it should have (empirically, this seems to be due to underresourced nodes/relays), then we will now prefer `B`.
    This was one of the motivations of Duncan's tiebreaker, compared to the status quo.
 
