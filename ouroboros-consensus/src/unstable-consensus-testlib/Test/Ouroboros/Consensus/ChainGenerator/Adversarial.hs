@@ -262,12 +262,12 @@ checkAdversarialChain recipe adv = do
     checkDensity = do
         let
           -- window of the honest schema after the intersection
-          winHAfterIntersection =
+          carWin =
               C.UnsafeContains
                   (fromJust $ C.toWindow winH $ C.windowStart winA)
                   (C.windowSize winA)
           -- honest schema after the intersection
-          vHAfterIntersection = C.sliceV winHAfterIntersection vH
+          vHAfterIntersection = C.sliceV carWin vH
           iterH :: RI.Race adv
           iterH =
               maybe (RI.initConservative vHAfterIntersection) id
