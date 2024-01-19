@@ -31,7 +31,7 @@ import           Control.Applicative ((<|>))
 import           Control.Monad (foldM, forM_, void, when)
 import qualified Control.Monad.Except as Exn
 import           Control.Monad.ST (ST)
-import           Data.Maybe (fromJust)
+import           Data.Maybe (fromJust, fromMaybe)
 import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector.Unboxed as Vector
 import qualified System.Random.Stateful as R
@@ -270,7 +270,7 @@ checkAdversarialChain recipe adv = do
           vHAfterIntersection = C.sliceV carWin vH
           iterH :: RI.Race adv
           iterH =
-              maybe (RI.initConservative vHAfterIntersection) id
+              fromMaybe (error "there should be k+1 active slots after the intersection")
             $ RI.init (Kcp k) vHAfterIntersection
 
         -- first race window after the intersection
@@ -519,7 +519,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- you can't have >k in the interval [0, C.frWindow adv n] either?
     let iterH :: RI.Race adv
         iterH =
-            maybe (RI.initConservative vHAfterIntersection) id
+            fromMaybe (error "there should be k+1 active slots after the intersection")
           $ RI.init kcp vHAfterIntersection
 
     -- We don't want to change the first active slot in the adversarial chain
