@@ -496,10 +496,12 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
        --
        -- There will be at least k unstable slots at the end, plus one more
        -- active slot a stability window earlier.
-       let trailingSlots = s + k + 1
-           szFirstActive = sz C.- trailingSlots C.+ 1
+       -- See Note [Minimum schema length] in "Test.Ouroboros.Consensus.ChainGenerator.Honest"
+       -- for the rationale.
+       let trailingSlots = s + k
+           szFirstActive = sz C.- trailingSlots
        when (szFirstActive <= C.Count 0) $
-         error "the adversarial schema is smaller than s+k+d+1"
+         error "the adversarial schema length should be greater than s+k"
        void $ BV.fillInWindow
             S.notInverted
             (BV.SomeDensityWindow (C.Count 1) szFirstActive)
@@ -786,23 +788,14 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 --
 -- The result is guaranteed to leave more than k active slots after the
 -- intersection in the honest and the adversarial chains.
+-- See Note [Minimum schema length] in "Test.Ouroboros.Consensus.ChainGenerator.Honest"
+-- for the rationale of the precondition.
 --
--- The following precondition ensures that there are enough slots to produce an
--- alternative chain schema with at least k+1 slots.
--- The precondition allows the intersection to occur early enough (earlier than
--- s+k+d+1 slots from the end), which should allow the generation algorithm to
--- fit k+1 active slots in the alternative schema after the intersection.
---
--- PRECONDITION: @schemaSize schedH >= s + k + d + 1@
---
--- The following precondition ensures that there are at least k+1 blocks after
--- the intersection in the honest chain.
---
--- PRECONDITION: there is at least one block before the last s + k + d + 1 slots
+-- PRECONDITION: @schemaSize schedH >= 2*s + d + 1@
 genPrefixBlockCount :: R.RandomGen g => HonestRecipe -> g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
 genPrefixBlockCount (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) g schedH
-    | C.getCount validIntersections < 0 =
-        error "size of schema is smaller than s + k + d + 1"
+    | C.lengthV v < C.Count (2*s + d + 1) =
+        error "size of schema is smaller than 2*s + d + 1"
     | numBlocks == C.Count 0 =
           -- Pick genesis if there are no blocks
           0
@@ -814,13 +807,21 @@ genPrefixBlockCount (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) g schedH
   where
     ChainSchema _slots v = schedH
 
-    -- 'H.uniformTheHonestChain' ensures there is at least one block in the
-    -- first s slots.
-    -- By leaving one block after the intersection in the first s slots, we
-    -- ensure there are k+1 active slots in the honest chain after the
-    -- intersection.
+    -- Slots where intersections can occur
+    --
+    -- At first we ensure there are k active slots in the honest chain after the
+    -- intersection and before the last k+d slots of the schema.
+    --
+    -- possibleBlocks then corrects to let one additional active slot after the
+    -- intersection
+    validIntersections = C.lengthV v C.- (s + k + d)
+
+    -- Let one additional active slot after the intersection in the honest
+    -- schema, for a total of k+1.
+    --
+    -- Depending on the values of k and s, it could happen that @numBlocks==0@.
+    -- However, in that case the length of the honest chain (2*s+d+1) ensures there
+    -- are at least @2*k@ active slots after genesis.
     possibleBlocks = numBlocks C.- 1
     numBlocks = BV.countActivesInV S.notInverted $
            C.sliceV (C.UnsafeContains (C.Count 0) validIntersections) v
-
-    validIntersections = C.lengthV v C.- (s + k + d + 1)

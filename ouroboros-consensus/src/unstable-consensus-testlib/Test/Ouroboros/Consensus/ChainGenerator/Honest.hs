@@ -102,16 +102,36 @@ data NoSuchHonestChainSchema =
     BadLen
   deriving (Eq, Read, Show)
 
+-- Note [Minimum schema length]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- We want schemas to have at least k+1 active slots after the intersection.
+-- The minimum length is calculated to allow k+1 active slots in every schema,
+-- and then allowing the intersection to be the genesis block.
+--
+-- To ensure the honest schema has at least k+1 active slots, we need a length
+-- of 2s - (k - 1). We know that because 2s slots have at a minimum 2k blocks
+-- because of the chain growth assumption. But that is ensuring k-1 more blocks
+-- than we actually need. Thus it's safe to remove the k-1 slots.
+--
+-- To ensure the alternative schema can have k+1 active slots, we reserve
+-- k unstable slots at the end of the schema, and we make sure to activate one
+-- slot a stability window earlier.
+--
+-- To reserve k unstable slots, there needs to be a gap of d slots between
+-- the first unstable slot and the k+1st active slot in the honest schema. Thus
+-- we need to extend the previous length by d+k, to obtain
+-- 2s - (k - 1) + d + k = 2s + d + 1.
+--
+-- To ensure we can activate a slot at least a stability window earlier, we
+-- chose k greater or equal to two, which we already needed to ensure that the
+-- alternative schema can have at least one active slot, yet lose density and
+-- race comparisons.
+
 genHonestRecipe :: QC.Gen HonestRecipe
 genHonestRecipe = sized1 $ \sz -> do
     (Kcp k, Scg s, Delta d) <- genKSD
-    -- 2s slots have at least 2k blocks. But that is ensuring k-1 more blocks
-    -- than we actually need. Thus it's safe to remove the k-1 last slots.
-    -- Therefore we first set for a length of at least 2s - (k - 1).
-    --
-    -- If we then add k+d slots (to get a total size of 2s+d+1), we get enough
-    -- room for alternative chains to have k+1 blocks when they branch before
-    -- the last s+d+1 slots.
+    -- See Note [Minimum schema length].
     l <- (+ (2*s + d + 1)) <$> QC.choose (0, 5 * sz)
     pure $ HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l)
 
