@@ -48,6 +48,7 @@ const sidebars = {
         'for-developers/QueryVersioning',
         'for-developers/BootstrapPeersIER',
         'for-developers/TechnicalReports',
+        'for-developers/PreflightGuide',
       ]
     },
   ]

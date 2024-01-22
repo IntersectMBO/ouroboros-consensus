@@ -17,10 +17,19 @@ We have two types of documentation:
 - Markdown files, which can be found in the [docs](docs/website/contents)
   directory. They contain information that is not strictly related to the code
   itself, such as getting started guides, references, tutorials, etc.
+
+  They are rendered at the [Consensus
+  website](https://ouroboros-consensus.cardano.intersectmbo.org).
 - [Haddock][haddock-site] comments. They contain more low level information
   about the code and should be used as a reference, although we aim to provide
   some context navigation (cross referencing modules) on the module
   descriptions.
+
+When starting to work on Consensus, we recommend to take a look at the following
+resources:
+
+ - [Preflight guide](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/PreflightGuide)
+ - [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary)
 
 When adding or improving documentation about the implementation, it is
 preferable to add haddock comments since they are closer to the code. However
