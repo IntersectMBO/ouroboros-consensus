@@ -493,7 +493,10 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     do -- Since the first active slot in the adversarial chain might determine
        -- the position of the acceleration bound, we ensure it is early enough
        -- so we can always fit k+1 blocks in the alternative schema.
-       let trailingSlots = s + k + d + 1
+       --
+       -- There will be at least k unstable slots at the end, plus one more
+       -- active slot a stability window earlier.
+       let trailingSlots = s + k + 1
            szFirstActive = sz C.- trailingSlots C.+ 1
        when (szFirstActive <= C.Count 0) $
          error "the adversarial schema is smaller than s+k+d+1"
