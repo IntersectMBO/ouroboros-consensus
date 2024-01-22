@@ -283,6 +283,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
                 :* SCfgB
                 :* Nil
             }
+        , topLevelConfigCheckpoints = emptyCheckpointsMap
         }
 
     consensusConfigA :: CoreNodeId -> ConsensusConfig ProtocolA

@@ -238,10 +238,11 @@ testCfg securityParam = TopLevelConfig {
         , bftSignKey = SignKeyMockDSIGN 0
         , bftVerKeys = Map.singleton (CoreId (CoreNodeId 0)) (VerKeyMockDSIGN 0)
         }
-    , topLevelConfigLedger  = eraParams
-    , topLevelConfigBlock   = TestBlockConfig numCoreNodes
-    , topLevelConfigCodec   = TestBlockCodecConfig
-    , topLevelConfigStorage = TestBlockStorageConfig
+    , topLevelConfigLedger      = eraParams
+    , topLevelConfigBlock       = TestBlockConfig numCoreNodes
+    , topLevelConfigCodec       = TestBlockCodecConfig
+    , topLevelConfigStorage     = TestBlockStorageConfig
+    , topLevelConfigCheckpoints = emptyCheckpointsMap
     }
   where
     slotLength :: SlotLength

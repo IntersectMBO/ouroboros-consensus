@@ -192,10 +192,11 @@ protocolInfoByron ProtocolParamsByron {
             topLevelConfigProtocol = PBftConfig {
                 pbftParams = byronPBftParams compactedGenesisConfig mSigThresh
               }
-          , topLevelConfigLedger  = compactedGenesisConfig
-          , topLevelConfigBlock   = blockConfig
-          , topLevelConfigCodec   = mkByronCodecConfig compactedGenesisConfig
-          , topLevelConfigStorage = ByronStorageConfig blockConfig
+          , topLevelConfigLedger      = compactedGenesisConfig
+          , topLevelConfigBlock       = blockConfig
+          , topLevelConfigCodec       = mkByronCodecConfig compactedGenesisConfig
+          , topLevelConfigStorage     = ByronStorageConfig blockConfig
+          , topLevelConfigCheckpoints = emptyCheckpointsMap
           }
       , pInfoInitLedger = ExtLedgerState {
             -- Important: don't pass the compacted genesis config to

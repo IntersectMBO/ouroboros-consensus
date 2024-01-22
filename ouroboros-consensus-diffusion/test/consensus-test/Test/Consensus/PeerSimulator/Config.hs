@@ -5,7 +5,8 @@ module Test.Consensus.PeerSimulator.Config (defaultCfg) where
 import           Cardano.Crypto.DSIGN (SignKeyDSIGN (..), VerKeyDSIGN (..))
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import qualified Data.Map.Strict as Map
-import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
+import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..),
+                     emptyCheckpointsMap)
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
 import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes))
@@ -33,10 +34,11 @@ defaultCfg secParam = TopLevelConfig {
       , (CoreId (CoreNodeId 1), VerKeyMockDSIGN 1)
       ]
     }
-  , topLevelConfigLedger  = eraParams
-  , topLevelConfigBlock   = TestBlockConfig numCoreNodes
-  , topLevelConfigCodec   = TestBlockCodecConfig
-  , topLevelConfigStorage = TestBlockStorageConfig
+  , topLevelConfigLedger      = eraParams
+  , topLevelConfigBlock       = TestBlockConfig numCoreNodes
+  , topLevelConfigCodec       = TestBlockCodecConfig
+  , topLevelConfigStorage     = TestBlockStorageConfig
+  , topLevelConfigCheckpoints = emptyCheckpointsMap
   }
   where
     -- REVIEW: Make it 1s or a parameter?

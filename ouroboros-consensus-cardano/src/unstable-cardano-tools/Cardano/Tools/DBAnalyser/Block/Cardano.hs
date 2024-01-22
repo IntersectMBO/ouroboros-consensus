@@ -54,6 +54,7 @@ import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block (CardanoEras)
 import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..),
                      protocolInfoCardano)
+import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
                      OneEraBlock (..), OneEraHash (..), getHardForkState,
                      hardForkLedgerStatePerEra)
@@ -322,6 +323,7 @@ mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNo
           }
         triggers
         transitionConfig
+        emptyCheckpointsMap
       )
   where
 
