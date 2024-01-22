@@ -2,7 +2,7 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2024-01-01T00:00:00Z";
+  tool-index-state = "2024-01-22T00:00:00Z";
   tool = name: version: other:
     final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
       version = version;
@@ -19,8 +19,8 @@ in
     src = final.fetchFromGitHub {
       owner = "haskell";
       repo = "cabal";
-      rev = "27f4ee71d949837ba31e170d205fbe6c1ecf847d";
-      hash = "sha256-Ia0CgKuqtYynSIR1TQd2/enB+IpzCYrB7CbbVBb3Rus=";
+      rev = "adc283a0f06c7d24aeed67e69aca3d71c04010b3";
+      hash = "sha256-3K9WVR/tINK3PyGlXpypSpp1pguHTnolDruHNE+VvE4=";
     };
     index-state = tool-index-state;
     inherit (final.hsPkgs.args) compiler-nix-name;
@@ -48,9 +48,9 @@ in
     '';
   };
 
-  stylish-haskell = tool "stylish-haskell" "0.14.5.0" { };
+  stylish-haskell = tool "stylish-haskell" "0.14.6.0" { };
 
-  cabal-fmt = tool "cabal-fmt" "0.1.9" { };
+  cabal-fmt = tool "cabal-fmt" "0.1.10" { };
 
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;

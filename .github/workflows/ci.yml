@@ -20,7 +20,7 @@ jobs:
     strategy:
        fail-fast: false
        matrix:
-         ghc: ["8.10.7", "9.6.3"]
+         ghc: ["8.10.7", "9.6.4"]
          cabal: ["3.10.1.0"]
          os: [ubuntu-latest]
     env:
@@ -172,7 +172,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.6.3'
+        && matrix.ghc=='9.6.4'
       run: |
         cabal build --dry-run --enable-tests all
         ./scripts/docs/haddocks.sh
@@ -182,7 +182,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='9.6.3'
+        && matrix.ghc=='9.6.4'
       uses: actions/upload-artifact@v4
       with:
         name: haddocks

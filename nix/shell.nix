@@ -22,7 +22,7 @@ hsPkgs.shellFor {
   # This is the place for tools that are required to be built with the same GHC
   # version as used in hsPkgs.
   tools = lib.mapAttrs (_: t: t // { index-state = pkgs.tool-index-state; }) {
-    haskell-language-server = { version = "2.5.0.0"; };
+    haskell-language-server = { version = "2.6.0.0"; };
   };
 
   shellHook = ''
