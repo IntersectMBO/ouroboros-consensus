@@ -15,8 +15,12 @@
 module Data.SOP.NonEmpty (
     NonEmpty (..)
     -- * Proofs
+  , IsEmpty (..)
   , IsNonEmpty (..)
+  , ProofEmpty (..)
   , ProofNonEmpty (..)
+  , checkEmptiness
+  , checkIsEmpty
   , checkIsNonEmpty
     -- * Working with 'NonEmpty'
   , nonEmptyFromList
@@ -159,6 +163,14 @@ nonEmptyMapTwo f g = go
   Proofs
 -------------------------------------------------------------------------------}
 
+checkEmptiness ::
+     forall xs. SListI xs
+  => Proxy xs
+  -> Either (ProofEmpty xs) (ProofNonEmpty xs)
+checkEmptiness _ = case sList @xs of
+    SNil  -> Left ProofEmpty
+    SCons -> Right $ ProofNonEmpty Proxy Proxy
+
 type ProofNonEmpty :: [a] -> Type
 data ProofNonEmpty xs where
   ProofNonEmpty :: Proxy x -> Proxy xs -> ProofNonEmpty (x ': xs)
@@ -173,3 +185,17 @@ checkIsNonEmpty :: forall xs. SListI xs => Proxy xs -> Maybe (ProofNonEmpty xs)
 checkIsNonEmpty _ = case sList @xs of
     SNil  -> Nothing
     SCons -> Just $ ProofNonEmpty Proxy Proxy
+
+data ProofEmpty :: [a] -> Type where
+  ProofEmpty :: ProofEmpty '[]
+
+class IsEmpty xs where
+  isEmpty :: Proxy xs -> ProofEmpty xs
+
+instance IsEmpty '[] where
+  isEmpty _ = ProofEmpty
+
+checkIsEmpty :: forall xs. SListI xs => Proxy xs -> Maybe (ProofEmpty xs)
+checkIsEmpty _ = case sList @xs of
+    SNil  -> Just ProofEmpty
+    SCons -> Nothing

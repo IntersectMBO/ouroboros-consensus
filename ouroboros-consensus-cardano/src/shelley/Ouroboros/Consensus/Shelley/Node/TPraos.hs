@@ -175,25 +175,25 @@ validateGenesis = first errsToString . SL.validateGenesis
 -- | Parameters needed to run Shelley
 data instance ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c)) = ProtocolParamsShelley {
       shelleyProtVer                :: SL.ProtVer
-    , shelleyMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock(TPraos c) (ShelleyEra c) )
+    , shelleyMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (ShelleyEra c))
     }
 
 -- | Parameters needed to run Allegra
 data instance ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c)) = ProtocolParamsAllegra {
       allegraProtVer                :: SL.ProtVer
-    , allegraMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (AllegraEra c) )
+    , allegraMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (AllegraEra c))
     }
 
 -- | Parameters needed to run Mary
 data instance ProtocolParams (ShelleyBlock (TPraos c) (MaryEra c)) = ProtocolParamsMary {
       maryProtVer                :: SL.ProtVer
-    , maryMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (MaryEra c) )
+    , maryMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (MaryEra c))
     }
 
 -- | Parameters needed to run Alonzo
 data instance ProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra c)) = ProtocolParamsAlonzo {
       alonzoProtVer                :: SL.ProtVer
-    , alonzoMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (AlonzoEra c) )
+    , alonzoMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (TPraos c) (AlonzoEra c))
     }
 
 protocolInfoShelley ::

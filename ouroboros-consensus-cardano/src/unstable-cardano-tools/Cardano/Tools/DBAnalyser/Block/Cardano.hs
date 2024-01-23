@@ -31,7 +31,6 @@ import qualified Cardano.Crypto.Hash.Class as CryptoClass
 import           Cardano.Crypto.Raw (Raw)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
-import qualified Cardano.Ledger.BaseTypes as SL (natVersion)
 import           Cardano.Ledger.Binary.Version (getVersion)
 import           Cardano.Ledger.Crypto
 import           Cardano.Node.Types (AdjustFilePaths (..))
@@ -53,7 +52,10 @@ import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block (CardanoEras)
 import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..),
-                     protocolInfoCardano)
+                     protocolInfoCardano')
+import           Ouroboros.Consensus.Cardano.Node.ProtocolVersions
+                     (CardanoProtocolVersions (..),
+                     cardanoMainnetProtocolVersions)
 import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
                      OneEraBlock (..), OneEraHash (..), getHardForkState,
                      hardForkLedgerStatePerEra)
@@ -157,6 +159,7 @@ instance HasProtocolInfo (CardanoBlock StandardCrypto) where
           transCfg
           initialNonce
           (cfgHardForkTriggers cc)
+          (cardanoMainnetProtocolVersions False)
 
 data CardanoConfig = CardanoConfig {
     -- | @RequiresNetworkMagic@ field
@@ -277,48 +280,40 @@ mkCardanoProtocolInfo ::
   -> L.TransitionConfig (L.LatestKnownEra StandardCrypto)
   -> Nonce
   -> CardanoHardForkTriggers
+  -> CardanoProtocolVersions StandardCrypto
   -> ProtocolInfo (CardanoBlock StandardCrypto)
-mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers =
-    fst $ protocolInfoCardano @_ @IO
-      (CardanoProtocolParams
-        ProtocolParamsByron {
-            byronGenesis                = genesisByron
-          , byronPbftSignatureThreshold = signatureThreshold
-          , byronProtocolVersion        = Byron.Update.ProtocolVersion 1 2 0
-          , byronSoftwareVersion        = Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
-          , byronLeaderCredentials      = Nothing
-          , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers protocolVersions =
+    fst $ protocolInfoCardano' @_ @IO
+      protocolVersions
+      (CardanoPartialProtocolParams
+        PartialProtocolParamsByron {
+            pbyronGenesis                = genesisByron
+          , pbyronPbftSignatureThreshold = signatureThreshold
+          , pbyronSoftwareVersion        = Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
+          , pbyronLeaderCredentials      = Nothing
+          , pbyronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
         ProtocolParamsShelleyBased {
             shelleyBasedInitialNonce      = initialNonce
           , shelleyBasedLeaderCredentials = []
           }
-        ProtocolParamsShelley {
-            -- Note that this is /not/ the Shelley protocol version, see
-            -- https://github.com/IntersectMBO/cardano-node/blob/daeae61a005776ee7b7514ce47de3933074234a8/cardano-node/src/Cardano/Node/Protocol/Cardano.hs#L167-L170
-            -- and the succeeding comments.
-            shelleyProtVer                = ProtVer (SL.natVersion @3) 0
-          , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+        PartialProtocolParamsShelley {
+            pshelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
-        ProtocolParamsAllegra {
-            allegraProtVer                = ProtVer (SL.natVersion @4) 0
-          , allegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+        PartialProtocolParamsAllegra {
+            pallegraMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
-        ProtocolParamsMary {
-            maryProtVer                   = ProtVer (SL.natVersion @5) 0
-          , maryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
+        PartialProtocolParamsMary {
+            pmaryMaxTxCapacityOverrides    = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
-        ProtocolParamsAlonzo {
-            alonzoProtVer                 = ProtVer (SL.natVersion @7) 0
-          , alonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+        PartialProtocolParamsAlonzo {
+            palonzoMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
-        ProtocolParamsBabbage {
-            babbageProtVer                 = ProtVer (SL.natVersion @9) 0
-          , babbageMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
+        PartialProtocolParamsBabbage {
+            pbabbageMaxTxCapacityOverrides  = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
-        ProtocolParamsConway {
-            conwayProtVer                  = ProtVer (SL.natVersion @9) 0
-          , conwayMaxTxCapacityOverrides   = Mempool.mkOverrides Mempool.noOverridesMeasure
+        PartialProtocolParamsConway {
+            pconwayMaxTxCapacityOverrides   = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
         triggers
         transitionConfig
