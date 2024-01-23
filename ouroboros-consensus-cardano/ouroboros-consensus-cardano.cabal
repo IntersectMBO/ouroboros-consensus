@@ -80,6 +80,9 @@ library
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
     Ouroboros.Consensus.Cardano.Node
+    Ouroboros.Consensus.Cardano.Node.HasPartialProtocolParams
+    Ouroboros.Consensus.Cardano.Node.ProtocolVersions
+    Ouroboros.Consensus.Cardano.Node.ProtocolVersions.Internal
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras

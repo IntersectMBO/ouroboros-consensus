@@ -34,10 +34,12 @@ module Ouroboros.Consensus.Cardano.Node (
   , CardanoHardForkTriggers (.., CardanoHardForkTriggers', triggerHardForkShelley, triggerHardForkAllegra, triggerHardForkMary, triggerHardForkAlonzo, triggerHardForkBabbage, triggerHardForkConway)
   , CardanoProtocolParams
   , MaxMajorProtVer (..)
+  , PartialProtocolParams (.., CardanoPartialProtocolParams, pparamsByron, pparamsShelleyBased, pparamsShelley, pparamsAllegra, pparamsMary, pparamsAlonzo, pparamsBabbage, pparamsConway, phardForkTriggers, pledgerTransitionConfig)
   , ProtocolParams (.., CardanoProtocolParams, paramsByron, paramsShelleyBased, paramsShelley, paramsAllegra, paramsMary, paramsAlonzo, paramsBabbage, paramsConway, hardForkTriggers, ledgerTransitionConfig)
   , TriggerHardFork (..)
   , protocolClientInfoCardano
   , protocolInfoCardano
+  , protocolInfoCardano'
     -- * SupportedNetworkProtocolVersion
   , pattern CardanoNodeToClientVersion1
   , pattern CardanoNodeToClientVersion10
@@ -80,7 +82,6 @@ import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
 import           Data.SOP.Index (Index (..))
-import           Data.SOP.NonEmpty
 import           Data.SOP.OptNP (NonEmptyOptNP, OptNP (OptSkip))
 import qualified Data.SOP.OptNP as OptNP
 import           Data.SOP.Strict
@@ -94,6 +95,9 @@ import           Ouroboros.Consensus.Byron.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Byron.Node
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
+import           Ouroboros.Consensus.Cardano.Node.HasPartialProtocolParams
+import           Ouroboros.Consensus.Cardano.Node.ProtocolVersions
+import qualified Ouroboros.Consensus.Cardano.Node.ProtocolVersions.Internal as PV.Internal
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
@@ -653,6 +657,109 @@ pattern CardanoProtocolParams {
 
 {-# COMPLETE CardanoProtocolParams #-}
 
+newtype PerEraPartialProtocolParams xs = PerEraPartialProtocolParams  { getPerEraPartialProtocolParams  :: NP PartialProtocolParams xs }
+
+instance HasPartialProtocolParams (CardanoBlock c) where
+  data instance PartialProtocolParams (CardanoBlock c) =
+    PartialProtocolParamsCardano {
+        cardanoPartialProtocolParamsPerEra :: PerEraPartialProtocolParams (CardanoEras c)
+      , pshelleyBasedProtocolParams        :: ProtocolParamsShelleyBased c
+      , pcardanoHardForkTriggers       :: CardanoHardForkTriggers
+      , pcardanoLedgerTransitionConfig :: L.TransitionConfig (L.LatestKnownEra c)
+      }
+
+  completeProtocolParams protocolVersionsCardano partialParamsCardano = ProtocolParamsCardano {
+        cardanoProtocolParamsPerEra = PerEraProtocolParams $
+          hczipWith
+            (Proxy @HasPartialProtocolParams)
+            (\pp pv -> completeProtocolParams (PV.Internal.unwrapProtocolVersion pv) pp)
+            (getPerEraPartialProtocolParams cardanoPartialProtocolParamsPerEra)
+            (PV.Internal.getPerEraProtocolVersion $ PV.Internal.getCardanoProtocolVersions protocolVersionsCardano)
+      , shelleyBasedProtocolParams      = pshelleyBasedProtocolParams
+      , cardanoHardForkTriggers = pcardanoHardForkTriggers
+      , cardanoLedgerTransitionConfig = pcardanoLedgerTransitionConfig
+      }
+    where
+      PartialProtocolParamsCardano {
+          cardanoPartialProtocolParamsPerEra
+        , pshelleyBasedProtocolParams
+        , pcardanoHardForkTriggers
+        , pcardanoLedgerTransitionConfig
+        } = partialParamsCardano
+
+type CardanoPartialProtocolParams c = PartialProtocolParams (CardanoBlock c)
+
+pattern CardanoPartialProtocolParams ::
+     PartialProtocolParams ByronBlock
+  -> ProtocolParamsShelleyBased c
+  -> PartialProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
+  -> PartialProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c))
+  -> PartialProtocolParams (ShelleyBlock (TPraos c) (MaryEra    c))
+  -> PartialProtocolParams (ShelleyBlock (TPraos c) (AlonzoEra  c))
+  -> PartialProtocolParams (ShelleyBlock (Praos  c) (BabbageEra c))
+  -> PartialProtocolParams (ShelleyBlock (Praos  c) (ConwayEra  c))
+  -> CardanoHardForkTriggers
+  -> L.TransitionConfig (L.LatestKnownEra c)
+  -> CardanoPartialProtocolParams c
+pattern CardanoPartialProtocolParams {
+        pparamsByron
+      , pparamsShelleyBased
+      , pparamsShelley
+      , pparamsAllegra
+      , pparamsMary
+      , pparamsAlonzo
+      , pparamsBabbage
+      , pparamsConway
+      , phardForkTriggers
+      , pledgerTransitionConfig
+      } =
+    PartialProtocolParamsCardano {
+        cardanoPartialProtocolParamsPerEra = PerEraPartialProtocolParams
+          (  pparamsByron
+          :* pparamsShelley
+          :* pparamsAllegra
+          :* pparamsMary
+          :* pparamsAlonzo
+          :* pparamsBabbage
+          :* pparamsConway
+          :* Nil
+          )
+      , pshelleyBasedProtocolParams = pparamsShelleyBased
+      , pcardanoHardForkTriggers = phardForkTriggers
+      , pcardanoLedgerTransitionConfig = pledgerTransitionConfig
+      }
+
+{-# COMPLETE CardanoPartialProtocolParams #-}
+
+instance HasProtocolVersion (CardanoBlock c) where
+  extractProtocolVersion =
+      PV.Internal.CardanoProtocolVersions_
+    . PV.Internal.PerEraProtocolVersion
+    . hcmap
+        (Proxy @HasProtocolVersion)
+        (PV.Internal.WrapProtocolVersion . extractProtocolVersion)
+    . getPerEraProtocolParams
+    . cardanoProtocolParamsPerEra
+
+-- | Create a 'ProtocolInfo' for 'CardanoBlock' like 'protocolInfoCardano', but
+-- pass in protocol versions separately from other parameters.
+--
+-- For mainnet node operation, this should be used in conjunction with
+-- 'cardanoMainnetProtocolVersions'.
+--
+-- This function should be preferred over 'protocolInfoCardano'.
+--
+-- See 'protocolInfoCardano' for more information.
+protocolInfoCardano' ::
+  forall c m. (IOLike m, CardanoHardForkConstraints c)
+  => CardanoProtocolVersions c
+  -> CardanoPartialProtocolParams c
+  -> ( ProtocolInfo      (CardanoBlock c)
+     , m [BlockForging m (CardanoBlock c)]
+     )
+protocolInfoCardano' protocolVersionsCardano partialParamsCardano =
+    protocolInfoCardano (completeProtocolParams protocolVersionsCardano partialParamsCardano)
+
 -- | Create a 'ProtocolInfo' for 'CardanoBlock'
 --
 -- NOTE: For testing and benchmarking purposes, the 'ShelleyGenesis' can contain
@@ -754,20 +861,8 @@ protocolInfoCardano paramsCardano
     maxMajorProtVer =
           MaxMajorProtVer
         $ pvMajor
-        $ nonEmptyLast
-        $ exactlyWeakenNonEmpty
-        $ protVers
-      where
-        protVers :: Exactly (CardanoShelleyEras StandardCrypto) ProtVer
-        protVers = Exactly $
-          -- ensure that these have the same order as 'CardanoShelleyEras'!
-          K protVerShelley :*
-          K protVerAllegra :*
-          K protVerMary :*
-          K protVerAlonzo :*
-          K protVerBabbage :*
-          K protVerConway :*
-          Nil
+        $ cardanoMaxProtocolVersion
+        $ extractProtocolVersion paramsCardano
 
     -- Byron
 
