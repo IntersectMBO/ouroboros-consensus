@@ -30,7 +30,7 @@ Consider the following three `SelectView`s:
 | Opcert no    | 2 | o | 1 |
 | VRF          | 3 | 2 | 1 |
 
-Lower-case letters stand for arbitrary values (but if they occur repeatedly, they designate the same value).
+Lower-case letters stand for arbitrary values (two letters designate the same value if and only if they are same letter).
 
 We have
 
