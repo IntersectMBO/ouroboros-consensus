@@ -22,42 +22,34 @@ repository should you find missing or inaccurate information.
 
 ## Very High-Level Motivation
 
-At a very high level, a net of Cardano nodes should exhibit the following
-concrete behaviors.
+The Consensus component allows a network of Cardano node to agree on a single (block) chain.
+To this end, this component implements the Ouroboros family of consensus protocols.
 
-  * The net should diffuse transactions throughout the net as rapidly as
-    possible.
+Another functional requirement is that the network should diffuse blocks and transactions as rapidly as
+possible. Also the network should be very difficult to disrupt. For example, a successful denial of service attack should be prohibitively expensive to execute.
+The Consensus layer must contribute to these goals.
 
-  * The net should diffuse blocks throughout the net as rapidly as possible.
+Whenever the Ouroboros protocol specifies that (a stake pool operating) a particular node should lead, that node should extend the best chain it has seen so far by minting a new block.
+A newly forged block should contain as many valid transactions as possible.
 
-  * Whenever the Ouroboros protocol specifies that (a stake pool operating) a
-    particular node should lead, that node should extend the best chain it has
-    seen so far by minting a new block, which should contain as many valid
-    transactions as possible.
+The primary data handled by this component are _blocks_ and _transactions_, the validity of which is determined by the ledger rules.
+The Consensus layer in combination with the [Network layer][ouroboros-network] implement a _filtering forwarding network_.
+Specifically, Consensus determines which blocks propagate between neighboring nodes (those on the _best_ chain).
 
-  * The net should be very difficult to disrupt. For example, a successful
-    denial of service attack should be prohibitively expensive to enact.
-
-The primary data are _blocks_ and _transactions_. The possible contents of both
-of those are primarily constrained by the ledger rules. The Consensus Layer and
-[Network Layer](https://github.com/IntersectMBO/ouroboros-network) together
-implement a _filtering forwarding network_. Specifically, the Consensus Layer
-determines which blocks propagate between neighboring nodes: those on the _best_
-chain. The IOG researchers have established that the Ouroboros protocol can be
-used to ensure that -- unless an adversary controls more than half of the net's
-stake -- the honest nodes will all continually reach _consensus_ regarding the
-selection of a single best chain and that that chain grows over time.
+The Ouroboros research papers that formalize the different protocols (such as Praos) contain proofs that:
+- the honest nodes will all continually and eventually agree on what the best chain is (unless an adversary controls more than half of the network's stake).
+- the best chain grows over time.
 
 The Consensus Layer defines the core Consensus components and logic, notably the
 Ouroboros protocol. See [References](References).
 
 ## The Neighbors of Consensus
 
-The Consensus Layer integrates the Consensus core with the Network Layer and the
+The Consensus Layer integrates the Consensus core with the [Network Layer][ouroboros-network] and the
 [Ledger Layer](https://github.com/IntersectMBO/cardano-ledger). We therefore work closely with the Network
 and Ledger teams.
 
-The [Network Layer](https://github.com/IntersectMBO/ouroboros-network) manages the nodes' connections to its
+The Network Layer manages the nodes' connections to its
 neighbors. So it ultimately provides communication channels to the Consensus
 Layer, while the Consensus Layer reports back to it if a neighbor has misbehaved
 etc. The Network Layer also provides the library used to define the Consensus
@@ -76,3 +68,5 @@ full Ouroboros protocol and mints new blocks. Secondary uses include the
 _Cardano wallet_ and [Cardano DB sync](https://github.com/IntersectMBO/cardano-db-sync), which
 connect to a proper node and only follow and _trust_ its chain selection. For
 example, these uses involve problem-specific queries of the latest ledger state.
+
+[ouroboros-network]: https://github.com/IntersectMBO/ouroboros-network
