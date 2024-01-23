@@ -2,13 +2,18 @@
 
 The following artifacts influence and/or describe the Consensus implementation.
 
+<!-- xrefcheck: ignore link -->
 * [Technical reports](../for-developers/TechnicalReports)
 * From the IOG researchers:
     * [Ouroboros BFT][ouroboros-bft]
     * [Ouroboros Praos][ouroboros-praos]
     * [Ouroboros Genesis][ouroboros-genesis]
 * [Ledger specifications][cardano-ledger].
-* Consensus (Praos) specification: [Agda style](/pdfs/consensus-spec-agda.pdf), [LaTeX style](/pdfs/consensus-spec.pdf)
+* Consensus (Praos) specification:
+    <!-- xrefcheck: ignore link -->
+    [Agda style](/pdfs/consensus-spec-agda.pdf),
+    <!-- xrefcheck: ignore link -->
+    [LaTeX style](/pdfs/consensus-spec.pdf)
 * [Quick reference table for all Cardano features](https://github.com/cardano-foundation/CIPs/blob/master/CIP-0059/feature-table.md).
   This includes the dates and first slot numbers of all eras and hard forks.
 * IOG media:

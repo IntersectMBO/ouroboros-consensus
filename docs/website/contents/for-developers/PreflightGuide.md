@@ -259,7 +259,7 @@ Finally, we shall note that there are various ideas of how to eliminate grinding
 [^utxo-hd]: The main reason for this is that the ledger state, ie the aggregated information necessary to validate blocks, is currently fully stored in memory.
 The Consensus team is currently working on *UTxO HD*, a solution to move the ledger state to disk.
 
-[^resource-relative]: Cardano is not a huge outlier in either direction, there are many examples for blockchains that are either much less resource-intensive (due to very low activity or new age, or due to very fancy cryptography, like Mina) or much more resource-intensive (due to very old age and large accumulated history, like Bitcoin, or a hyperfocus on performance, like [Solana](https://docs.solana.com/running-validator/validator-reqs#hardware-recommendations)).
+[^resource-relative]: Cardano is not a huge outlier in either direction, there are many examples for blockchains that are either much less resource-intensive (due to very low activity or new age, or due to very fancy cryptography, like Mina) or much more resource-intensive (due to very old age and large accumulated history, like Bitcoin, or a hyperfocus on performance, like [Solana](https://docs.anza.xyz/operations/requirements#hardware-recommendations)).
 
 [^genesis-syncing]: As of early 2024, syncing is a fully trusted process; if any node you are syncing from is adversarial, you might end up on an adversarial chain.
 There is an ongoing effort to implement *Ouroboros Genesis* in order to reduce this strong trust assumption; in particular, it will involve reaching out to lots of nodes while syncing.
@@ -293,17 +293,17 @@ for Ungrindable Blockchains" by Kiayias et al](https://eprint.iacr.org/2021/1698
 [cardano-cli]: https://github.com/IntersectMBO/cardano-cli
 [cardano-db-sync]: https://github.com/IntersectMBO/cardano-db-sync
 [kupo]: https://github.com/cardanosolutions/kupo
-[hydra]: https://github.com/input-output-hk/hydra
+[hydra]: https://github.com/cardano-scaling/hydra
 [ogmios]: https://github.com/CardanoSolutions/ogmios
 [node release page]: https://github.com/IntersectMBO/cardano-node/releases
 [cardano mainnet conf]: https://github.com/IntersectMBO/cardano-node/blob/master/configuration/cardano/mainnet-config.yaml
 [cardano mainnet topo]: https://github.com/IntersectMBO/cardano-node/blob/master/configuration/cardano/mainnet-topology.json
-[Mithril client]: https://mithril.network/doc
-[Mithril instructions]: https://mithril.network/doc/manual/getting-started/bootstrap-cardano-node
+[Mithril client]: https://mithril.network/doc/
+[Mithril instructions]: https://mithril.network/doc/manual/getting-started/bootstrap-cardano-node/
 [Magic Wormhole]: https://github.com/magic-wormhole/magic-wormhole
 [db-analyser]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/README.md#db-analyser
 [Cardano ledger]: https://github.com/IntersectMBO/cardano-ledger
-[Glossary]: https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary
+[Glossary]: https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary/
 [db-analyser snapshot]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/README.md#saving-a-snapshot
 [preflight epic]: https://github.com/IntersectMBO/ouroboros-consensus/issues/887
 [Ouroboros Praos paper]: https://iohk.io/en/research/library/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol/

@@ -28,8 +28,8 @@ We have two types of documentation:
 When starting to work on Consensus, we recommend to take a look at the following
 resources:
 
- - [Preflight guide](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/PreflightGuide)
- - [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary)
+ - [Preflight guide](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/PreflightGuide/)
+ - [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary/)
 
 When adding or improving documentation about the implementation, it is
 preferable to add haddock comments since they are closer to the code. However
@@ -53,7 +53,7 @@ live in this repository.
 
 ## Using Nix
 
-Consensus can be built using [Nix](https://nixos.org/download.html). The
+Consensus can be built using [Nix](https://nixos.org/download/). The
 installation and configuration instructions are taken from
 [cardano-node](https://github.com/input-output-hk/cardano-node-wiki/blob/main/docs/getting-started/building-the-node-using-nix.md),
 and detailed below. To install `nix` run:
@@ -378,5 +378,5 @@ See [Cardano engineering
 handbook](https://github.com/input-output-hk/cardano-engineering-handbook/blob/main/CODE-OF-CONDUCT.md)'s
 code of conduct.
 
-[haddock-site]: https://haskell-haddock.readthedocs.io/en/latest/
+[haddock-site]: https://haskell-haddock.readthedocs.io/latest/
 [chap]: https://github.com/IntersectMBO/cardano-haskell-packages

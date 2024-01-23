@@ -40,6 +40,7 @@ The Ouroboros research papers that formalize the different protocols (such as Pr
 - the honest nodes will all continually and eventually agree on what the best chain is (unless an adversary controls more than half of the network's stake).
 - the best chain grows over time.
 
+<!-- xrefcheck: ignore link -->
 The Consensus Layer defines the core Consensus components and logic, notably the
 Ouroboros protocol. See [References](References).
 
