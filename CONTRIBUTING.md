@@ -168,7 +168,7 @@ and improvements are always welcome.
 
 ## Formatting the code
 
-We use `stylish-haskell` 0.14.5.0 for Haskell code formatting.
+We use `stylish-haskell` 0.14.6.0 for Haskell code formatting.
 
 Either enable editor integration or call the script used by CI itself:
 

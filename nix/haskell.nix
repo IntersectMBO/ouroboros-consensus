@@ -14,7 +14,7 @@ let
   };
   hsPkgs = haskell-nix.cabalProject {
     src = ./..;
-    compiler-nix-name = "ghc963";
+    compiler-nix-name = "ghc964";
     flake.variants = {
       ghc810 = { compiler-nix-name = lib.mkForce "ghc8107"; };
     };
@@ -34,9 +34,6 @@ let
               extraSrcFiles = [ "golden/${n}/**/*" ];
             }) [ "byron" "shelley" "cardano" ]);
       }
-      ({ lib, pkgs, ... }: lib.mkIf pkgs.stdenv.hostPlatform.isWindows {
-        reinstallableLibGhc = false;
-      })
     ];
     flake.variants = {
       noAsserts = {
