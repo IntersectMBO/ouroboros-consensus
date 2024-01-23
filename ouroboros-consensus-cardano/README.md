@@ -196,7 +196,7 @@ See this file for usage information.
 
 If no analysis flag is provided, then the ChainDB will be opened, all the chunks
 in the immutable and volatile databases will be validated (see
-[validation](#database-validation)), and the tool will exit.
+[validation](#database-validation-via---db-validation)), and the tool will exit.
 
 ### Examples
 

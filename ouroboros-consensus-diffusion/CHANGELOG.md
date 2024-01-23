@@ -163,7 +163,7 @@ NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created
 
 - Added the Genesis State Machine (GSM), though for now it is merely the
   simpler [Bootstrap Peers State
-  Machine](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/BootstrapPeersIER).
+  Machine](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/BootstrapPeersIER/).
 
 - Added `rnGetUseBootstrapPeers` to `RunNodeArgs`, for dynamically
   enabling/disabling the GSM. The proper GSM must always be running, despite

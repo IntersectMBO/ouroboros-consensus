@@ -495,7 +495,7 @@ This rule is so simple that the ✗ for EasyPR is somewhat surpising.
 The hidden problem is that this scheme causes spurious merge conflicts among all your PRs.
 It would only be possible to merge PRs sequentially and merging one PR requires rebasing every other PR and updating its version number diff (assuming a single target branch).
 That usually implies a very poor contributor experience.
-(If you're wondering about variations on this, such as "only bump the version if it hasn't already been bumped", see [below](#RisingEdgeCompromises).)
+(If you're wondering about variations on this, such as "only bump the version if it hasn't already been bumped", see [below](#possible-risingedge-compromises).)
 
 We assign ✓ for EasyRelease because each release doesn't require any additional work; merely announce the result of the latest PR.
 Relatedly, though, we assign ✗ for TypicalReleases because it's unrealistic to release after every PR.
