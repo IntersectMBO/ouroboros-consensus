@@ -44,3 +44,32 @@ Let asai abbreviate "active sai".
 
     - Moreover, that inequality must hold for every prefix of that window that includes the `Kcp+1`st honest asai.
       This rules out a corner case in which the Genesis rule would disagree with the Praos rule, which the Genesis authors argued has a similar probability as a Praos Common Prefix violation.
+
+-----
+
+`uniformAdversarialChain` requires that the honest schema permits an intersection with both `Kcp+1` honest asais and also enough sais to also allow at least `Kcp+1` alternative asais.
+Specifically, there must be enough sais so that at least `Kcp` slots are _unstable_, ie both more than `Del` after the `Kcp+1`st honest asai and also more than `Scg` after the first alternative asai.
+
+`uniformAdversarialChain` requires that the honest schema permits an intersection with both `Kcp+1` honest asais and also enough sais to also allow at least `Kcp+1` alternative asais.
+Specifically, there must be enough sais so that at least `Kcp` slots are _unstable_, ie both more than `Del` after the `Kcp+1`st honest asai and also more than `Scg` after the first alternative asai.
+
+Suppose `1<Kcp`.
+The `Kcp+1`st honest asai can be no later than the `2Scg-(Kcp-1)`th sai.
+The unstable slots could begin as late as `Del+1` after that, ie the `2Scg-Kcp+Del+2`th sai.
+The first alternative asai is unconstrained when `1<Kcp`, and thus merely needs to be no later than the `Scg-Kcp+Del+1`st sai to not push the unstable slots farther into the future than the sai above.
+Thus `2Scg+Del+2` sais would suffice to ensure there are at least `Kcp` unstable slots before the end of the schema.
+
+Suppose `Kcp=0`.
+Note that there does not need to be an unstable slots, merely at least one alternative asai.
+The `Kcp+1`st honest asai is the first honest sai, and so can be no later than the `Scg`th sai, since Genesis requires the first `Scg` sais contains _strictly_ more honest active than alternative active.
+(This requires that the honest schema has two active slots in the same window of `Scg+1` slots, one of which may be the genesis block.)
+Thus it's possible that the first alternative asai can be no sooner than `Scg+Del+1`.
+Thus `Scg+Del+1` sais would suffice to ensure there are at least `Kcp=0` unstable slots before the end of the schema (actually: that there is at least one alternative asai).
+
+Suppose `Kcp=1`.
+(Again, the honest schema must have two active slots in the same window of `Scg+1` slots, one of which may be the genesis block.)
+This is similar to the `1<Kcp` case, except there might only be one honest active in the first `Scg` sais, and so the first alternative active sai might need to be after the `Scg`th sai, meaning the unstable slots couldn't begin before the `2Scg+2`nd sai.
+Also, the `Kcp+1=2`nd honest asai might be as late as the `2Scg`th sai, so the unstable slots might not begin until the `2Scg+Del+1`st sai.
+Thus `2Scg + max (Del+2) 3` sais would suffice to ensure there are at least `Kcp=1` unstable slot before the end of the schema.
+
+Since the genesis block can always be chosen as the intersection (as long as the first honest active slot is at most the `Scg`th slot), the above sai counts are also the minimum bound for `Len` in order to ensure at least `Kcp+1` asais for both honest and alternative.
