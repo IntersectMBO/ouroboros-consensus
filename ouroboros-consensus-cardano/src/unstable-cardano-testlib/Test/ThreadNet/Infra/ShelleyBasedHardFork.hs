@@ -98,8 +98,8 @@ pattern ShelleyBasedHardForkNodeToNodeVersion1 ::
 pattern ShelleyBasedHardForkNodeToNodeVersion1 =
     HardForkNodeToNodeEnabled
       HardForkSpecificNodeToNodeVersion1
-      (  EraNodeToNodeEnabled ShelleyNodeToNodeVersion1
-      :* EraNodeToNodeEnabled ShelleyNodeToNodeVersion1
+      (  WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
+      :* WrapNodeToNodeVersion ShelleyNodeToNodeVersion1
       :* Nil
       )
 

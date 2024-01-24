@@ -32,7 +32,6 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (
   , notFirstEra
     -- * Versioning
   , EraNodeToClientVersion (..)
-  , EraNodeToNodeVersion (..)
   , HardForkNodeToClientVersion (..)
   , HardForkNodeToNodeVersion (..)
   , HardForkSpecificNodeToClientVersion (..)
@@ -100,6 +99,7 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation (Some (..))
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Network.Block (Serialised)
 
 {-------------------------------------------------------------------------------
@@ -160,14 +160,12 @@ data HardForkNodeToNodeVersion xs where
 
   -- | Enable the HFC
   --
-  -- Each era can be enabled or disabled individually by passing
-  -- 'EraNodeToNodeDisabled' as its configuration, but serialised values will
-  -- always include tags inserted by the HFC to distinguish one era from
-  -- another. We also version the hard-fork specific parts with
-  -- 'HardForkSpecificNodeToNodeVersion'.
+  -- Serialised values will always include tags inserted by the HFC to
+  -- distinguish one era from another. We version the hard-fork specific parts
+  -- with 'HardForkSpecificNodeToNodeVersion'.
   HardForkNodeToNodeEnabled ::
        HardForkSpecificNodeToNodeVersion
-    -> NP EraNodeToNodeVersion xs
+    -> NP WrapNodeToNodeVersion xs
     -> HardForkNodeToNodeVersion xs
 
 data HardForkNodeToClientVersion xs where
@@ -186,18 +184,12 @@ data HardForkNodeToClientVersion xs where
     -> NP EraNodeToClientVersion xs
     -> HardForkNodeToClientVersion xs
 
-data EraNodeToNodeVersion blk =
-    EraNodeToNodeEnabled !(BlockNodeToNodeVersion blk)
-  | EraNodeToNodeDisabled
-
 data EraNodeToClientVersion blk =
     EraNodeToClientEnabled !(BlockNodeToClientVersion blk)
   | EraNodeToClientDisabled
 
-deriving instance Show (BlockNodeToNodeVersion   blk) => Show (EraNodeToNodeVersion   blk)
 deriving instance Show (BlockNodeToClientVersion blk) => Show (EraNodeToClientVersion blk)
 
-deriving instance Eq (BlockNodeToNodeVersion   blk) => Eq (EraNodeToNodeVersion   blk)
 deriving instance Eq (BlockNodeToClientVersion blk) => Eq (EraNodeToClientVersion blk)
 
 deriving instance SerialiseHFC xs => Show (HardForkNodeToNodeVersion xs)
@@ -260,10 +252,10 @@ pSHFC = Proxy
 class ( CanHardFork xs
       , All SerialiseConstraintsHFC xs
         -- Required for HasNetworkProtocolVersion
-      , All (Compose Show EraNodeToNodeVersion)   xs
-      , All (Compose Eq   EraNodeToNodeVersion)   xs
       , All (Compose Show EraNodeToClientVersion) xs
       , All (Compose Eq   EraNodeToClientVersion) xs
+      , All (Compose Show WrapNodeToNodeVersion)  xs
+      , All (Compose Eq   WrapNodeToNodeVersion)  xs
         -- Required for 'encodeNestedCtxt'/'decodeNestedCtxt'
       , All (EncodeDiskDepIx (NestedCtxt Header)) xs
       , All (DecodeDiskDepIx (NestedCtxt Header)) xs
@@ -371,6 +363,15 @@ data HardForkEncoderException where
   HardForkEncoderFutureEra :: SingleEraInfo blk -> HardForkEncoderException
 
   -- | HFC enabled, but we saw a value from a disabled era
+  --
+  -- This is only thrown by the Node-to-Client codec. Two nodes' negotiated
+  -- version does not constrain how the /distributed/ chain will evolve, so the
+  -- Node-to-Node communication does not need this. The
+  -- 'Ouroboros.Consensus.Protocol.Praos.Common.MaxMajorProtVer' check will
+  -- enforce it appropriately and incur explanatory log messages on the node
+  -- that needs to be updated in order to handle the latest hard fork.
+  --
+  -- See 'HardForkNodeToClientEnabled' for the use case.
   HardForkEncoderDisabledEra :: SingleEraInfo blk -> HardForkEncoderException
 
   -- | HFC disabled, but we saw a query that is only supported by the HFC

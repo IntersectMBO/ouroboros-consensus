@@ -25,11 +25,6 @@ instance CardanoHardForkConstraints c
   toGoldenDirectory v = case v of
     CardanoNodeToNodeVersion1 -> "CardanoNodeToNodeVersion1"
     CardanoNodeToNodeVersion2 -> "CardanoNodeToNodeVersion2"
-    CardanoNodeToNodeVersion3 -> "CardanoNodeToNodeVersion3"
-    CardanoNodeToNodeVersion4 -> "CardanoNodeToNodeVersion4"
-    CardanoNodeToNodeVersion5 -> "CardanoNodeToNodeVersion5"
-    CardanoNodeToNodeVersion6 -> "CardanoNodeToNodeVersion6"
-    CardanoNodeToNodeVersion7 -> "CardanoNodeToNodeVersion7"
     _                         -> error $ "Unknown version: " <> show v
 
 instance CardanoHardForkConstraints c

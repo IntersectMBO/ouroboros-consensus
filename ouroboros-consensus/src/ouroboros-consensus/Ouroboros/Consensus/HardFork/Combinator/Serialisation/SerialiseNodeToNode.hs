@@ -23,7 +23,6 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.NonEmpty (ProofNonEmpty (..), isNonEmpty)
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HardFork.Combinator.Abstract.SingleEraBlock
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
@@ -35,6 +34,7 @@ import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Serialisation
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
@@ -67,13 +67,11 @@ dispatchEncoder ccfg version ns =
   where
     ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
 
-    aux :: forall blk. (SingleEraBlock blk, SerialiseNodeToNodeConstraints blk)
+    aux :: forall blk. (SerialiseNodeToNodeConstraints blk)
         => CodecConfig blk
-        -> EraNodeToNodeVersion blk
+        -> WrapNodeToNodeVersion blk
         -> (f -.-> K Encoding) blk
-    aux ccfg' (EraNodeToNodeEnabled v) = Fn $ K . encodeNodeToNode ccfg' v
-    aux _      EraNodeToNodeDisabled   = Fn $ \_ ->
-        throw $ disabledEraException (Proxy @blk)
+    aux ccfg' (WrapNodeToNodeVersion v) = Fn $ K . encodeNodeToNode ccfg' v
 
 dispatchDecoder :: forall f xs. (
                      SerialiseHFC xs
@@ -94,13 +92,11 @@ dispatchDecoder ccfg version =
   where
     ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
 
-    aux :: forall blk. (SingleEraBlock blk, SerialiseNodeToNodeConstraints blk)
+    aux :: forall blk. (SerialiseNodeToNodeConstraints blk)
         => CodecConfig blk
-        -> EraNodeToNodeVersion blk
+        -> WrapNodeToNodeVersion blk
         -> forall s. (Decoder s :.: f) blk
-    aux ccfg' (EraNodeToNodeEnabled v) = Comp $ decodeNodeToNode ccfg' v
-    aux _      EraNodeToNodeDisabled   = Comp $
-        fail . show $ disabledEraException (Proxy @blk)
+    aux ccfg' (WrapNodeToNodeVersion v) = Comp $ decodeNodeToNode ccfg' v
 
 after :: (a -> b -> d -> e) -> (c -> d) -> a -> b -> c -> e
 after f g x y z = f x y (g z)
