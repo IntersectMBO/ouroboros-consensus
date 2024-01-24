@@ -23,6 +23,14 @@ import           Ouroboros.Network.NodeToNode.Version
 -------------------------------------------------------------------------------}
 
 -- | Protocol versioning
+--
+-- IMPORTANT Note that this is entirely independent of the
+-- 'Ouroboros.Consensus.Shelley.Node.TPraos.shelleyProtVer' field et al.
+--
+-- Its primary purpose is to control the details of on-the-wire codecs. And
+-- additionally which queries are allowed, in the case of
+-- 'BlockNodeToClienVersion' (this use is already handled by
+-- 'Ouroboros.Consensus.Shelley.Node.TPraos.shelleyProtVer' in the NTN case).
 class ( Show (BlockNodeToNodeVersion   blk)
       , Show (BlockNodeToClientVersion blk)
       , Eq   (BlockNodeToNodeVersion   blk)
@@ -48,6 +56,9 @@ class HasNetworkProtocolVersion blk => SupportedNetworkProtocolVersion blk where
   -- | The latest released version
   --
   -- This is the latest version intended for deployment.
+  --
+  -- IMPORTANT Note that this is entirely independent of the
+  -- 'Ouroboros.Consensus.Shelley.Node.TPraos.shelleyProtVer' field et al.
   latestReleasedNodeVersion
     :: Proxy blk -> (Maybe NodeToNodeVersion, Maybe NodeToClientVersion)
 
