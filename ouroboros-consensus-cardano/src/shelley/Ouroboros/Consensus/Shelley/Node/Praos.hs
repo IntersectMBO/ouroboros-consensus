@@ -119,10 +119,12 @@ praosSharedBlockForging
 
 data instance ProtocolParams (ShelleyBlock (Praos c) (BabbageEra c)) = ProtocolParamsBabbage {
     babbageProtVer                :: SL.ProtVer
+    -- ^ see 'Ouroboros.Consensus.Shelley.Node.TPraos.shelleyProtVer', mutatis mutandi
   , babbageMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (Praos c) (BabbageEra c))
   }
 
 data instance ProtocolParams (ShelleyBlock (Praos c) (ConwayEra c)) = ProtocolParamsConway {
     conwayProtVer                :: SL.ProtVer
+    -- ^ see 'Ouroboros.Consensus.Shelley.Node.TPraos.shelleyProtVer', mutatis mutandi
   , conwayMaxTxCapacityOverrides :: Mempool.TxOverrides (ShelleyBlock (Praos c) (ConwayEra c))
   }
