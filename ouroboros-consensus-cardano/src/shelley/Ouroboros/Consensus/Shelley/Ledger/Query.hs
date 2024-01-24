@@ -38,6 +38,7 @@ import           Cardano.Ledger.CertState (lookupDepositDState)
 import qualified Cardano.Ledger.CertState as SL
 import           Cardano.Ledger.Coin (Coin)
 import           Cardano.Ledger.Compactible (Compactible (fromCompact))
+import qualified Cardano.Ledger.Conway.Governance as CG
 import           Cardano.Ledger.Credential (StakeCredential)
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.EpochBoundary as SL
@@ -75,6 +76,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
+import qualified Ouroboros.Consensus.Shelley.Eras as SE
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Config
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -229,16 +231,23 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     -> BlockQuery (ShelleyBlock proto era)
                   (Map (StakeCredential (EraCrypto era)) Coin)
 
+  -- | Not supported in eras before Conway
   GetConstitution
-    :: BlockQuery (ShelleyBlock proto era) (Maybe (LC.Constitution era))
+    :: CG.ConwayEraGov era
+    => BlockQuery (ShelleyBlock proto era) (Maybe (LC.Constitution era))
 
+  -- | Although this query was introduced as part of Conway, it is general and
+  --  so has non-degenerate semantics for eras before Conway.
   GetGovState
     :: BlockQuery (ShelleyBlock proto era) (LC.GovState era)
 
   -- | The argument specifies the credential of each 'DRep' whose state should
   -- be returned. When it's empty, the state of every 'DRep' is returned.
+  --
+  -- Not supported in eras before Conway.
   GetDRepState
-    :: Set (SL.Credential 'DRepRole (EraCrypto era))
+    :: CG.ConwayEraGov era
+    => Set (SL.Credential 'DRepRole (EraCrypto era))
     -> BlockQuery (ShelleyBlock proto era)
                   (Map
                        (SL.Credential 'DRepRole (EraCrypto era))
@@ -251,19 +260,27 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   --
   -- The argument specifies whose stake should be returned. When it's empty,
   -- the stake of every 'DRep's is returned.
+  --
+  -- Not supported in eras before Conway.
   GetDRepStakeDistr
-    :: Set (SL.DRep (EraCrypto era))
+    :: CG.ConwayEraGov era
+    => Set (SL.DRep (EraCrypto era))
     -> BlockQuery (ShelleyBlock proto era) (Map (SL.DRep (EraCrypto era)) Coin)
 
   -- | Query committee members
+  --
+  -- Not supported in eras before Conway.
   GetCommitteeMembersState
-    :: Set (SL.Credential 'ColdCommitteeRole (EraCrypto era) )
+    :: CG.ConwayEraGov era
+    => Set (SL.Credential 'ColdCommitteeRole (EraCrypto era) )
     -> Set (SL.Credential 'HotCommitteeRole (EraCrypto era))
     -> Set SL.MemberStatus
     -> BlockQuery (ShelleyBlock proto era) (Maybe (SL.CommitteeMembersState (EraCrypto era)))
 
+  -- | Not supported in eras before Conway.
   GetFilteredVoteDelegatees
-    :: Set (SL.Credential 'SL.Staking (EraCrypto era))
+    :: CG.ConwayEraGov era
+    => Set (SL.Credential 'SL.Staking (EraCrypto era))
     -> BlockQuery (ShelleyBlock proto era) (VoteDelegatees (EraCrypto era))
 
   -- WARNING: please add new queries to the end of the list and stick to this
@@ -763,43 +780,56 @@ decodeShelleyQuery ::
 decodeShelleyQuery = do
     len <- CBOR.decodeListLen
     tag <- CBOR.decodeWord8
+
+    let failmsg :: forall s ans. String -> Decoder s ans
+        failmsg msg = fail $
+            "decodeShelleyQuery: " <> msg <> " (len, tag) = (" <>
+            show len <> ", " <> show tag <> ")"
+
+        requireCG ::
+             forall s ans.
+             (CG.ConwayEraGov era => Decoder s ans)
+          -> Decoder s ans
+        requireCG k = case SE.getConwayEraGovDict (Proxy @era) of
+            Just SE.ConwayEraGovDict -> k
+            Nothing                  -> failmsg "that query is not supported before Conway,"
+
     case (len, tag) of
-      (1, 0)  -> return $ SomeSecond GetLedgerTip
-      (1, 1)  -> return $ SomeSecond GetEpochNo
-      (2, 2)  -> SomeSecond . GetNonMyopicMemberRewards <$> fromCBOR
-      (1, 3)  -> return $ SomeSecond GetCurrentPParams
-      (1, 4)  -> return $ SomeSecond GetProposedPParamsUpdates
-      (1, 5)  -> return $ SomeSecond GetStakeDistribution
-      (2, 6)  -> SomeSecond . GetUTxOByAddress <$> LC.fromEraCBOR @era
-      (1, 7)  -> return $ SomeSecond GetUTxOWhole
-      (1, 8)  -> return $ SomeSecond DebugEpochState
-      (2, 9)  -> (\(SomeSecond q) -> SomeSecond (GetCBOR q)) <$> decodeShelleyQuery
-      (2, 10) -> SomeSecond . GetFilteredDelegationsAndRewardAccounts <$> LC.fromEraCBOR @era
-      (1, 11) -> return $ SomeSecond GetGenesisConfig
-      (1, 12) -> return $ SomeSecond DebugNewEpochState
-      (1, 13) -> return $ SomeSecond DebugChainDepState
-      (1, 14) -> return $ SomeSecond GetRewardProvenance
-      (2, 15) -> SomeSecond . GetUTxOByTxIn <$> LC.fromEraCBOR @era
-      (1, 16) -> return $ SomeSecond GetStakePools
-      (2, 17) -> SomeSecond . GetStakePoolParams <$> fromCBOR
-      (1, 18) -> return $ SomeSecond GetRewardInfoPools
-      (2, 19) -> SomeSecond . GetPoolState <$> fromCBOR
-      (2, 20) -> SomeSecond . GetStakeSnapshots <$> fromCBOR
-      (2, 21) -> SomeSecond . GetPoolDistr <$> fromCBOR
-      (2, 22) -> SomeSecond . GetStakeDelegDeposits <$> fromCBOR
-      (1, 23) -> return $ SomeSecond GetConstitution
-      (1, 24) -> return $ SomeSecond GetGovState
-      (2, 25) -> SomeSecond . GetDRepState <$> fromCBOR
-      (2, 26) -> SomeSecond . GetDRepStakeDistr <$> LC.fromEraCBOR @era
-      (4, 27) -> do
+      (1, 0)  ->             return $ SomeSecond GetLedgerTip
+      (1, 1)  ->             return $ SomeSecond GetEpochNo
+      (2, 2)  ->             SomeSecond . GetNonMyopicMemberRewards <$> fromCBOR
+      (1, 3)  ->             return $ SomeSecond GetCurrentPParams
+      (1, 4)  ->             return $ SomeSecond GetProposedPParamsUpdates
+      (1, 5)  ->             return $ SomeSecond GetStakeDistribution
+      (2, 6)  ->             SomeSecond . GetUTxOByAddress <$> LC.fromEraCBOR @era
+      (1, 7)  ->             return $ SomeSecond GetUTxOWhole
+      (1, 8)  ->             return $ SomeSecond DebugEpochState
+      (2, 9)  ->             (\(SomeSecond q) -> SomeSecond (GetCBOR q)) <$> decodeShelleyQuery
+      (2, 10) ->             SomeSecond . GetFilteredDelegationsAndRewardAccounts <$> LC.fromEraCBOR @era
+      (1, 11) ->             return $ SomeSecond GetGenesisConfig
+      (1, 12) ->             return $ SomeSecond DebugNewEpochState
+      (1, 13) ->             return $ SomeSecond DebugChainDepState
+      (1, 14) ->             return $ SomeSecond GetRewardProvenance
+      (2, 15) ->             SomeSecond . GetUTxOByTxIn <$> LC.fromEraCBOR @era
+      (1, 16) ->             return $ SomeSecond GetStakePools
+      (2, 17) ->             SomeSecond . GetStakePoolParams <$> fromCBOR
+      (1, 18) ->             return $ SomeSecond GetRewardInfoPools
+      (2, 19) ->             SomeSecond . GetPoolState <$> fromCBOR
+      (2, 20) ->             SomeSecond . GetStakeSnapshots <$> fromCBOR
+      (2, 21) ->             SomeSecond . GetPoolDistr <$> fromCBOR
+      (2, 22) ->             SomeSecond . GetStakeDelegDeposits <$> fromCBOR
+      (1, 23) -> requireCG $ return $ SomeSecond GetConstitution
+      (1, 24) ->             return $ SomeSecond GetGovState
+      (2, 25) -> requireCG $ SomeSecond . GetDRepState <$> fromCBOR
+      (2, 26) -> requireCG $ SomeSecond . GetDRepStakeDistr <$> LC.fromEraCBOR @era
+      (4, 27) -> requireCG $ do
         coldCreds <- fromCBOR
         hotCreds <- fromCBOR
         statuses <- LC.fromEraCBOR @era
         return $ SomeSecond $ GetCommitteeMembersState coldCreds hotCreds statuses
-      (2, 28) -> SomeSecond . GetFilteredVoteDelegatees <$> LC.fromEraCBOR @era
-      _       -> fail $
-        "decodeShelleyQuery: invalid (len, tag): (" <>
-        show len <> ", " <> show tag <> ")"
+      (2, 28) -> requireCG $ do
+        SomeSecond . GetFilteredVoteDelegatees <$> LC.fromEraCBOR @era
+      _       -> failmsg "invalid"
 
 encodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
