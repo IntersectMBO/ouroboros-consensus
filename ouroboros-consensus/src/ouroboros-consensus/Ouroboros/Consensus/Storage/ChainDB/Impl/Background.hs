@@ -39,10 +39,10 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Background (
 
 import           Control.Exception (assert)
 import           Control.Monad (forM_, forever, void)
+import           Control.Monad.Trans.Class (lift)
 import           Control.Tracer
 import           Data.Foldable (toList)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
 import           Data.Sequence.Strict (StrictSeq (..))
 import qualified Data.Sequence.Strict as Seq
 import           Data.Time.Clock
@@ -68,7 +68,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (TimeSinceLast (..))
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util ((.:))
+import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (Enclosing' (..))
 import           Ouroboros.Consensus.Util.IOLike
@@ -93,12 +93,12 @@ launchBgTasks
   -> m ()
 launchBgTasks cdb@CDB{..} replayed = do
     !addBlockThread <- launch "ChainDB.addBlockRunner" $
-      addBlockRunner cdb
+      addBlockRunner cdbChainSelFuse cdb
     gcSchedule <- newGcSchedule
     !gcThread <- launch "ChainDB.gcScheduleRunner" $
       gcScheduleRunner gcSchedule $ garbageCollect cdb
     !copyAndSnapshotThread <- launch "ChainDB.copyAndSnapshotRunner" $
-      copyAndSnapshotRunner cdb gcSchedule replayed
+      copyAndSnapshotRunner cdb gcSchedule replayed cdbCopyFuse
     atomically $ writeTVar cdbKillBgThreads $
       sequence_ [addBlockThread, gcThread, copyAndSnapshotThread]
   where
@@ -120,14 +120,6 @@ launchBgTasks cdb@CDB{..} replayed = do
 --
 -- The 'SlotNo' of the tip of the ImmutableDB after copying the blocks is
 -- returned. This can be used for a garbage collection on the VolatileDB.
---
--- NOTE: this function would not be safe when called multiple times
--- concurrently. To enforce thread-safety, a lock is obtained at the start of
--- this function and released at the end. So in practice, this function can be
--- called multiple times concurrently, but the calls will be serialised.
---
--- NOTE: this function /can/ run concurrently with all other functions, just
--- not with itself.
 copyToImmutableDB ::
      forall m blk.
      ( IOLike m
@@ -137,8 +129,8 @@ copyToImmutableDB ::
      , HasCallStack
      )
   => ChainDbEnv m blk
-  -> m (WithOrigin SlotNo)
-copyToImmutableDB CDB{..} = withCopyLock $ do
+  -> Electric m (WithOrigin SlotNo)
+copyToImmutableDB CDB{..} = electric $ do
     toCopy <- atomically $ do
       curChain <- readTVar cdbChain
       let nbToCopy = max 0 (AF.length curChain - fromIntegral k)
@@ -196,15 +188,6 @@ copyToImmutableDB CDB{..} = withCopyLock $ do
         -- happen if the precondition was satisfied.
         _ -> error "header to remove not on the current chain"
 
-    withCopyLock :: forall a. HasCallStack => m a -> m a
-    withCopyLock = bracket_
-      (fmap mustBeUnlocked $ tryTakeMVar cdbCopyLock)
-      (putMVar cdbCopyLock ())
-
-    mustBeUnlocked :: forall b. HasCallStack => Maybe b -> b
-    mustBeUnlocked = fromMaybe
-                   $ error "copyToImmutableDB running concurrently with itself"
-
 -- | Copy blocks from the VolatileDB to ImmutableDB and take snapshots of the
 -- LgrDB
 --
@@ -243,8 +226,9 @@ copyAndSnapshotRunner
   => ChainDbEnv m blk
   -> GcSchedule m
   -> Word64 -- ^ Number of immutable blocks replayed on ledger DB startup
+  -> Fuse m
   -> m Void
-copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed =
+copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed fuse =
     if onDiskShouldTakeSnapshot NoSnapshotTakenYet replayed then do
       updateLedgerSnapshots cdb
       now <- getMonotonicTime
@@ -267,7 +251,7 @@ copyAndSnapshotRunner cdb@CDB{..} gcSchedule replayed =
       --
       -- This is a synchronous operation: when it returns, the blocks have been
       -- copied to disk (though not flushed, necessarily).
-      copyToImmutableDB cdb >>= scheduleGC'
+      withFuse fuse (copyToImmutableDB cdb) >>= scheduleGC'
 
       now <- getMonotonicTime
       let distance' = distance + numToWrite
@@ -527,21 +511,24 @@ addBlockRunner
      , HasHardForkHistory blk
      , HasCallStack
      )
-  => ChainDbEnv m blk
+  => Fuse m
+  -> ChainDbEnv m blk
   -> m Void
-addBlockRunner cdb@CDB{..} = forever $ do
+addBlockRunner fuse cdb@CDB{..} = forever $ do
     let trace = traceWith cdbTracer . TraceAddBlockEvent
     trace $ PoppedBlockFromQueue RisingEdge
     -- if the `addBlockSync` does not complete because it was killed by an async
     -- exception (or it errored), notify the blocked thread
-    bracketOnError (getBlockToAdd cdbBlocksToAdd)
-                   (\blkToAdd -> atomically $ do
-                     _ <- tryPutTMVar (varBlockWrittenToDisk blkToAdd)
-                                     False
-                     _ <- tryPutTMVar (varBlockProcessed blkToAdd)
-                                     (FailedToAddBlock "Failed to add block synchronously")
-                     closeBlocksToAdd cdbBlocksToAdd)
-                   (\blkToAdd -> do
-                     trace $ PoppedBlockFromQueue $ FallingEdgeWith $
-                             blockRealPoint $ blockToAdd blkToAdd
-                     addBlockSync cdb blkToAdd)
+    withFuse fuse $
+      bracketOnError
+        (lift $ getBlockToAdd cdbBlocksToAdd)
+        (\blkToAdd -> lift $ atomically $ do
+            _ <- tryPutTMVar (varBlockWrittenToDisk blkToAdd)
+                   False
+            _ <- tryPutTMVar (varBlockProcessed blkToAdd)
+                   (FailedToAddBlock "Failed to add block synchronously")
+            closeBlocksToAdd cdbBlocksToAdd)
+        (\blkToAdd -> do
+            lift $ trace $ PoppedBlockFromQueue $ FallingEdgeWith $
+              blockRealPoint $ blockToAdd blkToAdd
+            addBlockSync cdb blkToAdd)
