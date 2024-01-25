@@ -116,8 +116,8 @@ prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain ac
 -- implementation details.
 --
 -- Additionally, this function labels the test results.
-checkOutcome
-  :: SecurityParam
+checkOutcome ::
+     SecurityParam
   -> Chain TestBlock
   -> [(Maybe (Point TestBlock), Either AcquireFailure (Point TestBlock))]
   -> Property
@@ -154,8 +154,8 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
       Right _result -> tabulate "Acquired" ["Success"] True
       Left  failure -> counterexample ("acuire tip point resulted in " ++ show failure) False
 
-mkClient
-  :: Monad m
+mkClient ::
+     Monad m
   => [Maybe (Point TestBlock)]
   -> LocalStateQueryClient
        TestBlock
@@ -165,8 +165,8 @@ mkClient
        [(Maybe (Point TestBlock), Either AcquireFailure (Point TestBlock))]
 mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <- points]
 
-mkServer
-  :: IOLike m
+mkServer ::
+     IOLike m
   => SecurityParam
   -> Chain TestBlock
   -> m (LocalStateQueryServer TestBlock (Point TestBlock) (Query TestBlock) m ())
@@ -184,8 +184,8 @@ mkServer k chain = do
       Chain.drop (fromIntegral (maxRollbacks k)) chain
 
 -- | Initialise a 'LgrDB' with the given chain.
-initLgrDB
-  :: forall m. IOLike m
+initLgrDB ::
+     forall m. IOLike m
   => SecurityParam
   -> Chain TestBlock
   -> m (LgrDB m TestBlock)

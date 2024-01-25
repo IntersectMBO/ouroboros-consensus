@@ -49,8 +49,8 @@ testCodecCfg =
     ShelleyCodecConfig
     ShelleyCodecConfig
 
-dictNestedHdr
-  :: forall a.
+dictNestedHdr ::
+     forall a.
      NestedCtxt_ (CardanoBlock MockCryptoCompatByron) Header a
   -> Dict (Eq a, Show a)
 dictNestedHdr = \case

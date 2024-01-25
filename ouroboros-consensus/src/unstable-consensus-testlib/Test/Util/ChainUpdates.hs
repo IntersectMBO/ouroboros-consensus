@@ -83,8 +83,8 @@ data UpdateBehavior =
     TentativeChainBehavior
   deriving stock (Show, Eq, Enum, Bounded)
 
-genChainUpdates
-  :: UpdateBehavior
+genChainUpdates ::
+     UpdateBehavior
   -> SecurityParam
   -> Int  -- ^ The number of updates to generate
   -> Gen [ChainUpdate]

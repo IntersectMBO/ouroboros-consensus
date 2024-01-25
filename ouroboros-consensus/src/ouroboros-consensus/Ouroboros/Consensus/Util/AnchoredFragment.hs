@@ -43,15 +43,15 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 -- the head of a fragment very often anyway, only when catching up. As soon as
 -- a new block/header is added to the fragment, the right decision will be
 -- made again ('GT' or 'LT').
-compareHeadBlockNo
-  :: HasHeader b
+compareHeadBlockNo ::
+     HasHeader b
   => AnchoredFragment b
   -> AnchoredFragment b
   -> Ordering
 compareHeadBlockNo = compare `on` AF.headBlockNo
 
-forksAtMostKBlocks
-  :: HasHeader b
+forksAtMostKBlocks ::
+     HasHeader b
   => Word64              -- ^ How many blocks can it fork?
   -> AnchoredFragment b  -- ^ Our chain.
   -> AnchoredFragment b  -- ^ Their chain

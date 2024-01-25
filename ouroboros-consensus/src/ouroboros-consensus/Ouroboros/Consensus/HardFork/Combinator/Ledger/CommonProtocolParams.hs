@@ -14,8 +14,8 @@ instance CanHardFork xs => CommonProtocolParams (HardForkBlock xs) where
   maxHeaderSize = askCurrentLedger maxHeaderSize
   maxTxSize     = askCurrentLedger maxTxSize
 
-askCurrentLedger
-  :: CanHardFork xs
+askCurrentLedger ::
+     CanHardFork xs
   => (forall blk. CommonProtocolParams blk => LedgerState blk -> a)
   -> LedgerState (HardForkBlock xs) -> a
 askCurrentLedger f =

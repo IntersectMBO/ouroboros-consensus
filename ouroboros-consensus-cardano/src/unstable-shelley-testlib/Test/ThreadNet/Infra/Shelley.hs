@@ -239,8 +239,8 @@ data KesConfig = KesConfig
 
 -- | A 'KesConfig' that will not require more evolutions than this test's crypto
 -- allows.
-mkKesConfig
-  :: forall proxy c. Crypto c
+mkKesConfig ::
+     forall proxy c. Crypto c
   => proxy c -> NumSlots -> KesConfig
 mkKesConfig _ (NumSlots t) = KesConfig
     { maxEvolutions
@@ -275,8 +275,8 @@ mkEpochSize (SecurityParam k) f =
 -- | Note: a KES algorithm supports a particular max number of KES evolutions,
 -- but we can configure a potentially lower maximum for the ledger, that's why
 -- we take it as an argument.
-mkGenesisConfig
-  :: forall c. PraosCrypto c
+mkGenesisConfig ::
+     forall c. PraosCrypto c
   => ProtVer   -- ^ Initial protocol version
   -> SecurityParam
   -> Rational  -- ^ Initial active slot coefficient

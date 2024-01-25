@@ -80,8 +80,8 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
   Launch background tasks
 -------------------------------------------------------------------------------}
 
-launchBgTasks
-  :: forall m blk.
+launchBgTasks ::
+     forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , InspectLedger blk
@@ -231,8 +231,8 @@ copyToImmutableDB CDB{..} = withCopyLock $ do
 -- GC can happen, when we restart the node and schedule the /next/ GC, it will
 -- /imply/ any previously scheduled GC, since GC is driven by slot number
 -- ("garbage collect anything older than @x@").
-copyAndSnapshotRunner
-  :: forall m blk.
+copyAndSnapshotRunner ::
+     forall m blk.
      ( IOLike m
      , ConsensusProtocol (BlockProtocol blk)
      , HasHeader blk
@@ -426,8 +426,8 @@ data GcParams = GcParams {
 newGcSchedule :: IOLike m => m (GcSchedule m)
 newGcSchedule = GcSchedule <$> newTVarIO Seq.empty
 
-scheduleGC
-  :: forall m blk. IOLike m
+scheduleGC ::
+     forall m blk. IOLike m
   => Tracer m (TraceGCEvent blk)
   -> SlotNo    -- ^ The slot to use for garbage collection
   -> GcParams
@@ -445,8 +445,8 @@ scheduleGC tracer slotNo gcParams (GcSchedule varQueue) = do
         -> queue  :|> ScheduledGc timeScheduledForGC slotNo
     traceWith tracer $ ScheduledGC slotNo timeScheduledForGC
 
-computeTimeForGC
-  :: GcParams
+computeTimeForGC ::
+     GcParams
   -> Time  -- ^ Now
   -> Time  -- ^ The time at which to perform the GC
 computeTimeForGC GcParams { gcDelay, gcInterval } (Time now) =
@@ -475,8 +475,8 @@ roundUpToInterval interval x
   where
     (d, m) = x `divMod` fromIntegral interval
 
-gcScheduleRunner
-  :: forall m. IOLike m
+gcScheduleRunner ::
+     forall m. IOLike m
   => GcSchedule m
   -> (SlotNo -> m ())  -- ^ GC function
   -> m Void
@@ -520,8 +520,8 @@ dumpGcSchedule (GcSchedule varQueue) = toList <$> readTVar varQueue
 
 -- | Read blocks from 'cdbBlocksToAdd' and add them synchronously to the
 -- ChainDB.
-addBlockRunner
-  :: ( IOLike m
+addBlockRunner ::
+     ( IOLike m
      , LedgerSupportsProtocol blk
      , InspectLedger blk
      , HasHardForkHistory blk

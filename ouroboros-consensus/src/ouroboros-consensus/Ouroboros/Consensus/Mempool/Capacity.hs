@@ -69,8 +69,8 @@ mkCapacityBytesOverride = MempoolCapacityBytesOverride . MempoolCapacityBytes
 
 -- | If no override is provided, calculate the default mempool capacity as 2x
 -- the current ledger's maximum transaction capacity of a block.
-computeMempoolCapacity
-  :: LedgerSupportsMempool blk
+computeMempoolCapacity ::
+     LedgerSupportsMempool blk
   => TickedLedgerState blk
   -> MempoolCapacityBytesOverride
   -> MempoolCapacityBytes

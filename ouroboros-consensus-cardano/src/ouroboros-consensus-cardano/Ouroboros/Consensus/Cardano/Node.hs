@@ -1139,8 +1139,8 @@ protocolInfoCardano paramsCardano
             praos  maxTxCapacityOverridesConway  :*
             Nil
 
-protocolClientInfoCardano
-  :: forall c.
+protocolClientInfoCardano ::
+     forall c.
      -- Byron
      EpochSlots
   -> ProtocolClientInfo (CardanoBlock c)

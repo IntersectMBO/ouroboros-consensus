@@ -20,8 +20,8 @@ import           Control.Monad.Trans.Except.Extra (firstExceptT)
 -- Conversions from configuration into specific protocols and their params
 --
 
-mkConsensusProtocol
-  :: NodeProtocolConfiguration
+mkConsensusProtocol ::
+     NodeProtocolConfiguration
   -> Maybe ProtocolFilepaths
   -> ExceptT ProtocolInstantiationError IO SomeConsensusProtocol
 mkConsensusProtocol ncProtocolConfig mProtocolFiles =

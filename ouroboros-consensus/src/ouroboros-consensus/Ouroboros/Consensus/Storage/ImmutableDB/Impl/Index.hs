@@ -119,8 +119,8 @@ data Index m blk h = Index
   deriving NoThunks via OnlyCheckWhnfNamed "Index" (Index m blk h)
 
 -- | See 'Primary.readOffset'.
-readOffset
-  :: Functor m
+readOffset ::
+     Functor m
   => Index m blk h
   -> ChunkNo
   -> RelativeSlot
@@ -129,8 +129,8 @@ readOffset index chunk slot = runIdentity <$>
     readOffsets index chunk (Identity slot)
 
 -- | See 'Secondary.readEntry'.
-readEntry
-  :: Functor m
+readEntry ::
+     Functor m
   => Index m blk h
   -> ChunkNo
   -> IsEBB
@@ -143,8 +143,8 @@ readEntry index chunk isEBB slotOffset = runIdentity <$>
   File-backed index
 ------------------------------------------------------------------------------}
 
-fileBackedIndex
-  :: forall m blk h.
+fileBackedIndex ::
+     forall m blk h.
      (ConvertRawHash blk, MonadCatch m, StandardHash blk, Typeable blk)
   => HasFS m h
   -> ChunkInfo
@@ -175,8 +175,8 @@ fileBackedIndex hasFS chunkInfo = Index
 --
 -- Spawns a background thread to expire past chunks from the cache that
 -- haven't been used for a while.
-cachedIndex
-  :: forall m blk h.
+cachedIndex ::
+     forall m blk h.
      (IOLike m, ConvertRawHash blk, StandardHash blk, Typeable blk)
   => HasFS m h
   -> ResourceRegistry m

@@ -104,8 +104,8 @@ data Handlers m peer blk = Handlers {
         :: LocalTxMonitorServer (GenTxId blk) (GenTx blk) SlotNo m ()
     }
 
-mkHandlers
-  :: forall m blk addrNTN addrNTC.
+mkHandlers ::
+     forall m blk addrNTN addrNTC.
      ( IOLike m
      , LedgerSupportsMempool blk
      , LedgerSupportsProtocol blk
@@ -378,8 +378,8 @@ data Apps m peer bCS bTX bSQ bTM a = Apps {
     }
 
 -- | Construct the 'NetworkApplication' for the node-to-client protocols
-mkApps
-  :: forall m addrNTN addrNTC blk e bCS bTX bSQ bTM.
+mkApps ::
+     forall m addrNTN addrNTC blk e bCS bTX bSQ bTM.
      ( IOLike m
      , Exception e
      , ShowProxy blk
@@ -456,8 +456,8 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
 
 -- | A projection from 'NetworkApplication' to a server-side
 -- 'OuroborosApplication' for the node-to-client protocols.
-responder
-  :: N.NodeToClientVersion
+responder ::
+     N.NodeToClientVersion
   -> Apps m (ConnectionId peer) b b b b a
   -> OuroborosApplicationWithMinimalCtx 'ResponderMode peer b m Void a
 responder version Apps {..} =

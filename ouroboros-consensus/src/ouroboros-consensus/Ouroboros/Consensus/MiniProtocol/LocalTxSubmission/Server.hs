@@ -19,8 +19,8 @@ import           Ouroboros.Network.Protocol.LocalTxSubmission.Type
 
 -- | Local transaction submission server, for adding txs to the 'Mempool'
 --
-localTxSubmissionServer
-  :: MonadSTM m
+localTxSubmissionServer ::
+     MonadSTM m
   => Tracer m (TraceLocalTxSubmissionServerEvent blk)
   -> Mempool m blk
   -> LocalTxSubmissionServer (GenTx blk) (ApplyTxErr blk) m ()

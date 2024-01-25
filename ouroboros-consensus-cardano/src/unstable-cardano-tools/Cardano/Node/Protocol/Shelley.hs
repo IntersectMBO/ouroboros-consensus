@@ -63,8 +63,8 @@ import           Prelude (String, id)
 --
 -- This also serves a purpose as a sanity check that we have all the necessary
 -- type class instances available.
-mkSomeConsensusProtocolShelley
-  :: NodeShelleyProtocolConfiguration
+mkSomeConsensusProtocolShelley ::
+     NodeShelleyProtocolConfiguration
   -> Maybe ProtocolFilepaths
   -> ExceptT ShelleyProtocolInstantiationError IO SomeConsensusProtocol
 mkSomeConsensusProtocolShelley NodeShelleyProtocolConfiguration {
@@ -129,8 +129,8 @@ validateGenesis genesis =
     firstExceptT GenesisValidationErrors . hoistEither $
       Shelley.validateGenesis genesis
 
-readLeaderCredentials
-  :: Maybe ProtocolFilepaths
+readLeaderCredentials ::
+     Maybe ProtocolFilepaths
   -> ExceptT PraosLeaderCredentialsError IO [ShelleyLeaderCredentials StandardCrypto]
 readLeaderCredentials Nothing = return []
 readLeaderCredentials (Just pfp) =
@@ -171,8 +171,8 @@ readLeaderCredentialsSingleton ProtocolFilepaths {shelleyVRFFile = Nothing} =
 readLeaderCredentialsSingleton ProtocolFilepaths {shelleyKESFile = Nothing} =
      left KESKeyNotSpecified
 
-opCertKesKeyCheck
-  :: FilePath
+opCertKesKeyCheck ::
+     FilePath
   -- ^ KES key
   -> FilePath
   -- ^ Operational certificate
@@ -197,8 +197,8 @@ data ShelleyCredentials
     , scKes  :: (TextEnvelope, FilePath)
     }
 
-readLeaderCredentialsBulk
-  :: ProtocolFilepaths
+readLeaderCredentialsBulk ::
+     ProtocolFilepaths
   -> ExceptT PraosLeaderCredentialsError IO [ShelleyLeaderCredentials StandardCrypto]
 readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
   mapM parseShelleyCredentials =<< readBulkFile mfp

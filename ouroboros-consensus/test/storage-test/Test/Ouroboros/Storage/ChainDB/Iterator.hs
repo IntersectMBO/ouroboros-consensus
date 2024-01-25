@@ -331,8 +331,8 @@ type IterRes = Either (UnknownRange TestBlock)
 -- | Open an iterator with the given bounds on the given 'TestSetup'. Return a
 -- trace of the 'TraceIteratorEvent's produced and the result of the iterator
 -- itself.
-runIterator
-  :: TestSetup
+runIterator ::
+     TestSetup
   -> StreamFrom TestBlock
   -> StreamTo   TestBlock
   -> ([TraceIteratorEvent TestBlock], IterRes)
@@ -361,8 +361,8 @@ runIterator setup from to = runSimOrThrow $ withRegistry $ \r -> do
   Setting up a mock IteratorEnv
 -------------------------------------------------------------------------------}
 
-initIteratorEnv
-  :: forall m. IOLike m
+initIteratorEnv ::
+     forall m. IOLike m
   => TestSetup
   -> Tracer m (TraceIteratorEvent TestBlock)
   -> m (IteratorEnv m TestBlock)

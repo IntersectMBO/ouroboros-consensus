@@ -248,8 +248,8 @@ isMempoolTxRejected _                   = False
 -- concurrent threads using 'addTx'.
 --
 -- See 'addTx' for further details.
-addTxs
-  :: forall m blk. MonadSTM m
+addTxs ::
+     forall m blk. MonadSTM m
   => Mempool m blk
   -> [GenTx blk]
   -> m [MempoolAddTxResult blk]
@@ -262,8 +262,8 @@ addTxs mempool = mapM (addTx mempool AddTxForRemotePeer)
 -- concurrent threads using 'addTx'.
 --
 -- See 'addTx' for further details.
-addLocalTxs
-  :: forall m blk. MonadSTM m
+addLocalTxs ::
+     forall m blk. MonadSTM m
   => Mempool m blk
   -> [GenTx blk]
   -> m [MempoolAddTxResult blk]

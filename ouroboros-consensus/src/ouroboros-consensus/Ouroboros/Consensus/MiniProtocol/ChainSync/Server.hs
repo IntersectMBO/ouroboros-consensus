@@ -33,16 +33,16 @@ import           Ouroboros.Network.Block (ChainUpdate (..), Serialised,
 import           Ouroboros.Network.Protocol.ChainSync.Server
 
 
-chainSyncHeaderServerFollower
-    :: ChainDB m blk
+chainSyncHeaderServerFollower ::
+       ChainDB m blk
     -> ChainDB.ChainType
     -> ResourceRegistry m
     -> m (Follower m blk (WithPoint blk (SerialisedHeader blk)))
 chainSyncHeaderServerFollower chainDB chainType registry =
   ChainDB.newFollower chainDB registry chainType getSerialisedHeaderWithPoint
 
-chainSyncBlockServerFollower
-    :: ChainDB m blk
+chainSyncBlockServerFollower ::
+       ChainDB m blk
     -> ResourceRegistry m
     -> m (Follower m blk (WithPoint blk (Serialised blk)))
 chainSyncBlockServerFollower chainDB registry =
@@ -53,8 +53,8 @@ chainSyncBlockServerFollower chainDB registry =
 -- The node-to-node protocol uses the chain sync mini-protocol with chain
 -- headers (and fetches blocks separately with the block fetch mini-protocol).
 --
-chainSyncHeadersServer
-    :: forall m blk.
+chainSyncHeadersServer ::
+       forall m blk.
        ( IOLike m
        , HasHeader (Header blk)
        )
@@ -70,8 +70,8 @@ chainSyncHeadersServer tracer chainDB flr =
 -- The local node-to-client protocol uses the chain sync mini-protocol with
 -- chains of full blocks (rather than a header \/ body split).
 --
-chainSyncBlocksServer
-    :: forall m blk. (IOLike m, HasHeader (Header blk))
+chainSyncBlocksServer ::
+       forall m blk. (IOLike m, HasHeader (Header blk))
     => Tracer m (TraceChainSyncServerEvent blk)
     -> ChainDB m blk
     -> Follower m blk (WithPoint blk (Serialised blk))

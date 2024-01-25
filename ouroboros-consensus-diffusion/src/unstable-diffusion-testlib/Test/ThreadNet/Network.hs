@@ -174,8 +174,8 @@ data TestNodeInitialization m blk = TestNodeInitialization
   , tniBlockForging :: m [BlockForging m blk]
   }
 
-plainTestNodeInitialization
-  :: ProtocolInfo blk
+plainTestNodeInitialization ::
+     ProtocolInfo blk
   -> m [BlockForging m blk]
   -> TestNodeInitialization m blk
 plainTestNodeInitialization pInfo blockForging = TestNodeInitialization
@@ -1129,8 +1129,8 @@ data RestartCause
 
 -- | Fork two directed edges, one in each direction between the two vertices
 --
-forkBothEdges
-  :: (IOLike m, RunNode blk, HasCallStack)
+forkBothEdges ::
+     (IOLike m, RunNode blk, HasCallStack)
   => ResourceRegistry m
   -> OracularClock m
   -> Tracer m (SlotNo, MiniProtocolState)
@@ -1361,8 +1361,8 @@ directedEdgeInner registry clock (version, blockVersion) (cfg, calcMessageDelay)
 -- Sending adds the message to a queue. The delaying argument should use
 -- 'threadDelay' in order to delay the transfer of the given message from the
 -- queue to the recipient.
-createConnectedChannelsWithDelay
-  :: IOLike m
+createConnectedChannelsWithDelay ::
+     IOLike m
   => ResourceRegistry m
   -> (CoreNodeId, CoreNodeId, String)
      -- ^ (client, server, protocol)

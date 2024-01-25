@@ -242,8 +242,8 @@ maxActualRollback k m =
 -- the background thread copying blocks from the VolatileDB to the ImmutableDB
 -- might not have caught up yet. This means we cannot use the tip of the
 -- ImmutableDB to know the most recent \"immutable\" block.
-immutableChain
-  :: SecurityParam
+immutableChain ::
+     SecurityParam
   -> Model blk
   -> Chain blk
 immutableChain (SecurityParam k) m =
@@ -265,8 +265,8 @@ immutableChain (SecurityParam k) m =
 -- 1. The last @k@ blocks of the current chain.
 -- 2. The suffix of the current chain not part of the 'immutableDbChain', i.e.,
 --    the \"ImmutableDB\".
-volatileChain
-    :: (HasHeader a, HasHeader blk)
+volatileChain ::
+       (HasHeader a, HasHeader blk)
     => SecurityParam
     -> (blk -> a)  -- ^ Provided since 'AnchoredFragment' is not a functor
     -> Model blk
@@ -346,8 +346,8 @@ getLedgerDB cfg m@Model{..} =
   Construction
 -------------------------------------------------------------------------------}
 
-empty
-  :: ExtLedgerState blk
+empty ::
+     ExtLedgerState blk
   -> Word64   -- ^ Max clock skew in number of blocks
   -> Model blk
 empty initLedger maxClockSkew = Model {
@@ -366,8 +366,8 @@ empty initLedger maxClockSkew = Model {
 
 -- | Advance the 'currentSlot' of the model to the given 'SlotNo' if the
 -- current slot of the model < the given 'SlotNo'.
-advanceCurSlot
-  :: SlotNo  -- ^ The new current slot
+advanceCurSlot ::
+     SlotNo  -- ^ The new current slot
   -> Model blk -> Model blk
 advanceCurSlot curSlot m = m { currentSlot = curSlot `max` currentSlot m }
 
@@ -457,8 +457,8 @@ addBlocks :: LedgerSupportsProtocol blk
 addBlocks cfg = repeatedly (addBlock cfg)
 
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
-addBlockPromise
-  :: forall m blk. (LedgerSupportsProtocol blk, MonadSTM m)
+addBlockPromise ::
+     forall m blk. (LedgerSupportsProtocol blk, MonadSTM m)
   => TopLevelConfig blk
   -> blk
   -> Model blk
@@ -477,8 +477,8 @@ addBlockPromise cfg blk m = (result, m')
   Iterators
 -------------------------------------------------------------------------------}
 
-stream
-  :: GetPrevHash blk
+stream ::
+     GetPrevHash blk
   => SecurityParam
   -> StreamFrom  blk
   -> StreamTo    blk
@@ -518,8 +518,8 @@ iteratorNext itrId blockComponent m =
   where
     updateIter bs = m { iterators = Map.insert itrId bs (iterators m) }
 
-getBlockComponent
-  :: forall blk b. ModelSupportsBlock blk
+getBlockComponent ::
+     forall blk b. ModelSupportsBlock blk
   => blk -> BlockComponent blk b -> b
 getBlockComponent blk = \case
     GetVerifiedBlock -> blk  -- We don't verify it
@@ -924,8 +924,8 @@ garbageCollectablePoint secParam m pt
 -- | Return 'True' when the next block the given iterator would produced is
 -- eligible for garbage collection, i.e. the real implementation might have
 -- garbage collected it.
-garbageCollectableIteratorNext
-  :: forall blk. ModelSupportsBlock blk
+garbageCollectableIteratorNext ::
+     forall blk. ModelSupportsBlock blk
   => SecurityParam -> Model blk -> IteratorId -> Bool
 garbageCollectableIteratorNext secParam m itId =
     case fst (iteratorNext itId GetBlock m) of
@@ -981,8 +981,8 @@ closeDB m@Model{..} = m {
 reopen :: Model blk -> Model blk
 reopen m = m { isOpen = True }
 
-wipeVolatileDB
-  :: forall blk. LedgerSupportsProtocol blk
+wipeVolatileDB ::
+     forall blk. LedgerSupportsProtocol blk
   => TopLevelConfig blk
   -> Model blk
   -> (Point blk, Model blk)

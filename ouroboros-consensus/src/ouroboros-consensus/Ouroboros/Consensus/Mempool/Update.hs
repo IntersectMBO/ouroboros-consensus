@@ -167,8 +167,8 @@ implTryAddTx istate cfg txSize wti tx = do
 -- It returns 'NoSpaceLeft' only when the current mempool size is bigger or
 -- equal than then mempool capacity. Otherwise it will validate the transaction
 -- and add it to the mempool if there is at least one byte free on the mempool.
-pureTryAddTx
-  :: ( LedgerSupportsMempool blk
+pureTryAddTx ::
+     ( LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
      )
   => LedgerCfg (LedgerState blk)
@@ -253,8 +253,8 @@ implRemoveTxs menv txs = do
 
 -- | Craft a 'RemoveTxs' that manually removes the given transactions from the
 -- mempool, returning inside it an updated InternalState.
-pureRemoveTxs
-  :: ( LedgerSupportsMempool blk
+pureRemoveTxs ::
+     ( LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
      , ValidateEnvelope blk
      )
@@ -337,8 +337,8 @@ implSyncWithLedger menv = do
 -- be stored for committing this synchronization with the Ledger.
 --
 -- See the documentation of 'runSyncWithLedger' for more context.
-pureSyncWithLedger
-  :: (LedgerSupportsMempool blk, HasTxId (GenTx blk), ValidateEnvelope blk)
+pureSyncWithLedger ::
+     (LedgerSupportsMempool blk, HasTxId (GenTx blk), ValidateEnvelope blk)
   => InternalState blk
   -> LedgerState blk
   -> LedgerConfig blk

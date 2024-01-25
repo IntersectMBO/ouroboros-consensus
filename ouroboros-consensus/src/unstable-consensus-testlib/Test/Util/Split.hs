@@ -17,8 +17,8 @@ import           Data.Word (Word64)
 -- | The returned @b@ is the first in the list.
 --
 -- INVARIANT The output data is a segmentation of the given list.
-spanLeft
-  :: forall x a b.
+spanLeft ::
+     forall x a b.
      (x -> Either a b) -> [x] -> ([a], Maybe (b, [x]))
 spanLeft prj xs = (reverse acc, mbBxs)
   where
@@ -47,8 +47,8 @@ data Prj a b = Prj !a !b
 -- list.
 --
 -- INVARIANT The output data is a segmentation of the given list.
-splitAtJust
-  :: forall x b.
+splitAtJust ::
+     forall x b.
      (x -> Maybe b) -> Word64 -> [x] -> (Maybe ([x], b), [x])
 splitAtJust prj = \n xs ->
   if 0 == n then (Nothing, xs)

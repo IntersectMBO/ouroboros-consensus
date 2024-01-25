@@ -164,8 +164,8 @@ slots (MkPrimaryIndex _ offsets) = fromIntegral $ V.length offsets - 1
 
 -- | Read the 'SecondaryOffset' corresponding to the given relative slot in
 -- the primary index. Return 'Nothing' when the slot is empty.
-readOffset
-  :: forall blk m h.
+readOffset ::
+     forall blk m h.
      (HasCallStack, MonadThrow m, StandardHash blk, Typeable blk)
   => Proxy blk
   -> HasFS m h
@@ -179,8 +179,8 @@ readOffset pb hasFS chunk slot = runIdentity <$>
 --
 -- NOTE: only use this for a few offsets, as we will seek (@pread@) for each
 -- offset. Use 'load' if you want to read the whole primary index.
-readOffsets
-  :: forall blk m h t.
+readOffsets ::
+     forall blk m h t.
      ( HasCallStack
      , MonadThrow m
      , Traversable t
@@ -226,8 +226,8 @@ readOffsets pb hasFS@HasFS { hGetSize } chunk toRead =
 -- number and offset 0.
 --
 -- May throw 'InvalidPrimaryIndexException'.
-readFirstFilledSlot
-  :: forall blk m h.
+readFirstFilledSlot ::
+     forall blk m h.
      (HasCallStack, MonadThrow m, StandardHash blk, Typeable blk)
   => Proxy blk
   -> HasFS m h
@@ -289,8 +289,8 @@ readFirstFilledSlot pb hasFS@HasFS { hSeek, hGetSome } chunkInfo chunk =
                  runGet pb primaryIndexFile getSecondaryOffset acc'
 
 -- | Load a primary index file in memory.
-load
-  :: forall blk m h.
+load ::
+     forall blk m h.
      (HasCallStack, MonadThrow m, StandardHash blk, Typeable blk)
   => Proxy blk
   -> HasFS m h
@@ -325,8 +325,8 @@ load pb hasFS chunk =
 --
 -- > primaryIndex === primaryIndex'
 --
-write
-  :: (HasCallStack, MonadThrow m)
+write ::
+     (HasCallStack, MonadThrow m)
   => HasFS m h
   -> ChunkNo
   -> PrimaryIndex
@@ -359,8 +359,8 @@ truncateToSlot chunkInfo relSlot primary@(MkPrimaryIndex _ offsets) =
 
 -- | On-disk variant of 'truncateToSlot'. The truncation is done without
 -- reading the primary index from disk.
-truncateToSlotFS
-  :: (HasCallStack, MonadThrow m)
+truncateToSlotFS ::
+     (HasCallStack, MonadThrow m)
   => HasFS m h
   -> ChunkNo
   -> RelativeSlot
@@ -380,8 +380,8 @@ truncateToSlotFS hasFS@HasFS { hTruncate, hGetSize } chunk relSlot =
 --
 -- POSTCONDITION: the last slot of the primary index file will be filled,
 -- unless the index itself is empty.
-unfinalise
-  :: (HasCallStack, MonadThrow m, StandardHash blk, Typeable blk)
+unfinalise ::
+     (HasCallStack, MonadThrow m, StandardHash blk, Typeable blk)
   => Proxy blk
   -> HasFS m h
   -> ChunkInfo
@@ -398,8 +398,8 @@ unfinalise pb hasFS chunkInfo chunk = do
 --
 -- The file is opened with the given 'AllowExisting' value. When given
 -- 'MustBeNew', the version number is written to the file.
-open
-  :: (HasCallStack, MonadCatch m)
+open ::
+     (HasCallStack, MonadCatch m)
   => HasFS m h
   -> ChunkNo
   -> AllowExisting
@@ -422,8 +422,8 @@ open hasFS@HasFS { hOpen, hClose } chunk allowExisting = do
 
 -- | Append the given 'SecondaryOffset' to the end of the file (passed as a
 -- handle).
-appendOffsets
-  :: (Monad m, Foldable f, HasCallStack)
+appendOffsets ::
+     (Monad m, Foldable f, HasCallStack)
   => HasFS m h
   -> Handle h
   -> f SecondaryOffset
@@ -600,8 +600,8 @@ lastFilledSlot chunkInfo (MkPrimaryIndex chunk offsets) =
 --
 -- We use @x, y, z@ in the examples above, but in practice these will be
 -- multiples of the (fixed) size of an entry in secondary index.
-backfill
-  :: RelativeSlot     -- ^ The slot to write to (>= next expected slot)
+backfill ::
+     RelativeSlot     -- ^ The slot to write to (>= next expected slot)
   -> RelativeSlot     -- ^ The next expected slot to write to
   -> SecondaryOffset  -- ^ The last 'SecondaryOffset' written to
   -> [SecondaryOffset]
@@ -615,8 +615,8 @@ backfill slot nextExpected offset =
 -- to the chunk size.
 --
 -- See 'backfill' for more details.
-backfillChunk
-  :: ChunkInfo
+backfillChunk ::
+     ChunkInfo
   -> ChunkNo
   -> NextRelativeSlot
   -> SecondaryOffset

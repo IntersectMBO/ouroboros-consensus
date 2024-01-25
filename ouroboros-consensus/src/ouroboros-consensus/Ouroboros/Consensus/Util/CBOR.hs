@@ -224,8 +224,8 @@ readIncremental = \(SomeHasFS hasFS) decoder fp -> withLiftST $ \liftST -> do
 -- NOTE: f we introduce user-facing streaming API also, the fact that we are
 -- using @streaming@ here should not dictate that we should stick with it
 -- later; rather, we should revisit this code at that point.
-withStreamIncrementalOffsets
-  :: forall m h a r. (IOLike m, HasCallStack)
+withStreamIncrementalOffsets ::
+     forall m h a r. (IOLike m, HasCallStack)
   => HasFS m h
   -> (forall s . CBOR.D.Decoder s (LBS.ByteString -> a))
   -> FsPath

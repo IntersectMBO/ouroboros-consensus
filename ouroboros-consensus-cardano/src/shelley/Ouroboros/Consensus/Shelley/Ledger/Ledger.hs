@@ -149,8 +149,8 @@ shelleyEraParamsNeverHardForks genesis = HardFork.EraParams {
     , eraSafeZone   = HardFork.UnsafeIndefiniteSafeZone
     }
 
-mkShelleyLedgerConfig
-  :: SL.ShelleyGenesis (EraCrypto era)
+mkShelleyLedgerConfig ::
+     SL.ShelleyGenesis (EraCrypto era)
   -> Core.TranslationContext era
   -> EpochInfo (Except HardFork.PastHorizonException)
   -> MaxMajorProtVer

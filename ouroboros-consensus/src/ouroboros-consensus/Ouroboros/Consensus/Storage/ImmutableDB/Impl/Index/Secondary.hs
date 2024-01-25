@@ -152,8 +152,8 @@ data BlockSize
 
 -- | Read the entry at the given 'SecondaryOffset'. Interpret it as an EBB
 -- depending on the given 'IsEBB'.
-readEntry
-  :: forall m blk h.
+readEntry ::
+     forall m blk h.
      ( HasCallStack
      , ConvertRawHash blk
      , MonadThrow m
@@ -173,8 +173,8 @@ readEntry hasFS chunk isEBB slotOffset = runIdentity <$>
 -- NOTE: only use this for a few entries, as we will seek (@pread@) for each
 -- entry. Use 'readAllEntries' if you want to read all entries in the
 -- secondary index file.
-readEntries
-  :: forall m blk h t.
+readEntries ::
+     forall m blk h t.
      ( HasCallStack
      , ConvertRawHash blk
      , MonadThrow m
@@ -220,8 +220,8 @@ readEntries hasFS chunk toRead =
 -- 'SecondaryOffset' until the stop condition is true or until the end of the
 -- file is reached. The entry for which the stop condition is true will be the
 -- last in the returned list of entries.
-readAllEntries
-  :: forall m blk h.
+readAllEntries ::
+     forall m blk h.
      ( HasCallStack
      , ConvertRawHash blk
      , MonadThrow m
@@ -291,8 +291,8 @@ readAllEntries hasFS secondaryOffset chunk stopAfter chunkFileSize = \isEBB ->
     consMaybe :: Maybe a -> [a] -> [a]
     consMaybe = maybe id (:)
 
-appendEntry
-  :: forall m blk h. (HasCallStack, ConvertRawHash blk, MonadThrow m)
+appendEntry ::
+     forall m blk h. (HasCallStack, ConvertRawHash blk, MonadThrow m)
   => HasFS m h
   -> Handle h
   -> Entry blk
@@ -305,8 +305,8 @@ appendEntry hasFS sHnd entry = do
 
 -- | Remove all entries after the entry at the given 'SecondaryOffset'. That
 -- entry will now be the last entry in the secondary index file.
-truncateToEntry
-  :: forall m blk h. (HasCallStack, ConvertRawHash blk, MonadThrow m)
+truncateToEntry ::
+     forall m blk h. (HasCallStack, ConvertRawHash blk, MonadThrow m)
   => Proxy blk
   -> HasFS m h
   -> ChunkNo
@@ -320,8 +320,8 @@ truncateToEntry pb hasFS chunk secondaryOffset =
     HasFS { hTruncate } = hasFS
     offset              = fromIntegral (secondaryOffset + entrySize pb)
 
-writeAllEntries
-  :: forall m blk h. (HasCallStack, ConvertRawHash blk, MonadThrow m)
+writeAllEntries ::
+     forall m blk h. (HasCallStack, ConvertRawHash blk, MonadThrow m)
   => HasFS m h
   -> ChunkNo
   -> [Entry blk]

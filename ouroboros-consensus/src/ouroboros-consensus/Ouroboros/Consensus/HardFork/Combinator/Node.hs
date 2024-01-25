@@ -36,8 +36,8 @@ instance CanHardFork xs => ConfigSupportsNode (HardForkBlock xs) where
   Auxiliary
 -------------------------------------------------------------------------------}
 
-getSameConfigValue
-  :: forall xs a. (CanHardFork xs, Eq a, HasCallStack)
+getSameConfigValue ::
+     forall xs a. (CanHardFork xs, Eq a, HasCallStack)
   => (forall blk. ConfigSupportsNode blk => BlockConfig blk -> a)
   -> BlockConfig (HardForkBlock xs)
   -> a

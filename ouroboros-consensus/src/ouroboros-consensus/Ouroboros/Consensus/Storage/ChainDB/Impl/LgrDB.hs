@@ -216,8 +216,8 @@ openDB args@LgrDbArgs { lgrHasFS = lgrHasFS@(SomeHasFS hasFS), .. } replayTracer
       , replayed
       )
 
-initFromDisk
-  :: forall blk m.
+initFromDisk ::
+     forall blk m.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , LgrDbSerialiseConstraints blk

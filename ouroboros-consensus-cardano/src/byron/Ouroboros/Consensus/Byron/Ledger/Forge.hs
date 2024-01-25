@@ -46,8 +46,8 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Protocol.PBFT
 
-forgeByronBlock
-  :: HasCallStack
+forgeByronBlock ::
+     HasCallStack
   => TopLevelConfig ByronBlock
   -> Mempool.TxOverrides ByronBlock   -- ^ How to override max tx capacity
                                       --   defined by ledger
@@ -59,8 +59,8 @@ forgeByronBlock
   -> ByronBlock
 forgeByronBlock cfg = forgeRegularBlock (configBlock cfg)
 
-forgeEBB
-  :: BlockConfig ByronBlock
+forgeEBB ::
+     BlockConfig ByronBlock
   -> SlotNo                          -- ^ Current slot
   -> BlockNo                         -- ^ Current block number
   -> ChainHash ByronBlock            -- ^ Previous hash
@@ -123,8 +123,8 @@ initBlockPayloads = BlockPayloads
   , bpUpProposal = Nothing
   }
 
-forgeRegularBlock
-  :: HasCallStack
+forgeRegularBlock ::
+     HasCallStack
   => BlockConfig ByronBlock
   -> Mempool.TxOverrides ByronBlock    -- ^ How to override max tx capacity
                                        --   defined by ledger

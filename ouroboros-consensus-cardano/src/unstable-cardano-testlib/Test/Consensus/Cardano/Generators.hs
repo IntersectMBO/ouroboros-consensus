@@ -147,8 +147,8 @@ instance Arbitrary (BlockNodeToNodeVersion blk)
     , (9, EraNodeToNodeEnabled <$> arbitrary)
     ]
 
-arbitraryNodeToNode
-  :: ( Arbitrary (WithVersion ByronNodeToNodeVersion byron)
+arbitraryNodeToNode ::
+     ( Arbitrary (WithVersion ByronNodeToNodeVersion byron)
      , Arbitrary (WithVersion ShelleyNodeToNodeVersion shelley)
      , Arbitrary (WithVersion ShelleyNodeToNodeVersion allegra)
      , Arbitrary (WithVersion ShelleyNodeToNodeVersion mary)
@@ -375,8 +375,8 @@ instance Arbitrary (BlockNodeToClientVersion blk)
     , (9, EraNodeToClientEnabled <$> arbitrary)
     ]
 
-arbitraryNodeToClient
-  :: ( Arbitrary (WithVersion ByronNodeToClientVersion   byron)
+arbitraryNodeToClient ::
+     ( Arbitrary (WithVersion ByronNodeToClientVersion   byron)
      , Arbitrary (WithVersion ShelleyNodeToClientVersion shelley)
      , Arbitrary (WithVersion ShelleyNodeToClientVersion allegra)
      , Arbitrary (WithVersion ShelleyNodeToClientVersion mary)

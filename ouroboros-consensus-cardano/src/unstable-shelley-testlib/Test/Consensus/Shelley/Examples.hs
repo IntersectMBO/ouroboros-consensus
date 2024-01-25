@@ -71,8 +71,8 @@ import           Test.Util.Serialisation.SomeResult (SomeResult (..))
 codecConfig :: CodecConfig StandardShelleyBlock
 codecConfig = ShelleyCodecConfig
 
-fromShelleyLedgerExamples
-  :: ShelleyCompatible (TPraos (EraCrypto era)) era
+fromShelleyLedgerExamples ::
+     ShelleyCompatible (TPraos (EraCrypto era)) era
   => ShelleyLedgerExamples era
   -> Examples (ShelleyBlock (TPraos (EraCrypto era)) era)
 fromShelleyLedgerExamples ShelleyLedgerExamples {

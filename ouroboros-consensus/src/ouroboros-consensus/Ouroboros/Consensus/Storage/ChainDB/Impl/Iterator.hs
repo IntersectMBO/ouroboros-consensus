@@ -176,8 +176,8 @@ import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 -- the VolatileDB, we try to see whether it can be streamed from the ImmutableDB
 -- instead. Opening such an iterator costs 2 (cached) reads from disk upfront.
 -- This can happen multiple times.
-stream
-  :: forall m blk b.
+stream ::
+     forall m blk b.
      ( IOLike m
      , HasHeader blk
      , HasCallStack

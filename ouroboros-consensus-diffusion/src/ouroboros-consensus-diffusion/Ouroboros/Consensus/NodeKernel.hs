@@ -142,8 +142,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , keepAliveRng            :: StdGen
     }
 
-initNodeKernel
-    :: forall m addrNTN addrNTC blk.
+initNodeKernel ::
+       forall m addrNTN addrNTC blk.
        ( IOLike m
        , RunNode blk
        , Ord addrNTN
@@ -219,8 +219,8 @@ data InternalState m addrNTN addrNTC blk = IS {
     , peerSharingRegistry :: PeerSharingRegistry addrNTN m
     }
 
-initInternalState
-    :: forall m addrNTN addrNTC blk.
+initInternalState ::
+       forall m addrNTN addrNTC blk.
        ( IOLike m
        , Ord addrNTN
        , Typeable addrNTN
@@ -262,8 +262,8 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
 
     return IS {..}
 
-forkBlockForging
-    :: forall m addrNTN addrNTC blk.
+forkBlockForging ::
+       forall m addrNTN addrNTC blk.
        (IOLike m, RunNode blk)
     => InternalState m addrNTN addrNTC blk
     -> BlockForging m blk
@@ -505,8 +505,8 @@ blockContextFromPrevHeader hdr =
 -- was also elected leader and managed to produce a block before us), the tip's
 -- predecessor. If the chain is empty, then it will refer to the chain's anchor
 -- point, which may be genesis.
-mkCurrentBlockContext
-  :: forall blk. RunNode blk
+mkCurrentBlockContext ::
+     forall blk. RunNode blk
   => SlotNo
      -- ^ the current slot, i.e. the slot of the block about to be forged
   -> AnchoredFragment (Header blk)
@@ -569,8 +569,8 @@ mkCurrentBlockContext currentSlot c = case c of
   TxSubmission integration
 -------------------------------------------------------------------------------}
 
-getMempoolReader
-  :: forall m blk.
+getMempoolReader ::
+     forall m blk.
      ( LedgerSupportsMempool blk
      , IOLike m
      , HasTxId (GenTx blk)
@@ -596,8 +596,8 @@ getMempoolReader mempool = MempoolReader.TxSubmissionMempoolReader
         , mempoolHasTx      = snapshotHasTx
         }
 
-getMempoolWriter
-  :: ( LedgerSupportsMempool blk
+getMempoolWriter ::
+     ( LedgerSupportsMempool blk
      , IOLike m
      , HasTxId (GenTx blk)
      )

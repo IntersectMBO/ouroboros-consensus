@@ -72,8 +72,8 @@ data VersionDecoder a where
                -> VersionDecoder to
 
 -- | Return a 'Decoder' for the given 'VersionDecoder'.
-getVersionDecoder
-  :: VersionNumber
+getVersionDecoder ::
+     VersionNumber
   -> VersionDecoder a
   -> forall s. Decoder s a
 getVersionDecoder vn = \case
@@ -87,8 +87,8 @@ getVersionDecoder vn = \case
 
 -- | Given a 'VersionNumber' and the encoding of an @a@, encode the
 -- corresponding @'Versioned' a@. Use 'decodeVersion' to decode it.
-encodeVersion
-  :: VersionNumber
+encodeVersion ::
+     VersionNumber
   -> Encoding
   -> Encoding
 encodeVersion vn encodedA = mconcat
@@ -104,8 +104,8 @@ encodeVersion vn encodedA = mconcat
 -- looked up in the given list. The first match is used (using the semantics
 -- of 'lookup'). When no match is found, a decoder that fails with
 -- 'UnknownVersion' is returned.
-decodeVersion
-  :: [(VersionNumber, VersionDecoder a)]
+decodeVersion ::
+     [(VersionNumber, VersionDecoder a)]
   -> forall s. Decoder s a
 decodeVersion versionDecoders =
     versioned <$> decodeVersioned versionDecoders
@@ -125,8 +125,8 @@ decodeVersion versionDecoders =
 -- Note that this will not work if the previous encoding can start with list
 -- length 2, as the new versioned decoder will be called in those cases, not the
 -- hook.
-decodeVersionWithHook
-  :: forall a.
+decodeVersionWithHook ::
+     forall a.
      (forall s. Maybe Int -> Decoder s a)
   -> [(VersionNumber, VersionDecoder a)]
   -> forall s. Decoder s a
@@ -156,14 +156,14 @@ decodeVersionWithHook hook versionDecoders = do
           Nothing   -> fail $ show $ UnknownVersion vn
           Just vDec -> getVersionDecoder vn vDec
 
-encodeVersioned
-  :: (          a -> Encoding)
+encodeVersioned ::
+     (          a -> Encoding)
   -> (Versioned a -> Encoding)
 encodeVersioned enc (Versioned vn a) =
     encodeVersion vn (enc a)
 
-decodeVersioned
-  :: [(VersionNumber, VersionDecoder a)]
+decodeVersioned ::
+     [(VersionNumber, VersionDecoder a)]
   -> forall s. Decoder s (Versioned a)
 decodeVersioned versionDecoders = do
     enforceSize "Versioned" 2

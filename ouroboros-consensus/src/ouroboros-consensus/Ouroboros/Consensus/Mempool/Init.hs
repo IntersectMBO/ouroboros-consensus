@@ -29,8 +29,8 @@ import           Ouroboros.Consensus.Util.STM (Watcher (..), forkLinkedWatcher)
 
 -- | Create a @Mempool m blk@ in @m@ to manipulate the mempool. It will also
 -- fork a thread that syncs the mempool and the ledger when the ledger changes.
-openMempool
-  :: ( IOLike m
+openMempool ::
+     ( IOLike m
      , LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
      , ValidateEnvelope blk
@@ -82,8 +82,8 @@ forkSyncStateOnTipPointChange registry menv =
 -- that synchronises with the ledger state whenever the later changes.
 --
 -- Intended for testing purposes.
-openMempoolWithoutSyncThread
-  :: ( IOLike m
+openMempoolWithoutSyncThread ::
+     ( IOLike m
      , LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
      , ValidateEnvelope blk
@@ -97,8 +97,8 @@ openMempoolWithoutSyncThread
 openMempoolWithoutSyncThread ledger cfg capacityOverride tracer txSize =
     mkMempool <$> initMempoolEnv ledger cfg capacityOverride tracer txSize
 
-mkMempool
-  :: ( IOLike m
+mkMempool ::
+     ( IOLike m
      , LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
      , ValidateEnvelope blk

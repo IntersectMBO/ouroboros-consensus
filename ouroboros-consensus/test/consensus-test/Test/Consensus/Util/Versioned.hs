@@ -71,8 +71,8 @@ version1 = Version1 1 100
 version2 :: Version2
 version2 = Version2 1 100 101
 
-decodeLatestVersion
-  :: [(VersionNumber, VersionDecoder Version2)]
+decodeLatestVersion ::
+     [(VersionNumber, VersionDecoder Version2)]
 decodeLatestVersion =
     [ (0, Incompatible "missing field 1")
     , (1, Migrate (Decode decode) $ \(Version1 a b) ->

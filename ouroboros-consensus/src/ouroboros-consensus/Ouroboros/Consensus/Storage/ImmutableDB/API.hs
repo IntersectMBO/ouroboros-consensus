@@ -197,8 +197,8 @@ data Iterator m blk b = Iterator {
 
 -- | Variant of 'traverse' instantiated to @'Iterator' m blk m@ that executes
 -- the monadic function when calling 'iteratorNext'.
-traverseIterator
-  :: Monad m
+traverseIterator ::
+     Monad m
   => (b -> m b')
   -> Iterator m blk b
   -> Iterator m blk b'

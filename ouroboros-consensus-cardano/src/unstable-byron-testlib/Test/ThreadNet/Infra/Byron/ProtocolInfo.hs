@@ -69,8 +69,8 @@ mkProtocolByron params coreNodeId genesisConfig genesisSecrets =
           , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
           }
 
-mkLeaderCredentials
-  :: HasCallStack
+mkLeaderCredentials ::
+     HasCallStack
   => Genesis.Config
   -> Genesis.GeneratedSecrets
   -> CoreNodeId

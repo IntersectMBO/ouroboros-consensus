@@ -19,8 +19,8 @@ import           Test.Util.Orphans.IOLike ()
 -- Supports an optional delay in release to simulate lazy, non-synchronous
 -- unlocking as done by Linux (near instantaneous but not instant) and
 -- Windows.
-mockFileLock
-  :: Maybe DiffTime  -- ^ Optional release delay
+mockFileLock ::
+     Maybe DiffTime  -- ^ Optional release delay
   -> IOSim s (FileLock (IOSim s))
 mockFileLock releaseDelay = do
     locks <- newMockFileLocks releaseDelay
