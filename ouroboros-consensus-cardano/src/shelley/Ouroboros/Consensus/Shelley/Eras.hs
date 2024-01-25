@@ -3,6 +3,7 @@
 {-# LANGUAGE DeriveAnyClass          #-}
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE GADTs                   #-}
 {-# LANGUAGE LambdaCase              #-}
 {-# LANGUAGE MultiParamTypeClasses   #-}
 {-# LANGUAGE OverloadedStrings       #-}
@@ -29,6 +30,7 @@ module Ouroboros.Consensus.Shelley.Eras (
   , StandardMary
   , StandardShelley
     -- * Shelley-based era
+  , ConwayEraGovDict (..)
   , ShelleyBasedEra (..)
   , WrapTx (..)
     -- * Type synonyms for convenience
@@ -49,6 +51,7 @@ import qualified Cardano.Ledger.Babbage.Translation as Babbage
 import           Cardano.Ledger.BaseTypes
 import           Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import           Cardano.Ledger.Conway (ConwayEra)
+import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as SL
                      (ConwayLedgerPredFailure (..))
 import qualified Cardano.Ledger.Conway.Translation as Conway
@@ -167,6 +170,12 @@ class ( Core.EraSegWits era
   -- For now, this always returns 'Nothing' for Conway (see the instance below).
   getProposedProtocolVersion :: Core.PParamsUpdate era -> Maybe ProtVer
 
+  -- | Whether the era has an instance of 'CG.ConwayEraGov'
+  getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
+
+data ConwayEraGovDict era where
+    ConwayEraGovDict :: CG.ConwayEraGov era => ConwayEraGovDict era
+
 -- | The default implementation of 'applyShelleyBasedTx', a thin wrapper around
 -- 'SL.applyTx'
 defaultApplyShelleyBasedTx ::
@@ -195,6 +204,9 @@ defaultGetProposedProtocolVersion ::
 defaultGetProposedProtocolVersion proposal =
     strictMaybeToMaybe $ proposal ^. ppuProtocolVersionL
 
+defaultGetConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
+defaultGetConwayEraGovDict _ = Nothing
+
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (ShelleyEra c) where
   shelleyBasedEraName _ = "Shelley"
@@ -202,6 +214,8 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getProposedProtocolVersion = defaultGetProposedProtocolVersion
+
+  getConwayEraGovDict = defaultGetConwayEraGovDict
 
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AllegraEra c) where
@@ -211,6 +225,8 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
 
   getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
+  getConwayEraGovDict = defaultGetConwayEraGovDict
+
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (MaryEra c) where
   shelleyBasedEraName _ = "Mary"
@@ -218,6 +234,8 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
   getProposedProtocolVersion = defaultGetProposedProtocolVersion
+
+  getConwayEraGovDict = defaultGetConwayEraGovDict
 
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AlonzoEra c) where
@@ -227,16 +245,21 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
 
   getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
+  getConwayEraGovDict = defaultGetConwayEraGovDict
+
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (BabbageEra c) where
   shelleyBasedEraName _ = "Babbage"
   applyShelleyBasedTx = applyAlonzoBasedTx
 
   getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
+  getConwayEraGovDict = defaultGetConwayEraGovDict
+
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (ConwayEra c) where
   shelleyBasedEraName _ = "Conway"
   applyShelleyBasedTx = applyAlonzoBasedTx
   getProposedProtocolVersion _ = Nothing
+  getConwayEraGovDict _ = Just ConwayEraGovDict
 
 applyAlonzoBasedTx :: forall era.
   ( ShelleyBasedEra era,
