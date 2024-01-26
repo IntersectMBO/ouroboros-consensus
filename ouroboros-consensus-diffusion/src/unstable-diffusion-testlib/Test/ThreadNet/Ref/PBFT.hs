@@ -281,8 +281,8 @@ resultConstrName = \case
 --
 -- See 'Result'.
 --
-simulate
-  :: HasCallStack => PBftParams -> NodeJoinPlan -> NumSlots -> Result
+simulate ::
+     HasCallStack => PBftParams -> NodeJoinPlan -> NumSlots -> Result
 simulate params nodeJoinPlan numSlots =
     case simulateShort params nodeJoinPlan numSlots of
       Left (Det st@State{outs}) -> Outcomes $ toList outs <> go st
@@ -339,8 +339,8 @@ data DetOrNondet
     --
     -- See 'Result'.
 
-simulateShort
-  :: HasCallStack
+simulateShort ::
+     HasCallStack
   => PBftParams -> NodeJoinPlan -> NumSlots -> Either DetOrNondet ShortState
 simulateShort params nodeJoinPlan (NumSlots t)
   -- no one has time to forge
@@ -379,8 +379,8 @@ emptyShortState (NodeJoinPlan m) = ShortState
   , ssNextSlot = 0
   }
 
-stepShort
-  :: HasCallStack
+stepShort ::
+     HasCallStack
   => PBftParams -> ShortState -> Either DetOrNondet ShortState
 stepShort params st
   | Just don <- mbDon = Left don

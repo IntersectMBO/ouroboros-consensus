@@ -124,8 +124,8 @@ type instance ForgeStateInfo ByronBlock = ()
 
 type instance ForgeStateUpdateError ByronBlock = Void
 
-byronBlockForging
-  :: Monad m
+byronBlockForging ::
+     Monad m
   => Mempool.TxOverrides ByronBlock
   -> ByronLeaderCredentials
   -> BlockForging m ByronBlock

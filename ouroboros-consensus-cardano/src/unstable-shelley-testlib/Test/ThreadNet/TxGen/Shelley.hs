@@ -84,8 +84,8 @@ instance HashAlgorithm h => TxGen (ShelleyBlock (TPraos (MockCrypto h)) (MockShe
               Left  _   -> go (tx:acc) (n - 1) st
               Right st' -> go (tx:acc) (n - 1) st'
 
-genTx
-  :: forall h. HashAlgorithm h
+genTx ::
+     forall h. HashAlgorithm h
   => TopLevelConfig (ShelleyBlock (TPraos (MockCrypto h)) (MockShelley h))
   -> SlotNo
   -> TickedLedgerState (ShelleyBlock (TPraos (MockCrypto h)) (MockShelley h))

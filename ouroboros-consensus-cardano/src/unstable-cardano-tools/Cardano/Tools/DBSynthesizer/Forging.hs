@@ -54,8 +54,8 @@ initialForgeState = ForgeState 0 0 0 0
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
 -- For an extensive commentary of the forging loop, see there.
 
-runForge
-  :: forall blk.
+runForge ::
+     forall blk.
     ( LedgerSupportsProtocol blk )
     => EpochSize
     -> SlotNo
@@ -192,8 +192,8 @@ blockContextFromPrevHeader hdr =
 
 -- | Determine the 'BlockContext' for a block about to be forged from the
 -- current slot, ChainDB chain fragment, and ChainDB tip block number
-mkCurrentBlockContext
-  :: forall blk.
+mkCurrentBlockContext ::
+     forall blk.
      ( GetHeader blk
      , BasicEnvelopeValidation blk )
   => SlotNo

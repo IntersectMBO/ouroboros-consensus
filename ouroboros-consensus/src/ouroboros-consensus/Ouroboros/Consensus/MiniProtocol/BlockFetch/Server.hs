@@ -64,8 +64,8 @@ instance Exception BlockFetchServerException
 -- | Block fetch server based on
 -- 'Ouroboros.Network.BlockFetch.Examples.mockBlockFetchServer1', but using
 -- the 'ChainDB'.
-blockFetchServer
-    :: forall m blk.
+blockFetchServer ::
+       forall m blk.
        ( IOLike m
        , StandardHash blk
        , Typeable     blk

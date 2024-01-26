@@ -55,8 +55,8 @@ class HasNetworkProtocolVersion blk => SupportedNetworkProtocolVersion blk where
 --
 -- Chooses the greatest in 'supportedNodeToNodeVersions' and
 -- 'supportedNodeToClientVersions'.
-latestReleasedNodeVersionDefault
-  :: SupportedNetworkProtocolVersion blk
+latestReleasedNodeVersionDefault ::
+     SupportedNetworkProtocolVersion blk
   => Proxy blk
   -> (Maybe NodeToNodeVersion, Maybe NodeToClientVersion)
 latestReleasedNodeVersionDefault prx =

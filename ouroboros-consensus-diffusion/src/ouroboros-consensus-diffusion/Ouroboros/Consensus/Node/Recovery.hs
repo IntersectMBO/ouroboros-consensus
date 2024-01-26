@@ -29,8 +29,8 @@ newtype LastShutDownWasClean = LastShutDownWasClean Bool
   deriving (Eq, Show)
 
 -- | Return 'True' when 'cleanShutdownMarkerFile' exists.
-hasCleanShutdownMarker
-  :: HasFS m h
+hasCleanShutdownMarker ::
+     HasFS m h
   -> m Bool
 hasCleanShutdownMarker hasFS =
     doesFileExist hasFS cleanShutdownMarkerFile
@@ -38,8 +38,8 @@ hasCleanShutdownMarker hasFS =
 -- | Create the 'cleanShutdownMarkerFile'.
 --
 -- Idempotent.
-createCleanShutdownMarker
-  :: IOLike m
+createCleanShutdownMarker ::
+     IOLike m
   => HasFS m h
   -> m ()
 createCleanShutdownMarker hasFS = do
@@ -51,8 +51,8 @@ createCleanShutdownMarker hasFS = do
 -- | Remove 'cleanShutdownMarkerFile'.
 --
 -- Will throw an 'FsResourceDoesNotExist' error when it does not exist.
-removeCleanShutdownMarker
-  :: HasFS m h
+removeCleanShutdownMarker ::
+     HasFS m h
   -> m ()
 removeCleanShutdownMarker hasFS =
     removeFile hasFS cleanShutdownMarkerFile
@@ -85,8 +85,8 @@ exceptionRequiresRecovery pb e = case toExitReason pb e of
 --   a shutdown handler that writes the marker except for certain exceptions
 --   (see 'exceptionRequiresRecovery') that indicate corruption, for which we
 --   want the next startup to do revalidation.
-runWithCheckedDB
-  :: forall a m h blk. (IOLike m, StandardHash blk, Typeable blk)
+runWithCheckedDB ::
+     forall a m h blk. (IOLike m, StandardHash blk, Typeable blk)
   => Proxy blk
   -> HasFS m h
   -> (LastShutDownWasClean -> (ChainDB m blk -> m a -> m a) -> m a)
@@ -134,8 +134,8 @@ runWithCheckedDB pb hasFS body = do
   Auxiliary
 -------------------------------------------------------------------------------}
 
-onExceptionIf
-  :: (IOLike m, Exception e)
+onExceptionIf ::
+     (IOLike m, Exception e)
   => (e -> Bool)  -- ^ Predicate to selection exceptions
   -> m ()         -- ^ Exception handler
   -> m a

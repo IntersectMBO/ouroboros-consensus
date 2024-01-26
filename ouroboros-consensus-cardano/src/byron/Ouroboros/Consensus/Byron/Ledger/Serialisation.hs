@@ -229,8 +229,8 @@ encodeByronRegularHeader :: RawHeader -> CBOR.Encoding
 encodeByronRegularHeader = toByronCBOR . CBOR.encodePreEncoded . CC.headerAnnotation
 
 -- | Inverse of 'encodeByronRegularHeader'
-decodeByronRegularHeader
-  :: CC.EpochSlots
+decodeByronRegularHeader ::
+     CC.EpochSlots
   -> Decoder s (Lazy.ByteString -> RawHeader)
 decodeByronRegularHeader epochSlots =
     toPlainDecoder byronProtVer $

@@ -53,8 +53,8 @@ import qualified Ouroboros.Consensus.Mempool as Mempool
 -- This also serves a purpose as a sanity check that we have all the necessary
 -- type class instances available.
 --
-mkSomeConsensusProtocolCardano
-  :: NodeByronProtocolConfiguration
+mkSomeConsensusProtocolCardano ::
+     NodeByronProtocolConfiguration
   -> NodeShelleyProtocolConfiguration
   -> NodeAlonzoProtocolConfiguration
   -> NodeConwayProtocolConfiguration

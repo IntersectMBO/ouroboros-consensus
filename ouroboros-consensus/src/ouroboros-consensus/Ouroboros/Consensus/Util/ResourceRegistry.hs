@@ -734,8 +734,8 @@ bracketWithPrivateRegistry newA closeA body =
 -- NOTE: we explicitly don't let 'runWithTempRegistry' return the final state,
 -- because the state /must/ have been stored somewhere safely, transferring
 -- the resources, before the temporary registry is closed.
-runWithTempRegistry
-  :: (IOLike m, HasCallStack)
+runWithTempRegistry ::
+     (IOLike m, HasCallStack)
   => WithTempRegistry st m (a, st)
   -> m a
 runWithTempRegistry m = withRegistry $ \rr -> do
@@ -786,8 +786,8 @@ runWithTempRegistry m = withRegistry $ \rr -> do
 -- async exception is received at that time, then the inner resources will be
 -- closed and then the composite resource will be closed. This means there's a
 -- risk of /double freeing/, which can be harmless if anticipated.
-runInnerWithTempRegistry
-  :: forall innerSt st m res a. IOLike m
+runInnerWithTempRegistry ::
+     forall innerSt st m res a. IOLike m
   => WithTempRegistry innerSt m (a, innerSt, res)
      -- ^ The embedded computation; see ASSUMPTION above
   -> (res -> m Bool)
@@ -878,8 +878,8 @@ instance MonadState s m => MonadState s (WithTempRegistry st m) where
 --
 -- NOTE: does not check that it's called by the same thread that allocated the
 -- resources, as it's an internal function only used in 'runWithTempRegistry'.
-untrackTransferredTo
-  :: IOLike m
+untrackTransferredTo ::
+     IOLike m
   => ResourceRegistry m
   -> TransferredTo st
   -> st
@@ -891,8 +891,8 @@ untrackTransferredTo rr transferredTo st =
 
 -- | Allocate a resource in a temporary registry until it has been transferred
 -- to the final state @st@. See 'runWithTempRegistry' for more details.
-allocateTemp
-  :: (IOLike m, HasCallStack)
+allocateTemp ::
+     (IOLike m, HasCallStack)
   => m a
      -- ^ Allocate the resource
   -> (a -> m Bool)
@@ -917,8 +917,8 @@ allocateTemp alloc free isTransferred = WithTempRegistry $ do
 -- | Higher level API on top of 'runWithTempRegistry': modify the given @st@,
 -- allocating resources in the process that will be transferred to the
 -- returned @st@.
-modifyWithTempRegistry
-  :: forall m st a. IOLike m
+modifyWithTempRegistry ::
+     forall m st a. IOLike m
   => m st                                 -- ^ Get the state
   -> (st -> ExitCase st -> m ())          -- ^ Store the new state
   -> StateT st (WithTempRegistry st m) a  -- ^ Modify the state

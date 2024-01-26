@@ -192,8 +192,8 @@ data Cached blk = Cached
   }
   deriving (Generic, NoThunks)
 
-checkInvariants
-  :: Word32  -- ^ Maximum number of past chunks to cache
+checkInvariants ::
+     Word32  -- ^ Maximum number of past chunks to cache
   -> Cached blk
   -> Maybe String
 checkInvariants pastChunksToCache Cached {..} = either Just (const Nothing) $ do
@@ -222,8 +222,8 @@ checkInvariants pastChunksToCache Cached {..} = either Just (const Nothing) $ do
 -- NOTE: does not trim the cache.
 --
 -- PRECONDITION: the given 'ChunkNo' is < the 'currentChunk'.
-addPastChunkInfo
-  :: ChunkNo
+addPastChunkInfo ::
+     ChunkNo
   -> LastUsed
   -> PastChunkInfo blk
   -> Cached blk
@@ -260,8 +260,8 @@ addPastChunkInfo chunk lastUsed pastChunkInfo cached =
 -- function directly after adding a past chunk to 'Cached'.
 --
 -- If a past chunk was evicted, its chunk number is returned.
-evictIfNecessary
-  :: Word32  -- ^ Maximum number of past chunks to cache
+evictIfNecessary ::
+     Word32  -- ^ Maximum number of past chunks to cache
   -> Cached blk
   -> (Cached blk, Maybe ChunkNo)
 evictIfNecessary maxNbPastChunks cached
@@ -286,8 +286,8 @@ evictIfNecessary maxNbPastChunks cached
 -- @-fstrictness@ optimisation (enabled by default for -O1).
 {-# INLINE evictIfNecessary #-}
 
-lookupPastChunkInfo
-  :: ChunkNo
+lookupPastChunkInfo ::
+     ChunkNo
   -> LastUsed
   -> Cached blk
   -> Maybe (PastChunkInfo blk, Cached blk)
@@ -305,8 +305,8 @@ lookupPastChunkInfo chunk lastUsed cached@Cached { pastChunksInfo } =
       Nothing                -> (Nothing, Nothing)
       Just (_lastUsed, info) -> (Just info, Just (lastUsed, info))
 
-openChunk
-  :: ChunkNo
+openChunk ::
+     ChunkNo
   -> LastUsed
   -> CurrentChunkInfo blk
   -> Cached blk
@@ -338,8 +338,8 @@ openChunk chunk lastUsed newCurrentChunkInfo cached
       { currentChunk, currentChunkInfo, pastChunksInfo, nbPastChunks
       } = cached
 
-emptyCached
-  :: ChunkNo -- ^ The current chunk
+emptyCached ::
+     ChunkNo -- ^ The current chunk
   -> CurrentChunkInfo blk
   -> Cached blk
 emptyCached currentChunk currentChunkInfo = Cached
@@ -365,8 +365,8 @@ data CacheEnv m blk h = CacheEnv
 -- unused past chunks ('expireUnusedChunks').
 --
 -- PRECONDITION: 'pastChunksToCache' (in 'CacheConfig') > 0
-newEnv
-  :: ( HasCallStack
+newEnv ::
+     ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
      , StandardHash blk
@@ -408,8 +408,8 @@ newEnv hasFS registry tracer cacheConfig chunkInfo chunk = do
 --
 -- Will expire past chunks that haven't been used for 'expireUnusedAfter' from
 -- the cache.
-expireUnusedChunks
-  :: (HasCallStack, IOLike m)
+expireUnusedChunks ::
+     (HasCallStack, IOLike m)
   => CacheEnv m blk h
   -> m Void
 expireUnusedChunks CacheEnv { cacheVar, cacheConfig, tracer } =
@@ -465,8 +465,8 @@ expireUnusedChunks CacheEnv { cacheVar, cacheConfig, tracer } =
   Reading indices
 ------------------------------------------------------------------------------}
 
-readPrimaryIndex
-  :: (HasCallStack, IOLike m, Typeable blk, StandardHash blk)
+readPrimaryIndex ::
+     (HasCallStack, IOLike m, Typeable blk, StandardHash blk)
   => Proxy blk
   -> HasFS m h
   -> ChunkInfo
@@ -486,8 +486,8 @@ readPrimaryIndex pb hasFS chunkInfo chunk = do
     firstRelativeSlot :: RelativeSlot
     firstRelativeSlot = firstBlockOrEBB chunkInfo chunk
 
-readSecondaryIndex
-  :: ( HasCallStack
+readSecondaryIndex ::
+     ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
      , StandardHash blk
@@ -508,8 +508,8 @@ readSecondaryIndex hasFS@HasFS { hGetSize } chunk firstIsEBB = do
     -- Don't stop until the end
     stopCondition = const False
 
-loadCurrentChunkInfo
-  :: forall m h blk.
+loadCurrentChunkInfo ::
+     forall m h blk.
      ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
@@ -540,8 +540,8 @@ loadCurrentChunkInfo hasFS chunkInfo chunk = do
   where
     primaryIndexFile = fsPathPrimaryIndexFile chunk
 
-loadPastChunkInfo
-  :: forall blk m h.
+loadPastChunkInfo ::
+     forall blk m h.
      ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
@@ -560,8 +560,8 @@ loadPastChunkInfo hasFS chunkInfo chunk = do
       , pastChunkEntries = Vector.fromList $ forceElemsToWHNF entries
       }
 
-getChunkInfo
-  :: forall m blk h.
+getChunkInfo ::
+     forall m blk h.
      ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
@@ -632,8 +632,8 @@ close CacheEnv { bgThreadVar } =
 --
 -- PRECONDITION: the background thread expiring unused past chunks must have
 -- been terminated.
-restart
-  :: (ConvertRawHash blk, IOLike m, StandardHash blk, Typeable blk)
+restart ::
+     (ConvertRawHash blk, IOLike m, StandardHash blk, Typeable blk)
   => CacheEnv m blk h
   -> ChunkNo  -- ^ The new current chunk
   -> m ()
@@ -654,8 +654,8 @@ restart cacheEnv chunk = do
   On the primary index
 ------------------------------------------------------------------------------}
 
-readOffsets
-  :: ( HasCallStack
+readOffsets ::
+     ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
      , StandardHash blk
@@ -697,8 +697,8 @@ readOffsets cacheEnv chunk relSlots =
       | otherwise
       = Nothing
 
-readFirstFilledSlot
-  :: ( HasCallStack
+readFirstFilledSlot ::
+     ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
      , StandardHash blk
@@ -724,8 +724,8 @@ readFirstFilledSlot cacheEnv chunk =
 
 -- | This is called when a new chunk is started, which means we need to update
 -- 'Cached' to reflect this.
-openPrimaryIndex
-  :: ( HasCallStack
+openPrimaryIndex ::
+     ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
      , StandardHash blk
@@ -756,8 +756,8 @@ openPrimaryIndex cacheEnv chunk allowExisting = do
     HasFS { hClose } = hasFS
     CacheConfig { pastChunksToCache } = cacheConfig
 
-appendOffsets
-  :: (HasCallStack, Foldable f, IOLike m)
+appendOffsets ::
+     (HasCallStack, Foldable f, IOLike m)
   => CacheEnv m blk h
   -> Handle h
   -> f SecondaryOffset
@@ -779,8 +779,8 @@ appendOffsets CacheEnv { hasFS, cacheVar } pHnd offsets = do
   On the secondary index
 ------------------------------------------------------------------------------}
 
-readEntries
-  :: forall m blk h t.
+readEntries ::
+     forall m blk h t.
      ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
@@ -820,8 +820,8 @@ readEntries cacheEnv chunk toRead =
       ("no entry missing for " <> show secondaryOffset)
       prettyCallStack
 
-readAllEntries
-  :: forall m blk h.
+readAllEntries ::
+     forall m blk h.
      ( HasCallStack
      , ConvertRawHash blk
      , IOLike m
@@ -849,8 +849,8 @@ readAllEntries cacheEnv secondaryOffset chunk stopCondition
     toDrop = fromIntegral $
       secondaryOffset `div` Secondary.entrySize (Proxy @blk)
 
-appendEntry
-  :: forall m blk h. (HasCallStack, ConvertRawHash blk, IOLike m)
+appendEntry ::
+     forall m blk h. (HasCallStack, ConvertRawHash blk, IOLike m)
   => CacheEnv m blk h
   -> ChunkNo
   -> Handle h

@@ -290,8 +290,8 @@ data ReversePath blk =
 
 -- | Lazily compute the 'ReversePath' that starts (i.e., ends) with the given
 -- 'HeaderHash'.
-computeReversePath
-  :: forall blk.
+computeReversePath ::
+     forall blk.
      LookupBlockInfo blk
   -> HeaderHash blk
      -- ^ End hash
@@ -369,8 +369,8 @@ computeReversePath lookupBlockInfo endHash =
 --
 -- When the suffix of the 'ChainDiff' is non-empty, @P@ will be the last point
 -- in the suffix.
-isReachable
-  :: forall blk. (HasHeader blk, GetHeader blk)
+isReachable ::
+     forall blk. (HasHeader blk, GetHeader blk)
   => LookupBlockInfo blk
   -> AnchoredFragment (Header blk) -- ^ Chain fragment to connect the point to
   -> RealPoint blk

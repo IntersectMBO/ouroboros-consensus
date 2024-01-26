@@ -68,8 +68,8 @@ new chainDiff ledger =
           "tip of ChainDiff doesn't match ledger: " <>
           show chainDiffTip <> " /= " <> show ledgerTip
 
-toValidatedFragment
-  :: (GetTip l, HasHeader b, HeaderHash l ~ HeaderHash b, HasCallStack)
+toValidatedFragment ::
+     (GetTip l, HasHeader b, HeaderHash l ~ HeaderHash b, HasCallStack)
   => ValidatedChainDiff b l
   -> ValidatedFragment b l
 toValidatedFragment (UnsafeValidatedChainDiff cs l) =

@@ -93,8 +93,8 @@ followerInstructionOnEmptyChain = do
 --            \
 --             \--- b3 -- b4
 --
-followerSwitchesToNewChain
-  :: (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
+followerSwitchesToNewChain ::
+     (Block m ~ TestBlock, SupportsUnitTest m, MonadError TestFailure m) => m ()
 followerSwitchesToNewChain =
   let fork i = TestBody i True
   in do
@@ -311,8 +311,8 @@ newtype ModelM blk a = ModelM
                       MonadState (Model blk), MonadError TestFailure)
 
 
-runModel
-  :: Model blk
+runModel ::
+     Model blk
   -> TopLevelConfig blk
   -> ModelM blk b
   -> Either TestFailure b
@@ -382,8 +382,8 @@ newtype SystemM blk m a = SystemM
                       MonadReader (ChainDBEnv m blk), MonadError TestFailure)
 
 
-runSystem
-  :: (forall a. (ChainDBEnv m blk -> m [TraceEvent blk] -> m a) -> m a)
+runSystem ::
+     (forall a. (ChainDBEnv m blk -> m [TraceEvent blk] -> m a) -> m a)
   -> SystemM blk m b
   -> m (Either TestFailure b)
 runSystem withChainDbEnv expr
@@ -392,8 +392,8 @@ runSystem withChainDbEnv expr
 
 
 -- | Provide a standard ChainDbEnv for testing.
-withTestChainDbEnv
-  :: (IOLike m, TestConstraints blk)
+withTestChainDbEnv ::
+     (IOLike m, TestConstraints blk)
   => TopLevelConfig blk
   -> ImmutableDB.ChunkInfo
   -> ExtLedgerState blk

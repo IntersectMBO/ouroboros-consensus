@@ -195,8 +195,8 @@ data Handlers m addr blk = Handlers {
         -> PeerSharingServer addr m
     }
 
-mkHandlers
-  :: forall m blk addrNTN addrNTC.
+mkHandlers ::
+     forall m blk addrNTN addrNTC.
      ( IOLike m
      , MonadTime m
      , MonadTimer m
@@ -523,8 +523,8 @@ byteLimits = ByteLimits {
          . BSL.length
 
 -- | Construct the 'NetworkApplication' for the node-to-node protocols
-mkApps
-  :: forall m addrNTN addrNTC blk e bCS bBF bTX bKA bPS.
+mkApps ::
+     forall m addrNTN addrNTC blk e bCS bBF bTX bKA bPS.
      ( IOLike m
      , MonadTimer m
      , Ord addrNTN
@@ -784,8 +784,8 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
 -- Implementation note: network currently doesn't enable protocols conditional
 -- on the protocol version, but it eventually may; this is why @_version@ is
 -- currently unused.
-initiator
-  :: MiniProtocolParameters
+initiator ::
+     MiniProtocolParameters
   -> NodeToNodeVersion
   -> PSTypes.PeerSharing
   -> Apps m addr b b b b b a c
@@ -819,8 +819,8 @@ initiator miniProtocolParameters version ownPeerSharing Apps {..} =
 -- Implementation note: network currently doesn't enable protocols conditional
 -- on the protocol version, but it eventually may; this is why @_version@ is
 -- currently unused.
-initiatorAndResponder
-  :: MiniProtocolParameters
+initiatorAndResponder ::
+     MiniProtocolParameters
   -> NodeToNodeVersion
   -> PSTypes.PeerSharing
   -> Apps m addr b b b b b a c

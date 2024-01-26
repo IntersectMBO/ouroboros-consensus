@@ -76,8 +76,8 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
   Initialization
 -------------------------------------------------------------------------------}
 
-withDB
-  :: forall m blk a.
+withDB ::
+     forall m blk a.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , InspectLedger blk
@@ -90,8 +90,8 @@ withDB
   -> m a
 withDB args = bracket (fst <$> openDBInternal args True) API.closeDB
 
-openDB
-  :: forall m blk.
+openDB ::
+     forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , InspectLedger blk
@@ -103,8 +103,8 @@ openDB
   -> m (ChainDB m blk)
 openDB args = fst <$> openDBInternal args True
 
-openDBInternal
-  :: forall m blk.
+openDBInternal ::
+     forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , InspectLedger blk
@@ -261,8 +261,8 @@ isOpen (CDBHandle varState) = readTVar varState <&> \case
     ChainDbClosed    -> False
     ChainDbOpen _env -> True
 
-closeDB
-  :: forall m blk.
+closeDB ::
+     forall m blk.
      ( IOLike m
      , HasHeader (Header blk)
      , HasCallStack

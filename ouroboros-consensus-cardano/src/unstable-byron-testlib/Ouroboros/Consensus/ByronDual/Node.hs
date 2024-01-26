@@ -54,8 +54,8 @@ import qualified Test.Cardano.Chain.UTxO.Model as Spec.Test
   BlockForging
 -------------------------------------------------------------------------------}
 
-dualByronBlockForging
-  :: Monad m
+dualByronBlockForging ::
+     Monad m
   => ByronLeaderCredentials
   -> BlockForging m DualByronBlock
 dualByronBlockForging creds = BlockForging {

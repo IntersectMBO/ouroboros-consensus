@@ -50,8 +50,8 @@ import           Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
 import           Test.Util.Time (dawnOfTime)
 
 
-startBlockFetchLogic
-  :: forall m peer.
+startBlockFetchLogic ::
+     forall m peer.
      (Hashable peer, Ord peer, IOLike m)
   => ResourceRegistry m
   -> ChainDB m TestBlock
@@ -91,8 +91,8 @@ startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates = do
         fetchClientRegistry
         blockFetchCfg
 
-startKeepAliveThread
-  :: forall m peer.
+startKeepAliveThread ::
+     forall m peer.
      (Ord peer, IOLike m)
   => ResourceRegistry m
   -> FetchClientRegistry peer (Header TestBlock) TestBlock m
@@ -103,8 +103,8 @@ startKeepAliveThread registry fetchClientRegistry peerId =
       bracketKeepAliveClient fetchClientRegistry peerId $ \_ ->
         atomically retry
 
-runBlockFetchClient
-  :: (Ord peer, IOLike m, MonadTime m)
+runBlockFetchClient ::
+     (Ord peer, IOLike m, MonadTime m)
   => peer
   -> FetchClientRegistry peer (Header TestBlock) TestBlock m
   -> ControlMessageSTM m

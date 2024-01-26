@@ -707,14 +707,14 @@ prop_estimateBlockSize ccfg (WithVersion version (Coherent blk))
   Serialised helpers
 -------------------------------------------------------------------------------}
 
-encodeThroughSerialised
-  :: (a -> Encoding)
+encodeThroughSerialised ::
+     (a -> Encoding)
   -> (Serialised a -> Encoding)
   -> (a -> Encoding)
 encodeThroughSerialised enc encSerialised = encSerialised . mkSerialised enc
 
-decodeThroughSerialised
-  :: (forall s. Decoder s (Lazy.ByteString -> a))
+decodeThroughSerialised ::
+     (forall s. Decoder s (Lazy.ByteString -> a))
   -> (forall s. Decoder s (Serialised a))
   -> (forall s. Decoder s a)
 decodeThroughSerialised dec decSerialised = do

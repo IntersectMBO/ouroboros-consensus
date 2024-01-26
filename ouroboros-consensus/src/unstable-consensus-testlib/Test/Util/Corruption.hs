@@ -41,8 +41,8 @@ applyCorruption (Corruption n) bs
 -- bytestring succeeds, pass the deserialised value to the integrity checking
 -- function. If that function returns 'False', the corruption was detected, if
 -- it returns 'True', the corruption was not detected and the test fails.
-detectCorruption
-  :: Show a
+detectCorruption ::
+     Show a
   => (a -> Encoding)
   -> (forall s. Decoder s (Lazy.ByteString -> a))
   -> (a -> Bool)

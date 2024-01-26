@@ -233,8 +233,8 @@ initStartingWith tracer cfg streamAPI initDb = do
 --
 -- Between the tip of the immutable DB and the point of the starting block,
 -- the node could (if it so desired) easily compute a "percentage complete".
-decorateReplayTracerWithGoal
-  :: Point blk -- ^ Tip of the ImmutableDB
+decorateReplayTracerWithGoal ::
+     Point blk -- ^ Tip of the ImmutableDB
   -> Tracer m (TraceReplayEvent blk)
   -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
 decorateReplayTracerWithGoal immTip = contramap ($ (ReplayGoal immTip))
@@ -242,8 +242,8 @@ decorateReplayTracerWithGoal immTip = contramap ($ (ReplayGoal immTip))
 -- | Add the block at which a replay started.
 --
 -- This allows to compute a "percentage complete" when tracing the events.
-decorateReplayTracerWithStart
-  :: Point blk -- ^ Starting point of the replay
+decorateReplayTracerWithStart ::
+     Point blk -- ^ Starting point of the replay
   -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
   -> Tracer m (ReplayStart blk -> ReplayGoal blk -> TraceReplayEvent blk)
 decorateReplayTracerWithStart start = contramap ($ (ReplayStart start))

@@ -212,8 +212,8 @@ overlap :: GcState -> Int
 overlap = length . unGcBlocks . gcBlocks
 
 -- | Number of blocks that could be GC'ed but haven't been
-unnecessaryOverlap
-  :: Time  -- ^ The current time
+unnecessaryOverlap ::
+     Time  -- ^ The current time
   -> GcState
   -> Int
 unnecessaryOverlap now =
@@ -242,8 +242,8 @@ runGc now gcState = GcState {
     toGarbageCollection :: ScheduledGc -> (SlotNo, Time)
     toGarbageCollection (ScheduledGc time slot) = (slot, time)
 
-step
-  :: GcParams
+step ::
+     GcParams
   -> Block
   -> GcState
   -> GcState

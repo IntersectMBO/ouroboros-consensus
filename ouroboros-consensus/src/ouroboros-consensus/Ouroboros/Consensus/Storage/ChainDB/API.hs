@@ -482,8 +482,8 @@ instance StandardHash blk => StandardHash (WithPoint blk b)
 getPoint :: BlockComponent blk (Point blk)
 getPoint = BlockPoint <$> GetSlot <*> GetHash
 
-getSerialisedBlockWithPoint
-  :: BlockComponent blk (WithPoint blk (Serialised blk))
+getSerialisedBlockWithPoint ::
+     BlockComponent blk (WithPoint blk (Serialised blk))
 getSerialisedBlockWithPoint =
     WithPoint <$> (Serialised <$> GetRawBlock) <*> getPoint
 
@@ -550,8 +550,8 @@ emptyIterator = Iterator {
 
 -- | Variant of 'traverse' instantiated to @'Iterator' m blk@ that executes
 -- the monadic function when calling 'iteratorNext'.
-traverseIterator
-  :: Monad m
+traverseIterator ::
+     Monad m
   => (b -> m b')
   -> Iterator m blk b
   -> Iterator m blk b'
@@ -763,8 +763,8 @@ data Follower m blk a = Follower {
 -- | Variant of 'traverse' instantiated to @'Follower' m blk@ that executes the
 -- monadic function when calling 'followerInstruction' and
 -- 'followerInstructionBlocking'.
-traverseFollower
-  :: Monad m
+traverseFollower ::
+     Monad m
   => (b -> m b')
   -> Follower m blk b
   -> Follower m blk b'

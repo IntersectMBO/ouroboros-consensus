@@ -61,8 +61,8 @@ import           Text.Read (readMaybe)
 --   contents could not be parsed, we also throw a 'DbMarkerError'.
 --
 -- Note that an 'FsError' can also be thrown.
-checkDbMarker
-  :: forall m h. MonadThrow m
+checkDbMarker ::
+     forall m h. MonadThrow m
   => HasFS m h
   -> MountPoint
      -- ^ Database directory. Should be the mount point of the @HasFS@. Used

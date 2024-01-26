@@ -441,15 +441,15 @@ txIsValid :: LedgerState TestBlock -> TestTx -> Bool
 txIsValid ledgerState tx =
     isRight $ runExcept $ applyTxToLedger ledgerState tx
 
-txsAreValid
-  :: LedgerState TestBlock
+txsAreValid ::
+     LedgerState TestBlock
   -> [TestTx]
   -> Either TestTxError (LedgerState TestBlock)
 txsAreValid ledgerState txs =
     runExcept $ repeatedlyM (flip applyTxToLedger) txs ledgerState
 
-validateTxs
-  :: LedgerState TestBlock
+validateTxs ::
+     LedgerState TestBlock
   -> [TestTx]
   -> ([(TestTx, Bool)], LedgerState TestBlock)
 validateTxs = go []
@@ -692,8 +692,8 @@ data TestMempool m = TestMempool
 -- module "Ouroboros.Consensus.Mock.Ledger.Block". This is why the generators do
 -- not care about the mempool capacity when generating transactions for a
 -- mempool with the 'NoMempoolCapacityBytesOverride' option set.
-withTestMempool
-  :: forall prop. Testable prop
+withTestMempool ::
+     forall prop. Testable prop
   => TestSetup
   -> (forall m. IOLike m => TestMempool m -> m prop)
   -> Property
@@ -1112,8 +1112,8 @@ currentTicketAssignment Mempool { syncWithLedger } = do
 instance Arbitrary Actions where
   arbitrary = sized $ genActions (choose (1, 3))
 
-genActions
-  :: Gen Int  -- ^ Generate the number of transactions to add
+genActions ::
+     Gen Int  -- ^ Generate the number of transactions to add
   -> Int      -- ^ How many actions
   -> Gen Actions
 genActions genNbToAdd = go testInitLedger mempty mempty

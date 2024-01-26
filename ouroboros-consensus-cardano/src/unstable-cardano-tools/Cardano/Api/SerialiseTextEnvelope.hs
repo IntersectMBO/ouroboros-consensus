@@ -215,8 +215,8 @@ readTextEnvelopeFromFile path =
       . hoistEither $ Aeson.eitherDecodeStrict' bs
 
 
-readTextEnvelopeOfTypeFromFile
-  :: TextEnvelopeType
+readTextEnvelopeOfTypeFromFile ::
+     TextEnvelopeType
   -> FilePath
   -> IO (Either (FileError TextEnvelopeError) TextEnvelope)
 readTextEnvelopeOfTypeFromFile expectedType path =

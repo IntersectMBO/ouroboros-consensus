@@ -88,8 +88,8 @@ extend = ChainDiff 0
 --
 -- PRECONDITION: the candidate fragment must intersect with the current chain
 -- fragment.
-diff
-  :: (HasHeader b, HasCallStack)
+diff ::
+     (HasHeader b, HasCallStack)
   => AnchoredFragment b  -- ^ Current chain
   -> AnchoredFragment b  -- ^ Candidate chain
   -> ChainDiff b
@@ -116,8 +116,8 @@ diff curChain candChain =
 --
 -- The returned fragment will have the same anchor point as the given
 -- fragment.
-apply
-  :: HasHeader b
+apply ::
+     HasHeader b
   => AnchoredFragment b
   -> ChainDiff b
   -> Maybe (AnchoredFragment b)
@@ -142,8 +142,8 @@ append (ChainDiff nbRollback suffix) b = (ChainDiff nbRollback (suffix :> b))
 --
 -- If the length of the truncated suffix is shorter than the rollback,
 -- 'Nothing' is returned.
-truncate
-  :: (HasHeader b, HasCallStack)
+truncate ::
+     (HasHeader b, HasCallStack)
   => Point b
   -> ChainDiff b
   -> ChainDiff b
@@ -157,16 +157,16 @@ truncate pt (ChainDiff nbRollback suffix)
 -- starting from the left, i.e., the \"oldest\" blocks.
 --
 -- If the new suffix is shorter than the diff's rollback, return 'Nothing'.
-takeWhileOldest
-  :: HasHeader b
+takeWhileOldest ::
+     HasHeader b
   => (b -> Bool)
   -> ChainDiff b
   -> ChainDiff b
 takeWhileOldest accept (ChainDiff nbRollback suffix) =
     ChainDiff nbRollback (AF.takeWhileOldest accept suffix)
 
-mapM
-  :: forall a b m.
+mapM ::
+     forall a b m.
      ( HasHeader b
      , HeaderHash a ~ HeaderHash b
      , Monad m

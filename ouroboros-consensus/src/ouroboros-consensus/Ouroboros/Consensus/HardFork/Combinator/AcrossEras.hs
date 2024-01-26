@@ -229,8 +229,8 @@ oneEraBlockHeader =
     . hcmap proxySingle (getHeader . unI)
     . getOneEraBlock
 
-getSameValue
-  :: forall xs a. (IsNonEmpty xs, Eq a, SListI xs, HasCallStack)
+getSameValue ::
+     forall xs a. (IsNonEmpty xs, Eq a, SListI xs, HasCallStack)
   => NP (K a) xs
   -> a
 getSameValue values =

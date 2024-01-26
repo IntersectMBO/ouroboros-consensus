@@ -166,8 +166,8 @@ withReadAccess rawLock =
 --
 -- Will block when there is another appender, a writer, or when a writer is
 -- waiting to take the lock.
-withAppendAccess
-  :: forall m st a. IOLike m => RAWLock m st -> (st -> m (st, a)) -> m a
+withAppendAccess ::
+     forall m st a. IOLike m => RAWLock m st -> (st -> m (st, a)) -> m a
 withAppendAccess rawLock k = snd . fst <$>
     generalBracket
       (atomically $ unsafeAcquireAppendAccess rawLock)
@@ -181,8 +181,8 @@ withAppendAccess rawLock k = snd . fst <$>
 --
 -- Will block when there is another writer or while there are readers and/or
 -- an appender.
-withWriteAccess
-  :: forall m st a. IOLike m => RAWLock m st -> (st -> m (st, a)) -> m a
+withWriteAccess ::
+     forall m st a. IOLike m => RAWLock m st -> (st -> m (st, a)) -> m a
 withWriteAccess rawLock k = snd . fst <$>
     generalBracket
       (unsafeAcquireWriteAccess rawLock)
@@ -193,8 +193,8 @@ withWriteAccess rawLock k = snd . fst <$>
       k
 
 -- | Internal helper
-stateToPutBack
-  :: st  -- ^ Acquired state
+stateToPutBack ::
+     st  -- ^ Acquired state
   -> ExitCase (st, a)
      -- ^ Result of 'generalBracket', containing the modified state in case of
      -- success
@@ -223,8 +223,8 @@ read (RAWLock var) = readTVar var >>= \case
 --
 -- Unless the lock has already been poisoned, in which case the original
 -- exception with which the lock was poisoned will be thrown.
-poison
-  :: (IOLike m, Exception e, HasCallStack)
+poison ::
+     (IOLike m, Exception e, HasCallStack)
   => RAWLock m st -> (CallStack -> e) -> m (Maybe st)
 poison (RAWLock var) mkEx = atomically $ do
     rawSt <- readTVar var
@@ -289,8 +289,8 @@ unsafeAcquireAppendAccess (RAWLock var) = do
 -- Composable with other 'STM' transactions.
 --
 -- NOTE: __must__ be preceded by a call to 'unsafeAcquireAppendAccess'.
-unsafeReleaseAppendAccess
-  :: IOLike m
+unsafeReleaseAppendAccess ::
+     IOLike m
   => RAWLock m st
   -> st  -- ^ State to store in the lock
   -> STM m ()
@@ -327,8 +327,8 @@ unsafeAcquireWriteAccess rawLock@(RAWLock var) = join $ atomically $ do
 -- Does /not/ compose with other 'STM' transactions.
 --
 -- NOTE: __must__ be preceded by a call to 'unsafeAcquireWriteAccess'.
-unsafeReleaseWriteAccess
-  :: IOLike m
+unsafeReleaseWriteAccess ::
+     IOLike m
   => RAWLock m st
   -> st  -- ^ State to store in the lock
   -> m ()
@@ -379,8 +379,8 @@ emptyRAWState = ReadAppend (Readers 0) NoAppender
   Pure internals: transitions between the 'RAWState's
 -------------------------------------------------------------------------------}
 
-acquireReadAccessPure
-  :: RAWState st -> Except SomeException (Maybe (RAWState st, st))
+acquireReadAccessPure ::
+     RAWState st -> Except SomeException (Maybe (RAWState st, st))
 acquireReadAccessPure = \case
     ReadAppend readers appender st
       -> return $ Just (ReadAppend (succ readers) appender st, st)
@@ -391,8 +391,8 @@ acquireReadAccessPure = \case
     Poisoned (AllowThunk ex)
       -> throwError ex
 
-releaseReadAccessPure
-  :: RAWState st -> Except SomeException (RAWState st)
+releaseReadAccessPure ::
+     RAWState st -> Except SomeException (RAWState st)
 releaseReadAccessPure = \case
     ReadAppend readers appender st
       | 0 <- readers
@@ -409,8 +409,8 @@ releaseReadAccessPure = \case
     Poisoned (AllowThunk ex)
       -> throwError ex
 
-acquireAppendAccessPure
-  :: RAWState st -> Except SomeException (Maybe (RAWState st, st))
+acquireAppendAccessPure ::
+     RAWState st -> Except SomeException (Maybe (RAWState st, st))
 acquireAppendAccessPure = \case
     ReadAppend readers appender st
       | NoAppender <- appender
@@ -424,8 +424,8 @@ acquireAppendAccessPure = \case
     Poisoned (AllowThunk ex)
       -> throwError ex
 
-releaseAppendAccessPure
-  :: st -> RAWState st -> Except SomeException (RAWState st)
+releaseAppendAccessPure ::
+     st -> RAWState st -> Except SomeException (RAWState st)
 releaseAppendAccessPure st' = \case
     ReadAppend readers appender _st
       | NoAppender <- appender
@@ -442,8 +442,8 @@ releaseAppendAccessPure st' = \case
     Poisoned (AllowThunk ex)
       -> throwError ex
 
-acquireWriteAccessPure
-  :: RAWState st -> Except SomeException (Maybe (RAWState st, Maybe st))
+acquireWriteAccessPure ::
+     RAWState st -> Except SomeException (Maybe (RAWState st, Maybe st))
 acquireWriteAccessPure = \case
     -- When there are no readers or appender in the 'ReadAppend' we can
     -- directly go to the 'Writing' state, if not, we'll go to the
@@ -465,8 +465,8 @@ acquireWriteAccessPure = \case
     Poisoned (AllowThunk ex)
       -> throwError ex
 
-releaseWriteAccessPure
-  :: st -> RAWState st -> Except SomeException (RAWState st)
+releaseWriteAccessPure ::
+     st -> RAWState st -> Except SomeException (RAWState st)
 releaseWriteAccessPure st' = \case
     ReadAppend _readers _appender _st
       -> error "releasing a writer in ReadAppend"
@@ -477,8 +477,8 @@ releaseWriteAccessPure st' = \case
     Poisoned (AllowThunk ex)
       -> throwError ex
 
-poisonPure
-  :: SomeException -> RAWState st -> Except SomeException (RAWState st, Maybe st)
+poisonPure ::
+     SomeException -> RAWState st -> Except SomeException (RAWState st, Maybe st)
 poisonPure ex = \case
     ReadAppend _readers _appender st
       -> return (Poisoned (AllowThunk ex), Just st)

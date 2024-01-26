@@ -48,8 +48,8 @@ import           Prelude hiding (show, (.))
 -- This also serves a purpose as a sanity check that we have all the necessary
 -- type class instances available.
 --
-mkSomeConsensusProtocolByron
-  :: NodeByronProtocolConfiguration
+mkSomeConsensusProtocolByron ::
+     NodeByronProtocolConfiguration
   -> Maybe ProtocolFilepaths
   -> ExceptT ByronProtocolInstantiationError IO SomeConsensusProtocol
 mkSomeConsensusProtocolByron NodeByronProtocolConfiguration {

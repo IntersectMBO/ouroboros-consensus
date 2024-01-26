@@ -257,8 +257,8 @@ safeMaximumOn f = safeMaximumBy (compare `on` f)
 
 -- | Calls 'hashFromBytes' and throws an error if the input is of the wrong
 -- length.
-hashFromBytesE
-  :: forall h a. (HashAlgorithm h, HasCallStack)
+hashFromBytesE ::
+     forall h a. (HashAlgorithm h, HasCallStack)
   => Strict.ByteString
   -> Hash h a
 hashFromBytesE bs = fromMaybe (error msg) $ hashFromBytes bs
@@ -269,8 +269,8 @@ hashFromBytesE bs = fromMaybe (error msg) $ hashFromBytes bs
 
 -- | Calls 'hashFromBytesShort' and throws an error if the input is of the
 -- wrong length.
-hashFromBytesShortE
-  :: forall h a. (HashAlgorithm h, HasCallStack)
+hashFromBytesShortE ::
+     forall h a. (HashAlgorithm h, HasCallStack)
   => ShortByteString
   -> Hash h a
 hashFromBytesShortE bs = fromMaybe (error msg) $ hashFromBytesShort bs

@@ -213,8 +213,8 @@ decodeExtLedgerState decodeLedgerState
   Casts
 -------------------------------------------------------------------------------}
 
-castExtLedgerState
-  :: ( Coercible (LedgerState blk)
+castExtLedgerState ::
+     ( Coercible (LedgerState blk)
                  (LedgerState blk')
      , Coercible (ChainDepState (BlockProtocol blk))
                  (ChainDepState (BlockProtocol blk'))

@@ -334,8 +334,8 @@ newtype ChainLength = ChainLength Int
   Creating blocks
 -------------------------------------------------------------------------------}
 
-mkBlock
-  :: HasCallStack
+mkBlock ::
+     HasCallStack
   => (SlotNo -> Bool)
   -- ^ Is this slot allowed contain an EBB?
   --

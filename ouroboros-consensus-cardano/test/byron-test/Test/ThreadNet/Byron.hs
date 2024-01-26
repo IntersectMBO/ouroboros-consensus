@@ -793,8 +793,8 @@ prop_deterministicPlan params numSlots numCoreNodes =
   where
     njp = trivialNodeJoinPlan numCoreNodes
 
-expectedCannotForge
-  :: SecurityParam
+expectedCannotForge ::
+     SecurityParam
   -> NumCoreNodes
   -> NodeRestarts
   -> SlotNo
@@ -839,8 +839,8 @@ expectedCannotForge _ _ _ _ _ _ = False
 --
 -- See @genNodeRekeys@ for the logic that ensures at least one of those slots'
 -- leaders will be able to lead.
-latestPossibleDlgMaturation
-  :: SecurityParam -> NumCoreNodes -> SlotNo -> SlotNo
+latestPossibleDlgMaturation ::
+     SecurityParam -> NumCoreNodes -> SlotNo -> SlotNo
 latestPossibleDlgMaturation
   (SecurityParam k) (NumCoreNodes n) (SlotNo rekeySlot) =
     SlotNo $ rekeySlot + n + 2 * k
@@ -1216,8 +1216,8 @@ genByronNodeJoinPlan params numSlots@(NumSlots t)
 -- since otherwise its inability to lead may spoil the invariants established
 -- by 'genByronNodeJoinPlan'.
 --
-genNodeRekeys
-  :: PBftParams
+genNodeRekeys ::
+     PBftParams
   -> NodeJoinPlan
   -> NodeTopology
   -> NumSlots
@@ -1278,8 +1278,8 @@ genNodeRekeys params nodeJoinPlan nodeTopology numSlots@(NumSlots t)
 -- | Overwrite the 'ProtocolInfo''s operational key, if any, and provide a
 -- transaction for its new delegation certificate
 --
-mkRekeyUpd
-  :: Monad m
+mkRekeyUpd ::
+     Monad m
   => Genesis.Config
   -> Genesis.GeneratedSecrets
   -> CoreNodeId
@@ -1309,8 +1309,8 @@ mkRekeyUpd genesisConfig genesisSecrets cid pInfo blockForging eno newSK = do
 
 -- | The secret key for a node index
 --
-genesisSecretFor
-  :: Genesis.Config
+genesisSecretFor ::
+     Genesis.Config
   -> Genesis.GeneratedSecrets
   -> CoreNodeId
   -> Crypto.SignKeyDSIGN Crypto.ByronDSIGN
@@ -1333,8 +1333,8 @@ genesisSecretFor genesisConfig genesisSecrets cid =
 -- | Create new 'ByronLeaderCredentials' by generating a new delegation
 -- certificate for the given new operational key.
 --
-updSignKey
-  :: Crypto.SignKeyDSIGN Crypto.ByronDSIGN
+updSignKey ::
+     Crypto.SignKeyDSIGN Crypto.ByronDSIGN
   -> BlockConfig ByronBlock
   -> CoreNodeId
   -> EpochNumber

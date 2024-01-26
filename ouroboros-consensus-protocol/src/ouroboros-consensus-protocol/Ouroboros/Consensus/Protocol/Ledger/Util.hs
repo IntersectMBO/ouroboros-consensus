@@ -17,8 +17,8 @@ import           Ouroboros.Consensus.HardFork.History.Util (addEpochs,
 -- some other slot.
 --
 -- PRECONDITION: the two slots must be in the same era.
-isNewEpoch
-  :: EpochInfo Identity
+isNewEpoch ::
+     EpochInfo Identity
   -> WithOrigin SlotNo
      -- ^ Slot we are comparing a new epoch against
   -> SlotNo

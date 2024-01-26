@@ -77,11 +77,11 @@ toPBftLedgerView = PBftLedgerView . Delegation.unMap
 fromPBftLedgerView :: PBftLedgerView PBftByronCrypto -> Delegation.Map
 fromPBftLedgerView = Delegation.Map . pbftDelegates
 
-encodeByronChainDepState
-  :: ChainDepState (BlockProtocol ByronBlock)
+encodeByronChainDepState ::
+     ChainDepState (BlockProtocol ByronBlock)
   -> Encoding
 encodeByronChainDepState = S.encodePBftState
 
-decodeByronChainDepState
-  :: Decoder s (ChainDepState (BlockProtocol ByronBlock))
+decodeByronChainDepState ::
+     Decoder s (ChainDepState (BlockProtocol ByronBlock))
 decodeByronChainDepState = S.decodePBftState

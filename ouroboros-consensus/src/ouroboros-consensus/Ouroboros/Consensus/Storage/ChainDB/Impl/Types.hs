@@ -459,8 +459,8 @@ newBlocksToAdd queueSize = BlocksToAdd <$>
     atomically (newTBQueue (fromIntegral queueSize))
 
 -- | Add a block to the 'BlocksToAdd' queue. Can block when the queue is full.
-addBlockToAdd
-  :: (IOLike m, HasHeader blk)
+addBlockToAdd ::
+     (IOLike m, HasHeader blk)
   => Tracer m (TraceAddBlockEvent blk)
   -> BlocksToAdd m blk
   -> InvalidBlockPunishment m

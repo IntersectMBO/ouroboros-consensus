@@ -81,8 +81,8 @@ data SoftwareVersionUpdateLabel = SoftwareVersionUpdateLabel
 -- | Classify the a @QuickCheck@ test's input and output with respect to
 -- whether the protocol\/software version should have been\/was updated
 --
-mkUpdateLabels
-  :: PBftParams
+mkUpdateLabels ::
+     PBftParams
   -> NumSlots
   -> Genesis.Config
   -> NodeJoinPlan
@@ -360,8 +360,8 @@ data ProposalState =
 --    mitigating circumstances, such as the test not even being scheduled to
 --    reach the second epoch.
 --
-mkProtocolByronAndHardForkTxs
-  :: forall m. (Monad m, HasCallStack)
+mkProtocolByronAndHardForkTxs ::
+     forall m. (Monad m, HasCallStack)
   => PBftParams
   -> CoreNodeId
   -> Genesis.Config
@@ -419,8 +419,8 @@ mkProtocolByronAndHardForkTxs
 --
 -- Without loss of generality, the proposal is signed by @'CoreNodeId' 0@.
 --
-mkHardForkProposal
-  :: HasCallStack
+mkHardForkProposal ::
+     HasCallStack
   => PBftParams
   -> Genesis.Config
   -> Genesis.GeneratedSecrets
@@ -472,8 +472,8 @@ mkHardForkProposal params genesisConfig genesisSecrets propPV =
 -- tricky to get right, and this function lets use reuse the existing CBOR
 -- instances.
 --
-loopbackAnnotations
-  :: ( DecCBOR (f ByteSpan)
+loopbackAnnotations ::
+     ( DecCBOR (f ByteSpan)
      , EncCBOR (f ())
      , Functor f
      )

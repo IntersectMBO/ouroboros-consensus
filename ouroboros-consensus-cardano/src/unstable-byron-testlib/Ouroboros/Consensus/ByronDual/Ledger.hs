@@ -198,8 +198,8 @@ bridgeTransactionIds = Spec.Test.transactionIds
   Block forging
 -------------------------------------------------------------------------------}
 
-forgeDualByronBlock
-  :: HasCallStack
+forgeDualByronBlock ::
+     HasCallStack
   => TopLevelConfig DualByronBlock
   -> BlockNo                              -- ^ Current block number
   -> SlotNo                               -- ^ Current slot number

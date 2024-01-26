@@ -131,8 +131,8 @@ tryImmutableDB pb = try . wrapFsError pb
 
 -- | Wrapper around 'Get.runGetOrFail' that throws an 'InvalidFileError' when
 -- it failed or when there was unconsumed input.
-runGet
-  :: forall blk a m.
+runGet ::
+     forall blk a m.
      (HasCallStack, MonadThrow m, StandardHash blk, Typeable blk)
   => Proxy blk
   -> FsPath
@@ -151,8 +151,8 @@ runGet _ file get bl = case Get.runGetOrFail get bl of
            InvalidFileError @blk file msg prettyCallStack
 
 -- | Same as 'runGet', but allows unconsumed input and returns it.
-runGetWithUnconsumed
-  :: forall blk a m.
+runGetWithUnconsumed ::
+     forall blk a m.
      (HasCallStack, MonadThrow m, StandardHash blk, Typeable blk)
   => Proxy blk
   -> FsPath

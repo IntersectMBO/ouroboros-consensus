@@ -202,8 +202,8 @@ parseChunkFile ccfg hasFS isNotCorrupt fsPath expectedChecksums k =
 
 -- | Thread some state through a 'Stream'. An early return is possible by
 -- returning 'Left'.
-mapAccumS
-  :: Monad m
+mapAccumS ::
+     Monad m
   => s  -- ^ Initial state
   -> (s -> a -> Either r (b, s))
   -> Stream (Of a) m r
@@ -220,8 +220,8 @@ mapAccumS st0 updateAcc = go st0
 -- first element in the stream to construct the initial state. For all
 -- elements in the stream after the first one, the second function argument is
 -- used.
-mapAccumS0
-  :: forall m a b r s. Monad m
+mapAccumS0 ::
+     forall m a b r s. Monad m
   => (a -> Either r (b, s))
   -> (s -> a -> Either r (b, s))
   -> Stream (Of a) m r

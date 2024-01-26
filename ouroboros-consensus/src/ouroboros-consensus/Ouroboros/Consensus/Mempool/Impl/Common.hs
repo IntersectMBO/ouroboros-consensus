@@ -135,8 +135,8 @@ deriving instance ( NoThunks (Validated (GenTx blk))
 isMempoolSize :: InternalState blk -> MempoolSize
 isMempoolSize = TxSeq.toMempoolSize . isTxs
 
-initInternalState
-  :: LedgerSupportsMempool blk
+initInternalState ::
+     LedgerSupportsMempool blk
   => MempoolCapacityBytesOverride
   -> TicketNo  -- ^ Used for 'isLastTicketNo'
   -> SlotNo
@@ -220,8 +220,8 @@ initMempoolEnv ledgerInterface cfg capacityOverride tracer txSize = do
 -------------------------------------------------------------------------------}
 
 -- | Tick the 'LedgerState' using the given 'BlockSlot'.
-tickLedgerState
-  :: forall blk. (UpdateLedger blk, ValidateEnvelope blk)
+tickLedgerState ::
+     forall blk. (UpdateLedger blk, ValidateEnvelope blk)
   => LedgerConfig     blk
   -> ForgeLedgerState blk
   -> (SlotNo, TickedLedgerState blk)
@@ -408,8 +408,8 @@ validationResultFromIS is = ValidationResult {
       } = is
 
 -- | Create a Mempool Snapshot from a given Internal State of the mempool.
-snapshotFromIS
-  :: HasTxId (GenTx blk)
+snapshotFromIS ::
+     HasTxId (GenTx blk)
   => InternalState blk
   -> MempoolSnapshot blk
 snapshotFromIS is = MempoolSnapshot {
@@ -460,8 +460,8 @@ snapshotFromIS is = MempoolSnapshot {
 --
 -- When these don't match, the transaction in the internal state will be
 -- revalidated ('revalidateTxsFor').
-validateStateFor
-  :: (LedgerSupportsMempool blk, HasTxId (GenTx blk), ValidateEnvelope blk)
+validateStateFor ::
+     (LedgerSupportsMempool blk, HasTxId (GenTx blk), ValidateEnvelope blk)
   => MempoolCapacityBytesOverride
   -> LedgerConfig     blk
   -> ForgeLedgerState blk
@@ -486,8 +486,8 @@ validateStateFor capacityOverride cfg blockLedgerState is
 -- | Revalidate the given transactions (@['TxTicket' ('GenTx' blk)]@), which
 -- are /all/ the transactions in the Mempool against the given ticked ledger
 -- state, which corresponds to the chain's ledger state.
-revalidateTxsFor
-  :: (LedgerSupportsMempool blk, HasTxId (GenTx blk))
+revalidateTxsFor ::
+     (LedgerSupportsMempool blk, HasTxId (GenTx blk))
   => MempoolCapacityBytesOverride
   -> LedgerConfig blk
   -> SlotNo

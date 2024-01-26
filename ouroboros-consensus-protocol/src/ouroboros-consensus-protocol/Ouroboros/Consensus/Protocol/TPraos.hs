@@ -193,8 +193,8 @@ data TPraosParams = TPraosParams {
     }
   deriving (Generic, NoThunks)
 
-mkTPraosParams
-  :: MaxMajorProtVer
+mkTPraosParams ::
+     MaxMajorProtVer
   -> SL.Nonce  -- ^ Initial nonce
   -> SL.ShelleyGenesis era
   -> TPraosParams

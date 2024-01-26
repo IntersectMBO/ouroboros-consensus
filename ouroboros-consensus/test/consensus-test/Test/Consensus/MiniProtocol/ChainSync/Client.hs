@@ -307,8 +307,8 @@ data ChainSyncOutcome = ChainSyncOutcome {
 --
 -- Note that updates that are scheduled before the time at which we start
 -- syncing help generate different chains to start syncing from.
-runChainSync
-    :: forall m. (IOLike m, MonadTime m)
+runChainSync ::
+       forall m. (IOLike m, MonadTime m)
     => ClockSkew
     -> SecurityParam
     -> ClientUpdates
@@ -865,8 +865,8 @@ removeLateClientUpdates (ServerUpdates (Schedule sus))
   Generating a schedule of updates
 -------------------------------------------------------------------------------}
 
-genUpdateSchedule
-  :: UpdateBehavior
+genUpdateSchedule ::
+     UpdateBehavior
   -> SecurityParam
   -> Gen (Schedule ChainUpdate)
 genUpdateSchedule updateBehavior securityParam =

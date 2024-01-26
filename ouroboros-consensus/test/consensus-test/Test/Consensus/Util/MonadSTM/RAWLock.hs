@@ -134,8 +134,8 @@ prop_RAWLock_correctness (TestSetup rawDelays) =
 
 -- | Like 'monadicSim' (which is like 'monadicIO' for the IO simulator), but
 -- allows inspecting the trace for labelling purposes.
-monadicSimWithTrace
-  :: Testable a
+monadicSimWithTrace ::
+     Testable a
   => (forall x. SimTrace x -> Property -> Property)
   -> (forall s. PropertyM (IOSim s) a)
   -> Property

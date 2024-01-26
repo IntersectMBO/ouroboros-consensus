@@ -365,8 +365,8 @@ data ChainDBEnv m blk = ChainDBEnv {
     -- ^ Needed to reopen a ChainDB, i.e., open a new one.
   }
 
-open
-  :: (IOLike m, TestConstraints blk)
+open ::
+     (IOLike m, TestConstraints blk)
   => ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
     (chainDB, internal) <- openDBInternal args False
@@ -375,8 +375,8 @@ open args = do
     return ChainDBState { chainDB, internal, addBlockAsync }
 
 -- PRECONDITION: the ChainDB is closed
-reopen
-  :: (IOLike m, TestConstraints blk)
+reopen ::
+     (IOLike m, TestConstraints blk)
   => ChainDBEnv m blk -> m ()
 reopen ChainDBEnv { varDB, args } = do
     chainDBState <- open args
@@ -879,8 +879,8 @@ lockstep model@Model {..} cmd (At resp) = Event
 type BlockGen blk m = Model blk m Symbolic -> Gen blk
 
 -- | Generate a 'Cmd'
-generator
-  :: forall blk m. TestConstraints blk
+generator ::
+     forall blk m. TestConstraints blk
   => BlockGen     blk m
   -> Model        blk m Symbolic
   -> Gen (At Cmd  blk m Symbolic)

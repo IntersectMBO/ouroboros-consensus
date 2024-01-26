@@ -60,8 +60,8 @@ import           Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin)
 -- In the latter case, we don't take blocks already in the ImmutableDB into
 -- account, as we know they /must/ have been \"immutable\" at some point, and,
 -- therefore, /must/ still be \"immutable\".
-getCurrentChain
-  :: forall m blk.
+getCurrentChain ::
+     forall m blk.
      ( IOLike m
      , HasHeader (Header blk)
      , ConsensusProtocol (BlockProtocol blk)
@@ -78,8 +78,8 @@ getLedgerDB ::
   => ChainDbEnv m blk -> STM m (LgrDB.LedgerDB' blk)
 getLedgerDB CDB{..} = LgrDB.getCurrent cdbLgrDB
 
-getTipBlock
-  :: forall m blk.
+getTipBlock ::
+     forall m blk.
      ( IOLike m
      , HasHeader blk
      , HasHeader (Header blk)
@@ -92,8 +92,8 @@ getTipBlock cdb@CDB{..} = do
       Origin      -> return Nothing
       NotOrigin p -> Just <$> getAnyKnownBlock cdbImmutableDB cdbVolatileDB p
 
-getTipHeader
-  :: forall m blk.
+getTipHeader ::
+     forall m blk.
      ( IOLike m
      , HasHeader blk
      , HasHeader (Header blk)
@@ -116,8 +116,8 @@ getTipHeader CDB{..} = do
             -- been appended to the ImmutableDB since we obtained 'anchorOrHdr'.
             Just <$> ImmutableDB.getKnownBlockComponent cdbImmutableDB GetHeader p
 
-getTipPoint
-  :: forall m blk. (IOLike m, HasHeader (Header blk))
+getTipPoint ::
+     forall m blk. (IOLike m, HasHeader (Header blk))
   => ChainDbEnv m blk -> STM m (Point blk)
 getTipPoint CDB{..} =
     (castPoint . AF.headPoint) <$> readTVar cdbChain

@@ -427,8 +427,8 @@ prop_simple_cardano_convergence TestSetup
         counterexample "CP violation in final chains!" $
         property $ maxRollbacks setupK >= finalIntersectionDepth
 
-mkProtocolCardanoAndHardForkTxs
-  :: forall c m. (IOLike m, CardanoHardForkConstraints c)
+mkProtocolCardanoAndHardForkTxs ::
+     forall c m. (IOLike m, CardanoHardForkConstraints c)
      -- Byron
   => PBftParams
   -> CoreNodeId

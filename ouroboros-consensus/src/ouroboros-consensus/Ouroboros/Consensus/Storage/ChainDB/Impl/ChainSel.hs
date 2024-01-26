@@ -95,8 +95,8 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 -- Returns the chosen validated chain and corresponding ledger.
 --
 -- See "## Initialization" in ChainDB.md.
-initialChainSelection
-  :: forall m blk. (IOLike m, LedgerSupportsProtocol blk)
+initialChainSelection ::
+     forall m blk. (IOLike m, LedgerSupportsProtocol blk)
   => ImmutableDB m blk
   -> VolatileDB m blk
   -> LgrDB m blk
@@ -238,8 +238,8 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
 -- in-memory state, it can't get out of sync with the file system state. On
 -- the next startup, a correct in-memory state will be reconstructed from the
 -- file system state.
-addBlockAsync
-  :: forall m blk. (IOLike m, HasHeader blk)
+addBlockAsync ::
+     forall m blk. (IOLike m, HasHeader blk)
   => ChainDbEnv m blk
   -> InvalidBlockPunishment m
   -> blk
@@ -255,8 +255,8 @@ addBlockAsync CDB { cdbTracer, cdbBlocksToAdd } =
 --
 -- When the slot of the block is > the current slot, a chain selection will be
 -- scheduled in the slot of the block.
-addBlockSync
-  :: forall m blk.
+addBlockSync ::
+     forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , InspectLedger blk
@@ -358,8 +358,8 @@ addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
 -- (because of corruption). The \"immutable\" block is then also the tip of
 -- the chain. If we then try to add the EBB after it, it will have the same
 -- block number, so we must allow it.
-olderThanK
-  :: HasHeader (Header blk)
+olderThanK ::
+     HasHeader (Header blk)
   => Header blk
      -- ^ Header of the block to add
   -> IsEBB
@@ -383,8 +383,8 @@ data ChainSwitchType = AddingBlocks | SwitchingToAFork
   deriving (Show, Eq)
 
 -- | Return the new tip.
-chainSelectionForFutureBlocks
-  :: ( IOLike m
+chainSelectionForFutureBlocks ::
+     ( IOLike m
      , LedgerSupportsProtocol blk
      , InspectLedger blk
      , HasHardForkHistory blk
@@ -439,8 +439,8 @@ chainSelectionForFutureBlocks cdb@CDB{..} blockCache = do
 -- * when we switch to a distant fork
 --
 -- This cost is currently deemed acceptable.
-chainSelectionForBlock
-  :: forall m blk.
+chainSelectionForBlock ::
+     forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , InspectLedger blk
@@ -824,8 +824,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
 -- the corresponding header from the VolatileDB and store it in the cache.
 --
 -- PRECONDITION: the header (block) must exist in the VolatileDB.
-getKnownHeaderThroughCache
-  :: (MonadThrow m, HasHeader blk)
+getKnownHeaderThroughCache ::
+     (MonadThrow m, HasHeader blk)
   => VolatileDB m blk
   -> HeaderHash blk
   -> StateT (Map (HeaderHash blk) (Header blk)) m (Header blk)
@@ -882,8 +882,8 @@ data ChainSelEnv m blk = ChainSelEnv
 --
 -- PRECONDITION: the candidate chain diffs must fit on the (given) current
 -- chain.
-chainSelection
-  :: forall m blk.
+chainSelection ::
+     forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , HasCallStack
@@ -1061,8 +1061,8 @@ data ValidationResult blk =
 -- If a block in the fragment is invalid, then the fragment in the returned
 -- 'ValidatedChainDiff' is a prefix of the given candidate chain diff (upto
 -- the last valid block).
-ledgerValidateCandidate
-  :: forall m blk.
+ledgerValidateCandidate ::
+     forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , HasCallStack
@@ -1149,8 +1149,8 @@ ledgerValidateCandidate chainSelEnv chainDiff@(ChainDiff rollback suffix) =
 -- 'InFutureExceedsClockSkew' as the reason.
 --
 -- When truncation happened, 'Left' is returned, otherwise 'Right'.
-futureCheckCandidate
-  :: forall m blk. (IOLike m, LedgerSupportsProtocol blk)
+futureCheckCandidate ::
+     forall m blk. (IOLike m, LedgerSupportsProtocol blk)
   => ChainSelEnv m blk
   -> ValidatedChainDiff (Header blk) (LedgerDB' blk)
   -> m (Either (ChainDiff (Header blk))
@@ -1223,8 +1223,8 @@ futureCheckCandidate chainSelEnv validatedChainDiff =
 
 -- | Validate a candidate chain using 'ledgerValidateCandidate' and
 -- 'futureCheck'.
-validateCandidate
-  :: ( IOLike m
+validateCandidate ::
+     ( IOLike m
      , LedgerSupportsProtocol blk
      , HasCallStack
      )
@@ -1294,8 +1294,8 @@ isPipelineable bcfg tentativeState ChainDiff {..}
 -------------------------------------------------------------------------------}
 
 -- | Wrap a @getter@ function so that it returns 'Nothing' for invalid blocks.
-ignoreInvalid
-  :: HasHeader blk
+ignoreInvalid ::
+     HasHeader blk
   => proxy blk
   -> InvalidBlocks blk
   -> (HeaderHash blk -> Maybe a)
@@ -1306,8 +1306,8 @@ ignoreInvalid _ invalid getter hash
 
 -- | Wrap a @successors@ function so that invalid blocks are not returned as
 -- successors.
-ignoreInvalidSuc
-  :: HasHeader blk
+ignoreInvalidSuc ::
+     HasHeader blk
   => proxy blk
   -> InvalidBlocks blk
   -> (ChainHash blk -> Set (HeaderHash blk))

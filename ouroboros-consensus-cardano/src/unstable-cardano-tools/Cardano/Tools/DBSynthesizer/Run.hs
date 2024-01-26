@@ -44,8 +44,8 @@ import           System.Directory
 import           System.FilePath (takeDirectory, (</>))
 
 
-initialize
-    :: NodeFilePaths
+initialize ::
+       NodeFilePaths
     -> NodeCredentials
     -> DBSynthesizerOptions
     -> IO (Either String (DBSynthesizerConfig, SomeConsensusProtocol))

@@ -586,8 +586,8 @@ stdWithCheckedDB pb databasePath networkMagic body = do
     mountPoint = MountPoint databasePath
     hasFS      = ioHasFS mountPoint
 
-openChainDB
-  :: forall m blk. (RunNode blk, IOLike m)
+openChainDB ::
+     forall m blk. (RunNode blk, IOLike m)
   => ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk
@@ -606,8 +606,8 @@ openChainDB registry inFuture cfg initLedger defArgs customiseArgs =
              (nodeImmutableDbChunkInfo (configStorage cfg))
              defArgs
 
-mkChainDbArgs
-  :: forall m blk. (RunNode blk, IOLike m)
+mkChainDbArgs ::
+     forall m blk. (RunNode blk, IOLike m)
   => ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk
@@ -633,8 +633,8 @@ mkChainDbArgs
     , ChainDB.cdbRegistry       = registry
     }
 
-mkNodeKernelArgs
-  :: forall m addrNTN addrNTC blk. (RunNode blk, IOLike m)
+mkNodeKernelArgs ::
+     forall m addrNTN addrNTC blk. (RunNode blk, IOLike m)
   => ResourceRegistry m
   -> Int
   -> StdGen
@@ -682,8 +682,8 @@ mkNodeKernelArgs
 -- through 'llrnCustomiseNodeKernelArgs', but there are some limits to some
 -- values. This function makes sure we don't exceed those limits and that the
 -- values are consistent.
-nodeKernelArgsEnforceInvariants
-  :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
+nodeKernelArgsEnforceInvariants ::
+     NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
   -> NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
 nodeKernelArgsEnforceInvariants nodeKernelArgs = nodeKernelArgs
     { miniProtocolParameters = miniProtocolParameters
