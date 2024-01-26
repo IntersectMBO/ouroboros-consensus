@@ -18,12 +18,11 @@ import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import           Data.Coerce (coerce)
 import qualified Data.Map.Strict as Map
-import           Ouroboros.Consensus.Protocol.Praos (ConsensusConfig (..),
-                     Praos, PraosParams (..), PraosState (..))
+import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosState (..))
 import           Ouroboros.Consensus.Protocol.Praos.Views
                      (LedgerView (lvMaxBodySize, lvMaxHeaderSize, lvProtocolVersion))
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
-import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..),
+import           Ouroboros.Consensus.Protocol.TPraos (TPraos,
                      TPraosState (tpraosStateChainDepState, tpraosStateLastSlot))
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto (..))
 
@@ -45,23 +44,6 @@ instance
   ) =>
   TranslateProto (TPraos c1) (Praos c2)
   where
-  translateConsensusConfig TPraosConfig {tpraosParams, tpraosEpochInfo} =
-    PraosConfig
-      { praosParams =
-          PraosParams
-            { praosSlotsPerKESPeriod = tpraosSlotsPerKESPeriod tpraosParams,
-              praosLeaderF = tpraosLeaderF tpraosParams,
-              praosSecurityParam = tpraosSecurityParam tpraosParams,
-              praosMaxKESEvo = tpraosMaxKESEvo tpraosParams,
-              praosQuorum = tpraosQuorum tpraosParams,
-              praosMaxMajorPV = tpraosMaxMajorPV tpraosParams,
-              praosMaxLovelaceSupply = tpraosMaxLovelaceSupply tpraosParams,
-              praosNetworkId = tpraosNetworkId tpraosParams,
-              praosSystemStart = tpraosSystemStart tpraosParams
-            },
-        praosEpochInfo = tpraosEpochInfo
-      }
-
   translateLedgerView SL.LedgerView {SL.lvPoolDistr, SL.lvChainChecks} =
       Views.LedgerView
         { Views.lvPoolDistr = coercePoolDistr lvPoolDistr,
