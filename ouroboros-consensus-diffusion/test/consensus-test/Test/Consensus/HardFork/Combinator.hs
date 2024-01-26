@@ -376,8 +376,8 @@ versionN2N :: BlockNodeToNodeVersion TestBlock
 versionN2N =
     HardForkNodeToNodeEnabled
       maxBound
-      (  EraNodeToNodeEnabled ()
-      :* EraNodeToNodeEnabled ()
+      (  WrapNodeToNodeVersion ()
+      :* WrapNodeToNodeVersion ()
       :* Nil
       )
 

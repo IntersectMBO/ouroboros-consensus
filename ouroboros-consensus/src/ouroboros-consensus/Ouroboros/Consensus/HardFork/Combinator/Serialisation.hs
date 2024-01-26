@@ -2,7 +2,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.Serialisation (module X) where
 
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common as X
-                     (EraNodeToClientVersion (..), EraNodeToNodeVersion (..),
+                     (EraNodeToClientVersion (..),
                      HardForkNodeToClientVersion (..),
                      HardForkNodeToNodeVersion (..),
                      HardForkSpecificNodeToClientVersion (..),
