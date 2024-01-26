@@ -45,7 +45,6 @@ import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer),
 import qualified Cardano.Ledger.Keys as SL
 import           Cardano.Ledger.PoolDistr
                      (IndividualPoolStake (IndividualPoolStake))
-import           Cardano.Ledger.Shelley.API (computeStabilityWindow)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Slot (Duration (Duration), (+*))
 import           Cardano.Protocol.TPraos.BHeader (BoundedNatural (bvValue),
@@ -183,29 +182,35 @@ forgePraosFields
 -- | Praos parameters that are node independent
 data PraosParams = PraosParams
   { -- | See 'Globals.slotsPerKESPeriod'.
-    praosSlotsPerKESPeriod :: !Word64,
+    praosSlotsPerKESPeriod             :: !Word64,
     -- | Active slots coefficient. This parameter represents the proportion
     -- of slots in which blocks should be issued. This can be interpreted as
     -- the probability that a party holding all the stake will be elected as
     -- leader for a given slot.
-    praosLeaderF           :: !SL.ActiveSlotCoeff,
+    praosLeaderF                       :: !SL.ActiveSlotCoeff,
     -- | See 'Globals.securityParameter'.
-    praosSecurityParam     :: !SecurityParam,
+    praosSecurityParam                 :: !SecurityParam,
     -- | Maximum number of KES iterations, see 'Globals.maxKESEvo'.
-    praosMaxKESEvo         :: !Word64,
+    praosMaxKESEvo                     :: !Word64,
     -- | Quorum for update system votes and MIR certificates, see
     -- 'Globals.quorum'.
-    praosQuorum            :: !Word64,
+    praosQuorum                        :: !Word64,
     -- | All blocks invalid after this protocol version, see
     -- 'Globals.maxMajorPV'.
-    praosMaxMajorPV        :: !MaxMajorProtVer,
+    praosMaxMajorPV                    :: !MaxMajorProtVer,
     -- | Maximum number of lovelace in the system, see
     -- 'Globals.maxLovelaceSupply'.
-    praosMaxLovelaceSupply :: !Word64,
+    praosMaxLovelaceSupply             :: !Word64,
     -- | Testnet or mainnet?
-    praosNetworkId         :: !SL.Network,
+    praosNetworkId                     :: !SL.Network,
     -- | The system start, as projected from the chain's genesis block.
-    praosSystemStart       :: !SystemStart
+    praosSystemStart                   :: !SystemStart,
+    -- | The number of slots before the start of an epoch where the
+    -- corresponding epoch nonce is snapshotted. This has to be at least one
+    -- stability window such that the nonce is stable at the beginning of the
+    -- epoch. Ouroboros Genesis requires this to be even larger, see
+    -- 'SL.computeRandomnessStabilisationWindow'.
+    praosRandomnessStabilisationWindow :: !Word64
   }
   deriving (Generic, NoThunks)
 
@@ -462,7 +467,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   -- - Update the operational certificate counter.
   reupdateChainDepState
     _cfg@( PraosConfig
-             PraosParams {praosSecurityParam, praosLeaderF}
+             PraosParams {praosRandomnessStabilisationWindow}
              ei
            )
     b
@@ -473,7 +478,7 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
           praosStateLabNonce = prevHashToNonce (Views.hvPrevHash b),
           praosStateEvolvingNonce = newEvolvingNonce,
           praosStateCandidateNonce =
-            if slot +* Duration stabilityWindow < firstSlotNextEpoch
+            if slot +* Duration praosRandomnessStabilisationWindow < firstSlotNextEpoch
               then newEvolvingNonce
               else praosStateCandidateNonce cs,
           praosStateOCertCounters =
@@ -489,8 +494,6 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
           let nextEpoch = EpochNo $ currentEpochNo + 1
           epochInfoFirst epochInfoWithErr nextEpoch
         cs = tickedPraosStateChainDepState tcs
-        stabilityWindow =
-          computeStabilityWindow (maxRollbacks praosSecurityParam) praosLeaderF
         eta = vrfNonceValue (Proxy @c) $ Views.hvVrfRes b
         newEvolvingNonce = praosStateEvolvingNonce cs ⭒ eta
         OCert _ n _ _ = Views.hvOCert b

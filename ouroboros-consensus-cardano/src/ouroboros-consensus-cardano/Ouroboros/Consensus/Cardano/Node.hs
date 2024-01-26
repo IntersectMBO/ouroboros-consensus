@@ -730,7 +730,13 @@ protocolInfoCardano paramsCardano
         praosMaxMajorPV = maxMajorProtVer,
         praosMaxLovelaceSupply = SL.sgMaxLovelaceSupply genesisShelley,
         praosNetworkId = SL.sgNetworkId genesisShelley,
-        praosSystemStart = SystemStart $ SL.sgSystemStart genesisShelley
+        praosSystemStart = SystemStart $ SL.sgSystemStart genesisShelley,
+        praosRandomnessStabilisationWindow =
+          -- This value is used for all Praos eras /except/ Babbage, see
+          -- 'partialConsensusConfigBabbage'.
+          SL.computeRandomnessStabilisationWindow
+            (SL.sgSecurityParam genesisShelley)
+            (SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley)
       }
 
     PraosParams { praosSlotsPerKESPeriod, praosMaxKESEvo } = praosParams
@@ -827,7 +833,17 @@ protocolInfoCardano paramsCardano
 
     partialConsensusConfigBabbage ::
          PartialConsensusConfig (BlockProtocol (ShelleyBlock (Praos c) (BabbageEra c)))
-    partialConsensusConfigBabbage = praosParams
+    partialConsensusConfigBabbage = praosParams {
+          -- For Praos in Babbage (just as in all TPraos eras) we use the
+          -- smaller (3k/f vs 4k/f slots) stability window here for
+          -- backwards-compatibility. See erratum 17.3 in the Shelley ledger
+          -- specs for context.
+          praosRandomnessStabilisationWindow =
+            SL.computeStabilityWindow
+              (SL.sgSecurityParam genesisShelley)
+              (SL.mkActiveSlotCoeff $ SL.sgActiveSlotsCoeff genesisShelley)
+        }
+
 
     partialLedgerConfigBabbage :: PartialLedgerConfig (ShelleyBlock (Praos c) (BabbageEra c))
     partialLedgerConfigBabbage =
