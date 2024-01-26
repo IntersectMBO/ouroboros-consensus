@@ -350,7 +350,7 @@ pureSyncWithLedger istate lstate lcfg capacityOverride =
                         lcfg
                         (ForgeInUnknownSlot lstate)
                         istate
-        removed     = map fst (vrInvalid vr)
+        removed     = vrInvalid vr
         istate'     = internalStateFromVR vr
         mTrace      = if null removed
                       then
