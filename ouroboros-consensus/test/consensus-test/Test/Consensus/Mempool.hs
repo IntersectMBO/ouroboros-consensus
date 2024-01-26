@@ -39,9 +39,9 @@ import           Control.Monad.Except (Except, runExcept)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Monad.State (State, evalState, get, modify)
 import           Control.Tracer (Tracer (..))
-import           Data.Bifunctor (first)
+import           Data.Bifunctor (first, second)
 import           Data.Either (isRight)
-import           Data.List (foldl', isSuffixOf, nub, partition, sort)
+import           Data.List (foldl', isSuffixOf, nub, partition, sortOn)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
@@ -276,17 +276,16 @@ prop_Mempool_TraceRemovedTxs setup =
       return $
         classify (not (null removedTxs)) "Removed some transactions" $
         map (const (Right ())) errs === errs .&&.
-        sort expected === sort removedTxs
+        sortOn fst expected === sortOn fst removedTxs
   where
-    isRemoveTxsEvent :: TraceEventMempool TestBlock -> Maybe [GenTx TestBlock]
-    isRemoveTxsEvent (TraceMempoolRemoveTxs txs _) = Just (map txForgetValidated txs)
+    isRemoveTxsEvent :: TraceEventMempool TestBlock -> Maybe [(TestTx, TestTxError)]
+    isRemoveTxsEvent (TraceMempoolRemoveTxs txs _) = Just (map (first txForgetValidated) txs)
     isRemoveTxsEvent _                             = Nothing
 
-    expectedToBeRemoved :: LedgerState TestBlock -> [TestTx] -> [TestTx]
+    expectedToBeRemoved :: LedgerState TestBlock -> [TestTx] -> [(TestTx, TestTxError)]
     expectedToBeRemoved ledgerState txsInMempool =
-      [ tx
-      | (tx, valid) <- fst $ validateTxs ledgerState txsInMempool
-      , not valid
+      [ (tx, err)
+      | (tx, Left err) <- fst $ validateTxs ledgerState txsInMempool
       ]
 
 {-------------------------------------------------------------------------------
@@ -451,14 +450,14 @@ txsAreValid ledgerState txs =
 validateTxs
   :: LedgerState TestBlock
   -> [TestTx]
-  -> ([(TestTx, Bool)], LedgerState TestBlock)
+  -> ([(TestTx, Either TestTxError ())], LedgerState TestBlock)
 validateTxs = go []
   where
     go revalidated ledgerState = \case
       []      -> (reverse revalidated, ledgerState)
       tx:txs' -> case runExcept (applyTxToLedger ledgerState tx) of
-        Left _             -> go ((tx, False):revalidated) ledgerState  txs'
-        Right ledgerState' -> go ((tx, True):revalidated)  ledgerState' txs'
+        Left err           -> go ((tx, Left err):revalidated) ledgerState  txs'
+        Right ledgerState' -> go ((tx, Right ()):revalidated) ledgerState' txs'
 
 -- | Generate a number of valid transactions and apply these to the given
 -- 'LedgerState'. The transactions and the resulting 'LedgerState' are
@@ -605,11 +604,11 @@ instance Arbitrary TestSetupWithTxs where
       [ TestSetupWithTxs { testSetup = testSetup', txs }
       | testSetup' <- shrink testSetup ] <>
       [ TestSetupWithTxs { testSetup, txs = txs' }
-      | txs' <- map (fst . revalidate testSetup) .
+      | txs' <- map (map (second isRight) . fst . revalidate testSetup) .
                 shrinkList (const []) .
                 map fst $ txs ]
 
-revalidate :: TestSetup -> [TestTx] -> ([(TestTx, Bool)], LedgerState TestBlock)
+revalidate :: TestSetup -> [TestTx] -> ([(TestTx, Either TestTxError ())], LedgerState TestBlock)
 revalidate TestSetup { testLedgerState, testInitialTxs } =
     validateTxs initLedgerState
   where
@@ -1133,7 +1132,7 @@ genActions genNbToAdd = go testInitLedger mempty mempty
             -- transactions to remove
           -> do
           tx <- elements txs
-          let ((vTxs, iTxs), ledger') = first (partition snd) $
+          let ((vTxs, iTxs), ledger') = first (partition (isRight . snd)) $
                 validateTxs testInitLedger (filter (/= tx) txs)
               txs'       = map fst vTxs
               removedTxs = tx : map fst iTxs
