@@ -10,6 +10,8 @@
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
+{-# OPTIONS_GHC -Wno-orphans     #-}
+
 module Ouroboros.Consensus.Shelley.Node.Praos (
     -- * BlockForging
     praosBlockForging

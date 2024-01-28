@@ -53,7 +53,7 @@ library
     Ouroboros.Consensus.Protocol.Translate
 
   build-depends:
-    , base                     >=4.14  && <4.19
+    , base                     >=4.14  && <4.20
     , bytestring
     , cardano-binary
     , cardano-crypto-class

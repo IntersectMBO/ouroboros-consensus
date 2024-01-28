@@ -253,11 +253,11 @@ library
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
-    , base                         >=4.14     && <4.19
+    , base                         >=4.14     && <4.20
     , base16-bytestring
     , bimap                        >=0.4      && <0.6
     , binary                       >=0.8      && <0.11
-    , bytestring                   >=0.10     && <0.12
+    , bytestring                   >=0.10     && <0.13
     , cardano-binary
     , cardano-crypto-class
     , cardano-prelude
@@ -276,7 +276,7 @@ library
     , nothunks                     ^>=0.1.5
     , ouroboros-network-api        ^>=0.6.2
     , ouroboros-network-mock       ^>=0.1.0.1
-    , ouroboros-network-protocols  ^>=0.6
+    , ouroboros-network-protocols  ^>=0.7
     , psqueues                     ^>=0.2.3
     , quiet                        ^>=0.2
     , semialign                    >=1.1
@@ -288,6 +288,7 @@ library
     , strict-checked-vars          ^>=0.2
     , strict-sop-core              ^>=0.1
     , strict-stm                   ^>=1.3
+    , text
     , these                        ^>=1.2
     , time
     , transformers

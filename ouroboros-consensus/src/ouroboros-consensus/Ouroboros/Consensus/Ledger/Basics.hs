@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE TypeFamilies      #-}
 {-# LANGUAGE TypeOperators     #-}
+{-# OPTIONS_GHC -Wno-orphans   #-}
 
 -- | Definition is 'IsLedger'
 --

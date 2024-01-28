@@ -1,6 +1,12 @@
+{-# LANGUAGE CPP              #-}
 {-# LANGUAGE LambdaCase       #-}
 {-# LANGUAGE TypeApplications #-}
-{-# OPTIONS_GHC -Wno-orphans -Wno-incomplete-uni-patterns #-}
+{-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+#if __GLASGOW_HASKELL__ >= 908
+{-# OPTIONS_GHC -Wno-x-partial #-}
+#endif
+
 -- | Primary index tests.
 --
 -- This is a sequence of relatively simple property tests:

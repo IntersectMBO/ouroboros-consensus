@@ -673,7 +673,7 @@ mkNodeKernelArgs
     defaultBlockFetchConfiguration = BlockFetchConfiguration
       { bfcMaxConcurrencyBulkSync = 1
       , bfcMaxConcurrencyDeadline = 1
-      , bfcMaxRequestsInflight    = blockFetchPipeliningMax defaultMiniProtocolParameters
+      , bfcMaxRequestsInflight    = fromIntegral $ blockFetchPipeliningMax defaultMiniProtocolParameters
       , bfcDecisionLoopInterval   = 0.01 -- 10ms
       , bfcSalt
       }
@@ -697,7 +697,7 @@ nodeKernelArgsEnforceInvariants nodeKernelArgs = nodeKernelArgs
         -- 'bfcMaxRequestsInflight' must be <= 'blockFetchPipeliningMax'
         { bfcMaxRequestsInflight =
             min (bfcMaxRequestsInflight blockFetchConfiguration)
-                (blockFetchPipeliningMax miniProtocolParameters)
+                (fromIntegral $ blockFetchPipeliningMax miniProtocolParameters)
         }
     }
   where
