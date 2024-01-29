@@ -104,7 +104,7 @@ instance (CanMock (Praos crypto) era, crypto ~ EraCrypto era)
             Praos.hbVk = SL.bheaderVk bhBody,
             Praos.hbVrfVk = SL.bheaderVrfVk bhBody,
             Praos.hbVrfRes = coerce $ SL.bheaderEta bhBody,
-            Praos.hbBodySize = fromIntegral $ SL.bsize bhBody,
+            Praos.hbBodySize = SL.bsize bhBody,
             Praos.hbBodyHash = SL.bhash bhBody,
             Praos.hbOCert = SL.bheaderOCert bhBody,
             Praos.hbProtVer = SL.bprotver bhBody

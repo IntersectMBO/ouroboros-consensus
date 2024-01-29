@@ -42,7 +42,7 @@ import           Cardano.Ledger.Alonzo.Tx (totExUnits)
 import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
                      EncCBOR (..), FromCBOR (..), FullByteString (..),
                      ToCBOR (..), toPlainDecoder)
-import qualified Cardano.Ledger.Block as SL (txid)
+import qualified Cardano.Ledger.Core as SL (txIdTxBody)
 import           Cardano.Ledger.Crypto (Crypto)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (Except)
@@ -134,7 +134,8 @@ instance ShelleyCompatible proto era
   reapplyTx = reapplyShelleyTx
 
   txsMaxBytes TickedShelleyLedgerState { tickedShelleyLedgerState = shelleyState } =
-      fromIntegral maxBlockBodySize - fixedBlockBodyOverhead
+      -- `maxBlockBodySize` is expected to be bigger than `fixedBlockBodyOverhead`
+      maxBlockBodySize - fixedBlockBodyOverhead
     where
       maxBlockBodySize = getPParams shelleyState ^. ppMaxBBSizeL
 
@@ -145,7 +146,7 @@ instance ShelleyCompatible proto era
   txForgetValidated (ShelleyValidatedTx txid vtx) = ShelleyTx txid (SL.extractTx vtx)
 
 mkShelleyTx :: forall era proto. ShelleyBasedEra era => Tx era -> GenTx (ShelleyBlock proto era)
-mkShelleyTx tx = ShelleyTx (SL.txid @era (tx ^. bodyTxL)) tx
+mkShelleyTx tx = ShelleyTx (SL.txIdTxBody @era (tx ^. bodyTxL)) tx
 
 mkShelleyValidatedTx :: forall era proto.
      ShelleyBasedEra era
@@ -153,7 +154,7 @@ mkShelleyValidatedTx :: forall era proto.
   -> Validated (GenTx (ShelleyBlock proto era))
 mkShelleyValidatedTx vtx = ShelleyValidatedTx txid vtx
   where
-    txid = SL.txid @era (SL.extractTx vtx ^. bodyTxL)
+    txid = SL.txIdTxBody @era (SL.extractTx vtx ^. bodyTxL)
 
 newtype instance TxId (GenTx (ShelleyBlock proto era)) = ShelleyTxId (SL.TxId (EraCrypto era))
   deriving newtype (Eq, Ord, NoThunks)

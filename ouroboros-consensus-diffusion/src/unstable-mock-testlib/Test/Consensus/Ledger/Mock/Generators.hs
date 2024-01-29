@@ -28,6 +28,8 @@ import qualified Ouroboros.Consensus.Mock.Ledger.State as L
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as L
 import           Ouroboros.Consensus.Mock.Node.Serialisation ()
 import           Ouroboros.Consensus.Protocol.BFT
+import           Test.ChainGenerators ()
+import           Test.Crypto.Hash ()
 import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Roundtrip

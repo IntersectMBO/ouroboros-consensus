@@ -5,13 +5,14 @@
 
 module Test.Util.Orphans.ToExpr () where
 
-import           Cardano.Ledger.TreeDiff
+import           Data.TreeDiff
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Network.Point
+import           Test.Cardano.Slotting.TreeDiff ()
 
 {-------------------------------------------------------------------------------
   ouroboros-network

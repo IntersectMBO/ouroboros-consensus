@@ -44,7 +44,6 @@ import           Cardano.Crypto.VRF (SignKeyVRF, VRFAlgorithm, VerKeyVRF,
                      deriveVerKeyVRF, genKeyVRF, seedSizeVRF)
 import qualified Cardano.Ledger.Allegra.Scripts as SL
 import           Cardano.Ledger.Alonzo (AlonzoEra)
-import           Cardano.Ledger.Babbage (BabbageEra)
 import           Cardano.Ledger.BaseTypes (boundRational)
 import           Cardano.Ledger.Crypto (Crypto, DSIGN, HASH, KES, VRF)
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
@@ -548,8 +547,8 @@ mkMASetDecentralizationParamTxs ::
      forall proto era.
      ( ShelleyBasedEra era
      , SL.AllegraEraTxBody era
+     , SL.ShelleyEraTxBody era
      , SL.AtMostEra AlonzoEra era
-     , SL.AtMostEra BabbageEra era
      )
   => [CoreNode (EraCrypto era)]
   -> ProtVer   -- ^ The proposed protocol version

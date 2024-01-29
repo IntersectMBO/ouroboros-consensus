@@ -56,8 +56,9 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Network.SizeInBytes
-import           Test.Cardano.Ledger.Binary.Arbitrary ()
+import           Test.Cardano.Slotting.Arbitrary ()
 import           Test.QuickCheck hiding (Fixed (..))
+import           Test.QuickCheck.Instances ()
 import           Test.Util.Time (dawnOfTime)
 
 minNumCoreNodes :: Word64

@@ -37,7 +37,7 @@ jobs:
 
       - name: Build PDFs (Consensus report)
         run: |
-          nix build -L .#consensus-pdfs
+          nix build -L .#consensus-pdfs --accept-flake-config
           cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Install dependencies
