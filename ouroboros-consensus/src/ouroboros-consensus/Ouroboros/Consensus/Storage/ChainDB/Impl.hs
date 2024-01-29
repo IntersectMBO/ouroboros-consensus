@@ -156,6 +156,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                           varInvalid
                           varFutureBlocks
                           (Args.cdbCheckInFuture args)
+                          (Args.cdbLoELimit args)
       traceWith initChainSelTracer InitalChainSelected
 
       let chain  = VF.validatedFragment chainAndLedger
