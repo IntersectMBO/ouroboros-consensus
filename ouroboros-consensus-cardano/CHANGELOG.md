@@ -2,6 +2,54 @@
 
 # Changelog entries
 
+<a id='changelog-0.13.0.0'></a>
+## 0.13.0.0 — 2024-01-29
+
+### Patch
+
+- Fix imports and type mismatches caused by `ouroboros-consensus` bumping
+  `strict-checked-vars` to `^>= 0.2`.
+
+- Improved Haddock comments that explain how to control which eras are enabled
+  when constructing a `ProtocolInfo`.
+
+- Updated to GHC 9.8.1.
+
+### Non-Breaking
+
+- Re-enable completeness warnings in Ouroboros.Consensus.Cardano.Node only on GHC>=9.6
+
+- `CardanoNodeToClientVersion12` now implies `ShelleyNodeToClientVersion8` in
+  all Shelley-based eras instead of just in `Conway`. This means that downstream
+  logic determining query availablity (eg in `cardano-api`) can (continue to)
+  simply branch on the negotiated `NodeToClientVersion`.
+
+- Update dependency on `ouroboros-network-api` to `^>=0.6.2`.
+
+- Update ledger packages
+  - `cardano-ledger-allegra`: `^>=1.3`
+  - `cardano-ledger-alonzo`: `^>=1.6`
+  - `cardano-ledger-api`: `^>=1.8`
+  - `cardano-ledger-babbage`: `^>=1.6`
+  - `cardano-ledger-binary`: `^>=1.3`
+  - `cardano-ledger-conway`: `^>=1.12`
+  - `cardano-ledger-core`: `^>=1.10`
+  - `cardano-ledger-mary`: `^>=1.5`
+  - `cardano-ledger-shelley`: `^>=1.9`
+  - `cardano-protocol-tpraos`: `^>=1.1`
+
+### Breaking
+
+- Removed `EraNodeToNodeVersion`, replacing it with `WrapNodeToNodeVersion`.
+- Removed `CardanoNodeToNodeVersion3` and above, since they're all equivalent
+  to `CardanoNodeToNodeVersion2` now.
+
+- The type system now prohibits Conway-specific queries for Shelley-based eras
+  before Conway, by adding the `ConwayEraGov era` constraint to those query
+  constructors.
+- The new `getConwayEraGovDict` enables the decoder to find the necessary
+  dictionaries and issue a specific error message if there isn't one.
+
 <a id='changelog-0.12.1.0'></a>
 ## 0.12.1.0 — 2023-11-30
 
