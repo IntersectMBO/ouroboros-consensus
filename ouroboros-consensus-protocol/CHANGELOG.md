@@ -2,6 +2,19 @@
 
 # Changelog entries
 
+<a id='changelog-0.7.0.0'></a>
+## 0.7.0.0 — 2024-01-29
+
+### Patch
+
+- Fix imports and type mismatches caused by `ouroboros-consensus` bumping
+  `strict-checked-vars` to `^>= 0.2`.
+
+### Breaking
+
+- Praos' `LedgerView.lvMaxHeaderSize` type changed from `Natural` to `Word16`.
+- Praos' `LedgerView.lvMaxBoxySize` type changed from `Natural` to `Word32`.
+
 <a id='changelog-0.6.0.0'></a>
 ## 0.6.0.0 — 2023-10-26
 
