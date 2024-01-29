@@ -34,10 +34,13 @@ jobs:
           cache-dependency-path: './docs/website/yarn.lock'
 
       - uses: cachix/install-nix-action@v25
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
 
       - name: Build PDFs (Consensus report)
         run: |
-          nix build -L .#consensus-pdfs --accept-flake-config
+          nix build -L .#consensus-pdfs
           cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Install dependencies

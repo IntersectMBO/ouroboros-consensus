@@ -7,6 +7,7 @@
 {-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
+{-# OPTIONS_GHC -Wno-orphans     #-}
 module Ouroboros.Consensus.HardFork.Combinator.Forging (
     HardForkCannotForge
   , HardForkForgeStateInfo (..)

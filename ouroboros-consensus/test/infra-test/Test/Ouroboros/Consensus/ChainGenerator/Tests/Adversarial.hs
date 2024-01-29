@@ -1,8 +1,13 @@
+{-# LANGUAGE CPP                       #-}
 {-# LANGUAGE DataKinds                 #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE LambdaCase                #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE TypeApplications          #-}
+
+#if __GLASGOW_HASKELL__ >= 908
+{-# OPTIONS_GHC -Wno-x-partial         #-}
+#endif
 
 module Test.Ouroboros.Consensus.ChainGenerator.Tests.Adversarial (
     SomeTestAdversarial (..)

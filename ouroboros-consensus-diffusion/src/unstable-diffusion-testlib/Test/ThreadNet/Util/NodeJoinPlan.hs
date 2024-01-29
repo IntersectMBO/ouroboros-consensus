@@ -1,5 +1,10 @@
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
+#if __GLASGOW_HASKELL__ >= 908
+{-# OPTIONS_GHC -Wno-x-partial #-}
+#endif
 
 module Test.ThreadNet.Util.NodeJoinPlan (
     -- * Node Join Plan

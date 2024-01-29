@@ -1,6 +1,11 @@
+{-# LANGUAGE CPP             #-}
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE RecordWildCards #-}
+
+#if __GLASGOW_HASKELL__ >= 908
+{-# OPTIONS_GHC -Wno-x-partial #-}
+#endif
 
 -- REVIEW: There is a `BlockTree` in `Test.Utils.TestBlock`. It relies on
 -- different mechanisms but maybe we should rely on that instead to avoid

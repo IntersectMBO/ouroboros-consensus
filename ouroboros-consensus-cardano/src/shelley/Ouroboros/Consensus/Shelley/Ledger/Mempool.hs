@@ -134,6 +134,7 @@ instance ShelleyCompatible proto era
   reapplyTx = reapplyShelleyTx
 
   txsMaxBytes TickedShelleyLedgerState { tickedShelleyLedgerState = shelleyState } =
+
       -- `maxBlockBodySize` is expected to be bigger than `fixedBlockBodyOverhead`
       maxBlockBodySize - fixedBlockBodyOverhead
     where
