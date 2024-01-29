@@ -460,7 +460,7 @@ instance HasHardForkHistory (ShelleyBlock proto era) where
 instance ShelleyCompatible proto era
       => CommonProtocolParams (ShelleyBlock proto era) where
   maxHeaderSize = fromIntegral . view ppMaxBHSizeL . getPParams . shelleyLedgerState
-  maxTxSize     = fromIntegral . view ppMaxTxSizeL . getPParams . shelleyLedgerState
+  maxTxSize     = view ppMaxTxSizeL . getPParams . shelleyLedgerState
 
 {-------------------------------------------------------------------------------
   ValidateEnvelope

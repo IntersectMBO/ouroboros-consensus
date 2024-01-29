@@ -14,7 +14,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Protocol.TPraos.BHeader (PrevHash)
 import           Cardano.Protocol.TPraos.OCert (OCert)
 import           Cardano.Slotting.Slot (SlotNo)
-import           Numeric.Natural (Natural)
+import           Data.Word (Word16, Word32)
 import           Ouroboros.Consensus.Protocol.Praos.Header (HeaderBody)
 import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF)
 
@@ -42,9 +42,9 @@ data LedgerView crypto = LedgerView
   { -- | Stake distribution
     lvPoolDistr       :: SL.PoolDistr crypto,
     -- | Maximum header size
-    lvMaxHeaderSize   :: !Natural,
+    lvMaxHeaderSize   :: !Word16,
     -- | Maximum block body size
-    lvMaxBodySize     :: !Natural,
+    lvMaxBodySize     :: !Word32,
     -- | Current protocol version
     lvProtocolVersion :: !ProtVer
   }

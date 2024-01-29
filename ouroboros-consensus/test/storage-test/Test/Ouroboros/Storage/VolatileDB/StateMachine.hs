@@ -76,6 +76,7 @@ import qualified Test.StateMachine.Types.Rank2 as Rank2
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
 import           Test.Util.Orphans.Arbitrary ()
+import           Test.Util.Orphans.ToExpr ()
 import           Test.Util.QuickCheck
 import           Test.Util.SOP
 import           Test.Util.ToExpr ()

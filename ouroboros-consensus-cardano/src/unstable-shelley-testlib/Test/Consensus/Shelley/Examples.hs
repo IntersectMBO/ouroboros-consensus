@@ -184,7 +184,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
           hbVk = SL.bheaderVk bhBody,
           hbVrfVk = SL.bheaderVrfVk bhBody,
           hbVrfRes = coerce $ SL.bheaderEta bhBody,
-          hbBodySize = fromIntegral $ SL.bsize bhBody,
+          hbBodySize = SL.bsize bhBody,
           hbBodyHash = SL.bhash bhBody,
           hbOCert = SL.bheaderOCert bhBody,
           hbProtVer = SL.bprotver bhBody

@@ -60,6 +60,7 @@ import           Cardano.Chain.Slotting (EpochSlots)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
+import           Cardano.Ledger.Conway.Transition (ConwayEraTransition)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
@@ -932,6 +933,11 @@ protocolInfoCardano paramsCardano
     -- When the initial ledger state is not in the Byron era, register the
     -- initial staking and initial funds (if provided in the genesis config) in
     -- the ledger state.
+    --
+    -- NOTE: we hope this code might change in the future when the
+    -- Ledger layer provides an era-generic registration function,
+    -- which will abstract away the data to be registered for a given
+    -- era.
     initExtLedgerStateCardano :: ExtLedgerState (CardanoBlock c)
     initExtLedgerStateCardano = ExtLedgerState {
           headerState = initHeaderState
@@ -953,21 +959,42 @@ protocolInfoCardano paramsCardano
           :* register transitionConfigMary
           :* register transitionConfigAlonzo
           :* register transitionConfigBabbage
-          :* register transitionConfigConway
+          :* registerConway transitionConfigConway
           :* Nil
 
         register ::
              L.EraTransition era
           => L.TransitionConfig era
           -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
-        register cfg = fn $ \st -> st {
+        register cfg = fn $ registerInitialFundsThenStaking cfg
+
+        registerInitialFundsThenStaking ::
+             L.EraTransition era
+          => L.TransitionConfig era
+          -> LedgerState (ShelleyBlock proto era)
+          -> LedgerState (ShelleyBlock proto era)
+        registerInitialFundsThenStaking cfg st = st {
             Shelley.shelleyLedgerState =
               -- We must first register the initial funds, because the stake
               -- information depends on it.
                 L.registerInitialStaking cfg
-              . L.registerInitialFunds cfg
+              . L.registerInitialFunds   cfg
               $ Shelley.shelleyLedgerState st
           }
+
+        registerConway ::
+             ConwayEraTransition era
+          => L.TransitionConfig era
+          -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
+        registerConway cfg = fn $ registerDRepsThenDelegs         cfg
+                                . registerInitialFundsThenStaking cfg
+          where
+            registerDRepsThenDelegs cfg st = st {
+              Shelley.shelleyLedgerState =
+                   L.registerDelegs cfg -- NOTE: The order of registration does not matter.
+                 . L.registerInitialDReps cfg
+                 $ Shelley.shelleyLedgerState st
+              }
 
     -- | For each element in the list, a block forging thread will be started.
     --

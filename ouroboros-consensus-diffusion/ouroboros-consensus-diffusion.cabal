@@ -79,10 +79,10 @@ library
     , io-classes                   ^>=1.3
     , mtl
     , ouroboros-consensus          ^>=0.14
-    , ouroboros-network            ^>=0.10.0
-    , ouroboros-network-api        ^>=0.6.0
+    , ouroboros-network            ^>=0.10.2
+    , ouroboros-network-api        ^>=0.6.2
     , ouroboros-network-framework  ^>=0.10
-    , ouroboros-network-protocols  ^>=0.6.0
+    , ouroboros-network-protocols  ^>=0.6.1
     , random
     , serialise                    ^>=0.2
     , si-timers                    ^>=1.3
@@ -156,8 +156,10 @@ library unstable-mock-testlib
     , base
     , bytestring
     , cardano-crypto-class
+    , cardano-crypto-tests
     , containers
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block}
+    , ouroboros-network-protocols:testlib
     , QuickCheck
     , serialise
     , unstable-diffusion-testlib

@@ -273,7 +273,7 @@ library
     , io-classes                   ^>=1.3
     , measures
     , mtl
-    , nothunks                     ^>=0.1.2
+    , nothunks                     ^>=0.1.5
     , ouroboros-network-api        ^>=0.6.2
     , ouroboros-network-mock       ^>=0.1.0.1
     , ouroboros-network-protocols  ^>=0.6
@@ -356,9 +356,10 @@ library unstable-consensus-testlib
     , base16-bytestring
     , binary
     , bytestring
+    , cardano-binary:testlib
     , cardano-crypto-class
-    , cardano-ledger-binary:{cardano-ledger-binary, testlib}
     , cardano-prelude
+    , cardano-slotting:testlib
     , cardano-strict-containers
     , cborg
     , constraints
@@ -368,8 +369,8 @@ library unstable-consensus-testlib
     , directory
     , file-embed
     , filepath
-    , fs-api                                                  ^>=0.2
-    , fs-sim                                                  ^>=0.2
+    , fs-api                                         ^>=0.2
+    , fs-sim                                         ^>=0.2
     , generics-sop
     , io-classes
     , io-sim
@@ -381,7 +382,8 @@ library unstable-consensus-testlib
     , ouroboros-network-mock
     , pretty-simple
     , QuickCheck
-    , quickcheck-state-machine:no-vendored-treediff           ^>=0.9
+    , quickcheck-instances
+    , quickcheck-state-machine:no-vendored-treediff  ^>=0.9
     , quiet
     , random
     , serialise

@@ -1,6 +1,7 @@
-{-# LANGUAGE DeriveGeneric  #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE TypeFamilies   #-}
+{-# LANGUAGE DeriveGeneric    #-}
+{-# LANGUAGE NamedFieldPuns   #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies     #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- See https://gitlab.haskell.org/ghc/ghc/-/issues/14630. GHC currently warns
 -- (erroneously) about name shadowing for record field selectors defined by
@@ -21,9 +22,9 @@ import qualified Cardano.Protocol.TPraos.OCert as SL
 import           Control.Monad (unless)
 import           Control.Monad.Except (throwError)
 import           Data.Either (isRight)
+import           Data.Word (Word16, Word32)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
-import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (MaxMajorProtVer (MaxMajorProtVer))
@@ -86,8 +87,8 @@ data PraosEnvelopeError
     -- block's non-header content either) where the header could be validated
     -- but its underlying block could not. See
     -- <https://github.com/IntersectMBO/ouroboros-consensus/issues/325>.
-  | HeaderSizeTooLarge Natural Natural
-  | BlockSizeTooLarge Natural Natural
+  | HeaderSizeTooLarge Int Word16
+  | BlockSizeTooLarge Word32 Word32
   deriving (Eq, Generic, Show)
 
 instance NoThunks PraosEnvelopeError
@@ -105,9 +106,9 @@ instance PraosCrypto c => ProtocolHeaderSupportsEnvelope (Praos c) where
 
   envelopeChecks cfg lv hdr = do
     unless (m <= maxpv) $ throwError (ObsoleteNode m maxpv)
-    unless (fromIntegral (bhviewHSize bhv) <= maxHeaderSize) $
+    unless (bhviewHSize bhv <= fromIntegral @Word16 @Int maxHeaderSize) $
       throwError $
-        HeaderSizeTooLarge (fromIntegral $ bhviewHSize bhv) maxHeaderSize
+        HeaderSizeTooLarge (bhviewHSize bhv) maxHeaderSize
     unless (bhviewBSize bhv <= maxBodySize) $
       throwError $
         BlockSizeTooLarge (bhviewBSize bhv) maxBodySize
@@ -190,7 +191,7 @@ instance PraosCrypto c => ProtocolHeaderSupportsLedger (Praos c) where
   mkHeaderView hdr@Header {headerBody} =
     BHeaderView
       { bhviewID = hashKey $ hbVk headerBody,
-        bhviewBSize = fromIntegral $ hbBodySize headerBody,
+        bhviewBSize = hbBodySize headerBody,
         bhviewHSize = headerSize hdr,
         bhviewBHash = hbBodyHash headerBody,
         bhviewSlot = hbSlotNo headerBody
