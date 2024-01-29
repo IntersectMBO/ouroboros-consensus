@@ -39,8 +39,11 @@ updateLoEFragUnconditional =
   UpdateLoEFrag $ \ curChain _ setLoEFrag -> atomically (setLoEFrag curChain)
 
 -- | Compute the fragment between the immutable tip, as given by the anchor
--- of @curChain@, and the earliest intersection between @curChain@ and any
--- of the @candidates@.
+-- of @curChain@, and the earliest intersection of the @candidates@.
+-- This excludes the selection from the set of intersected fragments since we
+-- need to be able to select k+1 blocks on a new chain when a fork's peer is
+-- killed on which we had selected k blocks, where the selection would
+-- otherwise keep the LoE fragment at the killed peer's intersection.
 sharedCandidatePrefix ::
   GetHeader blk =>
   SecurityParam ->
