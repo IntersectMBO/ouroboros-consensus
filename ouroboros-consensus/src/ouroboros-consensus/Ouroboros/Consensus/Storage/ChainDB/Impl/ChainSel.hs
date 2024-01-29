@@ -108,9 +108,10 @@ initialChainSelection
   -> StrictTVar m (WithFingerprint (InvalidBlocks blk))
   -> StrictTVar m (FutureBlocks m blk)
   -> CheckInFuture m blk
+  -> LoELimit
   -> m (ChainAndLedger blk)
 initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
-                      varFutureBlocks futureCheck = do
+                      varFutureBlocks futureCheck loELimit = do
     -- We follow the steps from section "## Initialization" in ChainDB.md
 
     (i :: Anchor blk, succsOf, ledger) <- atomically $ do
@@ -165,12 +166,18 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
     constructChains i succsOf = flip evalStateT Map.empty $
         mapM constructChain suffixesAfterI
       where
-        -- REVIEW We now prevent selecting more than k blocks in maximalCandidates
-        -- to avoid circumventing the LoE on startup.
-        -- Is this sensible?
-        -- Should we skip this if LoELimit is LoEUnlimited?
+        -- We now prevent selecting more than k blocks in maximalCandidates
+        -- when the LoE is enabled to avoid circumventing the LoE on startup.
+        -- Shutting down a syncing node and then restarting it should not cause
+        -- it to select the longest chain the VolDB, since that chain might be
+        -- adversarial (ie the LoE did not allow the node to select it when it
+        -- arrived).
         suffixesAfterI :: [NonEmpty (HeaderHash blk)]
-        suffixesAfterI = Paths.maximalCandidates succsOf k (AF.anchorToPoint i)
+        suffixesAfterI = Paths.maximalCandidates succsOf limit (AF.anchorToPoint i)
+          where
+            limit = case loELimit of
+              LoEDefault -> k
+              LoEUnlimited -> maxBound
 
         constructChain ::
              NonEmpty (HeaderHash blk)
