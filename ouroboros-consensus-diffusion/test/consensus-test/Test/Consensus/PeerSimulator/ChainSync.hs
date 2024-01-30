@@ -20,18 +20,19 @@ import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import           Network.TypedProtocol.Codec (AnyMessage)
-import           Ouroboros.Consensus.Block (Header, Point)
+import           Ouroboros.Consensus.Block (Header, Point, SlotNo)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     ChainSyncLoPBucketConfig, Consensus,
-                     bracketChainSyncClient, chainSyncClient)
+                     ChainSyncClientHandle, ChainSyncLoPBucketConfig, Consensus,
+                     Their, bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), StrictTVar, uncheckedNewTVarM)
+                     IOLike, MonadCatch (try), STM, StrictTVar,
+                     uncheckedNewTVarM)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
@@ -72,8 +73,19 @@ basicChainSyncClient ::
   StrictTVar m (AnchoredFragment (Header blk)) ->
   (m (), m ()) ->
   (m (), m (), m ()) ->
+  (Their (Tip blk) -> STM m ()) ->
+  (SlotNo -> STM m ()) ->
   Consensus ChainSyncClientPipelined blk m
-basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) =
+basicChainSyncClient
+    peerId
+    tracer
+    cfg
+    chainDbView
+    varCandidate
+    (startIdling, stopIdling)
+    (pauseLoPBucket, resumeLoPBucket, grantLoPToken)
+    setTheirTip
+    setLatestSlot =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
@@ -92,6 +104,8 @@ basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, st
       , CSClient.pauseLoPBucket
       , CSClient.resumeLoPBucket
       , CSClient.grantLoPToken
+      , CSClient.setTheirTip
+      , CSClient.setLatestSlot
       }
   where
     dummyHeaderInFutureCheck ::
@@ -114,6 +128,7 @@ runChainSyncClient ::
   ChainSyncLoPBucketConfig ->
   StateViewTracers blk m ->
   StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
+  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   Channel m (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))) ->
   m ()
 runChainSyncClient
@@ -125,6 +140,7 @@ runChainSyncClient
   lopBucketConfig
   StateViewTracers {svtPeerSimulatorResultsTracer}
   varCandidates
+  varHandles
   channel = do
     -- We don't need this shared Set yet. If we need it at some point,
     -- it ought to be passed to `runChainSyncClient`.
@@ -134,10 +150,11 @@ runChainSyncClient
       chainDbView
       varCandidates
       varIdling
+      varHandles
       peerId
       (maxBound :: NodeToNodeVersion)
       lopBucketConfig
-      $ \varCandidate idleManagers lopBucket -> do
+      $ \varCandidate idleManagers lopBucket setTip setLatestSlot -> do
         res <-
           try $
             runPipelinedPeerWithLimits
@@ -146,7 +163,17 @@ runChainSyncClient
               chainSyncNoSizeLimits
               (timeLimitsChainSync chainSyncTimeouts)
               channel
-              (chainSyncClientPeerPipelined (basicChainSyncClient peerId tracer cfg chainDbView varCandidate idleManagers lopBucket))
+              (chainSyncClientPeerPipelined
+                (basicChainSyncClient
+                  peerId
+                  tracer
+                  cfg
+                  chainDbView
+                  varCandidate
+                  idleManagers
+                  lopBucket
+                  setTip
+                  setLatestSlot))
         case res of
           Right res' -> traceWith svtPeerSimulatorResultsTracer $
             PeerSimulatorResult peerId $ SomeChainSyncClientResult $ Right res'

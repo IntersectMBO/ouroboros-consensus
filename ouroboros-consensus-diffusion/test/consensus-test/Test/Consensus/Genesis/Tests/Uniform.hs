@@ -17,7 +17,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
-import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
+import           Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockNo, blockSlot, unBlockNo)
@@ -34,7 +34,8 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
                      value)
-import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
+import           Test.Consensus.PointSchedule.Shrinking
+                     (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (SchedulePoint (ScheduleBlockPoint, ScheduleTipPoint))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
@@ -130,14 +131,17 @@ fromBlockPoint _                                      = Nothing
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.
 prop_serveAdversarialBranches :: Property
-prop_serveAdversarialBranches =
-  expectFailure $ forAllGenesisTest
+prop_serveAdversarialBranches = forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
-    (defaultSchedulerConfig {scTraceState = False, scTrace = False})
+    (defaultSchedulerConfig
+       {scTraceState = False, scTrace = False, scEnableLoE = True})
 
-    shrinkPeerSchedules
+    -- We cannot shrink by removing points from the adversarial schedules.
+    -- Otherwise, the immutable tip could get stuck because a peer doesn't
+    -- send any blocks or headers.
+    shrinkByRemovingAdversaries
 
     theProperty
 
@@ -288,7 +292,10 @@ prop_loeStalling =
         pure gt {gtChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}}
     )
 
-    (defaultSchedulerConfig {scTrace = False, scEnableLoE = True})
+    (defaultSchedulerConfig {
+      scEnableLoE = True,
+      scEnableChainSyncTimeouts = True
+    })
 
     shrinkPeerSchedules
 

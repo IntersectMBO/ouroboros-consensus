@@ -140,6 +140,8 @@ oneBenchRun
               , CSClient.pauseLoPBucket = pure ()
               , CSClient.resumeLoPBucket = pure ()
               , CSClient.grantLoPToken = pure ()
+              , CSClient.setTheirTip         = \_ -> pure ()
+              , CSClient.setLatestSlot       = \_ -> pure ()
               }
 
     server :: ChainSyncServer H (Point B) (Tip B) IO ()
