@@ -68,7 +68,8 @@ be adding is the Alonzo era, which comes after the Mary era.
 
 ## `ouroboros-consensus-cardano`
 
-* In `Ouroboros.Consensus.Cardano.Block`, include `AlonzoEra` in `CardanoShelleyEras`. Update all the pattern synonyms in the module with the
+* In `Ouroboros.Consensus.Cardano.Block`, include `AlonzoEra` in
+ `CardanoShelleyEras`. Update all the pattern synonyms in the module with the
   new era. Don't forget to update the comments, the `COMPLETE` pragmas, and the
   export lists. It's easy to forget a case and the compiler will likely not warn
   you, you'll notice it when trying to use the pattern synonyms.
@@ -106,10 +107,12 @@ be adding is the Alonzo era, which comes after the Mary era.
   create a `Test.ThreadNet.TxGen.Alonzo` module similar to
   `Test.ThreadNet.TxGen.Mary`.
 
-* Run the golden tests (`cabal run ouroboros-consensus-cardano:cardano-test -- -p /Golden/`). Golden test
-  results should have been created for the new Cardano versions. Don't forget to
-  commit those files, otherwise they will be recreated on each run in CI and not
-  compared against the previous results, rendering them useless.  
+* Run the golden tests
+  (`cabal run ouroboros-consensus-cardano:cardano-test -- -p /Golden/`).
+  Golden test results should have been created for the new Cardano versions. 
+  Don't forget to commit those files, otherwise they will be recreated on each
+  run in CI and not compared against the previous results, rendering them 
+  useless.  
 
 * Extend `Test.ThreadNet.Cardano` with the new era.
 

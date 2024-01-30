@@ -278,7 +278,9 @@ blockNo = headerFieldBlockNo . getHeaderFields
    -  `p` in place of `BlockProtocol blk`
    -  `cds` in place of `ChainDepState p`
 
-- `a ───(X :: A→B)───▶ b` should be interpreted as `type family X A :: B` or `data family X A :: B`, where `a` and `b` are typical names for the type family's index and result, respectively.
+- `a ───(X :: A→B)───▶ b` should be interpreted as `type family X A :: B` or 
+  `data family X A :: B`, where `a` and `b` are typical names for the type 
+  family's index and result, respectively.
 
 - To reduce the "noise", these type-class constraints are being ignored:
   `NoThunks`, `Eq`, `Show`, `HasCallStack`; `Ord` is *not* being ignored.
