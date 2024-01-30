@@ -48,6 +48,9 @@ module Test.Consensus.PointSchedule (
   , headerPointBlock
   , longRangeAttack
   , peerSchedulesBlocks
+  , peerStates
+  , peersStates
+  , peersStatesRelative
   , pointScheduleBlocks
   , pointSchedulePeers
   , prettyGenesisTest
@@ -319,6 +322,20 @@ peerStates Peer {name, value = schedulePoints} =
 
     (times, points) = unzip schedulePoints
 
+-- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
+--
+-- The resulting schedule contains all the peers. Items are sorted by time.
+peersStates :: Peers PeerSchedule -> [(Time, Peer NodeState)]
+peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
+
+-- | Same as 'peersStates' but returns the duration of a state instead of the
+-- absolute time at which it starts holding.
+peersStatesRelative :: Peers PeerSchedule -> [(DiffTime, Peer NodeState)]
+peersStatesRelative peers =
+  let (starts, states) = unzip $ peersStates peers
+      durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
+   in zip durations states
+
 type PeerSchedule = [(Time, SchedulePoint)]
 
 -- | Convert a set of @SinglePeer@ schedules to a 'PointSchedule'.
@@ -330,10 +347,7 @@ fromSchedulePoints peers = do
   pointSchedule (zipWith3 Tick states durations [0 ..]) peerIds
   where
     peerIds = getPeerIds peers
-
-    durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
-
-    (starts, states) = unzip $ foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
+    (durations, states) = unzip $ peersStatesRelative peers
 
 -- | List of all blocks appearing in the schedule.
 peerScheduleBlocks :: PeerSchedule -> [TestBlock]
