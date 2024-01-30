@@ -2,6 +2,41 @@
 
 # Changelog entries
 
+<a id='changelog-0.15.0.0'></a>
+## 0.15.0.0 — 2024-01-29
+
+### Patch
+
+- Updated to GHC 9.8.1.
+- Updated `ouroboros-network-protocols` 0.6 -> 0.7.
+
+### Non-Breaking
+
+- Update dependency on `nothunks` to `^>=0.1.5`.
+
+### Breaking
+
+- Added a new `InFutureCheck` to the ChainSync client, which requires
+  additional arguments to the 'chainSyncClient' definition. The node no longer
+  propagates headers/blocks from the future: a ChainSync client thread now
+  sleeps until the received header is no longer from the future.
+
+- Bundled up the arguments to the ChainSync client into new record types,
+  `ConfigEnv` and `DynamicEnv`.
+
+- Also introduced a `SomeHeaderInFutureCheck` that binds the existential type
+  variables separately from the actual payload of the `HeaderInFutureCheck`
+  record type.
+
+- Bump `strict-checked-vars` to `^>= 0.2`. Normal-form `StrictTVar`s are
+  refactored and moved to their own modules. Normal-form `StrictTVar`s and
+  `StrictMVar`s are exported by the `IOLike` module.
+
+- Removed `EraNodeToNodeVersion`, replacing it with `WrapNodeToNodeVersion`.
+
+- Mempool: add reason for transaction removal to `TraceMempoolRemoveTxs`. This
+  can be used in the node to enrich the trace output.
+
 <a id='changelog-0.14.0.0'></a>
 ## 0.14.0.0 — 2023-11-30
 

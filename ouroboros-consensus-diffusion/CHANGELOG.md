@@ -2,6 +2,37 @@
 
 # Changelog entries
 
+<a id='changelog-0.10.0.0'></a>
+## 0.10.0.0 — 2024-01-29
+
+### Patch
+
+- Fix imports and type mismatches caused by `ouroboros-consensus` bumping
+  `strict-checked-vars` to `^>= 0.2`.
+
+- Removed `EraNodeToNodeVersion`, replacing it with `WrapNodeToNodeVersion`.
+
+- Updated to GHC 9.8.1.
+- Updated `ouroboros-network` dependencies:
+  - `ouroboros-network` 0.10.2 -> 0.11
+  - `ouroboros-network-frameworks` 0.10 -> 0.11
+  - `ouroboros-network-protocols` 0.6.1 -> 0.7
+
+### Non-Breaking
+
+- Update network packages
+  - `ouroboros-network`: `^>=0.10.2`
+  - `ouroboros-network-api`: `^>=0.6.2`
+  - `ouroboros-network-protocols`: `^>=0.6.1`
+
+### Breaking
+
+- Integrate the new `InFutureCheck` in the ChainSync client, which requires new
+  fields in `NodeKernalArgs`.
+
+- The upstream ChainSync client refactoring required changes to NodeKernelArgs
+  and Handlers.
+
 <a id='changelog-0.9.0.0'></a>
 ## 0.9.0.0 — 2023-11-14
 
