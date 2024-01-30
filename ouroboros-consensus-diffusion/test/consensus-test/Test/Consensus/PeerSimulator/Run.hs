@@ -13,7 +13,6 @@ module Test.Consensus.PeerSimulator.Run (
   ) where
 
 import           Control.Monad.Class.MonadTime (MonadTime)
-import           Control.Monad.Class.MonadTime.SI (DiffTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Foldable (for_)
@@ -21,12 +20,12 @@ import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import           Ouroboros.Consensus.Genesis.Governor
-                     (reprocessLoEBlocksOnCandidateChange, updateLoEFragStall)
+import           Ouroboros.Consensus.Genesis.Governor (runGdd,
+                     updateLoEFragGenesis)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     ChainSyncLoPBucketConfig (..),
+                     ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
                      ChainSyncLoPBucketEnabledConfig (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Storage.ChainDB.API
@@ -35,12 +34,11 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl
                      (ChainDbArgs (cdbTracer), cdbLoE)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
-import           Ouroboros.Consensus.Util.IOLike (IOLike,
-                     MonadDelay (threadDelay), MonadSTM (atomically),
-                     StrictTVar, readTVar)
+import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      HasHeader)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
                      bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.Channel (createConnectedChannels)
@@ -142,6 +140,7 @@ startChainSyncConnectionThread ::
   ChainSyncLoPBucketConfig ->
   StateViewTracers blk m ->
   StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
+  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   m (Thread m (), Thread m ())
 startChainSyncConnectionThread
   registry
@@ -154,12 +153,13 @@ startChainSyncConnectionThread
   chainSyncTimeouts_
   chainSyncLoPBucketConfig
   tracers
-  varCandidates = do
+  varCandidates
+  varHandles = do
     (clientChannel, serverChannel) <- createConnectedChannels
     clientThread <-
       forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
         bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varCandidates clientChannel
+          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varCandidates varHandles clientChannel
     serverThread <-
       forkLinkedThread registry ("ChainSyncServer" <> condense srPeerId) $
         ChainSync.runChainSyncServer tracer srPeerId tracers csrServer serverChannel
@@ -233,6 +233,18 @@ runScheduler tracer stateTracer ps peers = do
   mapM_ (dispatchTick tracer stateTracer peers) (zip [0..] (peersStatesRelative ps))
   traceWith tracer TraceEndOfTime
 
+-- | Create the shared resource for the LoE if the feature is enabled in the config.
+-- This is used by the ChainDB and the GDD governor.
+mkLoEVar ::
+  IOLike m =>
+  SchedulerConfig ->
+  m (LoE (StrictTVar m (AnchoredFragment (Header TestBlock))))
+mkLoEVar SchedulerConfig {scEnableLoE}
+  | scEnableLoE
+  = LoEEnabled <$> newTVarIO (AF.Empty AF.AnchorGenesis)
+  | otherwise
+  = pure LoEDisabled
+
 -- | Construct STM resources, set up ChainSync and BlockFetch threads, and
 -- send all ticks in a 'PointSchedule' to all given peers in turn.
 runPointSchedule ::
@@ -247,8 +259,10 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     stateViewTracers <- defaultStateViewTracers
     resources <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
-        updateLoEFrag = updateLoEFragStall getCandidates
-    chainDb <- mkChainDb schedulerConfig tracer config registry updateLoEFrag
+        getHandles = readTVar (psrHandles resources)
+        getLatestSlots = traverse CSClient.cschLatestSlot =<< getHandles
+    loEVar <- mkLoEVar schedulerConfig
+    chainDb <- mkChainDb tracer config registry (readTVarIO <$> loEVar)
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = CSClient.defaultChainDbView chainDb
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
@@ -257,7 +271,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
         -- the registry is closed and all threads related to the peer are
         -- killed.
         withRegistry $ \peerRegistry -> do
-          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrCandidates resources)
+          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrCandidates resources) (psrHandles resources)
           BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry (srPeerId prShared)
           (bfClient, bfServer) <- startBlockFetchConnectionThread peerRegistry tracer stateViewTracers fetchClientRegistry (pure Continue) prShared prBlockFetch blockFetchTimeouts_
           waitAnyThread [csClient, csServer, bfClient, bfServer]
@@ -271,10 +285,19 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
           = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates getPoints
           | otherwise
           = pure nullTracer
+
+        gdd = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) getCandidates getHandles (readTVar (psrIdling resources))
+
     stateTracer <- mkStateTracer
     BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
-    void $ forkLinkedThread registry "ChainSel trigger" (reprocessLoEBlocksOnCandidateChange chainDb getCandidates)
-    runScheduler (Tracer $ traceWith tracer . TraceSchedulerEvent) stateTracer gtSchedule (psrPeers resources)
+    for_ loEVar $ \ var ->
+        void $ forkLinkedThread registry "LoE updater background" $
+          runGdd gdd var chainDb getLatestSlots
+    runScheduler
+      (Tracer $ traceWith tracer . TraceSchedulerEvent)
+      stateTracer
+      gtSchedule
+      (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
     GenesisTest {
@@ -285,9 +308,10 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
       , gtBlockFetchTimeouts
       , gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
       , gtForecastRange
+      , gtGenesisWindow
       } = genesisTest
 
-    config = defaultCfg k gtForecastRange
+    config = defaultCfg k gtForecastRange gtGenesisWindow
 
     -- FIXME: This type of configuration should move to `Trace.mkTracer`.
     tracer = if scTrace schedulerConfig then tracer0 else nullTracer
@@ -311,13 +335,12 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
 -- candidate fragments.
 mkChainDb ::
   IOLike m =>
-  SchedulerConfig ->
   Tracer m (TraceEvent TestBlock) ->
   TopLevelConfig TestBlock ->
   ResourceRegistry m ->
-  UpdateLoEFrag m TestBlock ->
+  GetLoEFragment m TestBlock ->
   m (ChainDB m TestBlock)
-mkChainDb schedulerConfig tracer nodeCfg registry updateLoEFrag = do
+mkChainDb tracer nodeCfg registry cdbLoE = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
       pure $ (
@@ -339,7 +362,3 @@ mkChainDb schedulerConfig tracer nodeCfg registry updateLoEFrag = do
         (ChainDB.closeDB . fst)
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
     pure chainDB
-  where
-    cdbLoE
-      | scEnableLoE schedulerConfig = LoEEnabled updateLoEFrag
-      | otherwise = LoEDisabled

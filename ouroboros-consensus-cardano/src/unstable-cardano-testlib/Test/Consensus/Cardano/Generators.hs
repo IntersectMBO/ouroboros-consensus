@@ -554,6 +554,7 @@ instance Arbitrary History.EraParams where
       <$> (EpochSize <$> arbitrary)
       <*> arbitrary
       <*> arbitrary
+      <*> (GenesisWindow <$> arbitrary)
 
 instance Arbitrary History.EraSummary where
   arbitrary = History.EraSummary
