@@ -34,6 +34,7 @@ module Ouroboros.Consensus.HardFork.History.Qry (
   , epochToSlot'
   , slotToEpoch
   , slotToEpoch'
+  , slotToGenesisWindow
   , slotToSlotLength
   , slotToWallclock
   , wallclockToSlot
@@ -224,10 +225,12 @@ data Expr (f :: Type -> Type) :: Type -> Type where
   ERelEpochToSlot :: Expr f EpochInEra -> Expr f SlotInEra
 
   -- Get era parameters
-  -- The arguments are used for bound checks
 
+  -- The arguments are used for bound checks
   ESlotLength :: Expr f SlotNo  -> Expr f SlotLength
   EEpochSize  :: Expr f EpochNo -> Expr f EpochSize
+
+  EGenesisWindow :: Expr f SlotNo -> Expr f GenesisWindow
 
 {-------------------------------------------------------------------------------
   Interpreter
@@ -336,6 +339,12 @@ evalExprInEra EraSummary{..} = \(ClosedExpr e) -> go e
         guard    $ e >= boundEpoch eraStart
         guardEnd $ \end -> e < boundEpoch end
         return eraEpochSize
+
+    go (EGenesisWindow expr) = do
+        s <- go expr
+        guard    $ s >= boundSlot eraStart
+        guardEnd $ \end -> s < boundSlot end
+        return eraGenesisWin
 
 {-------------------------------------------------------------------------------
   PastHorizonException
@@ -566,6 +575,10 @@ epochToSizeExpr :: EpochNo -> Expr f EpochSize
 epochToSizeExpr absEpoch =
     EEpochSize (ELit absEpoch)
 
+slotToGenesisWindow :: SlotNo -> Expr f GenesisWindow
+slotToGenesisWindow absSlot =
+    EGenesisWindow (ELit absSlot)
+
 {-------------------------------------------------------------------------------
   'Show' instances
 -------------------------------------------------------------------------------}
@@ -623,3 +636,4 @@ instance Show (ClosedExpr a) where
           ERelEpochToSlot e -> showString "ERelEpochToSlot " . go n 11 e
           ESlotLength     e -> showString "ESlotLength "     . go n 11 e
           EEpochSize      e -> showString "EEpochSize "      . go n 11 e
+          EGenesisWindow  e -> showString "EGenesisWindow "  . go n 11 e

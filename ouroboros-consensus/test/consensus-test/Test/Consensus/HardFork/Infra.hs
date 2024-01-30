@@ -111,6 +111,7 @@ genEraParams = do
     eraEpochSize  <- EpochSize         <$> choose (1, 10)
     eraSlotLength <- slotLengthFromSec <$> choose (1, 5)
     eraSafeZone   <- genSafeZone
+    eraGenesisWin <- GenesisWindow     <$> choose (1, 10)
     return HF.EraParams{..}
   where
     genSafeZone :: Gen HF.SafeZone

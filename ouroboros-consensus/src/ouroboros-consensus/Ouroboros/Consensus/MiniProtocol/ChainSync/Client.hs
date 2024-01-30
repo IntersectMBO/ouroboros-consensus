@@ -1,7 +1,9 @@
 {-# LANGUAGE BangPatterns               #-}
 {-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE DuplicateRecordFields      #-}
 {-# LANGUAGE ExistentialQuantification  #-}
 {-# LANGUAGE FlexibleContexts           #-}
@@ -47,6 +49,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , defaultChainDbView
     -- * Results
   , ChainSyncClientException (..)
+  , ChainSyncClientHandle (..)
   , ChainSyncClientResult (..)
     -- * Misc
   , Consensus
@@ -73,7 +76,7 @@ import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           Network.TypedProtocol.Pipelined
-import           NoThunks.Class (unsafeNoThunks)
+import           NoThunks.Class (AllowThunk (..), unsafeNoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
@@ -105,7 +108,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Ouroboros.Network.AnchoredSeq as AS
-import           Ouroboros.Network.Block (Tip, getTipBlockNo)
+import           Ouroboros.Network.Block (Tip (..), getTipBlockNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
                      (WhetherReceivingTentativeBlocks (..))
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
@@ -175,6 +178,14 @@ newtype Our a = Our { unOur :: a }
   deriving stock   (Eq)
   deriving newtype (Show, NoThunks)
 
+data ChainSyncClientHandle m blk = ChainSyncClientHandle {
+    cschKill       :: !(m ())
+  , cschTheirTip   :: !(STM m (Maybe (Tip blk)))
+  , cschLatestSlot :: !(STM m SlotNo)
+  }
+  deriving stock (Generic)
+  deriving (NoThunks) via AllowThunk (ChainSyncClientHandle m blk)
+
 bracketChainSyncClient ::
     ( IOLike m
     , Ord peer
@@ -195,12 +206,15 @@ bracketChainSyncClient ::
     -- It's more important that the client is removed from the set promptly
     -- than it is for the client to be added promptly, because of how this is
     -- used by the GSM to determine that the node is done syncing.
+ -> StrictTVar m (Map peer (ChainSyncClientHandle m blk))
  -> peer
  -> NodeToNodeVersion
  -> ChainSyncLoPBucketConfig
  -> (     StrictTVar m (AnchoredFragment (Header blk))
        -> (m (), m ())
        -> (m (), m (), m ())
+       -> (Their (Tip blk) -> STM m ())
+       -> (SlotNo -> STM m ())
        -> m a
     )
  -> m a
@@ -209,13 +223,14 @@ bracketChainSyncClient
     ChainDbView { getIsInvalidBlock }
     varCandidates
     varIdling
+    varHandles
     peer
     version
     csBucketConfig
     body
   =
     bracket newCandidateVar releaseCandidateVar
-  $ \varCandidate ->
+  $ \(varCandidate, setTheirTip, setLatestSlot) ->
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
             (invalidBlockWatcher varCandidate)
@@ -228,15 +243,27 @@ bracketChainSyncClient
                 ( LeakyBucket.setPaused lopBucket True
                 , LeakyBucket.setPaused lopBucket False
                 , void $ LeakyBucket.fill lopBucket 1 )
+                setTheirTip
+                setLatestSlot
   where
     newCandidateVar = do
         varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
-        atomically $ modifyTVar varCandidates $ Map.insert peer varCandidate
-        return varCandidate
+        varTheirTip <- newTVarIO Nothing
+        varFutureHeader <- newTVarIO (SlotNo 0)
+        tid <- myThreadId
+        atomically $ do
+          modifyTVar varCandidates $ Map.insert peer varCandidate
+          modifyTVar varHandles $ Map.insert peer ChainSyncClientHandle {
+              cschKill     = killThread tid
+            , cschTheirTip = readTVar varTheirTip
+            , cschLatestSlot = readTVar varFutureHeader
+            }
+        return (varCandidate, writeTVar varTheirTip . Just . unTheir, writeTVar varFutureHeader)
 
     releaseCandidateVar _ = atomically $ do
         modifyTVar varCandidates $ Map.delete peer
         modifyTVar varIdling     $ Set.delete peer
+        modifyTVar varHandles    $ Map.delete peer
 
     invalidBlockWatcher varCandidate =
         invalidBlockRejector
@@ -580,6 +607,8 @@ data DynamicEnv m blk = DynamicEnv {
     -- ^ Ensure that the LoP bucket is leaking. Can be called on an
     -- already-leaking bucket.
   , grantLoPToken       :: m ()
+  , setTheirTip         :: Their (Tip blk) -> STM m ()
+  , setLatestSlot       :: SlotNo -> STM m ()
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -810,6 +839,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
 
     DynamicEnv {
         varCandidate
+      , setTheirTip
       } = dynEnv
 
     InternalEnv {
@@ -911,7 +941,9 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                         disconnect
                       $ InvalidIntersection
                             intersection (ourTipFromChain ourFrag) theirTip
-            atomically $ writeTVar varCandidate theirFrag
+            atomically $ do
+              writeTVar varCandidate theirFrag
+              setTheirTip theirTip
             let kis =
                    assertKnownIntersectionInvariants (configConsensus cfg)
                  $ KnownIntersectionState {
@@ -960,6 +992,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
       , pauseLoPBucket
       , resumeLoPBucket
       , varCandidate
+      , setTheirTip
       } = dynEnv
 
     InternalEnv {
@@ -1004,7 +1037,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         let KnownIntersectionState {
                                 theirFrag
                               } = kis'
-                        atomically $ writeTVar varCandidate theirFrag
+                        atomically $ do
+                          writeTVar varCandidate theirFrag
+                          setTheirTip theirTip
                         return $
                             requestNext
                                 kis'
@@ -1126,6 +1161,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
+            atomically (setLatestSlot dynEnv slotNo)
+
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
                     continueWithState ()
@@ -1142,7 +1179,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         checkValid cfgEnv intEnv hdr theirTip kis' ledgerView
                     kis''' <- checkLoP cfgEnv dynEnv hdr kis''
 
-                    atomically $ writeTVar varCandidate (theirFrag kis''')
+                    atomically $ do
+                      writeTVar varCandidate (theirFrag kis''')
+                      setTheirTip theirTip
                     atomically
                       $ traceWith headerMetricsTracer (slotNo, arrivalTime)
 
@@ -1230,7 +1269,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                             , theirHeaderStateHistory = theirHeaderStateHistory'
                             , kBestBlockNo
                             }
-                  atomically $ writeTVar varCandidate theirFrag'
+                  atomically $ do
+                    writeTVar varCandidate theirFrag'
+                    setTheirTip theirTip
 
                   continueWithState kis' $
                       nextStep mkPipelineDecision n theirTip
