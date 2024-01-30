@@ -56,6 +56,8 @@ import           Data.Time (DiffTime)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..),
                      withOriginToMaybe)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
@@ -307,9 +309,6 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
     rollbackProb = 0.2
 
     emptyScheduleProb = 0.05
-
-newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
-  deriving (Show)
 
 newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)
