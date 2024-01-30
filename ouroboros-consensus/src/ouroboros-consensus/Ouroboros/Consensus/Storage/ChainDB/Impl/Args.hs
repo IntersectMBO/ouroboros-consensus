@@ -19,7 +19,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture)
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (LoEDisabled))
+import           Ouroboros.Consensus.Storage.ChainDB.API (GetLoEFragment,
+                     LoE (LoEDisabled))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -78,8 +79,9 @@ data ChainDbArgs f m blk = ChainDbArgs {
       -- up.
 
       -- Limit on Eagerness
-    , cdbLoE                    :: LoE m blk
-      -- ^ The callback for advancing the LoE fragment, if enabled.
+    , cdbLoE                    :: GetLoEFragment m blk
+      -- ^ If this is 'LoEEnabled', it contains an action that returns the
+      -- current LoE fragment.
     }
 
 -- | Arguments specific to the ChainDB, not to the ImmutableDB, VolatileDB, or
@@ -100,7 +102,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
     , cdbsRegistry        :: HKD f (ResourceRegistry m)
     , cdbsTracer          :: Tracer m (TraceEvent blk)
     , cdbsHasFSGsmDB      :: SomeHasFS m
-    , cdbsLoE             :: LoE m blk
+    , cdbsLoE             :: GetLoEFragment m blk
     }
 
 -- | Default arguments

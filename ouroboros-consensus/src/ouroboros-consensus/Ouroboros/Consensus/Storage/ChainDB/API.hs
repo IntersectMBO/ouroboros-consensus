@@ -31,6 +31,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , addBlock
   , addBlockWaitWrittenToDisk
   , addBlock_
+  , triggerChainSelectionAsync
     -- * Serialised block/header with its point
   , WithPoint (..)
   , getPoint
@@ -64,10 +65,9 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
     -- * Exceptions
   , ChainDbError (..)
     -- * Genesis
+  , GetLoEFragment
   , LoE (..)
   , LoELimit (..)
-  , UpdateLoEFrag (..)
-  , processLoE
   ) where
 
 import           Control.Monad (void)
@@ -141,7 +141,7 @@ data ChainDB m blk = ChainDB {
       addBlockAsync      :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
 
       -- | Trigger reprocessing of blocks postponed by the LoE.
-    , reprocessLoEAsync  :: m ()
+    , chainSelAsync      :: m ()
 
       -- | Get the current chain fragment
       --
@@ -465,6 +465,11 @@ addBlock chainDB punish blk = do
 -- Note: this is a partial function, only to support tests.
 addBlock_ :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m ()
 addBlock_  = void ..: addBlock
+
+-- | Alias for naming consistency.
+-- The short name was chosen to avoid a larger diff from alignment changes.
+triggerChainSelectionAsync :: ChainDB m blk -> m ()
+triggerChainSelectionAsync = chainSelAsync
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point
@@ -865,14 +870,19 @@ instance (Typeable blk, StandardHash blk) => Exception (ChainDbError blk) where
 
 -- | The Limit on Eagerness is a mechanism for keeping ChainSel from advancing
 -- the current selection in the case of competing chains.
+--
+-- The Limit on Eagerness prevents the selection of the node from extending
+-- more than k blocks after the youngest block that is present on all candidate
+-- fragments.
+--
 -- It requires a resolution mechanism to prevent indefinite stalling, which
--- will be implemented by the Genesis Density Disconnection principle soon,
--- a condition applied via 'UpdateLoEFrag' that disconnects from peers with forks
+-- is implemented by the Genesis Density Disconnection governor, a component
+-- that implements an 'UpdateLoEFrag' that disconnects from peers with forks
 -- it considers inferior.
 --
--- This type indicates whether the feature is enabled, and contains an update
--- callback if it is.
-data LoE m blk =
+-- This type indicates whether the feature is enabled, and contains a value
+-- if it is.
+data LoE a =
   -- | The LoE is disabled, so ChainSel will not keep the selection from
   -- advancing.
   LoEDisabled
@@ -881,37 +891,10 @@ data LoE m blk =
   -- When the selection's tip is @k@ blocks after the earliest intersection of
   -- of all candidate fragments, ChainSel will not add new blocks to the
   -- selection.
-  LoEEnabled (UpdateLoEFrag m blk)
-  deriving stock (Generic)
-  deriving anyclass (NoThunks)
+  LoEEnabled a
+  deriving (Eq, Show, Generic, NoThunks, Functor, Foldable, Traversable)
 
--- | This callback is a hook into ChainSync that is called right before deciding
--- whether a block can be added to the current selection.
---
--- Its purpose is to update the fragment whose tip provides the reference point
--- for the Limit on Eagerness, described in the docs of 'LoELimit'.
---
--- The callback is applied to the current chain, the current ledger state and
--- an STM action that writes the new LoE fragment to the state.
-data UpdateLoEFrag m blk = UpdateLoEFrag {
-    updateLoEFrag ::
-         AnchoredFragment (Header blk)
-      -> ExtLedgerState blk
-      -> m (AnchoredFragment (Header blk))
-  }
-  deriving stock (Generic)
-  deriving anyclass (NoThunks)
-
-processLoE ::
-     Applicative m
-  => GetHeader blk
-  => AnchoredFragment (Header blk)
-  -> ExtLedgerState blk
-  -> LoE m blk
-  -> m (AnchoredFragment (Header blk))
-processLoE curChain ledger = \case
-  LoEDisabled -> pure (AF.Empty AF.AnchorGenesis)
-  LoEEnabled hook -> updateLoEFrag hook curChain ledger
+type GetLoEFragment m blk = LoE (m (AnchoredFragment (Header blk)))
 
 data LoELimit =
   LoELimit Word64
