@@ -1,4 +1,4 @@
-pkgs:
+{ inputs, pkgs }:
 
 let
   inherit (pkgs) lib haskell-nix;
@@ -30,9 +30,9 @@ let
         haskellLib.collectChecks' projectHsPkgs;
     } // lib.optionalAttrs noCross {
       devShell =
-        import ./shell.nix { inherit pkgs hsPkgs; };
+        import ./shell.nix { inherit inputs pkgs hsPkgs; };
       devShellProfiled =
-        import ./shell.nix { inherit pkgs; hsPkgs = hsPkgs.projectVariants.profiled; };
+        import ./shell.nix { inherit inputs pkgs; hsPkgs = hsPkgs.projectVariants.profiled; };
     };
 
   jobs = lib.filterAttrsRecursive (n: v: n != "recurseForDerivations") ({
@@ -46,6 +46,9 @@ let
       haskell810 = builtins.removeAttrs
         (mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc810)
         [ "checks" "devShell" "devShellProfiled" ];
+
+      # also already test GHC 9.8, but only on Linux to reduce CI load
+      haskell98 = mkHaskellJobsFor pkgs.hsPkgs.projectVariants.ghc98;
     };
   } // lib.optionalAttrs (buildSystem == "x86_64-linux") {
     windows = {
