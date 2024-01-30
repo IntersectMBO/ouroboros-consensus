@@ -57,13 +57,15 @@
             (import ./nix/pdfs.nix)
           ];
         };
-        hydraJobs = import ./nix/ci.nix pkgs;
+        hydraJobs = import ./nix/ci.nix { inherit inputs pkgs; };
       in
       {
         devShells = rec {
           default = ghc96;
           ghc96 = hydraJobs.native.haskell96.devShell;
           ghc96-profiled = hydraJobs.native.haskell96.devShellProfiled;
+          ghc98 = hydraJobs.native.haskell98.devShell;
+          ghc98-profiled = hydraJobs.native.haskell98.devShellProfiled;
 
           website = pkgs.mkShell {
             packages = [ pkgs.nodejs pkgs.yarn ];

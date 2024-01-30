@@ -17,6 +17,7 @@ let
     compiler-nix-name = "ghc964";
     flake.variants = {
       ghc810 = { compiler-nix-name = lib.mkForce "ghc8107"; };
+      ghc98 = { compiler-nix-name = lib.mkForce "ghc981"; };
     };
     inputMap = {
       "https://chap.intersectmbo.org/" = inputs.CHaP;
