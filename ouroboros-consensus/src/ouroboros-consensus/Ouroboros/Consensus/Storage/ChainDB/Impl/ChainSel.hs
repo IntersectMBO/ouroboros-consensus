@@ -557,7 +557,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         traceWith addBlockTracer $ IgnoreBlockOlderThanK p
         return tipPoint
 
-      -- We might have validated the block in the meantime
+      -- The block is invalid
       | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
         traceWith addBlockTracer $ IgnoreInvalidBlock p reason
 
@@ -569,7 +569,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         return tipPoint
 
-      -- The block @b@ fits onto the end of our current chain
+      -- The block fits onto the end of our current chain
       | pointHash tipPoint == headerPrevHash hdr
         -- TODO could be optimized if necessary/easy enough
       , let newBlockFrag = curChain AF.:> hdr

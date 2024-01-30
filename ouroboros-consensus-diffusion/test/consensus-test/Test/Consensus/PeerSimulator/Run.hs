@@ -22,11 +22,11 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Genesis.Governor
-                     (reprocessLoEBlocksOnCandidateChange, updateLoEFragStall)
+                     (reprocessLoEBlocksOnCandidateChange, updateLoEFragGenesis)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     ChainSyncLoPBucketConfig (..),
+                     ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
                      ChainSyncLoPBucketEnabledConfig (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Storage.ChainDB.API
@@ -142,6 +142,7 @@ startChainSyncConnectionThread ::
   ChainSyncLoPBucketConfig ->
   StateViewTracers blk m ->
   StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
+  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   m (Thread m (), Thread m ())
 startChainSyncConnectionThread
   registry
@@ -154,12 +155,13 @@ startChainSyncConnectionThread
   chainSyncTimeouts_
   chainSyncLoPBucketConfig
   tracers
-  varCandidates = do
+  varCandidates
+  varHandles = do
     (clientChannel, serverChannel) <- createConnectedChannels
     clientThread <-
       forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
         bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varCandidates clientChannel
+          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varCandidates varHandles clientChannel
     serverThread <-
       forkLinkedThread registry ("ChainSyncServer" <> condense srPeerId) $
         ChainSync.runChainSyncServer tracer srPeerId tracers csrServer serverChannel
@@ -247,7 +249,8 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     stateViewTracers <- defaultStateViewTracers
     resources <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
-        updateLoEFrag = updateLoEFragStall getCandidates
+        getHandles = readTVar (psrHandles resources)
+        updateLoEFrag = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) getCandidates getHandles
     chainDb <- mkChainDb schedulerConfig tracer config registry updateLoEFrag
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = CSClient.defaultChainDbView chainDb
@@ -257,7 +260,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
         -- the registry is closed and all threads related to the peer are
         -- killed.
         withRegistry $ \peerRegistry -> do
-          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrCandidates resources)
+          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrCandidates resources) (psrHandles resources)
           BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry (srPeerId prShared)
           (bfClient, bfServer) <- startBlockFetchConnectionThread peerRegistry tracer stateViewTracers fetchClientRegistry (pure Continue) prShared prBlockFetch blockFetchTimeouts_
           waitAnyThread [csClient, csServer, bfClient, bfServer]
@@ -285,9 +288,10 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
       , gtBlockFetchTimeouts
       , gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
       , gtForecastRange
+      , gtGenesisWindow
       } = genesisTest
 
-    config = defaultCfg k gtForecastRange
+    config = defaultCfg k gtForecastRange gtGenesisWindow
 
     -- FIXME: This type of configuration should move to `Trace.mkTracer`.
     tracer = if scTrace schedulerConfig then tracer0 else nullTracer

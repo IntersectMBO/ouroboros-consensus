@@ -1,7 +1,12 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 
-module Ouroboros.Consensus.Ledger.SupportsProtocol (LedgerSupportsProtocol (..)) where
+module Ouroboros.Consensus.Ledger.SupportsProtocol (
+    GenesisWindow (..)
+  , LedgerSupportsProtocol (..)
+  ) where
 
 import           Control.Monad.Except
 import           GHC.Stack (HasCallStack)
