@@ -356,6 +356,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     -- separate map too, one that isn't emptied. We can use this map to look
     -- at the final state of each candidate.
     varFinalCandidates <- uncheckedNewTVarM Map.empty
+    varHandles     <- uncheckedNewTVarM Map.empty
 
     (tracer, getTrace) <- do
           (tracer', getTrace) <- recordingTracerTVar
@@ -407,10 +408,12 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
         client :: StrictTVar m (AnchoredFragment (Header TestBlock))
                -> (m (), m ())
                -> (m (), m (), m ())
+               -> (Their (Tip TestBlock) -> STM m ())
+               -> (WithOrigin SlotNo -> STM m ())
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) =
+        client varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) setTheirTip setLatestSlot =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -430,6 +433,8 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , pauseLoPBucket
                 , resumeLoPBucket
                 , grantLoPToken
+                , setTheirTip
+                , setLatestSlot
                 }
 
     -- Set up the server
@@ -501,15 +506,16 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  chainDbView
                  varCandidates
                  varIdlers
+                 varHandles
                  serverId
                  maxBound
                  lopBucketConfig
-                 $ \varCandidate idlingSignals lopBucket -> do
+                 $ \varCandidate idlingSignals lopBucket setTheirTip setLatestSlot -> do
                    atomically $ modifyTVar varFinalCandidates $
                      Map.insert serverId varCandidate
                    result <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
-                       chainSyncClientPeerPipelined $ client varCandidate idlingSignals lopBucket
+                       chainSyncClientPeerPipelined $ client varCandidate idlingSignals lopBucket setTheirTip setLatestSlot
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
                    return ()
               `catchAlsoLinked` \ex -> do
