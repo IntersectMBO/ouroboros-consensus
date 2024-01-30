@@ -95,6 +95,7 @@ module Test.Consensus.PointSchedule.SinglePeer (
 
 import           Cardano.Slotting.Slot (WithOrigin (At, Origin), withOrigin)
 import           Control.Arrow (second)
+import           Control.Monad.Class.MonadTime.SI (Time)
 import           Data.List (mapAccumL)
 import           Data.Time.Clock (DiffTime)
 import           Data.Vector (Vector)
@@ -161,7 +162,7 @@ singleJumpPeerSchedule
   => g
   -> PeerScheduleParams
   -> AF.AnchoredFragment TestBlock
-  -> m [(DiffTime, SchedulePoint)]
+  -> m [(Time, SchedulePoint)]
 singleJumpPeerSchedule g psp chain = do
     let chainv = Vector.fromList $ AF.toOldestFirst chain
     (tps, hps, bps) <- singleJumpRawPeerSchedule g psp tbSlot chainv
@@ -179,7 +180,7 @@ singleJumpRawPeerSchedule
   -> PeerScheduleParams
   -> (b -> SlotNo)
   -> Vector b
-  -> m ([(DiffTime, b)], [(DiffTime, b)], [(DiffTime, b)])
+  -> m ([(Time, b)], [(Time, b)], [(Time, b)])
 singleJumpRawPeerSchedule g psp slotOfB chainv = do
     -- generate the tip points
     ixs <- singleJumpTipPoints g 0 (Vector.length chainv - 1)
@@ -222,7 +223,7 @@ peerScheduleFromTipPoints
   -> [(IsTrunk, [Int])]
   -> AF.AnchoredFragment TestBlock
   -> [AF.AnchoredFragment TestBlock]
-  -> m [(DiffTime, SchedulePoint)]
+  -> m [(Time, SchedulePoint)]
 peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
     let trunk0v = Vector.fromList $ AF.toOldestFirst trunk0
         firstTrunkBlockNo = withOrigin 1 (+1) $ AF.anchorBlockNo trunk0
@@ -263,7 +264,7 @@ rawPeerScheduleFromTipPoints
   -> Vector b
   -> [Vector b]
   -> [Maybe Int]
-  -> m ([(DiffTime, b)], [(DiffTime, b)], [(DiffTime, b)])
+  -> m ([(Time, b)], [(Time, b)], [(Time, b)])
 rawPeerScheduleFromTipPoints g psp slotOfB tipPoints trunk0v branches0v intersections = do
     let (isTrunks, tpIxs) = unzip tipPoints
         pairedVectors = pairVectorsWithChunks trunk0v branches0v isTrunks
@@ -299,7 +300,7 @@ rawPeerScheduleFromTipPoints g psp slotOfB tipPoints trunk0v branches0v intersec
         pairVectors [] IsBranch       = error "not enough branches"
 
     -- | Replaces block indices with the actual blocks
-    scheduleIndicesToBlocks :: Vector b -> Vector b -> HeaderPointSchedule -> [(DiffTime, b)]
+    scheduleIndicesToBlocks :: Vector b -> Vector b -> HeaderPointSchedule -> [(Time, b)]
     scheduleIndicesToBlocks trunk v hps =
         map (second (trunk Vector.!)) (hpsTrunk hps)
           ++ map (second (v Vector.!)) (hpsBranch hps)

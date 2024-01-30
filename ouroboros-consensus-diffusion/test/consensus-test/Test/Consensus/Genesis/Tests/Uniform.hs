@@ -12,11 +12,11 @@ module Test.Consensus.Genesis.Tests.Uniform (tests) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
+import           Control.Monad.Class.MonadTime.SI (Time, addTime)
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
-import           Data.Time.Clock (DiffTime)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Util.Condense (condense)
@@ -125,7 +125,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
 
     Classifiers {genesisWindowAfterIntersection, longerThanGenesisWindow} = classifiers genesisTest
 
-fromBlockPoint :: (DiffTime, SchedulePoint) -> Maybe (DiffTime, TestBlock)
+fromBlockPoint :: (Time, SchedulePoint) -> Maybe (Time, TestBlock)
 fromBlockPoint (t, ScheduleBlockPoint bp) = Just (t, bp)
 fromBlockPoint _                          = Nothing
 
@@ -196,7 +196,7 @@ prop_leashingAttackStalling =
       advs <- mapM (mapM dropRandomPoints) advs0
       pure $ Peers honest advs
 
-    dropRandomPoints :: [(DiffTime, SchedulePoint)] -> QC.Gen [(DiffTime, SchedulePoint)]
+    dropRandomPoints :: [(Time, SchedulePoint)] -> QC.Gen [(Time, SchedulePoint)]
     dropRandomPoints ps = do
       let lenps = length ps
       dropCount <- QC.choose (0, max 1 $ div lenps 5)
@@ -242,7 +242,7 @@ prop_leashingAttackTimeLimited =
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 
-    estimateTimeBound :: PeerSchedule -> [PeerSchedule] -> DiffTime
+    estimateTimeBound :: PeerSchedule -> [PeerSchedule] -> Time
     estimateTimeBound honest advs =
       let firstTipPointBlock = headCallStack (mapMaybe fromTipPoint honest)
           lastBlockPoint = last (mapMaybe fromBlockPoint honest)
@@ -263,10 +263,9 @@ prop_leashingAttackTimeLimited =
           -- sent.
       in max
           (fst lastBlockPoint)
-          (fst firstTipPointBlock +
-              0.020 * fromIntegral maxBlockNo + 5 * fromIntegral peerCount)
+          (addTime (0.020 * fromIntegral maxBlockNo + 5 * fromIntegral peerCount) (fst firstTipPointBlock))
 
-    blockPointNos :: [(DiffTime, SchedulePoint)] -> [Word64]
+    blockPointNos :: [(Time, SchedulePoint)] -> [Word64]
     blockPointNos =
       map (unBlockNo . blockNo . snd) .
       mapMaybe fromBlockPoint

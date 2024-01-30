@@ -57,6 +57,8 @@ module Test.Consensus.PointSchedule (
   , uniformPoints
   ) where
 
+import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
+                     diffTime)
 import           Control.Monad.ST (ST)
 import           Data.Foldable (toList)
 import           Data.Functor (($>))
@@ -64,7 +66,7 @@ import           Data.List (mapAccumL, partition, scanl', transpose)
 import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromMaybe, listToMaybe)
+import           Data.Maybe (catMaybes)
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
@@ -300,22 +302,24 @@ pointSchedule ticks nePeerIds = PointSchedule (NonEmpty.fromList ticks) nePeerId
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
-peerStates :: Peer PeerSchedule -> [(DiffTime, Peer NodeState)]
+peerStates :: Peer PeerSchedule -> [(Time, Peer NodeState)]
 peerStates Peer {name, value = schedulePoints} =
-  drop 1 (zip (0 : (shiftTime <$> times)) (Peer name . NodeOnline <$> scanl' modPoint genesisAdvertisedPoints points))
+  drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name . NodeOnline <$> scanl' modPoint genesisAdvertisedPoints points))
   where
-    shiftTime t = t - firstTipOffset
+    shiftTime :: Time -> Time
+    shiftTime t = addTime (- firstTipOffset) t
+
+    firstTipOffset :: DiffTime
+    firstTipOffset = case times of [] -> 0; (Time dt : _) -> dt
 
     modPoint z = \case
       ScheduleTipPoint tip -> z {tip = TipPoint (tipFromHeader tip)}
       ScheduleHeaderPoint h -> z {header = HeaderPoint (At (getHeader h))}
       ScheduleBlockPoint b -> z {block = BlockPoint (At b)}
 
-    firstTipOffset = fromMaybe 0 (listToMaybe times)
-
     (times, points) = unzip schedulePoints
 
-type PeerSchedule = [(DiffTime, SchedulePoint)]
+type PeerSchedule = [(Time, SchedulePoint)]
 
 -- | Convert a set of @SinglePeer@ schedules to a 'PointSchedule'.
 --
@@ -327,7 +331,7 @@ fromSchedulePoints peers = do
   where
     peerIds = getPeerIds peers
 
-    durations = snd (mapAccumL (\ prev start -> (start, start - prev)) 0 (drop 1 starts)) ++ [0.1]
+    durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
 
     (starts, states) = unzip $ foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
 
