@@ -118,6 +118,7 @@ instance ( SimpleCrypto c
          ) => LedgerSupportsProtocol (SimplePraosBlock c c') where
   protocolLedgerView   _ _  = ()
   ledgerViewForecastAt _ st = constantForecastOf () (getTipSlot st)
+  computeGenesisWindow _ _ = GenesisWindow 42 -- TODO
 
 {-------------------------------------------------------------------------------
   Forging

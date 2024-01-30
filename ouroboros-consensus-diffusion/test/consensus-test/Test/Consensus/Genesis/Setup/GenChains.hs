@@ -17,6 +17,8 @@ import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector.Unboxed as Vector
 import           Data.Word (Word8)
 import           Ouroboros.Consensus.Block.Abstract hiding (Header)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Consensus.Protocol.Abstract
                      (SecurityParam (SecurityParam))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)

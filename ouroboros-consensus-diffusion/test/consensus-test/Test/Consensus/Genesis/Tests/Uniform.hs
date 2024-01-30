@@ -14,6 +14,8 @@ import           Data.Maybe (mapMaybe)
 import           Data.Time.Clock (DiffTime)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockNo, unBlockNo)

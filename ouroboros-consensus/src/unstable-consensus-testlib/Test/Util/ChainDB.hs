@@ -21,8 +21,6 @@ import           Ouroboros.Consensus.Config
                      configSecurityParam)
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture (..))
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
-import           Ouroboros.Consensus.Genesis.Governor
-                     (updateLoEFragUnconditional)
 import           Ouroboros.Consensus.HardFork.History.EraParams (EraParams,
                      eraEpochSize)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)

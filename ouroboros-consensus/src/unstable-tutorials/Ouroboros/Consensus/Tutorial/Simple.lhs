@@ -58,7 +58,7 @@ First, some imports we'll need:
 >    LedgerResult(LedgerResult, lrEvents, lrResult),
 >    LedgerState, ApplyBlock(..), UpdateLedger)
 > import Ouroboros.Consensus.Ledger.SupportsProtocol
->   (LedgerSupportsProtocol(..))
+>   (GenesisWindow(..), LedgerSupportsProtocol(..))
 > import Ouroboros.Consensus.Forecast (trivialForecast)
 > import Ouroboros.Consensus.HeaderValidation
 >   (ValidateEnvelope, BasicEnvelopeValidation, HasAnnTip)
@@ -669,6 +669,7 @@ the block to index both the ledger and the protocol.
 > instance LedgerSupportsProtocol BlockC where
 >   protocolLedgerView _lcfg  _tl = ()
 >   ledgerViewForecastAt _lccf = trivialForecast
+>   computeGenesisWindow _ _ = GenesisWindow 42 -- TODO
 
 The `protocolLedgerView` function describes how to project the
 consensus-specific `LedgerView` out of `LedgerState` and `LedgerCfg` together -

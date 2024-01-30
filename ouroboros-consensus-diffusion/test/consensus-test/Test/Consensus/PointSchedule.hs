@@ -28,7 +28,6 @@ module Test.Consensus.PointSchedule (
     AdvertisedPoints (..)
   , BlockPoint (..)
   , GenesisTest (..)
-  , GenesisWindow (..)
   , HeaderPoint (..)
   , NodeState (..)
   , PeerSchedule
@@ -64,8 +63,9 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import           Data.Time (DiffTime)
-import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
@@ -460,9 +460,6 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
       pure defaultPeerScheduleParams {pspTipDelayInterval = (tipL, tipU), pspHeaderDelayInterval = (headerL, headerU)}
 
     rollbackProb = 0.2
-
-newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
-  deriving (Show)
 
 -- | All the data used by point schedule tests.
 data GenesisTest = GenesisTest {

@@ -26,6 +26,8 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import           Ouroboros.Consensus.Config.SecurityParam
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 
 {-------------------------------------------------------------------------------
   OVERVIEW
@@ -132,6 +134,7 @@ data EraParams = EraParams {
       eraEpochSize  :: !EpochSize
     , eraSlotLength :: !SlotLength
     , eraSafeZone   :: !SafeZone
+    , eraGenesisWin :: !GenesisWindow
     }
   deriving stock    (Show, Eq, Generic)
   deriving anyclass (NoThunks)
@@ -150,6 +153,7 @@ defaultEraParams (SecurityParam k) slotLength = EraParams {
       eraEpochSize  = EpochSize (k * 10)
     , eraSlotLength = slotLength
     , eraSafeZone   = StandardSafeZone (k * 2)
+    , eraGenesisWin = GenesisWindow (k * 2)
     }
 
 -- | Zone in which it is guaranteed that no hard fork can take place
@@ -228,15 +232,17 @@ decodeSafeBeforeEpoch = do
 
 instance Serialise EraParams where
   encode EraParams{..} = mconcat [
-        encodeListLen 3
+        encodeListLen 4
       , encode (unEpochSize eraEpochSize)
       , encode eraSlotLength
       , encode eraSafeZone
+      , encode (unGenesisWindow eraGenesisWin)
       ]
 
   decode = do
-      enforceSize "EraParams" 3
+      enforceSize "EraParams" 4
       eraEpochSize  <- EpochSize <$> decode
       eraSlotLength <- decode
       eraSafeZone   <- decode
+      eraGenesisWin <- GenesisWindow <$> decode
       return EraParams{..}

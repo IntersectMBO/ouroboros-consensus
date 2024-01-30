@@ -55,6 +55,8 @@ import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientHandle)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
 import           Ouroboros.Consensus.Node.Run
@@ -111,6 +113,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
 
       -- | Read the current candidates
     , getNodeCandidates      :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
+
+    , getChainSyncHandles    :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
 
       -- | Read the current peer sharing registry, used for interacting with
       -- the PeerSharing protocol
@@ -178,6 +182,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
+    varChainSyncHandles <- newTVarIO mempty
+
     return NodeKernel
       { getChainDB             = chainDB
       , getMempool             = mempool
@@ -185,6 +191,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getFetchClientRegistry = fetchClientRegistry
       , getFetchMode           = readFetchMode blockFetchInterface
       , getNodeCandidates      = varCandidates
+      , getChainSyncHandles    = varChainSyncHandles
       , getPeerSharingRegistry = peerSharingRegistry
       , getTracers             = tracers
       , setBlockForging        = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a

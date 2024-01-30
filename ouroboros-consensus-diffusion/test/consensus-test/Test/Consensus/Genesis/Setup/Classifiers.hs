@@ -17,6 +17,8 @@ import           Ouroboros.Consensus.Block (ChainHash (BlockHash), HeaderHash)
 import           Ouroboros.Consensus.Block.Abstract (SlotNo (SlotNo),
                      withOrigin)
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Network.AnchoredFragment (anchor, anchorToSlotNo,
                      headSlot)
 import qualified Ouroboros.Network.AnchoredFragment as AF
