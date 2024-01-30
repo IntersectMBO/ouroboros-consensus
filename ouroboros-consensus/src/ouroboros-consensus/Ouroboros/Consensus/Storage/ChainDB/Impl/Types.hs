@@ -271,9 +271,9 @@ data ChainDbEnv m blk = CDB
     -- The number of blocks from the future is bounded by the number of
     -- upstream peers multiplied by the max clock skew divided by the slot
     -- length.
-  , cdbLoE             :: LoE m blk
+  , cdbLoE             :: LoE (m (AnchoredFragment (Header blk)))
     -- ^ Configure the Limit on Eagerness. If this is 'LoEEnabled', it contains
-    -- a hook that returns the LoE fragment, which indicates the latest rollback
+    -- an action that returns the LoE fragment, which indicates the latest rollback
     -- point, i.e. we are not allowed to select a chain from which we could not
     -- switch back to a chain containing it. The fragment is usually anchored at
     -- a recent immutable tip; if it does not, it will conservatively be treated
@@ -681,7 +681,7 @@ data TraceAddBlockEvent blk =
   | StoreButDontChange (RealPoint blk)
 
     -- | Debugging information about chain selection and LoE
-  | ChainSelectionLoEDebug (AnchoredFragment (Header blk)) (AnchoredFragment (Header blk))
+  | ChainSelectionLoEDebug (AnchoredFragment (Header blk)) (LoE (AnchoredFragment (Header blk)))
 
     -- | The new block fits onto the current chain (first
     -- fragment) and we have successfully used it to extend our (new) current

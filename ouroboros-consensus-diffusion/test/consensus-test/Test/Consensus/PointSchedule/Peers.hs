@@ -14,8 +14,10 @@ module Test.Consensus.PointSchedule.Peers (
     Peer (..)
   , PeerId (..)
   , Peers (..)
+  , enumerateAdversaries
   , fromMap
   , fromMap'
+  , getPeer
   , getPeerIds
   , mkPeers
   , mkPeers'
@@ -26,6 +28,7 @@ module Test.Consensus.PointSchedule.Peers (
   , peersOnlyHonest
   , toMap
   , toMap'
+  , updatePeer
   ) where
 
 import           Data.Hashable (Hashable)
@@ -117,10 +120,28 @@ peersOnlyHonest value =
 getPeerIds :: Peers a -> NonEmpty PeerId
 getPeerIds peers = HonestPeer :| Map.keys (others peers)
 
+getPeer :: PeerId -> Peers a -> Peer a
+getPeer pid peers
+  | HonestPeer <- pid
+  = honest peers
+  | otherwise
+  = others peers Map.! pid
+
+updatePeer :: (a -> a) -> PeerId -> Peers a -> Peers a
+updatePeer f pid Peers {honest, others}
+  | HonestPeer <- pid
+  = Peers {honest = f <$> honest, others}
+  | otherwise
+  = Peers {honest, others = Map.adjust (fmap f) pid others}
+
 -- | Convert 'Peers' to a list of 'Peer'.
 peersList :: Peers a -> NonEmpty (Peer a)
 peersList Peers {honest, others} =
   honest :| Map.elems others
+
+enumerateAdversaries :: [PeerId]
+enumerateAdversaries =
+  (\ n -> PeerId ("adversary " ++ show n)) <$> [1 :: Int ..]
 
 -- | Construct 'Peers' from values, adding adversary names based on the default schema.
 -- A single adversary gets the ID @adversary@, multiple get enumerated as @adversary N@.
@@ -130,8 +151,7 @@ mkPeers h as =
   where
     mkPeer (pid, a) = (pid, Peer pid a)
     advs [a] = [("adversary", a)]
-    advs _   = zip enumAdvs as
-    enumAdvs = (\ n -> PeerId ("adversary " ++ show n)) <$> [1 :: Int ..]
+    advs _   = zip enumerateAdversaries as
 
 -- | Make a 'Peers' structure from the honest value and the other peers. Fail if
 -- one of the other peers is the 'HonestPeer'.

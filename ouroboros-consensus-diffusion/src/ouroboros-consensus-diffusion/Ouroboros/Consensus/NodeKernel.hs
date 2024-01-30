@@ -61,6 +61,8 @@ import           Ouroboros.Consensus.Ledger.SupportsPeerSelection
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientHandle)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
@@ -136,6 +138,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       -- | Read the set of peers that have claimed to have no subsequent
       -- headers beyond their current candidate
     , getNodeIdlers           :: StrictTVar m (Set (ConnectionId addrNTN))
+
+    , getChainSyncHandles    :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
 
       -- | Read the current peer sharing registry, used for interacting with
       -- the PeerSharing protocol
@@ -269,6 +273,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
+    varChainSyncHandles <- newTVarIO mempty
+
     return NodeKernel
       { getChainDB              = chainDB
       , getMempool              = mempool
@@ -277,6 +283,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getFetchMode            = readFetchMode blockFetchInterface
       , getLedgerStateJudgement = readTVar varLedgerJudgement
       , getNodeCandidates       = varCandidates
+      , getChainSyncHandles     = varChainSyncHandles
       , getNodeIdlers           = varIdlers
       , getPeerSharingRegistry  = peerSharingRegistry
       , getTracers              = tracers

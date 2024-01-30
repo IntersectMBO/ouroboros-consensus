@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE NamedFieldPuns     #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE TypeApplications   #-}
 {-# LANGUAGE TypeFamilies       #-}
 
 -- | Helpers for tracing used by the peer simulator.
@@ -12,16 +13,22 @@ module Test.Consensus.PeerSimulator.Trace (
   , TraceScheduledChainSyncServerEvent (..)
   , TraceScheduledServerHandlerEvent (..)
   , TraceSchedulerEvent (..)
+  , mkGDDTracerTestBlock
   , traceLinesWith
   , tracerTestBlock
   ) where
 
-import           Control.Tracer (Tracer (Tracer), traceWith)
+import           Control.Tracer (Tracer (Tracer), contramap, traceWith)
 import           Data.List (intersperse)
+import qualified Data.Map as Map
 import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds)
-import           Ouroboros.Consensus.Block (Header, Point)
+import           Ouroboros.Consensus.Block (GenesisWindow (..), Header, Point,
+                     WithOrigin (NotOrigin, Origin), succWithOrigin)
+import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
+                     TraceGDDEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
+import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceAddBlockEvent (..))
@@ -30,12 +37,13 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), atomically, getMonotonicTime, readTVarIO,
                      uncheckedNewTVarM, writeTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import           Ouroboros.Network.Block (Tip)
+import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Block (SlotNo (SlotNo), Tip, castPoint)
 import           Test.Consensus.PointSchedule (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (Peer), PeerId)
-import           Test.Util.TersePrinting (terseBlock, terseFragment,
-                     terseHFragment, terseHeader, tersePoint, terseRealPoint,
-                     terseTip)
+import           Test.Util.TersePrinting (terseAnchor, terseBlock,
+                     terseFragment, terseHFragment, terseHeader, tersePoint,
+                     terseRealPoint, terseTip)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
@@ -99,6 +107,7 @@ data TraceEvent blk
   | TraceChainSyncClientEvent PeerId (TraceChainSyncClientEvent blk)
   | TraceChainSyncClientTerminationEvent PeerId TraceChainSyncClientTerminationEvent
   | TraceBlockFetchClientTerminationEvent PeerId TraceBlockFetchClientTerminationEvent
+  | TraceGenesisDDEvent (TraceGDDEvent PeerId blk)
 
 -- * 'TestBlock'-specific tracers for the peer simulator
 
@@ -126,6 +135,11 @@ tracerTestBlock tracer0 = do
         traceWith tracer0 $ concat $ intersperse "\n" $ map (prefix ++) $ lines msg
   pure $ Tracer $ traceEventTestBlockWith setTickTime tracer0 tracer
 
+mkGDDTracerTestBlock ::
+  Tracer m (TraceEvent TestBlock) ->
+  Tracer m (TraceGDDEvent PeerId TestBlock)
+mkGDDTracerTestBlock = contramap TraceGenesisDDEvent
+
 traceEventTestBlockWith ::
   (MonadMonotonicTime m) =>
   (Time -> m ()) ->
@@ -144,6 +158,7 @@ traceEventTestBlockWith setTickTime tracer0 tracer = \case
     TraceChainSyncClientEvent peerId traceEvent -> traceChainSyncClientEventTestBlockWith peerId tracer traceEvent
     TraceChainSyncClientTerminationEvent peerId traceEvent -> traceChainSyncClientTerminationEventTestBlockWith peerId tracer traceEvent
     TraceBlockFetchClientTerminationEvent peerId traceEvent -> traceBlockFetchClientTerminationEventTestBlockWith peerId tracer traceEvent
+    TraceGenesisDDEvent gddEvent -> traceWith tracer (terseGDDEvent gddEvent)
 
 traceSchedulerEventTestBlockWith ::
   (MonadMonotonicTime m) =>
@@ -274,9 +289,11 @@ traceChainDBEventTestBlockWith tracer = \case
           trace $ "Did not select block due to LoE: " ++ terseRealPoint point
         IgnoreBlockOlderThanK point ->
           trace $ "Ignored block older than k: " ++ terseRealPoint point
-        ChainSelectionLoEDebug curChain loeFrag0 -> do
+        ChainSelectionLoEDebug curChain (LoEEnabled loeFrag0) -> do
           trace $ "Current chain: " ++ terseHFragment curChain
           trace $ "LoE fragment: " ++ terseHFragment loeFrag0
+        ChainSelectionLoEDebug _ LoEDisabled ->
+          pure ()
         AddedReprocessLoEBlocksToQueue ->
           trace $ "Requested ChainSel run"
         _ -> pure ()
@@ -345,6 +362,53 @@ traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
     trace = traceUnitWith tracer ("BlockFetchClient " ++ condense pid)
 
 -- * Other utilities
+terseGDDEvent :: TraceGDDEvent PeerId TestBlock -> String
+terseGDDEvent = \case
+  TraceGDDEvent {sgen = GenesisWindow sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead} ->
+    unlines $ [
+      "GDD | Window: " ++ window sgen loeHead,
+      "      Selection: " ++ terseHFragment curChain,
+      "      Candidates:"
+      ] ++
+      showPeers (either (const "G") terseHeader . AF.head <$> candidates) ++
+      [
+      "      Candidate suffixes (bounds):"
+      ] ++
+      showPeers (terseHFragment . fragment <$> bounds) ++
+      ["      Density bounds:"] ++
+      showPeers (showBounds <$> bounds) ++
+      ["      New candidate tips:"] ++
+      showPeers (tersePoint . castPoint <$> Map.map AF.headPoint candidateSuffixes) ++
+      [
+        "      Losing peers: " ++ show losingPeers,
+      "      Setting loeFrag: " ++ terseAnchor (AF.castAnchor loeHead)
+      ]
+  where
+    showBounds DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot} =
+      show lowerBound ++ "/" ++ show upperBound ++ "[" ++ more ++ "], " ++
+      lastPoint ++ "latest: " ++ showLatestSlot latestSlot ++ block
+      where
+        more = if offersMoreThanK then "+" else " "
+
+        block = if hasBlockAfter then ", has block" else " "
+
+        lastPoint =
+          "point: " ++
+          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.lastPoint fragment)) ++
+          ", "
+
+        showLatestSlot = \case
+          Origin -> "unknown"
+          NotOrigin (SlotNo slot) -> show slot
+
+    window sgen loeHead =
+      show winStart ++ " -> " ++ show winEnd
+      where
+        winEnd = winStart + sgen - 1
+        SlotNo winStart = succWithOrigin (AF.anchorToSlotNo loeHead)
+
+    showPeers :: Map.Map PeerId String -> [String]
+    showPeers = fmap (\ (peer, v) -> "        " ++ condense peer ++ ": " ++ v) . Map.toList
 
 prettyTime :: Time -> String
 prettyTime (Time time) =
