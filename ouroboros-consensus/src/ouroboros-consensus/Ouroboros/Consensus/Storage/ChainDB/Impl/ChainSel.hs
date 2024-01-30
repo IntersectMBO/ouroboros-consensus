@@ -61,8 +61,7 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..), ChainType (..),
-                     InvalidBlockReason (..), LoELimit (..),
-                     UpdateLoEFrag (updateLoEFrag))
+                     InvalidBlockReason (..), LoE (..), processLoE)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -108,7 +107,7 @@ initialChainSelection
   -> StrictTVar m (WithFingerprint (InvalidBlocks blk))
   -> StrictTVar m (FutureBlocks m blk)
   -> CheckInFuture m blk
-  -> LoELimit
+  -> LoE m blk
   -> m (ChainAndLedger blk)
 initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
                       varFutureBlocks futureCheck loELimit = do
@@ -176,8 +175,8 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
         suffixesAfterI = Paths.maximalCandidates succsOf limit (AF.anchorToPoint i)
           where
             limit = case loELimit of
-              LoEDefault -> k
-              LoEUnlimited -> maxBound
+              LoEEnabled _ -> k
+              LoEDisabled  -> maxBound
 
         constructChain ::
              NonEmpty (HeaderHash blk)
@@ -509,7 +508,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     -- The preconditions
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
 
-    updateLoEFrag cdbUpdateLoEFrag curChain (LgrDB.ledgerDbCurrent ledgerDB) (writeTVar cdbLoEFrag)
+    processLoE curChain (LgrDB.ledgerDbCurrent ledgerDB) (writeTVar cdbLoEFrag) cdbLoE
 
     if
       -- The chain might have grown since we added the block such that the
@@ -559,9 +558,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     -- will first copy the blocks/headers to trim (from the end of the
     -- fragment) from the VolatileDB to the ImmutableDB.
   where
-    loELimit = case cdbLoELimit of
-      LoEDefault   -> k
-      LoEUnlimited -> maxBound
+    loELimit = case cdbLoE of
+      LoEEnabled _ -> k
+      LoEDisabled  -> maxBound
 
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 

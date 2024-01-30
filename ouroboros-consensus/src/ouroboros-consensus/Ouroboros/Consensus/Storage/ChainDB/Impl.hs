@@ -156,7 +156,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                           varInvalid
                           varFutureBlocks
                           (Args.cdbCheckInFuture args)
-                          (Args.cdbLoELimit args)
+                          (Args.cdbLoE args)
       traceWith initChainSelTracer InitalChainSelected
 
       let chain  = VF.validatedFragment chainAndLedger
@@ -201,8 +201,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     , cdbBlocksToAdd     = blocksToAdd
                     , cdbFutureBlocks    = varFutureBlocks
                     , cdbLoEFrag         = varLoEFrag
-                    , cdbLoELimit        = Args.cdbLoELimit args
-                    , cdbUpdateLoEFrag   = Args.cdbUpdateLoEFrag args
+                    , cdbLoE             = Args.cdbLoE args
                     }
       h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
       let chainDB = API.ChainDB

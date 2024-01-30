@@ -21,14 +21,13 @@ import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import           Ouroboros.Consensus.Genesis.Governor (updateLoEFragStall,
-                     updateLoEFragUnconditional)
+import           Ouroboros.Consensus.Genesis.Governor (updateLoEFragStall)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
-                     (ChainDbArgs (cdbTracer), cdbLoELimit, cdbUpdateLoEFrag)
+                     (ChainDbArgs (cdbTracer), cdbLoE)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike,
@@ -317,8 +316,7 @@ mkChainDb schedulerConfig tracer nodeCfg registry updateLoEFrag = do
           }
         ) {
             cdbTracer = mkCdbTracer tracer,
-            cdbLoELimit,
-            cdbUpdateLoEFrag
+            cdbLoE
         }
     (_, (chainDB, ChainDB.Impl.Internal{intAddBlockRunner})) <-
       allocate
@@ -328,6 +326,6 @@ mkChainDb schedulerConfig tracer nodeCfg registry updateLoEFrag = do
     _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
     pure chainDB
   where
-    (cdbLoELimit, cdbUpdateLoEFrag)
-      | scEnableLoE schedulerConfig = (LoEDefault, updateLoEFrag)
-      | otherwise = (LoEUnlimited, updateLoEFragUnconditional)
+    cdbLoE
+      | scEnableLoE schedulerConfig = LoEEnabled updateLoEFrag
+      | otherwise = LoEDisabled

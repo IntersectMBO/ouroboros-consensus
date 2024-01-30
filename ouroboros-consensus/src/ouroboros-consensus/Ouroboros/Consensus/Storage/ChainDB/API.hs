@@ -64,8 +64,9 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
     -- * Exceptions
   , ChainDbError (..)
     -- * Genesis
-  , LoELimit (..)
+  , LoE (..)
   , UpdateLoEFrag (..)
+  , processLoE
   ) where
 
 import           Control.Monad (void)
@@ -872,17 +873,18 @@ instance (Typeable blk, StandardHash blk) => Exception (ChainDbError blk) where
 -- a condition applied via 'UpdateLoEFrag' that disconnects from peers with forks
 -- it considers inferior.
 --
--- This type indicates whether the feature is enabled.
-data LoELimit =
+-- This type indicates whether the feature is enabled, and contains an update
+-- callback if it is.
+data LoE m blk =
+  -- | The LoE is disabled, so ChainSel will not keep the selection from
+  -- advancing.
+  LoEDisabled
+  |
   -- | The LoE is enabled, using the security parameter @k@ as the limit.
   -- When the selection's tip is @k@ blocks after the earliest intersection of
   -- of all candidate fragments, ChainSel will not add new blocks to the
   -- selection.
-  LoEDefault
-  |
-  -- | The LoE is disabled, so ChainSel will not keep the selection from
-  -- advancing.
-  LoEUnlimited
+  LoEEnabled (UpdateLoEFrag m blk)
   deriving stock (Generic)
   deriving anyclass (NoThunks)
 
@@ -903,3 +905,14 @@ data UpdateLoEFrag m blk = UpdateLoEFrag {
   }
   deriving stock (Generic)
   deriving anyclass (NoThunks)
+
+processLoE ::
+     Applicative m
+  => AnchoredFragment (Header blk)
+  -> ExtLedgerState blk
+  -> (AnchoredFragment (Header blk) -> STM m ())
+  -> LoE m blk
+  -> m ()
+processLoE curChain ledger setLoEFrag = \case
+  LoEDisabled -> pure ()
+  LoEEnabled hook -> updateLoEFrag hook curChain ledger setLoEFrag

@@ -81,8 +81,8 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), ChainDbError (..), ChainType,
-                     InvalidBlockReason, LoELimit, StreamFrom, StreamTo,
-                     UnknownRange, UpdateLoEFrag)
+                     InvalidBlockReason, LoE, StreamFrom, StreamTo,
+                     UnknownRange)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB',
@@ -277,10 +277,8 @@ data ChainDbEnv m blk = CDB
     -- containing it. The fragment is usually anchored at a recent immutable
     -- tip; if it does not, it will conservatively be treated as the empty
     -- fragment anchored in the current immutable tip.
-  , cdbLoELimit        :: LoELimit
+  , cdbLoE             :: LoE m blk
     -- ^ See 'Args.cdbLoELimit'.
-  , cdbUpdateLoEFrag   :: UpdateLoEFrag m blk
-    -- ^ See 'Args.cdbUpdateLoEFrag'.
   } deriving (Generic)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
