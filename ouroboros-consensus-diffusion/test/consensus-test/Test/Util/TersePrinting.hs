@@ -4,7 +4,8 @@
 -- similar to that provided by the 'Condense' typeclass except it can be
 -- sometimes even more compact and it is very specific to tests.
 module Test.Util.TersePrinting (
-    terseBlock
+    terseAnchor
+  , terseBlock
   , terseFragment
   , terseHFragment
   , terseHeader
