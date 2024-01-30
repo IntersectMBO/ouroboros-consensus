@@ -8,6 +8,7 @@ module Test.Consensus.PointSchedule.Tests (tests) where
 import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..),
                      withOrigin)
 import           Control.Monad (forM, replicateM)
+import           Control.Monad.Class.MonadTime.SI (Time (Time))
 import           Data.Bifunctor (second)
 import           Data.List (foldl', group, isSuffixOf, partition, sort)
 import qualified Data.List.NonEmpty as NonEmpty
@@ -29,7 +30,6 @@ import qualified Test.Util.QuickCheck as QC
 import           Test.Util.TestBlock (TestBlock, TestHash (unTestHash),
                      firstBlock, modifyFork, successorBlock, tbSlot)
 import           Test.Util.TestEnv
-
 
 tests :: TestTree
 tests =
@@ -55,7 +55,6 @@ prop_zipMany xss =
           map (map snd) ys QC.=== xss
         QC..&&.
           concatMap (map fst) ys QC.=== xs
-
 
 data SingleJumpTipPointsInput = SingleJumpTipPointsInput
   { sjtpMin :: Int
@@ -112,7 +111,7 @@ prop_tipPointSchedule seed (TipPointScheduleInput slotLength msgInterval slots) 
 
 data HeaderPointScheduleInput = HeaderPointScheduleInput
   { hpsMsgInterval :: (DiffTime, DiffTime)
-  , hpsTipPoints   :: [(Maybe Int, [(DiffTime, Int)])]
+  , hpsTipPoints   :: [(Maybe Int, [(Time, Int)])]
   } deriving (Show)
 
 instance QC.Arbitrary HeaderPointScheduleInput where
@@ -121,7 +120,7 @@ instance QC.Arbitrary HeaderPointScheduleInput where
     branchTips <- genTipPoints
     let branchCount = length branchTips
         tpCount = sum $ map length branchTips
-    ts <- scanl1 (+) . sort <$> replicateM tpCount (chooseDiffTime (7, 12))
+    ts <- map Time <$> scanl1 (+) . sort <$> replicateM tpCount (chooseDiffTime (7, 12))
     let tpts = zipMany ts branchTips
     intersectionBlocks <- genIntersections branchCount
     maybes <- QC.infiniteList @(Maybe Int)
@@ -333,7 +332,7 @@ dedupSorted = map headCallStack . group
 headCallStack :: HasCallStack => [a] -> a
 headCallStack xs = if null xs then error "headCallStack: empty list" else head xs
 
-headerPointsFollowTipPoints :: Show a => (a -> a -> Maybe Ordering) -> [(DiffTime, a)] -> [(DiffTime, a)] -> QC.Property
+headerPointsFollowTipPoints :: Show a => (a -> a -> Maybe Ordering) -> [(Time, a)] -> [(Time, a)] -> QC.Property
 headerPointsFollowTipPoints _ [] [] = QC.property True
 headerPointsFollowTipPoints isAncestor ((t0, i0) : ss) ((t1, i1) : ps) =
       QC.counterexample "schedule times follow tip points" (QC.ge t0 t1)
