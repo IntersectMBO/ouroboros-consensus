@@ -569,8 +569,9 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
             (CsClient.defaultChainDbView (getChainDB kernel))
             (getNodeCandidates kernel)
+            (getChainSyncHandles kernel)
             them
-            version $ \varCandidate -> do
+            version $ \varCandidate setTheirTip -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
                 runPipelinedPeerWithLimits
@@ -588,6 +589,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
                         , CsClient.controlMessageSTM
                         , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
                         , CsClient.varCandidate
+                        , CsClient.setTheirTip
                         }
               return (ChainSyncInitiatorResult r, trailing)
 

@@ -482,6 +482,11 @@ instance Bridge m a => LedgerSupportsProtocol (DualBlock m a) where
         (dualLedgerConfigMain cfg)
         (dualLedgerStateMain  state)
 
+  computeGenesisWindow cfg state =
+      computeGenesisWindow
+        (dualLedgerConfigMain cfg)
+        (dualLedgerStateMain state)
+
 instance Bridge m a => HasHardForkHistory (DualBlock m a) where
   type HardForkIndices (DualBlock m a) = HardForkIndices m
 

@@ -6,7 +6,10 @@ import           Cardano.Crypto.DSIGN (SignKeyDSIGN (..), VerKeyDSIGN (..))
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..))
+import           Ouroboros.Consensus.HardFork.History
+                     (EraParams (eraGenesisWin))
 import qualified Ouroboros.Consensus.HardFork.History.EraParams as HardFork
+import           Ouroboros.Consensus.Ledger.SupportsProtocol (GenesisWindow)
 import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes))
 import           Ouroboros.Consensus.NodeId (CoreNodeId (CoreNodeId),
@@ -46,6 +49,6 @@ defaultCfg secParam (ForecastRange sfor) = TopLevelConfig {
     slotLength = slotLengthFromSec 20
 
     eraParams :: HardFork.EraParams
-    eraParams = HardFork.defaultEraParams secParam slotLength
+    eraParams = (HardFork.defaultEraParams secParam slotLength) {eraGenesisWin = eraGenesisWin}
 
     numCoreNodes = NumCoreNodes 2

@@ -592,12 +592,16 @@ instance (PayloadSemantics ptype) => LedgerSupportsProtocol (TestBlockWith ptype
   protocolLedgerView   _ _  = ()
   ledgerViewForecastAt cfg state =
     constantForecastInRange (tblcForecastRange cfg) () (getTipSlot state)
+  computeGenesisWindow cfg _ =
+    HardFork.eraGenesisWin cfg
 
 singleNodeTestConfigWith ::
      CodecConfig (TestBlockWith ptype)
   -> StorageConfig (TestBlockWith ptype)
-  -> SecurityParam -> TopLevelConfig (TestBlockWith ptype)
-singleNodeTestConfigWith codecConfig storageConfig k = TopLevelConfig {
+  -> SecurityParam
+  -> GenesisWindow
+  -> TopLevelConfig (TestBlockWith ptype)
+singleNodeTestConfigWith codecConfig storageConfig k genesisWindow = TopLevelConfig {
       topLevelConfigProtocol = BftConfig {
           bftParams  = BftParams { bftSecurityParam = k
                                  , bftNumNodes      = numCoreNodes
@@ -622,6 +626,9 @@ singleNodeTestConfigWith codecConfig storageConfig k = TopLevelConfig {
       tblcHardForkParams = HardFork.defaultEraParams k slotLength,
       tblcForecastRange = Nothing
     }
+
+    eraParams :: HardFork.EraParams
+    eraParams = (HardFork.defaultEraParams k slotLength) {HardFork.eraGenesisWin = genesisWindow}
 
 
 {-------------------------------------------------------------------------------
@@ -670,7 +677,8 @@ singleNodeTestConfig :: TopLevelConfig TestBlock
 singleNodeTestConfig = singleNodeTestConfigWithK (SecurityParam 4)
 
 singleNodeTestConfigWithK :: SecurityParam -> TopLevelConfig TestBlock
-singleNodeTestConfigWithK = singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig
+singleNodeTestConfigWithK k =
+  singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig k (GenesisWindow (2 * maxRollbacks k))
 
 {-------------------------------------------------------------------------------
   Chain of blocks (without payload)

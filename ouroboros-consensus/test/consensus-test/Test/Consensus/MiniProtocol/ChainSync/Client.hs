@@ -355,6 +355,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     -- separate map too, one that isn't emptied. We can use this map to look
     -- at the final state of each candidate.
     varFinalCandidates <- uncheckedNewTVarM Map.empty
+    varHandles     <- uncheckedNewTVarM Map.empty
 
     (tracer, getTrace) <- do
           (tracer', getTrace) <- recordingTracerTVar
@@ -401,10 +402,11 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
             -- client's and server's clock as the tolerable clock skew.
 
         client :: StrictTVar m (AnchoredFragment (Header TestBlock))
+               -> (Their (Tip TestBlock) -> STM m ())
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client varCandidate =
+        client varCandidate setTheirTip =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -419,6 +421,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , controlMessageSTM   = return Continue
                 , headerMetricsTracer = nullTracer
                 , varCandidate
+                , setTheirTip
                 }
 
     -- Set up the server
@@ -489,13 +492,14 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  chainSyncTracer
                  chainDbView
                  varCandidates
+                 varHandles
                  serverId
-                 maxBound $ \varCandidate -> do
+                 maxBound $ \varCandidate setTheirTip -> do
                    atomically $ modifyTVar varFinalCandidates $
                      Map.insert serverId varCandidate
                    result <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
-                       chainSyncClientPeerPipelined $ client varCandidate
+                       chainSyncClientPeerPipelined $ client varCandidate setTheirTip
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
                    return ()
               `catchAlsoLinked` \ex -> do

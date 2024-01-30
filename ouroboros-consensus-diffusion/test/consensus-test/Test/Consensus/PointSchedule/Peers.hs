@@ -14,6 +14,7 @@ module Test.Consensus.PointSchedule.Peers (
     Peer (..)
   , PeerId (..)
   , Peers (..)
+  , enumerateAdversaries
   , fromMap
   , fromMap'
   , getPeerIds
@@ -122,6 +123,10 @@ peersList :: Peers a -> NonEmpty (Peer a)
 peersList Peers {honest, others} =
   honest :| Map.elems others
 
+enumerateAdversaries :: [PeerId]
+enumerateAdversaries =
+  (\ n -> PeerId ("adversary " ++ show n)) <$> [1 :: Int ..]
+
 -- | Construct 'Peers' from values, adding adversary names based on the default schema.
 -- A single adversary gets the ID @adversary@, multiple get enumerated as @adversary N@.
 mkPeers :: a -> [a] -> Peers a
@@ -130,8 +135,7 @@ mkPeers h as =
   where
     mkPeer (pid, a) = (pid, Peer pid a)
     advs [a] = [("adversary", a)]
-    advs _   = zip enumAdvs as
-    enumAdvs = (\ n -> PeerId ("adversary " ++ show n)) <$> [1 :: Int ..]
+    advs _   = zip enumerateAdversaries as
 
 -- | Make a 'Peers' structure from the honest value and the other peers. Fail if
 -- one of the other peers is the 'HonestPeer'.

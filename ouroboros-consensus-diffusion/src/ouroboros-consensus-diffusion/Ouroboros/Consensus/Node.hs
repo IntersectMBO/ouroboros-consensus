@@ -73,8 +73,6 @@ import           Ouroboros.Consensus.Config.SupportsNode
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
-import           Ouroboros.Consensus.Genesis.Governor
-                     (updateLoEFragUnconditional)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
@@ -312,6 +310,7 @@ runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      , Hashable addrNTN -- the constraint comes from `initNodeKernel`
      , NetworkIO m
      , NetworkAddr addrNTN
+     , Show addrNTN
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)

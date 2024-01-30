@@ -24,7 +24,6 @@ module Test.Consensus.PointSchedule (
   , BlockPoint (..)
   , ForecastRange (..)
   , GenesisTest (..)
-  , GenesisWindow (..)
   , HeaderPoint (..)
   , NodeState (..)
   , PeerSchedule
@@ -52,9 +51,10 @@ import           Data.Foldable (toList)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
 import           Data.Time (DiffTime)
-import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
 import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
 import           Ouroboros.Consensus.Util.Condense (Condense (..),

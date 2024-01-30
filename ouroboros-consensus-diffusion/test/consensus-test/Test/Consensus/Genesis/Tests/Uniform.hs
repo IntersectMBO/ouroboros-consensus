@@ -14,6 +14,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockNo, unBlockNo)

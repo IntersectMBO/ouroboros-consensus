@@ -26,6 +26,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientHandle)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
                      StrictTVar, readTVar, uncheckedNewTVarM, writeTVar)
@@ -114,7 +116,10 @@ data PeerSimulatorResources m =
     psrPeers      :: Map PeerId (PeerResources m),
 
     -- | The shared candidate fragments used by ChainDB, ChainSync and BlockFetch.
-    psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m TestFragH))
+    psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m TestFragH)),
+
+    -- | The kill action and tip accessor that the Genesis governor uses to interact with ChainSync.
+    psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock))
   }
 
 -- | Create 'ChainSyncServerHandlers' for our default implementation using 'AdvertisedPoints'.
@@ -234,4 +239,5 @@ makePeerSimulatorResources tracer blockTree peers = do
     peerResources <- makePeerResources tracer blockTree peerId
     pure (peerId, peerResources)
   psrCandidates <- uncheckedNewTVarM mempty
-  pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources}
+  psrHandles <- uncheckedNewTVarM mempty
+  pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources, psrHandles}

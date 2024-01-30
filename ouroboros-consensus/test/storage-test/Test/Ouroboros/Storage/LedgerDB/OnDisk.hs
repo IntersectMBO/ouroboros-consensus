@@ -64,6 +64,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (GenesisWindow))
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
@@ -254,7 +256,7 @@ genBlockFromLedgerState = pure . genBlock . lastAppliedPoint . ledgerState
 extLedgerDbConfig :: SecurityParam -> LedgerDbCfg (ExtLedgerState TestBlock)
 extLedgerDbConfig secParam = LedgerDbCfg {
       ledgerDbCfgSecParam = secParam
-    , ledgerDbCfg         = ExtLedgerCfg $ singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig secParam
+    , ledgerDbCfg         = ExtLedgerCfg $ singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig secParam (GenesisWindow (2 * maxRollbacks secParam))
     }
 
 

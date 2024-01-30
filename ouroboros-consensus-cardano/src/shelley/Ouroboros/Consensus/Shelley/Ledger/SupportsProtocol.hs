@@ -33,7 +33,7 @@ import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History.Util
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-                     (LedgerSupportsProtocol (..))
+                     (GenesisWindow (..), LedgerSupportsProtocol (..))
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
@@ -85,6 +85,10 @@ instance
       maxFor :: SlotNo
       maxFor = addSlots swindow $ succWithOrigin at
 
+  computeGenesisWindow cfg _ = GenesisWindow (SL.stabilityWindow globals)
+    where
+      globals = shelleyLedgerGlobals cfg
+
 instance
   ( ShelleyCompatible (Praos crypto) era,
     ShelleyCompatible (TPraos crypto) era,
@@ -124,3 +128,7 @@ instance
             shelleyLedgerTransition = shelleyLedgerTransition st
           }
       coerceTip (ShelleyTip slot block hash) = ShelleyTip slot block (coerce hash)
+
+  computeGenesisWindow cfg _ = GenesisWindow (SL.stabilityWindow globals)
+    where
+      globals = shelleyLedgerGlobals cfg
