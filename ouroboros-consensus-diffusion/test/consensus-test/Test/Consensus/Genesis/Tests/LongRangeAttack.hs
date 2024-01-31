@@ -31,7 +31,7 @@ tests =
 
 prop_longRangeAttack :: Property
 prop_longRangeAttack =
-  forAllGenesisTest'
+  forAllGenesisTest
 
     (do gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
         ps <- stToGen (longRangeAttack gtBlockTree)

@@ -128,7 +128,7 @@ fromBlockPoint _                          = Nothing
 -- adversarial peers serving adversarial branches.
 prop_serveAdversarialBranches :: Property
 prop_serveAdversarialBranches =
-  expectFailure $ forAllGenesisTest'
+  expectFailure $ forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
@@ -170,7 +170,7 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 -- yet.
 prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
-  expectFailure $ forAllGenesisTest'
+  expectFailure $ forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
@@ -215,7 +215,7 @@ prop_leashingAttackStalling =
 -- See Note [Leashing attacks]
 prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
-  expectFailure $ forAllGenesisTest'
+  expectFailure $ forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
 
@@ -278,7 +278,7 @@ headCallStack xs = if null xs then error "headCallStack: empty list" else head x
 -- This is pretty slow since it relies on timeouts to terminate the test.
 prop_loeStalling :: Property
 prop_loeStalling =
-  forAllGenesisTest'
+  forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
