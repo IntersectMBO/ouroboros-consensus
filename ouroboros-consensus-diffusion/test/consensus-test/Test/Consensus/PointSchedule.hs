@@ -77,8 +77,8 @@ import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      prettyBlockTree)
-import           Test.Consensus.PointSchedule.Peers (Peer (..),
-                     Peers (..), mkPeers, peersList)
+import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
+                     mkPeers, peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
