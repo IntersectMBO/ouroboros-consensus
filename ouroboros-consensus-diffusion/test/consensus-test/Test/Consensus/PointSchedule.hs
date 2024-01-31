@@ -54,6 +54,7 @@ module Test.Consensus.PointSchedule (
   , pointScheduleBlocks
   , pointSchedulePeers
   , prettyGenesisTest
+  , prettyPeersSchedule
   , prettyPointSchedule
   , stToGen
   , tipPointBlock
@@ -71,6 +72,7 @@ import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import           Data.Time (DiffTime)
+import           Data.Traversable (for)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
@@ -246,6 +248,11 @@ instance Condense PointSchedule where
 prettyPointSchedule :: PointSchedule -> [String]
 prettyPointSchedule PointSchedule{ticks} =
   "PointSchedule:" : (("  " ++) <$> (condense <$> toList ticks))
+
+prettyPeersSchedule :: Peers PeerSchedule -> [String]
+prettyPeersSchedule peers =
+  for (zip [(0 :: Integer)..] (peersStates peers)) $ \(number, (time, peerState)) ->
+  show number ++ ": " ++ condense peerState ++ " @" ++ show time
 
 -- | Parameters that are significant for components outside of generators, like the peer
 -- simulator.
