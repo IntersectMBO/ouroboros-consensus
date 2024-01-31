@@ -113,26 +113,34 @@ data NoSuchHonestChainSchema =
 -- rollbacks.
 --
 -- The minimum length is calculated to allow k+1 active slots in every schema,
--- and then allowing the intersection to be the genesis block.
+-- and then allowing the intersection to be the genesis block. When the schemas
+-- are longer than the minimum, chosing a later intersection is possible.
 --
--- To ensure the honest schema has at least k+1 active slots, we need a length
--- of 2s - (k - 1). We know that because 2s slots have at a minimum 2k blocks
--- because of the chain growth assumption. But that is ensuring k-1 more blocks
--- than we actually need. Thus it's safe to remove the k-1 slots.
+-- We divide the length of the schemas in the following three segments:
+--
+-- 2s - (k - 1) | d | k
+--
+-- To ensure the honest schema has at least k+1 active slots, we need at least
+-- the length of the first segment: 2s - (k - 1). We know that because 2s slots
+-- have at a minimum 2k blocks by the chain growth assumption. But that would be
+-- ensuring k-1 more blocks than we want. Thus we subtract the redundant k-1
+-- slots.
 --
 -- To ensure the alternative schema can have k+1 active slots, we reserve
--- k unstable slots at the end of the schema, and we make sure to activate one
--- slot a stability window earlier.
+-- k unstable slots at the end of the schema (this is the last of our segments),
+-- and we make sure to activate one more earlier slot.
 --
--- To reserve k unstable slots, there needs to be a gap of d slots between
--- the first unstable slot and the k+1st active slot in the honest schema. Thus
--- we need to extend the previous length by d+k, to obtain
--- 2s - (k - 1) + d + k = 2s + d + 1.
+-- To reserve k unstable slots, we need to meet two conditions. One condition is
+-- that there needs to be a gap of d slots between the first unstable slot and
+-- the k+1st active slot in the honest schema. This is the middle segment in the
+-- schema. Therefore, to obtain the total length, we need to extend the length
+-- of the first segment by d+k, to obtain 2s - (k - 1) + d + k = 2s + d + 1.
 --
--- To ensure we can activate a slot at least a stability window earlier, we
--- chose k greater or equal to two, which we already needed to ensure that the
--- alternative schema can have at least one active slot, yet lose density and
--- race comparisons.
+-- The second condition for unstable slots requires that the first alternative
+-- active slot after the intersection is s slots before the first unstable slot.
+-- To ensure that we can activate a slot at this point or earlier, we chose k>1,
+-- which we already needed to ensure that the alternative schema can have at
+-- least one active slot, yet lose density and race comparisons.
 
 genHonestRecipe :: QC.Gen HonestRecipe
 genHonestRecipe = sized1 $ \sz -> do
