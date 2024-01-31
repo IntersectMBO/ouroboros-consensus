@@ -14,6 +14,7 @@ module Test.Consensus.PeerSimulator.Run (
 
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import           Control.Monad.Class.MonadTime (MonadTime)
+import           Control.Monad.Class.MonadTime.SI (DiffTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Foldable (for_)
@@ -53,10 +54,10 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
-                     PointSchedule (PointSchedule), PointScheduleConfig,
-                     TestFragH, Tick (Tick), pointSchedulePeers,
-                     prettyPointSchedule)
-import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId)
+                     NodeState, PeerSchedule, PointScheduleConfig, TestFragH,
+                     peersStatesRelative, prettyPeersSchedule)
+import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId, Peers,
+                     getPeerIds)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
@@ -201,9 +202,9 @@ dispatchTick ::
   Tracer m String ->
   Tracer m () ->
   Map PeerId (PeerResources m) ->
-  Tick ->
+  (Int, (DiffTime, Peer NodeState)) ->
   m ()
-dispatchTick tracer stateTracer peers Tick {active = Peer pid state, duration, number} =
+dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
       time <- prettyTime
@@ -232,13 +233,13 @@ runScheduler ::
   IOLike m =>
   Tracer m String ->
   Tracer m () ->
-  PointSchedule ->
+  Peers PeerSchedule ->
   Map PeerId (PeerResources m) ->
   m ()
-runScheduler tracer stateTracer ps@PointSchedule{ticks} peers = do
-  traceLinesWith tracer (prettyPointSchedule ps)
+runScheduler tracer stateTracer ps peers = do
+  traceLinesWith tracer ("Point schedule:" : map ("  " ++) (prettyPeersSchedule ps))
   traceStartOfTime
-  for_ ticks (dispatchTick tracer stateTracer peers)
+  mapM_ (dispatchTick tracer stateTracer peers) (zip [0..] (peersStatesRelative ps))
   traceEndOfTime
   where
     traceStartOfTime =
@@ -256,13 +257,13 @@ runPointSchedule ::
   forall m.
   (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
-  GenesisTest PointSchedule ->
+  GenesisTest (Peers PeerSchedule) ->
   Tracer m String ->
   m StateView
 runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtBlockTree, gtSchedule} tracer0 =
   withRegistry $ \registry -> do
     stateViewTracers <- defaultStateViewTracers
-    resources <- makePeerSimulatorResources tracer gtBlockTree (pointSchedulePeers gtSchedule)
+    resources <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
         updateLoEFrag = updateLoEFragStall k getCandidates
     chainDb <- mkChainDb schedulerConfig tracer config registry updateLoEFrag

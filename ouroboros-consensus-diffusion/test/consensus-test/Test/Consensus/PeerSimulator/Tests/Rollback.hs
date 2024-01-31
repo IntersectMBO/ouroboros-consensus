@@ -2,18 +2,23 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 
 module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
 
+import           Control.Monad.Class.MonadTime.SI (Time (Time))
 import           Ouroboros.Consensus.Block (ChainHash (..), Header)
 import           Ouroboros.Consensus.Config.SecurityParam
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
+                     toOldestFirst)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
+import           Test.Consensus.PointSchedule.Peers (Peers, peersOnlyHonest)
+import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -72,18 +77,21 @@ prop_cannotRollback =
 -- chain of the given block tree.
 --
 -- PRECONDITION: Block tree with at least one alternative chain.
-rollbackSchedule :: Int -> BlockTree TestBlock -> PointSchedule
+rollbackSchedule :: Int -> BlockTree TestBlock -> Peers PeerSchedule
 rollbackSchedule n blockTree =
-  let branch = firstBranch blockTree
-      trunkSuffix = AF.takeOldest n (btbTrunkSuffix branch)
-      states = concat
-        [ banalStates (btbPrefix branch)
-        , banalStates trunkSuffix
-        , banalStates (btbSuffix branch)
-        ]
-      peers = peersOnlyHonest states
-      pointSchedule = balanced defaultPointScheduleConfig peers
-   in pointSchedule
+    let branch = firstBranch blockTree
+        trunkSuffix = AF.takeOldest n (btbTrunkSuffix branch)
+        schedulePoints = concat
+          [ banalSchedulePoints (btbPrefix branch)
+          , banalSchedulePoints trunkSuffix
+          , banalSchedulePoints (btbSuffix branch)
+          ]
+    in peersOnlyHonest $ zip (map (Time . (/30)) [0..]) schedulePoints
+  where
+    banalSchedulePoints :: AnchoredFragment TestBlock -> [SchedulePoint]
+    banalSchedulePoints = concatMap banalSchedulePoints' . toOldestFirst
+    banalSchedulePoints' :: TestBlock -> [SchedulePoint]
+    banalSchedulePoints' block = [ScheduleTipPoint block, ScheduleHeaderPoint block, ScheduleBlockPoint block]
 
 -- | Whether the alternative chain has more than 'k' blocks after the
 -- intersection with the honest chain.
