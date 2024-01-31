@@ -67,6 +67,7 @@ import           Control.Tracer (Tracer, contramap, traceWith)
 import           Data.ByteString.Lazy (ByteString)
 import           Data.Functor.Contravariant (Predicate (..))
 import           Data.Hashable (Hashable)
+import           Data.List.NonEmpty (NonEmpty(..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, isNothing)
@@ -100,7 +101,6 @@ import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.StartupWarning
 import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.NodeKernel
-import           Ouroboros.Consensus.Protocol.Abstract (protocolSecurityParamConsistencyCheck)
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
@@ -423,6 +423,12 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 -- ChainDB to detect and recover from any disk corruption.
               = ChainDB.ensureValidateAll
 
+        case checkSecurityParamConsistency cfg of
+          _ :| [] -> pure ()
+          ks@(_ :| _) ->
+              traceWith (consensusSanityCheckTracer rnTraceConsensus) $
+              InconsistentSecurityParam ks
+
         (chainDB, finalArgs) <- openChainDB
                      registry
                      inFuture
@@ -433,11 +439,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                      (  maybeValidateAll
                       . llrnCustomiseChainDbArgs
                      )
-
-        case protocolSecurityParamConsistencyCheck (topLevelConfigProtocol cfg) of
-          Nothing -> pure ()
-          Just ks -> traceWith (consensusSanityCheckTracer rnTraceConsensus) $
-            InconsistentSecurityParam ks
 
         continueWithCleanChainDB chainDB $ do
           btime <-

@@ -21,7 +21,6 @@ module Ouroboros.Consensus.Protocol.Abstract (
   , SecurityParam (..)
   ) where
 
-import           Data.List.NonEmpty
 import           Control.Monad.Except
 import           Data.Kind (Type)
 import           Data.Proxy (Proxy)
@@ -179,9 +178,6 @@ class ( Show (ChainDepState   p)
 
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
-
-  protocolSecurityParamConsistencyCheck :: ConsensusConfig p
-                                        -> Maybe (NonEmpty SecurityParam)
 
 -- | Translate across protocols
 class TranslateProto protoFrom protoTo where

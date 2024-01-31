@@ -162,8 +162,8 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
          return newPParamsEpochNo
 
 instance
-  ( ShelleyCompatible proto era,
-    LedgerSupportsProtocol (ShelleyBlock proto era)
+  ( ShelleyCompatible proto era
+  , LedgerSupportsProtocol (ShelleyBlock proto era)
   ) => SingleEraBlock (ShelleyBlock proto era) where
   singleEraTransition pcfg _eraParams _eraStart ledgerState =
       -- TODO: We might be evaluating 'singleEraTransition' more than once when
@@ -193,16 +193,12 @@ instance PraosCrypto c => HasPartialConsensusConfig (Praos c) where
 
   toPartialConsensusConfig _ = praosParams
 
-  partialConsensusConfigSecurityParam _ = praosSecurityParam
-
 instance SL.PraosCrypto c => HasPartialConsensusConfig (TPraos c) where
   type PartialConsensusConfig (TPraos c) = TPraosParams
 
   completeConsensusConfig _ tpraosEpochInfo tpraosParams = TPraosConfig {..}
 
   toPartialConsensusConfig _ = tpraosParams
-
-  partialConsensusConfigSecurityParam _ = tpraosSecurityParam
 
 data ShelleyPartialLedgerConfig era = ShelleyPartialLedgerConfig {
       -- | We cache the non-partial ledger config containing a dummy

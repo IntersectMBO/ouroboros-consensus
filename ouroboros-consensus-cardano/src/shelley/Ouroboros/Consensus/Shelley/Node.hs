@@ -32,6 +32,7 @@ import qualified Cardano.Ledger.Shelley.API as SL
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -104,6 +105,12 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
                          (SL.VKey 'SL.BlockIssuer (EraCrypto era))
       issuerVKeys = shelleyBlockIssuerVKeys cfg
 
+instance ProtocolConfigHasSecurityParam proto
+  => BlockSupportsSanityCheck (ShelleyBlock proto era) where
+  checkSecurityParamConsistency = pure . protocolConfigSecurityParam . topLevelConfigProtocol
 
-instance (ShelleyCompatible proto era, LedgerSupportsProtocol (ShelleyBlock proto era))
-  => RunNode (ShelleyBlock proto era)
+instance
+  ( ShelleyCompatible proto era
+  , LedgerSupportsProtocol (ShelleyBlock proto era)
+  , BlockSupportsSanityCheck (ShelleyBlock proto era)
+  ) => RunNode (ShelleyBlock proto era)

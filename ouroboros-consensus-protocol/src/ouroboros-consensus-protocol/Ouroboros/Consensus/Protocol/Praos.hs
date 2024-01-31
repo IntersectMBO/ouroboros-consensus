@@ -76,7 +76,7 @@ import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import           Numeric.Natural (Natural)
-import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
+import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin), ProtocolConfigHasSecurityParam(..))
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
@@ -241,6 +241,9 @@ data instance ConsensusConfig (Praos c) = PraosConfig
 
 instance PraosCrypto c => NoThunks (ConsensusConfig (Praos c))
 
+instance ProtocolConfigHasSecurityParam (Praos c) where
+  protocolConfigSecurityParam = praosSecurityParam . praosParams
+
 type PraosValidateView c = Views.HeaderView c
 
 {-------------------------------------------------------------------------------
@@ -377,7 +380,6 @@ instance PraosCrypto c => ConsensusProtocol (Praos c) where
   type ValidateView (Praos c) = PraosValidateView c
 
   protocolSecurityParam = praosSecurityParam . praosParams
-  protocolSecurityParamConsistencyCheck _ = Nothing
 
   checkIsLeader
     cfg
