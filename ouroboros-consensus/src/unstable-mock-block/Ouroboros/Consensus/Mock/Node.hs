@@ -20,12 +20,16 @@ import           Codec.Serialise (Serialise)
 import qualified Data.Map.Strict as Map
 import           Data.Void (Void)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Block.SupportsSanityCheck
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.SupportsMempool (txForgetValidated)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mock.Ledger
+import           Ouroboros.Consensus.Mock.Ledger.Block.BFT
+import           Ouroboros.Consensus.Mock.Ledger.Block.PBFT
 import           Ouroboros.Consensus.Mock.Node.Abstract
 import           Ouroboros.Consensus.Mock.Node.Serialisation ()
+import           Ouroboros.Consensus.Mock.Protocol.Praos
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
@@ -55,7 +59,13 @@ instance NodeInitStorage (SimpleBlock SimpleMockCrypto ext) where
 instance BlockSupportsMetrics (SimpleBlock c ext) where
   isSelfIssued = isSelfIssuedConstUnknown
 
+instance ProtocolConfigHasSecurityParam (BlockProtocol (SimpleBlock c ext))
+  => BlockSupportsSanityCheck (SimpleBlock c ext) where
+  checkSecurityParamConsistency =
+    pure . protocolConfigSecurityParam . topLevelConfigProtocol
+
 instance ( LedgerSupportsProtocol      (SimpleBlock SimpleMockCrypto ext)
+         , ProtocolConfigHasSecurityParam (BlockProtocol (SimpleBlock SimpleMockCrypto ext))
          , Show (CannotForge           (SimpleBlock SimpleMockCrypto ext))
          , Show (ForgeStateInfo        (SimpleBlock SimpleMockCrypto ext))
          , Show (ForgeStateUpdateError (SimpleBlock SimpleMockCrypto ext))

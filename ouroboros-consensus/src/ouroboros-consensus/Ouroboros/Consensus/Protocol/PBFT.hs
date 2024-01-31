@@ -293,7 +293,6 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
   type CanBeLeader   (PBft c) = PBftCanBeLeader c
 
   protocolSecurityParam = pbftSecurityParam . pbftParams
-  protocolSecurityParamConsistencyCheck _ = Nothing
 
   checkIsLeader PBftConfig{pbftParams}
                 PBftCanBeLeader{..}
@@ -371,6 +370,9 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
                 Right () -> state'
     where
       params = pbftWindowParams cfg
+
+instance ProtocolConfigHasSecurityParam (PBft c) where
+  protocolConfigSecurityParam = pbftSecurityParam . pbftParams
 
 {-------------------------------------------------------------------------------
   Internal: thin wrapper on top of 'PBftState'

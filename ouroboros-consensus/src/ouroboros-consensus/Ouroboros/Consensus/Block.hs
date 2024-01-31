@@ -8,3 +8,4 @@ import           Ouroboros.Consensus.Block.NestedContent as X
 import           Ouroboros.Consensus.Block.RealPoint as X
 import           Ouroboros.Consensus.Block.SupportsMetrics as X
 import           Ouroboros.Consensus.Block.SupportsProtocol as X
+import           Ouroboros.Consensus.Block.SupportsSanityCheck as X

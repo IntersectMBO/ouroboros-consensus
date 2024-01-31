@@ -250,4 +250,7 @@ instance NodeInitStorage DualByronBlock where
 instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
+instance BlockSupportsSanityCheck DualByronBlock where
+  checkSecurityParamConsistency = pure . protocolConfigSecurityParam . topLevelConfigProtocol
+
 instance RunNode DualByronBlock
