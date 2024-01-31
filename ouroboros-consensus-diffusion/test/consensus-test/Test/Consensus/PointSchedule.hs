@@ -32,18 +32,15 @@ module Test.Consensus.PointSchedule (
   , HeaderPoint (..)
   , NodeState (..)
   , PeerSchedule
-  , PointSchedule (..)
   , PointScheduleConfig (..)
   , TestFrag
   , TestFragH
   , Tick (..)
   , TipPoint (..)
-  , balanced
   , banalStates
   , blockPointBlock
   , defaultPointScheduleConfig
   , enrichedWith
-  , fromSchedulePoints
   , genesisAdvertisedPoints
   , headerPointBlock
   , longRangeAttack
@@ -51,11 +48,8 @@ module Test.Consensus.PointSchedule (
   , peerStates
   , peersStates
   , peersStatesRelative
-  , pointScheduleBlocks
-  , pointSchedulePeers
   , prettyGenesisTest
   , prettyPeersSchedule
-  , prettyPointSchedule
   , stToGen
   , tipPointBlock
   , uniformPoints
@@ -66,11 +60,7 @@ import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
 import           Control.Monad.ST (ST)
 import           Data.Foldable (toList)
 import           Data.Functor (($>))
-import           Data.List (mapAccumL, partition, scanl', transpose)
-import           Data.List.NonEmpty (NonEmpty)
-import qualified Data.List.NonEmpty as NonEmpty
-import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
+import           Data.List (mapAccumL, partition, scanl')
 import           Data.Time (DiffTime)
 import           Data.Traversable (for)
 import           Data.Word (Word64)
@@ -87,8 +77,8 @@ import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      prettyBlockTree)
-import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..),
-                     Peers (..), getPeerIds, mkPeers, peersList)
+import           Test.Consensus.PointSchedule.Peers (Peer (..),
+                     Peers (..), mkPeers, peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
@@ -220,35 +210,6 @@ instance Condense Tick where
     where
       showDT t = printf "%.6f" (realToFrac t :: Double)
 
-tickDefault :: PointScheduleConfig -> Word -> Peer NodeState -> Tick
-tickDefault PointScheduleConfig {pscTickDuration} number active =
-  Tick {active, duration = pscTickDuration, number}
-
-tickDefaults :: PointScheduleConfig -> [Peer NodeState] -> [Tick]
-tickDefaults psc states =
-  uncurry (tickDefault psc) <$> zip [0 ..] states
-
--- | A point schedule is a series of states for a set of peers.
---
--- Each state defines which parts of the peer's chain are supposed to be served in the
--- given tick.
--- Each tick gives agency to only a single peer, which should process messages regularly
--- until the given state is reached, while the other peers block.
-data PointSchedule =
-  PointSchedule
-    { ticks   :: NonEmpty Tick
-    , peerIds :: NonEmpty PeerId -- ^ The peer ids that are involved in this point schedule.
-                                 -- Ticks can only refer to these peers.
-    }
-  deriving (Eq, Show)
-
-instance Condense PointSchedule where
-  condense (PointSchedule ticks _) = unlines (condense <$> toList ticks)
-
-prettyPointSchedule :: PointSchedule -> [String]
-prettyPointSchedule PointSchedule{ticks} =
-  "PointSchedule:" : (("  " ++) <$> (condense <$> toList ticks))
-
 prettyPeersSchedule :: Peers PeerSchedule -> [String]
 prettyPeersSchedule peers =
   for (zip [(0 :: Integer)..] (peersStates peers)) $ \(number, (time, peerState)) ->
@@ -268,35 +229,8 @@ defaultPointScheduleConfig =
   PointScheduleConfig {pscTickDuration = 0.1}
 
 ----------------------------------------------------------------------------------------------------
--- Accessors
-----------------------------------------------------------------------------------------------------
-
--- | Get the names of the peers involved in this point schedule.
--- This is the main motivation for requiring the point schedule to be
--- nonempty, so we don't have to carry around another value for the
--- 'PeerId's.
-pointSchedulePeers :: PointSchedule -> NonEmpty PeerId
-pointSchedulePeers = peerIds
-
--- | List of all blocks appearing in the schedule as tip point, header point or
--- block point.
-pointScheduleBlocks :: PointSchedule -> [TestBlock]
-pointScheduleBlocks PointSchedule{ticks} =
-  catMaybes $ concatMap
-    (\Tick{active=Peer{value}} -> case value of
-         NodeOffline -> []
-         NodeOnline (AdvertisedPoints{tip, header, block}) ->
-           [tipPointBlock tip, headerPointBlock header, blockPointBlock block])
-    ticks
-
-----------------------------------------------------------------------------------------------------
 -- Conversion to 'PointSchedule'
 ----------------------------------------------------------------------------------------------------
-
--- | Create a point schedule from a list of ticks
-pointSchedule :: [Tick] -> NonEmpty PeerId -> PointSchedule
-pointSchedule [] _nePeerIds = error "pointSchedule: no ticks"
-pointSchedule ticks nePeerIds = PointSchedule (NonEmpty.fromList ticks) nePeerIds
 
 -- | Convert a @SinglePeer@ schedule to a 'NodeState' schedule.
 --
@@ -345,17 +279,6 @@ peersStatesRelative peers =
 
 type PeerSchedule = [(Time, SchedulePoint)]
 
--- | Convert a set of @SinglePeer@ schedules to a 'PointSchedule'.
---
--- Call 'peerStates' for each peer, then merge all of them sorted by tick start times, then convert
--- start times to relative tick durations.
-fromSchedulePoints :: Peers PeerSchedule -> PointSchedule
-fromSchedulePoints peers = do
-  pointSchedule (zipWith3 Tick states durations [0 ..]) peerIds
-  where
-    peerIds = getPeerIds peers
-    (durations, states) = unzip $ peersStatesRelative peers
-
 -- | List of all blocks appearing in the schedule.
 peerScheduleBlocks :: PeerSchedule -> [TestBlock]
 peerScheduleBlocks = map (schedulePointToBlock . snd)
@@ -381,24 +304,6 @@ banalStates frag@(_ :> tipBlock) =
             (NodeOnline AdvertisedPoints {tip, header, block = BlockPoint (At block)} : z)
             pre
     tip = TipPoint $ tipFromHeader tipBlock
-
--- | Generate a point schedule from a set of peer schedules by taking one element from each peer in
--- turn.
---
--- Implemented by concatenating the peers' schedules and transposing the result.
---
--- REVIEW: I see the point of this point schedule as an exercice to manipulate
--- them but I otherwise find it rather useless.
-balanced ::
-  PointScheduleConfig ->
-  Peers [NodeState] ->
-  PointSchedule
-balanced config states =
-  pointSchedule (tickDefaults config activeSeq) (getPeerIds states)
-  where
-    -- Sequence containing the first state of all the nodes in order, then the
-    -- second in order, etc.
-    activeSeq = concat $ transpose $ sequenceA (honest states) : (sequenceA <$> Map.elems (others states))
 
 -- | Produce a schedule similar to @Frequencies (Peers 1 [10])@, using the new @SinglePeer@
 -- generator.
