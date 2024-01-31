@@ -95,7 +95,10 @@ instance Read SomeCheckedHonestRecipe where
             <*> Some.readArg
 
 data NoSuchHonestChainSchema =
-    -- | must have @0 <= 'Kcp' <= 'Scg'@
+    -- | must have @2 <= 'Kcp' <= 'Scg'@
+    --
+    -- Chosing @Kcp > 2@ allows adversarial schemas to have at least 1 active
+    -- slot and still lose density comparisons and races.
     BadKcp
   |
     -- | 'Len' must be positive
@@ -144,7 +147,7 @@ checkHonestRecipe :: HonestRecipe -> Exn.Except NoSuchHonestChainSchema SomeChec
 checkHonestRecipe recipe = do
     when (l <= 0) $ Exn.throwError BadLen
 
-    when (k < 0 || s < k) $ Exn.throwError BadKcp
+    when (k < 2 || s < k) $ Exn.throwError BadKcp
 
     C.withTopWindow (C.Lbl @HonestLbl) l $ \base topWindow -> do
         C.SomeWindow Proxy slots <- pure topWindow
