@@ -784,8 +784,6 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 
 -- | Draw a random active slot count for the prefix of a fork.
 --
--- The count will be strictly smaller than the number of active slots in the given 'ChainSchema'.
---
 -- The result is guaranteed to leave more than k active slots after the
 -- intersection in the honest and the adversarial chains.
 -- See Note [Minimum schema length] in "Test.Ouroboros.Consensus.ChainGenerator.Honest"
