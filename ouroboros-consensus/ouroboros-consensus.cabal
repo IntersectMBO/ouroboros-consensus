@@ -77,6 +77,7 @@ library
     Ouroboros.Consensus.Block.SupportsDiffusionPipelining
     Ouroboros.Consensus.Block.SupportsMetrics
     Ouroboros.Consensus.Block.SupportsProtocol
+    Ouroboros.Consensus.Block.SupportsSanityCheck
     Ouroboros.Consensus.BlockchainTime
     Ouroboros.Consensus.BlockchainTime.API
     Ouroboros.Consensus.BlockchainTime.WallClock.Default
@@ -121,6 +122,7 @@ library
     Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining
     Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage
     Ouroboros.Consensus.HardFork.Combinator.Node.Metrics
+    Ouroboros.Consensus.HardFork.Combinator.Node.SanityCheck
     Ouroboros.Consensus.HardFork.Combinator.PartialConfig
     Ouroboros.Consensus.HardFork.Combinator.Protocol
     Ouroboros.Consensus.HardFork.Combinator.Protocol.ChainSel
@@ -357,6 +359,7 @@ library unstable-consensus-testlib
     Test.Util.QuickCheck
     Test.Util.Range
     Test.Util.RefEnv
+    Test.Util.SanityCheck
     Test.Util.SOP
     Test.Util.Schedule
     Test.Util.Serialisation.Examples

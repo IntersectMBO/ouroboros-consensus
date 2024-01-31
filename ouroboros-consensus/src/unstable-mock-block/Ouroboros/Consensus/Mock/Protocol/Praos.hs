@@ -377,6 +377,9 @@ data instance ConsensusConfig (Praos c) = PraosConfig
 
 instance PraosCrypto c => NoThunks (ConsensusConfig (Praos c))
 
+instance ProtocolConfigHasSecurityParam (Praos c) where
+  protocolConfigSecurityParam = praosSecurityParam . praosParams
+
 slotEpoch :: ConsensusConfig (Praos c) -> SlotNo -> EpochNo
 slotEpoch PraosConfig{..} s =
     fixedEpochInfoEpoch (EpochSize praosSlotsPerEpoch) s

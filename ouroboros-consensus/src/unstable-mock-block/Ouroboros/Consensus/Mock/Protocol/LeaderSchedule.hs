@@ -13,6 +13,7 @@ module Ouroboros.Consensus.Mock.Protocol.LeaderSchedule (
 import qualified Data.Map.Strict as Map
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
+import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.LeaderSchedule
@@ -46,8 +47,6 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
   type CanBeLeader   (WithLeaderSchedule p) = ()
 
   protocolSecurityParam = protocolSecurityParam . wlsConfigP
-  protocolSecurityParamConsistencyCheck =
-    protocolSecurityParamConsistencyCheck . wlsConfigP
 
   checkIsLeader WLSConfig{..} () slot _ =
     case Map.lookup slot $ getLeaderSchedule wlsConfigSchedule of
@@ -62,3 +61,6 @@ instance ConsensusProtocol p => ConsensusProtocol (WithLeaderSchedule p) where
 
 instance ConsensusProtocol p
       => NoThunks (ConsensusConfig (WithLeaderSchedule p))
+
+instance ProtocolConfigHasSecurityParam p => ProtocolConfigHasSecurityParam (WithLeaderSchedule p) where
+  protocolConfigSecurityParam = protocolConfigSecurityParam . wlsConfigP

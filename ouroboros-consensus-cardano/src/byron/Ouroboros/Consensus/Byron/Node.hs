@@ -291,6 +291,10 @@ instance NodeInitStorage ByronBlock where
 
 instance BlockSupportsMetrics ByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
+  
+instance BlockSupportsSanityCheck ByronBlock where
+  checkSecurityParamConsistency =
+    pure . pbftSecurityParam . pbftParams . topLevelConfigProtocol
 
 deriving via SelectViewDiffusionPipelining ByronBlock
   instance BlockSupportsDiffusionPipelining ByronBlock

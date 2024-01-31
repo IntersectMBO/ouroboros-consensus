@@ -40,7 +40,5 @@ instance ( ConsensusProtocol p
     updateChainDepState   = updateChainDepState   . mcsConfigP
     reupdateChainDepState = reupdateChainDepState . mcsConfigP
     protocolSecurityParam = protocolSecurityParam . mcsConfigP
-    protocolSecurityParamConsistencyCheck =
-        protocolSecurityParamConsistencyCheck . mcsConfigP
 
 instance ConsensusProtocol p => NoThunks (ConsensusConfig (ModChainSel p s))
