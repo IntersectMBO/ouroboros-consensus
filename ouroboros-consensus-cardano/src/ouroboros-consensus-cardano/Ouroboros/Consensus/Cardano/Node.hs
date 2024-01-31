@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE TypeOperators            #-}
+{-# LANGUAGE UndecidableSuperClasses  #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- Disable completeness checks on GHC versions pre-9.6, where this can be
@@ -969,19 +970,20 @@ protocolInfoCardano paramsCardano
 
         registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
         registerAny =
-             injectIntoTestState transitionConfigShelley
-          :* injectIntoTestState transitionConfigAllegra
-          :* injectIntoTestState transitionConfigMary
-          :* injectIntoTestState transitionConfigAlonzo
-          :* injectIntoTestState transitionConfigBabbage
-          :* injectIntoTestState transitionConfigConway
-          :* Nil
+            hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
+                WrapTransitionConfig transitionConfigShelley
+             :* WrapTransitionConfig transitionConfigAllegra
+             :* WrapTransitionConfig transitionConfigMary
+             :* WrapTransitionConfig transitionConfigAlonzo
+             :* WrapTransitionConfig transitionConfigBabbage
+             :* WrapTransitionConfig transitionConfigConway
+             :* Nil
 
         injectIntoTestState ::
              L.EraTransition era
-          => L.TransitionConfig era
+          => WrapTransitionConfig (ShelleyBlock proto era)
           -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
-        injectIntoTestState cfg = fn $ \st -> st {
+        injectIntoTestState (WrapTransitionConfig cfg) = fn $ \st -> st {
             Shelley.shelleyLedgerState = L.injectIntoTestState cfg (Shelley.shelleyLedgerState st)
           }
 
@@ -1110,3 +1112,16 @@ mkPartialLedgerConfigShelley transitionConfig maxMajorProtVer shelleyTriggerHard
               maxMajorProtVer
         , shelleyTriggerHardFork = shelleyTriggerHardFork
         }
+
+class
+  ( ShelleyBasedEra (ShelleyBlockLedgerEra blk)
+  , blk ~ ShelleyBlock (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
+  ) => IsShelleyBlock blk
+instance ShelleyBasedEra era => IsShelleyBlock (ShelleyBlock proto era)
+
+type family ShelleyBlockLedgerEra blk where
+  ShelleyBlockLedgerEra (ShelleyBlock proto era) = era
+
+-- | We need this wrapper to partially apply a 'TransitionConfig' in an NP.
+newtype WrapTransitionConfig blk =
+    WrapTransitionConfig (L.TransitionConfig (ShelleyBlockLedgerEra blk))
