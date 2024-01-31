@@ -806,7 +806,7 @@ genPrefixBlockCount (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) g schedH
     ChainSchema _winH vH = schedH
 
     -- Ultimately, the intersection must have more than k active slots in each
-    -- of the honest and the adversarial schemas. For the rationale, please
+    -- of the honest and the adversarial schemas. For the larger story, please
     -- see Note [Minimum schema length] in
     -- "Test.Ouroboros.Consensus.ChainGenerator.Honest".
     --

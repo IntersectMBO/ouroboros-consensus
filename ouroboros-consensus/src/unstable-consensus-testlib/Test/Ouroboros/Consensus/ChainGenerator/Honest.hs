@@ -106,6 +106,9 @@ data NoSuchHonestChainSchema =
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 --
 -- We want schemas to have at least k+1 active slots after the intersection.
+-- This would produce sufficiently long chains to test the long range attack and
+-- rollbacks.
+--
 -- The minimum length is calculated to allow k+1 active slots in every schema,
 -- and then allowing the intersection to be the genesis block.
 --
