@@ -792,34 +792,42 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 -- PRECONDITION: @schemaSize schedH >= 2*s + d + 1@
 genPrefixBlockCount :: R.RandomGen g => HonestRecipe -> g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
 genPrefixBlockCount (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) g schedH
-    | C.lengthV v < C.Count (2*s + d + 1) =
+    | C.lengthV vH < C.Count (2*s + d + 1) =
         error "size of schema is smaller than 2*s + d + 1"
-    | numBlocks == C.Count 0 =
-          -- Pick genesis if there are no blocks
-          0
+    | phase1 == C.Count 0 =
+        error $ "there should be at least k active slots in the first s slots of the honest schema: "
+                ++ show (k, s, vH)
     | otherwise =
         -- @uniformIndex n@ yields a value in @[0..n-1]@, we add 1 to the
         -- argument to account for the possibility of intersecting at the
         -- genesis block
-        C.toVar $ R.runSTGen_ g $ C.uniformIndex (possibleBlocks C.+ 1)
+        C.toVar $ R.runSTGen_ g $ C.uniformIndex (phase2 C.+ 1)
   where
-    ChainSchema _slots v = schedH
+    ChainSchema _winH vH = schedH
 
-    -- Slots where intersections can occur
+    -- Ultimately, the intersection must have more than k active slots in each
+    -- of the honest and the adversarial schemas. For the rationale, please
+    -- see Note [Minimum schema length] in
+    -- "Test.Ouroboros.Consensus.ChainGenerator.Honest".
     --
-    -- At first we ensure there are k active slots in the honest chain after the
-    -- intersection and before the last k+d slots of the schema.
+    -- Here we proceed as follows.
     --
-    -- possibleBlocks then corrects to let one additional active slot after the
-    -- intersection
-    validIntersections = C.lengthV v C.- (s + k + d)
+    -- Let phase1 be the amount of honest active slots with at least s+d+k slots
+    -- after them. We know there is going to be at least k active slots in the
+    -- s+k+d suffix of the honest schema.
+    --
+    -- Now let phase2 be the set of honest active slots obtained from phase1
+    -- by removing its yongest slot. Thus we can claim that the honest schema
+    -- should have more than k active slots after the youngest slot of phase2.
+    --
+    -- phase1 is neved empty because the containing prefix has length
+    -- @2*s+d+1 - (s+d+k) = s-(k-1)@ which must always contain at least one
+    -- active slot.
 
-    -- Let one additional active slot after the intersection in the honest
-    -- schema, for a total of k+1.
-    --
-    -- Depending on the values of k and s, it could happen that @numBlocks==0@.
-    -- However, in that case the length of the honest chain (2*s+d+1) ensures there
-    -- are at least @2*k@ active slots after genesis.
-    possibleBlocks = numBlocks C.- 1
-    numBlocks = BV.countActivesInV S.notInverted $
-           C.sliceV (C.UnsafeContains (C.Count 0) validIntersections) v
+    phase1 =
+        BV.countActivesInV S.notInverted
+      $ C.sliceV
+          (C.UnsafeContains (C.Count 0) $ C.lengthV vH C.- (s + d + k))
+          vH
+
+    phase2 = phase1 C.- 1
