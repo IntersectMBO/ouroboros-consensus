@@ -46,7 +46,7 @@ prop_rollback = do
     (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
         pure gt {gtSchedule =  rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree})
 
-    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    noTimeoutsSchedulerConfig
 
     (\_ _ -> [])
 
@@ -62,7 +62,7 @@ prop_cannotRollback =
     (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
         pure gt {gtSchedule = rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree})
 
-    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    noTimeoutsSchedulerConfig
 
     (\_ _ -> [])
 

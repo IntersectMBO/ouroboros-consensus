@@ -32,14 +32,11 @@ module Test.Consensus.PointSchedule (
   , HeaderPoint (..)
   , NodeState (..)
   , PeerSchedule
-  , PointScheduleConfig (..)
   , TestFrag
   , TestFragH
-  , Tick (..)
   , TipPoint (..)
   , banalStates
   , blockPointBlock
-  , defaultPointScheduleConfig
   , enrichedWith
   , genesisAdvertisedPoints
   , headerPointBlock
@@ -93,7 +90,6 @@ import           Test.Util.TersePrinting (terseBlock, terseHeader, terseTip,
                      terseWithOrigin)
 import           Test.Util.TestBlock (Header, TestBlock, Validity (Valid),
                      testHeader, unsafeTestBlockWithPayload)
-import           Text.Printf (printf)
 
 ----------------------------------------------------------------------------------------------------
 -- Data types
@@ -193,40 +189,10 @@ instance Condense NodeState where
     NodeOnline points -> condense points
     NodeOffline -> "*chrrrk* <signal lost>"
 
--- | A tick is an entry in a 'PointSchedule', containing the peer that is
--- going to change state.
-data Tick =
-  Tick {
-    active   :: Peer NodeState,
-    -- | The duration of this tick, for the scheduler to pass to @threadDelay@.
-    duration :: DiffTime,
-    number   :: Word
-  }
-  deriving (Eq, Show)
-
-instance Condense Tick where
-  condense Tick {active, duration, number} =
-    show number ++ ": " ++ condense active ++ " | " ++ showDT duration
-    where
-      showDT t = printf "%.6f" (realToFrac t :: Double)
-
 prettyPeersSchedule :: Peers PeerSchedule -> [String]
 prettyPeersSchedule peers =
   for (zip [(0 :: Integer)..] (peersStates peers)) $ \(number, (time, peerState)) ->
   show number ++ ": " ++ condense peerState ++ " @" ++ show time
-
--- | Parameters that are significant for components outside of generators, like the peer
--- simulator.
-data PointScheduleConfig =
-  PointScheduleConfig {
-    -- | Duration of a tick, for timeouts in the scheduler.
-    pscTickDuration :: DiffTime
-  }
-  deriving (Eq, Show)
-
-defaultPointScheduleConfig :: PointScheduleConfig
-defaultPointScheduleConfig =
-  PointScheduleConfig {pscTickDuration = 0.1}
 
 ----------------------------------------------------------------------------------------------------
 -- Conversion to 'PointSchedule'
