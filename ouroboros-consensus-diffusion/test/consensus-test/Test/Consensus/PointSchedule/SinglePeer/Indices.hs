@@ -314,7 +314,7 @@ headerPointSchedule g msgDelayInterval xs =
           if maybe False (tNext >) mtMax || nextHp > tp then
             pure ((tNext, nextHp), reverse acc)
           else do
-            t <- (flip addTime tNext) <$> uniformRMDiffTime msgDelayInterval g
+            t <- (`addTime` tNext) <$> uniformRMDiffTime msgDelayInterval g
             go t (nextHp+1) ((tNext, nextHp) : acc)
 
 mapAccumM :: Monad m => (s -> x -> m (s, y)) -> s -> [x] -> m (s, [y])
