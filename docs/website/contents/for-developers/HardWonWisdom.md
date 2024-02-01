@@ -8,7 +8,8 @@ Step two will be to occasionally extract cohesive insights from this bag, creati
 
 One of the `HardForkBlock` combinator's major responsibilities is providing an `EpochInfo` to the ledger code.
 This `EpochInfo` uses the `Either` monad to return `Right` only when the query can be answered with certainty.
-For more information on when that is, see the Consensus Report and the recordings of Edsko's presentations at the Weekly IOG Seminar.
+For more information on when that is, see the [Consensus Report](https://ouroboros-consensus.cardano.intersectmbo.org/pdfs/report.pdf) 
+and the recordings of Edsko's presentations at the Weekly IOG Seminar([1](https://drive.google.com/file/d/1m_jKQM_gxBm0ctLqIq9NGj5_nXPI66Su/view),[2](https://drive.google.com/file/d/1QIJ-VBlj-txB6K6E7DIEnY5TzaD89qQm/view)).
 
 However, most of the the ledger code that interacts with the given `EpochInfo` assumes it cannot fail by using `epochInfoPure`.
 

@@ -1,10 +1,14 @@
 # Chain sync client specification
 
+The aim of the chain sync client is to replicate the chain of an upstream node.
+For every upstream node that the local node is connected to there is a separate
+ instance of the client. In the following, we consider a single instance.
+
 Note on terminology:
 
 - By "intersection" between two chains we will always mean the most _recent_
-  intersection (could be genesis).
-- "Their" fragment, "their" chain refers to the chain of the upstream node;
+  _intersection_[^glossary] (could be genesis).
+- "Their" _fragment_[^glossary], "their" chain refers to the chain of the upstream node;
   "our" fragment, "our" chain refers to the chain of the local node.
 
 ## Key invariant
@@ -91,27 +95,32 @@ chain; but in this case, starting afresh is only beneficial.)
 We get notified through the chain sync protocol about updates to their chain:
 
 1. Roll forward. Two possibilities:
-   a. This block does not exist on our fragment (they are either ahead of us on
-      the same chain, or they are on another fork). The intersection point does
-      not change.
-   b. This block _does_ exist on our fragment (they are behind us on the same
-      chain). The intersection points shifts forward one block, but must still
-      exist on both fragments. Moreover, since it moved _forward_, it can't
-      violate the "intersection point within `k`" condition.
+
+    a. This block does not exist on our fragment (they are either ahead of us on
+       the same chain, or they are on another fork). The intersection point does
+       not change.
+
+    b. This block _does_ exist on our fragment (they are behind us on the same
+       chain). The intersection points shifts forward one block, but must still
+       exist on both fragments. Moreover, since it moved _forward_, it can't
+       violate the "intersection point within `k`" condition.
 
 2. Roll back. Two possibilities:
-   a. The roll back point is at or after the old intersection point (before the
+
+    a. The roll back point is at or after the old intersection point (before the
       rollback). All is fine.
-   b. The roll back point is /before/ the old intersection point. All blocks
+
+    b. The roll back point is /before/ the old intersection point. All blocks
       before the old intersection point must be shared between their chain and
       our chain, so the new intersection point must /be/ the rollback point.
       If that rollback point lies on our fragment (and hence is within @k@),
       all is good; otherwise, we disconnect.
-   Notes:
-   - We could additionally (and optionally) check that they do not roll
+  
+    Notes:
+    - We could additionally (and optionally) check that they do not roll
      back more than `k`, and if they do, treat them as adversarial (disconnect).
      (This is anyway limited by maximum rollback supported by the `ChainState`.)
-   - This might mean we could disconnect from peers that do unnecessarily
+    - This might mean we could disconnect from peers that do unnecessary
      rollbacks; we consider this acceptable (they should not be doing that in
      the first place).
 
@@ -148,3 +157,5 @@ trim their fragment so that it is anchored at our anchor point.
 - We could, if needed, bind this more tightly still; as long as we have a
   sufficient number of headers to determine if their chain is preferred over
   ours (this needs careful consideration when adopting genesis).
+
+[^glossary]: See the [Glossary](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary)

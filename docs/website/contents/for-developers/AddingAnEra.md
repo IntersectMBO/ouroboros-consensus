@@ -68,8 +68,8 @@ be adding is the Alonzo era, which comes after the Mary era.
 
 ## `ouroboros-consensus-cardano`
 
-* In `Ouroboros.Consensus.Cardano.Block`, include `AlonzoEra` in `CardanoEras`
-  and `ShelleyBasedEras`. Update all the pattern synonyms in the module with the
+* In `Ouroboros.Consensus.Cardano.Block`, include `AlonzoEra` in
+ `CardanoShelleyEras`. Update all the pattern synonyms in the module with the
   new era. Don't forget to update the comments, the `COMPLETE` pragmas, and the
   export lists. It's easy to forget a case and the compiler will likely not warn
   you, you'll notice it when trying to use the pattern synonyms.
@@ -92,23 +92,12 @@ be adding is the Alonzo era, which comes after the Mary era.
   add the extra arguments needed for `protocolInfoCardano` to the
   `ProtocolCardano` constructor. Update `protocolInfo` accordingly.
 
-## `ouroboros-consensus-cardano-test`
-
-* In `Test.Consensus.Cardano.Generators`, update `arbitraryNodeToNode`,
-  `arbitraryNodeToClient`. Try to understand the logic of these two, you will
-  also have to add a new case to these. It would be nice if we could write these
-  two in a generic way so that they won't have to be updated with each era, but
-  it's not so simple. Update the other functions/instances. Be careful, you
-  won't get warnings for missing cases in `Arbitrary` instances, so go over all
-  of them and add the missing cases.
+### `test`
 
 * In `Test.Consensus.Cardano.ByronCompatibility`, update `toCardanoCodecConfig`.
 
 * In `Test.Consensus.Cardano.Serialisation`, update `testCodecCfg` and
   `dictNestedHdr`.
-
-* In `Test.Consensus.Cardano.Examples`, update `eraExamples`, `combineEras`, and
-  the rest.
 
 * In `Test.Consensus.Cardano.Golden`, update the `ToGoldenDirectory` instances.
 
@@ -118,10 +107,25 @@ be adding is the Alonzo era, which comes after the Mary era.
   create a `Test.ThreadNet.TxGen.Alonzo` module similar to
   `Test.ThreadNet.TxGen.Mary`.
 
-* Run the golden tests of `ouroboros-consensus-cardano-test`. Golden test
-  results should have been created for the new Cardano versions. Don't forget to
-  commit those files, otherwise they will be recreated on each run in CI and not
-  compared against the previous results, rendering them useless.
+* Run the golden tests
+  (`cabal run ouroboros-consensus-cardano:cardano-test -- -p /Golden/`).
+  Golden test results should have been created for the new Cardano versions. 
+  Don't forget to commit those files, otherwise they will be recreated on each
+  run in CI and not compared against the previous results, rendering them 
+  useless.  
 
-* Extend `Test.ThreadNet.Cardano` with the new era. At the time of writing this
-  hasn't been done yet for Allegra or Mary, though.
+* Extend `Test.ThreadNet.Cardano` with the new era.
+
+
+### `unstable-cardano-testlib`
+
+* In `Test.Consensus.Cardano.Generators`, update `arbitraryNodeToNode`,
+  `arbitraryNodeToClient`. Try to understand the logic of these two, you will
+  also have to add a new case to these. It would be nice if we could write these
+  two in a generic way so that they won't have to be updated with each era, but
+  it's not so simple. Update the other functions/instances. Be careful, you
+  won't get warnings for missing cases in `Arbitrary` instances, so go over all
+  of them and add the missing cases.
+
+* In `Test.Consensus.Cardano.Examples`, update `eraExamples`, `combineEras`, and
+  the rest.

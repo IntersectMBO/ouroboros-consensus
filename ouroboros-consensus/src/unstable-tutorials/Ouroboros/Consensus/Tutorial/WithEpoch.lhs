@@ -3,11 +3,11 @@
 Introduction
 ============
 
-This tutorial builds on the example in `Tutorial.lhs` by specifying a block,
+This tutorial builds on the example in `Simple.lhs` by specifying a block,
 ledger, and protocol for a blockchain that has a notion of epoch built into it -
 serving as an example of a case where the state of the ledger is used as part of
 the machinery of consensus.  It is highly recommended that the reader have read
-`Tutorial.lhs` before this if they are not already familiar with concepts such
+`Simple.lhs` before this if they are not already familiar with concepts such
 as `ConsensusProtocol` and `LedgerState`.
 
 Much like the previous example of `BlockC` this blockchain (with block type
@@ -549,11 +549,11 @@ functions defined above:
 >   -- this doesn't give us too much confidence, as there is nothing that
 >   -- precludes a node from masquerading as any other node).
 >
->   updateChainDepState _cfg hdrVw slot tcds =
->     if isLeader hdrVw slot (tickedChainDepLV tcds) then
+>   updateChainDepState _cfg hdrView slot tcds =
+>     if isLeader hdrView slot (tickedChainDepLV tcds) then
 >       return ChainDepStateD
 >     else
->       throwError $ "leader check failed: " ++ show (hdrVw,slot)
+>       throwError $ "leader check failed: " ++ show (hdrView,slot)
 >
 >   reupdateChainDepState _ _ _ _ = ChainDepStateD
 
