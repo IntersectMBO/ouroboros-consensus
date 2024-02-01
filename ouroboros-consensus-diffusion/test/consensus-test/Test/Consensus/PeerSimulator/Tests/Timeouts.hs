@@ -34,9 +34,7 @@ prop_timeouts = do
   genesisTest <- genChains (pure 0)
 
   -- Use higher tick duration to avoid the test taking really long
-  let scSchedule = PointScheduleConfig {pscTickDuration = 1}
-
-      schedulerConfig = defaultSchedulerConfig scSchedule (gtHonestAsc genesisTest)
+  let schedulerConfig = defaultSchedulerConfig (gtHonestAsc genesisTest)
 
       schedule =
         dullSchedule

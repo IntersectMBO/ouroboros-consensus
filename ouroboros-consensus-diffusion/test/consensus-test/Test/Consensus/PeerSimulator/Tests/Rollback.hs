@@ -48,7 +48,7 @@ prop_rollback = do
           then pure gt {gtSchedule =  rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree}
           else discard)
 
-    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    noTimeoutsSchedulerConfig
 
     (\_ _ -> [])
 
@@ -66,7 +66,7 @@ prop_cannotRollback =
           then pure gt {gtSchedule = rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree}
           else discard)
 
-    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    noTimeoutsSchedulerConfig
 
     (\_ _ -> [])
 

@@ -41,7 +41,7 @@ prop_longRangeAttack =
           then pure $ gt $> ps
           else discard)
 
-    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    noTimeoutsSchedulerConfig
 
     shrinkPeerSchedules
 

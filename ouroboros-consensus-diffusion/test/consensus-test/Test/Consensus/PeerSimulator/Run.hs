@@ -54,8 +54,8 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
-                     NodeState, PeerSchedule, PointScheduleConfig, TestFragH,
-                     peersStatesRelative, prettyPeersSchedule)
+                     NodeState, PeerSchedule, TestFragH, peersStatesRelative,
+                     prettyPeersSchedule)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId, Peers,
                      getPeerIds)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc)
@@ -76,9 +76,6 @@ data SchedulerConfig =
     -- | The duration of a single slot, used by the peer simulator to wait
     -- between ticks.
     , scSlotLength      :: SlotLength
-
-    -- | Config shared with point schedule generators.
-    , scSchedule        :: PointScheduleConfig
 
     -- | If 'True', 'Test.Consensus.Genesis.Setup.runTest' will print traces
     -- to stderr.
@@ -103,12 +100,11 @@ data SchedulerConfig =
   }
 
 -- | Determine timeouts based on the 'Asc' and a slot length of 20 seconds.
-defaultSchedulerConfig :: PointScheduleConfig -> Asc -> SchedulerConfig
-defaultSchedulerConfig scSchedule asc =
+defaultSchedulerConfig :: Asc -> SchedulerConfig
+defaultSchedulerConfig asc =
   SchedulerConfig {
     scChainSyncTimeouts = chainSyncTimeouts scSlotLength asc,
     scSlotLength,
-    scSchedule,
     scDebug = False,
     scTrace = True,
     scTraceState = False,
@@ -118,12 +114,11 @@ defaultSchedulerConfig scSchedule asc =
     scSlotLength = slotLengthFromSec 20
 
 -- | Config with no timeouts and a slot length of 20 seconds.
-noTimeoutsSchedulerConfig :: PointScheduleConfig -> SchedulerConfig
-noTimeoutsSchedulerConfig scSchedule =
+noTimeoutsSchedulerConfig :: SchedulerConfig
+noTimeoutsSchedulerConfig =
   SchedulerConfig {
     scChainSyncTimeouts = chainSyncNoTimeouts,
     scSlotLength,
-    scSchedule,
     scDebug = False,
     scTrace = True,
     scTraceState = False,

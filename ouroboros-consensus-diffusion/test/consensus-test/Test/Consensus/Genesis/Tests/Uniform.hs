@@ -137,7 +137,7 @@ prop_serveAdversarialBranches =
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
-    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    (noTimeoutsSchedulerConfig
        {scTraceState = False, scTrace = False})
 
     shrinkPeerSchedules
@@ -179,7 +179,7 @@ prop_leashingAttackStalling =
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
-    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    (noTimeoutsSchedulerConfig
       {scTrace = False})
 
     shrinkPeerSchedules
@@ -224,7 +224,7 @@ prop_leashingAttackTimeLimited =
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
 
-    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    (noTimeoutsSchedulerConfig
       {scTrace = False})
 
     shrinkPeerSchedules
@@ -289,7 +289,7 @@ prop_loeStalling =
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
-    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig) {
+    (noTimeoutsSchedulerConfig {
       scTrace = False,
       scEnableLoE = True,
       scChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}
