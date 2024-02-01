@@ -182,7 +182,7 @@ tipPointSchedule g slotLength msgDelayInterval slots = do
           firstLater = case newBranch of
             -- If there is no later point, pick an arbitrary later time interval
             -- to sample from
-            []           -> addTime (let Time lt = lastTime in lt) (slotTime (toEnum nseq)) -- REVIEW: why are we summing two absolute times?
+            []           -> addTime (slotsDiffTime (toEnum nseq)) lastTime
             ((a, _) : _) -> addTime (fst msgDelayInterval) a
       times <- replicateM nseq (uniformRMTime (lastTime, firstLater) g)
       pure (sort times, newBranch)
