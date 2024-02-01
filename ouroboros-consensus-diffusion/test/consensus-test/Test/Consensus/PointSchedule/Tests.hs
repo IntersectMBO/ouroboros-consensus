@@ -10,6 +10,7 @@ import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..),
 import           Control.Monad (forM, replicateM)
 import           Control.Monad.Class.MonadTime.SI (Time (Time))
 import           Data.Bifunctor (second)
+import           Data.Coerce (coerce)
 import           Data.List (foldl', group, isSuffixOf, partition, sort)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (isNothing)
@@ -120,7 +121,7 @@ instance QC.Arbitrary HeaderPointScheduleInput where
     branchTips <- genTipPoints
     let branchCount = length branchTips
         tpCount = sum $ map length branchTips
-    ts <- map Time <$> scanl1 (+) . sort <$> replicateM tpCount (chooseDiffTime (7, 12))
+    ts <- coerce <$> scanl1 (+) . sort <$> replicateM tpCount (chooseDiffTime (7, 12))
     let tpts = zipMany ts branchTips
     intersectionBlocks <- genIntersections branchCount
     maybes <- QC.infiniteList @(Maybe Int)
