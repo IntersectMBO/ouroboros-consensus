@@ -1,11 +1,18 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE ConstraintKinds     #-}
-{-# LANGUAGE FlexibleInstances   #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE KindSignatures      #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE PolyKinds           #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE ConstraintKinds            #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures             #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE PolyKinds                  #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 -- | Miscellaneous utilities
 module Ouroboros.Consensus.Util (
@@ -63,10 +70,20 @@ module Ouroboros.Consensus.Util (
     -- * Miscellaneous
   , eitherToMaybe
   , fib
+    -- * Electric code
+  , Electric
+  , Fuse
+  , FuseBlownException (..)
+  , electric
+  , newFuse
+  , withFuse
   ) where
 
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm, hashFromBytes,
                      hashFromBytesShort)
+import           Control.Monad (unless)
+import           Control.Monad.Class.MonadThrow
+import           Control.Monad.Trans.Class
 import qualified Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.ByteString.Short (ShortByteString)
@@ -82,7 +99,9 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Void
 import           Data.Word (Word64)
+import           GHC.Generics (Generic)
 import           GHC.Stack
+import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 
 {-------------------------------------------------------------------------------
@@ -374,3 +393,59 @@ fib n = round $ phi ** fromIntegral n / sq5
 eitherToMaybe :: Either a b -> Maybe b
 eitherToMaybe (Left _)  = Nothing
 eitherToMaybe (Right x) = Just x
+
+{-------------------------------------------------------------------------------
+  Electric code, i.e. regions of code that will throw an exception if accessed
+  concurrently.
+-------------------------------------------------------------------------------}
+
+-- | An action that cannot be ran without drawing current through a 'Fuse'.
+--
+-- NOTE: using @Fuse m -> ...@ would suffice but the newtype wrapper is useful
+-- for ensuring we don't make mistakes.
+newtype Electric m a = Electric (m a)
+  deriving newtype (Functor, Applicative, Monad, MonadThrow, MonadCatch)
+
+instance MonadTrans Electric where
+  lift = Electric
+
+-- | See 'Electric'
+electric :: m a -> Electric m a
+electric = Electric
+
+-- | A simple semaphore, though instead of blocking a fatal exception is thrown.
+data Fuse m = Fuse !String !(StrictMVar m ()) deriving (Generic)
+
+deriving instance NoThunks (StrictMVar m ()) => NoThunks (Fuse m)
+
+newFuse :: MonadMVar m => String -> m (Fuse m)
+newFuse name = Fuse name <$> newMVar ()
+
+-- | Put full load on the 'Fuse' while the 'Electric' is running.
+--
+-- Thus any two 'withFuse' calls with the same 'Fuse' will throw one fatal
+-- exception.
+--
+-- NOTE The metaphor is: when I run at most one waffle iron concurrently, my
+-- kitchen's fuse doesn't blow. But it blows if I run more than one waffle iron
+-- concurrently.
+--
+-- WARNING If the given action throws its own exception, then it will never stop
+-- putting load on the 'Fuse'.
+withFuse ::
+     (MonadThrow m, MonadMVar m)
+  => Fuse m
+  -> Electric m a
+  -> m a
+withFuse (Fuse name m) (Electric io) = do
+  tryTakeMVar m >>= \case
+    Nothing -> throwIO $ FuseBlownException name
+    Just () -> pure ()
+  a <- io
+  tryPutMVar m () >>= \b -> unless b $ throwIO $ FuseBlownException name
+  pure a
+
+-- | Too much electrical load was put on the 'Fuse', see 'withFuse'.
+newtype FuseBlownException  = FuseBlownException  String
+ deriving (Show)
+ deriving anyclass (Exception)

@@ -3,11 +3,8 @@
 {-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE MultiWayIf           #-}
 {-# LANGUAGE NamedFieldPuns       #-}
-{-# LANGUAGE PatternSynonyms      #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Operations involving chain selection: the initial chain selection and
@@ -78,7 +75,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util (eitherToMaybe, whenJust)
+import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.AnchoredFragment
 import           Ouroboros.Consensus.Util.Enclose (encloseWith)
 import           Ouroboros.Consensus.Util.IOLike
@@ -265,9 +262,9 @@ addBlockSync ::
      )
   => ChainDbEnv m blk
   -> BlockToAdd m blk
-  -> m ()
+  -> Electric m ()
 addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
-    (isMember, invalid, curChain) <- atomically $ (,,)
+    (isMember, invalid, curChain) <- lift $ atomically $ (,,)
       <$> VolatileDB.getIsMember          cdbVolatileDB
       <*> (forgetFingerprint <$> readTVar cdbInvalid)
       <*> Query.getCurrentChain           cdb
@@ -286,22 +283,22 @@ addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
     -- ### Ignore
     newTip <- if
       | olderThanK hdr isEBB immBlockNo -> do
-        traceWith addBlockTracer $ IgnoreBlockOlderThanK (blockRealPoint b)
-        deliverWrittenToDisk False
+        lift $ traceWith addBlockTracer $ IgnoreBlockOlderThanK (blockRealPoint b)
+        lift $ deliverWrittenToDisk False
         chainSelectionForFutureBlocks cdb BlockCache.empty
 
       | isMember (blockHash b) -> do
-        traceWith addBlockTracer $ IgnoreBlockAlreadyInVolatileDB (blockRealPoint b)
-        deliverWrittenToDisk True
+        lift $ traceWith addBlockTracer $ IgnoreBlockAlreadyInVolatileDB (blockRealPoint b)
+        lift $ deliverWrittenToDisk True
         chainSelectionForFutureBlocks cdb BlockCache.empty
 
       | Just (InvalidBlockInfo reason _) <- Map.lookup (blockHash b) invalid -> do
-        traceWith addBlockTracer $ IgnoreInvalidBlock (blockRealPoint b) reason
-        deliverWrittenToDisk False
+        lift $ traceWith addBlockTracer $ IgnoreInvalidBlock (blockRealPoint b) reason
+        lift $ deliverWrittenToDisk False
 
         -- We wouldn't know the block is invalid if its prefix was invalid,
         -- hence 'InvalidBlockPunishment.BlockItself'.
-        InvalidBlockPunishment.enact
+        lift $ InvalidBlockPunishment.enact
           blockPunish
           InvalidBlockPunishment.BlockItself
 
@@ -310,9 +307,9 @@ addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
       -- The remaining cases
       | otherwise -> do
         let traceEv = AddedBlockToVolatileDB (blockRealPoint b) (blockNo b) isEBB
-        encloseWith (traceEv >$< addBlockTracer) $
+        lift $ encloseWith (traceEv >$< addBlockTracer) $
           VolatileDB.putBlock cdbVolatileDB b
-        deliverWrittenToDisk True
+        lift $ deliverWrittenToDisk True
 
         let blockCache = BlockCache.singleton b
         -- Do chain selection for future blocks before chain selection for the
@@ -321,7 +318,7 @@ addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
         void $ chainSelectionForFutureBlocks cdb blockCache
         chainSelectionForBlock cdb blockCache hdr blockPunish
 
-    deliverProcessed newTip
+    lift $ deliverProcessed newTip
   where
     addBlockTracer :: Tracer m (TraceAddBlockEvent blk)
     addBlockTracer = TraceAddBlockEvent >$< cdbTracer
@@ -390,20 +387,20 @@ chainSelectionForFutureBlocks ::
      , HasHardForkHistory blk
      , HasCallStack
      )
-  => ChainDbEnv m blk -> BlockCache blk -> m (Point blk)
+  => ChainDbEnv m blk -> BlockCache blk -> Electric m (Point blk)
 chainSelectionForFutureBlocks cdb@CDB{..} blockCache = do
     -- Get 'cdbFutureBlocks' and empty the map in the TVar. It will be
     -- repopulated with the blocks that are still from the future (but not the
     -- ones no longer from the future) during chain selection for those
     -- blocks.
-    futureBlockHeaders <- atomically $ do
+    futureBlockHeaders <- lift $ atomically $ do
       futureBlocks <- readTVar cdbFutureBlocks
       writeTVar cdbFutureBlocks Map.empty
       return $ Map.elems futureBlocks
     forM_ futureBlockHeaders $ \(hdr, punish) -> do
-      traceWith tracer $ ChainSelectionForFutureBlock (headerRealPoint hdr)
+      lift $ traceWith tracer $ ChainSelectionForFutureBlock (headerRealPoint hdr)
       chainSelectionForBlock cdb blockCache hdr punish
-    atomically $ Query.getTipPoint cdb
+    lift $ atomically $ Query.getTipPoint cdb
   where
     tracer = TraceAddBlockEvent >$< cdbTracer
 
@@ -451,8 +448,8 @@ chainSelectionForBlock ::
   -> BlockCache blk
   -> Header blk
   -> InvalidBlockPunishment m
-  -> m (Point blk)
-chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
+  -> Electric m (Point blk)
+chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB)
       <- atomically $ (,,,,,)
           <$> (forgetFingerprint <$> readTVar cdbInvalid)

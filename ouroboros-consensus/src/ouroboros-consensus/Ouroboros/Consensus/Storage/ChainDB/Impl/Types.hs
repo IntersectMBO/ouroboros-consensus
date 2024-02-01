@@ -95,6 +95,7 @@ import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB,
                      VolatileDbSerialiseConstraints)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
+import           Ouroboros.Consensus.Util (Fuse)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import           Ouroboros.Consensus.Util.IOLike
@@ -228,12 +229,8 @@ data ChainDbEnv m blk = CDB
     -- not when hashes are garbage-collected from the map.
   , cdbNextIteratorKey :: !(StrictTVar m IteratorKey)
   , cdbNextFollowerKey :: !(StrictTVar m FollowerKey)
-  , cdbCopyLock        :: !(StrictMVar m ())
-    -- ^ Lock used to ensure that 'copyToImmutableDB' is not executed more than
-    -- once concurrently.
-    --
-    -- Note that 'copyToImmutableDB' can still be executed concurrently with all
-    -- others functions, just not with itself.
+  , cdbCopyFuse        :: !(Fuse m)
+  , cdbChainSelFuse    :: !(Fuse m)
   , cdbTracer          :: !(Tracer m (TraceEvent blk))
   , cdbTraceLedger     :: !(Tracer m (LedgerDB' blk))
   , cdbRegistry        :: !(ResourceRegistry m)

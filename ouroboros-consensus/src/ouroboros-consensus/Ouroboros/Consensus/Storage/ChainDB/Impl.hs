@@ -62,7 +62,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Query as Query
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
-import           Ouroboros.Consensus.Util (whenJust)
+import           Ouroboros.Consensus.Util (newFuse, whenJust, withFuse)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
                      allocate, runInnerWithTempRegistry, runWithTempRegistry)
@@ -170,8 +170,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       varFollowers       <- newTVarIO Map.empty
       varNextIteratorKey <- newTVarIO (IteratorKey 0)
       varNextFollowerKey <- newTVarIO (FollowerKey   0)
-      varCopyLock        <- newMVar  ()
       varKillBgThreads   <- newTVarIO $ return ()
+      copyFuse           <- newFuse "copy to immutable db"
+      chainSelFuse       <- newFuse "chain selection"
       blocksToAdd        <- newBlocksToAdd (Args.cdbBlocksToAddSize args)
 
       let env = CDB { cdbImmutableDB     = immutableDB
@@ -186,7 +187,8 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     , cdbInvalid         = varInvalid
                     , cdbNextIteratorKey = varNextIteratorKey
                     , cdbNextFollowerKey = varNextFollowerKey
-                    , cdbCopyLock        = varCopyLock
+                    , cdbCopyFuse        = copyFuse
+                    , cdbChainSelFuse    = chainSelFuse
                     , cdbTracer          = tracer
                     , cdbTraceLedger     = Args.cdbTraceLedger args
                     , cdbRegistry        = Args.cdbRegistry args
@@ -217,11 +219,13 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , closeDB               = closeDB h
             , isOpen                = isOpen  h
             }
-          testing = Internal
-            { intCopyToImmutableDB       = getEnv  h Background.copyToImmutableDB
+      addBlockTestFuse <- newFuse "test chain selection"
+      copyTestFuse <- newFuse "test copy to immutable db"
+      let testing = Internal
+            { intCopyToImmutableDB       = getEnv  h (withFuse copyTestFuse . Background.copyToImmutableDB)
             , intGarbageCollect          = getEnv1 h Background.garbageCollect
             , intUpdateLedgerSnapshots   = getEnv  h Background.updateLedgerSnapshots
-            , intAddBlockRunner          = getEnv  h Background.addBlockRunner
+            , intAddBlockRunner          = getEnv  h (Background.addBlockRunner addBlockTestFuse)
             , intKillBgThreads           = varKillBgThreads
             }
 
