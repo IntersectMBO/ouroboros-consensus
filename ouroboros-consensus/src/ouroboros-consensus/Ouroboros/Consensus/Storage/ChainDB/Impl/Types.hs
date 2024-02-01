@@ -86,7 +86,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB,
                      ImmutableDbSerialiseConstraints)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (Forker', LedgerDB,
+import           Ouroboros.Consensus.Storage.LedgerDB (Forker', LedgerDB',
                      LedgerDbSerialiseConstraints, TraceLedgerDBEvent,
                      TraceReplayEvent, TraceValidateEvent)
 import           Ouroboros.Consensus.Storage.Serialisation
@@ -164,7 +164,7 @@ data ChainDbState m blk
 data ChainDbEnv m blk = CDB
   { cdbImmutableDB     :: !(ImmutableDB m blk)
   , cdbVolatileDB      :: !(VolatileDB m blk)
-  , cdbLedgerDB        :: !(LedgerDB m (ExtLedgerState blk) blk)
+  , cdbLedgerDB        :: !(LedgerDB' m blk)
   , cdbChain           :: !(StrictTVar m (AnchoredFragment (Header blk)))
     -- ^ Contains the current chain fragment.
     --

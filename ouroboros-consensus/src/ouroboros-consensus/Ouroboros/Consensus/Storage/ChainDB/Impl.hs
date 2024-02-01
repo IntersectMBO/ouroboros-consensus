@@ -169,8 +169,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
         let chain  = VF.validatedFragment chainAndLedger
             ledger = VF.validatedLedger   chainAndLedger
 
-        atomically $ LedgerDB.forkerCommit ledger
-        LedgerDB.forkerClose ledger
+        LedgerDB.forkerCommit ledger
 
         pure chain
 

@@ -140,7 +140,7 @@ initialChainSelection immutableDB volatileDB lgrDB rr tracer cfg varInvalid
       Just chains' ->
         chainSelection' curChainAndLedger chains' >>= \case
           Nothing       -> pure curChainAndLedger
-          Just newChain -> LedgerDB.forkerClose curForker >> toChainAndLedger newChain
+          Just newChain -> LedgerDB.forkerDiscard curForker >> toChainAndLedger newChain
   where
     bcfg :: BlockConfig blk
     bcfg = configBlock cfg
@@ -690,9 +690,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
         curTip      = castPoint $ AF.headPoint curChain
 
     -- | Create a 'NewTipInfo' corresponding to the tip of the given ledger.
-    mkNewTipInfo :: Forker' m blk -> m (NewTipInfo blk)
-    mkNewTipInfo newLedgerDB = do
-        ledger <- atomically (ledgerState <$> LedgerDB.forkerGetLedgerState newLedgerDB)
+    mkNewTipInfo :: LedgerState blk EmptyMK -> NewTipInfo blk
+    mkNewTipInfo ledger =
         let
           summary :: History.Summary (HardForkIndices blk)
           summary = hardForkSummary
@@ -706,7 +705,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
               NotOrigin tip ->
                 let query = History.slotToEpoch' (realPointSlot tip)
                 in (tip, History.runQueryPure query summary)
-        pure $ NewTipInfo {
+        in NewTipInfo {
             newTipPoint       = tipPoint
           , newTipEpoch       = tipEpoch
           , newTipSlotInEpoch = tipSlotInEpoch
@@ -744,7 +743,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
           $ getSuffix
           $ getChainDiff vChainDiff
         currentForker <- LedgerDB.getForkerAtTip cdbLedgerDB rr
-        (curChain, newChain, events, prevTentativeHeader) <- atomically $ do
+        (curChain, newChain, events, prevTentativeHeader, newLedger) <- atomically $ do
           curChain  <- readTVar         cdbChain -- Not Query.getCurrentChain!
           curLedger <- LedgerDB.forkerGetLedgerState currentForker
           newLedger <- LedgerDB.forkerGetLedgerState newForker
@@ -754,7 +753,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
               error "chainDiff doesn't fit onto current chain"
             Just newChain -> do
               writeTVar cdbChain newChain
-              LedgerDB.forkerCommit newForker
               -- Inspect the new ledger for potential problems
               let events :: [LedgerEvent blk]
                   events = inspectLedger
@@ -781,20 +779,26 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
                   followerHandles <- Map.elems <$> readTVar cdbFollowers
                   forM_ followerHandles $ switchFollowerToFork curChain newChain ipoint
 
-              return (curChain, newChain, events, prevTentativeHeader)
+              return (curChain, newChain, events, prevTentativeHeader, newLedger)
+
+        -- TODO: in between the previous atomically block and the next
+        -- forkerCommit, the chain DB might be out of sync with the LedgerDB.
+        -- Our expectation is that this is probably not a big problem. If we
+        -- would want to prevent this, we would have to implement a read/write
+        -- locking mechanism on the whole of the LedgerDB. During the time when
+        -- this lock would be taken in write-mode, all other operations on a
+        -- LedgerDB would block.
+        LedgerDB.forkerCommit newForker
+        LedgerDB.forkerDiscard currentForker
 
         let mkTraceEvent = case chainSwitchType of
               AddingBlocks     -> AddedToCurrentChain
               SwitchingToAFork -> SwitchedToAFork
-        nti <- mkNewTipInfo newForker
+            nti = mkNewTipInfo $ ledgerState newLedger
         traceWith addBlockTracer $
           mkTraceEvent events nti curChain newChain
         whenJust (strictMaybeToMaybe prevTentativeHeader) $ traceWith $
           PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
-        traceWith cdbTraceLedger newForker
-
-        LedgerDB.forkerClose currentForker
-        LedgerDB.forkerClose newForker
 
         return $ castPoint $ AF.headPoint newChain
       where
@@ -1278,7 +1282,7 @@ validateCandidate chainSelEnv rr chainDiff =
     -- leftover forker that we have to close so that its resources are correctly
     -- released.
     cleanup :: ValidatedChainDiff b (Forker' m blk) -> m ()
-    cleanup = LedgerDB.forkerClose . getLedger
+    cleanup = LedgerDB.forkerDiscard . getLedger
 
 {-------------------------------------------------------------------------------
   'ChainAndLedger'
