@@ -119,7 +119,6 @@ library
     Ouroboros.Consensus.HardFork.Combinator.Info
     Ouroboros.Consensus.HardFork.Combinator.InjectTxs
     Ouroboros.Consensus.HardFork.Combinator.Ledger
-    Ouroboros.Consensus.HardFork.Combinator.Ledger.CanonicalTxIn
     Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams
     Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection
     Ouroboros.Consensus.HardFork.Combinator.Ledger.Query

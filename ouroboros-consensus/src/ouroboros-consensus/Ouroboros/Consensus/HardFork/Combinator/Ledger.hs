@@ -36,10 +36,18 @@ module Ouroboros.Consensus.HardFork.Combinator.Ledger (
     -- * Ledger tables
   , HardForkHasLedgerTables
   , distribLedgerTables
-  , distribTxOut
   , injectLedgerTables
-    -- ** Re-export
+    -- ** HardForkTxIn
   , HasCanonicalTxIn (..)
+    -- ** HardForkTxOut
+  , DefaultHardForkTxOut
+  , HasHardForkTxOut (..)
+  , distribHardForkTxOutDefault
+  , injectHardForkTxOutDefault
+    -- *** Serialisation
+  , SerializeHardForkTxOut (..)
+  , decodeHardForkTxOutDefault
+  , encodeHardForkTxOutDefault
   ) where
 
 import qualified Codec.CBOR.Decoding as CBOR
@@ -49,6 +57,7 @@ import           Control.Monad.Except (throwError, withExcept)
 import           Data.Functor ((<&>))
 import           Data.Functor.Product
 import           Data.Kind (Type)
+import           Data.Maybe (fromMaybe)
 import           Data.Monoid (First (..))
 import           Data.Proxy
 import           Data.SOP.Counting (getExactly)
@@ -73,7 +82,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.HardFork.Combinator.Info
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger.CanonicalTxIn
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol ()
 import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
@@ -207,6 +215,7 @@ tickOne ei slot sopIdx partialCfg st =
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
+         , HasHardForkTxOut xs
          )
       => ApplyBlock (LedgerState (HardForkBlock xs)) (HardForkBlock xs) where
 
@@ -295,6 +304,7 @@ reapply index (WrapLedgerConfig cfg) (Pair (I block) (FlipTickedLedgerState st))
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
+         , HasHardForkTxOut xs
          ) => UpdateLedger (HardForkBlock xs)
 
 {-------------------------------------------------------------------------------
@@ -367,6 +377,7 @@ instance CanHardFork xs => ValidateEnvelope (HardForkBlock xs) where
 instance ( CanHardFork xs
          , HardForkHasLedgerTables xs
          , HasCanonicalTxIn xs
+         , HasHardForkTxOut xs
          ) => LedgerSupportsProtocol (HardForkBlock xs) where
   protocolLedgerView HardForkLedgerConfig{..}
                      (TickedHardForkLedgerState transition ticked) =
@@ -819,85 +830,6 @@ injectLedgerEvent index =
   Ledger Tables for the Nary HardForkBlock
 -------------------------------------------------------------------------------}
 
--- | Defaults to a 'CannonicalTxIn' type, but this will probably change in the
--- future to @NS 'WrapTxIn' xs@. See 'HasCanonicalTxIn'.
-type instance Key   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
-
--- | This choice for 'Value' imposes some complications on the code.
---
--- We deliberately chose not to have all values in the tables be
--- @'Cardano.Ledger.Core.TxOut' era@ because this would require us to traverse
--- and translate the whole UTxO set on era boundaries. To avoid this, we are
--- holding a @'NS' 'WrapTxOut' xs@ instead.
---
--- Whenever we are carrying a @'LedgerState' ('HardForkBlock' xs) mk@ (or
--- 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState'), the implied tables are
--- the ones inside the particular ledger state in the 'Telescope' of the
--- 'HardForkState'.
---
--- <<docs/haddocks/hard-fork-tables-per-block.svg>>
---
--- However, when we are carrying @'LedgerTables' ('HardForkBlock' xs) mk@ we are
--- instead carrying these tables, where the 'Value' is an 'NS'. This means that
--- whenever we are extracting these tables, we are effectively duplicating the
--- UTxO set ('Data.Map.Map') inside, to create an identical one where every
--- element has been translated to the most recent era and unwrapped from the
--- 'NS'.
---
--- <<docs/haddocks/hard-fork-tables.svg>>
---
--- To prevent memory explosion, try to only perform one of this transformations,
--- for example:
---
--- * when applying blocks, inject the tables for the transactions only once, and
---     extract them only once.
---
--- * when performing queries on the tables (that use
---     'Ouroboros.Consensus.Ledger.Query.QFTraverseTables'), operate with the
---     tables at the hard fork level until the very end, when you have to
---     promote them to some specific era.
---
--- = __(image code)__
---
--- >>> :{
--- >>> either (error . show) pure =<<
--- >>>  renderToFile "docs/haddocks/hard-fork-tables.svg" defaultEnv (tikz ["positioning", "arrows"]) "\\node at (4.5,4.8) {\\small{LedgerTables (LedgerState (HardForkBlock xs))}};\
--- >>> \ \\draw (0,0) rectangle (9,5);\
--- >>> \ \\node (rect) at (1.5,4) [draw,minimum width=1cm,minimum height=0.5cm] {TxIn};\
--- >>> \ \\node (oneOf) at (3.5,4) [draw=none] {NS};\
--- >>> \ \\draw (rect) -> (oneOf);\
--- >>> \ \\node (sh) at (6.5,4) [draw,minimum width=1cm,minimum height=0.5cm] {BlockATxOut};\
--- >>> \ \\node (al) at (6.5,3) [draw,minimum width=1cm,minimum height=0.5cm] {BlockBTxOut};\
--- >>> \ \\node (my) at (6.5,2) [draw=none,minimum width=1cm,minimum height=0.5cm] {...};\
--- >>> \ \\node (ba) at (6.5,1) [draw,minimum width=1cm,minimum height=0.5cm] {BlockNTxOut};\
--- >>> \ \\draw (oneOf) -> (sh);\
--- >>> \ \\draw (oneOf) -> (al);\
--- >>> \ \\draw (oneOf) -> (ba);\
--- >>> \ \\draw (3,0.5) rectangle (8,4.5);"
--- >>> :}
---
--- >>> :{
--- >>> either (error . show) pure =<<
--- >>>  renderToFile "docs/haddocks/hard-fork-tables-per-block.svg" defaultEnv (tikz ["positioning", "arrows"]) "\\node at (5,4.8) {\\small{LedgerState (HardForkBlock xs)}};\
--- >>> \ \\draw (0,0) rectangle (10,5);\
--- >>> \ \\node (oneOf2) at (2,4) [draw=none] {HardForkState};\
--- >>> \ \\node (bb) at (5,4) [draw,minimum width=1cm,minimum height=0.5cm] {BlockAState};\
--- >>> \ \\node (bt) at (8,4) [draw,minimum width=1cm,minimum height=0.5cm] {BlockATables};\
--- >>> \ \\node (sb) at (5,3) [draw,minimum width=1cm,minimum height=0.5cm] {BlockBState};\
--- >>> \ \\node (st) at (8,3) [draw,minimum width=1cm,minimum height=0.5cm] {BlockBTables};\
--- >>> \ \\node (db) at (5,2) [draw=none,minimum width=1cm,minimum height=0.5cm] {...};\
--- >>> \ \\node (dt) at (8,2) [draw=none,minimum width=1cm,minimum height=0.5cm] {...};\
--- >>> \ \\node (bab) at (5,1) [draw,minimum width=1cm,minimum height=0.5cm] {BlockNState};\
--- >>> \ \\node (bat) at (8,1) [draw,minimum width=1cm,minimum height=0.5cm] {BlockNTables};\
--- >>> \ \\draw (oneOf2) -> (bb);\
--- >>> \ \\draw (bb) -> (bt);\
--- >>> \ \\draw (oneOf2) -> (sb);\
--- >>> \ \\draw (sb) -> (st);\
--- >>> \ \\draw (oneOf2) -> (bab);\
--- >>> \ \\draw (bab) -> (bat);"
--- >>> :}
-type instance Value (LedgerState (HardForkBlock xs)) = NS WrapTxOut xs
-
 type HardForkHasLedgerTables :: [Type] -> Constraint
 type HardForkHasLedgerTables xs = (
     All (Compose HasLedgerTables LedgerState) xs
@@ -905,6 +837,12 @@ type HardForkHasLedgerTables xs = (
   , All (Compose Eq WrapTxOut) xs
   , All (Compose Show WrapTxOut) xs
   , All (Compose NoThunks WrapTxOut) xs
+  , Show (CanonicalTxIn xs)
+  , Ord (CanonicalTxIn xs)
+  , NoThunks (CanonicalTxIn xs)
+  , Eq (HardForkTxOut xs)
+  , Show (HardForkTxOut xs)
+  , NoThunks (HardForkTxOut xs)
   )
 
 -- | The Ledger and Consensus team discussed the fact that we need to be able
@@ -913,54 +851,15 @@ type HardForkHasLedgerTables xs = (
 -- serialization that doesn't change between eras. For now we are using
 -- @'toEraCBOR' \@('ShelleyEra' c)@ as a stop-gap, but Ledger will provide a
 -- serialization function into something more efficient.
-instance ( All (Compose CanSerializeLedgerTables LedgerState) xs
-         , HasCanonicalTxIn xs
+instance ( HasCanonicalTxIn xs
+         , SerializeHardForkTxOut xs
          ) => CanSerializeLedgerTables (LedgerState (HardForkBlock xs)) where
     codecLedgerTables = LedgerTables $
         CodecMK
           encodeCanonicalTxIn
-          encodeTxOut
+          (encodeHardForkTxOut (Proxy @xs))
           decodeCanonicalTxIn
-          decodeTxOut
-      where
-        encodeTxOut :: NS WrapTxOut xs -> CBOR.Encoding
-        encodeTxOut =
-              hcollapse
-            . hcimap (Proxy @(Compose CanSerializeLedgerTables LedgerState)) each
-          where
-            each ::
-                 forall x. CanSerializeLedgerTables (LedgerState x)
-              => Index xs x
-              -> WrapTxOut x
-              -> K CBOR.Encoding x
-            each idx (WrapTxOut txout) = K $
-                   CBOR.encodeListLen 2
-                <> CBOR.encodeWord8 (toWord8 idx)
-                <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x)) txout
-
-        decodeTxOut :: forall s. CBOR.Decoder s (NS WrapTxOut xs)
-        decodeTxOut = do
-            CBOR.decodeListLenOf 2
-            tag <- CBOR.decodeWord8
-            case getFirst $ aDecoder tag of
-              Nothing -> error $ "decodeTxOut for HardForkBlock, unknown tag: " <> show tag
-              Just x  -> x
-          where
-            each ::
-                 forall x. CanSerializeLedgerTables (LedgerState x)
-              => Index xs x
-              -> forall s'. K (Word8 -> First (CBOR.Decoder s' (NS WrapTxOut xs))) x
-            each idx = K $ \w -> First $
-                if w /= toWord8 idx then Nothing else
-                Just
-                  $ injectNS idx . WrapTxOut <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x))
-
-            aDecoder = mconcat
-                    $ hcollapse
-                    $ hcmap
-                        (Proxy @(Compose CanSerializeLedgerTables LedgerState))
-                        each
-                        (indices @xs)
+          (decodeHardForkTxOut (Proxy @xs))
 
 -- | Warning: 'projectLedgerTables' and 'withLedgerTables' are prohibitively
 -- expensive when using big tables or when used multiple times. See the 'Value'
@@ -968,6 +867,7 @@ instance ( All (Compose CanSerializeLedgerTables LedgerState) xs
 instance ( HardForkHasLedgerTables xs
          , CanHardFork xs
          , HasCanonicalTxIn xs
+         , HasHardForkTxOut xs
          ) => HasLedgerTables (LedgerState (HardForkBlock xs)) where
   projectLedgerTables ::
        forall mk. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
@@ -1008,6 +908,7 @@ instance ( HardForkHasLedgerTables xs
 instance ( HardForkHasLedgerTables xs
          , CanHardFork xs
          , HasCanonicalTxIn xs
+         , HasHardForkTxOut xs
          ) => HasLedgerTables (Ticked1 (LedgerState (HardForkBlock xs))) where
   projectLedgerTables ::
        forall mk. (CanMapMK mk, CanMapKeysMK mk, ZeroableMK mk)
@@ -1094,6 +995,7 @@ injectLedgerTables ::
           CanMapKeysMK mk
         , CanMapMK mk
         , HasCanonicalTxIn xs
+        , HasHardForkTxOut xs
         )
   => Index xs x
   -> LedgerTables (LedgerState                x  ) mk
@@ -1105,18 +1007,18 @@ injectLedgerTables idx =
   . getLedgerTables
   where
     injTxIn :: Key (LedgerState x) -> Key (LedgerState (HardForkBlock xs))
-    injTxIn  = injectCanonicalTxIn idx
+    injTxIn = injectCanonicalTxIn idx
 
     injTxOut :: Value (LedgerState x) -> Value (LedgerState (HardForkBlock xs))
-    injTxOut = injectNS idx . WrapTxOut
+    injTxOut = injectHardForkTxOut idx
 
 distribLedgerTables ::
      forall xs x mk. (
           CanMapKeysMK mk
         , Ord (Key (LedgerState x))
         , HasCanonicalTxIn xs
-        , CanMapMaybeMK mk
-        , CanHardFork xs
+        , CanMapMK mk
+        , HasHardForkTxOut xs
         )
   => Index xs x
   -> LedgerTables (LedgerState (HardForkBlock xs)) mk
@@ -1124,16 +1026,149 @@ distribLedgerTables ::
 distribLedgerTables idx =
     LedgerTables
   . mapKeysMK (distribCanonicalTxIn idx)
-  . mapMaybeMK (distribTxOut idx)
+  . mapMK (fromMaybe (error "distribLedgerTables: anachrony") . distribHardForkTxOut idx)
   . getLedgerTables
 
-distribTxOut ::
-     forall xs x.
+{-------------------------------------------------------------------------------
+  HardForkTxIn
+-------------------------------------------------------------------------------}
+
+-- | Defaults to a 'CannonicalTxIn' type, but this will probably change in the
+-- future to @NS 'WrapTxIn' xs@. See 'HasCanonicalTxIn'.
+type instance Key   (LedgerState (HardForkBlock xs)) = CanonicalTxIn xs
+
+-- | Canonical TxIn
+--
+-- The Ledger and Consensus team discussed the fact that we need to be able to
+-- reach the TxIn key for an entry from any era, regardless of the era in which
+-- it was created, therefore we need to have a "canonical" serialization that
+-- doesn't change between eras. For now we are requiring that a 'HardForkBlock'
+-- has only one associated 'TxIn' type as a stop-gap, but Ledger will provide a
+-- serialization function into something more efficient.
+type HasCanonicalTxIn :: [Type] -> Constraint
+class ( Show (CanonicalTxIn xs)
+      , Ord (CanonicalTxIn xs)
+      , NoThunks (CanonicalTxIn xs)
+      ) => HasCanonicalTxIn xs where
+  data family CanonicalTxIn (xs :: [Type]) :: Type
+
+  -- | Inject an era-specific 'TxIn' into a 'TxIn' for a 'HardForkBlock'.
+  injectCanonicalTxIn ::
+    Index xs x ->
+    Key (LedgerState x) ->
+    CanonicalTxIn xs
+
+  -- | Distribute a 'TxIn' for a 'HardForkBlock' to an era-specific 'TxIn'.
+  distribCanonicalTxIn ::
+    Index xs x ->
+    CanonicalTxIn xs ->
+    Key (LedgerState x)
+
+  encodeCanonicalTxIn :: CanonicalTxIn xs -> CBOR.Encoding
+
+  decodeCanonicalTxIn :: forall s. CBOR.Decoder s (CanonicalTxIn xs)
+
+{-------------------------------------------------------------------------------
+  HardForkTxOut
+-------------------------------------------------------------------------------}
+
+-- | Defaults to the 'HardForkTxOut' type
+type instance Value (LedgerState (HardForkBlock xs)) = HardForkTxOut xs
+
+-- | This choice for 'HardForkTxOut' imposes some complications on the code.
+--
+-- We deliberately chose not to have all values in the tables be
+-- @'Cardano.Ledger.Core.TxOut' era@ because this would require us to traverse
+-- and translate the whole UTxO set on era boundaries. To avoid this, we are
+-- holding a @'NS' 'WrapTxOut' xs@ instead.
+--
+-- Whenever we are carrying a @'LedgerState' ('HardForkBlock' xs) mk@ (or
+-- 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState'), the implied tables are
+-- the ones inside the particular ledger state in the 'Telescope' of the
+-- 'HardForkState'.
+--
+-- <<docs/haddocks/hard-fork-tables-per-block.svg>>
+--
+-- However, when we are carrying @'LedgerTables' ('HardForkBlock' xs) mk@ we are
+-- instead carrying these tables, where the 'Value' is an 'NS'. This means that
+-- whenever we are extracting these tables, we are effectively duplicating the
+-- UTxO set ('Data.Map.Map') inside, to create an identical one where every
+-- element has been translated to the most recent era and unwrapped from the
+-- 'NS'.
+--
+-- <<docs/haddocks/hard-fork-tables.svg>>
+--
+-- To prevent memory explosion, try to only perform one of this transformations,
+-- for example:
+--
+-- * when applying blocks, inject the tables for the transactions only once, and
+--     extract them only once.
+--
+-- * when performing queries on the tables (that use
+--     'Ouroboros.Consensus.Ledger.Query.QFTraverseTables'), operate with the
+--     tables at the hard fork level until the very end, when you have to
+--     promote them to some specific era.
+--
+-- = __(image code)__
+--
+-- >>> :{
+-- >>> either (error . show) pure =<<
+-- >>>  renderToFile "docs/haddocks/hard-fork-tables.svg" defaultEnv (tikz ["positioning", "arrows"]) "\\node at (4.5,4.8) {\\small{LedgerTables (LedgerState (HardForkBlock xs))}};\
+-- >>> \ \\draw (0,0) rectangle (9,5);\
+-- >>> \ \\node (rect) at (1.5,4) [draw,minimum width=1cm,minimum height=0.5cm] {TxIn};\
+-- >>> \ \\node (oneOf) at (3.5,4) [draw=none] {NS};\
+-- >>> \ \\draw (rect) -> (oneOf);\
+-- >>> \ \\node (sh) at (6.5,4) [draw,minimum width=1cm,minimum height=0.5cm] {BlockATxOut};\
+-- >>> \ \\node (al) at (6.5,3) [draw,minimum width=1cm,minimum height=0.5cm] {BlockBTxOut};\
+-- >>> \ \\node (my) at (6.5,2) [draw=none,minimum width=1cm,minimum height=0.5cm] {...};\
+-- >>> \ \\node (ba) at (6.5,1) [draw,minimum width=1cm,minimum height=0.5cm] {BlockNTxOut};\
+-- >>> \ \\draw (oneOf) -> (sh);\
+-- >>> \ \\draw (oneOf) -> (al);\
+-- >>> \ \\draw (oneOf) -> (ba);\
+-- >>> \ \\draw (3,0.5) rectangle (8,4.5);"
+-- >>> :}
+--
+-- >>> :{
+-- >>> either (error . show) pure =<<
+-- >>>  renderToFile "docs/haddocks/hard-fork-tables-per-block.svg" defaultEnv (tikz ["positioning", "arrows"]) "\\node at (5,4.8) {\\small{LedgerState (HardForkBlock xs)}};\
+-- >>> \ \\draw (0,0) rectangle (10,5);\
+-- >>> \ \\node (oneOf2) at (2,4) [draw=none] {HardForkState};\
+-- >>> \ \\node (bb) at (5,4) [draw,minimum width=1cm,minimum height=0.5cm] {BlockAState};\
+-- >>> \ \\node (bt) at (8,4) [draw,minimum width=1cm,minimum height=0.5cm] {BlockATables};\
+-- >>> \ \\node (sb) at (5,3) [draw,minimum width=1cm,minimum height=0.5cm] {BlockBState};\
+-- >>> \ \\node (st) at (8,3) [draw,minimum width=1cm,minimum height=0.5cm] {BlockBTables};\
+-- >>> \ \\node (db) at (5,2) [draw=none,minimum width=1cm,minimum height=0.5cm] {...};\
+-- >>> \ \\node (dt) at (8,2) [draw=none,minimum width=1cm,minimum height=0.5cm] {...};\
+-- >>> \ \\node (bab) at (5,1) [draw,minimum width=1cm,minimum height=0.5cm] {BlockNState};\
+-- >>> \ \\node (bat) at (8,1) [draw,minimum width=1cm,minimum height=0.5cm] {BlockNTables};\
+-- >>> \ \\draw (oneOf2) -> (bb);\
+-- >>> \ \\draw (bb) -> (bt);\
+-- >>> \ \\draw (oneOf2) -> (sb);\
+-- >>> \ \\draw (sb) -> (st);\
+-- >>> \ \\draw (oneOf2) -> (bab);\
+-- >>> \ \\draw (bab) -> (bat);"
+-- >>> :}
+type DefaultHardForkTxOut xs = NS WrapTxOut xs
+
+class HasHardForkTxOut xs where
+  type HardForkTxOut xs :: Type
+  type HardForkTxOut xs = DefaultHardForkTxOut xs
+
+  injectHardForkTxOut :: Index xs x -> Value (LedgerState x) -> HardForkTxOut xs
+  distribHardForkTxOut :: Index xs x -> HardForkTxOut xs -> Maybe (Value (LedgerState x))
+
+injectHardForkTxOutDefault ::
+     Index xs x
+  -> Value (LedgerState x)
+  -> DefaultHardForkTxOut xs
+injectHardForkTxOutDefault idx = injectNS idx . WrapTxOut
+
+distribHardForkTxOutDefault ::
      CanHardFork xs
   => Index xs x
-  -> Value (LedgerState (HardForkBlock xs))
+  -> DefaultHardForkTxOut xs
   -> Maybe (Value (LedgerState x))
-distribTxOut idx =
+distribHardForkTxOutDefault idx  =
     fmap unwrapTxOut
   . unComp
   . apFn (projectNP idx $ composeTxOutTranslations $ ipTranslateTxOut hardForkEraTranslation)
@@ -1148,10 +1183,9 @@ composeTxOutTranslations = \case
       fn (Comp. Just . unZ . unK) :* Nil
     PCons (TranslateTxOut t) ts ->
       fn ( Comp
-         . Just
          . eitherNS
-              id
-              (error "composeTranslations: anachrony")
+              Just
+              (const Nothing)
          . unK
          )
       :* hmap
@@ -1168,3 +1202,51 @@ composeTxOutTranslations = \case
     eitherNS l r = \case
       Z x -> l x
       S x -> r x
+
+class HasHardForkTxOut xs => SerializeHardForkTxOut xs where
+  encodeHardForkTxOut :: Proxy xs -> HardForkTxOut xs -> CBOR.Encoding
+  decodeHardForkTxOut :: Proxy xs -> CBOR.Decoder s (HardForkTxOut xs)
+
+encodeHardForkTxOutDefault ::
+     forall xs. All (Compose CanSerializeLedgerTables LedgerState) xs
+  => DefaultHardForkTxOut xs
+  -> CBOR.Encoding
+encodeHardForkTxOutDefault =
+      hcollapse
+    . hcimap (Proxy @(Compose CanSerializeLedgerTables LedgerState)) each
+  where
+    each ::
+          forall x. CanSerializeLedgerTables (LedgerState x)
+      => Index xs x
+      -> WrapTxOut x
+      -> K CBOR.Encoding x
+    each idx (WrapTxOut txout) = K $
+           CBOR.encodeListLen 2
+        <> CBOR.encodeWord8 (toWord8 idx)
+        <> encodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x)) txout
+
+decodeHardForkTxOutDefault ::
+     forall s xs. All (Compose CanSerializeLedgerTables LedgerState) xs
+  => CBOR.Decoder s (DefaultHardForkTxOut xs)
+decodeHardForkTxOutDefault = do
+    CBOR.decodeListLenOf 2
+    tag <- CBOR.decodeWord8
+    case getFirst $ aDecoder tag of
+      Nothing -> error $ "decodeTxOut for HardForkBlock, unknown tag: " <> show tag
+      Just x  -> x
+  where
+    each ::
+          forall x. CanSerializeLedgerTables (LedgerState x)
+      => Index xs x
+      -> forall s'. K (Word8 -> First (CBOR.Decoder s' (NS WrapTxOut xs))) x
+    each idx = K $ \w -> First $
+        if w /= toWord8 idx then Nothing else
+        Just
+          $ injectNS idx . WrapTxOut <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x))
+
+    aDecoder = mconcat
+            $ hcollapse
+            $ hcmap
+                (Proxy @(Compose CanSerializeLedgerTables LedgerState))
+                each
+                (indices @xs)

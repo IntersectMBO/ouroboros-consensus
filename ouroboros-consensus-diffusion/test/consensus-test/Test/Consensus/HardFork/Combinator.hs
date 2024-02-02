@@ -38,7 +38,6 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.Condense ()
-import           Ouroboros.Consensus.HardFork.Combinator.Ledger ()
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.History (EraParams (..))
@@ -382,6 +381,15 @@ instance HasCanonicalTxIn '[BlockA, BlockB] where
   encodeCanonicalTxIn = toCBOR
 
   decodeCanonicalTxIn = fromCBOR
+
+instance HasHardForkTxOut '[BlockA, BlockB] where
+  type HardForkTxOut '[BlockA, BlockB] = DefaultHardForkTxOut '[BlockA, BlockB]
+  injectHardForkTxOut = injectHardForkTxOutDefault
+  distribHardForkTxOut = distribHardForkTxOutDefault
+
+instance SerializeHardForkTxOut '[BlockA, BlockB] where
+  encodeHardForkTxOut _ = encodeHardForkTxOutDefault
+  decodeHardForkTxOut _ = decodeHardForkTxOutDefault
 
 {-------------------------------------------------------------------------------
   Hard fork

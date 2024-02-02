@@ -304,6 +304,8 @@ class CanStowLedgerTables l where
 
 -- | This class provides a 'CodecMK' that can be used to encode/decode keys and
 -- values on @'LedgerTables' l mk@
+--
+-- TODO: can this be removed in favour of EncodeDisk and DecodeDisk?
 type CanSerializeLedgerTables :: LedgerStateKind -> Constraint
 class CanSerializeLedgerTables l where
   codecLedgerTables :: LedgerTables l CodecMK

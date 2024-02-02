@@ -32,7 +32,7 @@ import           Data.SOP.Strict hiding (Shape (..))
 import           Legacy.Byron.Node ()
 import           Legacy.Cardano.Block
 import           Legacy.Cardano.CanHardFork
-import           Legacy.Cardano.CanonicalTxIn ()
+import           Legacy.Cardano.Ledger ()
 import           Legacy.Shelley.Node ()
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano

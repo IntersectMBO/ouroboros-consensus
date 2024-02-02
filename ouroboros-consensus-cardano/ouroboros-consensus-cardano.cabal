@@ -81,8 +81,8 @@ library
     Ouroboros.Consensus.Cardano.Block
     Ouroboros.Consensus.Cardano.ByronHFC
     Ouroboros.Consensus.Cardano.CanHardFork
-    Ouroboros.Consensus.Cardano.CanonicalTxIn
     Ouroboros.Consensus.Cardano.Condense
+    Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
     Ouroboros.Consensus.Cardano.QueryHF
     Ouroboros.Consensus.Shelley.Crypto

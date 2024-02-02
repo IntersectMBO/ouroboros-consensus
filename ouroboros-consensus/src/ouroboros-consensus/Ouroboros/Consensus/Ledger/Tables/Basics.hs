@@ -79,15 +79,15 @@ deriving newtype instance NoThunks (mk (Key l) (Value l))
 -- | Each @LedgerState@ instance will have the notion of a @Key@ for the tables.
 -- For instance, if we only pulled out only the UTxO set from the ledger state,
 -- this type would be @TxIn@. See
--- "Ouroboros.Consensus.HardFork.Combinator.Ledger.CanonicalTxIn".
+-- "Ouroboros.Consensus.HardFork.Combinator.Ledger".
 type Key :: LedgerStateKind -> Type
-type family Key l
+type family Key l -- TODO: rename to TxIn
 
 -- | Each @LedgerState@ instance will have the notion of a @Value@ for the
 -- tables. For instance, if we only pulled out only the UTxO set from the ledger
 -- state, this type would be @TxOut@ or @NS TxOut@.
 type Value :: LedgerStateKind -> Type
-type family Value l
+type family Value l -- TODO: rename to TxOut
 
 type instance Key   (LedgerTables l) = Key l
 type instance Value (LedgerTables l) = Value l
