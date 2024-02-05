@@ -62,7 +62,7 @@ deriving via SelectViewDiffusionPipelining (SimpleBlock c ext) instance
   
 instance ProtocolConfigHasSecurityParam (BlockProtocol (SimpleBlock c ext))
   => BlockSupportsSanityCheck (SimpleBlock c ext) where
-  checkSecurityParamConsistency =
+  configAllSecurityParams =
     pure . protocolConfigSecurityParam . topLevelConfigProtocol
 
 instance ( LedgerSupportsProtocol      (SimpleBlock SimpleMockCrypto ext)

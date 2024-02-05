@@ -254,7 +254,7 @@ instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
 instance BlockSupportsSanityCheck DualByronBlock where
-  checkSecurityParamConsistency = pure . protocolConfigSecurityParam . topLevelConfigProtocol
+  configAllSecurityParams = pure . protocolConfigSecurityParam . topLevelConfigProtocol
 
 deriving via SelectViewDiffusionPipelining DualByronBlock
   instance BlockSupportsDiffusionPipelining DualByronBlock

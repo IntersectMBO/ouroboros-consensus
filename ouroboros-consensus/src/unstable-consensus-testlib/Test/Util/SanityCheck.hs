@@ -10,17 +10,16 @@ import Ouroboros.Consensus.Block.SupportsSanityCheck
 import Ouroboros.Consensus.Config
 import Test.Util.Orphans.Arbitrary ()
 import Test.Tasty.QuickCheck
-import Data.List.NonEmpty (nub)
 
 prop_sanityChecks
   :: BlockSupportsSanityCheck blk
   => TopLevelConfig blk -> Property
 prop_sanityChecks cfg =
-  prop_securityParamConsistent cfg
+  sanityCheckConfig cfg === []
 
 prop_securityParamConsistent
   :: BlockSupportsSanityCheck blk
   => TopLevelConfig blk -> Property
 prop_securityParamConsistent cfg =
-  length (nub (checkSecurityParamConsistency cfg)) === 1
+  checkSecurityParamConsistency cfg === Nothing
 

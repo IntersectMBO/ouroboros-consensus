@@ -62,6 +62,7 @@ import           Test.ThreadNet.Util.NodeToNodeVersion
 import           Test.ThreadNet.Util.NodeTopology
 import           Test.ThreadNet.Util.Seed
 import           Test.Util.HardFork.Future
+import           Test.Util.SanityCheck (prop_sanityChecks)
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.Time (dawnOfTime)
 
@@ -132,6 +133,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
     counterexample ("eraSizeA: " <> show eraSizeA) $
     tabulate "epochs in era A" [labelEraSizeA] $
     prop_general args testOutput .&&.
+    prop_sanityChecks (topLevelConfig (CoreNodeId 0))  .&&.
     prop_allExpectedBlocks
   where
     k :: SecurityParam

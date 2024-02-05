@@ -293,7 +293,7 @@ instance BlockSupportsMetrics ByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
   
 instance BlockSupportsSanityCheck ByronBlock where
-  checkSecurityParamConsistency =
+  configAllSecurityParams =
     pure . pbftSecurityParam . pbftParams . topLevelConfigProtocol
 
 deriving via SelectViewDiffusionPipelining ByronBlock
