@@ -50,7 +50,6 @@ import           Data.Foldable (toList)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
 import           Data.Time (DiffTime)
-import           Data.Traversable (for)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
@@ -164,8 +163,9 @@ instance Condense NodeState where
 
 prettyPeersSchedule :: Peers PeerSchedule -> [String]
 prettyPeersSchedule peers =
-  for (zip [(0 :: Integer)..] (peersStates peers)) $ \(number, (time, peerState)) ->
-  show number ++ ": " ++ condense peerState ++ " @" ++ show time
+  map
+    (\(number, (time, peerState)) -> show number ++ ": " ++ condense peerState ++ " @" ++ show time)
+    (zip [(0 :: Int)..] (peersStates peers))
 
 ----------------------------------------------------------------------------------------------------
 -- Conversion to 'PointSchedule'
