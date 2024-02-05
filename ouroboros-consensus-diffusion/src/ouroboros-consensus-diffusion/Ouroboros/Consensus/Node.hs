@@ -550,8 +550,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 | (version, blockVersion) <- Map.toList llrnNodeToClientVersions
                 ],
             Diffusion.daLedgerPeersCtx =
-              LedgerPeersConsensusInterface
-                (getPeersFromCurrentLedgerAfterSlot kernel)
+              LedgerPeersConsensusInterface {
+                  lpGetLatestSlot = getImmTipSlot kernel,
+                  lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
+                  lpGetLedgerStateJudgement = getLedgerStateJudgement kernel
+                }
           }
 
         localRethrowPolicy :: RethrowPolicy
