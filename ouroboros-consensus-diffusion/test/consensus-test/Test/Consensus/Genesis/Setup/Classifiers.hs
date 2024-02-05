@@ -13,7 +13,8 @@ module Test.Consensus.Genesis.Setup.Classifiers (
 import           Cardano.Slotting.Slot (WithOrigin (At))
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Word (Word64)
-import           Ouroboros.Consensus.Block (ChainHash (BlockHash), HeaderHash)
+import           Ouroboros.Consensus.Block (ChainHash (BlockHash), HeaderHash,
+                     blockSlot, succWithOrigin)
 import           Ouroboros.Consensus.Block.Abstract (SlotNo (SlotNo),
                      withOrigin)
 import           Ouroboros.Consensus.Config
@@ -31,8 +32,19 @@ data Classifiers =
   Classifiers {
     -- | There are more than k blocks in at least one alternative chain after the intersection
     existsSelectableAdversary      :: Bool,
-    -- | There are more than k blocks in all alternative chains after the intersection
+    -- | There are more than k blocks in all alternative chains after the
+    -- intersection. Note that this is always guaranteed for the honest chain.
     allAdversariesSelectable       :: Bool,
+    -- | There is always at least one block per sliding forecast window in all
+    -- alternative chains. Note that this is always guaranteed for the honest
+    -- chain.
+    allAdversariesForecastable     :: Bool,
+    -- | All adversaries have at least @k+1@ block in the forecast window the
+    -- follows their intersection with the trunk. Note that the generator always
+    -- enforces that the trunk wins in all _Genesis_ windows after the
+    -- intersection. In particular, if @sgen = sfor@, then the trunk will have
+    -- at least @k+2@.
+    allAdversariesKPlus1InForecast :: Bool,
     -- | There are at least scg slots after the intesection on both the honest
     -- and the alternative chain
     --
@@ -50,6 +62,8 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
   Classifiers {
     existsSelectableAdversary,
     allAdversariesSelectable,
+    allAdversariesForecastable,
+    allAdversariesKPlus1InForecast,
     genesisWindowAfterIntersection,
     longerThanGenesisWindow
   }
@@ -72,6 +86,25 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
       all isSelectable branches
 
     isSelectable bt = AF.length (btbSuffix bt) > fromIntegral k
+
+    allAdversariesForecastable =
+      all isForecastable branches
+
+    isForecastable bt =
+      -- FIXME: We are using `scg` here but what we really mean is `sfor`.
+      -- Distinguish `scg` vs. `sgen` vs. `sfor` and use the latter here.
+      let slotNos = map blockSlot $ AF.toOldestFirst $ btbFull bt in
+      all (\(SlotNo prev, SlotNo next) -> next - prev <= scg) (zip slotNos (drop 1 slotNos))
+
+    allAdversariesKPlus1InForecast =
+      all hasKPlus1InForecast branches
+
+    hasKPlus1InForecast BlockTreeBranch{btbSuffix} =
+      -- FIXME: We are using `scg` here but what we really mean is `sfor`.
+      -- Distinguish `scg` vs. `sgen` vs. `sfor` and use the latter here.
+      let forecastSlot = succWithOrigin (anchorToSlotNo $ anchor btbSuffix) + SlotNo scg
+          forecastBlocks = AF.takeWhileOldest (\b -> blockSlot b < forecastSlot) btbSuffix
+       in AF.length forecastBlocks >= fromIntegral k + 1
 
     SlotNo goodTipSlot = withOrigin 0 id (headSlot goodChain)
 
