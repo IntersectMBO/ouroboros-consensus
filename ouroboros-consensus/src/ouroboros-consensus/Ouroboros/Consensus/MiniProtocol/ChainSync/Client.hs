@@ -1204,7 +1204,11 @@ checkTime cfgEnv intEnv =
         Intersects kis2 lst        <- checkArrivalTime kis arrival
         Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
             Just ledgerView -> pure $ Intersects kis2 ledgerView
-            Nothing         -> readLedgerState kis2 (projectLedgerView slotNo)
+            Nothing         -> do
+              EarlyExit.lift $ traceWith (tracer cfgEnv) $ TraceWaitingBeyondForecastHorizon slotNo
+              res <- readLedgerState kis2 (projectLedgerView slotNo)
+              EarlyExit.lift $ traceWith (tracer cfgEnv) $ TraceAccessingForecastHorizon slotNo
+              pure res
         pure $ Intersects kis3 ledgerView
   where
     ConfigEnv {
@@ -1714,6 +1718,14 @@ data TraceChainSyncClientEvent blk =
   |
     TraceTermination ChainSyncClientResult
     -- ^ The client has terminated.
+  |
+    TraceWaitingBeyondForecastHorizon SlotNo
+    -- ^ The given 'SlotNo' is beyond the forecast horizon, the ChainSync client
+    -- cannot yet validate a header in this slot and therefore is waiting.
+  |
+    TraceAccessingForecastHorizon SlotNo
+    -- ^ The given 'SlotNo', which was previously beyond the forecast horizon,
+    -- has now entered the forecast horizon, and we can resume processing.
 
 deriving instance
   ( BlockSupportsProtocol blk

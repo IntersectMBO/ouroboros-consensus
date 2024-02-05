@@ -17,7 +17,8 @@ import           Ouroboros.Consensus.Protocol.BFT
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
                      CodecConfig (TestBlockCodecConfig),
-                     StorageConfig (TestBlockStorageConfig), TestBlock)
+                     StorageConfig (TestBlockStorageConfig), TestBlock,
+                     TestBlockLedgerConfig (..))
 
 -- REVIEW: this has not been deliberately chosen
 defaultCfg :: SecurityParam -> TopLevelConfig TestBlock
@@ -33,7 +34,7 @@ defaultCfg secParam = TopLevelConfig {
       , (CoreId (CoreNodeId 1), VerKeyMockDSIGN 1)
       ]
     }
-  , topLevelConfigLedger  = eraParams
+  , topLevelConfigLedger  = TestBlockLedgerConfig eraParams Nothing
   , topLevelConfigBlock   = TestBlockConfig numCoreNodes
   , topLevelConfigCodec   = TestBlockCodecConfig
   , topLevelConfigStorage = TestBlockStorageConfig
