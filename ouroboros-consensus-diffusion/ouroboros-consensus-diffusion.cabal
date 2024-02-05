@@ -81,9 +81,9 @@ library
     , io-classes                   ^>=1.4.1
     , mtl
     , ouroboros-consensus          ^>=0.16
-    , ouroboros-network            ^>=0.12
+    , ouroboros-network            ^>=0.13
     , ouroboros-network-api        ^>=0.7
-    , ouroboros-network-framework  ^>=0.11.1
+    , ouroboros-network-framework  ^>=0.11.2
     , ouroboros-network-protocols  ^>=0.8
     , random
     , serialise                    ^>=0.2

@@ -31,3 +31,14 @@ tests: true
 benchmarks: true
 
 import: ./asserts.cabal
+
+source-repository-package
+    type: git
+    location: https://github.com/input-output-hk/ouroboros-network/
+    tag: a99fd1626d172ef8aeb7ae56a6dadbe1fff2dd21
+    subdir: ouroboros-network
+            ouroboros-network-framework
+            ouroboros-network-api
+            ouroboros-network-testing
+            ouroboros-network-protocols
+    --sha256: sha256-dnPdP3arNIvTdXMZ7+7Jv5A/EZSDsBYAJvoz+cJ9M6Y=

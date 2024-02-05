@@ -90,8 +90,10 @@ import           Ouroboros.Network.NodeToNode (ConnectionId,
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
-import           Ouroboros.Network.PeerSharing (PeerSharingRegistry,
-                     newPeerSharingRegistry)
+import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
+                     PeerSharingRegistry, newPeerSharingAPI,
+                     newPeerSharingRegistry, ps_POLICY_PEER_SHARE_MAX_PEERS,
+                     ps_POLICY_PEER_SHARE_STICKY_TIME)
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
@@ -144,7 +146,9 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       --
       -- When set with the empty list '[]' block forging will be disabled.
       --
-    , setBlockForging         :: [BlockForging m blk] -> m ()
+    , setBlockForging        :: [BlockForging m blk] -> m ()
+
+    , getPeerSharingAPI      :: PeerSharingAPI addrNTN StdGen m
     }
 
 -- | Arguments required when initializing a node
@@ -163,6 +167,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , keepAliveRng            :: StdGen
     , gsmArgs                 :: GsmNodeKernelArgs m blk
     , getUseBootstrapPeers    :: STM m UseBootstrapPeers
+    , peerSharingRng          :: StdGen
     }
 
 initNodeKernel ::
@@ -180,6 +185,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , chainDB, initChainDB
                                    , blockFetchConfiguration
                                    , gsmArgs
+                                   , peerSharingRng
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -237,6 +243,10 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           TooOld      -> GSM.enterOnlyBootstrap gsm
           YoungEnough -> GSM.enterCaughtUp      gsm
 
+    peerSharingAPI <- newPeerSharingAPI peerSharingRng
+                                        ps_POLICY_PEER_SHARE_STICKY_TIME
+                                        ps_POLICY_PEER_SHARE_MAX_PEERS
+
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
                             blockForgingController st (LazySTM.takeTMVar blockForgingVar)
 
@@ -262,6 +272,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getPeerSharingRegistry  = peerSharingRegistry
       , getTracers              = tracers
       , setBlockForging         = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
+      , getPeerSharingAPI       = peerSharingAPI
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
