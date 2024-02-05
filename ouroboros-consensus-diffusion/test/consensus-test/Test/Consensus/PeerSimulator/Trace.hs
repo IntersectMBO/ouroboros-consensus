@@ -60,6 +60,10 @@ mkChainSyncClientTracer tracer =
       trace $ "Rolled back to: " ++ tersePoint point
     TraceFoundIntersection point _ourTip _theirTip ->
       trace $ "Found intersection at: " ++ tersePoint point
+    TraceWaitingBeyondForecastHorizon slotNo ->
+      trace $ "Waiting beyond forecast horizon: " ++ show slotNo
+    TraceAccessingForecastHorizon slotNo ->
+      trace $ "Accessing forecast horizon: " ++ show slotNo
     _ -> pure ()
   where
     trace = traceUnitWith tracer "ChainSyncClient"
