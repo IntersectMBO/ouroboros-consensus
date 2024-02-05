@@ -107,7 +107,7 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
 
 instance ProtocolConfigHasSecurityParam proto
   => BlockSupportsSanityCheck (ShelleyBlock proto era) where
-  checkSecurityParamConsistency = pure . protocolConfigSecurityParam . topLevelConfigProtocol
+  configAllSecurityParams = pure . protocolConfigSecurityParam . topLevelConfigProtocol
 
 instance
   ( ShelleyCompatible proto era
