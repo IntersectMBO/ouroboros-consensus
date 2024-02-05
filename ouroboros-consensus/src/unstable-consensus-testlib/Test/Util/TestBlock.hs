@@ -71,11 +71,13 @@ module Test.Util.TestBlock (
   , testInitLedgerWithState
     -- * Support for tests
   , Permutation (..)
+  , TestBlockLedgerConfig (..)
   , isAncestorOf
   , isDescendentOf
   , isStrictAncestorOf
   , isStrictDescendentOf
   , permute
+  , testBlockLedgerConfigFrom
   , unsafeTestBlockWithPayload
   , updateToNextNumeral
   ) where
@@ -543,7 +545,19 @@ testInitExtLedgerWithState st = ExtLedgerState {
     , headerState = genesisHeaderState ()
     }
 
-type instance LedgerCfg (LedgerState (TestBlockWith ptype)) = HardFork.EraParams
+data TestBlockLedgerConfig = TestBlockLedgerConfig {
+  tblcHardForkParams :: HardFork.EraParams,
+  -- | `Nothing` means an infinite forecast range.
+  -- Instead of SlotNo, it should be something like "SlotRange"
+  tblcForecastRange  :: Maybe SlotNo
+}
+  deriving (Show, Eq, Generic)
+  deriving anyclass (NoThunks)
+
+testBlockLedgerConfigFrom :: HardFork.EraParams -> TestBlockLedgerConfig
+testBlockLedgerConfigFrom eraParams = TestBlockLedgerConfig eraParams Nothing
+
+type instance LedgerCfg (LedgerState (TestBlockWith ptype)) = TestBlockLedgerConfig
 
 instance GetTip (LedgerState (TestBlockWith ptype)) where
   getTip = castPoint . lastAppliedPoint
@@ -576,7 +590,8 @@ instance (PayloadSemantics ptype) => ValidateEnvelope (TestBlockWith ptype) wher
 
 instance (PayloadSemantics ptype) => LedgerSupportsProtocol (TestBlockWith ptype) where
   protocolLedgerView   _ _  = ()
-  ledgerViewForecastAt _    = trivialForecast
+  ledgerViewForecastAt cfg state =
+    constantForecastInRange (tblcForecastRange cfg) () (getTipSlot state)
 
 singleNodeTestConfigWith ::
      CodecConfig (TestBlockWith ptype)
@@ -590,7 +605,7 @@ singleNodeTestConfigWith codecConfig storageConfig k = TopLevelConfig {
         , bftSignKey = SignKeyMockDSIGN 0
         , bftVerKeys = Map.singleton (CoreId (CoreNodeId 0)) (VerKeyMockDSIGN 0)
         }
-    , topLevelConfigLedger  = eraParams
+    , topLevelConfigLedger  = ledgerCfgParams
     , topLevelConfigBlock   = TestBlockConfig numCoreNodes
     , topLevelConfigCodec   = codecConfig
     , topLevelConfigStorage = storageConfig
@@ -602,8 +617,11 @@ singleNodeTestConfigWith codecConfig storageConfig k = TopLevelConfig {
     numCoreNodes :: NumCoreNodes
     numCoreNodes = NumCoreNodes 1
 
-    eraParams :: HardFork.EraParams
-    eraParams = HardFork.defaultEraParams k slotLength
+    ledgerCfgParams :: TestBlockLedgerConfig
+    ledgerCfgParams = TestBlockLedgerConfig {
+      tblcHardForkParams = HardFork.defaultEraParams k slotLength,
+      tblcForecastRange = Nothing
+    }
 
 
 {-------------------------------------------------------------------------------
@@ -623,7 +641,7 @@ data instance StorageConfig TestBlock = TestBlockStorageConfig
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
-  hardForkSummary = neverForksHardForkSummary id
+  hardForkSummary = neverForksHardForkSummary tblcHardForkParams
 
 data instance BlockQuery TestBlock result where
   QueryLedgerTip :: BlockQuery TestBlock (Point TestBlock)

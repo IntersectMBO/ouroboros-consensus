@@ -11,7 +11,8 @@ import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-                     (allAdversariesSelectable, classifiers)
+                     (allAdversariesForecastable, allAdversariesSelectable,
+                     classifiers)
 import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
@@ -25,20 +26,28 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 tests :: TestTree
 tests =
   testGroup "long range attack" [
+    -- NOTE: We want to keep this test to show that Praos is vulnerable to this
+    -- attack but Genesis is not. This requires to first fix it as mentioned
+    -- above.
+    --
     adjustQuickCheckTests (`div` 10) $
     testProperty "one adversary" prop_longRangeAttack
   ]
 
 prop_longRangeAttack :: Property
 prop_longRangeAttack =
-  forAllGenesisTest
+  -- NOTE: `shrinkPeerSchedules` only makes sense for tests that expect the
+  -- honest node to win. Hence the `noShrinking`.
+
+  noShrinking $ forAllGenesisTest
 
     (do
         -- Create a block tree with @1@ alternative chain.
         gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
         -- Create a 'longRangeAttack' schedule based on the generated chains.
         ps <- stToGen (longRangeAttack gtBlockTree)
-        if allAdversariesSelectable (classifiers gt)
+        let cls = classifiers gt
+        if allAdversariesSelectable cls && allAdversariesForecastable cls
           then pure $ gt $> ps
           else discard)
 
@@ -47,7 +56,8 @@ prop_longRangeAttack =
     shrinkPeerSchedules
 
     -- NOTE: This is the expected behaviour of Praos to be reversed with
-    -- Genesis. But we are testing Praos for the moment
+    -- Genesis. But we are testing Praos for the moment. Do not forget to remove
+    -- `noShrinking` above when removing this negation.
     (\_ -> not . isHonestTestFragH . svSelectedChain)
 
   where
