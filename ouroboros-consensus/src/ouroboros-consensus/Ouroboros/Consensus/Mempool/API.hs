@@ -32,7 +32,7 @@ module Ouroboros.Consensus.Mempool.API (
   , zeroTicketNo
   ) where
 
-import           Ouroboros.Consensus.Block (SlotNo)
+import           Ouroboros.Consensus.Block (ChainHash, SlotNo)
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import qualified Ouroboros.Consensus.Mempool.Capacity as Cap
@@ -195,6 +195,17 @@ data Mempool m blk = Mempool {
       --
       -- This does not update the state of the mempool.
     , getSnapshotFor :: ForgeLedgerState blk -> STM m (MempoolSnapshot blk)
+
+    -- | Get a snapshot of the mempool state that is valid with respect to
+    -- the /given/ ledger state, retaining chain hash and slot no. attributes of
+    -- the /current/ ledger state referenced in the mempool's internal state.
+    --
+    -- We keep this in @m@ instead of @STM m@ as:
+    --  * It does not update the state of the mempool.
+    --  * It only depends on reading one TVar, once.
+    --  * ... so can be optimized for the forging loop, to avoid an STM transaction.
+    , getSnapshotForForging :: ForgeLedgerState blk
+                            -> m (ChainHash blk, SlotNo, MempoolSnapshot blk)
 
       -- | Get the mempool's capacity in bytes.
       --

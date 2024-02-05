@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
@@ -110,6 +111,9 @@ mkMempool mpEnv = Mempool
     , syncWithLedger = implSyncWithLedger mpEnv
     , getSnapshot    = snapshotFromIS <$> readTVar istate
     , getSnapshotFor = \fls -> pureGetSnapshotFor cfg fls co <$> readTVar istate
+    , getSnapshotForForging = \fls -> do
+        is@IS { isTip, isSlotNo } <- readTVarIO istate
+        pure (isTip, isSlotNo, pureGetSnapshotFor cfg fls co is)
     , getCapacity    = isCapacity <$> readTVar istate
     , getTxSize      = txSize
     }

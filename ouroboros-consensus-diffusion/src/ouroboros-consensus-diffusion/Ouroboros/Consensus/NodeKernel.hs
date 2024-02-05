@@ -386,17 +386,10 @@ forkBlockForging IS{..} blockForging =
         -- produce a block that fits onto the ledger we got above; if the
         -- ledger in the meantime changes, the block we produce here may or
         -- may not be adopted, but it won't be invalid.
-        (mempoolHash, mempoolSlotNo, mempoolSnapshot) <- lift $ atomically $ do
-            (mempoolHash, mempoolSlotNo) <- do
-              snap <- getSnapshot mempool   -- only used for its tip-like information
-              let h :: ChainHash blk
-                  h = castHash $ getTipHash $ snapshotLedgerState snap
-              pure (h, snapshotSlotNo snap)
-
-            snap <- getSnapshotFor
-                      mempool
-                      (ForgeInKnownSlot currentSlot tickedLedgerState)
-            pure (mempoolHash, mempoolSlotNo, snap)
+        (mempoolHash, mempoolSlotNo, mempoolSnapshot) <- lift $
+          getSnapshotForForging
+            mempool
+            (ForgeInKnownSlot currentSlot tickedLedgerState)
 
         let txs = map fst $ snapshotTxs mempoolSnapshot
 
