@@ -48,6 +48,7 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy as BSL
+import           Data.Hashable (Hashable)
 import           Data.Int (Int64)
 import           Data.Map.Strict (Map)
 import           Data.Void (Void)
@@ -110,8 +111,7 @@ import           Ouroboros.Network.Protocol.PeerSharing.Codec
                      codecPeerSharingId, timeLimitsPeerSharing)
 import           Ouroboros.Network.Protocol.PeerSharing.Server
                      (PeerSharingServer, peerSharingServerPeer)
-import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing,
-                     PeerSharingAmount)
+import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import           Ouroboros.Network.Protocol.TxSubmission2.Client
 import           Ouroboros.Network.Protocol.TxSubmission2.Codec
 import           Ouroboros.Network.Protocol.TxSubmission2.Server
@@ -204,16 +204,14 @@ mkHandlers ::
      , HasTxId (GenTx blk)
      , LedgerSupportsProtocol blk
      , Ord addrNTN
+     , Hashable addrNTN
      )
   => NodeKernelArgs m addrNTN addrNTC blk
   -> NodeKernel     m addrNTN addrNTC blk
-  -> (PeerSharingAmount -> m [addrNTN])
-  -- ^ Peer Sharing result computation callback
   -> Handlers       m addrNTN           blk
 mkHandlers
       NodeKernelArgs {chainSyncFutureCheck, keepAliveRng, miniProtocolParameters}
-      NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers}
-      computePeers =
+      NodeKernel {getChainDB, getMempool, getTopLevelConfig, getTracers = tracers, getPeerSharingAPI} =
     Handlers {
         hChainSyncClient = \peer _isBigLedgerpeer dynEnv ->
           CsClient.chainSyncClient
@@ -257,7 +255,7 @@ mkHandlers
       , hKeepAliveClient = \_version -> keepAliveClient (Node.keepAliveClientTracer tracers) keepAliveRng
       , hKeepAliveServer = \_version _peer -> keepAliveServer
       , hPeerSharingClient = \_version controlMessageSTM _peer -> peerSharingClient controlMessageSTM
-      , hPeerSharingServer = \_version _peer -> peerSharingServer computePeers
+      , hPeerSharingServer = \_version _peer -> peerSharingServer getPeerSharingAPI
       }
 
 {-------------------------------------------------------------------------------

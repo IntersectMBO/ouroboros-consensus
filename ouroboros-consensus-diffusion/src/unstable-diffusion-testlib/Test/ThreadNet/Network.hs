@@ -115,7 +115,7 @@ import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import           Ouroboros.Network.Protocol.TxSubmission2.Type
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS (MockFS)
-import           System.Random (mkStdGen)
+import           System.Random (mkStdGen, split)
 import           Test.ThreadNet.TxGen
 import           Test.ThreadNet.Util.NodeJoinPlan
 import           Test.ThreadNet.Util.NodeRestarts
@@ -969,8 +969,9 @@ runThreadNetwork systemTime ThreadNetworkArgs
         , hfbtMaxClockRewind = secondsToNominalDiffTime 0
         }
 
-      let kaRng = case seed of
+      let rng = case seed of
                     Seed s -> mkStdGen s
+          (kaRng, psRng) = split rng
       let nodeKernelArgs = NodeKernelArgs
             { tracers
             , registry
@@ -985,6 +986,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
             , blockFetchSize          = estimateBlockSize
             , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
             , keepAliveRng            = kaRng
+            , peerSharingRng          = psRng
             , miniProtocolParameters  = MiniProtocolParameters {
                   chainSyncPipeliningHighMark = 4,
                   chainSyncPipeliningLowMark  = 2,
@@ -1040,7 +1042,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                   -- The purpose of this test is not testing protocols, so
                   -- returning constant empty list is fine if we have thorough
                   -- tests about the peer sharing protocol itself.
-                  (NTN.mkHandlers nodeKernelArgs nodeKernel (\_ -> return []))
+                  (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the
