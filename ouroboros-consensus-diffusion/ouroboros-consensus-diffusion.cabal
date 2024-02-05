@@ -68,11 +68,11 @@ library
     , Ouroboros.Consensus.Node.NetworkProtocolVersion
 
   build-depends:
-    , base                         >=4.14    && <4.20
-    , bytestring                   >=0.10    && <0.13
+    , base                         >=4.14   && <4.20
+    , bytestring                   >=0.10   && <0.13
     , cardano-slotting
     , cborg                        ^>=0.2.2
-    , containers                   >=0.5     && <0.7
+    , containers                   >=0.5    && <0.7
     , contra-tracer
     , deepseq
     , filepath
@@ -81,10 +81,10 @@ library
     , io-classes                   ^>=1.4.1
     , mtl
     , ouroboros-consensus          ^>=0.16
-    , ouroboros-network            ^>=0.12
-    , ouroboros-network-api        ^>=0.7
-    , ouroboros-network-framework  ^>=0.11.1
-    , ouroboros-network-protocols  ^>=0.8
+    , ouroboros-network            ^>=0.13
+    , ouroboros-network-api        ^>=0.7.1
+    , ouroboros-network-framework  ^>=0.12
+    , ouroboros-network-protocols  ^>=0.8.1
     , random
     , serialise                    ^>=0.2
     , si-timers                    ^>=1.4
