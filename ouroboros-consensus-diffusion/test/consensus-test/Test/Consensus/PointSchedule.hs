@@ -35,7 +35,6 @@ module Test.Consensus.PointSchedule (
   , TestFrag
   , TestFragH
   , TipPoint (..)
-  , banalStates
   , blockPointBlock
   , enrichedWith
   , genesisAdvertisedPoints
@@ -65,8 +64,7 @@ import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     AnchoredSeq (Empty, (:>)))
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..), tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
@@ -256,20 +254,6 @@ peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersLis
 ----------------------------------------------------------------------------------------------------
 -- Schedule generators
 ----------------------------------------------------------------------------------------------------
-
--- | Create a peer schedule by serving one header in each tick.
-banalStates :: TestFrag -> [NodeState]
-banalStates (Empty _) = []
-banalStates frag@(_ :> tipBlock) =
-  spin [] frag
-  where
-    spin z (Empty _) = z
-    spin z (pre :> block) =
-      let header = HeaderPoint $ At (getHeader block)
-       in spin
-            (NodeOnline AdvertisedPoints {tip, header, block = BlockPoint (At block)} : z)
-            pre
-    tip = TipPoint $ tipFromHeader tipBlock
 
 -- | Produce a schedule similar to @Frequencies (Peers 1 [10])@, using the new @SinglePeer@
 -- generator.
