@@ -18,6 +18,7 @@ module Ouroboros.Consensus.NodeKernel (
   , NodeKernel (..)
   , NodeKernelArgs (..)
   , TraceForgeEvent (..)
+  , getImmTipSlot
   , getMempoolReader
   , getMempoolWriter
   , getPeersFromCurrentLedger
@@ -662,3 +663,14 @@ getPeersFromCurrentLedgerAfterSlot kernel slotNo =
       case ledgerTipSlot st of
         Origin        -> False
         NotOrigin tip -> tip > slotNo
+
+-- | Retrieve the slot of the immutable tip
+getImmTipSlot ::
+     ( IOLike m
+     , UpdateLedger blk
+     )
+  => NodeKernel m addrNTN addrNTC blk
+  -> STM m (WithOrigin SlotNo)
+getImmTipSlot kernel =
+        getTipSlot
+    <$> ChainDB.getImmutableLedger (getChainDB kernel)
