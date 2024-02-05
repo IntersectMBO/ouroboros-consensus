@@ -5,6 +5,7 @@ module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
 
 import           Data.Functor (($>))
 import           Data.Maybe (fromJust)
+import           Data.Time (secondsToDiffTime)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike (DiffTime, Time (Time),
                      fromException)
@@ -64,9 +65,11 @@ prop_timeouts = do
     dullSchedule :: DiffTime -> TestFrag -> Peers PeerSchedule
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
-      let tickDuration = 1 -- 1s
+      let tickDuration = secondsToDiffTime 1 -- 1s
           maximumNumberOfTicks = round $ timeout / tickDuration
        in peersOnlyHonest $
             (Time 0, ScheduleTipPoint tipBlock)
               : (Time 0, ScheduleHeaderPoint tipBlock)
-              : zip (map (Time . (* tickDuration)) [0..]) (replicate maximumNumberOfTicks (ScheduleBlockPoint tipBlock))
+              : zip
+                  (map (Time . (* tickDuration) . secondsToDiffTime) [0..])
+                  (replicate (1 + maximumNumberOfTicks) (ScheduleBlockPoint tipBlock))
