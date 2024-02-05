@@ -123,14 +123,13 @@ import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
 import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
                      (decodeRemoteAddress, encodeRemoteAddress)
 import           Ouroboros.Network.Protocol.Limits (shortWait)
-import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharingAmount)
 import           Ouroboros.Network.RethrowPolicy
 import           System.Exit (ExitCode (..))
 import           System.FilePath ((</>))
 import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types
 import           System.FS.IO (ioHasFS)
-import           System.Random (StdGen, newStdGen, randomIO, randomRIO)
+import           System.Random (StdGen, newStdGen, randomIO, randomRIO, split)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -426,8 +425,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       -> (NodeToNodeVersion -> addrNTN -> CBOR.Encoding)
       -> (NodeToNodeVersion -> forall s . CBOR.Decoder s addrNTN)
       -> BlockNodeToNodeVersion blk
-      -> (PeerSharingAmount -> m [addrNTN])
-      -- ^ Peer Sharing result computation callback
       -> NTN.Apps m
           addrNTN
           ByteString
@@ -437,7 +434,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           ByteString
           NodeToNodeInitiatorResult
           ()
-    mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version computePeers =
+    mkNodeToNodeApps nodeKernelArgs nodeKernel peerMetrics encAddrNTN decAddrNTN version =
         NTN.mkApps
           nodeKernel
           rnTraceNTN
@@ -445,7 +442,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           NTN.byteLimits
           llrnChainSyncTimeout
           (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
-          (NTN.mkHandlers nodeKernelArgs nodeKernel computePeers)
+          (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
     mkNodeToClientApps
       :: NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk
@@ -464,8 +461,6 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
       :: NetworkP2PMode p2p
       -> MiniProtocolParameters
       -> (   BlockNodeToNodeVersion blk
-          -- Peer Sharing result computation callback
-          -> (PeerSharingAmount -> m [addrNTN])
           -> NTN.Apps
                m
                addrNTN
@@ -528,16 +523,16 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                       -- Initiator side won't start responder side of Peer
                       -- Sharing protocol so we give a dummy implementation
                       -- here.
-                      $ ntnApps blockVersion (error "impossible happened!"))
+                      $ ntnApps blockVersion)
                 | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
                 ],
-            Diffusion.daApplicationInitiatorResponderMode = \computePeers ->
+            Diffusion.daApplicationInitiatorResponderMode =
               combineVersions
                 [ simpleSingletonVersions
                     version
                     llrnVersionDataNTN
                     (NTN.initiatorAndResponder miniProtocolParams version rnPeerSharing
-                      $ ntnApps blockVersion computePeers)
+                      $ ntnApps blockVersion)
                 | (version, blockVersion) <- Map.toList llrnNodeToNodeVersions
                 ],
             Diffusion.daLocalResponderApplication =
@@ -647,13 +642,14 @@ mkNodeKernelArgs ::
 mkNodeKernelArgs
   registry
   bfcSalt
-  keepAliveRng
+  rng
   cfg
   tracers
   btime
   chainSyncFutureCheck
   chainDB
   = do
+    let (kaRng, psRng) = split rng
     return NodeKernelArgs
       { tracers
       , registry
@@ -666,7 +662,8 @@ mkNodeKernelArgs
       , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
       , miniProtocolParameters  = defaultMiniProtocolParameters
       , blockFetchConfiguration = defaultBlockFetchConfiguration
-      , keepAliveRng
+      , keepAliveRng = kaRng
+      , peerSharingRng = psRng
       }
   where
     defaultBlockFetchConfiguration :: BlockFetchConfiguration

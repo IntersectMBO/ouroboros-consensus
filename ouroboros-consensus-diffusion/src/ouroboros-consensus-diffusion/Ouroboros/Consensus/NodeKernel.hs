@@ -77,8 +77,10 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
-import           Ouroboros.Network.PeerSharing (PeerSharingRegistry,
-                     newPeerSharingRegistry)
+import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
+                     PeerSharingRegistry, newPeerSharingAPI,
+                     newPeerSharingRegistry, ps_POLICY_PEER_SHARE_MAX_PEERS,
+                     ps_POLICY_PEER_SHARE_STICKY_TIME)
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
@@ -124,6 +126,8 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       -- When set with the empty list '[]' block forging will be disabled.
       --
     , setBlockForging        :: [BlockForging m blk] -> m ()
+
+    , getPeerSharingAPI      :: PeerSharingAPI addrNTN StdGen m
     }
 
 -- | Arguments required when initializing a node
@@ -140,6 +144,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , miniProtocolParameters  :: MiniProtocolParameters
     , blockFetchConfiguration :: BlockFetchConfiguration
     , keepAliveRng            :: StdGen
+    , peerSharingRng          :: StdGen
     }
 
 initNodeKernel ::
@@ -155,12 +160,17 @@ initNodeKernel ::
 initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , chainDB, initChainDB
                                    , blockFetchConfiguration
+                                   , peerSharingRng
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
     st <- initInternalState args
+
+    peerSharingAPI <- newPeerSharingAPI peerSharingRng
+                                        ps_POLICY_PEER_SHARE_STICKY_TIME
+                                        ps_POLICY_PEER_SHARE_MAX_PEERS
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
                             blockForgingController st (LazySTM.takeTMVar blockForgingVar)
@@ -188,6 +198,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getPeerSharingRegistry = peerSharingRegistry
       , getTracers             = tracers
       , setBlockForging        = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
+      , getPeerSharingAPI      = peerSharingAPI
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
