@@ -251,6 +251,6 @@ instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
 instance BlockSupportsSanityCheck DualByronBlock where
-  checkSecurityParamConsistency = pure . protocolConfigSecurityParam . topLevelConfigProtocol
+  configAllSecurityParams = pure . protocolConfigSecurityParam . topLevelConfigProtocol
 
 instance RunNode DualByronBlock

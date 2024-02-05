@@ -21,13 +21,14 @@ import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.History.EpochInfo
 
 instance CanHardFork xs => BlockSupportsSanityCheck (HardForkBlock xs) where
-  checkSecurityParamConsistency tlc = do
+  configAllSecurityParams tlc = do
     let configProtocol = topLevelConfigProtocol tlc
     hardForkConsensusConfigK configProtocol :|
       perEraConsensusConfigSecurityParams (hardForkConsensusConfigPerEra configProtocol)
 
-perEraConsensusConfigSecurityParams :: All SingleEraBlock xs
-                                    => PerEraConsensusConfig xs -> [SecurityParam]
+perEraConsensusConfigSecurityParams
+  :: All SingleEraBlock xs
+  => PerEraConsensusConfig xs -> [SecurityParam]
 perEraConsensusConfigSecurityParams (PerEraConsensusConfig xs) =
   unK $ hctraverse_ (Proxy @SingleEraBlock) go xs
     where
