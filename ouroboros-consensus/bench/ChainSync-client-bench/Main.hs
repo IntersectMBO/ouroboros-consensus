@@ -235,7 +235,7 @@ topConfig = TopLevelConfig {
                        , (CoreId (CoreNodeId 1), VerKeyMockDSIGN 1)
                        ]
       }
-  , topLevelConfigLedger  = eraParams
+  , topLevelConfigLedger  = TB.testBlockLedgerConfigFrom eraParams
   , topLevelConfigBlock   = TB.TestBlockConfig numCoreNodes
   , topLevelConfigCodec   = TB.TestBlockCodecConfig
   , topLevelConfigStorage = TB.TestBlockStorageConfig
