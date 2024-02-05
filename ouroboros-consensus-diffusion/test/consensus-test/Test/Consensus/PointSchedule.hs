@@ -35,10 +35,8 @@ module Test.Consensus.PointSchedule (
   , TestFrag
   , TestFragH
   , TipPoint (..)
-  , blockPointBlock
   , enrichedWith
   , genesisAdvertisedPoints
-  , headerPointBlock
   , longRangeAttack
   , peerSchedulesBlocks
   , peerStates
@@ -47,7 +45,6 @@ module Test.Consensus.PointSchedule (
   , prettyGenesisTest
   , prettyPeersSchedule
   , stToGen
-  , tipPointBlock
   , uniformPoints
   ) where
 
@@ -86,8 +83,7 @@ import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
 import           Test.Util.TersePrinting (terseBlock, terseHeader, terseTip,
                      terseWithOrigin)
-import           Test.Util.TestBlock (Header, TestBlock, Validity (Valid),
-                     testHeader, unsafeTestBlockWithPayload)
+import           Test.Util.TestBlock (Header, TestBlock)
 
 ----------------------------------------------------------------------------------------------------
 -- Data types
@@ -106,12 +102,6 @@ newtype TipPoint =
 instance Condense TipPoint where
   condense (TipPoint tip) = terseTip tip
 
--- | Convert a 'TipPoint' to a 'TestBlock'.
-tipPointBlock :: TipPoint -> Maybe TestBlock
-tipPointBlock (TipPoint TipGenesis) = Nothing
-tipPointBlock (TipPoint (Tip slot hash _)) =
-  Just $ unsafeTestBlockWithPayload hash slot Valid ()
-
 -- | The latest header that should be sent to the client by the ChainSync server
 -- in a tick.
 newtype HeaderPoint =
@@ -121,11 +111,6 @@ newtype HeaderPoint =
 instance Condense HeaderPoint where
   condense (HeaderPoint header) = terseWithOrigin terseHeader header
 
--- | Convert a 'HeaderPoint' to a 'TestBlock'.
-headerPointBlock :: HeaderPoint -> Maybe TestBlock
-headerPointBlock (HeaderPoint Origin)      = Nothing
-headerPointBlock (HeaderPoint (At header)) = Just $ testHeader header
-
 -- | The latest block that should be sent to the client by the BlockFetch server
 -- in a tick.
 newtype BlockPoint =
@@ -134,11 +119,6 @@ newtype BlockPoint =
 
 instance Condense BlockPoint where
   condense (BlockPoint block) = terseWithOrigin terseBlock block
-
--- | Convert a 'BlockPoint' to a 'Point'.
-blockPointBlock :: BlockPoint -> Maybe TestBlock
-blockPointBlock (BlockPoint Origin)     = Nothing
-blockPointBlock (BlockPoint (At block)) = Just block
 
 -- | The set of parameters that define the state that a peer should reach when it receives control
 -- by the scheduler in a single tick.
