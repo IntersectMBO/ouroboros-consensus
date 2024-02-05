@@ -1,8 +1,11 @@
-{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveFunctor    #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE NamedFieldPuns   #-}
 
 module Ouroboros.Consensus.Forecast (
     Forecast (..)
   , OutsideForecastRange (..)
+  , constantForecastInRange
   , constantForecastOf
   , mapForecast
   , trivialForecast
@@ -12,7 +15,7 @@ module Ouroboros.Consensus.Forecast (
 
 import           Control.Exception (Exception)
 import           Control.Monad (guard)
-import           Control.Monad.Except (Except)
+import           Control.Monad.Except (Except, throwError)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HardFork.History.Util (addSlots)
@@ -43,13 +46,31 @@ trivialForecast x = constantForecastOf () (getTipSlot x)
 -- This is primarily useful for tests; the forecast range is infinite, but we
 -- do still check the precondition, to catch any bugs.
 constantForecastOf :: a -> WithOrigin SlotNo -> Forecast a
-constantForecastOf a at = Forecast {
+constantForecastOf = constantForecastInRange Nothing
+
+-- | Forecast where the values are never changing, in a certain window.
+--
+-- This is primarily useful for tests; the forecast range is finite, and we
+-- do still check the precondition, to catch any bugs.
+constantForecastInRange :: Maybe SlotNo -> a -> WithOrigin SlotNo -> Forecast a
+constantForecastInRange range' a at = Forecast {
       forecastAt  = at
-    , forecastFor = \for ->
-                      if NotOrigin for >= at
-                        then return a
-                        else error "constantForecastOf: precondition violated"
+    , forecastFor = forecastForWithRange range'
     }
+  where
+    forecastForWithRange Nothing = \for ->
+        if NotOrigin for >= at
+          then return a
+          else error "constantForecastOf: precondition violated"
+    forecastForWithRange (Just range) = \for ->
+        let outsideForecastMaxFor = succWithOrigin at + range
+         in if for >= outsideForecastMaxFor
+              then throwError $ OutsideForecastRange {
+                  outsideForecastAt = at
+                , outsideForecastMaxFor
+                , outsideForecastFor = for
+                }
+              else forecastForWithRange Nothing for
 
 data OutsideForecastRange =
     OutsideForecastRange {

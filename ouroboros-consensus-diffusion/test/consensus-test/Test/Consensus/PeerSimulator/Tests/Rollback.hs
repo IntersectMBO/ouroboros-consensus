@@ -14,6 +14,9 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Genesis.Setup
+import           Test.Consensus.Genesis.Setup.Classifiers
+                     (Classifiers (allAdversariesKPlus1InForecast),
+                     allAdversariesForecastable, classifiers)
 import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
@@ -30,7 +33,6 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 tests :: TestTree
 tests = testGroup "rollback" [
   adjustQuickCheckTests (`div` 2) $
-  localOption (QuickCheckMaxRatio 100) $
   testProperty "can rollback" prop_rollback
   ,
   adjustQuickCheckTests (`div` 2) $
@@ -45,7 +47,11 @@ prop_rollback = do
   forAllGenesisTest
 
     (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
-        pure gt {gtSchedule =  rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree})
+        -- TODO: Trim block tree, the rollback schedule does not use all of it
+        let cls = classifiers gt
+        if allAdversariesForecastable cls && allAdversariesKPlus1InForecast cls
+          then pure gt {gtSchedule = rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree}
+          else discard)
 
     defaultSchedulerConfig
 

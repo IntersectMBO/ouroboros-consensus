@@ -32,7 +32,8 @@ import           System.Random (randomIO)
 import           Test.Consensus.Mempool.Fairness.TestBlock
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.HUnit (testCase, (@?), (@?=))
-import           Test.Util.TestBlock (testInitLedgerWithState)
+import           Test.Util.TestBlock (testBlockLedgerConfigFrom,
+                     testInitLedgerWithState)
 
 tests :: TestTree
 tests = testGroup "Mempool fairness"
@@ -84,11 +85,11 @@ testTxSizeFairness TestParams { mempoolMaxCapacity, smallTxSize, largeTxSize, nr
               Mempool.getCurrentLedgerState = pure $ testInitLedgerWithState ()
           }
 
-      sampleLedgerConfig =
+      eraParams =
           HardFork.defaultEraParams (Consensus.SecurityParam 10) (Time.slotLengthFromSec 2)
     mempool <- Mempool.openMempoolWithoutSyncThread
                    ledgerItf
-                   sampleLedgerConfig
+                   (testBlockLedgerConfigFrom eraParams)
                    (Mempool.mkCapacityBytesOverride mempoolMaxCapacity)
                    Tracer.nullTracer
                    genTxSize

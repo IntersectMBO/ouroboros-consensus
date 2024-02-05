@@ -67,5 +67,9 @@ prop_timeouts mustTimeout = do
        in peersOnlyHonest $ [
             (Time 0, scheduleTipPoint tipBlock),
             (Time 0, scheduleHeaderPoint tipBlock),
-            (Time (timeout + offset), scheduleBlockPoint tipBlock)
+            (Time 0, scheduleBlockPoint tipBlock),
+            -- This last point does not matter, it is only here to leave the
+            -- connection open (aka. keep the test running) long enough to
+            -- pass the timeout by 'offset'.
+            (Time (timeout + offset), scheduleTipPoint tipBlock)
             ]

@@ -117,6 +117,7 @@ genChains genNumForks = do
   pure $ GenesisTest {
     gtSecurityParam = SecurityParam (fromIntegral kcp),
     gtGenesisWindow = GenesisWindow (fromIntegral scg),
+    gtForecastRange = ForecastRange (fromIntegral scg), -- REVIEW: Do we want to generate those randomly?
     gtDelay = delta,
     gtSlotLength,
     gtChainSyncTimeouts = chainSyncTimeouts gtSlotLength asc,

@@ -262,9 +262,10 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
       , gtBlockTree
       , gtSchedule
       , gtChainSyncTimeouts
+      , gtForecastRange
       } = genesisTest
 
-    config = defaultCfg k
+    config = defaultCfg k gtForecastRange
 
     tracer = if scTrace schedulerConfig then tracer0 else nullTracer
 

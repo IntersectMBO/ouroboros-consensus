@@ -591,7 +591,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                            , (CoreId (CoreNodeId 1), VerKeyMockDSIGN 1)
                            ]
           }
-      , topLevelConfigLedger  = eraParams
+      , topLevelConfigLedger  = testBlockLedgerConfigFrom eraParams
       , topLevelConfigBlock   = TestBlockConfig numCoreNodes
       , topLevelConfigCodec   = TestBlockCodecConfig
       , topLevelConfigStorage = TestBlockStorageConfig

@@ -40,7 +40,8 @@ import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Test.Util.TestBlock (LedgerState (TestLedger),
                      PayloadSemantics (PayloadDependentError, PayloadDependentState, applyPayload),
                      TestBlockWith, applyDirectlyToPayloadDependentState,
-                     lastAppliedPoint, payloadDependentState)
+                     lastAppliedPoint, payloadDependentState,
+                     testBlockLedgerConfigFrom)
 
 {-------------------------------------------------------------------------------
   MempoolTestBlock
@@ -72,7 +73,7 @@ initialLedgerState = TestLedger {
     }
 
 sampleLedgerConfig :: Ledger.LedgerConfig TestBlock
-sampleLedgerConfig =
+sampleLedgerConfig = testBlockLedgerConfigFrom $
   HardFork.defaultEraParams (Consensus.SecurityParam 10) (Time.slotLengthFromSec 2)
 
 {-------------------------------------------------------------------------------

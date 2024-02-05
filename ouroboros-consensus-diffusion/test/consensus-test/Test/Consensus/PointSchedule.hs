@@ -21,7 +21,8 @@
 -- and once it fulfills the state's criteria, it yields control back to the scheduler,
 -- who then activates the next tick's peer.
 module Test.Consensus.PointSchedule (
-    GenesisTest (..)
+    ForecastRange (..)
+  , GenesisTest (..)
   , GenesisTestFull
   , GenesisWindow (..)
   , NodeState (..)
@@ -300,10 +301,14 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
 newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
   deriving (Show)
 
+newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
+  deriving (Show)
+
 -- | All the data used by point schedule tests.
 data GenesisTest blk schedule = GenesisTest {
   gtSecurityParam     :: SecurityParam,
   gtGenesisWindow     :: GenesisWindow,
+  gtForecastRange     :: ForecastRange, -- REVIEW: Do we want to allow infinite forecast ranges?
   gtDelay             :: Delta,
   gtBlockTree         :: BlockTree blk,
   gtChainSyncTimeouts :: ChainSyncTimeout,
@@ -318,6 +323,7 @@ prettyGenesisTest genesisTest =
   [ "GenesisTest:"
   , "  gtSecurityParam: " ++ show (maxRollbacks gtSecurityParam)
   , "  gtGenesisWindow: " ++ show (unGenesisWindow gtGenesisWindow)
+  , "  gtForecastRange: " ++ show (unForecastRange gtForecastRange)
   , "  gtDelay: " ++ show delta
   , "  gtSlotLength: " ++ show gtSlotLength
   , "  gtChainSyncTimeouts: "
@@ -331,6 +337,7 @@ prettyGenesisTest genesisTest =
     GenesisTest {
         gtSecurityParam
       , gtGenesisWindow
+      , gtForecastRange
       , gtDelay = Delta delta
       , gtBlockTree
       , gtChainSyncTimeouts = ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout}
