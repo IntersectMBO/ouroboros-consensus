@@ -6,13 +6,10 @@
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 
--- | Data types and generators that convert a 'BlockTree' to a 'PointSchedule'.
---
--- Point schedules can have arbitrary configurations that model different behaviors
--- we want to use for tests.
+-- | Data types and generators for point schedules.
 --
 -- Each generator takes a set of 'AnchoredFragment's corresponding to the tested peers'
--- chains, and converts them to a 'PointSchedule' consisting of a sequence of states
+-- chains, and converts them to a point schedule consisting of a sequence of states
 -- ('AdvertisedPoints'), each of which is associated with a single peer.
 --
 -- When a schedule is executed in a test, each tick is processed in order.
@@ -22,8 +19,6 @@
 -- The state in the current tick determines the actions that the peer is allowed to perform,
 -- and once it fulfills the state's criteria, it yields control back to the scheduler,
 -- who then activates the next tick's peer.
---
--- /Note/: At the moment this implementation is experimental.
 module Test.Consensus.PointSchedule (
     AdvertisedPoints (..)
   , BlockPoint (..)
