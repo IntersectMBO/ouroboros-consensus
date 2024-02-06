@@ -25,6 +25,12 @@ hsPkgs.shellFor {
     haskell-language-server = {
       src = inputs.haskellNix.inputs."hls-2.6";
       configureArgs = "--disable-benchmarks --disable-tests";
+      modules = [{
+        packages.ghcide.patches = [
+          # https://github.com/haskell/haskell-language-server/issues/4046#issuecomment-1926242056
+          ./ghcide-workaround.diff
+        ];
+      }];
     };
   };
 
