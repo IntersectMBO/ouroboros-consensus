@@ -24,7 +24,7 @@ import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
 
 -- REVIEW: this has not been deliberately chosen
 defaultCfg :: SecurityParam -> GenesisWindow -> TopLevelConfig TestBlock
-defaultCfg secParam eraGenesisWin = TopLevelConfig {
+defaultCfg secParam sgen = TopLevelConfig {
     topLevelConfigProtocol = BftConfig {
       bftParams  = BftParams {
         bftSecurityParam = secParam
@@ -47,6 +47,6 @@ defaultCfg secParam eraGenesisWin = TopLevelConfig {
     slotLength = slotLengthFromSec 20
 
     eraParams :: HardFork.EraParams
-    eraParams = (HardFork.defaultEraParams secParam slotLength) {eraGenesisWin = eraGenesisWin}
+    eraParams = (HardFork.defaultEraParams secParam slotLength) {eraGenesisWin = sgen}
 
     numCoreNodes = NumCoreNodes 2

@@ -17,6 +17,7 @@ module Test.Consensus.PointSchedule.Peers (
   , enumerateAdversaries
   , fromMap
   , fromMap'
+  , getPeer
   , getPeerIds
   , mkPeers
   , mkPeers'
@@ -27,6 +28,7 @@ module Test.Consensus.PointSchedule.Peers (
   , peersOnlyHonest
   , toMap
   , toMap'
+  , updatePeer
   ) where
 
 import           Data.Hashable (Hashable)
@@ -105,6 +107,20 @@ peersOnlyHonest value =
 -- | Extract all 'PeerId's.
 getPeerIds :: Peers a -> NonEmpty PeerId
 getPeerIds peers = HonestPeer :| Map.keys (others peers)
+
+getPeer :: PeerId -> Peers a -> Peer a
+getPeer pid peers
+  | HonestPeer <- pid
+  = honest peers
+  | otherwise
+  = others peers Map.! pid
+
+updatePeer :: (a -> a) -> PeerId -> Peers a -> Peers a
+updatePeer f pid Peers {honest, others}
+  | HonestPeer <- pid
+  = Peers {honest = f <$> honest, others}
+  | otherwise
+  = Peers {honest, others = Map.adjust (fmap f) pid others}
 
 -- | Convert 'Peers' to a list of 'Peer'.
 peersList :: Peers a -> NonEmpty (Peer a)
