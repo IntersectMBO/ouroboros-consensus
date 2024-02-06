@@ -22,7 +22,6 @@ module Ouroboros.Consensus.Mempool.Impl.Common (
     -- * Validation
   , ValidationResult (..)
   , extendVRNew
-  , extendVRPrevApplied
   , revalidateTxsFor
   , validateStateFor
     -- * Tracing
