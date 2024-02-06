@@ -29,6 +29,7 @@ import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Function (on)
+import           Data.Functor ((<&>))
 import           Data.Functor.Contravariant ((>$<))
 import           Data.List (partition, sortBy)
 import           Data.List.NonEmpty (NonEmpty)
@@ -468,31 +469,22 @@ chainSelectionForBlock
   -> InvalidBlockPunishment m
   -> m (Point blk)
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
-    (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeFrag)
+    (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB)
       <- atomically $ do
-          (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB, loeFrag) <-
-                (,,,,,,)
+          (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB) <-
+                (,,,,,)
             <$> (forgetFingerprint <$> readTVar cdbInvalid)
             <*> VolatileDB.filterByPredecessor  cdbVolatileDB
             <*> VolatileDB.getBlockInfo         cdbVolatileDB
             <*> Query.getCurrentChain           cdb
             <*> Query.getTipPoint               cdb
             <*> LgrDB.getCurrent                cdbLgrDB
-            <*> readTVar                        cdbLoEFrag
 
           -- Let these two functions ignore invalid blocks
           let lookupBlockInfo' = ignoreInvalid    cdb invalid lookupBlockInfo
               succsOf'         = ignoreInvalidSuc cdb invalid succsOf
 
-              loeFrag' = case cross curChain loeFrag of
-                Just (_, frag) -> frag
-                -- We don't crash if the LoE fragment doesn't intersect with the selection
-                -- because we update the selection _after_ updating the LoE fragment, which
-                -- means it could move to another fork or beyond the end of the LF, depending
-                -- on the implementation of @updateLoEFrag@.
-                Nothing        -> AF.Empty (AF.anchor curChain)
-
-          pure (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeFrag')
+          pure (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB)
 
     let curChainAndLedger :: ChainAndLedger blk
         curChainAndLedger =
@@ -509,6 +501,14 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
 
     processLoE curChain (LgrDB.ledgerDbCurrent ledgerDB) (writeTVar cdbLoEFrag) cdbLoE
+
+    loeFrag <- atomically (cross curChain <$> readTVar cdbLoEFrag) <&> \case
+        Just (_, frag) -> frag
+        -- We don't crash if the LoE fragment doesn't intersect with the selection
+        -- because we update the selection _after_ updating the LoE fragment, which
+        -- means it could move to another fork or beyond the end of the LF, depending
+        -- on the implementation of @updateLoEFrag@.
+        Nothing        -> AF.Empty (AF.anchor curChain)
 
     if
       -- The chain might have grown since we added the block such that the
