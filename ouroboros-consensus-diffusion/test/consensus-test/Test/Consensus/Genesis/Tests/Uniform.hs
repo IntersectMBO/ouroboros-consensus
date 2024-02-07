@@ -130,15 +130,14 @@ fromBlockPoint _                          = Nothing
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.
 prop_serveAdversarialBranches :: Property
-prop_serveAdversarialBranches =
-  expectFailure $ forAllGenesisTest'
+prop_serveAdversarialBranches = forAllGenesisTest'
 
     (do gt <- genChains (QC.choose (1, 4))
         ps <- genUniformSchedulePoints gt
         pure (gt, ps))
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
-       {scTraceState = False, scTrace = False})
+       {scTraceState = False, scTrace = False, scEnableLoE = True})
 
     shrinkPeerSchedules
 
