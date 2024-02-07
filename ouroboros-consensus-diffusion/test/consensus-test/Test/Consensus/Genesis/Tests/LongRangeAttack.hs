@@ -31,7 +31,10 @@ tests =
 
 prop_longRangeAttack :: Property
 prop_longRangeAttack =
-  forAllGenesisTest
+  -- NOTE: `shrinkPeerSchedules` only makes sense for tests that expect the
+  -- honest node to win. Hence the `noShrinking`.
+
+  noShrinking $ forAllGenesisTest
 
     (do gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
         ps <- stToGen (longRangeAttack gtBlockTree)
@@ -44,7 +47,8 @@ prop_longRangeAttack =
     shrinkPeerSchedules
 
     -- NOTE: This is the expected behaviour of Praos to be reversed with
-    -- Genesis. But we are testing Praos for the moment
+    -- Genesis. But we are testing Praos for the moment. Do not forget to remove
+    -- `noShrinking` above when removing this negation.
     (\_ -> not . isHonestTestFragH . svSelectedChain)
 
   where
