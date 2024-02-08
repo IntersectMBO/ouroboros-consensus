@@ -29,7 +29,6 @@ import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Function (on)
-import           Data.Functor ((<&>))
 import           Data.Functor.Contravariant ((>$<))
 import           Data.List (partition, sortBy)
 import           Data.List.NonEmpty (NonEmpty)
@@ -502,13 +501,16 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
 
     processLoE curChain (LgrDB.ledgerDbCurrent ledgerDB) (writeTVar cdbLoEFrag) cdbLoE
 
-    loeFrag <- atomically (cross curChain <$> readTVar cdbLoEFrag) <&> \case
-        Just (_, frag) -> frag
-        -- We don't crash if the LoE fragment doesn't intersect with the selection
-        -- because we update the selection _after_ updating the LoE fragment, which
-        -- means it could move to another fork or beyond the end of the LF, depending
-        -- on the implementation of @updateLoEFrag@.
-        Nothing        -> AF.Empty (AF.anchor curChain)
+    loeFrag0 <- readTVarIO cdbLoEFrag
+    let loeFrag = case cross curChain loeFrag0 of
+          Just (_, frag) -> frag
+          -- We don't crash if the LoE fragment doesn't intersect with the selection
+          -- because we update the selection _after_ updating the LoE fragment, which
+          -- means it could move to another fork or beyond the end of the LF, depending
+          -- on the implementation of @updateLoEFrag@.
+          Nothing        -> AF.Empty (AF.anchor curChain)
+
+    traceWith addBlockTracer (ChainSelectionLoEDebug curChain loeFrag0)
 
     if
       -- The chain might have grown since we added the block such that the

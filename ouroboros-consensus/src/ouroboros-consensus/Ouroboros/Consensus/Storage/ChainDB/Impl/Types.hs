@@ -652,6 +652,9 @@ data TraceAddBlockEvent blk =
     -- it.
   | StoreButDontChange (RealPoint blk)
 
+    -- | Debugging information about chain selection and LoE
+  | ChainSelectionLoEDebug (AnchoredFragment (Header blk)) (AnchoredFragment (Header blk))
+
     -- | The new block fits onto the current chain (first
     -- fragment) and we have successfully used it to extend our (new) current
     -- chain (second fragment).

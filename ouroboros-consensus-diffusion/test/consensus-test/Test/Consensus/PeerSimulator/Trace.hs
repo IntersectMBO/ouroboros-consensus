@@ -45,6 +45,10 @@ mkCdbTracer tracer =
         StoreButDontChange block -> do
           trace "Did not add block due to LoE"
           trace $ "Block: " ++ condense block
+        ChainSelectionLoEDebug curChain loeFrag0 -> do
+          trace $ "Current chain: " ++ terseHFragment curChain
+          trace $ "LoE fragment: " ++ terseHFragment loeFrag0
+
         _ -> pure ()
     _ -> pure ()
   where
