@@ -1,11 +1,9 @@
-{-# LANGUAGE LambdaCase     #-}
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
 
 import           Data.Functor (($>))
 import           Data.Maybe (fromJust)
-import           Data.Time (secondsToDiffTime)
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike (DiffTime, Time (Time),
                      fromException)
@@ -28,10 +26,13 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
-tests = adjustQuickCheckTests (`div` 10) $ testProperty "timeouts" prop_timeouts
+tests = testGroup "timeouts" [
+  adjustQuickCheckTests (`div` 10) $ testProperty "does time out" (prop_timeouts True),
+  adjustQuickCheckTests (`div` 10) $ testProperty "does not time out" (prop_timeouts False)
+  ]
 
-prop_timeouts :: Gen Property
-prop_timeouts = do
+prop_timeouts :: Bool -> Gen Property
+prop_timeouts mustTimeout = do
   genesisTest <- genChains (pure 0)
 
   -- Use higher tick duration to avoid the test taking really long
@@ -51,25 +52,21 @@ prop_timeouts = do
     runGenesisTest' schedulerConfig genesisTest' $ \stateView ->
       case svChainSyncExceptions stateView of
         [] ->
-          counterexample ("result: " ++ condense (svSelectedChain stateView)) False
+          counterexample ("result: " ++ condense (svSelectedChain stateView)) (not mustTimeout)
         [exn] ->
           case fromException $ cseException exn of
-            Just (ExceededTimeLimit _) -> property True
+            Just (ExceededTimeLimit _) -> property mustTimeout
             _ -> counterexample ("exception: " ++ show exn) False
         exns ->
           counterexample ("exceptions: " ++ show exns) False
 
   where
-    -- A schedule that advertises all the points of the chain from the start but
-    -- contains just one too many ticks, therefore reaching the timeouts.
     dullSchedule :: DiffTime -> TestFrag -> Peers PeerSchedule
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
-      let tickDuration = secondsToDiffTime 1 -- 1s
-          maximumNumberOfTicks = round $ timeout / tickDuration
-       in peersOnlyHonest $
-            (Time 0, ScheduleTipPoint tipBlock)
-              : (Time 0, ScheduleHeaderPoint tipBlock)
-              : zip
-                  (map (Time . (* tickDuration) . secondsToDiffTime) [0..])
-                  (replicate (1 + maximumNumberOfTicks) (ScheduleBlockPoint tipBlock))
+      let offset :: DiffTime = if mustTimeout then 1 else -1
+       in peersOnlyHonest $ [
+            (Time 0, ScheduleTipPoint tipBlock),
+            (Time 0, ScheduleHeaderPoint tipBlock),
+            (Time (timeout + offset), ScheduleBlockPoint tipBlock)
+            ]
