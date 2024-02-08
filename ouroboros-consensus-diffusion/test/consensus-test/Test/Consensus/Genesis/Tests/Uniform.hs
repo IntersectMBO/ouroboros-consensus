@@ -33,7 +33,8 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
                      value)
-import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
+import           Test.Consensus.PointSchedule.Shrinking
+                     (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (SchedulePoint (ScheduleBlockPoint, ScheduleTipPoint))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
@@ -136,7 +137,10 @@ prop_serveAdversarialBranches = forAllGenesisTest
     (defaultPointScheduleConfig
        {scTraceState = False, scTrace = False, scEnableLoE = True})
 
-    shrinkPeerSchedules
+    -- We cannot shrink by removing points from the adversarial schedules.
+    -- Otherwise, the immutable tip could get stuck because a peer doesn't
+    -- send any blocks or headers.
+    shrinkByRemovingAdversaries
 
     theProperty
 

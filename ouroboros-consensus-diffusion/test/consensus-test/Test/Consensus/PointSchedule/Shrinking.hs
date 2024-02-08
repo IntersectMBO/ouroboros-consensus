@@ -1,7 +1,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Consensus.PointSchedule.Shrinking (
-    shrinkPeerSchedules
+    shrinkByRemovingAdversaries
+  , shrinkPeerSchedules
   , trimBlockTree'
   ) where
 
@@ -34,6 +35,19 @@ shrinkPeerSchedules genesisTest _stateView =
   shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&> \shrunkSchedule ->
     let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
      in genesisTest{gtSchedule = shrunkSchedule, gtBlockTree = trimmedBlockTree}
+
+-- | Shrink a 'Peers PeerSchedule' by removing adversaries. This does not affect
+-- the honest peer; and it does not remove ticks from the schedules of the
+-- remaining adversaries.
+shrinkByRemovingAdversaries ::
+  GenesisTest ->
+  Peers PeerSchedule ->
+  StateView ->
+  [(GenesisTest, Peers PeerSchedule)]
+shrinkByRemovingAdversaries genesisTest schedule _stateView =
+  shrinkOtherPeers (const []) schedule <&> \shrunkSchedule ->
+    let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
+     in (genesisTest{gtBlockTree = trimmedBlockTree}, shrunkSchedule)
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
 -- unchanged.
