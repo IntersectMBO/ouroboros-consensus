@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE PatternSynonyms     #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -27,13 +28,24 @@ import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Int (Int64)
+import           Data.IORef (IORef, modifyIORef, newIORef, readIORef,
+                     writeIORef)
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
+import           Data.Time.Clock (diffUTCTime, getCurrentTime)
 import           Data.Word (Word16, Word64)
 import qualified Debug.Trace as Debug
 import qualified GHC.Stats as GC
+import qualified GHC.Stats as Stats
 import           NoThunks.Class (noThunks)
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.BlockchainTime.API (knownSlotWatcher)
+import           Ouroboros.Consensus.BlockchainTime.WallClock.Default
+                     (defaultSystemTime)
+import           Ouroboros.Consensus.BlockchainTime.WallClock.Simple
+                     (simpleBlockchainTime)
+import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
+                     (SystemStart (SystemStart), slotLengthFromSec)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast (forecastFor)
 import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..),
@@ -66,6 +78,7 @@ import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes,
                      encodeDisk)
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
 import           System.FS.API (SomeHasFS (..))
 import qualified System.IO as IO
 
@@ -341,6 +354,12 @@ showEBBs AnalysisEnv { db, registry, initLedger, limit, tracer } = do
   Analysis: store a ledger at specific slot
 -------------------------------------------------------------------------------}
 
+data LeadershipCheckState =
+  LeadershipCheckState { lastSeenSlotRef :: IORef (Maybe SlotNo)
+                       , missedSlotsRef  :: IORef Word64
+                       , outFileHandle   :: IO.Handle
+                       }
+
 storeLedgerStateAt ::
      forall blk .
      ( LgrDbSerialiseConstraints blk
@@ -349,17 +368,85 @@ storeLedgerStateAt ::
      )
   => SlotNo -> Analysis blk
 storeLedgerStateAt slotNo (AnalysisEnv { db, registry, initLedger, cfg, limit, ledgerDbFS, tracer }) = do
-    void $ processAllUntil db registry GetBlock initLedger limit initLedger process
+    startTime <- getCurrentTime
+
+    leadershipCheckState <- LeadershipCheckState <$> (newIORef Nothing) -- The last seen slot is unknown.
+                                                 <*> (newIORef 0)       -- We haven't missed any slots yet.
+                                                 <*> (IO.openFile "slot_gc_stats.csv" IO.WriteMode)
+
+    --
+    -- Start the dummy leadership check.
+    --
+    let systemStartTime        = defaultSystemTime (SystemStart startTime) nullTracer
+    blockchainTime            <- simpleBlockchainTime registry systemStartTime (slotLengthFromSec 1) 0
+    let leadershipCheckWatcher = knownSlotWatcher blockchainTime (dummyLeadershipCheck leadershipCheckState)
+    leadershipCheckThread     <- forkLinkedWatcher registry "Dummy leadership check" leadershipCheckWatcher
+
+    --
+    -- Process blocks.
+    --
+    storeLedgerEventsHandle <- IO.openFile "store_ledger_events.csv" IO.WriteMode
+    void $ processAllUntil db registry GetBlock initLedger limit (startTime, initLedger) (process storeLedgerEventsHandle)
+
+    --
+    -- Clean up.
+    --
+    cancelThread leadershipCheckThread
+    IO.hClose (outFileHandle leadershipCheckState)
+    IO.hClose storeLedgerEventsHandle
     pure Nothing
   where
-    process :: ExtLedgerState blk -> blk -> IO (NextStep, ExtLedgerState blk)
-    process oldLedger blk = do
+    dummyLeadershipCheck LeadershipCheckState{ lastSeenSlotRef, missedSlotsRef, outFileHandle } slot = do
+      mLastSeenSlot <- readIORef lastSeenSlotRef
+      let newlyMissedSlots = case mLastSeenSlot of
+                               Nothing           -> 0
+                               Just lastSeenSlot -> slot - lastSeenSlot - 1
+      modifyIORef missedSlotsRef  (+ unSlotNo newlyMissedSlots)
+      writeIORef  lastSeenSlotRef (Just slot)
+
+      --
+      -- Write the information to file.
+      --
+      time        <- getCurrentTime
+      missedSlots <- readIORef missedSlotsRef
+      gcCpuNs     <- Stats.gc_cpu_ns <$> Stats.getRTSStats
+      IO.hPutStrLn outFileHandle $          show time
+                                 <> ", " <> show missedSlots
+                                 <> ", " <> show (gcCpuNs `div` 1_000_000_000)
+
+    process outFileHandle (prevSnapshotTimestamp, oldLedger) blk = do
       let ledgerCfg = ExtLedgerCfg cfg
           newLedger = tickThenReapply ledgerCfg blk oldLedger
+
+      --------------------------------------------------------------------------
+      -- We store ledger states every 'timeBetweenSnapsInSecs' seconds
+      --------------------------------------------------------------------------
+      let timeBetweenSnapsInSecs = 30
+      currTimestamp <- getCurrentTime
+
+      let shouldTakeSnapshot =  timeBetweenSnapsInSecs <= currTimestamp `diffUTCTime` prevSnapshotTimestamp
+                             && blockSlot blk < slotNo -- We want to avoid taking two snapshots at the same slot.
+
+      when shouldTakeSnapshot $ do
+        startTime <- getCurrentTime
+        storeLedgerState blk newLedger
+        endTime <- getCurrentTime
+        IO.hPutStrLn outFileHandle $ show startTime <> ", " <> show endTime
+
+      -- Snapshots can take more that 'timeBetweenSnapsInSecs', so we
+      -- need to record the end time of the last take snapshot.
+      latestSnapshotTimestamp <- if (shouldTakeSnapshot)
+                                 then getCurrentTime
+                                 else pure prevSnapshotTimestamp
+
+      --------------------------------------------------------------------------
+      -- END We store ledger states every time between snapshots seconds
+      --------------------------------------------------------------------------
+
       when (blockSlot blk >= slotNo) $ storeLedgerState blk newLedger
       when (blockSlot blk > slotNo) $ issueWarning blk
       when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-      return (continue blk, newLedger)
+      return (continue blk, (latestSnapshotTimestamp, newLedger))
 
     continue :: blk -> NextStep
     continue blk

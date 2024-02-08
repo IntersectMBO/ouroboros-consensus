@@ -30,4 +30,5 @@ packages:
 tests: true
 benchmarks: true
 
-import: ./asserts.cabal
+-- For this experiment we want to run 'db-analyser' with assertions disabled.
+-- import: ./asserts.cabal
