@@ -721,9 +721,19 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         curChain    = VF.validatedFragment curChainAndLedger
         curTip      = castPoint $ AF.headPoint curChain
 
-    -- | How many extra blocks to select at most after the block @b@ that is
-    -- currently being processed, according to the LoE. If not even @b@ is
-    -- allowed to be selected, return 'Nothing'.
+    -- | How many extra blocks to select at most after the tip of @newBlockFrag@
+    -- according to the LoE.
+    --
+    -- There are two cases to consider:
+    --
+    -- 1. If @newBlockFrag@ and @loeFrag@ are on the same chain, then we cannot
+    --    select more than @loeLimit@ blocks after @loeFrag@.
+    --
+    -- 2. If @newBlockFrag@ and @loeFrag@ are on different chains, then we
+    --   cannot select more than @loeLimit@ blocks after their intersection.
+    --
+    -- In any case, 'Nothing' is returned if @newBlockFrag@ extends beyond
+    -- what LoE allows.
     computeLoEMaxExtra ::
          (HasHeader x, HeaderHash x ~ HeaderHash blk)
       => Word64
@@ -735,12 +745,20 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
          -- ^ The fragment with the new block @b@ as its tip, with the same
          -- anchor as @curChain@.
       -> Maybe Word64
-    computeLoEMaxExtra loeLimit loeFrag newBlockFrag
-      | budgetAlreadyUsed > loeLimit = Nothing
-      | otherwise                    = Just $ loeLimit - budgetAlreadyUsed
+    computeLoEMaxExtra loeLimit loeFrag newBlockFrag =
+        -- Both fragments are on the same chain
+        if loeSuffixLength == 0 || rollback == 0 then
+          if rollback > loeLimit + loeSuffixLength
+            then Nothing
+            else Just $ loeLimit + loeSuffixLength - rollback
+        else
+          if rollback > loeLimit
+            then Nothing
+            else Just $ loeLimit - rollback
       where
-        -- How many blocks did we already select beyond the LoE, including @b@.
-        budgetAlreadyUsed = Diff.getRollback $ Diff.diff newBlockFrag loeFrag
+        d = Diff.diff newBlockFrag loeFrag
+        rollback = Diff.getRollback d
+        loeSuffixLength = fromIntegral $ AF.length (Diff.getSuffix d)
 
     mkSelectionChangedInfo ::
          AnchoredFragment (Header blk) -- ^ old chain
