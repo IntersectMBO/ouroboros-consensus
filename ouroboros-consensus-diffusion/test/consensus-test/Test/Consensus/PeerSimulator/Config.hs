@@ -14,6 +14,7 @@ import           Ouroboros.Consensus.NodeId (CoreNodeId (CoreNodeId),
 import           Ouroboros.Consensus.Protocol.BFT
                      (BftParams (BftParams, bftNumNodes, bftSecurityParam),
                      ConsensusConfig (BftConfig, bftParams, bftSignKey, bftVerKeys))
+import           Test.Consensus.PointSchedule (ForecastRange (ForecastRange))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
                      CodecConfig (TestBlockCodecConfig),
@@ -21,8 +22,8 @@ import           Test.Util.TestBlock (BlockConfig (TestBlockConfig),
                      TestBlockLedgerConfig (..))
 
 -- REVIEW: this has not been deliberately chosen
-defaultCfg :: SecurityParam -> TopLevelConfig TestBlock
-defaultCfg secParam = TopLevelConfig {
+defaultCfg :: SecurityParam -> ForecastRange -> TopLevelConfig TestBlock
+defaultCfg secParam (ForecastRange sfor) = TopLevelConfig {
     topLevelConfigProtocol = BftConfig {
       bftParams  = BftParams {
         bftSecurityParam = secParam
@@ -34,7 +35,7 @@ defaultCfg secParam = TopLevelConfig {
       , (CoreId (CoreNodeId 1), VerKeyMockDSIGN 1)
       ]
     }
-  , topLevelConfigLedger  = TestBlockLedgerConfig eraParams Nothing
+  , topLevelConfigLedger  = TestBlockLedgerConfig eraParams (Just $ fromIntegral sfor)
   , topLevelConfigBlock   = TestBlockConfig numCoreNodes
   , topLevelConfigCodec   = TestBlockCodecConfig
   , topLevelConfigStorage = TestBlockStorageConfig
