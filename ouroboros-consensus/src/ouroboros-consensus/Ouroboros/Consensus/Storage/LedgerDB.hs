@@ -76,14 +76,18 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , TraceSnapshotEvent (..)
     -- * Disk policy
   , DiskPolicy (..)
+  , DiskPolicyArgs (..)
+  , NumOfDiskSnapshots (..)
   , SnapshotInterval (..)
   , TimeSinceLast (..)
-  , defaultDiskPolicy
+  , defaultDiskPolicyArgs
+  , mkDiskPolicy
   ) where
 
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (DiskPolicy (..), SnapshotInterval (..),
-                     TimeSinceLast (..), defaultDiskPolicy)
+                     (DiskPolicy (..), DiskPolicyArgs (..),
+                     NumOfDiskSnapshots (..), SnapshotInterval (..),
+                     TimeSinceLast (..), defaultDiskPolicyArgs, mkDiskPolicy)
 import           Ouroboros.Consensus.Storage.LedgerDB.Init (InitLog (..),
                      ReplayGoal (..), ReplayStart (..), TraceReplayEvent (..),
                      decorateReplayTracerWithGoal,

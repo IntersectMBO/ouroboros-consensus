@@ -128,7 +128,7 @@ type LgrDbSerialiseConstraints blk =
 -------------------------------------------------------------------------------}
 
 data LgrDbArgs f m blk = LgrDbArgs {
-      lgrDiskPolicy     :: LedgerDB.DiskPolicy
+      lgrDiskPolicyArgs :: LedgerDB.DiskPolicyArgs
     , lgrGenesis        :: HKD f (m (ExtLedgerState blk))
     , lgrHasFS          :: SomeHasFS m
     , lgrTopLevelConfig :: HKD f (TopLevelConfig blk)
@@ -140,10 +140,9 @@ data LgrDbArgs f m blk = LgrDbArgs {
 defaultArgs ::
      Applicative m
   => SomeHasFS m
-  -> LedgerDB.DiskPolicy
   -> LgrDbArgs Defaults m blk
-defaultArgs lgrHasFS diskPolicy = LgrDbArgs {
-      lgrDiskPolicy     = diskPolicy
+defaultArgs lgrHasFS = LgrDbArgs {
+      lgrDiskPolicyArgs = LedgerDB.defaultDiskPolicyArgs
     , lgrGenesis        = NoDefault
     , lgrHasFS
     , lgrTopLevelConfig = NoDefault
@@ -209,7 +208,8 @@ openDB args@LgrDbArgs { lgrHasFS = lgrHasFS@(SomeHasFS hasFS), .. } replayTracer
           , varPrevApplied = varPrevApplied
           , resolveBlock   = getBlock
           , cfg            = lgrTopLevelConfig
-          , diskPolicy     = lgrDiskPolicy
+          , diskPolicy     = let k = configSecurityParam lgrTopLevelConfig
+            in  LedgerDB.mkDiskPolicy k lgrDiskPolicyArgs
           , hasFS          = lgrHasFS
           , tracer         = lgrTracer
           }
@@ -256,15 +256,17 @@ mkLgrDB :: StrictTVar m (LedgerDB' blk)
         -> StrictTVar m (Set (RealPoint blk))
         -> (RealPoint blk -> m blk)
         -> LgrDbArgs Identity m blk
+        -> SecurityParam
         -> LgrDB m blk
-mkLgrDB varDB varPrevApplied resolveBlock args = LgrDB {..}
+mkLgrDB varDB varPrevApplied resolveBlock args k = LgrDB {..}
   where
     LgrDbArgs {
         lgrTopLevelConfig = cfg
-      , lgrDiskPolicy     = diskPolicy
+      , lgrDiskPolicyArgs = diskPolicyArgs
       , lgrHasFS          = hasFS
       , lgrTracer         = tracer
       } = args
+    diskPolicy = LedgerDB.mkDiskPolicy k diskPolicyArgs
 
 {-------------------------------------------------------------------------------
   Wrappers
