@@ -517,7 +517,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         traceWith addBlockTracer $ IgnoreBlockOlderThanK p
         return tipPoint
 
-      -- We might have validated the block in the meantime
+      -- The block is invalid
       | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
         traceWith addBlockTracer $ IgnoreInvalidBlock p reason
 
@@ -529,7 +529,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
 
         return tipPoint
 
-      -- The block @b@ fits onto the end of our current chain
+      -- The block fits onto the end of our current chain
       | pointHash tipPoint == headerPrevHash hdr
         -- TODO could be optimized if necessary/easy enough
       , let newBlockFrag = curChain AF.:> hdr
@@ -538,6 +538,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         traceWith addBlockTracer (TryAddToCurrentChain p)
         addToCurrentChain succsOf' curChainAndLedger maxExtra
 
+      -- The block is reachable from the current selection
+      -- and it doesn't fit after the current selection
       | Just diff <- Paths.isReachable lookupBlockInfo' curChain p
         -- TODO could be optimized if necessary/easy enough
       , let curChain' =
@@ -548,6 +550,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
         traceWith addBlockTracer (TrySwitchToAFork p diff)
         switchToAFork succsOf' lookupBlockInfo' curChainAndLedger maxExtra diff
 
+      -- We cannot reach the block from the current selection
       | otherwise -> do
         -- ### Store but don't change the current chain
         traceWith addBlockTracer (StoreButDontChange p)
