@@ -59,28 +59,21 @@ updateLoEFragUnconditional ::
 updateLoEFragUnconditional =
   UpdateLoEFrag $ \ curChain _ setLoEFrag -> atomically (setLoEFrag curChain)
 
--- | Compute the fragment between the immutable tip, as given by the anchor
--- of @curChain@, and the earliest intersection of the @candidates@.
--- This excludes the selection from the set of intersected fragments since we
--- need to be able to select k+1 blocks on a new chain when a fork's peer is
--- killed on which we had selected k blocks, where the selection would
--- otherwise keep the LoE fragment at the killed peer's intersection.
+-- | Compute the fragment @loeFrag@ between the immutable tip and the
+-- earliest intersection between @curChain@ and any of the @candidates@.
+--
+-- The immutable tip is the anchor of @curChain@.
+--
+-- The function also yields the suffixes of the intersection of @loeFrag@ with
+-- every candidate fragment.
 sharedCandidatePrefix ::
   GetHeader blk =>
-  SecurityParam ->
   AnchoredFragment (Header blk) ->
   Map peer (AnchoredFragment (Header blk)) ->
   (AnchoredFragment (Header blk), Map peer (AnchoredFragment (Header blk)))
-sharedCandidatePrefix (SecurityParam k) curChain candidates =
-  (trunc, suffixes)
+sharedCandidatePrefix curChain candidates =
+  stripCommonPrefix (AF.anchor curChain) immutableTipSuffixes
   where
-    trunc | excess > 0 = snd (AF.splitAt excess shared)
-          | otherwise = shared
-
-    excess = AF.length shared - fromIntegral k
-
-    (shared, suffixes) = stripCommonPrefix (AF.anchor curChain) immutableTipSuffixes
-
     immutableTip = AF.anchorPoint curChain
 
     splitAfterImmutableTip frag =
@@ -107,14 +100,13 @@ sharedCandidatePrefix (SecurityParam k) curChain candidates =
 updateLoEFragStall ::
   MonadSTM m =>
   GetHeader blk =>
-  SecurityParam ->
   STM m (Map peer (AnchoredFragment (Header blk))) ->
   UpdateLoEFrag m blk
-updateLoEFragStall k getCandidates =
+updateLoEFragStall getCandidates =
   UpdateLoEFrag $ \ curChain _ setLoEFrag ->
     atomically $ do
       candidates <- getCandidates
-      setLoEFrag (fst (sharedCandidatePrefix k curChain candidates))
+      setLoEFrag (fst (sharedCandidatePrefix curChain candidates))
 
 showPeers ::
      Show peer
@@ -229,7 +221,7 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles =
       handles <- getHandles
       let
         (loeFrag, candidateSuffixes) =
-          sharedCandidatePrefix (configSecurityParam cfg) curChain candidates
+          sharedCandidatePrefix curChain candidates
       setLoEFrag loeFrag
       -- Obtaining these before calling setLoEFrag appeared to result in a wrong state,
       -- but maybe that was a fluke.

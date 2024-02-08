@@ -80,7 +80,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
       }
       where
         (loeFrag, suffixes) =
-          sharedCandidatePrefix gtSecurityParam curChain (toHeaders <$> candidates)
+          sharedCandidatePrefix curChain (toHeaders <$> candidates)
 
     selections = selection <$> branches
 
@@ -239,7 +239,7 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers} =
       let
           curChain = selection (value (firstBranch ps))
           next = updatePeer movePeer target ps
-          (loeFrag, suffixes) = sharedCandidatePrefix k curChain (candidate . value <$> toMap next)
+          (loeFrag, suffixes) = sharedCandidatePrefix curChain (candidate . value <$> toMap next)
           disconnect = fst (densityDisconnect sgen k suffixes tips loeFrag)
       either (pure . second (result loeFrag)) step (updatePeers sgen target disconnect next)
       where
