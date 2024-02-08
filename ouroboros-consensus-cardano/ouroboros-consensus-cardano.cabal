@@ -542,7 +542,6 @@ library unstable-cardano-tools
     , transformers-except
 
 executable db-analyser
-  import:         common-exe
   hs-source-dirs: app
   main-is:        db-analyser.hs
   build-depends:
@@ -553,6 +552,19 @@ executable db-analyser
     , ouroboros-consensus
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
     , text
+
+ -- NOTE: these options should match the ones in the cardano-node.
+ --
+ -- 'db-analyser' is often used as a benchmarking tool. Thus, by using
+ -- the same GHC flags as the node, we are more likely to get
+ -- performance observations that correspond to those we get from a
+ -- running node.
+  ghc-options:          -threaded
+                        -rtsopts
+  if arch(arm)
+    ghc-options:        "-with-rtsopts=-T -I0 -A16m -N1 --disable-delayed-os-memory-return"
+  else
+    ghc-options:        "-with-rtsopts=-T -I0 -A16m -N2 --disable-delayed-os-memory-return"
 
   other-modules:  DBAnalyser.Parsers
 
