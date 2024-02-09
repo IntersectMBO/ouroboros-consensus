@@ -18,8 +18,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
-                     (SelectionChangedInfo (..), TraceAddBlockEvent (..))
-import           Ouroboros.Consensus.Util.Condense (Condense (..))
+                     (TraceAddBlockEvent (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
 import           Test.Util.TersePrinting (terseHFragment, tersePoint,
@@ -35,16 +34,14 @@ mkCdbTracer tracer =
   Tracer $ \case
     ChainDB.Impl.TraceAddBlockEvent event ->
       case event of
-        AddedToCurrentChain _ SelectionChangedInfo {newTipPoint} _ _ -> do
-          trace "Added to current chain"
-          trace $ "New tip: " ++ terseRealPoint newTipPoint
-        SwitchedToAFork _ SelectionChangedInfo {newTipPoint} _ newFragment -> do
-          trace "Switched to a fork"
-          trace $ "New tip: " ++ terseRealPoint newTipPoint
-          trace $ "New fragment: " ++ terseHFragment newFragment
-        StoreButDontChange block -> do
-          trace "Did not add block due to LoE"
-          trace $ "Block: " ++ condense block
+        AddedToCurrentChain _ _ _ newFragment ->
+          trace $ "Added to current chain; now: " ++ terseHFragment newFragment
+        SwitchedToAFork _ _ _ newFragment ->
+          trace $ "Switched to a fork; now: " ++ terseHFragment newFragment
+        StoreButDontChange point ->
+          trace $ "Did not add block due to LoE: " ++ terseRealPoint point
+        IgnoreBlockOlderThanK point ->
+          trace $ "Ignored block older than k: " ++ terseRealPoint point
         _ -> pure ()
     _ -> pure ()
   where
