@@ -63,7 +63,7 @@ constantForecastInRange range' a at = Forecast {
           then return a
           else error "constantForecastOf: precondition violated"
     forecastForWithRange (Just range) = \for ->
-        let outsideForecastMaxFor = fromWithOrigin (-1) at + range + 1
+        let outsideForecastMaxFor = succWithOrigin at + range
          in if for >= outsideForecastMaxFor
               then throwError $ OutsideForecastRange {
                   outsideForecastAt = at
