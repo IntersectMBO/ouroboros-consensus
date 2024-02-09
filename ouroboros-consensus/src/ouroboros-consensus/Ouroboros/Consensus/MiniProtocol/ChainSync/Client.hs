@@ -1364,6 +1364,8 @@ checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
           | otherwise
           = mostRecentIntersection
 
+    traceWith (tracer cfgEnv) $ TraceValidatedHeader hdr
+
     pure
       $ assertKnownIntersectionInvariants (configConsensus cfg)
       $ KnownIntersectionState {
@@ -1719,6 +1721,9 @@ data TraceChainSyncClientEvent blk =
   |
     TraceTermination ChainSyncClientResult
     -- ^ The client has terminated.
+  |
+    TraceValidatedHeader (Header blk)
+    -- ^ We have validated the given header.
   |
     TraceWaitingBeyondForecastHorizon (WithOrigin SlotNo) SlotNo
     -- ^ The second 'SlotNo' is beyond the forecast horizon taken from the first
