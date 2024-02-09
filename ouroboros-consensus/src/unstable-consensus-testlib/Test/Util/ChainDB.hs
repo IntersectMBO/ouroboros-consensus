@@ -72,7 +72,7 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs {
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
 mkTestChunkInfo :: LedgerConfig blk ~ TestBlockLedgerConfig => TopLevelConfig blk -> ImmutableDB.ChunkInfo
-mkTestChunkInfo = simpleChunkInfo . eraEpochSize . hardForkParams . topLevelConfigLedger
+mkTestChunkInfo = simpleChunkInfo . eraEpochSize . tblcHardForkParams . topLevelConfigLedger
 
 -- | Creates a default set of of arguments for ChainDB tests.
 fromMinimalChainDbArgs ::
