@@ -546,10 +546,10 @@ testInitExtLedgerWithState st = ExtLedgerState {
     }
 
 data TestBlockLedgerConfig = TestBlockLedgerConfig {
-  hardForkParams :: HardFork.EraParams,
+  tblcHardForkParams :: HardFork.EraParams,
   -- | `Nothing` means an infinite forecast range.
   -- Instead of SlotNo, it should be something like "SlotRange"
-  forecastRange  :: Maybe SlotNo
+  tblcForecastRange  :: Maybe SlotNo
 }
   deriving (Show, Eq, Generic)
   deriving anyclass (NoThunks)
@@ -590,7 +590,7 @@ instance (PayloadSemantics ptype) => ValidateEnvelope (TestBlockWith ptype) wher
 
 instance (PayloadSemantics ptype) => LedgerSupportsProtocol (TestBlockWith ptype) where
   protocolLedgerView   _ _  = ()
-  ledgerViewForecastAt cfg state = constantForecastInRange (forecastRange cfg) () (getTipSlot state)
+  ledgerViewForecastAt cfg state = constantForecastInRange (tblcForecastRange cfg) () (getTipSlot state)
 
 singleNodeTestConfigWith ::
      CodecConfig (TestBlockWith ptype)
@@ -618,8 +618,8 @@ singleNodeTestConfigWith codecConfig storageConfig k = TopLevelConfig {
 
     ledgerCfgParams :: TestBlockLedgerConfig
     ledgerCfgParams = TestBlockLedgerConfig {
-      hardForkParams = HardFork.defaultEraParams k slotLength,
-      forecastRange = Nothing
+      tblcHardForkParams = HardFork.defaultEraParams k slotLength,
+      tblcForecastRange = Nothing
     }
 
 
@@ -640,7 +640,7 @@ data instance StorageConfig TestBlock = TestBlockStorageConfig
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
-  hardForkSummary = neverForksHardForkSummary hardForkParams
+  hardForkSummary = neverForksHardForkSummary tblcHardForkParams
 
 data instance BlockQuery TestBlock result where
   QueryLedgerTip :: BlockQuery TestBlock (Point TestBlock)
