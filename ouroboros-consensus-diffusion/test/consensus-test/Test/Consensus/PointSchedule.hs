@@ -343,6 +343,7 @@ prettyGenesisTest genesisTest =
   [ "GenesisTest:"
   , "  gtSecurityParam: " ++ show (maxRollbacks gtSecurityParam)
   , "  gtGenesisWindow: " ++ show (unGenesisWindow gtGenesisWindow)
+  , "  gtForecastRange: " ++ show (unForecastRange gtForecastRange)
   , "  gtDelay: " ++ show delta
   , "  gtSlotLength: " ++ show gtSlotLength
   , "  gtChainSyncTimeouts: "
@@ -356,6 +357,7 @@ prettyGenesisTest genesisTest =
     GenesisTest {
         gtSecurityParam
       , gtGenesisWindow
+      , gtForecastRange
       , gtDelay = Delta delta
       , gtBlockTree
       , gtChainSyncTimeouts = ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout}
