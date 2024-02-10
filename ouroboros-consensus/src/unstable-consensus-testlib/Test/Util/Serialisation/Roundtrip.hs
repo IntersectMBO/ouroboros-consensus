@@ -36,6 +36,7 @@ module Test.Util.Serialisation.Roundtrip (
   , examplesRoundtrip
   ) where
 
+import Debug.Trace (trace)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding)
 import           Codec.CBOR.FlatTerm (toFlatTerm, validFlatTerm)
@@ -138,7 +139,7 @@ roundtripAnd check enc dec a = checkRoundtripResult $ do
 
     when (check == CheckCBORValidity) $
       (validFlatTerm (toFlatTerm enc_a)          ?!       "Encoded flat term is not valid: " <> show enc_a)
-    (bsRem, a' ) <- deserialiseFromBytes dec bs `onError` showByteString bs
+    (bsRem, a' ) <- deserialiseFromBytes (trace "DEC" dec) bs `onError` showByteString bs (show a)
     Lazy.null bsRem                              ?!       "Left-over bytes: " <> toBase16 bsRem
     a == a' bs                                   ?!        pShowNeq a (a' bs)
   where
@@ -157,10 +158,11 @@ roundtripAnd check enc dec a = checkRoundtripResult $ do
 
     showByteString ::
          Char8.ByteString
+      -> String
       -> DeserialiseFailure
       -> String
-    showByteString bs deserialiseFailure =
-      show deserialiseFailure <> "\n" <> "When deserialising " <> toBase16 bs
+    showByteString bs a deserialiseFailure =
+      show deserialiseFailure <> "\n" <> "When OOPS deserialising " <> toBase16 bs <> "\n HERE: " <> a
 
     toBase16 :: Lazy.ByteString -> String
     toBase16 = Char8.unpack . Base16.encode
@@ -762,8 +764,8 @@ examplesRoundtrip codecConfig examples =
           in
           case (testLabel, exampleName) of
             -- We case on Cardano specific test names here to avoid introducing parameters to 'examplesRoundtrip' that will be removed once #3740 is fixed. This is a temporary workaround.
-            ("Ledger state"         , Just "Conway") -> expectFailBecause _3740 $ runTest
-            ("Extended ledger state", Just "Conway") -> expectFailBecause _3740 $ runTest
+            -- ("Ledger state"         , Just "Conway") -> expectFailBecause _3740 $ runTest
+            -- ("Extended ledger state", Just "Conway") -> expectFailBecause _3740 $ runTest
             _                                        ->                           runTest
 
     encodeExt =

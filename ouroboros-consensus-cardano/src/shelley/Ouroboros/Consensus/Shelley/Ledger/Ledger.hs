@@ -46,6 +46,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Ledger (
   , encodeShelleyLedgerState
   ) where
 
+import Debug.Trace (trace)
 import qualified Cardano.Ledger.BaseTypes as SL (epochInfoPure)
 import qualified Cardano.Ledger.BHeaderView as SL (BHeaderView)
 import           Cardano.Ledger.Binary.Plain (FromCBOR (..), ToCBOR (..),
@@ -569,17 +570,17 @@ encodeShelleyLedgerState
 decodeShelleyLedgerState ::
      forall era proto s. ShelleyCompatible proto era
   => Decoder s (LedgerState (ShelleyBlock proto era))
-decodeShelleyLedgerState = decodeVersion [
+decodeShelleyLedgerState = trace "MY GOD!" $ decodeVersion [
       (serialisationFormatVersion2, Decode decodeShelleyLedgerState2)
     ]
   where
     decodeShelleyLedgerState2 :: Decoder s' (LedgerState (ShelleyBlock proto era))
     decodeShelleyLedgerState2 = do
       enforceSize "LedgerState ShelleyBlock" 3
-      shelleyLedgerTip        <- decodeWithOrigin decodeShelleyTip
-      shelleyLedgerState      <- fromCBOR
-      shelleyLedgerTransition <- decodeShelleyTransition
-      return ShelleyLedgerState {
+      shelleyLedgerTip        <- trace "DECODE TIP" $ decodeWithOrigin decodeShelleyTip
+      shelleyLedgerState      <- trace "FROM CBOR" fromCBOR -- THIS IS THE PLACE
+      shelleyLedgerTransition <- trace "DECODE TRANSITION" decodeShelleyTransition
+      return $ trace "NO ERRORS" $ ShelleyLedgerState {
           shelleyLedgerTip
         , shelleyLedgerState
         , shelleyLedgerTransition

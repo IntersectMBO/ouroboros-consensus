@@ -6,6 +6,7 @@
 
 module Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseDisk () where
 
+import Debug.Trace (trace)
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.SOP.BasicFunctors
@@ -118,16 +119,16 @@ instance SerialiseHFC xs
 
 instance SerialiseHFC xs
       => EncodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs) )where
-  encodeDisk cfg =
-        encodeTelescope (hcmap pSHFC (fn . (K .: encodeDisk)) cfgs)
+  encodeDisk cfg = trace "THIS IS BEING USED" $
+        encodeTelescope (trace "IMPORTANT" (hcmap pSHFC (fn . (K .: encodeDisk)) cfgs))
       . hardForkLedgerStatePerEra
     where
-      cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+      cfgs = getPerEraCodecConfig $ trace "THIS D IS ALSO BEING USED" (hardForkCodecConfigPerEra cfg)
 
 instance SerialiseHFC xs
       => DecodeDisk (HardForkBlock xs) (LedgerState (HardForkBlock xs)) where
-  decodeDisk cfg =
+  decodeDisk cfg = trace "THIS IS BEING USED" $
         fmap HardForkLedgerState
-      $ decodeTelescope (hcmap pSHFC (Comp . decodeDisk) cfgs)
+      $ decodeTelescope $ trace "IMPORTANT" (hcmap pSHFC (Comp . decodeDisk) cfgs)
     where
-      cfgs = getPerEraCodecConfig (hardForkCodecConfigPerEra cfg)
+      cfgs = getPerEraCodecConfig  $ trace "THIS D IS ALSO BEING USED" (hardForkCodecConfigPerEra cfg)

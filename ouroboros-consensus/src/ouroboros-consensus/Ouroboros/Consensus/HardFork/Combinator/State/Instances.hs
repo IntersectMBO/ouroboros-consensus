@@ -21,6 +21,7 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Instances (
   , encodePast
   ) where
 
+import Debug.Trace (trace)
 import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
@@ -102,8 +103,8 @@ encodeCurrent f Current{..} = mconcat [
 decodeCurrent :: Decoder s (f blk) -> Decoder s (Current f blk)
 decodeCurrent f = do
     enforceSize "decodeCurrent" 2
-    currentStart <- decode
-    currentState <- f
+    currentStart <- trace "CURRENT START" decode
+    currentState <- trace "CURRENT STATE" f
     return Current{..}
 
 encodePast :: Past -> Encoding

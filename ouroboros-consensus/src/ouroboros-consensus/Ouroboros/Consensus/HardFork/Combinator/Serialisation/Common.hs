@@ -66,6 +66,7 @@ module Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common (
   , SerialiseNS (..)
   ) where
 
+import Debug.Trace (trace)
 import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import qualified Codec.CBOR.Decoding as Dec
@@ -436,8 +437,8 @@ decodeTelescope = \ds -> do
     go :: Int
        -> NP (Decoder s :.: f) xs
        -> Decoder s (Telescope (K Past) (Current f) xs)
-    go 0 (Comp d :* _)  = TZ <$> decodeCurrent d
-    go i (Comp _ :* ds) = TS <$> (K <$> decodePast) <*> go (i - 1) ds
+    go 0 (Comp d :* _)  = TZ <$> decodeCurrent (trace ("DECODE CURRENT") d)
+    go i (Comp _ :* ds) = TS <$> (K <$> (trace "DECODE PAST" decodePast)) <*> go (i - 1) ds
     go _ Nil            = error "decodeTelescope: invalid telescope length"
 
 {-------------------------------------------------------------------------------
