@@ -10,6 +10,7 @@ module Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server (
   ) where
 
 import           Control.Tracer
+import           Data.SOP.BasicFunctors
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Mempool.API
 import           Ouroboros.Consensus.Util.IOLike
@@ -30,13 +31,11 @@ localTxSubmissionServer tracer mempool =
     server = LocalTxSubmissionServer {
       recvMsgSubmitTx = \tx -> do
         traceWith tracer $ TraceReceivedTx tx
-        res <- addLocalTxs mempool [tx]
-        case res of
-          [addTxRes] -> case addTxRes of
-            MempoolTxAdded _tx             -> return (SubmitSuccess, server)
-            MempoolTxRejected _tx addTxErr -> return (SubmitFail addTxErr, server)
-          -- The output list of addTxs has the same length as the input list.
-          _                 -> error "addTxs: unexpected result"
+        -- Once we drop GHC 8.10, we could use @Solo@ from base.
+        I addTxRes <- addLocalTxs mempool (I tx)
+        case addTxRes of
+          MempoolTxAdded _tx             -> return (SubmitSuccess, server)
+          MempoolTxRejected _tx addTxErr -> return (SubmitFail addTxErr, server)
 
     , recvMsgDone = ()
     }

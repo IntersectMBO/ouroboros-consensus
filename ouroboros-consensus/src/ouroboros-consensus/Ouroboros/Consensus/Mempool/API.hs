@@ -249,10 +249,10 @@ isMempoolTxRejected _                   = False
 --
 -- See 'addTx' for further details.
 addTxs ::
-     forall m blk. MonadSTM m
+     forall m blk t. (MonadSTM m, Traversable t)
   => Mempool m blk
-  -> [GenTx blk]
-  -> m [MempoolAddTxResult blk]
+  -> t (GenTx blk)
+  -> m (t (MempoolAddTxResult blk))
 addTxs mempool = mapM (addTx mempool AddTxForRemotePeer)
 
 -- | A wrapper around 'addTx' that adds a sequence of transactions on behalf of
@@ -263,10 +263,10 @@ addTxs mempool = mapM (addTx mempool AddTxForRemotePeer)
 --
 -- See 'addTx' for further details.
 addLocalTxs ::
-     forall m blk. MonadSTM m
+     forall m blk t. (MonadSTM m, Traversable t)
   => Mempool m blk
-  -> [GenTx blk]
-  -> m [MempoolAddTxResult blk]
+  -> t (GenTx blk)
+  -> m (t (MempoolAddTxResult blk))
 addLocalTxs mempool = mapM (addTx mempool AddTxForLocalClient)
 
 -- | Who are we adding a tx on behalf of, a remote peer or a local client?
