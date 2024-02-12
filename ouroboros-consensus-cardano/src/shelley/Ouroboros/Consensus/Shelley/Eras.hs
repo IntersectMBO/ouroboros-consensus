@@ -284,10 +284,13 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
             ledgerEnv
             mempoolState
             wti
-            tx{Alonzo.isValid = Alonzo.IsValid True}
-
+            intervenedTx
       pure (mempoolState', vtx)
     where
+      intervenedTx = case wti of
+        DoNotIntervene -> tx { Alonzo.isValid = Alonzo.IsValid True }
+        Intervene      -> tx
+
       handler e = case (wti, e) of
         (DoNotIntervene, SL.ApplyTxError [err])
           | isIncorrectClaimedFlag (Proxy @era) err
