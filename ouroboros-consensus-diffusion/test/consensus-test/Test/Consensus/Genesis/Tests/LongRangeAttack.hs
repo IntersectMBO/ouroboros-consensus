@@ -13,7 +13,8 @@ import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-                     (allAdversariesSelectable, classifiers)
+                     (allAdversariesForecastable, allAdversariesSelectable,
+                     classifiers)
 import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
@@ -22,27 +23,21 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, unTestHash)
+import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
   testGroup "long range attack" [
-    -- NOTE: Temporarily disabled because, since the inception of finite
-    -- forecast range, the adversary may not be dense enough in the forecast
-    -- range to even advance properly and will not be selected, causing the test
-    -- to fail. The test should be re-enabled when we can guarantee that the
-    -- adversary is dense enough (with at least one block per sliding forecast
-    -- window).
-    --
     -- NOTE: We want to keep this test to show that Praos is vulnerable to this
     -- attack but Genesis is not. This requires to first fix it as mentioned
     -- above.
     --
-    -- adjustQuickCheckTests (`div` 10) $
-    -- testProperty "one adversary" prop_longRangeAttack
+    adjustQuickCheckTests (`div` 10) $
+    testProperty "one adversary" prop_longRangeAttack
   ]
 
-_prop_longRangeAttack :: Property
-_prop_longRangeAttack =
+prop_longRangeAttack :: Property
+prop_longRangeAttack =
   -- NOTE: `shrinkPeerSchedules` only makes sense for tests that expect the
   -- honest node to win. Hence the `noShrinking`.
 
@@ -50,7 +45,8 @@ _prop_longRangeAttack =
 
     (do gt@GenesisTest{gtBlockTree} <- genChains (pure 1)
         ps <- stToGen (longRangeAttack gtBlockTree)
-        if allAdversariesSelectable (classifiers gt)
+        let cls = classifiers gt
+        if allAdversariesSelectable cls && allAdversariesForecastable cls
           then pure $ gt $> ps
           else discard)
 

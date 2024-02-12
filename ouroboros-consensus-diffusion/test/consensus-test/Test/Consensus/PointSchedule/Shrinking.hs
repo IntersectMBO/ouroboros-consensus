@@ -1,6 +1,9 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules) where
+module Test.Consensus.PointSchedule.Shrinking (
+    shrinkPeerSchedules
+  , trimBlockTree'
+  ) where
 
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Functor ((<&>))
