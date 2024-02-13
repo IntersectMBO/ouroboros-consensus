@@ -25,6 +25,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Query (
   , getAnyKnownBlockComponent
   ) where
 
+import           Data.Foldable (for_)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
@@ -130,10 +131,19 @@ getBlockComponent ::
 getBlockComponent CDB{..} = getAnyBlockComponent cdbImmutableDB cdbVolatileDB
 
 getIsFetched ::
-     forall m blk. IOLike m
+     forall m blk. (IOLike m, HasHeader blk)
   => ChainDbEnv m blk -> STM m (Point blk -> Bool)
-getIsFetched CDB{..} = basedOnHash <$> VolatileDB.getIsMember cdbVolatileDB
+getIsFetched CDB{..} = basedOnHash <$> do
+    isMemberOfVol <- VolatileDB.getIsMember cdbVolatileDB
+    isInQueue <- do
+      btas <- flushTBQueue blockQueue
+      let hashes = Set.fromList $ blockHash . blockToAdd <$> btas
+      for_ (reverse btas) $ unGetTBQueue blockQueue
+      pure (`Set.member` hashes)
+    pure $ \h -> isInQueue h || isMemberOfVol h
   where
+    BlocksToAdd blockQueue = cdbBlocksToAdd
+
     -- The volatile DB indexes by hash only, not by points. However, it should
     -- not be possible to have two points with the same hash but different
     -- slot numbers.

@@ -42,7 +42,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , FutureBlocks
     -- * Blocks to add
   , BlockToAdd (..)
-  , BlocksToAdd
+  , BlocksToAdd (..)
   , addBlockToAdd
   , closeBlocksToAdd
   , getBlockToAdd
