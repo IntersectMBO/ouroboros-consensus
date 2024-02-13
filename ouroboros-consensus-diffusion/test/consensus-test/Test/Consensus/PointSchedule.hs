@@ -57,7 +57,9 @@ import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
 import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
-import           Ouroboros.Consensus.Util.Condense (Condense (condense))
+import           Ouroboros.Consensus.Util.Condense (Condense (..),
+                     CondenseList (..), PaddingDirection (..),
+                     condenseListWithPadding)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..), tipFromHeader)
@@ -80,6 +82,7 @@ import           Test.QuickCheck.Random (QCGen)
 import           Test.Util.TersePrinting (terseBlock, terseFragment,
                      terseHeader, terseTip, terseWithOrigin)
 import           Test.Util.TestBlock (Header, TestBlock)
+import           Text.Printf (printf)
 
 ----------------------------------------------------------------------------------------------------
 -- Data types
@@ -98,6 +101,9 @@ newtype TipPoint =
 instance Condense TipPoint where
   condense (TipPoint tip) = terseTip tip
 
+instance CondenseList TipPoint where
+  condenseList = condenseListWithPadding PadRight
+
 -- | The latest header that should be sent to the client by the ChainSync server
 -- in a tick.
 newtype HeaderPoint =
@@ -107,6 +113,9 @@ newtype HeaderPoint =
 instance Condense HeaderPoint where
   condense (HeaderPoint header) = terseWithOrigin terseHeader header
 
+instance CondenseList HeaderPoint where
+  condenseList = condenseListWithPadding PadRight
+
 -- | The latest block that should be sent to the client by the BlockFetch server
 -- in a tick.
 newtype BlockPoint =
@@ -115,6 +124,9 @@ newtype BlockPoint =
 
 instance Condense BlockPoint where
   condense (BlockPoint block) = terseWithOrigin terseBlock block
+
+instance CondenseList BlockPoint where
+  condenseList = condenseListWithPadding PadRight
 
 -- | The set of parameters that define the state that a peer should reach when it receives control
 -- by the scheduler in a single tick.
@@ -135,6 +147,18 @@ instance Condense AdvertisedPoints where
     "TP " ++ condense tip ++
     " | HP " ++ condense header ++
     " | BP " ++ condense block
+
+instance CondenseList AdvertisedPoints where
+  condenseList points =
+    zipWith3
+      (\tip header block ->
+        "TP " ++ tip ++
+          " | HP " ++ header ++
+          " | BP " ++ block
+      )
+      (condenseList $ tip <$> points)
+      (condenseList $ header <$> points)
+      (condenseList $ block <$> points)
 
 genesisAdvertisedPoints :: AdvertisedPoints
 genesisAdvertisedPoints =
@@ -163,11 +187,34 @@ instance Condense NodeState where
     NodeOnline points -> condense points
     NodeOffline -> "*chrrrk* <signal lost>"
 
+instance CondenseList NodeState where
+  condenseList states =
+    case mapM toMaybe states of
+      -- all nodes are online
+      Just points -> condenseList points
+      -- there is one offline node
+      Nothing     -> condense <$> states
+    where
+      toMaybe :: NodeState -> Maybe AdvertisedPoints
+      toMaybe = \case
+        NodeOffline -> Nothing
+        NodeOnline points -> Just points
+
 prettyPeersSchedule :: Peers PeerSchedule -> [String]
 prettyPeersSchedule peers =
-  map
-    (\(number, (time, peerState)) -> show number ++ ": " ++ condense peerState ++ " @" ++ show time)
-    (zip [(0 :: Int)..] (peersStates peers))
+  zipWith3
+    (\number time peerState ->
+      number ++ ": " ++ peerState ++ " @ " ++ time
+    )
+    (condenseListWithPadding PadLeft $ fst <$> numberedPeersStates)
+    (showDT . fst . snd <$> numberedPeersStates)
+    (condenseList $ (snd . snd) <$> numberedPeersStates)
+  where
+    numberedPeersStates :: [(Int, (Time, Peer NodeState))]
+    numberedPeersStates = zip [0..] (peersStates peers)
+
+    showDT :: Time -> String
+    showDT (Time dt) = printf "%.6f" (realToFrac dt :: Double)
 
 ----------------------------------------------------------------------------------------------------
 -- Conversion to 'PointSchedule'
