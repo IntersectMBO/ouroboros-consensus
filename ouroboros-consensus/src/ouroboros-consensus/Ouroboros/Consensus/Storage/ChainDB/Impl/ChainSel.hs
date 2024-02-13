@@ -335,8 +335,11 @@ addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
     -- | Fill in the 'TMVar' for the 'varBlockWrittenToDisk' of the block's
     -- 'AddBlockPromise' with the given 'Bool'.
     deliverWrittenToDisk :: Bool -> m ()
-    deliverWrittenToDisk writtenToDisk = atomically $
+    deliverWrittenToDisk writtenToDisk = atomically $ do
         putTMVar varBlockWrittenToDisk writtenToDisk
+        void $ readTBQueue blockQueue
+      where
+        BlocksToAdd blockQueue = cdbBlocksToAdd
 
     -- | Fill in the 'TMVar' for the 'varBlockProcessed' of the block's
     -- 'AddBlockPromise' with the given tip.

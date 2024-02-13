@@ -535,7 +535,7 @@ addBlockRunner cdb@CDB{..} = forever $ do
     trace $ PoppedBlockFromQueue RisingEdge
     -- if the `addBlockSync` does not complete because it was killed by an async
     -- exception (or it errored), notify the blocked thread
-    bracketOnError (getBlockToAdd cdbBlocksToAdd)
+    bracketOnError (atomically $ peekTBQueue blockQueue)
                    (\blkToAdd -> atomically $ do
                      _ <- tryPutTMVar (varBlockWrittenToDisk blkToAdd)
                                      False
@@ -546,3 +546,5 @@ addBlockRunner cdb@CDB{..} = forever $ do
                      trace $ PoppedBlockFromQueue $ FallingEdgeWith $
                              blockRealPoint $ blockToAdd blkToAdd
                      addBlockSync cdb blkToAdd)
+  where
+    BlocksToAdd blockQueue = cdbBlocksToAdd

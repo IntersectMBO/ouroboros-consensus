@@ -44,7 +44,8 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin)
+import           Ouroboros.Network.Block (MaxSlotNo (..),
+                     maxSlotNoFromWithOrigin)
 
 -- | Return the last @k@ headers.
 --
@@ -130,20 +131,27 @@ getBlockComponent ::
   -> RealPoint blk -> m (Maybe b)
 getBlockComponent CDB{..} = getAnyBlockComponent cdbImmutableDB cdbVolatileDB
 
-getIsFetched ::
-     forall m blk. (IOLike m, HasHeader blk)
-  => ChainDbEnv m blk -> STM m (Point blk -> Bool)
-getIsFetched CDB{..} = basedOnHash <$> do
-    isMemberOfVol <- VolatileDB.getIsMember cdbVolatileDB
-    isInQueue <- do
-      btas <- flushTBQueue blockQueue
-      let hashes = Set.fromList $ blockHash . blockToAdd <$> btas
-      for_ (reverse btas) $ unGetTBQueue blockQueue
-      pure (`Set.member` hashes)
-    pure $ \h -> isInQueue h || isMemberOfVol h
+getBlocksInQueue ::
+     IOLike m
+  => ChainDbEnv m blk -> STM m [blk]
+getBlocksInQueue CDB{..} = do
+    btas <- flushTBQueue blockQueue
+    for_ (reverse btas) $ unGetTBQueue blockQueue
+    pure $ blockToAdd <$> btas
   where
     BlocksToAdd blockQueue = cdbBlocksToAdd
 
+getIsFetched ::
+     forall m blk. (IOLike m, HasHeader blk)
+  => ChainDbEnv m blk -> STM m (Point blk -> Bool)
+getIsFetched cdb@CDB{..} = basedOnHash <$> do
+    isMemberOfVol <- VolatileDB.getIsMember cdbVolatileDB
+    isInQueue <- do
+      blks <- getBlocksInQueue cdb
+      let hashes = Set.fromList $ blockHash <$> blks
+      pure (`Set.member` hashes)
+    pure $ \h -> isInQueue h || isMemberOfVol h
+  where
     -- The volatile DB indexes by hash only, not by points. However, it should
     -- not be possible to have two points with the same hash but different
     -- slot numbers.
@@ -177,9 +185,9 @@ getIsValid CDB{..} = do
          | otherwise                 -> Nothing
 
 getMaxSlotNo ::
-     forall m blk. (IOLike m, HasHeader (Header blk))
+     forall m blk. (IOLike m, HasHeader (Header blk), HasHeader blk)
   => ChainDbEnv m blk -> STM m MaxSlotNo
-getMaxSlotNo CDB{..} = do
+getMaxSlotNo cdb@CDB{..} = do
     -- Note that we need to look at both the current chain and the VolatileDB
     -- in all cases (even when the VolatileDB is not empty), because the
     -- VolatileDB might have been corrupted.
@@ -191,7 +199,10 @@ getMaxSlotNo CDB{..} = do
     curChainMaxSlotNo <- maxSlotNoFromWithOrigin . AF.headSlot
                      <$> readTVar cdbChain
     volatileDbMaxSlotNo    <- VolatileDB.getMaxSlotNo cdbVolatileDB
-    return $ curChainMaxSlotNo `max` volatileDbMaxSlotNo
+
+    queueMaxSlotNo <- mconcat . fmap (MaxSlotNo . blockSlot) <$> getBlocksInQueue cdb
+
+    return $ mconcat [curChainMaxSlotNo, volatileDbMaxSlotNo, queueMaxSlotNo]
 
 {-------------------------------------------------------------------------------
   Unifying interface over the immutable DB and volatile DB, but independent
