@@ -590,7 +590,8 @@ instance (PayloadSemantics ptype) => ValidateEnvelope (TestBlockWith ptype) wher
 
 instance (PayloadSemantics ptype) => LedgerSupportsProtocol (TestBlockWith ptype) where
   protocolLedgerView   _ _  = ()
-  ledgerViewForecastAt cfg state = constantForecastInRange (tblcForecastRange cfg) () (getTipSlot state)
+  ledgerViewForecastAt cfg state =
+    constantForecastInRange (tblcForecastRange cfg) () (getTipSlot state)
 
 singleNodeTestConfigWith ::
      CodecConfig (TestBlockWith ptype)
