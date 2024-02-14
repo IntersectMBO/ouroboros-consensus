@@ -219,6 +219,8 @@ test-suite consensus-test
     Test.Consensus.Genesis.Setup.GenChains
     Test.Consensus.Genesis.Tests
     Test.Consensus.Genesis.Tests.LongRangeAttack
+    Test.Consensus.GSM
+    Test.Consensus.GSM.Model
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
@@ -265,6 +267,7 @@ test-suite consensus-test
     , serialise
     , si-timers
     , sop-extras
+    , strict-checked-vars
     , strict-sop-core
     , strict-stm
     , tasty
@@ -272,6 +275,7 @@ test-suite consensus-test
     , tasty-quickcheck
     , temporary
     , time
+    , tree-diff
     , typed-protocols
     , typed-protocols-examples
     , unstable-diffusion-testlib
