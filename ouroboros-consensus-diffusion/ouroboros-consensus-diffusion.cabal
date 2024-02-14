@@ -222,6 +222,7 @@ test-suite consensus-test
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
+    Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
     Test.Consensus.Network.AnchoredFragment.Extras
     Test.Consensus.Network.Driver.Limits.Extras
     Test.Consensus.Node
@@ -257,7 +258,9 @@ test-suite consensus-test
     , ouroboros-network-framework
     , ouroboros-network-mock
     , ouroboros-network-protocols
+    , pretty-show
     , QuickCheck
+    , quickcheck-state-machine
     , quiet
     , serialise
     , si-timers
