@@ -15,6 +15,7 @@ module Test.Consensus.PeerSimulator.BlockFetch (
 
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadTime
+import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (nullTracer)
 import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
@@ -104,7 +105,7 @@ startKeepAliveThread registry fetchClientRegistry peerId =
         atomically retry
 
 runBlockFetchClient ::
-     (Ord peer, IOLike m, MonadTime m)
+     (Ord peer, IOLike m, MonadTime m, MonadTimer m)
   => peer
   -> FetchClientRegistry peer (Header TestBlock) TestBlock m
   -> ControlMessageSTM m

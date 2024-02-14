@@ -41,6 +41,7 @@ data ChainDbArgs f m blk = ChainDbArgs {
       cdbHasFSImmutableDB       :: SomeHasFS m
     , cdbHasFSVolatileDB        :: SomeHasFS m
     , cdbHasFSLgrDB             :: SomeHasFS m
+    , cdbHasFSGsmDB             :: SomeHasFS m
 
       -- Policy
     , cdbImmutableDbValidation  :: ImmutableDB.ValidationPolicy
@@ -93,6 +94,7 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
       -- 'cdbsGcInterval'.
     , cdbsRegistry        :: HKD f (ResourceRegistry m)
     , cdbsTracer          :: Tracer m (TraceEvent blk)
+    , cdbsHasFSGsmDB      :: SomeHasFS m
     }
 
 -- | Default arguments
@@ -117,14 +119,18 @@ data ChainDbSpecificArgs f m blk = ChainDbSpecificArgs {
 --   have, because of batching) < the number of blocks sync in @gcInterval@.
 --   E.g., when syncing at 1k-2k blocks/s, this means 10k-20k blocks. During
 --   normal operation, we receive 1 block/20s, meaning at most 1 block.
-defaultSpecificArgs :: Monad m => ChainDbSpecificArgs Defaults m blk
-defaultSpecificArgs = ChainDbSpecificArgs {
+defaultSpecificArgs ::
+     Monad m
+  => (RelativeMountPoint -> SomeHasFS m)
+  -> ChainDbSpecificArgs Defaults m blk
+defaultSpecificArgs mkFS = ChainDbSpecificArgs {
       cdbsBlocksToAddSize = 10
     , cdbsCheckInFuture   = NoDefault
     , cdbsGcDelay         = secondsToDiffTime 60
     , cdbsGcInterval      = secondsToDiffTime 10
     , cdbsRegistry        = NoDefault
     , cdbsTracer          = nullTracer
+    , cdbsHasFSGsmDB      = mkFS $ RelativeMountPoint "gsm"
     }
 
 -- | Default arguments
@@ -142,7 +148,7 @@ defaultArgs mkFS diskPolicy =
   toChainDbArgs (ImmutableDB.defaultArgs immFS)
                 (VolatileDB.defaultArgs  volFS)
                 (LgrDB.defaultArgs       lgrFS diskPolicy)
-                defaultSpecificArgs
+                (defaultSpecificArgs mkFS)
   where
     immFS, volFS, lgrFS :: SomeHasFS m
 
@@ -194,6 +200,7 @@ fromChainDbArgs ChainDbArgs{..} = (
         , cdbsGcInterval      = cdbGcInterval
         , cdbsCheckInFuture   = cdbCheckInFuture
         , cdbsBlocksToAddSize = cdbBlocksToAddSize
+        , cdbsHasFSGsmDB      = cdbHasFSGsmDB
         }
     )
 
@@ -215,6 +222,7 @@ toChainDbArgs ImmutableDB.ImmutableDbArgs {..}
       cdbHasFSImmutableDB       = immHasFS
     , cdbHasFSVolatileDB        = volHasFS
     , cdbHasFSLgrDB             = lgrHasFS
+    , cdbHasFSGsmDB             = cdbsHasFSGsmDB
       -- Policy
     , cdbImmutableDbValidation  = immValidationPolicy
     , cdbVolatileDbValidation   = volValidationPolicy

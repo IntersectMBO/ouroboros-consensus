@@ -65,6 +65,7 @@ import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, isNothing)
+import           Data.Time (NominalDiffTime)
 import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
@@ -81,6 +82,8 @@ import           Ouroboros.Consensus.Node.DbLock
 import           Ouroboros.Consensus.Node.DbMarker
 import           Ouroboros.Consensus.Node.ErrorPolicy
 import           Ouroboros.Consensus.Node.ExitPolicy
+import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
+import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -130,7 +133,7 @@ import           System.FilePath ((</>))
 import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types
 import           System.FS.IO (ioHasFS)
-import           System.Random (StdGen, newStdGen, randomIO, randomRIO)
+import           System.Random (StdGen, newStdGen, randomIO, randomRIO, split)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -254,6 +257,10 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       -- | node-to-client protocol versions to run.
     , llrnNodeToClientVersions :: Map NodeToClientVersion (BlockNodeToClientVersion blk)
 
+      -- | If the volatile tip is older than this, then the node will exit the
+      -- @CaughtUp@ state.
+    , llrnMaxCaughtUpAge :: NominalDiffTime
+
       -- | Maximum clock skew
     , llrnMaxClockSkew :: ClockSkew
     }
@@ -364,8 +371,15 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   , ChainDB.cdbVolatileDbValidation  = ValidateAll
                   }
 
-        chainDB <- openChainDB registry inFuture cfg initLedger
-                  llrnChainDbArgsDefaults customiseChainDbArgs'
+        let finalChainDbArgs =
+              mkFinalChainDbArgs
+                registry
+                inFuture
+                cfg
+                initLedger
+                llrnChainDbArgsDefaults
+                customiseChainDbArgs'
+        chainDB <- ChainDB.openDB finalChainDbArgs
 
         continueWithCleanChainDB chainDB $ do
           btime <-
@@ -384,17 +398,28 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               , hfbtMaxClockRewind = secondsToNominalDiffTime 20
               }
 
-          nodeKernelArgs <-
-              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs) $
-              mkNodeKernelArgs
-                registry
-                llrnBfcSalt
-                llrnKeepAliveRng
-                cfg
-                rnTraceConsensus
-                btime
-                (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
-                chainDB
+          nodeKernelArgs <- do
+              durationUntilTooOld <- GSM.realDurationUntilTooOld
+                (configLedger cfg)
+                (ledgerState <$> ChainDB.getCurrentLedger chainDB)
+                llrnMaxCaughtUpAge
+                systemTime
+              let gsmMarkerFileView =
+                    case ChainDB.cdbHasFSGsmDB finalChainDbArgs of
+                        SomeHasFS x -> GSM.realMarkerFileView chainDB x
+              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs)
+                $ mkNodeKernelArgs
+                    registry
+                    llrnBfcSalt
+                    llrnKeepAliveRng
+                    cfg
+                    rnTraceConsensus
+                    btime
+                    (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
+                    chainDB
+                    llrnMaxCaughtUpAge
+                    (Just durationUntilTooOld)
+                    gsmMarkerFileView
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
 
@@ -601,13 +626,25 @@ openChainDB ::
       -- ^ Customise the 'ChainDbArgs'
   -> m (ChainDB m blk)
 openChainDB registry inFuture cfg initLedger defArgs customiseArgs =
-    ChainDB.openDB args
-  where
-    args :: ChainDbArgs Identity m blk
-    args = customiseArgs $
-             mkChainDbArgs registry inFuture cfg initLedger
-             (nodeImmutableDbChunkInfo (configStorage cfg))
-             defArgs
+    ChainDB.openDB
+  $ mkFinalChainDbArgs registry inFuture cfg initLedger defArgs customiseArgs
+
+mkFinalChainDbArgs
+  :: forall m blk. (RunNode blk, IOLike m)
+  => ResourceRegistry m
+  -> CheckInFuture m blk
+  -> TopLevelConfig blk
+  -> ExtLedgerState blk
+     -- ^ Initial ledger
+  -> ChainDbArgs Defaults m blk
+  -> (ChainDbArgs Identity m blk -> ChainDbArgs Identity m blk)
+      -- ^ Customise the 'ChainDbArgs'
+  -> ChainDbArgs Identity m blk
+mkFinalChainDbArgs registry inFuture cfg initLedger defArgs customiseArgs =
+    customiseArgs $
+      mkChainDbArgs registry inFuture cfg initLedger
+      (nodeImmutableDbChunkInfo (configStorage cfg))
+      defArgs
 
 mkChainDbArgs ::
      forall m blk. (RunNode blk, IOLike m)
@@ -646,6 +683,9 @@ mkNodeKernelArgs ::
   -> BlockchainTime m
   -> InFutureCheck.SomeHeaderInFutureCheck m blk
   -> ChainDB m blk
+  -> NominalDiffTime
+  -> Maybe (GSM.WrapDurationUntilTooOld m blk)
+  -> GSM.MarkerFileView m
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -656,6 +696,9 @@ mkNodeKernelArgs
   btime
   chainSyncFutureCheck
   chainDB
+  maxCaughtUpAge
+  gsmDurationUntilTooOld
+  gsmMarkerFileView
   = do
     return NodeKernelArgs
       { tracers
@@ -670,6 +713,12 @@ mkNodeKernelArgs
       , miniProtocolParameters  = defaultMiniProtocolParameters
       , blockFetchConfiguration = defaultBlockFetchConfiguration
       , keepAliveRng
+      , gsmArgs = GsmNodeKernelArgs {
+          gsmAntiThunderingHerd  = snd (split keepAliveRng)
+        , gsmDurationUntilTooOld
+        , gsmMarkerFileView
+        , gsmMinCaughtUpDuration = maxCaughtUpAge
+        }
       }
   where
     defaultBlockFetchConfiguration :: BlockFetchConfiguration
@@ -880,6 +929,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
             (supportedNodeToClientVersions (Proxy @blk))
       , llrnWithCheckedDB =
           stdWithCheckedDB (Proxy @blk) srnDatabasePath networkMagic
+      , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60   -- 20 min
       , llrnMaxClockSkew =
           InFuture.defaultClockSkew
       }

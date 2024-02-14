@@ -48,12 +48,14 @@ data NodeDBs db = NodeDBs {
     nodeDBsImm :: db
   , nodeDBsVol :: db
   , nodeDBsLgr :: db
+  , nodeDBsGsm :: db
   }
   deriving (Functor, Foldable, Traversable)
 
 emptyNodeDBs :: MonadSTM m => m (NodeDBs (StrictTVar m MockFS))
 emptyNodeDBs = NodeDBs
   <$> uncheckedNewTVarM Mock.empty
+  <*> uncheckedNewTVarM Mock.empty
   <*> uncheckedNewTVarM Mock.empty
   <*> uncheckedNewTVarM Mock.empty
 
@@ -86,6 +88,8 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
     cdbHasFSImmutableDB       = SomeHasFS $ simHasFS (nodeDBsImm mcdbNodeDBs')
   , cdbHasFSVolatileDB        = SomeHasFS $ simHasFS (nodeDBsVol mcdbNodeDBs')
   , cdbHasFSLgrDB             = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs')
+  , cdbHasFSGsmDB             = SomeHasFS $ simHasFS (nodeDBsGsm mcdbNodeDBs')
+
   , cdbImmutableDbValidation  = ImmutableDB.ValidateAllChunks
   , cdbVolatileDbValidation   = VolatileDB.ValidateAll
   , cdbMaxBlocksPerFile       = VolatileDB.mkBlocksPerFile 4
