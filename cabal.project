@@ -31,3 +31,23 @@ tests: true
 benchmarks: true
 
 import: ./asserts.cabal
+
+source-repository-package
+    type: git
+    location: https://github.com/input-output-hk/ouroboros-network/
+    tag: 8ab444850b9d654110cd751a17c21db814bba593
+    subdir: monoidal-synchronisation
+            network-mux
+            ouroboros-network
+            ouroboros-network-api
+            ouroboros-network-framework
+            ouroboros-network-protocols
+            ouroboros-network-testing
+    --sha256: 1vw8r8csa6lq4330bwgddxa4nl2m1pw1ps5y6l7lw2zw3xdlr0hf
+
+source-repository-package
+    type: git
+    location: https://github.com/input-output-hk/io-sim
+    tag: 85d633d6f9c76ffb678b36396c8fd39b2ff7219e
+    subdir: io-sim
+    --sha256: 10f54xg88wq2w7ylg3n33f1yiswd6w4dam7fvl12raiqj0rk21qm
