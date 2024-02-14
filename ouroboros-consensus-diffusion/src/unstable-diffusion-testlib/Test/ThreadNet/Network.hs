@@ -73,6 +73,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import           Ouroboros.Consensus.Node.ExitPolicy
+import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -997,6 +998,16 @@ runThreadNetwork systemTime ThreadNetworkArgs
                                                   -- blockfetch descision interval.
                 , bfcSalt                   = 0
                 }
+            , gsmArgs                 = GSM.GsmNodeKernelArgs {
+                  gsmAntiThunderingHerd  = kaRng
+                , gsmDurationUntilTooOld = Nothing
+                , gsmMarkerFileView      = GSM.MarkerFileView {
+                      touchMarkerFile  = pure ()
+                    , removeMarkerFile = pure ()
+                    , hasMarkerFile    = pure False
+                    }
+                , gsmMinCaughtUpDuration = 0
+                }
             }
 
       nodeKernel <- initNodeKernel nodeKernelArgs
@@ -1458,9 +1469,10 @@ newNodeInfo = do
       (v1, m1) <- mk
       (v2, m2) <- mk
       (v3, m3) <- mk
+      (v4, m4) <- mk
       pure
-          ( NodeDBs     v1     v2     v3
-          , NodeDBs <$> m1 <*> m2 <*> m3
+          ( NodeDBs     v1     v2     v3     v4
+          , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4
           )
 
   pure

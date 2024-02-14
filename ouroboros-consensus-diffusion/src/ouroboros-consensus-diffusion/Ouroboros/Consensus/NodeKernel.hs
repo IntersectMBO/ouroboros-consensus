@@ -31,16 +31,20 @@ module Ouroboros.Consensus.NodeKernel (
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import           Control.DeepSeq (force)
 import           Control.Monad
+import qualified Control.Monad.Class.MonadTimer.SI as SI
 import           Control.Monad.Except
 import           Control.Tracer
 import           Data.Bifunctor (second)
 import           Data.Data (Typeable)
 import           Data.Foldable (traverse_)
+import           Data.Function (on)
+import           Data.Functor ((<&>))
 import           Data.Hashable (Hashable)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map.Strict (Map)
 import           Data.Maybe (isJust, mapMaybe)
 import           Data.Proxy
+import           Data.Set (Set)
 import qualified Data.Text as Text
 import           Data.Void (Void)
 import           Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -58,6 +62,8 @@ import           Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
+import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
+import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -67,6 +73,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
+import           Ouroboros.Consensus.Util.AnchoredFragment
+                     (preferAnchoredCandidate)
 import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -75,9 +83,12 @@ import           Ouroboros.Consensus.Util.STM
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
+import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
+                     (LedgerStateJudgement (..))
 import           Ouroboros.Network.PeerSharing (PeerSharingRegistry,
                      newPeerSharingRegistry)
 import           Ouroboros.Network.TxSubmission.Inbound
@@ -95,36 +106,44 @@ import           System.Random (StdGen)
 -- | Interface against running relay node
 data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       -- | The 'ChainDB' of the node
-      getChainDB             :: ChainDB m blk
+      getChainDB              :: ChainDB m blk
 
       -- | The node's mempool
-    , getMempool             :: Mempool m blk
+    , getMempool              :: Mempool m blk
 
       -- | The node's top-level static configuration
-    , getTopLevelConfig      :: TopLevelConfig blk
+    , getTopLevelConfig       :: TopLevelConfig blk
 
       -- | The fetch client registry, used for the block fetch clients.
-    , getFetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
+    , getFetchClientRegistry  :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
 
       -- | The fetch mode, used by diffusion.
       --
-    , getFetchMode           :: STM m FetchMode
+    , getFetchMode            :: STM m FetchMode
+
+      -- | The ledger judgement, used by diffusion.
+      --
+    , getLedgerStateJudgement :: STM m LedgerStateJudgement
 
       -- | Read the current candidates
-    , getNodeCandidates      :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
+    , getNodeCandidates       :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
+
+      -- | Read the set of peers that have claimed to have no subsequent
+      -- headers beyond their current candidate
+    , getNodeIdlers           :: StrictTVar m (Set (ConnectionId addrNTN))
 
       -- | Read the current peer sharing registry, used for interacting with
       -- the PeerSharing protocol
-    , getPeerSharingRegistry :: PeerSharingRegistry addrNTN m
+    , getPeerSharingRegistry  :: PeerSharingRegistry addrNTN m
 
       -- | The node's tracers
-    , getTracers             :: Tracers m (ConnectionId addrNTN) addrNTC blk
+    , getTracers              :: Tracers m (ConnectionId addrNTN) addrNTC blk
 
       -- | Set block forging
       --
       -- When set with the empty list '[]' block forging will be disabled.
       --
-    , setBlockForging        :: [BlockForging m blk] -> m ()
+    , setBlockForging         :: [BlockForging m blk] -> m ()
     }
 
 -- | Arguments required when initializing a node
@@ -141,11 +160,13 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , miniProtocolParameters  :: MiniProtocolParameters
     , blockFetchConfiguration :: BlockFetchConfiguration
     , keepAliveRng            :: StdGen
+    , gsmArgs                 :: GsmNodeKernelArgs m blk
     }
 
 initNodeKernel ::
        forall m addrNTN addrNTC blk.
        ( IOLike m
+       , SI.MonadTimer m
        , RunNode blk
        , Ord addrNTN
        , Hashable addrNTN
@@ -156,18 +177,66 @@ initNodeKernel ::
 initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , chainDB, initChainDB
                                    , blockFetchConfiguration
+                                   , gsmArgs
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
     initChainDB (configStorage cfg) (InitChainDB.fromFull chainDB)
 
     st <- initInternalState args
+    let IS
+          { blockFetchInterface
+          , fetchClientRegistry
+          , mempool
+          , peerSharingRegistry
+          , varCandidates
+          , varIdlers
+          , varLedgerJudgement
+          } = st
+
+    do  let GsmNodeKernelArgs {..} = gsmArgs
+            gsmTracerArgs          =
+              ( castTip . either AF.anchorToTip tipFromHeader . AF.head . fst
+              , gsmTracer tracers
+              )
+
+        let gsm = GSM.realGsmEntryPoints gsmTracerArgs GSM.GsmView
+              { GSM.antiThunderingHerd        = Just gsmAntiThunderingHerd
+              , GSM.candidateOverSelection    = \(headers, _lst) candidate ->
+                    case AF.intersectionPoint headers candidate of
+                        Nothing -> GSM.CandidateDoesNotIntersect
+                        Just{}  ->
+                            GSM.WhetherCandidateIsBetter
+                          $ -- precondition requires intersection
+                            preferAnchoredCandidate
+                                (configBlock cfg)
+                                headers
+                                candidate
+              , GSM.durationUntilTooOld       =
+                      gsmDurationUntilTooOld
+                  <&> \wd (_headers, lst) ->
+                        GSM.getDurationUntilTooOld wd (getTipSlot lst)
+              , GSM.equivalent                = (==) `on` (AF.headPoint . fst)
+              , GSM.getChainSyncCandidates    = readTVar varCandidates
+              , GSM.getChainSyncIdlers        = readTVar varIdlers
+              , GSM.getCurrentSelection       = do
+                  headers        <- ChainDB.getCurrentChain  chainDB
+                  extLedgerState <- ChainDB.getCurrentLedger chainDB
+                  return (headers, ledgerState extLedgerState)
+              , GSM.minCaughtUpDuration       = gsmMinCaughtUpDuration
+              , GSM.setCaughtUpPersistentMark = \upd ->
+                  (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
+                    gsmMarkerFileView
+              , GSM.writeLedgerStateJudgement   = \x -> atomically $ do
+                  writeTVar varLedgerJudgement x
+              }
+        judgment <- readTVarIO varLedgerJudgement
+        void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
+          TooOld      -> GSM.enterOnlyBootstrap gsm
+          YoungEnough -> GSM.enterCaughtUp      gsm
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
                             blockForgingController st (LazySTM.takeTMVar blockForgingVar)
-
-    let IS { blockFetchInterface, fetchClientRegistry, varCandidates,
-             peerSharingRegistry, mempool } = st
 
     -- Run the block fetch logic in the background. This will call
     -- 'addFetchedBlock' whenever a new block is downloaded.
@@ -180,15 +249,17 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         blockFetchConfiguration
 
     return NodeKernel
-      { getChainDB             = chainDB
-      , getMempool             = mempool
-      , getTopLevelConfig      = cfg
-      , getFetchClientRegistry = fetchClientRegistry
-      , getFetchMode           = readFetchMode blockFetchInterface
-      , getNodeCandidates      = varCandidates
-      , getPeerSharingRegistry = peerSharingRegistry
-      , getTracers             = tracers
-      , setBlockForging        = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
+      { getChainDB              = chainDB
+      , getMempool              = mempool
+      , getTopLevelConfig       = cfg
+      , getFetchClientRegistry  = fetchClientRegistry
+      , getFetchMode            = readFetchMode blockFetchInterface
+      , getLedgerStateJudgement = readTVar varLedgerJudgement
+      , getNodeCandidates       = varCandidates
+      , getNodeIdlers           = varIdlers
+      , getPeerSharingRegistry  = peerSharingRegistry
+      , getTracers              = tracers
+      , setBlockForging         = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
@@ -216,8 +287,10 @@ data InternalState m addrNTN addrNTC blk = IS {
     , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
     , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
     , varCandidates       :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
+    , varIdlers           :: StrictTVar m (Set (ConnectionId addrNTN))
     , mempool             :: Mempool m blk
     , peerSharingRegistry :: PeerSharingRegistry addrNTN m
+    , varLedgerJudgement  :: StrictTVar m LedgerStateJudgement
     }
 
 initInternalState ::
@@ -232,8 +305,18 @@ initInternalState ::
 initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , blockFetchSize, btime
                                  , mempoolCapacityOverride
+                                 , gsmArgs
                                  } = do
+    varLedgerJudgement <- do
+      let GsmNodeKernelArgs {..} = gsmArgs
+      j <- GSM.initializationLedgerJudgement
+        (atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB)
+        gsmDurationUntilTooOld
+        gsmMarkerFileView
+      newTVarIO j
+
     varCandidates <- newTVarIO mempty
+    varIdlers     <- newTVarIO mempty
     mempool       <- openMempool registry
                                  (chainDBLedgerInterface chainDB)
                                  (configLedger cfg)

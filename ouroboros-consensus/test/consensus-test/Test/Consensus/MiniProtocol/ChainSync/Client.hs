@@ -346,7 +346,8 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               (ServerUpdates serverUpdates)
 
     -- Set up the client
-    varCandidates   <- uncheckedNewTVarM Map.empty
+    varCandidates   <- uncheckedNewTVarM mempty
+    varIdlers       <- uncheckedNewTVarM mempty
     varClientState  <- uncheckedNewTVarM Genesis
     varClientResult <- uncheckedNewTVarM Nothing
     varKnownInvalid <- uncheckedNewTVarM mempty
@@ -401,10 +402,11 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
             -- client's and server's clock as the tolerable clock skew.
 
         client :: StrictTVar m (AnchoredFragment (Header TestBlock))
+               -> (m (), m ())
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client varCandidate =
+        client varCandidate (startIdling, stopIdling) =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -419,6 +421,8 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , controlMessageSTM   = return Continue
                 , headerMetricsTracer = nullTracer
                 , varCandidate
+                , startIdling
+                , stopIdling
                 }
 
     -- Set up the server
@@ -489,13 +493,14 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  chainSyncTracer
                  chainDbView
                  varCandidates
+                 varIdlers
                  serverId
-                 maxBound $ \varCandidate -> do
+                 maxBound $ \varCandidate idlingSignals -> do
                    atomically $ modifyTVar varFinalCandidates $
                      Map.insert serverId varCandidate
                    result <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
-                       chainSyncClientPeerPipelined $ client varCandidate
+                       chainSyncClientPeerPipelined $ client varCandidate idlingSignals
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
                    return ()
               `catchAlsoLinked` \ex -> do

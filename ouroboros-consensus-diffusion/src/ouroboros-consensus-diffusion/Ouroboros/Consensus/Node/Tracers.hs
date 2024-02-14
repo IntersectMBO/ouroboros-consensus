@@ -34,6 +34,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (TraceChainSyncServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent (..))
+import           Ouroboros.Consensus.Node.GSM (TraceGsmEvent)
+import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.BlockFetch (FetchDecision,
                      TraceFetchClientState, TraceLabelPeer)
 import           Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
@@ -62,6 +64,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , forgeStateInfoTracer          :: f (TraceLabelCreds (ForgeStateInfo blk))
   , keepAliveClientTracer         :: f (TraceKeepAliveClient remotePeer)
   , consensusErrorTracer          :: f SomeException
+  , gsmTracer                     :: f (TraceGsmEvent (Tip blk))
   }
 
 instance (forall a. Semigroup (f a))
@@ -82,6 +85,7 @@ instance (forall a. Semigroup (f a))
       , forgeStateInfoTracer          = f forgeStateInfoTracer
       , keepAliveClientTracer         = f keepAliveClientTracer
       , consensusErrorTracer          = f consensusErrorTracer
+      , gsmTracer                     = f gsmTracer
       }
     where
       f :: forall a. Semigroup a
@@ -110,6 +114,7 @@ nullTracers = Tracers
     , forgeStateInfoTracer          = nullTracer
     , keepAliveClientTracer         = nullTracer
     , consensusErrorTracer          = nullTracer
+    , gsmTracer                     = nullTracer
     }
 
 showTracers :: ( Show blk
@@ -141,6 +146,7 @@ showTracers tr = Tracers
     , forgeStateInfoTracer          = showTracing tr
     , keepAliveClientTracer         = showTracing tr
     , consensusErrorTracer          = showTracing tr
+    , gsmTracer                     = showTracing tr
     }
 
 {-------------------------------------------------------------------------------

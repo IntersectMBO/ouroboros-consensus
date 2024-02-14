@@ -64,6 +64,8 @@ import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.Typeable
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
@@ -161,14 +163,28 @@ bracketChainSyncClient ::
  -> StrictTVar m (Map peer (StrictTVar m (AnchoredFragment (Header blk))))
     -- ^ The candidate chains, we need the whole map because we
     -- (de)register nodes (@peer@).
+ -> StrictTVar m (Set peer)
+    -- ^ This ChainSync client should ensure that its peer is in this set while
+    -- and only while both of the following conditions are satisfied: the
+    -- peer's latest -- message has been fully processed (especially that its
+    -- candidate has been updated; previous argument) and its latest message
+    -- did not claim that it already has headers that extend its candidate.
+    --
+    -- It's more important that the client is removed from the set promptly
+    -- than it is for the client to be added promptly, because of how this is
+    -- used by the GSM to determine that the node is done syncing.
  -> peer
  -> NodeToNodeVersion
- -> (StrictTVar m (AnchoredFragment (Header blk)) -> m a)
+ -> (     StrictTVar m (AnchoredFragment (Header blk))
+       -> (m (), m ())
+       -> m a
+    )
  -> m a
 bracketChainSyncClient
     tracer
     ChainDbView { getIsInvalidBlock }
     varCandidates
+    varIdling
     peer
     version
     body
@@ -178,15 +194,20 @@ bracketChainSyncClient
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
             (invalidBlockWatcher varCandidate)
-      $ body varCandidate
+      $ body
+            varCandidate
+            ( atomically $ modifyTVar varIdling $ Set.insert peer
+            , atomically $ modifyTVar varIdling $ Set.delete peer
+            )
   where
     newCandidateVar = do
         varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
         atomically $ modifyTVar varCandidates $ Map.insert peer varCandidate
         return varCandidate
 
-    releaseCandidateVar _ = do
-        atomically $ modifyTVar varCandidates $ Map.delete peer
+    releaseCandidateVar _ = atomically $ do
+        modifyTVar varCandidates $ Map.delete peer
+        modifyTVar varIdling     $ Set.delete peer
 
     invalidBlockWatcher varCandidate =
         invalidBlockRejector
@@ -495,6 +516,12 @@ data DynamicEnv m blk = DynamicEnv {
   , controlMessageSTM   :: ControlMessageSTM m
   , headerMetricsTracer :: HeaderMetricsTracer m
   , varCandidate        :: StrictTVar m (AnchoredFragment (Header blk))
+  , startIdling         :: m ()
+    -- ^ Insert the peer into the idling set argument of
+    -- 'bracketChainSyncClient'
+  , stopIdling          :: m ()
+    -- ^ Remove the peer from the idling set argument of
+    -- 'bracketChainSyncClient'
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -586,6 +613,10 @@ chainSyncClient cfgEnv dynEnv =
         getCurrentChain
       } = chainDbView
 
+    DynamicEnv {
+        stopIdling
+      } = dynEnv
+
     mkIntEnv ::
         InFutureCheck.HeaderInFutureCheck m blk arrival judgment
      -> InternalEnv                       m blk arrival judgment
@@ -629,7 +660,7 @@ chainSyncClient cfgEnv dynEnv =
                   recvMsgRollForward  = \_hdr _tip -> go n' s
                 , recvMsgRollBackward = \_pt  _tip -> go n' s
                 }
-      in Stateful $ go n0
+      in Stateful $ \s -> do stopIdling; go n0 s
 
     terminate ::
         ChainSyncClientResult
@@ -855,6 +886,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     DynamicEnv {
         controlMessageSTM
       , headerMetricsTracer
+      , startIdling
+      , stopIdling
       , varCandidate
       } = dynEnv
 
@@ -930,22 +963,21 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     requestNext kis mkPipelineDecision n theirTip candTipBlockNo =
         let theirTipBlockNo = getTipBlockNo (unTheir theirTip)
             decision        =
-              runPipelineDecision
-              mkPipelineDecision
-              n
-              candTipBlockNo
-              theirTipBlockNo
+                runPipelineDecision
+                    mkPipelineDecision
+                    n
+                    candTipBlockNo
+                    theirTipBlockNo
         in
         case (n, decision) of
           (Zero, (Request, mkPipelineDecision')) ->
               SendMsgRequestNext
+                  startIdling   -- on MsgAwaitReply
                   (handleNext kis mkPipelineDecision' Zero)
-                  ( -- when we have to wait
-                    return $ handleNext kis mkPipelineDecision' Zero
-                  )
 
           (_, (Pipeline, mkPipelineDecision')) ->
               SendMsgRequestNextPipelined
+                startIdling   -- on MsgAwaitReply
             $ requestNext
                   kis
                   mkPipelineDecision'
@@ -955,9 +987,10 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
           (Succ n', (CollectOrPipeline, mkPipelineDecision')) ->
               CollectResponse
-                  (    Just
+                  (   Just
                     $ pure
                     $ SendMsgRequestNextPipelined
+                        startIdling   -- on MsgAwaitReply
                     $ requestNext
                           kis
                           mkPipelineDecision'
@@ -979,6 +1012,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
      -> Consensus (ClientStNext n) blk m
     handleNext kis mkPipelineDecision n = ClientStNext {
         recvMsgRollForward = \hdr theirTip -> do
+            stopIdling
             traceWith tracer $ TraceDownloadedHeader hdr
             continueWithState kis $
                 rollForward
@@ -988,6 +1022,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     (Their theirTip)
       ,
         recvMsgRollBackward = \intersection theirTip -> do
+            stopIdling
             let intersection' :: Point blk
                 intersection' = castPoint intersection
             traceWith tracer $ TraceRolledBack intersection'
