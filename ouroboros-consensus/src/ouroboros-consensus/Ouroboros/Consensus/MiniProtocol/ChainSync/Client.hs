@@ -1240,10 +1240,13 @@ checkTime cfgEnv intEnv =
         Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
             Just ledgerView -> pure $ Intersects kis2 ledgerView
             Nothing         -> do
-              let forecastAtSlot = forecastAt (ledgerViewForecastAt (configLedger cfg) lst)
-              EarlyExit.lift $ traceWith (tracer cfgEnv) $ TraceWaitingBeyondForecastHorizon forecastAtSlot slotNo
+              EarlyExit.lift $
+                  traceWith (tracer cfgEnv)
+                $ TraceWaitingBeyondForecastHorizon slotNo
               res <- readLedgerState kis2 (projectLedgerView slotNo)
-              EarlyExit.lift $ traceWith (tracer cfgEnv) $ TraceAccessingForecastHorizon forecastAtSlot slotNo
+              EarlyExit.lift $
+                  traceWith (tracer cfgEnv)
+                $ TraceAccessingForecastHorizon slotNo
               pure res
         pure $ Intersects kis3 ledgerView
   where
@@ -1760,15 +1763,13 @@ data TraceChainSyncClientEvent blk =
     TraceValidatedHeader (Header blk)
     -- ^ We have validated the given header.
   |
-    TraceWaitingBeyondForecastHorizon (WithOrigin SlotNo) SlotNo
-    -- ^ The second 'SlotNo' is beyond the forecast horizon taken from the first
-    -- 'SlotNo', the ChainSync client cannot yet validate a header in this slot
-    -- and therefore is waiting.
+    TraceWaitingBeyondForecastHorizon SlotNo
+    -- ^ The 'SlotNo' is beyond the forecast horizon, the ChainSync client
+    -- cannot yet validate a header in this slot and therefore is waiting.
   |
-    TraceAccessingForecastHorizon (WithOrigin SlotNo) SlotNo
-    -- ^ The given 'SlotNo', which was previously beyond the forecast horizon
-    -- taken from the first 'SlotNo', has now entered the forecast horizon, and
-    -- we can resume processing.
+    TraceAccessingForecastHorizon SlotNo
+    -- ^ The 'SlotNo', which was previously beyond the forecast horizon, has now
+    -- entered it, and we can resume processing.
 
 deriving instance
   ( BlockSupportsProtocol blk
