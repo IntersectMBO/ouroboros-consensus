@@ -136,6 +136,7 @@ oneBenchRun
               , CSClient.headerMetricsTracer = nullTracer
               , CSClient.varCandidate
               , CSClient.setTheirTip         = \_ -> pure ()
+              , CSClient.setFutureHeader     = \_ -> pure ()
               }
 
     server :: ChainSyncServer H (Point B) (Tip B) IO ()
