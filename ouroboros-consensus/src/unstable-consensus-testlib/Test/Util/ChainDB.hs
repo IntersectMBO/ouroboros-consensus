@@ -22,7 +22,6 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture (..))
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
-import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB hiding
@@ -38,7 +37,7 @@ import           System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS
 import           System.FS.Sim.STM (simHasFS)
-import           Test.Util.TestBlock (TestBlockLedgerConfig (..))
+import           Test.Util.TestBlock (TestBlock, TestBlockLedgerConfig (..))
 
 -- | A vector with an element for each database of a node
 --
@@ -72,7 +71,7 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs {
   }
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
-mkTestChunkInfo :: LedgerConfig blk ~ TestBlockLedgerConfig => TopLevelConfig blk -> ImmutableDB.ChunkInfo
+mkTestChunkInfo :: TopLevelConfig TestBlock -> ImmutableDB.ChunkInfo
 mkTestChunkInfo = simpleChunkInfo . eraEpochSize . tblcHardForkParams . topLevelConfigLedger
 
 -- | Creates a default set of of arguments for ChainDB tests.
