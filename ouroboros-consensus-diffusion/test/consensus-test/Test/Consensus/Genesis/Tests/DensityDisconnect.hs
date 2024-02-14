@@ -101,7 +101,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
 prop_densityDisconnectStatic :: Property
 prop_densityDisconnectStatic =
   forAll gen $ \ StaticCandidates {k, sgen, suffixes, tips, loeFrag} -> do
-    let (disconnect, _) = densityDisconnect sgen k suffixes tips loeFrag
+    let (disconnect, _) = densityDisconnect sgen k suffixes tips mempty loeFrag
     not (null disconnect) && HonestPeer `notElem` disconnect
   where
     gen = do
@@ -240,7 +240,7 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers} =
           curChain = selection (value (firstBranch ps))
           next = updatePeer movePeer target ps
           (loeFrag, suffixes) = sharedCandidatePrefix curChain (candidate . value <$> toMap next)
-          disconnect = fst (densityDisconnect sgen k suffixes tips loeFrag)
+          disconnect = fst (densityDisconnect sgen k suffixes tips mempty loeFrag)
       either (pure . second (result loeFrag)) step (updatePeers sgen target disconnect next)
       where
         result f final = EvolvingPeers {k, sgen, peers = final, loeFrag = f}

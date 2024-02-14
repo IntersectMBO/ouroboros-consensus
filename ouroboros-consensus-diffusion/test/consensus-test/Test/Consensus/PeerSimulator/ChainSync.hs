@@ -53,8 +53,9 @@ basicChainSyncClient :: forall m.
   ChainDbView m TestBlock ->
   StrictTVar m TestFragH ->
   (Their (Tip TestBlock) -> STM m ()) ->
+  (Bool -> STM m ()) ->
   Consensus ChainSyncClientPipelined TestBlock m
-basicChainSyncClient tracer cfg chainDbView varCandidate setTheirTip =
+basicChainSyncClient tracer cfg chainDbView varCandidate setTheirTip setFutureHeader =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
@@ -69,6 +70,7 @@ basicChainSyncClient tracer cfg chainDbView varCandidate setTheirTip =
       , CSClient.headerMetricsTracer = nullTracer
       , CSClient.varCandidate
       , CSClient.setTheirTip
+      , CSClient.setFutureHeader
       }
   where
     dummyHeaderInFutureCheck ::
@@ -104,14 +106,14 @@ runChainSyncClient
   varCandidates
   varHandles
   =
-    bracketChainSyncClient nullTracer chainDbView varCandidates varHandles peerId ntnVersion $ \ varCandidate setTip -> do
+    bracketChainSyncClient nullTracer chainDbView varCandidates varHandles peerId ntnVersion $ \ varCandidate setTip setFutureHeader -> do
       res <- try $ runConnectedPeersPipelinedWithLimits
         createConnectedChannels
         nullTracer
         codecChainSyncId
         chainSyncNoSizeLimits
         (timeLimitsChainSync chainSyncTimeouts)
-        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate setTip))
+        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate setTip setFutureHeader))
         (chainSyncServerPeer server)
       case res of
         Left exn -> do

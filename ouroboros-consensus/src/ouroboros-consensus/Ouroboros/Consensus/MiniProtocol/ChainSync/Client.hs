@@ -158,6 +158,7 @@ newtype Our a = Our { unOur :: a }
 data ChainSyncClientHandle m blk = ChainSyncClientHandle {
     cschKill     :: !(m ())
   , cschTheirTip :: !(STM m (Maybe (Tip blk)))
+  , cschFutureHeader :: !(STM m Bool)
   }
   deriving stock (Generic)
   deriving (NoThunks) via AllowThunk (ChainSyncClientHandle m blk)
@@ -177,6 +178,7 @@ bracketChainSyncClient ::
  -> NodeToNodeVersion
  -> (    StrictTVar m (AnchoredFragment (Header blk))
       -> (Their (Tip blk) -> STM m ())
+      -> (Bool -> STM m ())
       -> m a
     )
  -> m a
@@ -190,23 +192,25 @@ bracketChainSyncClient
     body
   =
     bracket newCandidateVar releaseCandidateVar
-  $ \(varCandidate, varTheirTip) ->
+  $ \(varCandidate, setTheirTip, setFutureHeader) ->
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
             (invalidBlockWatcher varCandidate)
-      $ body varCandidate varTheirTip
+      $ body varCandidate setTheirTip setFutureHeader
   where
     newCandidateVar = do
         varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
         varTheirTip <- newTVarIO Nothing
+        varFutureHeader <- newTVarIO False
         tid <- myThreadId
         atomically $ do
           modifyTVar varCandidates $ Map.insert peer varCandidate
           modifyTVar varHandles $ Map.insert peer ChainSyncClientHandle {
               cschKill     = killThread tid
             , cschTheirTip = readTVar varTheirTip
+            , cschFutureHeader = readTVar varFutureHeader
             }
-        return (varCandidate, writeTVar varTheirTip . Just . unTheir)
+        return (varCandidate, writeTVar varTheirTip . Just . unTheir, writeTVar varFutureHeader)
 
     releaseCandidateVar _ = do
         atomically $ do
@@ -521,6 +525,7 @@ data DynamicEnv m blk = DynamicEnv {
   , headerMetricsTracer :: HeaderMetricsTracer m
   , varCandidate        :: StrictTVar m (AnchoredFragment (Header blk))
   , setTheirTip         :: Their (Tip blk) -> STM m ()
+  , setFutureHeader     :: Bool -> STM m ()
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -1048,7 +1053,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
-            checkTime cfgEnv intEnv kis arrival slotNo >>= \case
+            checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
                     continueWithState ()
                   $ drainThePipe n
@@ -1229,17 +1234,22 @@ checkTime ::
      , LedgerSupportsProtocol blk
      )
   => ConfigEnv m blk
+  -> DynamicEnv m blk
   -> InternalEnv m blk arrival judgment
   -> KnownIntersectionState blk
   -> arrival
   -> SlotNo
   -> m (UpdatedIntersectionState blk (LedgerView (BlockProtocol blk)))
-checkTime cfgEnv intEnv =
+checkTime cfgEnv dynEnv intEnv =
     \kis arrival slotNo -> castEarlyExitIntersects $ do
         Intersects kis2 lst        <- checkArrivalTime kis arrival
         Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
             Just ledgerView -> pure $ Intersects kis2 ledgerView
-            Nothing         -> readLedgerState kis2 (projectLedgerView slotNo)
+            Nothing         ->
+              bracket_
+              (EarlyExit.lift (atomically (setFutureHeader dynEnv True)))
+              (EarlyExit.lift (atomically (setFutureHeader dynEnv False)))
+              (readLedgerState kis2 (projectLedgerView slotNo))
         pure $ Intersects kis3 ledgerView
   where
     ConfigEnv {

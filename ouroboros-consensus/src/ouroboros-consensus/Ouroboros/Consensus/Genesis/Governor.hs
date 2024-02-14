@@ -27,6 +27,7 @@ import           Data.Foldable (for_, toList)
 import           Data.List (intercalate)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block (SlotNo (SlotNo, unSlotNo),
                      blockSlot, succWithOrigin)
@@ -123,9 +124,10 @@ densityDisconnect ::
   -> SecurityParam
   -> Map peer (AnchoredFragment (Header blk))
   -> Map peer (Tip blk)
+  -> Map peer Bool
   -> AnchoredFragment (Header blk)
   -> ([peer], String)
-densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes theirTips loeFrag =
+densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes theirTips futureHeaders loeFrag =
   (losingPeers, showPeers (showBounds <$> densityBounds))
   where
     densityBounds = Map.fromList $ do
@@ -146,6 +148,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
             -- > s >= endOfGenesisWindow
               succWithOrigin (AF.headSlot candidateSuffix)
             > endOfGenesisWindow
+            || fromMaybe False (futureHeaders Map.!? peer)
           upperBound =
               lowerBound
             + if hasBlockAfterGenesisWindow
@@ -216,7 +219,7 @@ updateLoEFragGenesis ::
   -> UpdateLoEFrag m blk
 updateLoEFragGenesis cfg tracer getCandidates getHandles =
   UpdateLoEFrag $ \ curChain immutableLedgerSt setLoEFrag -> do
-    (candidateSuffixes, handles, theirTips, loeFrag) <- atomically $ do
+    (candidateSuffixes, handles, theirTips, futureHeaders, loeFrag) <- atomically $ do
       candidates <- getCandidates
       handles <- getHandles
       let
@@ -228,14 +231,17 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles =
       theirTips <-
         fmap (Map.mapMaybe id) $ flip Map.traverseWithKey candidateSuffixes $ \peer _ ->
           cschTheirTip (handles Map.! peer)
-      pure (candidateSuffixes, handles, theirTips, loeFrag)
+      futureHeaders <-
+        flip Map.traverseWithKey candidateSuffixes $ \peer _ ->
+          cschFutureHeader (handles Map.! peer)
+      pure (candidateSuffixes, handles, theirTips, futureHeaders, loeFrag)
 
     let
       -- TODO: use a forecasted ledger view for the intersection
       -- slot (tip of LoE frag).
       sgen = computeGenesisWindow (configLedger cfg) (ledgerState immutableLedgerSt)
       (losingPeers, boundsDesc) =
-        densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes theirTips loeFrag
+        densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes theirTips futureHeaders loeFrag
 
     trace ("Density bounds: " ++ boundsDesc)
     trace ("New candidate tips: " ++ showPeers (showTip <$> Map.map AF.headPoint candidateSuffixes))

@@ -403,10 +403,11 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
 
         client :: StrictTVar m (AnchoredFragment (Header TestBlock))
                -> (Their (Tip TestBlock) -> STM m ())
+               -> (Bool -> STM m ())
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client varCandidate setTheirTip =
+        client varCandidate setTheirTip setFutureHeader =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -422,6 +423,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , headerMetricsTracer = nullTracer
                 , varCandidate
                 , setTheirTip
+                , setFutureHeader
                 }
 
     -- Set up the server
@@ -494,12 +496,12 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  varCandidates
                  varHandles
                  serverId
-                 maxBound $ \varCandidate setTheirTip -> do
+                 maxBound $ \varCandidate setTheirTip setFutureHeader -> do
                    atomically $ modifyTVar varFinalCandidates $
                      Map.insert serverId varCandidate
                    result <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
-                       chainSyncClientPeerPipelined $ client varCandidate setTheirTip
+                       chainSyncClientPeerPipelined $ client varCandidate setTheirTip setFutureHeader
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
                    return ()
               `catchAlsoLinked` \ex -> do
