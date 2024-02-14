@@ -275,7 +275,9 @@ csBlockConfig = csBlockConfig' . csSecParam
 csBlockConfig' :: SecurityParam -> LedgerDbCfg (LedgerState TestBlock)
 csBlockConfig' secParam = LedgerDbCfg {
       ledgerDbCfgSecParam = secParam
-    , ledgerDbCfg         = testBlockLedgerConfigFrom $ HardFork.defaultEraParams secParam slotLength
+    , ledgerDbCfg         =
+          testBlockLedgerConfigFrom
+        $ HardFork.defaultEraParams secParam slotLength
     }
   where
     slotLength = slotLengthFromSec 20
