@@ -195,7 +195,7 @@ prop_sequential1 j0 cmds = runSimQC $ do
     let executionSM = sm (Just maxBound) vars j0
 
         -- NB the specific IO type is unused here
-        prettySM = sm undefined undefined undefined
+        prettySM = sm undefined undefined j0
 
     let gsm = GSM.realGsmEntryPoints GSM.GsmView {
             GSM.antiThunderingHerd = Nothing
