@@ -150,7 +150,7 @@ initModel j = Model {
 -- if you're debugging a failure by manually altering commands, then these
 -- annotations may be helpful.
 precondition :: Model Symbolic -> Command Symbolic -> QSM.Logic
-precondition model = \case
+precondition model = pre $ \case
     cmd@ExtendSelection{} ->
         let model' = transition model cmd Unit
         in
@@ -158,7 +158,7 @@ precondition model = \case
          QSM..&&
             "early selection" `atom` selectionIsNotEarly model'
          QSM..&&
-            "non-boring selection" `atom` boringDur model' 0
+            boringDur model' 0
     Disconnect peer ->
         "double disconnect" `atom` (peer `Map.member` cands)
     ModifyCandidate peer _bdel ->
@@ -176,7 +176,7 @@ precondition model = \case
     TimePasses dur ->
         "non-positive duration" `atom` (0 < dur)
      QSM..&&
-        "non-boring duration" `atom` boringDur model dur
+        boringDur model dur
   where
     Model {
         mCandidates = cands
@@ -184,7 +184,7 @@ precondition model = \case
         mIdlers = idlers
       } = model
 
-    atom s b = QSM.Boolean b QSM..// s
+    pre f cmd = f cmd QSM..// show cmd
 
 transition :: Model r -> Command r -> Response r -> Model r
 transition model cmd resp = fixupModelState cmd $ case (cmd, resp) of
@@ -587,6 +587,9 @@ toMarker = \case
 
 -----
 
+atom :: String -> Bool -> QSM.Logic
+atom s b = QSM.Boolean b QSM..// s
+
 onset :: Selection -> SI.Time
 onset (Selection _b (S s)) = SI.Time $ fromIntegral s
 
@@ -617,13 +620,14 @@ selectionIsNotEarly model =
       } = model
 
 -- | Checks that a 'TimePasses' command does not end exactly when a timeout
--- could fire
+-- could fire and that a 'ExtendSelection' does not incur a timeout that would
+-- fire immediately
 --
 -- This insulates the test from race conditions that are innocuous in the real
 -- world.
-boringDur :: Model r -> Int -> Bool
+boringDur :: Model r -> Int -> QSM.Logic
 boringDur model dur =
-    boringSelection && boringState
+    boringSelection QSM..&& boringState
   where
     Model {
         mClock = clk
@@ -640,13 +644,17 @@ boringDur model dur =
 
     clk' = SI.addTime (0.1 * fromIntegral dur) clk
 
-    boringSelection = clk' /= expiryAge
+    boringSelection = "boringDur selection" `atom` (clk' /= expiryAge)
 
     boringState = case st of
-        ModelTooOld                -> True
+        ModelTooOld                -> QSM.Top
         ModelYoungEnough timestamp ->
             let gap = clk' `SI.diffTime` expiry timestamp
+                n   =
+                  mod
+                      (diffTimeToPicoseconds gap)
+                      (secondsToPicoseconds thrashLimit)
             in
-            0 /= (diffTimeToPicoseconds gap `mod` secondsToPicoseconds thrashLimit)
+            "boringDur state" `atom` (gap < 0 || 0 /= n)
 
     secondsToPicoseconds x = x * 10 ^ (12 :: Int)
