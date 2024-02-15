@@ -16,8 +16,6 @@ import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (debugTracer, traceWith)
 import           Data.Foldable (for_)
 import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Network.Protocol.ChainSync.Codec
-                     (ChainSyncTimeout (..))
 import           Test.Consensus.BlockTree (allFragments)
 import           Test.Consensus.Genesis.Setup.Classifiers (classifiers, Classifiers (..))
 import           Test.Consensus.Genesis.Setup.GenChains
@@ -52,13 +50,7 @@ runGenesisTest schedulerConfig genesisTest =
     -- FIXME: should also go in 'prettyGenesisTest' (or 'prettyBlockTree')
     for_ (allFragments gtBlockTree) (traceWith tracer . terseFragment)
 
-    traceLinesWith tracer $ [
-      "SchedulerConfig:",
-      "  ChainSyncTimeouts:",
-      "    canAwait = " ++ show (canAwaitTimeout scChainSyncTimeouts),
-      "    intersect = " ++ show (intersectTimeout scChainSyncTimeouts),
-      "    mustReply = " ++ show (mustReplyTimeout scChainSyncTimeouts)
-      ] ++ prettyGenesisTest genesisTest
+    traceLinesWith tracer $ prettyGenesisTest genesisTest
 
     rgtrStateView <- runPointSchedule schedulerConfig genesisTest tracer
     traceWith tracer (condense rgtrStateView)
@@ -66,7 +58,6 @@ runGenesisTest schedulerConfig genesisTest =
 
     pure $ RunGenesisTestResult {rgtrTrace, rgtrStateView}
   where
-    SchedulerConfig {scChainSyncTimeouts} = schedulerConfig
     GenesisTest {gtBlockTree} = genesisTest
 
 -- | Variant of 'runGenesisTest' that also takes a property on the final

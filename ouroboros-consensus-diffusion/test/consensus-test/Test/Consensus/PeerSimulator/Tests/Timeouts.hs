@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
@@ -13,7 +14,8 @@ import           Ouroboros.Network.Driver.Limits
 import           Ouroboros.Network.Protocol.ChainSync.Codec (mustReplyTimeout)
 import           Test.Consensus.BlockTree (btTrunk)
 import           Test.Consensus.Genesis.Setup
-import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
+import           Test.Consensus.PeerSimulator.Run
+                     (SchedulerConfig (scEnableChainSyncTimeouts),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
@@ -31,25 +33,20 @@ tests = testGroup "timeouts" [
   adjustQuickCheckTests (`div` 10) $ testProperty "does not time out" (prop_timeouts False)
   ]
 
-prop_timeouts :: Bool -> Gen Property
+prop_timeouts :: Bool -> Property
 prop_timeouts mustTimeout = do
-  genesisTest <- genChains (pure 0)
+  forAllGenesisTest
 
-  -- Use higher tick duration to avoid the test taking really long
-  let schedulerConfig = defaultSchedulerConfig (gtHonestAsc genesisTest)
+    (do gt@GenesisTest{gtChainSyncTimeouts, gtBlockTree} <- genChains (pure 0)
+        let schedule = dullSchedule (fromJust $ mustReplyTimeout gtChainSyncTimeouts) (btTrunk gtBlockTree)
+        pure $ gt $> schedule
+    )
 
-      schedule =
-        dullSchedule
-          (fromJust $ mustReplyTimeout (scChainSyncTimeouts schedulerConfig))
-          (btTrunk $ gtBlockTree genesisTest)
+    (defaultSchedulerConfig { scEnableChainSyncTimeouts = True })
 
-      genesisTest' = genesisTest $> schedule
+    (\_ _ -> [])
 
-  -- FIXME: Because the scheduler configuration depends on the generated
-  -- 'GenesisTest' itself, we cannot rely on helpers such as
-  -- 'forAllGenesisTest'.
-  pure $
-    runGenesisTest' schedulerConfig genesisTest' $ \stateView ->
+    (\_ stateView ->
       case svChainSyncExceptions stateView of
         [] ->
           counterexample ("result: " ++ condense (svSelectedChain stateView)) (not mustTimeout)
@@ -59,6 +56,7 @@ prop_timeouts mustTimeout = do
             _ -> counterexample ("exception: " ++ show exn) False
         exns ->
           counterexample ("exceptions: " ++ show exns) False
+    )
 
   where
     dullSchedule :: DiffTime -> TestFrag -> Peers PeerSchedule

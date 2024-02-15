@@ -12,7 +12,7 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
                      (allAdversariesSelectable, classifiers)
-import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
+import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
@@ -39,7 +39,7 @@ prop_longRangeAttack =
           then pure $ gt $> ps
           else discard)
 
-    noTimeoutsSchedulerConfig
+    defaultSchedulerConfig
 
     shrinkPeerSchedules
 

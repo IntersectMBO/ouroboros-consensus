@@ -26,7 +26,7 @@ import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.Network.Driver.Limits.Extras
                      (chainSyncNoTimeouts)
 import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
-                     noTimeoutsSchedulerConfig)
+                     defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
@@ -132,8 +132,7 @@ prop_serveAdversarialBranches =
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
-    (noTimeoutsSchedulerConfig
-       {scTraceState = False, scTrace = False})
+    (defaultSchedulerConfig {scTraceState = False, scTrace = False})
 
     shrinkPeerSchedules
 
@@ -174,8 +173,7 @@ prop_leashingAttackStalling =
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
-    (noTimeoutsSchedulerConfig
-      {scTrace = False})
+    (defaultSchedulerConfig {scTrace = False})
 
     shrinkPeerSchedules
 
@@ -219,8 +217,7 @@ prop_leashingAttackTimeLimited =
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
 
-    (noTimeoutsSchedulerConfig
-      {scTrace = False})
+    (defaultSchedulerConfig {scTrace = False})
 
     shrinkPeerSchedules
 
@@ -280,13 +277,13 @@ prop_loeStalling :: Property
 prop_loeStalling =
   forAllGenesisTest
 
-    (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
+    (do gt <- genChains (QC.choose (1, 4))
+                `enrichedWith`
+              genUniformSchedulePoints
+        pure gt {gtChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}}
+    )
 
-    (noTimeoutsSchedulerConfig {
-      scTrace = False,
-      scEnableLoE = True,
-      scChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}
-    })
+    (defaultSchedulerConfig {scTrace = False, scEnableLoE = True})
 
     shrinkPeerSchedules
 

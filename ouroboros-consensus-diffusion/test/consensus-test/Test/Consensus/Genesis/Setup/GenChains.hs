@@ -10,6 +10,7 @@ module Test.Consensus.Genesis.Setup.GenChains (
   , genChains
   ) where
 
+import           Cardano.Slotting.Time (slotLengthFromSec)
 import           Control.Monad (replicateM)
 import qualified Control.Monad.Except as Exn
 import           Data.List (foldl')
@@ -22,6 +23,7 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Test.Consensus.BlockTree as BT
+import           Test.Consensus.Network.Driver.Limits.Extras (chainSyncTimeouts)
 import           Test.Consensus.PointSchedule
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Adversarial as A
 import           Test.Ouroboros.Consensus.ChainGenerator.Adversarial
@@ -113,15 +115,18 @@ genChains genNumForks = do
   numForks <- genNumForks
   alternativeChainSchemas <- replicateM (fromIntegral numForks) (genAlternativeChainSchema (honestRecipe, honestChainSchema))
   pure $ GenesisTest {
-    gtHonestAsc = asc,
     gtSecurityParam = SecurityParam (fromIntegral kcp),
     gtGenesisWindow = GenesisWindow (fromIntegral scg),
     gtDelay = delta,
+    gtSlotLength,
+    gtChainSyncTimeouts = chainSyncTimeouts gtSlotLength asc,
     gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
     gtSchedule = ()
     }
 
   where
+    gtSlotLength = slotLengthFromSec 20
+
     genAdversarialFragment :: [TestBlock] -> Int -> (Int, [S]) -> TestFrag
     genAdversarialFragment goodBlocks forkNo (prefixCount, slotsA)
       = mkTestFragment (mkTestBlocks prefix slotsA forkNo)

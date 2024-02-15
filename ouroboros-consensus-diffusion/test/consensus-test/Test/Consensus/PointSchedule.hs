@@ -43,6 +43,7 @@ module Test.Consensus.PointSchedule (
   , uniformPoints
   ) where
 
+import           Cardano.Slotting.Time (SlotLength)
 import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
                      diffTime)
 import           Control.Monad.ST (ST)
@@ -52,6 +53,7 @@ import           Data.List (mapAccumL, partition, scanl')
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
+import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
 import           Ouroboros.Consensus.Util.Condense (Condense (condense))
@@ -71,8 +73,7 @@ import           Test.Consensus.PointSchedule.SinglePeer
                      peerScheduleFromTipPoints, schedulePointToBlock)
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
                      (uniformRMDiffTime)
-import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
-                     Delta (Delta), ascVal)
+import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
 import           Test.Util.TersePrinting (terseBlock, terseHeader, terseTip,
@@ -323,23 +324,38 @@ newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
 
 -- | All the data used by point schedule tests.
 data GenesisTest schedule = GenesisTest {
-  gtHonestAsc     :: Asc,
-  gtSecurityParam :: SecurityParam,
-  gtGenesisWindow :: GenesisWindow,
-  gtDelay         :: Delta,
-  gtBlockTree     :: BlockTree TestBlock,
-  gtSchedule      :: schedule
+  gtSecurityParam     :: SecurityParam,
+  gtGenesisWindow     :: GenesisWindow,
+  gtDelay             :: Delta,
+  gtBlockTree         :: BlockTree TestBlock,
+  gtChainSyncTimeouts :: ChainSyncTimeout,
+  gtSlotLength        :: SlotLength,
+  gtSchedule          :: schedule
   }
 
 prettyGenesisTest :: GenesisTest schedule -> [String]
-prettyGenesisTest GenesisTest{gtHonestAsc, gtSecurityParam, gtGenesisWindow, gtDelay = Delta delta, gtBlockTree} =
+prettyGenesisTest genesisTest =
   [ "GenesisTest:"
-  , "  gtHonestAsc: " ++ show (ascVal gtHonestAsc)
   , "  gtSecurityParam: " ++ show (maxRollbacks gtSecurityParam)
   , "  gtGenesisWindow: " ++ show (unGenesisWindow gtGenesisWindow)
   , "  gtDelay: " ++ show delta
+  , "  gtSlotLength: " ++ show gtSlotLength
+  , "  gtChainSyncTimeouts: "
+  , "    canAwait = " ++ show canAwaitTimeout
+  , "    intersect = " ++ show intersectTimeout
+  , "    mustReply = " ++ show mustReplyTimeout
   , "  gtBlockTree:"
   ] ++ (("    " ++) <$> prettyBlockTree gtBlockTree)
+  where
+    GenesisTest {
+        gtSecurityParam
+      , gtGenesisWindow
+      , gtDelay = Delta delta
+      , gtBlockTree
+      , gtChainSyncTimeouts = ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout}
+      , gtSlotLength
+      , gtSchedule = _
+      } = genesisTest
 
 instance Functor GenesisTest where
   fmap f gt@GenesisTest{gtSchedule} = gt {gtSchedule = f gtSchedule}
