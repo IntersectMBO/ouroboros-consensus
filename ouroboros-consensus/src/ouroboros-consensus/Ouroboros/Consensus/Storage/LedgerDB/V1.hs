@@ -469,7 +469,7 @@ implTryFlush env = do
           (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
         )
 
-implCloseDB :: IOLike m => LedgerDBHandle m l blk -> m ()
+implCloseDB :: MonadSTM m => LedgerDBHandle m l blk -> m ()
 implCloseDB (LDBHandle varState) = do
     mbOpenEnv <- atomically $ readTVar varState >>= \case
       -- Idempotent
@@ -528,6 +528,7 @@ implIntReapplyThenPushBlock ::
      )
   => LedgerDBHandle m l blk -> LedgerDBEnv m l blk -> blk -> m ()
 implIntReapplyThenPushBlock h env blk =
-    bracketWithPrivateRegistry (newForkerAtTip h) forkerDiscard $ \forker -> do
+    bracketWithPrivateRegistry (newForkerAtTip h) forkerClose $ \forker -> do
       Impl.applyThenPush (ExtLedgerCfg $ ldbCfg env) (Impl.ReapplyVal blk) forker
-      forkerCommit forker
+      atomically $ forkerCommit forker
+      forkerClose forker

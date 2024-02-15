@@ -12,7 +12,6 @@
 {-# LANGUAGE StandaloneKindSignatures   #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
-{-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
@@ -71,7 +70,6 @@ import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as Lock
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API
 
 {-------------------------------------------------------------------------------
@@ -224,8 +222,6 @@ data ForkerEnv m l blk = ForkerEnv {
     -- * Config
   , foeSecurityParam           :: !SecurityParam
   , foeQueryBatchSize          :: !QueryBatchSize
-    -- * Resource registry
-  , foeResourceKey             :: !(ResourceKey m)
   }
   deriving Generic
 

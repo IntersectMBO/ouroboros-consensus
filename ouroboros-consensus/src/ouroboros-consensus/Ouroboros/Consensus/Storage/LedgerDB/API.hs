@@ -352,22 +352,10 @@ data Forker m l blk = Forker {
 
     -- | Advance the fork handle by pushing a new ledger state to the tip of the
     -- current fork.
-    -- | Close the forker, commiting the chain fork of new ledger states that
-    -- was constructed using 'forkerPush' as the current version of the
-    -- LedgerDB.
-    --
-    -- This is /not/ idempotent.
-    --
-    -- Other functions on forkers should throw a 'ClosedForkerError' once the
-    -- forker is committed.
-  , forkerCommit :: !(m ())
-    -- | Close the forker, discarding any uncommitted ledger states.
-    --
-    -- This is idempotent.
-    --
-    -- Other functions on forkers should throw a 'ClosedForkerError' once the
-    -- forker is discarded.
-  , forkerDiscard :: !(m ())
+  , forkerPush :: !(l DiffMK -> m ())
+    -- | Commit the fork, which was constructed using 'forkerPush', as the
+    -- current version of the LedgerDB.
+  , forkerCommit :: !(STM m ())
   }
 
 type instance HeaderHash (Forker m l blk) = HeaderHash l
@@ -391,7 +379,6 @@ data RangeQuery l = RangeQuery {
 newtype Statistics = Statistics {
     ledgerTableSize :: Int
   }
-  deriving (Show, Eq)
 
 -- | Errors that can be thrown while acquiring forkers.
 data GetForkerError =
@@ -430,7 +417,7 @@ withTipForker ::
   => LedgerDB m l blk
   -> ResourceRegistry m
   -> (Forker m l blk -> m a) -> m a
-withTipForker ldb rr = bracket (getForkerAtTip ldb rr) forkerDiscard
+withTipForker ldb rr = bracket (getForkerAtTip ldb rr) forkerClose
 
 -- | Like 'withTipForker', but it uses a private registry to allocate and
 -- de-allocate the forker.
@@ -438,7 +425,7 @@ withPrivateTipForker ::
      IOLike m
   => LedgerDB m l blk
   -> (Forker m l blk -> m a) -> m a
-withPrivateTipForker ldb = bracketWithPrivateRegistry (getForkerAtTip ldb) forkerDiscard
+withPrivateTipForker ldb = bracketWithPrivateRegistry (getForkerAtTip ldb) forkerClose
 
 getForker ::
      MonadSTM m
@@ -460,7 +447,7 @@ readLedgerTablesAtFor ::
 readLedgerTablesAtFor ldb p ks =
     bracketWithPrivateRegistry
       (\rr -> getForkerAtPoint ldb rr p)
-      (mapM_ forkerDiscard)
+      (mapM_ forkerClose)
       $ \foEith -> do
         forM foEith $ \fo -> do
           fo `forkerReadTables` ks
@@ -489,12 +476,7 @@ readLedgerStateAtTipFor ldb ks = withPrivateTipForker ldb $ \forker -> do
 -- | Read-only 'Forker'.
 type ReadOnlyForker :: (Type -> Type) -> LedgerStateKind -> Type -> Type
 data ReadOnlyForker m l blk = ReadOnlyForker {
-    -- | Close the read-only forker.
-    --
-    -- This is idempotent.
-    --
-    -- Other functions on forkers should throw a 'ClosedForkerError' once the
-    -- forker is closed.
+    -- | See 'forkerClose'
     roforkerClose :: !(m ())
     -- | See 'forkerReadTables'
   , roforkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
@@ -514,7 +496,7 @@ type ReadOnlyForker' m blk = ReadOnlyForker m (ExtLedgerState blk) blk
 
 readOnlyForker :: Forker m l blk -> ReadOnlyForker m l blk
 readOnlyForker forker = ReadOnlyForker {
-      roforkerClose = forkerDiscard forker
+      roforkerClose = forkerClose forker
     , roforkerReadTables = forkerReadTables forker
     , roforkerRangeReadTables = forkerRangeReadTables forker
     , roforkerRangeReadTablesDefault = forkerRangeReadTablesDefault forker

@@ -8,8 +8,7 @@ module Cardano.Tools.DBAnalyser.Run (analyse) where
 import           Cardano.Tools.DBAnalyser.Analysis
 import           Cardano.Tools.DBAnalyser.HasAnalysis
 import           Cardano.Tools.DBAnalyser.Types
-import           Control.Monad.Except (ExceptT, runExceptT)
-import           Control.Monad.Trans (MonadTrans (..))
+import           Control.Monad.Except (ExceptT, MonadTrans (lift), runExceptT)
 import           Control.Tracer (Tracer (..), nullTracer)
 import qualified Debug.Trace as Debug
 import           Ouroboros.Consensus.Block
