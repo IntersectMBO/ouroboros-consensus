@@ -64,7 +64,7 @@ import           Ouroboros.Network.Point (WithOrigin (At))
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
-                     prettyBlockTree)
+                     allFragments, prettyBlockTree)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
                      mkPeers, peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -76,8 +76,8 @@ import           Test.Consensus.PointSchedule.SinglePeer.Indices
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
-import           Test.Util.TersePrinting (terseBlock, terseHeader, terseTip,
-                     terseWithOrigin)
+import           Test.Util.TersePrinting (terseBlock, terseFragment,
+                     terseHeader, terseTip, terseWithOrigin)
 import           Test.Util.TestBlock (Header, TestBlock)
 
 ----------------------------------------------------------------------------------------------------
@@ -345,7 +345,8 @@ prettyGenesisTest genesisTest =
   , "    intersect = " ++ show intersectTimeout
   , "    mustReply = " ++ show mustReplyTimeout
   , "  gtBlockTree:"
-  ] ++ (("    " ++) <$> prettyBlockTree gtBlockTree)
+  ] ++ map (("    " ++) . terseFragment) (allFragments gtBlockTree)
+    ++ map ("    " ++) (prettyBlockTree gtBlockTree)
   where
     GenesisTest {
         gtSecurityParam

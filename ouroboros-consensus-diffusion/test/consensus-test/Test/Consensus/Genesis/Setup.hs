@@ -14,9 +14,7 @@ module Test.Consensus.Genesis.Setup (
 
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (debugTracer, traceWith)
-import           Data.Foldable (for_)
 import           Ouroboros.Consensus.Util.Condense
-import           Test.Consensus.BlockTree (allFragments)
 import           Test.Consensus.Genesis.Setup.Classifiers (classifiers, Classifiers (..))
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
@@ -26,7 +24,6 @@ import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (Peers)
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.QuickCheck (forAllGenRunShrinkCheck)
 import           Test.Util.Tracer (recordingTracerTVar)
 
@@ -47,9 +44,6 @@ runGenesisTest schedulerConfig genesisTest =
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
-    -- FIXME: should also go in 'prettyGenesisTest' (or 'prettyBlockTree')
-    for_ (allFragments gtBlockTree) (traceWith tracer . terseFragment)
-
     traceLinesWith tracer $ prettyGenesisTest genesisTest
 
     rgtrStateView <- runPointSchedule schedulerConfig genesisTest tracer
@@ -57,8 +51,6 @@ runGenesisTest schedulerConfig genesisTest =
     rgtrTrace <- unlines <$> getTrace
 
     pure $ RunGenesisTestResult {rgtrTrace, rgtrStateView}
-  where
-    GenesisTest {gtBlockTree} = genesisTest
 
 -- | Variant of 'runGenesisTest' that also takes a property on the final
 -- 'StateView' and returns a QuickCheck property. The trace is printed in case
