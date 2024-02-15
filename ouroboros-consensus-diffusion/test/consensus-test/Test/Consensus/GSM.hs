@@ -36,14 +36,21 @@ import           Test.Util.ToExpr ()
 -----
 
 tests :: [TestTree]
-tests = [
-      adjustQuickCheckTests (* 10)
-    $ testProperty ("GSM (" <> testName ub <> ")")
-    $ prop_sequential ub
-  | ub <- Nothing : map Just [minBound .. maxBound :: UpstreamPeer]
-  ]
+tests =
+    adhoc <> core
   where
-    testName = \case
+    adhoc = [
+        testProperty "GSM yield regression" prop_yield_regression
+     ]
+
+    core = [
+          adjustQuickCheckTests (* 10)
+        $ testProperty ("GSM (" <> coreTestName ub <> ")")
+        $ prop_sequential ub
+      | ub <- Nothing : map Just [minBound .. maxBound :: UpstreamPeer]
+      ]
+
+    coreTestName = \case
         Nothing -> "no peers"
         Just ub -> "at most " <> case fromEnum ub of
             0 -> "1 peer"
@@ -349,6 +356,20 @@ And since we're yielding after the command, we should also yield before the
 first command, for consistency.
 
 -}
+
+-- | Test the example from the Note [Why yield after the command]
+--
+-- This property fails when 'yieldSeveralTimes' is removed/redefined to @pure
+-- ()@.
+prop_yield_regression :: QC.Property
+prop_yield_regression =
+   prop_sequential1 YoungEnough $ QSM.Commands
+     [ QSM.Command (NewCandidate Amara (B 1)) Unit []
+     , QSM.Command (StartIdling Amara) Unit []
+     , QSM.Command (TimePasses 61) Unit []
+     , QSM.Command (ExtendSelection (S (-4))) Unit []
+     , QSM.Command ReadMarker (ReadThisMarker Absent) []
+     ]
 
 ----- trivial event accumulator, useful for debugging test failures
 
