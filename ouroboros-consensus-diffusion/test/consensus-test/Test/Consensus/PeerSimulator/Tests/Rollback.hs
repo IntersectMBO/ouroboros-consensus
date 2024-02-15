@@ -14,7 +14,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Genesis.Setup
-import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
+import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (Peers, peersOnlyHonest)
@@ -48,7 +48,7 @@ prop_rollback = do
           then pure gt {gtSchedule =  rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree}
           else discard)
 
-    noTimeoutsSchedulerConfig
+    defaultSchedulerConfig
 
     (\_ _ -> [])
 
@@ -66,7 +66,7 @@ prop_cannotRollback =
           then pure gt {gtSchedule = rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree}
           else discard)
 
-    noTimeoutsSchedulerConfig
+    defaultSchedulerConfig
 
     (\_ _ -> [])
 
