@@ -156,9 +156,9 @@ newtype Our a = Our { unOur :: a }
   deriving newtype (Show, NoThunks)
 
 data ChainSyncClientHandle m blk = ChainSyncClientHandle {
-    cschKill     :: !(m ())
-  , cschTheirTip :: !(STM m (Maybe (Tip blk)))
-  , cschFutureHeader :: !(STM m Bool)
+    cschKill       :: !(m ())
+  , cschTheirTip   :: !(STM m (Maybe (Tip blk)))
+  , cschLatestSlot :: !(STM m SlotNo)
   }
   deriving stock (Generic)
   deriving (NoThunks) via AllowThunk (ChainSyncClientHandle m blk)
@@ -178,7 +178,7 @@ bracketChainSyncClient ::
  -> NodeToNodeVersion
  -> (    StrictTVar m (AnchoredFragment (Header blk))
       -> (Their (Tip blk) -> STM m ())
-      -> (Bool -> STM m ())
+      -> (SlotNo -> STM m ())
       -> m a
     )
  -> m a
@@ -192,23 +192,23 @@ bracketChainSyncClient
     body
   =
     bracket newCandidateVar releaseCandidateVar
-  $ \(varCandidate, setTheirTip, setFutureHeader) ->
+  $ \(varCandidate, setTheirTip, setLatestSlot) ->
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
             (invalidBlockWatcher varCandidate)
-      $ body varCandidate setTheirTip setFutureHeader
+      $ body varCandidate setTheirTip setLatestSlot
   where
     newCandidateVar = do
         varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
         varTheirTip <- newTVarIO Nothing
-        varFutureHeader <- newTVarIO False
+        varFutureHeader <- newTVarIO (SlotNo 0)
         tid <- myThreadId
         atomically $ do
           modifyTVar varCandidates $ Map.insert peer varCandidate
           modifyTVar varHandles $ Map.insert peer ChainSyncClientHandle {
               cschKill     = killThread tid
             , cschTheirTip = readTVar varTheirTip
-            , cschFutureHeader = readTVar varFutureHeader
+            , cschLatestSlot = readTVar varFutureHeader
             }
         return (varCandidate, writeTVar varTheirTip . Just . unTheir, writeTVar varFutureHeader)
 
@@ -525,7 +525,7 @@ data DynamicEnv m blk = DynamicEnv {
   , headerMetricsTracer :: HeaderMetricsTracer m
   , varCandidate        :: StrictTVar m (AnchoredFragment (Header blk))
   , setTheirTip         :: Their (Tip blk) -> STM m ()
-  , setFutureHeader     :: Bool -> STM m ()
+  , setLatestSlot       :: SlotNo -> STM m ()
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -1053,6 +1053,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
+            atomically (setLatestSlot dynEnv slotNo)
+
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
                     continueWithState ()
@@ -1245,11 +1247,7 @@ checkTime cfgEnv dynEnv intEnv =
         Intersects kis2 lst        <- checkArrivalTime kis arrival
         Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
             Just ledgerView -> pure $ Intersects kis2 ledgerView
-            Nothing         ->
-              bracket_
-              (EarlyExit.lift (atomically (setFutureHeader dynEnv True)))
-              (EarlyExit.lift (atomically (setFutureHeader dynEnv False)))
-              (readLedgerState kis2 (projectLedgerView slotNo))
+            Nothing         -> readLedgerState kis2 (projectLedgerView slotNo)
         pure $ Intersects kis3 ledgerView
   where
     ConfigEnv {

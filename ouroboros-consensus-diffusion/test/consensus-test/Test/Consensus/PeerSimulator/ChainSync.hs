@@ -3,6 +3,7 @@
 
 module Test.Consensus.PeerSimulator.ChainSync (runChainSyncClient) where
 
+import Ouroboros.Consensus.Block (SlotNo)
 import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
@@ -53,9 +54,9 @@ basicChainSyncClient :: forall m.
   ChainDbView m TestBlock ->
   StrictTVar m TestFragH ->
   (Their (Tip TestBlock) -> STM m ()) ->
-  (Bool -> STM m ()) ->
+  (SlotNo -> STM m ()) ->
   Consensus ChainSyncClientPipelined TestBlock m
-basicChainSyncClient tracer cfg chainDbView varCandidate setTheirTip setFutureHeader =
+basicChainSyncClient tracer cfg chainDbView varCandidate setTheirTip setLatestSlot =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
@@ -70,7 +71,7 @@ basicChainSyncClient tracer cfg chainDbView varCandidate setTheirTip setFutureHe
       , CSClient.headerMetricsTracer = nullTracer
       , CSClient.varCandidate
       , CSClient.setTheirTip
-      , CSClient.setFutureHeader
+      , CSClient.setLatestSlot
       }
   where
     dummyHeaderInFutureCheck ::
@@ -106,14 +107,14 @@ runChainSyncClient
   varCandidates
   varHandles
   =
-    bracketChainSyncClient nullTracer chainDbView varCandidates varHandles peerId ntnVersion $ \ varCandidate setTip setFutureHeader -> do
+    bracketChainSyncClient nullTracer chainDbView varCandidates varHandles peerId ntnVersion $ \ varCandidate setTip setLatestSlot -> do
       res <- try $ runConnectedPeersPipelinedWithLimits
         createConnectedChannels
         nullTracer
         codecChainSyncId
         chainSyncNoSizeLimits
         (timeLimitsChainSync chainSyncTimeouts)
-        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate setTip setFutureHeader))
+        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate setTip setLatestSlot))
         (chainSyncServerPeer server)
       case res of
         Left exn -> do

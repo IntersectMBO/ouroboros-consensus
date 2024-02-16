@@ -135,7 +135,7 @@ oneBenchRun
               , CSClient.headerMetricsTracer = nullTracer
               , CSClient.varCandidate
               , CSClient.setTheirTip         = \_ -> pure ()
-              , CSClient.setFutureHeader     = \_ -> pure ()
+              , CSClient.setLatestSlot       = \_ -> pure ()
               }
 
     server :: ChainSyncServer H (Point B) (Tip B) IO ()
