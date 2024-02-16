@@ -10,6 +10,7 @@ import           Control.Tracer (contramap, debugTracer, nullTracer)
 import           Data.IORef (newIORef, readIORef, writeIORef)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
+import           Main.Utf8 (withStdTerminalHandles)
 import           Network.TypedProtocol.Channel
 import           Network.TypedProtocol.Driver.Simple
 import           Ouroboros.Consensus.Block
@@ -54,7 +55,7 @@ type B = TB.TestBlock
 type H = Header B
 
 main :: IO ()
-main = mainWith $ \n -> do
+main = withStdTerminalHandles $ mainWith $ \n -> do
     varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
 
     varServerTip <- newTVarIO TipGenesis

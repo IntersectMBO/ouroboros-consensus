@@ -20,6 +20,7 @@ import           Data.Maybe (fromMaybe)
 import           Data.Set ()
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
+import           Main.Utf8 (withStdTerminalHandles)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
 import           System.Exit (die, exitFailure)
 import qualified Test.Consensus.Mempool.Mocked as Mocked
@@ -32,7 +33,7 @@ import           Test.Tasty.Options (changeOption)
 import           Test.Tasty.Runners (parseOptions, tryIngredients)
 
 main :: IO ()
-main = do
+main = withStdTerminalHandles $ do
     let csvFilePath = "mempool-benchmarks.csv"
     runBenchmarks csvFilePath
     rawValues <- parseBenchmarkResults csvFilePath

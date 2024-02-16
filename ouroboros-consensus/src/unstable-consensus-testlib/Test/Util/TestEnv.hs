@@ -11,18 +11,21 @@ module Test.Util.TestEnv (
 
 import           Cardano.Crypto.Init (cryptoInit)
 import           Data.Proxy (Proxy (..))
+import           Main.Utf8 (withStdTerminalHandles)
 import           Options.Applicative (metavar)
 import           Test.Tasty
 import           Test.Tasty.Ingredients
 import           Test.Tasty.Options
 import           Test.Tasty.QuickCheck
 
--- | 'defaultMain' extended with 'iohkTestEnvIngredient'
+-- | 'defaultMain' extended with 'iohkTestEnvIngredient' and setting the
+-- terminal handles to UTF-8.
 defaultMainWithTestEnv :: TestEnvConfig -> TestTree -> IO ()
 defaultMainWithTestEnv testConfig testTree = do
     cryptoInit
-    defaultMainWithIngredients (testEnvIngredient : defaultIngredients) $
-      withTestEnv testConfig testTree
+    withStdTerminalHandles $
+      defaultMainWithIngredients (testEnvIngredient : defaultIngredients) $
+        withTestEnv testConfig testTree
     where
       testEnvIngredient :: Ingredient
       testEnvIngredient = includingOptions [Option (Proxy :: Proxy TestEnv)]

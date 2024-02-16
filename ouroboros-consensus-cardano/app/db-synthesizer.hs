@@ -26,11 +26,12 @@ module Main (main) where
 import           Cardano.Crypto.Init (cryptoInit)
 import           Cardano.Tools.DBSynthesizer.Run
 import           DBSynthesizer.Parsers
+import           Main.Utf8 (withStdTerminalHandles)
 import           System.Exit
 
 
 main :: IO ()
-main = do
+main = withStdTerminalHandles $ do
     cryptoInit
     (paths, creds, forgeOpts) <- parseCommandLine
     result <- initialize paths creds forgeOpts >>= either die (uncurry synthesize)

@@ -5,13 +5,14 @@ import           Cardano.Tools.DBTruncater.Run
 import           Cardano.Tools.DBTruncater.Types
 import           DBAnalyser.Parsers (BlockType (..))
 import qualified DBTruncater.Parsers as DBTruncater
+import           Main.Utf8 (withStdTerminalHandles)
 import           Options.Applicative (execParser, fullDesc, helper, info,
                      progDesc, (<**>))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl ()
 import           Prelude hiding (truncate)
 
 main :: IO ()
-main = do
+main = withStdTerminalHandles $ do
     cryptoInit
     (conf, blocktype) <- getCommandLineConfig
     case blocktype of
