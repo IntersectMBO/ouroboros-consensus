@@ -16,7 +16,6 @@ module Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (
 
 import           Control.Monad
 import           Data.Map.Strict (Map)
-import           Data.Proxy
 import           Data.Time.Clock (UTCTime)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block hiding (blockMatchesHeader)
@@ -28,7 +27,6 @@ import qualified Ouroboros.Consensus.HardFork.Abstract as History
 import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
@@ -171,6 +169,7 @@ readFetchModeDefault btime getCurrentChain
 mkBlockFetchConsensusInterface ::
      forall m peer blk.
      ( IOLike m
+     , BlockSupportsDiffusionPipelining blk
      , BlockSupportsProtocol blk
      )
   => BlockConfig blk
@@ -203,13 +202,14 @@ mkBlockFetchConsensusInterface
          WhetherReceivingTentativeBlocks
       -> STM m (Point blk -> blk -> m ())
     mkAddFetchedBlock enabledPipelining = do
-      unlessImproved <- InvalidBlockPunishment.mkUnlessImproved (Proxy @blk)
-      pure $ mkAddFetchedBlock_ unlessImproved enabledPipelining
+      pipeliningPunishment <- InvalidBlockPunishment.mkForDiffusionPipelining
+      pure $ mkAddFetchedBlock_ pipeliningPunishment enabledPipelining
 
     -- Waits until the block has been written to disk, but not until chain
     -- selection has processed the block.
     mkAddFetchedBlock_ ::
-         (   SelectView (BlockProtocol blk)
+         (   BlockConfig blk
+          -> Header blk
           -> InvalidBlockPunishment m
           -> InvalidBlockPunishment m
          )
@@ -217,7 +217,7 @@ mkBlockFetchConsensusInterface
       -> Point blk
       -> blk
       -> m ()
-    mkAddFetchedBlock_ unlessImproved enabledPipelining _pt blk = void $ do
+    mkAddFetchedBlock_ pipeliningPunishment enabledPipelining _pt blk = void $ do
        disconnect <- InvalidBlockPunishment.mkPunishThisThread
        -- A BlockFetch peer can either send an entire range or none of the
        -- range; anything else will incur a disconnect. And in 'FetchDeadline'
@@ -249,7 +249,7 @@ mkBlockFetchConsensusInterface
              InvalidBlockPunishment.BlockItself -> case enabledPipelining of
                NotReceivingTentativeBlocks -> disconnect
                ReceivingTentativeBlocks    ->
-                 unlessImproved (selectView bcfg (getHeader blk)) disconnect
+                 pipeliningPunishment bcfg (getHeader blk) disconnect
        addBlockWaitWrittenToDisk
          chainDB
          punishment
