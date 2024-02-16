@@ -14,6 +14,7 @@
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -335,6 +336,9 @@ instance NodeInitStorage BlockB where
 
 instance BlockSupportsMetrics BlockB where
   isSelfIssued = isSelfIssuedConstUnknown
+
+deriving via SelectViewDiffusionPipelining BlockB
+  instance BlockSupportsDiffusionPipelining BlockB
 
 instance SingleEraBlock BlockB where
   singleEraInfo _     = SingleEraInfo "B"

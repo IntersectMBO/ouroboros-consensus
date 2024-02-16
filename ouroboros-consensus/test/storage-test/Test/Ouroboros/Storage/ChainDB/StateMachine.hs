@@ -316,6 +316,7 @@ type AllComponents blk =
 type TestConstraints blk =
   ( ConsensusProtocol  (BlockProtocol blk)
   , LedgerSupportsProtocol            blk
+  , BlockSupportsDiffusionPipelining  blk
   , InspectLedger                     blk
   , Eq (ChainDepState  (BlockProtocol blk))
   , Eq (LedgerState                   blk)
