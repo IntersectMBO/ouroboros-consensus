@@ -84,6 +84,7 @@ launchBgTasks ::
      forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
      , InspectLedger blk
      , HasHardForkHistory blk
      , LgrDbSerialiseConstraints blk
@@ -507,6 +508,7 @@ dumpGcSchedule (GcSchedule varQueue) = toList <$> readTVar varQueue
 addBlockRunner ::
      ( IOLike m
      , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
      , InspectLedger blk
      , HasHardForkHistory blk
      , HasCallStack

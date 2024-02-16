@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns       #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -34,9 +35,8 @@ import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isJust)
-import           Data.Maybe.Strict (StrictMaybe (..), isSNothing,
-                     strictMaybeToMaybe)
+import           Data.Maybe (isJust, isNothing)
+import           Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           GHC.Stack (HasCallStack)
@@ -84,7 +84,6 @@ import           Ouroboros.Consensus.Util.AnchoredFragment
 import           Ouroboros.Consensus.Util.Enclose (encloseWith)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
-import           Ouroboros.Consensus.Util.TentativeState
 import           Ouroboros.Network.AnchoredFragment (Anchor, AnchoredFragment,
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -97,7 +96,11 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 --
 -- See "## Initialization" in ChainDB.md.
 initialChainSelection ::
-     forall m blk. (IOLike m, LedgerSupportsProtocol blk)
+     forall m blk.
+     ( IOLike m
+     , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
+     )
   => ImmutableDB m blk
   -> VolatileDB m blk
   -> LgrDB m blk
@@ -211,7 +214,7 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
         curChain = VF.validatedFragment curChainAndLedger
         ledger   = VF.validatedLedger   curChainAndLedger
         chainSelEnv = do
-          varTentativeState  <- newTVarIO NoLastInvalidTentative
+          varTentativeState  <- newTVarIO (initialTentativeHeaderState (Proxy @blk))
           varTentativeHeader <- newTVarIO SNothing
           pure ChainSelEnv
             { lgrDB
@@ -282,6 +285,7 @@ chainSelSync ::
      forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
      , InspectLedger blk
      , HasHardForkHistory blk
      , HasCallStack
@@ -440,6 +444,7 @@ data ChainSwitchType = AddingBlocks | SwitchingToAFork
 chainSelectionForFutureBlocks ::
      ( IOLike m
      , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
      , InspectLedger blk
      , HasHardForkHistory blk
      , HasCallStack
@@ -497,6 +502,7 @@ chainSelectionForBlock ::
      forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
      , InspectLedger blk
      , HasHardForkHistory blk
      , HasCallStack
@@ -972,7 +978,7 @@ data ChainSelEnv m blk = ChainSelEnv
     , bcfg                  :: BlockConfig blk
     , varInvalid            :: StrictTVar m (WithFingerprint (InvalidBlocks blk))
     , varFutureBlocks       :: StrictTVar m (FutureBlocks m blk)
-    , varTentativeState     :: StrictTVar m (TentativeState blk)
+    , varTentativeState     :: StrictTVar m (TentativeHeaderState blk)
     , varTentativeHeader    :: StrictTVar m (StrictMaybe (Header blk))
     , getTentativeFollowers :: STM m [FollowerHandle m blk]
     , futureCheck           :: CheckInFuture m blk
@@ -1014,6 +1020,7 @@ chainSelection ::
      forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
      , HasCallStack
      )
   => ChainSelEnv m blk
@@ -1056,7 +1063,7 @@ chainSelection chainSelEnv chainDiffs =
             -- When the body of the tentative block turns out to be invalid, we
             -- have a valid *empty* prefix, as the tentative header fits on top
             -- of the current chain.
-            assert (isSNothing mTentativeHeader) $ do
+            assert (isNothing mTentativeHeader) $ do
               candidates1 <- truncateRejectedBlocks candidates0
               go (sortCandidates candidates1)
           FullyValid validatedCandidate@(ValidatedChainDiff candidate' _) ->
@@ -1064,7 +1071,7 @@ chainSelection chainSelEnv chainDiffs =
             assert (Diff.getTip candidate == Diff.getTip candidate') $
             return $ Just validatedCandidate
           ValidPrefix candidate' -> do
-            whenJust (strictMaybeToMaybe mTentativeHeader) clearTentativeHeader
+            whenJust mTentativeHeader clearTentativeHeader
             -- Prefix of the candidate because it contained rejected blocks
             -- (invalid blocks and/or blocks from the future). Note that the
             -- spec says go back to candidate selection, see [^whyGoBack],
@@ -1085,14 +1092,15 @@ chainSelection chainSelEnv chainDiffs =
                   = candidates1
             go (sortCandidates candidates2)
       where
-        -- | Set and return the tentative header, if applicable. Also, notify
-        -- the tentative followers.
-        setTentativeHeader :: m (StrictMaybe (Header blk))
+        -- | Set and return the tentative header, if applicable. Also return the
+        -- new 'TentativeHeaderState' in case the corresponding block body turns
+        -- out to be invalid.
+        setTentativeHeader :: m (Maybe (Header blk, TentativeHeaderState blk))
         setTentativeHeader = do
-            mTentativeHeader <-
+            pipeliningResult <-
                   (\ts -> isPipelineable bcfg ts candidate)
               <$> readTVarIO varTentativeState
-            whenJust (strictMaybeToMaybe mTentativeHeader) $ \tentativeHeader -> do
+            whenJust pipeliningResult $ \(tentativeHeader, _) -> do
               let setTentative = SetTentativeHeader tentativeHeader
               encloseWith (setTentative >$< pipeliningTracer) $
                 atomically $ writeTVar varTentativeHeader $ SJust tentativeHeader
@@ -1104,16 +1112,15 @@ chainSelection chainSelEnv chainDiffs =
               -- default, the node uses just two) has the opportunity to switch
               -- to a ChainSync server thread.
               yield
-            pure mTentativeHeader
+            pure pipeliningResult
 
         -- | Clear a tentative header that turned out to be invalid. Also, roll
         -- back the tentative followers.
-        clearTentativeHeader :: Header blk -> m ()
-        clearTentativeHeader tentativeHeader = do
+        clearTentativeHeader :: (Header blk, TentativeHeaderState blk) -> m ()
+        clearTentativeHeader (tentativeHeader, tentativeSt) = do
             atomically $ do
               writeTVar varTentativeHeader SNothing
-              writeTVar varTentativeState $
-                LastInvalidTentative (selectView bcfg tentativeHeader)
+              writeTVar varTentativeState  tentativeSt
               forTentativeFollowers $ \followerHandle -> do
                 let curTipPoint = castPoint $ AF.headPoint curChain
                     oldPoints = Set.singleton $ headerPoint tentativeHeader
@@ -1399,23 +1406,24 @@ type ChainAndLedger blk = ValidatedFragment (Header blk) (LedgerDB' blk)
 -------------------------------------------------------------------------------}
 
 -- | Check whether a 'ChainDiff' can be pipelined. If it can, the tentative
--- header is returned.
+-- header as well as the new 'TentativeHeaderState' (to be used in case the
+-- block body turns out to be invalid) is returned.
 --
 -- PRECONDITION: The 'ChainDiff' fits on top of the current chain and is better.
 isPipelineable ::
-     LedgerSupportsProtocol blk
+     (HasHeader (Header blk), BlockSupportsDiffusionPipelining blk)
   => BlockConfig blk
-  -> TentativeState blk
+  -> TentativeHeaderState blk
   -> ChainDiff (Header blk)
-  -> StrictMaybe (Header blk)
-isPipelineable bcfg tentativeState ChainDiff {..}
+  -> Maybe (Header blk, TentativeHeaderState blk)
+isPipelineable bcfg st ChainDiff {..}
   | -- we apply exactly one header
     AF.Empty _ :> hdr <- getSuffix
-  , preferToLastInvalidTentative bcfg tentativeState hdr
+  , Just st' <- updateTentativeHeaderState bcfg hdr st
     -- ensure that the diff is applied to the chain tip
   , getRollback == 0
-  = SJust hdr
-  | otherwise = SNothing
+  = Just (hdr, st')
+  | otherwise = Nothing
 
 {-------------------------------------------------------------------------------
   Helpers
