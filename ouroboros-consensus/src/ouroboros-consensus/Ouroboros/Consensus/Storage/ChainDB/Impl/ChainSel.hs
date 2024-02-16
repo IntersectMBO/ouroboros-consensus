@@ -120,7 +120,7 @@ initialChainSelection immutableDB volatileDB lgrDB rr tracer cfg varInvalid
         <*> (ignoreInvalidSuc volatileDB invalid <$>
               VolatileDB.filterByPredecessor volatileDB)
 
-    -- This is safe: the LedgerDB doesn't change in between the previous
+    -- This is safe: the LedgerDB tip doesn't change in between the previous
     -- atomically block and this call to 'withTipForker'.
     --
     -- We don't use 'LedgerDB.withTipForker' here, because 'curForker' might be
@@ -470,7 +470,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
           <*> VolatileDB.getBlockInfo         cdbVolatileDB
           <*> Query.getCurrentChain           cdb
           <*> Query.getTipPoint               cdb
-    -- This is safe: the LedgerDB doesn't change in between the previous
+    -- This is safe: the LedgerDB tip doesn't change in between the previous
     -- atomically block and this call to 'withTipForker'.
     LedgerDB.withTipForker cdbLedgerDB rr $ \curForker -> do
       curChainAndLedger :: ChainAndLedger m blk <-
