@@ -1,7 +1,6 @@
 module Main (main) where
 
-import           System.IO (BufferMode (LineBuffering), hSetBuffering,
-                     hSetEncoding, stdout, utf8)
+import           System.IO (BufferMode (LineBuffering), hSetBuffering, stdout)
 import qualified Test.Consensus.Cardano.ByronCompatibility
 import qualified Test.Consensus.Cardano.Golden
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server

@@ -553,6 +553,7 @@ executable db-analyser
     , ouroboros-consensus
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
     , text
+    , with-utf8
 
   other-modules:  DBAnalyser.Parsers
 
@@ -566,6 +567,7 @@ executable db-synthesizer
     , optparse-applicative
     , ouroboros-consensus
     , unstable-cardano-tools
+    , with-utf8
 
   other-modules:  DBSynthesizer.Parsers
 
@@ -580,6 +582,7 @@ executable db-truncater
     , optparse-applicative
     , ouroboros-consensus
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
+    , with-utf8
 
   other-modules:
     DBAnalyser.Parsers
@@ -596,6 +599,7 @@ executable immdb-server
     , optparse-applicative
     , ouroboros-consensus
     , ouroboros-consensus-cardano:unstable-cardano-tools
+    , with-utf8
 
 test-suite tools-test
   import:         common-test

@@ -22,12 +22,13 @@ import           Cardano.Tools.GitRev (gitRev)
 import           Control.Monad (void)
 import qualified Data.Text as T
 import           DBAnalyser.Parsers
+import           Main.Utf8 (withStdTerminalHandles)
 import           Options.Applicative (execParser, footer, fullDesc, helper,
                      info, progDesc, (<**>))
 
 
 main :: IO ()
-main = do
+main = withStdTerminalHandles $ do
     cryptoInit
     (conf, blocktype) <- getCmdLine
     void $ case blocktype of
