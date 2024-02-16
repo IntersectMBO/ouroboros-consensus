@@ -28,8 +28,6 @@ module Ouroboros.Consensus.Shelley.Node (
   , validateGenesis
   ) where
 
-
-
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -43,6 +41,7 @@ import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
+import           Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
 import           Ouroboros.Consensus.Shelley.Node.Praos
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Node.TPraos
