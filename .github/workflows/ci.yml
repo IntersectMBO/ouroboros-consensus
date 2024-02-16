@@ -114,7 +114,7 @@ jobs:
       run: cabal build all -j
 
     - name: Test
-      run: cabal test all -j
+      run: cabal test all -j --test-show-details=streaming
 
     - name: Create baseline-benchmark
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
