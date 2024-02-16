@@ -17,6 +17,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
   , acquireAtTip
   ) where
 
+import           Control.Monad (void)
 import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Semigroup
@@ -85,7 +86,7 @@ newForkerAtFromTip h rr n = getEnv h $ \ldbEnv -> do
 
 -- | Close all open block and header 'Follower's.
 closeAllForkers ::
-     MonadSTM m
+     IOLike m
   => LedgerDBEnv m l blk
   -> m ()
 closeAllForkers ldbEnv = do
@@ -97,16 +98,15 @@ closeAllForkers ldbEnv = do
   where
     forkersVar = ldbForkers ldbEnv
 
-closeForkerEnv :: ForkerEnv m l blk -> m ()
-closeForkerEnv ForkerEnv { foeBackingStoreValueHandle } = do
-        bsvhClose foeBackingStoreValueHandle
+closeForkerEnv :: IOLike m => ForkerEnv m l blk -> m ()
+closeForkerEnv ForkerEnv { foeResourceKey } = void $ release foeResourceKey
 
 {-------------------------------------------------------------------------------
   Acquiring consistent views
 -------------------------------------------------------------------------------}
 
 type Resources m l =
-    (LedgerBackingStoreValueHandle m l, AnchorlessDbChangelog l)
+    (LedgerBackingStoreValueHandle m l, AnchorlessDbChangelog l, ResourceKey m)
 
 -- Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
@@ -118,7 +118,7 @@ acquireAtTip ::
 acquireAtTip ldbEnv rr =
     withReadLock (ldbLock ldbEnv) $ do
       dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
-      (,dblog) <$> acquire ldbEnv rr dblog
+      acquire ldbEnv rr dblog >>= \(vh, rk) -> pure (vh, dblog, rk)
 
 -- Acquire both a value handle and a db changelog at the requested point. Holds
 -- a read lock while doing so.
@@ -142,7 +142,8 @@ acquireAtPoint ldbEnv rr pt =
       case rollback pt dblog of
         Nothing     | pt < immTip -> pure $ Left PointTooOld
                     | otherwise   -> pure $ Left PointNotOnChain
-        Just dblog' -> Right . (,dblog') <$> acquire ldbEnv rr dblog'
+        Just dblog' -> do (vh, rk) <- acquire ldbEnv rr dblog'
+                          pure $ Right (vh, dblog', rk)
 
 -- Acquire both a value handle and a db changelog at n blocks before the tip.
 -- Holds a read lock while doing so.
@@ -165,19 +166,20 @@ acquireAtFromTip ldbEnv rr n =
               API.rollbackMaximum   = maxRollback dblog
             , API.rollbackRequested = n
             }
-        Just dblog' -> Right . (,dblog') <$> acquire ldbEnv rr dblog'
+        Just dblog' -> do (vh, rk) <- acquire ldbEnv rr dblog'
+                          pure $ Right (vh, dblog', rk)
 
 acquire ::
      IOLike m
   => LedgerDBEnv m l blk
   -> ResourceRegistry m
   -> AnchorlessDbChangelog l
-  -> m (LedgerBackingStoreValueHandle m l)
+  -> m (LedgerBackingStoreValueHandle m l, ResourceKey m)
 acquire ldbEnv rr dblog =  do
-  (_, vh) <- allocate rr (\_ -> bsValueHandle $ ldbBackingStore ldbEnv) bsvhClose
+  (rk, vh) <- allocate rr (\_ -> bsValueHandle $ ldbBackingStore ldbEnv) bsvhClose
   if bsvhAtSlot vh == adcLastFlushedSlot dblog
-    then pure vh
-    else bsvhClose vh >>
+    then pure (vh, rk)
+    else release rk >>
          error (  "Critical error: Value handles are created at "
                 <> show (bsvhAtSlot vh)
                 <> " while the db changelog is at "
@@ -200,7 +202,7 @@ newForker ::
   -> LedgerDBEnv m l blk
   -> Resources m l
   -> m (Forker m l blk)
-newForker h ldbEnv (vh, dblog) = do
+newForker h ldbEnv (vh, dblog, rk) = do
   dblogVar <- newTVarIO dblog
   let forkerEnv = ForkerEnv {
       foeBackingStoreValueHandle = vh
@@ -208,6 +210,7 @@ newForker h ldbEnv (vh, dblog) = do
     , foeSwitchVar               = ldbChangelog ldbEnv
     , foeSecurityParam           = ldbSecParam ldbEnv
     , foeQueryBatchSize          = ldbQueryBatchSize ldbEnv
+    , foeResourceKey             = rk
     }
   forkerKey <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, succ r)
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
@@ -234,7 +237,7 @@ mkForker h forkerKey = Forker {
     }
 
 implForkerClose ::
-     MonadSTM m
+     IOLike m
   => LedgerDBHandle m l blk
   -> ForkerKey
   -> m ()

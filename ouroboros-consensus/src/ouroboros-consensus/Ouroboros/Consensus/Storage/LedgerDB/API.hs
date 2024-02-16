@@ -327,6 +327,9 @@ data Forker m l blk = Forker {
     --
     -- Note: always use this functions before the forker is forgotten!
     -- Otherwise, cleanup of (on-disk) state might not be prompt or guaranteed.
+    --
+    -- This function should release any resources that are held by the forker,
+    -- and not by the LedgerDB.
     forkerClose :: !(m ())
 
     -- * Queries

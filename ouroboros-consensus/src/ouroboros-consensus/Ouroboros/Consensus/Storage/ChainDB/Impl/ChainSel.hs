@@ -514,12 +514,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
         | pointHash tipPoint == headerPrevHash hdr -> do
           -- ### Add to current chain
           traceWith addBlockTracer (TryAddToCurrentChain p)
-          addToCurrentChain rr succsOf' curChainAndLedger
+          addToCurrentChain rr succsOf' (LedgerDB.getVolatileTip cdbLedgerDB) curChainAndLedger
 
         | Just diff <- Paths.isReachable lookupBlockInfo' curChain p -> do
           -- ### Switch to a fork
           traceWith addBlockTracer (TrySwitchToAFork p diff)
-          switchToAFork rr succsOf' lookupBlockInfo' curChainAndLedger diff
+          switchToAFork rr succsOf' lookupBlockInfo' (LedgerDB.getVolatileTip cdbLedgerDB) curChainAndLedger diff
 
         | otherwise -> do
           -- ### Store but don't change the current chain
@@ -569,10 +569,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
          HasCallStack
       => ResourceRegistry m
       -> (ChainHash blk -> Set (HeaderHash blk))
+      -> STM m (ExtLedgerState blk EmptyMK)
+         -- ^ (Volatile) tip of the LedgerDB
       -> ChainAndLedger m blk
          -- ^ The current chain and ledger
       -> m (Point blk)
-    addToCurrentChain rr succsOf curChainAndLedger = do
+    addToCurrentChain rr succsOf tipLedgerDB curChainAndLedger = do
         let suffixesAfterB = Paths.maximalCandidates succsOf (realPointToPoint p)
 
         -- Fragments that are anchored at @curHead@, i.e. suffixes of the
@@ -617,7 +619,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
                 return curTip
               Just validatedChainDiff ->
                 switchTo
-                  rr
+                  tipLedgerDB
                   validatedChainDiff
                   (varTentativeHeader chainSelEnv)
                   AddingBlocks
@@ -638,12 +640,14 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
       => ResourceRegistry m
       -> (ChainHash blk -> Set (HeaderHash blk))
       -> LookupBlockInfo blk
+      -> STM m (ExtLedgerState blk EmptyMK)
+         -- ^ (Volatile) tip of the LedgerDB
       -> ChainAndLedger m blk
          -- ^ The current chain (anchored at @i@) and ledger
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
       -> m (Point blk)
-    switchToAFork rr succsOf lookupBlockInfo curChainAndLedger diff = do
+    switchToAFork rr succsOf lookupBlockInfo tipLedgerDB curChainAndLedger diff = do
         -- We use a cache to avoid reading the headers from disk multiple
         -- times in case they're part of multiple forks that go through @b@.
         let initCache = Map.singleton (headerHash hdr) hdr
@@ -680,7 +684,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
                 return curTip
               Just validatedChainDiff ->
                 switchTo
-                  rr
+                  tipLedgerDB
                   validatedChainDiff
                   (varTentativeHeader chainSelEnv)
                   SwitchingToAFork
@@ -690,9 +694,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
         curTip      = castPoint $ AF.headPoint curChain
 
     -- | Create a 'NewTipInfo' corresponding to the tip of the given ledger.
-    mkNewTipInfo :: Forker' m blk -> m (NewTipInfo blk)
-    mkNewTipInfo newLedgerDB = do
-        ledger <- atomically (ledgerState <$> LedgerDB.forkerGetLedgerState newLedgerDB)
+    mkNewTipInfo :: LedgerState blk EmptyMK -> NewTipInfo blk
+    mkNewTipInfo ledger =
         let
           summary :: History.Summary (HardForkIndices blk)
           summary = hardForkSummary
@@ -706,7 +709,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
               NotOrigin tip ->
                 let query = History.slotToEpoch' (realPointSlot tip)
                 in (tip, History.runQueryPure query summary)
-        pure $ NewTipInfo {
+        in NewTipInfo {
             newTipPoint       = tipPoint
           , newTipEpoch       = tipEpoch
           , newTipSlotInEpoch = tipSlotInEpoch
@@ -729,24 +732,24 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
     -- us, as we cannot roll back more than @k@ headers anyway.
     switchTo
       :: HasCallStack
-      => ResourceRegistry m
+      => STM m (ExtLedgerState blk EmptyMK)
+         -- ^ (Volatile) tip of the LedgerDB
       -> ValidatedChainDiff (Header blk) (Forker' m blk)
          -- ^ Chain and ledger to switch to
       -> StrictTVar m (StrictMaybe (Header blk))
          -- ^ Tentative header
       -> ChainSwitchType
       -> m (Point blk)
-    switchTo rr vChainDiff varTentativeHeader chainSwitchType = do
+    switchTo tipLegerDB vChainDiff varTentativeHeader chainSwitchType = do
         traceWith addBlockTracer $
             ChangingSelection
           $ castPoint
           $ AF.headPoint
           $ getSuffix
           $ getChainDiff vChainDiff
-        currentForker <- LedgerDB.getForkerAtTip cdbLedgerDB rr
-        (curChain, newChain, events, prevTentativeHeader) <- atomically $ do
+        (curChain, newChain, events, prevTentativeHeader, newLedger) <- atomically $ do
           curChain  <- readTVar         cdbChain -- Not Query.getCurrentChain!
-          curLedger <- LedgerDB.forkerGetLedgerState currentForker
+          curLedger <- tipLegerDB
           newLedger <- LedgerDB.forkerGetLedgerState newForker
           case Diff.apply curChain chainDiff of
             -- Impossible, as described in the docstring
@@ -781,19 +784,16 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = withRegistry $ \rr ->
                   followerHandles <- Map.elems <$> readTVar cdbFollowers
                   forM_ followerHandles $ switchFollowerToFork curChain newChain ipoint
 
-              return (curChain, newChain, events, prevTentativeHeader)
-
+              return (curChain, newChain, events, prevTentativeHeader, newLedger)
         let mkTraceEvent = case chainSwitchType of
               AddingBlocks     -> AddedToCurrentChain
               SwitchingToAFork -> SwitchedToAFork
-        nti <- mkNewTipInfo newForker
+            nti = mkNewTipInfo $ ledgerState newLedger
         traceWith addBlockTracer $
           mkTraceEvent events nti curChain newChain
         whenJust (strictMaybeToMaybe prevTentativeHeader) $ traceWith $
           PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
-        traceWith cdbTraceLedger newForker
 
-        LedgerDB.forkerClose currentForker
         LedgerDB.forkerClose newForker
 
         return $ castPoint $ AF.headPoint newChain
