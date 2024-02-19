@@ -12,7 +12,9 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Genesis.Governor (
-    densityDisconnect
+    DensityBounds (..)
+  , TraceGDDEvent (..)
+  , densityDisconnect
   , sharedCandidatePrefix
   , updateLoEFragGenesis
   , updateLoEFragStall
@@ -108,15 +110,16 @@ updateLoEFragStall getCandidates =
       candidates <- getCandidates
       pure (fst (sharedCandidatePrefix curChain candidates))
 
-showPeers ::
-     Show peer
-  => Map peer String
-  -> String
-showPeers = intercalate ", " . fmap (\ (peer, v) -> show peer ++ " -> " ++ v) . Map.toList
+data DensityBounds blk =
+  DensityBounds {
+    fragment        :: AnchoredFragment (Header blk),
+    offersMoreThanK :: Bool,
+    lowerBound      :: Word64,
+    upperBound      :: Word64
+  }
 
 densityDisconnect ::
      ( Ord peer
-     , Show peer
      , LedgerSupportsProtocol blk
      )
   => GenesisWindow
@@ -125,17 +128,17 @@ densityDisconnect ::
   -> Map peer (Tip blk)
   -> Map peer SlotNo
   -> AnchoredFragment (Header blk)
-  -> ([peer], String)
+  -> ([peer], Map peer (DensityBounds blk))
 densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes theirTips latestSlots loeFrag =
-  (losingPeers, showPeers (showBounds <$> densityBounds))
+  (losingPeers, densityBounds)
   where
     densityBounds = Map.fromList $ do
-      (peer, frag) <- Map.toList competingFrags
+      (peer, fragment) <- Map.toList competingFrags
       theirTip <- toList (theirTips Map.!? peer)
       let candidateSuffix = candidateSuffixes Map.! peer
-          lowerBound = fromIntegral $ AF.length frag
+          lowerBound = fromIntegral $ AF.length fragment
           unresolvedSlotsLB =
-            succWithOrigin $ AF.headSlot frag
+            succWithOrigin $ AF.headSlot fragment
           unresolvedSlotsUB =
               endOfGenesisWindow `min` claimedTip
             where
@@ -154,16 +157,16 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
               then 0
               else unSlotNo (intervalLength unresolvedSlotsLB unresolvedSlotsUB)
           offersMoreThanK = AF.length candidateSuffix > fromIntegral k
-      pure (peer, (frag, offersMoreThanK, lowerBound, upperBound))
+      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound})
 
     losingPeers = nubOrd $ do
-      (peer0 , (frag0, _        , _  , ub0)) <- Map.toList densityBounds
-      (_peer1, (frag1, moreThanK, lb1, _  )) <- Map.toList densityBounds
+      (peer0 , DensityBounds {fragment = frag0, upperBound = ub0}) <- Map.toList densityBounds
+      (_peer1, DensityBounds {fragment = frag1, offersMoreThanK, lowerBound = lb1 }) <- Map.toList densityBounds
       -- ensure that the two peer fragments don't share any
       -- headers after the LoE
       guard $ AF.lastPoint frag0 /= AF.lastPoint frag1
       -- peer1 offers more than k blocks
-      guard moreThanK
+      guard offersMoreThanK
       -- peer1 definitely has higher density than peer0
       guard $ lb1 > ub0
       pure peer0
@@ -185,9 +188,6 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
       | a <= b    = b - a
       | otherwise = 0
 
-    showBounds :: (AnchoredFragment (Header blk), Bool, Word64, Word64) -> String
-    showBounds (_, more, lower, upper) = show lower ++ "/" ++ show upper ++ "[" ++ (if more then "+" else " ") ++ "]"
-
 {- TODO: convert this scribble into a useful explanatory diagram, illustrating the
         density calculation below
 
@@ -199,6 +199,14 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
 
 -}
 
+data TraceGDDEvent peer blk =
+  TraceGDDEvent {
+    bounds            :: Map peer (DensityBounds blk),
+    candidateSuffixes :: Map peer (AnchoredFragment (Header blk)),
+    losingPeers       :: [peer],
+    loeHead           :: AF.Anchor (Header blk)
+  }
+
 -- | Run the Genesis disconnection logic once.
 --
 --   * Update the LoE and return it.
@@ -208,11 +216,10 @@ updateLoEFragGenesis ::
      forall m blk peer.
      ( IOLike m
      , Ord peer
-     , Show peer
      , LedgerSupportsProtocol blk
      )
   => TopLevelConfig blk
-  -> Tracer m String
+  -> Tracer m (TraceGDDEvent peer blk)
   -> STM m (Map peer (AnchoredFragment (Header blk)))
   -> STM m (Map peer (ChainSyncClientHandle m blk))
   -> UpdateLoEFrag m blk
@@ -237,15 +244,11 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles =
       -- slot (tip of LoE frag).
       -- REVIEW: Have we talked about this?
       sgen = computeGenesisWindow (configLedger cfg) (ledgerState immutableLedgerSt)
-      (losingPeers, boundsDesc) =
+      (losingPeers, bounds) =
         densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes theirTips latestSlots loeFrag
+      loeHead = AF.headAnchor loeFrag
 
-    traceWith tracer $ unlines [
-      "GDG | Density bounds: " ++ boundsDesc,
-      "      New candidate tips: " ++ showPeers (show <$> Map.map AF.headPoint candidateSuffixes),
-      "      Losing peers: " ++ show losingPeers,
-      "      Setting loeFrag: " ++ show (AF.headAnchor loeFrag)
-      ]
+    traceWith tracer TraceGDDEvent {bounds, candidateSuffixes, losingPeers, loeHead}
 
     for_ losingPeers $ \peer -> cschKill (handles Map.! peer)
     pure loeFrag

@@ -7,13 +7,18 @@
 module Test.Consensus.PeerSimulator.Trace (
     mkCdbTracer
   , mkChainSyncClientTracer
+  , mkGDDTracer
   , prettyTime
   , traceLinesWith
   , traceUnitWith
   ) where
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
+import           Data.List (intercalate)
+import qualified Data.Map as Map
 import           Data.Time.Clock (diffTimeToPicoseconds)
+import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
+                     TraceGDDEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
@@ -23,6 +28,8 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
 import           Test.Util.TersePrinting (terseHFragment, terseHeader,
                      tersePoint, terseRealPoint)
+import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
@@ -72,6 +79,25 @@ mkChainSyncClientTracer tracer =
     _ -> pure ()
   where
     trace = traceUnitWith tracer "ChainSyncClient"
+
+mkGDDTracer ::
+  IOLike m =>
+  Tracer m String ->
+  Tracer m (TraceGDDEvent PeerId TestBlock)
+mkGDDTracer tracer =
+  Tracer $ \TraceGDDEvent {bounds, candidateSuffixes, losingPeers, loeHead} ->
+    traceWith tracer $ unlines [
+      "GDG | Density bounds: " ++ showPeers (showBounds <$> bounds),
+      "      New candidate tips: " ++ showPeers (show <$> Map.map AF.headPoint candidateSuffixes),
+      "      Losing peers: " ++ show losingPeers,
+      "      Setting loeFrag: " ++ show loeHead
+      ]
+  where
+    showBounds DensityBounds {offersMoreThanK, lowerBound, upperBound} =
+      show lowerBound ++ "/" ++ show upperBound ++ "[" ++ (if offersMoreThanK then "+" else " ") ++ "]"
+
+    showPeers :: Map.Map PeerId String -> String
+    showPeers = intercalate ", " . fmap (\ (peer, v) -> show peer ++ " -> " ++ v) . Map.toList
 
 prettyTime :: MonadMonotonicTime m => m String
 prettyTime = do
