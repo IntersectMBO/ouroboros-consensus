@@ -87,6 +87,7 @@ import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
+import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
 import           Ouroboros.Network.PeerSharing (PeerSharingRegistry,
@@ -161,6 +162,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , blockFetchConfiguration :: BlockFetchConfiguration
     , keepAliveRng            :: StdGen
     , gsmArgs                 :: GsmNodeKernelArgs m blk
+    , getUseBootstrapPeers    :: STM m UseBootstrapPeers
     }
 
 initNodeKernel ::
@@ -305,7 +307,7 @@ initInternalState ::
 initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , blockFetchSize, btime
                                  , mempoolCapacityOverride
-                                 , gsmArgs
+                                 , gsmArgs, getUseBootstrapPeers
                                  } = do
     varLedgerJudgement <- do
       let GsmNodeKernelArgs {..} = gsmArgs
@@ -333,6 +335,8 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
     let readFetchMode = BlockFetchClientInterface.readFetchModeDefault
           btime
           (ChainDB.getCurrentChain chainDB)
+          getUseBootstrapPeers
+          (readTVar varLedgerJudgement)
         blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (configBlock cfg)

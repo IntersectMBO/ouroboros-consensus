@@ -104,6 +104,8 @@ import           Ouroboros.Network.Mock.Chain (Chain (Genesis))
 import           Ouroboros.Network.NodeToNode (ConnectionId (..),
                      ExpandedInitiatorContext (..), IsBigLedgerPeer (..),
                      MiniProtocolParameters (..), ResponderContext (..))
+import           Ouroboros.Network.PeerSelection.Bootstrap
+                     (UseBootstrapPeers (..))
 import           Ouroboros.Network.PeerSelection.PeerMetric (nullMetric)
 import           Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
@@ -1008,6 +1010,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                     }
                 , gsmMinCaughtUpDuration = 0
                 }
+            , getUseBootstrapPeers = pure DontUseBootstrapPeers
             }
 
       nodeKernel <- initNodeKernel nodeKernelArgs

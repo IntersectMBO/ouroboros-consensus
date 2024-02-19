@@ -120,6 +120,7 @@ import           Ouroboros.Network.NodeToNode (DiffusionMode (..),
                      ExceptionInHandler (..), MiniProtocolParameters,
                      NodeToNodeVersionData (..), RemoteAddress, Socket,
                      blockFetchPipeliningMax, defaultMiniProtocolParameters)
+import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers
                      (LedgerPeersConsensusInterface (..))
 import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
@@ -189,6 +190,8 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
 
       -- | Network PeerSharing miniprotocol willingness flag
     , rnPeerSharing :: PeerSharing
+
+    , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
     }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -426,6 +429,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     llrnMaxCaughtUpAge
                     (Just durationUntilTooOld)
                     gsmMarkerFileView
+                    rnGetUseBootstrapPeers
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
 
@@ -693,6 +697,7 @@ mkNodeKernelArgs ::
   -> NominalDiffTime
   -> Maybe (GSM.WrapDurationUntilTooOld m blk)
   -> GSM.MarkerFileView m
+  -> STM m UseBootstrapPeers
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -707,6 +712,7 @@ mkNodeKernelArgs
   maxCaughtUpAge
   gsmDurationUntilTooOld
   gsmMarkerFileView
+  getUseBootstrapPeers
   = do
     return NodeKernelArgs
       { tracers
@@ -727,6 +733,7 @@ mkNodeKernelArgs
         , gsmMarkerFileView
         , gsmMinCaughtUpDuration = maxCaughtUpAge
         }
+      , getUseBootstrapPeers
       }
   where
     defaultBlockFetchConfiguration :: BlockFetchConfiguration
