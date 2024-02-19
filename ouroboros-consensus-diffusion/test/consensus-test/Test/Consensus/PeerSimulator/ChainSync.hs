@@ -3,13 +3,12 @@
 
 module Test.Consensus.PeerSimulator.ChainSync (runChainSyncClient) where
 
-import Ouroboros.Consensus.Block (SlotNo)
 import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
-import           Ouroboros.Consensus.Block (Header, Point)
+import           Ouroboros.Consensus.Block (Header, Point, SlotNo)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncClientHandle, Consensus, Their,

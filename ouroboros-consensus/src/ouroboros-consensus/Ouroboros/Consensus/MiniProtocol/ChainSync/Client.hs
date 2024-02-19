@@ -1055,7 +1055,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             atomically (setLatestSlot dynEnv slotNo)
 
-            checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
+            checkTime cfgEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
                     continueWithState ()
                   $ drainThePipe n
@@ -1236,13 +1236,12 @@ checkTime ::
      , LedgerSupportsProtocol blk
      )
   => ConfigEnv m blk
-  -> DynamicEnv m blk
   -> InternalEnv m blk arrival judgment
   -> KnownIntersectionState blk
   -> arrival
   -> SlotNo
   -> m (UpdatedIntersectionState blk (LedgerView (BlockProtocol blk)))
-checkTime cfgEnv dynEnv intEnv =
+checkTime cfgEnv intEnv =
     \kis arrival slotNo -> castEarlyExitIntersects $ do
         Intersects kis2 lst        <- checkArrivalTime kis arrival
         Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
