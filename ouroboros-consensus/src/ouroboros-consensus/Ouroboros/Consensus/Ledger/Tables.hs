@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns             #-}
 {-# LANGUAGE CPP                      #-}
 {-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE DefaultSignatures        #-}
@@ -356,8 +357,11 @@ valuesMKDecoder = do
      -> CodecMK k v
      -> CBOR.Decoder s (ValuesMK k v)
   go len (CodecMK _encK _encV decK decV) =
-        ValuesMK . Map.fromList
-    <$> replicateM len ((,) <$> decK <*> decV)
+    ValuesMK . Map.fromList
+      <$> replicateM len (do
+                               !k <- decK
+                               !v <- decV
+                               pure (k, v))
 
 {-------------------------------------------------------------------------------
   Special classes of ledger states
