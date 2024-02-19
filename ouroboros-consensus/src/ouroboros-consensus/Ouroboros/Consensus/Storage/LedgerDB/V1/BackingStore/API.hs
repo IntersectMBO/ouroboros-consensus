@@ -20,6 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API (
     -- * Backing store
     BackingStore (..)
   , BackingStore'
+  , DiffsToFlush (..)
   , InitFrom (..)
   , LedgerBackingStore
     -- * Value handle
@@ -49,6 +50,16 @@ import qualified System.FS.API.Types as FS
 {-------------------------------------------------------------------------------
   Backing store interface
 -------------------------------------------------------------------------------}
+
+-- | A container for differences that are inteded to be flushed to a
+-- 'BackingStore'
+data DiffsToFlush l = DiffsToFlush {
+    -- | The set of differences that should be flushed into the 'BackingStore'
+    toFlushDiffs :: !(LedgerTables l DiffMK)
+    -- | At which slot the diffs were split. This must be the slot of the state
+    -- considered as "last flushed" in the kept 'DbChangelog'
+  , toFlushSlot  :: !SlotNo
+  }
 
 data BackingStore m keys values diff = BackingStore {
     -- | Close the backing store
