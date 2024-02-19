@@ -10,6 +10,7 @@
     prettyprinter,
     text,
     turtle ^>=1.6.0,
+    with-utf8,
 -}
 {-# OPTIONS_GHC -Wall -Wextra #-}
 {-# LANGUAGE BlockArguments      #-}
@@ -30,12 +31,13 @@ import           Data.Semigroup (Max (..))
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import           Data.Version
+import           Main.Utf8 (withStdTerminalHandles)
 import           Prettyprinter
 import           System.FilePath
 import           Turtle hiding (d, fp, l, o)
 
 main :: IO ()
-main = sh do
+main = withStdTerminalHandles $ sh do
 
   (isDryRun, skipGit) <- options helpDescription $
     (,) <$> switch "dry-run" 'd' "Make no changes"

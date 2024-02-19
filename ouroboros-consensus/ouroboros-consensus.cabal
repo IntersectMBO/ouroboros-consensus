@@ -403,6 +403,7 @@ library unstable-consensus-testlib
     , tree-diff
     , utf8-string
     , vector
+    , with-utf8
 
 library unstable-mock-block
   import:          common-lib
@@ -670,6 +671,7 @@ benchmark mempool-bench
     , tree-diff
     , unstable-consensus-testlib
     , unstable-mempool-test-utils
+    , with-utf8
 
 benchmark ChainSync-client-bench
   import:         common-bench
@@ -689,3 +691,4 @@ benchmark ChainSync-client-bench
     , time
     , typed-protocols-examples
     , unstable-consensus-testlib
+    , with-utf8
