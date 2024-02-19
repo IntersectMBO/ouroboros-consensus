@@ -12,20 +12,20 @@
 {-# LANGUAGE UndecidableInstances     #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate (
-    validate
-    -- * Apply blocks
-  , Ap (..)
-  , applyThenPush
-    -- * Finding blocks
-  , ResolveBlock
+    -- * Find blocks
+    ResolveBlock
+  , ResolvesBlocks (..)
+    -- * Validation
+  , ValidLedgerState (..)
+  , validate
   ) where
 
 import           Control.Monad (void)
 import           Control.Monad.Base
-import           Control.Monad.Except (ExceptT, MonadError (throwError),
-                     runExcept, runExceptT)
+import           Control.Monad.Except (ExceptT (..), MonadError (..), runExcept,
+                     runExceptT)
 import           Control.Monad.Reader (ReaderT (..))
-import           Control.Monad.Trans
+import           Control.Monad.Trans (MonadTrans (..))
 import           Data.Kind
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -37,8 +37,7 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.LedgerDB.API hiding
-                     (getForkerAtFromTip, getPrevApplied, validate)
+import           Ouroboros.Consensus.Storage.LedgerDB.API hiding (validate)
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -48,29 +47,28 @@ import           Ouroboros.Consensus.Util.ResourceRegistry
 -------------------------------------------------------------------------------}
 
 validate ::
-     forall m l blk. (
+     forall m blk. (
        IOLike m
      , LedgerSupportsProtocol blk
      , HasCallStack
-     , l ~ ExtLedgerState blk
      , MonadBase m m
      )
   => ResolveBlock m blk
   -> TopLevelConfig blk
   -> ([RealPoint blk] -> STM m ())
   -> STM m (Set (RealPoint blk))
-  -> (ResourceRegistry m -> Word64 -> m (Either ExceededRollback (Forker m l blk)))
+  -> (ResourceRegistry m -> Word64 -> m (Either ExceededRollback (Forker' m blk)))
   -> ResourceRegistry m
   -> (TraceValidateEvent blk -> m ())
   -> BlockCache blk
   -> Word64          -- ^ How many blocks to roll back
   -> [Header blk]
-  -> m (ValidateResult m l blk)
-validate resolve config addPrevApplied getPrevApplied getForkerAtFromTip rr trace blockCache numRollbacks hdrs = do
-    aps <- mkAps <$> atomically getPrevApplied
+  -> m (ValidateResult' m blk)
+validate resolve config addPrevApplied prevApplied forkerAtFromTip rr trace blockCache numRollbacks hdrs = do
+    aps <- mkAps <$> atomically prevApplied
     res <- fmap rewrap $ defaultResolveWithErrors resolve $
              switch
-               getForkerAtFromTip
+               forkerAtFromTip
                rr
                (ExtLedgerCfg config)
                numRollbacks
@@ -79,16 +77,16 @@ validate resolve config addPrevApplied getPrevApplied getForkerAtFromTip rr trac
     liftBase $ atomically $ addPrevApplied (validBlockPoints res (map headerRealPoint hdrs))
     return res
   where
-    rewrap :: Either (AnnLedgerError n l blk) (Either ExceededRollback (Forker n l blk))
-           -> ValidateResult n l blk
+    rewrap :: Either (AnnLedgerError' n blk) (Either ExceededRollback (Forker' n blk))
+           -> ValidateResult' n blk
     rewrap (Left         e)  = ValidateLedgerError      e
     rewrap (Right (Left  e)) = ValidateExceededRollBack e
     rewrap (Right (Right l)) = ValidateSuccessful       l
 
-    mkAps :: forall bn n l'. l' ~ ExtLedgerState blk
+    mkAps :: forall bn n l. l ~ ExtLedgerState blk
           => Set (RealPoint blk)
           -> [Ap bn n l blk ( ResolvesBlocks       n   blk
-                            , ThrowsLedgerError bn n l' blk
+                            , ThrowsLedgerError bn n l blk
                             )]
     mkAps prev =
       [ case ( Set.member (headerRealPoint hdr) prev
@@ -103,7 +101,7 @@ validate resolve config addPrevApplied getPrevApplied getForkerAtFromTip rr trac
 
     -- | Based on the 'ValidateResult', return the hashes corresponding to
     -- valid blocks.
-    validBlockPoints :: forall n. ValidateResult n l blk -> [RealPoint blk] -> [RealPoint blk]
+    validBlockPoints :: forall n. ValidateResult' n blk -> [RealPoint blk] -> [RealPoint blk]
     validBlockPoints = \case
       ValidateExceededRollBack _ -> const []
       ValidateSuccessful       _ -> id
@@ -120,8 +118,8 @@ switch ::
   -> (TraceValidateEvent blk -> m ())
   -> [Ap bm m l blk c]  -- ^ New blocks to apply
   -> m (Either ExceededRollback (Forker bm l blk))
-switch getForkerAtFromTip rr cfg numRollbacks trace newBlocks = do
-  foEith <- liftBase $ getForkerAtFromTip rr numRollbacks
+switch forkerAtFromTip rr cfg numRollbacks trace newBlocks = do
+  foEith <- liftBase $ forkerAtFromTip rr numRollbacks
   case foEith of
     Left rbExceeded -> pure $ Left rbExceeded
     Right fo -> do

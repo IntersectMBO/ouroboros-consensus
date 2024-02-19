@@ -1,22 +1,23 @@
-{-# LANGUAGE CPP                      #-}
-{-# LANGUAGE ConstraintKinds          #-}
-{-# LANGUAGE DataKinds                #-}
-{-# LANGUAGE DeriveAnyClass           #-}
-{-# LANGUAGE DeriveGeneric            #-}
-{-# LANGUAGE DerivingVia              #-}
-{-# LANGUAGE FlexibleContexts         #-}
-{-# LANGUAGE FlexibleInstances        #-}
-{-# LANGUAGE FunctionalDependencies   #-}
-{-# LANGUAGE GADTs                    #-}
-{-# LANGUAGE LambdaCase               #-}
-{-# LANGUAGE NumericUnderscores       #-}
-{-# LANGUAGE QuantifiedConstraints    #-}
-{-# LANGUAGE RankNTypes               #-}
-{-# LANGUAGE ScopedTypeVariables      #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
-{-# LANGUAGE TypeFamilies             #-}
-{-# LANGUAGE TypeOperators            #-}
-{-# LANGUAGE UndecidableInstances     #-}
+{-# LANGUAGE CPP                        #-}
+{-# LANGUAGE ConstraintKinds            #-}
+{-# LANGUAGE DataKinds                  #-}
+{-# LANGUAGE DeriveAnyClass             #-}
+{-# LANGUAGE DeriveGeneric              #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE PolyKinds                  #-}
+{-# LANGUAGE QuantifiedConstraints      #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneKindSignatures   #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 -- | The Ledger DB is responsible for the following tasks:
 --
@@ -115,20 +116,17 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
   , currentPoint
     -- * Exceptions
   , LedgerDbError (..)
-    -- * Arguments
-  , QueryBatchSize (..)
-  , defaultQueryBatchSize
     -- * Forker
   , ExceededRollback (..)
   , Forker (..)
   , Forker'
+  , ForkerKey (..)
   , GetForkerError (..)
   , RangeQuery (..)
   , Statistics (..)
   , forkerCurrentPoint
-  , getForker
+  , getReadOnlyForker
   , getTipStatistics
-  , readLedgerStateAtTipFor
   , readLedgerTablesAtFor
   , withPrivateTipForker
   , withTipForker
@@ -137,33 +135,26 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
   , ReadOnlyForker'
   , readOnlyForker
     -- * Snapshots
-  , DiskSnapshot (..)
   , SnapCounters (..)
-  , SnapshotFailure (..)
     -- * Validation
-  , AnnLedgerError (..)
   , ValidateResult (..)
+  , ValidateResult'
+    -- ** Annotated ledger errors
+  , AnnLedgerError (..)
+  , AnnLedgerError'
     -- * Tracing
-  , TraceLedgerDBEvent (..)
-    -- ** Replay events
-  , ReplayGoal (..)
-  , ReplayStart (..)
-  , TraceReplayEvent (..)
-  , decorateReplayTracerWithGoal
-  , decorateReplayTracerWithStart
-    -- ** Snapshot events
-  , TraceSnapshotEvent (..)
     -- ** Validation events
   , PushGoal (..)
   , PushStart (..)
   , Pushing (..)
   , TraceValidateEvent (..)
+    -- ** Forker events
+  , TraceForkerEvent (..)
+  , TraceForkerEventWithKey (..)
   ) where
 
 import           Control.Monad (forM)
 import           Control.Monad.Class.MonadTime.SI
-import           Control.Tracer
-import           Data.Functor.Contravariant
 import           Data.Kind
 import           Data.Set (Set)
 import           Data.Word
@@ -173,10 +164,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderStateHistory
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
 import           Ouroboros.Consensus.Util.CallStack
-import           Ouroboros.Consensus.Util.CBOR
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 
@@ -199,25 +188,28 @@ data LedgerDB m l blk = LedgerDB {
          (l ~ ExtLedgerState blk)
       => STM m (HeaderStateHistory blk)
     -- | Acquire a 'Forker' at the tip.
-  , getForkerAtTip  :: ResourceRegistry m -> m (Forker m l blk)
+  , getForkerAtTip  ::
+         ResourceRegistry m
+#if __GLASGOW_HASKELL__ >= 902
+         -- ^ The producer/consumer registry.
+#endif
+      -> m (Forker m l blk)
     -- | Acquire a 'Forker' at the requested point. If a ledger state associated
     -- with the requested point does not exist in the LedgerDB, it will return a
     -- 'GetForkerError'.
   , getForkerAtPoint ::
          ResourceRegistry m
+#if __GLASGOW_HASKELL__ >= 902
+         -- ^ The producer/consumer registry.
+#endif
       -> Point blk
       -> m (Either GetForkerError (Forker m l blk))
-    -- | Acquire a 'Forker' at a requested @n@ blocks back from the tip.
-    --
-    -- You could view this as a rollback of @n@ blocks, and acquiring the
-    -- 'Forker' at that point.
-  , getForkerAtFromTip ::
-         ResourceRegistry m
-      -> Word64
-      -> m (Either ExceededRollback (Forker m l blk))
   , validate ::
          (l ~ ExtLedgerState blk)
       => ResourceRegistry m
+#if __GLASGOW_HASKELL__ >= 902
+         -- ^ The producer/consumer registry.
+#endif
       -> (TraceValidateEvent blk -> m ())
       -> BlockCache blk
       -> Word64
@@ -283,40 +275,10 @@ data LedgerDbError blk =
     deriving anyclass (Exception)
 
 {-------------------------------------------------------------------------------
-  Arguments
--------------------------------------------------------------------------------}
-
--- | The /maximum/ number of keys to read in a backing store range query.
---
--- When performing a ledger state query that involves on-disk parts of the
--- ledger state, we might have to read ranges of key-value pair data (e.g.,
--- UTxO) from disk using backing store range queries. Instead of reading all
--- data in one go, we read it in batches. 'QueryBatchSize' determines the size
--- of these batches.
---
--- INVARIANT: Should be at least 1.
---
--- It is fine if the result of a range read contains less than this number of
--- keys, but it should never return more.
-data QueryBatchSize =
-    -- | A default value, which is determined by a specific 'DiskPolicy'. See
-    -- 'defaultDiskPolicy' as an example.
-    DefaultQueryBatchSize
-    -- | A requested value: the number of keys to read from disk in each batch.
-  | RequestedQueryBatchSize Word64
-  deriving (Show, Eq, Generic)
-  deriving anyclass NoThunks
-
-defaultQueryBatchSize :: QueryBatchSize -> Word64
-defaultQueryBatchSize requestedQueryBatchSize = case requestedQueryBatchSize of
-    RequestedQueryBatchSize value -> value
-    DefaultQueryBatchSize         -> 100_000
-
-{-------------------------------------------------------------------------------
   Forker
 -------------------------------------------------------------------------------}
 
--- | An independent handle to a point the LedgerDB, which can be advanced to
+-- | An independent handle to a point in the LedgerDB, which can be advanced to
 -- evaluate forks in the chain.
 type Forker :: (Type -> Type) -> LedgerStateKind -> Type -> Type
 data Forker m l blk = Forker {
@@ -361,18 +323,23 @@ data Forker m l blk = Forker {
   , forkerCommit :: !(STM m ())
   }
 
+-- | An identifier for a 'Forker'. See 'ldbForkers'.
+newtype ForkerKey = ForkerKey Word16
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (Enum, NoThunks, Num)
+
 type instance HeaderHash (Forker m l blk) = HeaderHash l
 
 type Forker' m blk = Forker m (ExtLedgerState blk) blk
-
--- TODO(jdral_ldb): get rid of this instance
-instance Show (Forker m l blk) where show _ = "Forker"
 
 instance (GetTip l, HeaderHash l ~ HeaderHash blk, MonadSTM m)
       => GetTipSTM m (Forker m l blk) where
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
--- TODO: document
+-- TODO: This type is unsuitable for FlavorV2 queries, in particular for LSM
+-- queries. Those will work by splitting the UTxO set in chunks, which means
+-- that there is no number of keys to read, but instead what fraction of the
+-- UTxO range of keys to consult.
 data RangeQuery l = RangeQuery {
     rqPrev  :: !(Maybe (LedgerTables l KeysMK))
   , rqCount :: !Int
@@ -430,31 +397,6 @@ withPrivateTipForker ::
   -> (Forker m l blk -> m a) -> m a
 withPrivateTipForker ldb = bracketWithPrivateRegistry (getForkerAtTip ldb) forkerClose
 
-getForker ::
-     MonadSTM m
-  => LedgerDB m l blk
-  -> ResourceRegistry m
-  -> Maybe (Point blk)
-  -> m (Either GetForkerError (Forker m l blk))
-getForker ldb rr = \case
-    Nothing -> Right <$> getForkerAtTip ldb rr
-    Just pt -> getForkerAtPoint ldb rr pt
-
--- | Read a table of values at the requested point.
-readLedgerTablesAtFor ::
-     IOLike m
-  => LedgerDB m l blk
-  -> Point blk
-  -> LedgerTables l KeysMK
-  -> m (Either GetForkerError (LedgerTables l ValuesMK))
-readLedgerTablesAtFor ldb p ks =
-    bracketWithPrivateRegistry
-      (\rr -> getForkerAtPoint ldb rr p)
-      (mapM_ forkerClose)
-      $ \foEith -> do
-        forM foEith $ \fo -> do
-          fo `forkerReadTables` ks
-
 -- | Get statistics from the tip of the LedgerDB.
 getTipStatistics ::
      IOLike m
@@ -462,21 +404,20 @@ getTipStatistics ::
   -> m (Maybe Statistics)
 getTipStatistics ldb = withPrivateTipForker ldb forkerReadStatistics
 
-readLedgerStateAtTipFor ::
-     (IOLike m, HasLedgerTables l)
-  => LedgerDB m l blk
-  -> LedgerTables l KeysMK
-  -> m (l ValuesMK)
-readLedgerStateAtTipFor ldb ks = withPrivateTipForker ldb $ \forker -> do
-    state <- atomically $ forkerGetLedgerState forker
-    tables <- forkerReadTables forker ks
-    pure $ state `withLedgerTables` tables
-
 {-------------------------------------------------------------------------------
   Read-only forkers
 -------------------------------------------------------------------------------}
 
 -- | Read-only 'Forker'.
+--
+-- These forkers are not allowed to commit. They are used everywhere except in
+-- Chain Selection. In particular they are now used in:
+--
+-- - LocalStateQuery server, via 'getReadOnlyForkerAtPoint'
+--
+-- - Forging loop.
+--
+-- - Mempool.
 type ReadOnlyForker :: (Type -> Type) -> LedgerStateKind -> Type -> Type
 data ReadOnlyForker m l blk = ReadOnlyForker {
     -- | See 'forkerClose'
@@ -507,6 +448,31 @@ readOnlyForker forker = ReadOnlyForker {
     , roforkerReadStatistics = forkerReadStatistics forker
     }
 
+getReadOnlyForker ::
+     MonadSTM m
+  => LedgerDB m l blk
+  -> ResourceRegistry m
+  -> Maybe (Point blk)
+  -> m (Either GetForkerError (ReadOnlyForker m l blk))
+getReadOnlyForker ldb rr = \case
+    Nothing -> Right . readOnlyForker <$> getForkerAtTip ldb rr
+    Just pt -> fmap readOnlyForker <$> getForkerAtPoint ldb rr pt
+
+-- | Read a table of values at the requested point via a 'ReadOnlyForker'
+readLedgerTablesAtFor ::
+     IOLike m
+  => LedgerDB m l blk
+  -> Point blk
+  -> LedgerTables l KeysMK
+  -> m (Either GetForkerError (LedgerTables l ValuesMK))
+readLedgerTablesAtFor ldb p ks =
+    bracketWithPrivateRegistry
+      (\rr -> fmap readOnlyForker <$> getForkerAtPoint ldb rr p)
+      (mapM_ roforkerClose)
+      $ \foEith -> do
+        forM foEith $ \fo -> do
+          fo `roforkerReadTables` ks
+
 {-------------------------------------------------------------------------------
   Snapshots
 -------------------------------------------------------------------------------}
@@ -518,42 +484,6 @@ data SnapCounters = SnapCounters {
     -- | How many blocks have we processed since the last snapshot
   , ntBlocksSinceLastSnap :: !Word64
   }
-
-data DiskSnapshot = DiskSnapshot {
-      -- | Snapshots are numbered. We will try the snapshots with the highest
-      -- number first.
-      --
-      -- When creating a snapshot, we use the slot number of the ledger state it
-      -- corresponds to as the snapshot number. This gives an indication of how
-      -- recent the snapshot is.
-      --
-      -- Note that the snapshot names are only indicative, we don't rely on the
-      -- snapshot number matching the slot number of the corresponding ledger
-      -- state. We only use the snapshots numbers to determine the order in
-      -- which we try them.
-      dsNumber :: Word64
-
-      -- | Snapshots can optionally have a suffix, separated by the snapshot
-      -- number with an underscore, e.g., @4492799_last_Byron@. This suffix acts
-      -- as metadata for the operator of the node. Snapshots with a suffix will
-      -- /not be trimmed/.
-    , dsSuffix :: Maybe String
-    }
-  deriving (Show, Eq, Ord, Generic)
-
-data SnapshotFailure blk =
-    -- | We failed to deserialise the snapshot
-    --
-    -- This can happen due to data corruption in the ledger DB.
-    InitFailureRead ReadIncrementalErr
-
-    -- | This snapshot is too recent (ahead of the tip of the chain)
-  | InitFailureTooRecent (RealPoint blk)
-
-    -- | This snapshot was of the ledger state at genesis, even though we never
-    -- take snapshots at genesis, so this is unexpected.
-  | InitFailureGenesis
-  deriving (Show, Eq, Generic)
 
 {-------------------------------------------------------------------------------
   Validation
@@ -567,6 +497,12 @@ data ValidateResult m l blk =
   | ValidateLedgerError      (AnnLedgerError m l blk)
   | ValidateExceededRollBack ExceededRollback
 
+type ValidateResult' m blk = ValidateResult m (ExtLedgerState blk) blk
+
+{-------------------------------------------------------------------------------
+  An annotated ledger error
+-------------------------------------------------------------------------------}
+
 -- | Annotated ledger errors
 data AnnLedgerError m l blk = AnnLedgerError {
         -- | The ledger DB just /before/ this block was applied
@@ -579,80 +515,7 @@ data AnnLedgerError m l blk = AnnLedgerError {
     , annLedgerErr    :: LedgerErr l
     }
 
-{-------------------------------------------------------------------------------
-  Tracing
--------------------------------------------------------------------------------}
-
-data TraceLedgerDBEvent blk =
-    LedgerDBSnapshotEvent (TraceSnapshotEvent blk)
-  deriving (Show, Eq, Generic)
-
-{-------------------------------------------------------------------------------
-  Trace replay events
--------------------------------------------------------------------------------}
-
--- | Add the tip of the Immutable DB to the trace event
---
--- Between the tip of the immutable DB and the point of the starting block,
--- the node could (if it so desired) easily compute a "percentage complete".
-decorateReplayTracerWithGoal
-  :: Point blk -- ^ Tip of the ImmutableDB
-  -> Tracer m (TraceReplayEvent blk)
-  -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
-decorateReplayTracerWithGoal immTip = (($ ReplayGoal immTip) >$<)
-
--- | Add the block at which a replay started.
---
--- This allows to compute a "percentage complete" when tracing the events.
-decorateReplayTracerWithStart
-  :: Point blk -- ^ Starting point of the replay
-  -> Tracer m (ReplayGoal blk -> TraceReplayEvent blk)
-  -> Tracer m (ReplayStart blk -> ReplayGoal blk -> TraceReplayEvent blk)
-decorateReplayTracerWithStart start = (($ ReplayStart start) >$<)
-
--- | Which point the replay started from
-newtype ReplayStart blk = ReplayStart (Point blk) deriving (Eq, Show)
-
--- | Which point the replay is expected to end at
-newtype ReplayGoal blk = ReplayGoal (Point blk) deriving (Eq, Show)
-
--- | Events traced while replaying blocks against the ledger to bring it up to
--- date w.r.t. the tip of the ImmutableDB during initialisation. As this
--- process takes a while, we trace events to inform higher layers of our
--- progress.
-data TraceReplayEvent blk
-  = -- | There were no LedgerDB snapshots on disk, so we're replaying all blocks
-    -- starting from Genesis against the initial ledger.
-    ReplayFromGenesis
-        (ReplayGoal blk)  -- ^ the block at the tip of the ImmutableDB
-    -- | There was a LedgerDB snapshot on disk corresponding to the given tip.
-    -- We're replaying more recent blocks against it.
-  | ReplayFromSnapshot
-        DiskSnapshot
-        (RealPoint blk)
-        (ReplayStart blk) -- ^ the block at which this replay started
-        (ReplayGoal blk)  -- ^ the block at the tip of the ImmutableDB
-  -- | We replayed the given block (reference) on the genesis snapshot during
-  -- the initialisation of the LedgerDB. Used during ImmutableDB replay.
-  | ReplayedBlock
-        (RealPoint blk)   -- ^ the block being replayed
-        [LedgerEvent blk]
-        (ReplayStart blk) -- ^ the block at which this replay started
-        (ReplayGoal blk)  -- ^ the block at the tip of the ImmutableDB
-  deriving (Generic, Eq, Show)
-
-{-------------------------------------------------------------------------------
-  Tracing snapshot events
--------------------------------------------------------------------------------}
-
-data TraceSnapshotEvent blk
-  = InvalidSnapshot DiskSnapshot (SnapshotFailure blk)
-    -- ^ An on disk snapshot was skipped because it was invalid.
-  | TookSnapshot DiskSnapshot (RealPoint blk)
-    -- ^ A snapshot was written to disk.
-  | DeletedSnapshot DiskSnapshot
-    -- ^ An old or invalid on-disk snapshot was deleted
-  deriving (Generic, Eq, Show)
+type AnnLedgerError' m blk = AnnLedgerError m (ExtLedgerState blk) blk
 
 {-------------------------------------------------------------------------------
   Trace validation events
@@ -679,3 +542,24 @@ data TraceValidateEvent blk =
         !(Pushing blk)
         -- ^ Point which block we are about to push
   deriving (Show, Eq, Generic)
+
+{-------------------------------------------------------------------------------
+  Forker events
+-------------------------------------------------------------------------------}
+
+data TraceForkerEventWithKey =
+  TraceForkerEventWithKey ForkerKey TraceForkerEvent
+  deriving (Show, Eq)
+
+data TraceForkerEvent =
+    ForkerOpen
+  | ForkerCloseUncommitted
+  | ForkerCloseCommitted
+  | ForkerReadTablesStart
+  | ForkerReadTablesEnd
+  | ForkerRangeReadTablesStart
+  | ForkerRangeReadTablesEnd
+  | ForkerReadStatistics
+  | ForkerPushStart
+  | ForkerPushEnd
+  deriving (Show, Eq)
