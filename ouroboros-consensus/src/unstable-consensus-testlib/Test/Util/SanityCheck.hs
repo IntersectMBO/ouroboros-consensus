@@ -1,6 +1,3 @@
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
 module Test.Util.SanityCheck
   ( prop_sanityChecks
   , prop_securityParamConsistent
@@ -22,4 +19,3 @@ prop_securityParamConsistent
   => TopLevelConfig blk -> Property
 prop_securityParamConsistent cfg =
   checkSecurityParamConsistency cfg === Nothing
-

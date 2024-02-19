@@ -59,7 +59,6 @@ class ( LedgerSupportsProtocol blk
       , ConvertRawTxId (GenTx blk)
       , BlockSupportsLedgerQuery blk
       , HasPartialConsensusConfig (BlockProtocol blk)
-      -- , PartialConsensusConfigHasSecurityParam (BlockProtocol blk)
       , HasPartialLedgerConfig blk
       , ConvertRawHash blk
       , ReconstructNestedCtxt Header blk

@@ -21,8 +21,8 @@ import           Data.SOP.Strict
 import           Ouroboros.Consensus.HardFork.History.EpochInfo
 
 instance CanHardFork xs => BlockSupportsSanityCheck (HardForkBlock xs) where
-  configAllSecurityParams tlc = do
-    let configProtocol = topLevelConfigProtocol tlc
+  configAllSecurityParams tlc =
+    let configProtocol = topLevelConfigProtocol tlc in
     hardForkConsensusConfigK configProtocol :|
       perEraConsensusConfigSecurityParams (hardForkConsensusConfigPerEra configProtocol)
 
