@@ -34,8 +34,6 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (TraceChainSyncServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent (..))
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
-                     (BackingStoreTraceByBackend)
 import           Ouroboros.Network.BlockFetch (FetchDecision,
                      TraceFetchClientState, TraceLabelPeer)
 import           Ouroboros.Network.KeepAlive (TraceKeepAliveClient)
@@ -59,7 +57,6 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , txOutboundTracer              :: f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
   , mempoolTracer                 :: f (TraceEventMempool blk)
-  , backingStoreTracer            :: f LedgerDB.V1.BackingStoreTraceByBackend
   , forgeTracer                   :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer          :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer          :: f (TraceLabelCreds (ForgeStateInfo blk))
@@ -80,7 +77,6 @@ instance (forall a. Semigroup (f a))
       , txOutboundTracer              = f txOutboundTracer
       , localTxSubmissionServerTracer = f localTxSubmissionServerTracer
       , mempoolTracer                 = f mempoolTracer
-      , backingStoreTracer            = f backingStoreTracer
       , forgeTracer                   = f forgeTracer
       , blockchainTimeTracer          = f blockchainTimeTracer
       , forgeStateInfoTracer          = f forgeStateInfoTracer
@@ -109,7 +105,6 @@ nullTracers = Tracers
     , txOutboundTracer              = nullTracer
     , localTxSubmissionServerTracer = nullTracer
     , mempoolTracer                 = nullTracer
-    , backingStoreTracer            = nullTracer
     , forgeTracer                   = nullTracer
     , blockchainTimeTracer          = nullTracer
     , forgeStateInfoTracer          = nullTracer
@@ -141,7 +136,6 @@ showTracers tr = Tracers
     , txOutboundTracer              = showTracing tr
     , localTxSubmissionServerTracer = showTracing tr
     , mempoolTracer                 = showTracing tr
-    , backingStoreTracer            = showTracing tr
     , forgeTracer                   = showTracing tr
     , blockchainTimeTracer          = showTracing tr
     , forgeStateInfoTracer          = showTracing tr
