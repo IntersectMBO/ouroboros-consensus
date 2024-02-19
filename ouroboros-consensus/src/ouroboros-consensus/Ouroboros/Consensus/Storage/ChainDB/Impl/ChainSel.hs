@@ -506,7 +506,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
           -- We don't crash if the LoE fragment doesn't intersect with the selection
           -- because we update the selection _after_ updating the LoE fragment, which
           -- means it could move to another fork or beyond the end of the LF, depending
-          -- on the implementation of @updateLoEFrag@.
+          -- on the implementation of @processLoE@.
           Nothing        -> AF.Empty (AF.anchor curChain)
 
     traceWith addBlockTracer (ChainSelectionLoEDebug curChain loeFrag0)
