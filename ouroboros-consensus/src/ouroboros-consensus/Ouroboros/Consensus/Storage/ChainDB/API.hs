@@ -65,12 +65,14 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , ChainDbError (..)
     -- * Genesis
   , LoE (..)
+  , LoELimit (..)
   , UpdateLoEFrag (..)
   , processLoE
   ) where
 
 import           Control.Monad (void)
 import           Data.Typeable (Typeable)
+import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderStateHistory
@@ -916,3 +918,8 @@ processLoE ::
 processLoE curChain ledger setLoEFrag = \case
   LoEDisabled -> pure ()
   LoEEnabled hook -> updateLoEFrag hook curChain ledger setLoEFrag
+
+data LoELimit =
+  LoELimit Word64
+  |
+  LoEUnlimited
