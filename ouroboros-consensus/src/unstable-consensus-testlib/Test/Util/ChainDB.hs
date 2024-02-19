@@ -15,17 +15,14 @@ module Test.Util.ChainDB (
 
 import           Control.Tracer (nullTracer)
 import           Data.Functor.Identity (Identity)
-import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
-                     (TopLevelConfig (topLevelConfigLedger),
-                     configSecurityParam)
+                     (TopLevelConfig (topLevelConfigLedger))
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture (..))
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.HardFork.History.EraParams (EraParams,
                      eraEpochSize)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
-import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
@@ -79,7 +76,6 @@ mkTestChunkInfo = simpleChunkInfo . eraEpochSize . topLevelConfigLedger
 fromMinimalChainDbArgs ::
      ( MonadThrow m
      , MonadSTM m
-     , ConsensusProtocol (BlockProtocol blk)
      )
   => MinimalChainDbArgs m blk -> ChainDbArgs Identity m blk
 fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
@@ -89,8 +85,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
   , cdbImmutableDbValidation  = ImmutableDB.ValidateAllChunks
   , cdbVolatileDbValidation   = VolatileDB.ValidateAll
   , cdbMaxBlocksPerFile       = VolatileDB.mkBlocksPerFile 4
-  , cdbDiskPolicy             = LedgerDB.defaultDiskPolicy (configSecurityParam mcdbTopLevelConfig)
-                                  LedgerDB.DefaultSnapshotInterval
+  , cdbDiskPolicyArgs         = LedgerDB.defaultDiskPolicyArgs
   -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 * k seconds, where k is the
   -- security parameter.
   , cdbTopLevelConfig         = mcdbTopLevelConfig

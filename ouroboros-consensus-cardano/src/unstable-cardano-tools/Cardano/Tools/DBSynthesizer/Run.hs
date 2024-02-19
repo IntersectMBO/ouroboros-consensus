@@ -21,7 +21,7 @@ import           Data.Aeson as Aeson (FromJSON, Result (..), Value,
                      eitherDecodeFileStrict', eitherDecodeStrict', fromJSON)
 import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
-import           Ouroboros.Consensus.Config (configSecurityParam, configStorage)
+import           Ouroboros.Consensus.Config (configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
 import qualified Ouroboros.Consensus.Node as Node (mkChainDbArgs,
                      stdMkChainDbHasFS)
@@ -34,8 +34,6 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (defaultArgs,
                      getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (cdbTracer,
                      withDB)
-import           Ouroboros.Consensus.Storage.LedgerDB (SnapshotInterval (..),
-                     defaultDiskPolicy)
 import           Ouroboros.Consensus.Util.IOLike (atomically)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block
@@ -117,11 +115,9 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
         let
             epochSize   = sgEpochLength confShelleyGenesis
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
-            k           = configSecurityParam pInfoConfig
-            diskPolicy  = defaultDiskPolicy k DefaultSnapshotInterval
             dbArgs      = Node.mkChainDbArgs
                 registry InFuture.dontCheck pInfoConfig pInfoInitLedger chunkInfo $
-                    ChainDB.defaultArgs (Node.stdMkChainDbHasFS confDbDir) diskPolicy
+                    ChainDB.defaultArgs (Node.stdMkChainDbHasFS confDbDir)
 
         forgers <- blockForging
         let fCount = length forgers

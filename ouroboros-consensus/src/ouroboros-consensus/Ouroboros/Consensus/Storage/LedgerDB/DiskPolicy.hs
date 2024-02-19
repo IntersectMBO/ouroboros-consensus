@@ -8,9 +8,12 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy (
     DiskPolicy (..)
+  , DiskPolicyArgs (..)
+  , NumOfDiskSnapshots (..)
   , SnapshotInterval (..)
   , TimeSinceLast (..)
-  , defaultDiskPolicy
+  , defaultDiskPolicyArgs
+  , mkDiskPolicy
   ) where
 
 import           Control.Monad.Class.MonadTime.SI
@@ -25,11 +28,21 @@ import           Ouroboros.Consensus.Config.SecurityParam
 --
 -- 1. either explicitly provided by user in seconds
 -- 2. or default value can be requested - the specific DiskPolicy determines
---    what that is exactly, see `defaultDiskPolicy` as an example
+--    what that is exactly, see `mkDiskPolicy` as an example
 data SnapshotInterval =
     DefaultSnapshotInterval
   | RequestedSnapshotInterval DiffTime
   deriving stock (Eq, Generic, Show)
+
+-- | Number of snapshots to be stored on disk. This is either the default value
+-- as determined by the DiskPolicy, or it is provided by the user. See the
+-- `DiskPolicy` documentation for more information.
+data NumOfDiskSnapshots =
+    DefaultNumOfDiskSnapshots
+  | RequestedNumOfDiskSnapshots Word
+  deriving stock (Eq, Generic, Show)
+
+data DiskPolicyArgs = DiskPolicyArgs SnapshotInterval NumOfDiskSnapshots
 
 -- | On-disk policy
 --
@@ -74,7 +87,7 @@ data DiskPolicy = DiskPolicy {
       --   policy to decide to take a snapshot /on node startup/ if a lot of
       --   blocks had to be replayed.
       --
-      -- See also 'defaultDiskPolicy'
+      -- See also 'mkDiskPolicy'
     , onDiskShouldTakeSnapshot :: TimeSinceLast DiffTime -> Word64 -> Bool
     }
   deriving NoThunks via OnlyCheckWhnf DiskPolicy
@@ -82,13 +95,19 @@ data DiskPolicy = DiskPolicy {
 data TimeSinceLast time = NoSnapshotTakenYet | TimeSinceLast time
   deriving (Functor, Show)
 
--- | Default on-disk policy suitable to use with cardano-node
+-- | Default on-disk policy arguments suitable to use with cardano-node
 --
-defaultDiskPolicy :: SecurityParam -> SnapshotInterval -> DiskPolicy
-defaultDiskPolicy (SecurityParam k) requestedInterval = DiskPolicy {..}
+defaultDiskPolicyArgs :: DiskPolicyArgs
+defaultDiskPolicyArgs = DiskPolicyArgs DefaultSnapshotInterval DefaultNumOfDiskSnapshots
+
+mkDiskPolicy :: SecurityParam -> DiskPolicyArgs -> DiskPolicy
+mkDiskPolicy (SecurityParam k) (DiskPolicyArgs reqInterval reqNumOfSnapshots) =
+  DiskPolicy {..}
   where
     onDiskNumSnapshots :: Word
-    onDiskNumSnapshots = 2
+    onDiskNumSnapshots = case reqNumOfSnapshots of
+      DefaultNumOfDiskSnapshots         -> 2
+      RequestedNumOfDiskSnapshots value -> value
 
     onDiskShouldTakeSnapshot ::
          TimeSinceLast DiffTime
@@ -125,6 +144,6 @@ defaultDiskPolicy (SecurityParam k) requestedInterval = DiskPolicy {..}
     -- snapshot interval (DefaultSnapshotInterval). If the latter then the
     -- snapshot interval is defaulted to k * 2 seconds - when @k = 2160@ the interval
     -- defaults to 72 minutes.
-    snapshotInterval = case requestedInterval of
+    snapshotInterval = case reqInterval of
       RequestedSnapshotInterval value -> value
       DefaultSnapshotInterval           -> secondsToDiffTime $ fromIntegral $ k * 2

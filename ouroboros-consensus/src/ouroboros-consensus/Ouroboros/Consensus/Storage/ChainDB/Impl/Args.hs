@@ -25,7 +25,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceEvent (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicy (..))
+import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicyArgs)
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
@@ -50,7 +50,7 @@ data ChainDbArgs f m blk = ChainDbArgs {
     -- ^ Should the parser for the VolatileDB fail when it encounters a
     -- corrupt/invalid block?
     , cdbMaxBlocksPerFile       :: VolatileDB.BlocksPerFile
-    , cdbDiskPolicy             :: LgrDB.DiskPolicy
+    , cdbDiskPolicyArgs         :: DiskPolicyArgs
 
       -- Integration
     , cdbTopLevelConfig         :: HKD f (TopLevelConfig blk)
@@ -136,12 +136,11 @@ defaultArgs ::
      forall m blk.
      Monad m
   => (RelativeMountPoint -> SomeHasFS m)
-  -> DiskPolicy
   -> ChainDbArgs Defaults m blk
-defaultArgs mkFS diskPolicy =
+defaultArgs mkFS =
   toChainDbArgs (ImmutableDB.defaultArgs immFS)
                 (VolatileDB.defaultArgs  volFS)
-                (LgrDB.defaultArgs       lgrFS diskPolicy)
+                (LgrDB.defaultArgs       lgrFS)
                 defaultSpecificArgs
   where
     immFS, volFS, lgrFS :: SomeHasFS m
@@ -182,7 +181,7 @@ fromChainDbArgs ChainDbArgs{..} = (
     , LgrDB.LgrDbArgs {
           lgrTopLevelConfig   = cdbTopLevelConfig
         , lgrHasFS            = cdbHasFSLgrDB
-        , lgrDiskPolicy       = cdbDiskPolicy
+        , lgrDiskPolicyArgs   = cdbDiskPolicyArgs
         , lgrGenesis          = cdbGenesis
         , lgrTracer           = contramap TraceSnapshotEvent cdbTracer
         , lgrTraceLedger      = cdbTraceLedger
@@ -219,7 +218,7 @@ toChainDbArgs ImmutableDB.ImmutableDbArgs {..}
     , cdbImmutableDbValidation  = immValidationPolicy
     , cdbVolatileDbValidation   = volValidationPolicy
     , cdbMaxBlocksPerFile       = volMaxBlocksPerFile
-    , cdbDiskPolicy             = lgrDiskPolicy
+    , cdbDiskPolicyArgs         = lgrDiskPolicyArgs
       -- Integration
     , cdbTopLevelConfig         = lgrTopLevelConfig
     , cdbChunkInfo              = immChunkInfo
