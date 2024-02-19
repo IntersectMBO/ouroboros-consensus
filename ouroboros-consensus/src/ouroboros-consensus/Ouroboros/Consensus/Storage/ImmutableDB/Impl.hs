@@ -140,22 +140,27 @@ import           System.FS.CRC
 data ImmutableDbArgs f m blk = ImmutableDbArgs {
       immCacheConfig      :: Index.CacheConfig
     , immCheckIntegrity   :: HKD f (blk -> Bool)
+      -- ^ Predicate to check for integrity of
+      -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
+      -- extracting them from the ImmutableDB.
     , immChunkInfo        :: HKD f ChunkInfo
     , immCodecConfig      :: HKD f (CodecConfig blk)
-    , immHasFS            :: SomeHasFS m
+    , immHasFS            :: HKD f (SomeHasFS m)
     , immRegistry         :: HKD f (ResourceRegistry m)
     , immTracer           :: Tracer m (TraceEvent blk)
     , immValidationPolicy :: ValidationPolicy
+      -- ^ Which chunks of the ImmutableDB to validate on opening: all chunks, or
+      -- only the most recent chunk?
     }
 
 -- | Default arguments
-defaultArgs :: Applicative m => SomeHasFS m -> ImmutableDbArgs Defaults m blk
-defaultArgs immHasFS = ImmutableDbArgs {
+defaultArgs :: Applicative m => Incomplete ImmutableDbArgs m blk
+defaultArgs = ImmutableDbArgs {
       immCacheConfig      = cacheConfig
     , immCheckIntegrity   = NoDefault
     , immChunkInfo        = NoDefault
     , immCodecConfig      = NoDefault
-    , immHasFS
+    , immHasFS            = NoDefault
     , immRegistry         = NoDefault
     , immTracer           = nullTracer
     , immValidationPolicy = ValidateMostRecentChunk
@@ -236,7 +241,7 @@ openDBInternal ::
      , ImmutableDbSerialiseConstraints blk
      , HasCallStack
      )
-  => ImmutableDbArgs Identity m blk
+  => Complete ImmutableDbArgs m blk
   -> (forall h.
          WithTempRegistry
            (OpenState m blk h)

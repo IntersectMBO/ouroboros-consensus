@@ -219,8 +219,7 @@ getReadOnlyForkerAtPoint ::
   -> ResourceRegistry m
   -> Maybe (Point blk)
   -> m (Either GetForkerError (ReadOnlyForker' m blk))
-getReadOnlyForkerAtPoint CDB{..} rr mpt = fmap LedgerDB.readOnlyForker <$>
-    LedgerDB.getForker cdbLedgerDB rr mpt
+getReadOnlyForkerAtPoint CDB{..} = LedgerDB.getReadOnlyForker cdbLedgerDB
 
 getLedgerTablesAtFor ::
      IOLike m

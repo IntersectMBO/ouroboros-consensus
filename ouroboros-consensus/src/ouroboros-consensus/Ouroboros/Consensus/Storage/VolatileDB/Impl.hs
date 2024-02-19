@@ -155,19 +155,24 @@ import           System.FS.API.Types
 
 data VolatileDbArgs f m blk = VolatileDbArgs {
       volCheckIntegrity   :: HKD f (blk -> Bool)
+      -- ^ Predicate to check for integrity of
+      -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
+      -- extracting them from the VolatileDB.
     , volCodecConfig      :: HKD f (CodecConfig blk)
-    , volHasFS            :: SomeHasFS m
+    , volHasFS            :: HKD f (SomeHasFS m)
     , volMaxBlocksPerFile :: BlocksPerFile
     , volTracer           :: Tracer m (TraceEvent blk)
     , volValidationPolicy :: BlockValidationPolicy
+      -- ^ Should the parser for the VolatileDB fail when it encounters a
+      -- corrupt/invalid block?
     }
 
 -- | Default arguments
-defaultArgs :: Applicative m => SomeHasFS m -> VolatileDbArgs Defaults m blk
-defaultArgs volHasFS = VolatileDbArgs {
+defaultArgs :: Applicative m => Incomplete VolatileDbArgs m blk
+defaultArgs = VolatileDbArgs {
       volCheckIntegrity   = NoDefault
     , volCodecConfig      = NoDefault
-    , volHasFS
+    , volHasFS            = NoDefault
     , volMaxBlocksPerFile = mkBlocksPerFile 1000
     , volTracer           = nullTracer
     , volValidationPolicy = NoValidation
@@ -189,8 +194,8 @@ openDB ::
      , GetPrevHash blk
      , VolatileDbSerialiseConstraints blk
      )
-  => VolatileDbArgs Identity m blk
-  -> (forall st. WithTempRegistry st m (VolatileDB m blk, st) -> ans)
+  => Complete VolatileDbArgs m blk
+  -> (forall st. WithTempRegistry st m ((VolatileDB m blk, MaxSlotNo), st) -> ans)
   -> ans
 openDB VolatileDbArgs { volHasFS = SomeHasFS hasFS, .. } cont = cont $ do
     lift $ createDirectoryIfMissing hasFS True (mkFsPath [])
@@ -219,7 +224,7 @@ openDB VolatileDbArgs { volHasFS = SomeHasFS hasFS, .. } cont = cont $ do
           , getBlockInfo        = getBlockInfoImpl        env
           , getMaxSlotNo        = getMaxSlotNoImpl        env
           }
-    return (volatileDB, ost)
+    return ((volatileDB, currentMaxSlotNo ost), ost)
 
 {------------------------------------------------------------------------------
   VolatileDB API
@@ -234,8 +239,9 @@ closeDBImpl VolatileDBEnv { varInternalState, tracer, hasFS } = do
       RAWLock.withWriteAccess varInternalState $ \st -> return (DbClosed, st)
     case mbInternalState of
       DbClosed -> traceWith tracer DBAlreadyClosed
-      DbOpen ost ->
+      DbOpen ost -> do
         wrapFsError (Proxy @blk) $ closeOpenHandles hasFS ost
+        traceWith tracer DBClosed
 
 getBlockComponentImpl ::
      forall m blk b.

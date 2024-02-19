@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE NamedFieldPuns             #-}
@@ -86,9 +87,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB,
                      ImmutableDbSerialiseConstraints)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (Forker', LedgerDB',
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB',
                      LedgerDbSerialiseConstraints, TraceLedgerDBEvent,
-                     TraceReplayEvent, TraceValidateEvent)
+                     TraceValidateEvent)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB,
                      VolatileDbSerialiseConstraints)
@@ -96,10 +97,12 @@ import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
 import           Ouroboros.Consensus.Util.TentativeState (TentativeState (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import           Ouroboros.Network.Block (MaxSlotNo)
 
 -- | All the serialisation related constraints needed by the ChainDB.
 class ( ImmutableDbSerialiseConstraints blk
@@ -233,10 +236,7 @@ data ChainDbEnv m blk = CDB
     -- Note that 'copyToImmutableDB' can still be executed concurrently with all
     -- others functions, just not with itself.
   , cdbTracer          :: !(Tracer m (TraceEvent blk))
-  , cdbTraceLedger     :: !(Tracer m (Forker' m blk))
   , cdbRegistry        :: !(ResourceRegistry m)
-    -- ^ Resource registry that will be used to (re)start the background
-    -- threads, see 'cdbBgThreads'.
   , cdbGcDelay         :: !DiffTime
     -- ^ How long to wait between copying a block from the VolatileDB to
     -- ImmutableDB and garbage collecting it from the VolatileDB
@@ -245,8 +245,6 @@ data ChainDbEnv m blk = CDB
     -- garbage collections.
   , cdbKillBgThreads   :: !(StrictTVar m (m ()))
     -- ^ A handle to kill the background threads.
-  , cdbChunkInfo       :: !ImmutableDB.ChunkInfo
-  , cdbCheckIntegrity  :: !(blk -> Bool)
   , cdbCheckInFuture   :: !(CheckInFuture m blk)
   , cdbBlocksToAdd     :: !(BlocksToAdd m blk)
     -- ^ Queue of blocks that still have to be added.
@@ -504,19 +502,17 @@ closeBlocksToAdd (BlocksToAdd queue) = do
 
 -- | Trace type for the various events of the ChainDB.
 data TraceEvent blk
-  = TraceAddBlockEvent          (TraceAddBlockEvent           blk)
-  | TraceFollowerEvent          (TraceFollowerEvent           blk)
-  | TraceCopyToImmutableDBEvent (TraceCopyToImmutableDBEvent  blk)
-  | TraceGCEvent                (TraceGCEvent                 blk)
-  | TraceInitChainSelEvent      (TraceInitChainSelEvent       blk)
-  | TraceOpenEvent              (TraceOpenEvent               blk)
-  | TraceIteratorEvent          (TraceIteratorEvent           blk)
-  | TraceLedgerDBEvent          (TraceLedgerDBEvent           blk)
-  | TraceLedgerReplayEvent      (TraceReplayEvent             blk)
-  | TraceImmutableDBEvent       (ImmutableDB.TraceEvent       blk)
-  | TraceVolatileDBEvent        (VolatileDB.TraceEvent        blk)
+  = TraceAddBlockEvent            (TraceAddBlockEvent          blk)
+  | TraceFollowerEvent            (TraceFollowerEvent          blk)
+  | TraceCopyToImmutableDBEvent   (TraceCopyToImmutableDBEvent blk)
+  | TraceGCEvent                  (TraceGCEvent                blk)
+  | TraceInitChainSelEvent        (TraceInitChainSelEvent      blk)
+  | TraceOpenEvent                (TraceOpenEvent              blk)
+  | TraceIteratorEvent            (TraceIteratorEvent          blk)
+  | TraceLedgerDBEvent            (TraceLedgerDBEvent          blk)
+  | TraceImmutableDBEvent         (ImmutableDB.TraceEvent      blk)
+  | TraceVolatileDBEvent          (VolatileDB.TraceEvent       blk)
   deriving (Generic)
-
 
 deriving instance
   ( Eq (Header blk)
@@ -554,7 +550,7 @@ data TraceOpenEvent blk =
   | StartedOpeningVolatileDB
 
     -- | The VolatileDB was opened.
-  | OpenedVolatileDB
+  | OpenedVolatileDB MaxSlotNo
 
     -- | The LedgerDB started opening.
   | StartedOpeningLgrDB
