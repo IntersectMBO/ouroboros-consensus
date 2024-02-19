@@ -499,9 +499,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = do
     -- The preconditions
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
 
-    processLoE curChain (LgrDB.ledgerDbCurrent ledgerDB) (writeTVar cdbLoEFrag) cdbLoE
+    loeFrag0 <- processLoE curChain (LgrDB.ledgerDbCurrent ledgerDB) cdbLoE
 
-    loeFrag0 <- readTVarIO cdbLoEFrag
     let loeFrag = case cross curChain loeFrag0 of
           Just (_, frag) -> frag
           -- We don't crash if the LoE fragment doesn't intersect with the selection

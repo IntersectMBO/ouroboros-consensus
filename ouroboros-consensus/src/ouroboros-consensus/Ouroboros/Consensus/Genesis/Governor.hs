@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Genesis.Governor (
   ) where
 
 import           Control.Monad (guard)
-import           Control.Monad.Except ()
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_, toList)
@@ -31,7 +30,7 @@ import           Data.Maybe (fromMaybe)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block (SlotNo (SlotNo, unSlotNo),
                      blockSlot, succWithOrigin)
-import           Ouroboros.Consensus.Block.Abstract (GetHeader, Header, Point)
+import           Ouroboros.Consensus.Block.Abstract (GetHeader, Header)
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
                      configSecurityParam)
 import           Ouroboros.Consensus.Config.SecurityParam
@@ -58,7 +57,7 @@ updateLoEFragUnconditional ::
   MonadSTM m =>
   UpdateLoEFrag m blk
 updateLoEFragUnconditional =
-  UpdateLoEFrag $ \ curChain _ setLoEFrag -> atomically (setLoEFrag curChain)
+  UpdateLoEFrag $ \ curChain _ -> pure curChain
 
 -- | Compute the fragment @loeFrag@ between the immutable tip and the
 -- earliest intersection between @curChain@ and any of the @candidates@.
@@ -104,10 +103,10 @@ updateLoEFragStall ::
   STM m (Map peer (AnchoredFragment (Header blk))) ->
   UpdateLoEFrag m blk
 updateLoEFragStall getCandidates =
-  UpdateLoEFrag $ \ curChain _ setLoEFrag ->
+  UpdateLoEFrag $ \ curChain _ ->
     atomically $ do
       candidates <- getCandidates
-      setLoEFrag (fst (sharedCandidatePrefix curChain candidates))
+      pure (fst (sharedCandidatePrefix curChain candidates))
 
 showPeers ::
      Show peer
@@ -202,7 +201,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
 
 -- | Run the Genesis disconnection logic once.
 --
---   * Maintain and update the LoE.
+--   * Update the LoE and return it.
 --
 --   * Disconnect from peers with inferior density.
 updateLoEFragGenesis ::
@@ -218,16 +217,13 @@ updateLoEFragGenesis ::
   -> STM m (Map peer (ChainSyncClientHandle m blk))
   -> UpdateLoEFrag m blk
 updateLoEFragGenesis cfg tracer getCandidates getHandles =
-  UpdateLoEFrag $ \ curChain immutableLedgerSt setLoEFrag -> do
+  UpdateLoEFrag $ \ curChain immutableLedgerSt -> do
     (candidateSuffixes, handles, theirTips, latestSlots, loeFrag) <- atomically $ do
       candidates <- getCandidates
       handles <- getHandles
       let
         (loeFrag, candidateSuffixes) =
           sharedCandidatePrefix curChain candidates
-      setLoEFrag loeFrag
-      -- Obtaining these before calling setLoEFrag appeared to result in a wrong state,
-      -- but maybe that was a fluke.
       theirTips <-
         fmap (Map.mapMaybe id) $ flip Map.traverseWithKey candidateSuffixes $ \peer _ ->
           cschTheirTip (handles Map.! peer)
@@ -239,20 +235,17 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles =
     let
       -- TODO: use a forecasted ledger view for the intersection
       -- slot (tip of LoE frag).
+      -- REVIEW: Have we talked about this?
       sgen = computeGenesisWindow (configLedger cfg) (ledgerState immutableLedgerSt)
       (losingPeers, boundsDesc) =
         densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes theirTips latestSlots loeFrag
 
-    trace ("Density bounds: " ++ boundsDesc)
-    trace ("New candidate tips: " ++ showPeers (showTip <$> Map.map AF.headPoint candidateSuffixes))
-    trace ("Losing peers: " ++ show losingPeers)
-    trace ("Setting loeFrag: " ++ show (AF.headAnchor loeFrag))
+    traceWith tracer $ unlines [
+      "GDG | Density bounds: " ++ boundsDesc,
+      "      New candidate tips: " ++ showPeers (show <$> Map.map AF.headPoint candidateSuffixes),
+      "      Losing peers: " ++ show losingPeers,
+      "      Setting loeFrag: " ++ show (AF.headAnchor loeFrag)
+      ]
 
-    for_ losingPeers $ \peer -> do
-      trace ("Killing peer: " ++ show peer)
-      cschKill (handles Map.! peer)
-  where
-    trace msg = traceWith tracer ("GDG | " ++ msg)
-
-    showTip :: Point (Header blk) -> String
-    showTip = show
+    for_ losingPeers $ \peer -> cschKill (handles Map.! peer)
+    pure loeFrag
