@@ -17,7 +17,6 @@ import           Test.Util.TestEnv (defaultMainWithTestEnv,
 main :: IO ()
 main = do
   hSetBuffering stdout LineBuffering
-  hSetEncoding stdout utf8
   defaultMainWithTestEnv defaultTestEnvConfig tests
 
 tests :: TestTree
