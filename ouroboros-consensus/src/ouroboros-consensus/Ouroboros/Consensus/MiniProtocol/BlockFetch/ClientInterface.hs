@@ -43,6 +43,10 @@ import           Ouroboros.Network.Block (MaxSlotNo)
 import           Ouroboros.Network.BlockFetch.ConsensusInterface
                      (BlockFetchConsensusInterface (..), FetchMode (..),
                      FromConsensus (..), WhetherReceivingTentativeBlocks (..))
+import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers,
+                     requiresBootstrapPeers)
+import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
+                     (LedgerStateJudgement)
 import           Ouroboros.Network.SizeInBytes
 
 -- | Abstract over the ChainDB
@@ -134,13 +138,23 @@ readFetchModeDefault ::
      (MonadSTM m, HasHeader blk)
   => BlockchainTime m
   -> STM m (AnchoredFragment blk)
+  -> STM m UseBootstrapPeers
+  -> STM m LedgerStateJudgement
   -> STM m FetchMode
-readFetchModeDefault btime getCurrentChain = do
+readFetchModeDefault btime getCurrentChain
+                     getUseBootstrapPeers getLedgerStateJudgement = do
     mCurSlot <- getCurrentSlot btime
-    case mCurSlot of
-      -- The current chain's tip far away from "now", so use bulk sync mode.
-      CurrentSlotUnknown  -> return FetchModeBulkSync
-      CurrentSlot curSlot -> do
+    usingBootstrapPeers <- requiresBootstrapPeers <$> getUseBootstrapPeers
+                                                  <*> getLedgerStateJudgement
+
+    -- This logic means that when the node is using bootstrap peers and is in
+    -- TooOld state it will always return BulkSync. Otherwise if the node
+    -- isn't using bootstrap peers (i.e. has them disabled it will use the old
+    -- logic of returning BulkSync if behind 1000 slots
+    case (usingBootstrapPeers, mCurSlot) of
+      (True, _)                    -> return FetchModeBulkSync
+      (False, CurrentSlotUnknown)  -> return FetchModeBulkSync
+      (False, CurrentSlot curSlot) -> do
         curChainSlot <- AF.headSlot <$> getCurrentChain
         let slotsBehind = case curChainSlot of
               -- There's nothing in the chain. If the current slot is 0, then
