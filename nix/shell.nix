@@ -10,7 +10,7 @@ hsPkgs.shellFor {
     pkgs.fd
     pkgs.nixpkgs-fmt
     pkgs.stylish-haskell
-    pkgs.cabal-fmt
+    pkgs.cabal-gild
     pkgs.cabal-hoogle
     pkgs.ghcid
 

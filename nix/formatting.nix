@@ -27,6 +27,6 @@ let
 in
 {
   stylish = checkFormatting pkgs.stylish-haskell ../scripts/ci/run-stylish.sh;
-  cabal-fmt = checkFormatting pkgs.cabal-fmt ../scripts/ci/run-cabal-fmt.sh;
+  cabal-gild = checkFormatting pkgs.cabal-gild ../scripts/ci/run-cabal-gild.sh;
   nixpkgs-fmt = checkFormatting pkgs.nixpkgs-fmt ../scripts/ci/run-nixpkgs-fmt.sh;
 }
