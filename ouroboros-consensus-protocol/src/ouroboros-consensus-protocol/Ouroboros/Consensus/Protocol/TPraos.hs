@@ -241,9 +241,6 @@ data instance ConsensusConfig (TPraos c) = TPraosConfig {
 
 instance SL.PraosCrypto c => NoThunks (ConsensusConfig (TPraos c))
 
-instance ProtocolConfigHasSecurityParam (TPraos c) where
-  protocolConfigSecurityParam = tpraosSecurityParam . tpraosParams
-
 -- | Transitional Praos consensus state.
 --
 -- In addition to the 'ChainDepState' provided by the ledger, we track the slot

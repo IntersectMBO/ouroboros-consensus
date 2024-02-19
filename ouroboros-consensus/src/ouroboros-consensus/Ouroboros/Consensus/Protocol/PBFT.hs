@@ -371,9 +371,6 @@ instance PBftCrypto c => ConsensusProtocol (PBft c) where
     where
       params = pbftWindowParams cfg
 
-instance ProtocolConfigHasSecurityParam (PBft c) where
-  protocolConfigSecurityParam = pbftSecurityParam . pbftParams
-
 {-------------------------------------------------------------------------------
   Internal: thin wrapper on top of 'PBftState'
 -------------------------------------------------------------------------------}

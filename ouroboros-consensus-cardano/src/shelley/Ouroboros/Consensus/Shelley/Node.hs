@@ -39,6 +39,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger
@@ -106,9 +107,8 @@ instance ShelleyCompatible proto era => BlockSupportsMetrics (ShelleyBlock proto
                          (SL.VKey 'SL.BlockIssuer (EraCrypto era))
       issuerVKeys = shelleyBlockIssuerVKeys cfg
 
-instance ProtocolConfigHasSecurityParam proto
-  => BlockSupportsSanityCheck (ShelleyBlock proto era) where
-  configAllSecurityParams = pure . protocolConfigSecurityParam . topLevelConfigProtocol
+instance ConsensusProtocol proto => BlockSupportsSanityCheck (ShelleyBlock proto era) where
+  configAllSecurityParams = pure . protocolSecurityParam . topLevelConfigProtocol
 
 instance
   ( ShelleyCompatible proto era

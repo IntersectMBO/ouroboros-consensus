@@ -55,13 +55,11 @@ instance NodeInitStorage (SimpleBlock SimpleMockCrypto ext) where
 instance BlockSupportsMetrics (SimpleBlock c ext) where
   isSelfIssued = isSelfIssuedConstUnknown
 
-instance ProtocolConfigHasSecurityParam (BlockProtocol (SimpleBlock c ext))
-  => BlockSupportsSanityCheck (SimpleBlock c ext) where
+instance ConsensusProtocol (BlockProtocol (SimpleBlock c ext)) => BlockSupportsSanityCheck (SimpleBlock c ext) where
   configAllSecurityParams =
-    pure . protocolConfigSecurityParam . topLevelConfigProtocol
+    pure . protocolSecurityParam . topLevelConfigProtocol
 
 instance ( LedgerSupportsProtocol      (SimpleBlock SimpleMockCrypto ext)
-         , ProtocolConfigHasSecurityParam (BlockProtocol (SimpleBlock SimpleMockCrypto ext))
          , Show (CannotForge           (SimpleBlock SimpleMockCrypto ext))
          , Show (ForgeStateInfo        (SimpleBlock SimpleMockCrypto ext))
          , Show (ForgeStateUpdateError (SimpleBlock SimpleMockCrypto ext))
