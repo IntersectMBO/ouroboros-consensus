@@ -298,7 +298,6 @@ prop_loeStalling =
         pure (gt, ps))
 
     ((noTimeoutsSchedulerConfig defaultPointScheduleConfig) {
-      scTrace = False,
       scEnableLoE = True,
       scChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}
     })
