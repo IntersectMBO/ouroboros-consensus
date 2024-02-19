@@ -37,7 +37,6 @@ import           Data.Typeable
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Block.SupportsSanityCheck
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId (CoreNodeId (..), NodeId (..))
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -161,9 +160,6 @@ instance BftCrypto c => ConsensusProtocol (Bft c) where
 
 instance BftCrypto c => NoThunks (ConsensusConfig (Bft c))
   -- use generic instance
-
-instance ProtocolConfigHasSecurityParam (Bft c) where
-  protocolConfigSecurityParam = bftSecurityParam . bftParams
 
 {-------------------------------------------------------------------------------
   BFT specific types

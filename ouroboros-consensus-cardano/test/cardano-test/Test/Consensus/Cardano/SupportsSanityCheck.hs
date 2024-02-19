@@ -1,5 +1,4 @@
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE RecordWildCards #-}
 module Test.Consensus.Cardano.SupportsSanityCheck (tests) where
 
 import Ouroboros.Consensus.Cardano.Block
@@ -34,11 +33,11 @@ prop_intentionallyBrokenConfigDoesNotSanityCheck =
     in expectFailure $ prop_sanityChecks brokenConfig
 
 breakTopLevelConfig :: TopLevelConfig (CardanoBlock StandardCrypto) -> TopLevelConfig (CardanoBlock StandardCrypto)
-breakTopLevelConfig tlc = do
+breakTopLevelConfig tlc =
   let TopLevelConfig{topLevelConfigProtocol} = tlc
       HardForkConsensusConfig{hardForkConsensusConfigK} = topLevelConfigProtocol
       SecurityParam k = hardForkConsensusConfigK
-  tlc
+  in tlc
     { topLevelConfigProtocol = topLevelConfigProtocol
       { hardForkConsensusConfigK = SecurityParam (succ k)
       }
@@ -46,14 +45,14 @@ breakTopLevelConfig tlc = do
 
 genSimpleTestProtocolInfo :: Gen (ProtocolInfo (CardanoBlock StandardCrypto))
 genSimpleTestProtocolInfo = do
-  SimpleTestProtocolInfoSetup{..} <- arbitrary
+  setup <- arbitrary
   pure $
     mkSimpleTestProtocolInfo
-      decentralizationParam
-      securityParam
-      byronSlotLength
-      shelleySlotLength
-      hardForkSpec
+      (decentralizationParam setup)
+      (securityParam setup)
+      (byronSlotLength setup)
+      (shelleySlotLength setup)
+      (hardForkSpec setup)
 
 data SimpleTestProtocolInfoSetup = SimpleTestProtocolInfoSetup
   { decentralizationParam :: Shelley.DecentralizationParam
