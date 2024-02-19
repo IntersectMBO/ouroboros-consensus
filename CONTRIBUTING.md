@@ -323,10 +323,10 @@ To get the exact `libsodium-vrf` used by Nix:
 "dbb48cce5429cb6585c9034f002568964f1ce567"
 ```
 
-To get the `cabal-fmt` version used by Nix:
+To get the `cabal-gild` version used by Nix:
 ```console
- $ nix eval --json .#cabal-fmt.version
-"0.1.6"
+ $ nix eval --json .#cabal-gild.version
+"1.3.0.1"
 ```
 
 In more complex cases, you can start a Nix REPL and go on to explore

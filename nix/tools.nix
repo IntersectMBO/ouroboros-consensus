@@ -50,7 +50,7 @@ in
 
   stylish-haskell = tool "stylish-haskell" "0.14.6.0" { };
 
-  cabal-fmt = tool "cabal-fmt" "0.1.10" { };
+  cabal-gild = tool "cabal-gild" "1.3.0.1" { };
 
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;
