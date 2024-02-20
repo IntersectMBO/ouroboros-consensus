@@ -2,7 +2,7 @@ inputs: final: prev:
 
 let
   inherit (final) lib;
-  tool-index-state = "2024-01-22T00:00:00Z";
+  tool-index-state = "2024-02-19T00:00:00Z";
   tool = name: version: other:
     final.haskell-nix.tool final.hsPkgs.args.compiler-nix-name name ({
       version = version;
@@ -50,7 +50,7 @@ in
 
   stylish-haskell = tool "stylish-haskell" "0.14.6.0" { };
 
-  cabal-fmt = tool "cabal-fmt" "0.1.10" { };
+  cabal-gild = tool "cabal-gild" "1.0.0.1" { };
 
   haskellBuildUtils = prev.haskellBuildUtils.override {
     inherit (final.hsPkgs.args) compiler-nix-name;
