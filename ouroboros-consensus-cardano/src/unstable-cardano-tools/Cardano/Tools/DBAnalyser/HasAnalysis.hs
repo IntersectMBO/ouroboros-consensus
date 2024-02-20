@@ -16,6 +16,7 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes)
 import           Ouroboros.Consensus.Util.Condense (Condense)
 import           Text.Builder (Builder)
+import Data.Word (Word)
 
 {-------------------------------------------------------------------------------
   HasAnalysis
@@ -38,6 +39,11 @@ class (HasAnnTip blk, GetPrevHash blk, Condense (HeaderHash blk)) => HasAnalysis
 
   -- | This method was introduced for the sake of the 'BenchmarkLedgerOps' pass.
   blockStats     :: blk -> [Builder]
+
+  -- | FIXME: we should generalize this to any analysis we could do on the 'WithLedgerState' value.
+  --
+  -- A cheap way to generalize this is to emit a text or a builder.
+  utxoSize :: WithLedgerState blk -> IO Word
 
 class HasProtocolInfo blk where
   data Args blk

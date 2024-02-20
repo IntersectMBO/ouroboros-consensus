@@ -51,7 +51,7 @@ import           Data.String (IsString (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
 import           Ouroboros.Consensus.Cardano
-import           Ouroboros.Consensus.Cardano.Block (CardanoEras)
+import           Ouroboros.Consensus.Cardano.Block (CardanoEras, LedgerState (LedgerStateByron))
 import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..),
                      protocolInfoCardano)
 import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
@@ -68,6 +68,23 @@ import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           System.Directory (makeAbsolute)
 import           System.FilePath (takeDirectory, (</>))
+
+-- FIXME: do not alias the imports
+import qualified Cardano.Chain.Block as Byron
+import qualified Cardano.Chain.UTxO as Byron
+import qualified Ouroboros.Consensus.Byron.Ledger.Ledger as Byron
+import qualified Data.Map.Strict as Map
+
+import qualified Cardano.Ledger.Shelley.LedgerState as Shelley
+import qualified Cardano.Ledger.Shelley.UTxO as Shelley
+import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
+
+import qualified Ouroboros.Consensus.Cardano.Block as Cardano.Block
+
+import qualified GHC.DataSize as DataSize
+import Control.DeepSeq (NFData)
+
+import qualified Cardano.Ledger.Core
 
 analyseBlock ::
      (forall blk. HasAnalysis blk => blk -> a)
@@ -268,6 +285,35 @@ instance (HasAnnTip (CardanoBlock StandardCrypto), GetPrevHash (CardanoBlock Sta
   emitTraces = analyseWithLedgerState emitTraces
 
   blockStats = analyseBlock blockStats
+
+  utxoSize (WithLedgerState blk stPre stPost) =
+      -- FIXME: we should consider unifying this with https://github.com/IntersectMBO/cardano-node/blob/7b0076138b7073ea8101ffa758c170ec0c3c8094/cardano-node/src/Cardano/Node/Queries.hs#L239
+      case stPost of
+        -- FIXME: Delete: See https://hackage.haskell.org/package/ghc-datasize-0.2.6/docs/GHC-DataSize.html
+        LedgerStateByron st                 -> utxoSizeByronEra st
+        Cardano.Block.LedgerStateShelley st -> utxoSizeShelleyBasedEra st
+        Cardano.Block.LedgerStateAllegra st -> utxoSizeShelleyBasedEra st
+        Cardano.Block.LedgerStateMary    st -> utxoSizeShelleyBasedEra st
+        Cardano.Block.LedgerStateAlonzo  st -> utxoSizeShelleyBasedEra st
+        Cardano.Block.LedgerStateBabbage st -> utxoSizeShelleyBasedEra st
+        Cardano.Block.LedgerStateConway  st -> utxoSizeShelleyBasedEra st
+
+     where
+       utxoSizeByronEra        = DataSize.recursiveSizeNF
+                               . Byron.unUTxO
+                               . Byron.cvsUtxo
+                               . Byron.byronLedgerState
+
+utxoSizeShelleyBasedEra ::
+     (Crypto (Cardano.Block.EraCrypto era0), NFData (Cardano.Ledger.Core.TxOut era0))
+  => LedgerState (ShelleyBlock proto0 era0) -> IO Word
+utxoSizeShelleyBasedEra = DataSize.recursiveSizeNF
+                               . (\(Shelley.UTxO xs)->  xs)
+                               . Shelley.utxosUtxo
+                               . Shelley.lsUTxOState
+                               . Shelley.esLState
+                               . Shelley.nesEs
+                               . Shelley.shelleyLedgerState
 
 type CardanoBlockArgs = Args (CardanoBlock StandardCrypto)
 

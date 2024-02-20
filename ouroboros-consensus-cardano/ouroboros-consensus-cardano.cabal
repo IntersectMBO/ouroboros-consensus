@@ -543,6 +543,9 @@ library unstable-cardano-tools
 
     , time
 
+    , ghc-datasize
+    , deepseq
+
 executable db-analyser
   hs-source-dirs: app
   main-is:        db-analyser.hs

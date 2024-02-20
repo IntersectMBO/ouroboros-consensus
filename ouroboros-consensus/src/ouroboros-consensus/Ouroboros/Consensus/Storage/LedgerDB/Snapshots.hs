@@ -57,6 +57,7 @@ import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Versioned
 import           System.FS.API.Lazy
+import qualified System.FS.API as FS
 import           Text.Read (readMaybe)
 
 {-------------------------------------------------------------------------------
@@ -206,7 +207,7 @@ writeSnapshot ::
   -> ExtLedgerState blk -> m ()
 writeSnapshot (SomeHasFS hasFS) encLedger ss cs = do
     withFile hasFS (snapshotToPath ss) (WriteMode MustBeNew) $ \h ->
-      void $ hPut hasFS h $ CBOR.toBuilder (encode cs)
+      void $ FS.hPutBuilder hasFS h $ CBOR.toBuilder (encode cs)
   where
     encode :: ExtLedgerState blk -> Encoding
     encode = encodeSnapshot encLedger

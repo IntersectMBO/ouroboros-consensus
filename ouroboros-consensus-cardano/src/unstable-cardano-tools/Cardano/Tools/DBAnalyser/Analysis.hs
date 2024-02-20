@@ -53,7 +53,7 @@ import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..),
                      validateHeader)
 import           Ouroboros.Consensus.Ledger.Abstract (LedgerCfg, LedgerConfig,
                      applyBlockLedgerResult, applyChainTick,
-                     tickThenApplyLedgerResult, tickThenReapply)
+                     tickThenApplyLedgerResult, tickThenReapply, tickThenReapplyLedgerResult)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerResult (..),
                      LedgerState, getTipSlot)
 import           Ouroboros.Consensus.Ledger.Extended
@@ -79,8 +79,10 @@ import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes,
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
+import           Ouroboros.Consensus.Util(whenJust)
 import           System.FS.API (SomeHasFS (..))
 import qualified System.IO as IO
+import GHC.Profiling (startHeapProfTimer, stopHeapProfTimer)
 
 {-------------------------------------------------------------------------------
   Run the requested analysis
@@ -421,17 +423,20 @@ storeLedgerStateAt slotNo (AnalysisEnv { db, registry, initLedger, cfg, limit, l
       --------------------------------------------------------------------------
       -- We store ledger states every 'timeBetweenSnapsInSecs' seconds
       --------------------------------------------------------------------------
-      let timeBetweenSnapsInSecs = 30
+      let timeBetweenSnapsInSecs = 3000000
       currTimestamp <- getCurrentTime
 
       let shouldTakeSnapshot =  timeBetweenSnapsInSecs <= currTimestamp `diffUTCTime` prevSnapshotTimestamp
                              && blockSlot blk < slotNo -- We want to avoid taking two snapshots at the same slot.
 
       when shouldTakeSnapshot $ do
+        startHeapProfTimer
         startTime <- getCurrentTime
         storeLedgerState blk newLedger
         endTime <- getCurrentTime
+        stopHeapProfTimer
         IO.hPutStrLn outFileHandle $ show startTime <> ", " <> show endTime
+
 
       -- Snapshots can take more that 'timeBetweenSnapsInSecs', so we
       -- need to record the end time of the last take snapshot.
@@ -462,11 +467,15 @@ storeLedgerStateAt slotNo (AnalysisEnv { db, registry, initLedger, cfg, limit, l
          blk
       -> ExtLedgerState blk
       -> IO ()
-    storeLedgerState blk ledgerState = do
+    storeLedgerState blk !ledgerState = do
+      noThunks [] ledgerState >>= (`whenJust` (error . show))
+
+      startHeapProfTimer
       let snapshot = DiskSnapshot
                       (unSlotNo $ blockSlot blk)
                       (Just $ "db-analyser")
       writeSnapshot ledgerDbFS encLedger snapshot ledgerState
+      stopHeapProfTimer
       traceWith tracer $ SnapshotStoredEvent (blockSlot blk)
 
     encLedger :: ExtLedgerState blk -> Encoding
@@ -502,19 +511,25 @@ checkNoThunksEvery ::
   Analysis blk
 checkNoThunksEvery
   nBlocks
-  (AnalysisEnv {db, registry, initLedger, cfg, limit}) = do
-    putStrLn $
-      "Checking for thunks in each block where blockNo === 0 (mod " <> show nBlocks <> ")."
-    void $ processAll db registry GetBlock initLedger limit initLedger process
-    pure Nothing
+  (AnalysisEnv {db, registry, initLedger, cfg, limit}) =
+    IO.withFile "slot_x_utxo_size-revert.csv" IO.WriteMode $ \outFileHandle ->  do
+        putStrLn $
+          "Checking for thunks in each block where blockNo === 0 (mod " <> show nBlocks <> ")."
+        void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle)
+        pure Nothing
   where
-    process :: ExtLedgerState blk -> blk -> IO (ExtLedgerState blk)
-    process oldLedger blk = do
+    process :: IO.Handle -> ExtLedgerState blk -> blk -> IO (ExtLedgerState blk)
+    process outFileHandle oldLedger blk = do
       let ledgerCfg     = ExtLedgerCfg cfg
-          appliedResult = tickThenApplyLedgerResult ledgerCfg blk oldLedger
-          newLedger     = either (error . show) lrResult $ runExcept $ appliedResult
+          newLedger     = tickThenReapply ledgerCfg blk oldLedger
           bn            = blockNo blk
-      when (unBlockNo bn `mod` nBlocks == 0 ) $ IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
+      when (unBlockNo bn `mod` nBlocks == 0 ) $ do
+        -- FIXME: for now I'm piggybacking on this logic. We should move to a separate analysis (and generalize all these analysis).
+        -- IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
+        utxoSize <- HasAnalysis.utxoSize (HasAnalysis.WithLedgerState blk (ledgerState oldLedger) (ledgerState newLedger))
+        IO.hPutStrLn outFileHandle $ show (blockSlot blk) <> ", " <> show utxoSize
+        IO.hFlush outFileHandle
+        putStrLn $ show (unSlotNo $ blockSlot blk) <> ", " <> show utxoSize
       return newLedger
 
     checkNoThunks :: BlockNo -> LedgerState blk -> IO ()
