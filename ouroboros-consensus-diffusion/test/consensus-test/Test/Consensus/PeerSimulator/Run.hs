@@ -51,9 +51,9 @@ import           Test.Consensus.PeerSimulator.StateDiagram
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
-import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
-                     NodeState, PeerSchedule, TestFragH, peersStatesRelative,
-                     prettyPeersSchedule)
+import           Test.Consensus.PointSchedule (AdvertisedPoints,
+                     GenesisTest (GenesisTest), PeerSchedule, TestFragH,
+                     peersStatesRelative, prettyPeersSchedule)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId, Peers,
                      getPeerIds)
 import           Test.Util.ChainDB
@@ -170,7 +170,7 @@ dispatchTick ::
   Tracer m String ->
   Tracer m () ->
   Map PeerId (PeerResources m) ->
-  (Int, (DiffTime, Peer NodeState)) ->
+  (Int, (DiffTime, Peer AdvertisedPoints)) ->
   m ()
 dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
   case peers Map.!? pid of

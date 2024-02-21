@@ -26,7 +26,6 @@ module Test.Consensus.PointSchedule (
   , GenesisTest (..)
   , GenesisWindow (..)
   , HeaderPoint (..)
-  , NodeState (..)
   , PeerSchedule
   , TestFrag
   , TestFragH
@@ -168,38 +167,6 @@ genesisAdvertisedPoints =
     block = BlockPoint Origin
   }
 
--- | The state of a peer in a single tick.
---
--- At the moment, this is only used to encode the fact that a peer does not have a current state
--- before it has been active for the first time.
---
--- REVIEW: Is that necessary/useful?
-data NodeState =
-  -- | The peer is online and advertises the given points.
-  NodeOnline AdvertisedPoints
-  |
-  -- | The peer should not respond to messages.
-  NodeOffline
-  deriving (Eq, Show)
-
-instance Condense NodeState where
-  condense = \case
-    NodeOnline points -> condense points
-    NodeOffline -> "*chrrrk* <signal lost>"
-
-instance CondenseList NodeState where
-  condenseList states =
-    case mapM toMaybe states of
-      -- all nodes are online
-      Just points -> condenseList points
-      -- there is one offline node
-      Nothing     -> condense <$> states
-    where
-      toMaybe :: NodeState -> Maybe AdvertisedPoints
-      toMaybe = \case
-        NodeOffline -> Nothing
-        NodeOnline points -> Just points
-
 prettyPeersSchedule :: Peers PeerSchedule -> [String]
 prettyPeersSchedule peers =
   zipWith3
@@ -210,7 +177,7 @@ prettyPeersSchedule peers =
     (showDT . fst . snd <$> numberedPeersStates)
     (condenseList $ (snd . snd) <$> numberedPeersStates)
   where
-    numberedPeersStates :: [(Int, (Time, Peer NodeState))]
+    numberedPeersStates :: [(Int, (Time, Peer AdvertisedPoints))]
     numberedPeersStates = zip [0..] (peersStates peers)
 
     showDT :: Time -> String
@@ -234,9 +201,9 @@ prettyPeersSchedule peers =
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
-peerStates :: Peer PeerSchedule -> [(Time, Peer NodeState)]
+peerStates :: Peer PeerSchedule -> [(Time, Peer AdvertisedPoints)]
 peerStates Peer {name, value = schedulePoints} =
-  drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name . NodeOnline <$> scanl' modPoint genesisAdvertisedPoints points))
+  drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisAdvertisedPoints points))
   where
     shiftTime :: Time -> Time
     shiftTime t = addTime (- firstTipOffset) t
@@ -254,12 +221,12 @@ peerStates Peer {name, value = schedulePoints} =
 -- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
 --
 -- The resulting schedule contains all the peers. Items are sorted by time.
-peersStates :: Peers PeerSchedule -> [(Time, Peer NodeState)]
+peersStates :: Peers PeerSchedule -> [(Time, Peer AdvertisedPoints)]
 peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
 
 -- | Same as 'peersStates' but returns the duration of a state instead of the
 -- absolute time at which it starts holding.
-peersStatesRelative :: Peers PeerSchedule -> [(DiffTime, Peer NodeState)]
+peersStatesRelative :: Peers PeerSchedule -> [(DiffTime, Peer AdvertisedPoints)]
 peersStatesRelative peers =
   let (starts, states) = unzip $ peersStates peers
       durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]

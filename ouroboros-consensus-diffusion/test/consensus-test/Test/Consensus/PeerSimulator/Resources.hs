@@ -103,7 +103,7 @@ data PeerResources m =
 
     -- | An action used by the scheduler to update the peer's advertised points and
     -- resume processing for the ChainSync and BlockFetch servers.
-    prUpdateState :: NodeState -> STM m ()
+    prUpdateState :: AdvertisedPoints -> STM m ()
   }
 
 -- | Resources for the peer simulator.
@@ -163,21 +163,19 @@ makeChainSyncResources csrTickStarted SharedResources {srPeerId, srTracer, srBlo
 updateState ::
   IOLike m =>
   StrictTVar m (Maybe AdvertisedPoints) ->
-  m (NodeState -> STM m (), STM m (), STM m ())
+  m (AdvertisedPoints -> STM m (), STM m (), STM m ())
 updateState srCurrentState =
   atomically $ do
     publisher <- newBroadcastTChan
     consumer1 <- dupTChan publisher
     consumer2 <- dupTChan publisher
     let
-      newState s = do
-        writeTVar srCurrentState =<< case s of
-          NodeOffline     -> pure Nothing
-          NodeOnline tick -> do
+      newState points = do
+        writeTVar srCurrentState =<< do
             -- REVIEW: Is it ok to only unblock the peer when it is online?
             -- So far we've handled Nothing in the ChainSync server by skipping the tick.
             writeTChan publisher ()
-            pure (Just tick)
+            pure (Just points)
     pure (newState, readTChan consumer1, readTChan consumer2)
 
 -- | Create all concurrency resources and the ChainSync protocol server used
