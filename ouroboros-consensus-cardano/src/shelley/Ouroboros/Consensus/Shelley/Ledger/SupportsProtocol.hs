@@ -85,10 +85,6 @@ instance
       maxFor :: SlotNo
       maxFor = addSlots swindow $ succWithOrigin at
 
-  computeGenesisWindow cfg _ = GenesisWindow (SL.stabilityWindow globals)
-    where
-      globals = shelleyLedgerGlobals cfg
-
 instance
   ( ShelleyCompatible (Praos crypto) era,
     ShelleyCompatible (TPraos crypto) era,
@@ -128,7 +124,3 @@ instance
             shelleyLedgerTransition = shelleyLedgerTransition st
           }
       coerceTip (ShelleyTip slot block hash) = ShelleyTip slot block (coerce hash)
-
-  computeGenesisWindow cfg _ = GenesisWindow (SL.stabilityWindow globals)
-    where
-      globals = shelleyLedgerGlobals cfg

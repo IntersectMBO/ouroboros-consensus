@@ -122,7 +122,6 @@ instance ( SimpleCrypto c
   ledgerViewForecastAt cfg st = constantForecastOf
                                  (simpleMockLedgerConfig cfg)
                                  (getTipSlot st)
-  computeGenesisWindow _ _ = GenesisWindow 42 -- TODO
 
 {-------------------------------------------------------------------------------
   Forging

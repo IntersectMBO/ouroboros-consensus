@@ -243,7 +243,6 @@ instance BlockSupportsProtocol BlockA where
 instance LedgerSupportsProtocol BlockA where
   protocolLedgerView   _ _  = ()
   ledgerViewForecastAt _    = trivialForecast
-  computeGenesisWindow _ _  = GenesisWindow 42 -- TODO
 
 instance HasPartialConsensusConfig ProtocolA
 

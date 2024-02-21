@@ -592,8 +592,6 @@ instance (PayloadSemantics ptype) => LedgerSupportsProtocol (TestBlockWith ptype
   protocolLedgerView   _ _  = ()
   ledgerViewForecastAt cfg state =
     constantForecastInRange (tblcForecastRange cfg) () (getTipSlot state)
-  computeGenesisWindow cfg _ =
-    HardFork.eraGenesisWin cfg
 
 singleNodeTestConfigWith ::
      CodecConfig (TestBlockWith ptype)
