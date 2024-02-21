@@ -20,18 +20,18 @@
 -- and once it fulfills the state's criteria, it yields control back to the scheduler,
 -- who then activates the next tick's peer.
 module Test.Consensus.PointSchedule (
-    AdvertisedPoints (..)
-  , BlockPoint (..)
+    BlockPoint (..)
   , ForecastRange (..)
   , GenesisTest (..)
   , GenesisWindow (..)
   , HeaderPoint (..)
+  , NodeState (..)
   , PeerSchedule
   , TestFrag
   , TestFragH
   , TipPoint (..)
   , enrichedWith
-  , genesisAdvertisedPoints
+  , genesisNodeState
   , longRangeAttack
   , peerSchedulesBlocks
   , peerStates
@@ -127,27 +127,22 @@ instance Condense BlockPoint where
 instance CondenseList BlockPoint where
   condenseList = condenseListWithPadding PadRight
 
--- | The set of parameters that define the state that a peer should reach when it receives control
--- by the scheduler in a single tick.
---
--- REVIEW: I find this rather poorly named. If it is really what is advertised
--- then isn't it weird to have the fragment in it? If it is the whole internal
--- state of the (online) node, then maybe we can call it that?
-data AdvertisedPoints =
-  AdvertisedPoints {
+-- | The state of a peer at a given point in time.
+data NodeState =
+  NodeState {
     tip    :: TipPoint,
     header :: HeaderPoint,
     block  :: BlockPoint
   }
   deriving (Eq, Show)
 
-instance Condense AdvertisedPoints where
-  condense AdvertisedPoints {tip, header, block} =
+instance Condense NodeState where
+  condense NodeState {tip, header, block} =
     "TP " ++ condense tip ++
     " | HP " ++ condense header ++
     " | BP " ++ condense block
 
-instance CondenseList AdvertisedPoints where
+instance CondenseList NodeState where
   condenseList points =
     zipWith3
       (\tip header block ->
@@ -159,9 +154,9 @@ instance CondenseList AdvertisedPoints where
       (condenseList $ header <$> points)
       (condenseList $ block <$> points)
 
-genesisAdvertisedPoints :: AdvertisedPoints
-genesisAdvertisedPoints =
-  AdvertisedPoints {
+genesisNodeState :: NodeState
+genesisNodeState =
+  NodeState {
     tip = TipPoint TipGenesis,
     header = HeaderPoint Origin,
     block = BlockPoint Origin
@@ -177,7 +172,7 @@ prettyPeersSchedule peers =
     (showDT . fst . snd <$> numberedPeersStates)
     (condenseList $ (snd . snd) <$> numberedPeersStates)
   where
-    numberedPeersStates :: [(Int, (Time, Peer AdvertisedPoints))]
+    numberedPeersStates :: [(Int, (Time, Peer NodeState))]
     numberedPeersStates = zip [0..] (peersStates peers)
 
     showDT :: Time -> String
@@ -201,9 +196,9 @@ prettyPeersSchedule peers =
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
-peerStates :: Peer PeerSchedule -> [(Time, Peer AdvertisedPoints)]
+peerStates :: Peer PeerSchedule -> [(Time, Peer NodeState)]
 peerStates Peer {name, value = schedulePoints} =
-  drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisAdvertisedPoints points))
+  drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisNodeState points))
   where
     shiftTime :: Time -> Time
     shiftTime t = addTime (- firstTipOffset) t
@@ -221,12 +216,12 @@ peerStates Peer {name, value = schedulePoints} =
 -- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
 --
 -- The resulting schedule contains all the peers. Items are sorted by time.
-peersStates :: Peers PeerSchedule -> [(Time, Peer AdvertisedPoints)]
+peersStates :: Peers PeerSchedule -> [(Time, Peer NodeState)]
 peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
 
 -- | Same as 'peersStates' but returns the duration of a state instead of the
 -- absolute time at which it starts holding.
-peersStatesRelative :: Peers PeerSchedule -> [(DiffTime, Peer AdvertisedPoints)]
+peersStatesRelative :: Peers PeerSchedule -> [(DiffTime, Peer NodeState)]
 peersStatesRelative peers =
   let (starts, states) = unzip $ peersStates peers
       durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]

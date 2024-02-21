@@ -4,7 +4,7 @@
 {-# LANGUAGE TypeOperators       #-}
 
 -- | Business logic of the ChainSync and BlockFetch protocol handlers that operate
--- on the 'AdvertisedPoints' of a point schedule.
+-- on the 'NodeState' of a point schedule.
 --
 -- These are separated from the scheduling related mechanics of the
 -- server mocks that the peer simulator uses, in
@@ -56,7 +56,7 @@ handlerFindIntersection ::
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
   [Point TestBlock] ->
-  AdvertisedPoints ->
+  NodeState ->
   STM m (Maybe FindIntersect, [String])
 handlerFindIntersection currentIntersection blockTree clientPoints points = do
   let TipPoint tip' = tip points
@@ -83,7 +83,7 @@ handlerRequestNext ::
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
-  AdvertisedPoints ->
+  NodeState ->
   STM m (Maybe RequestNext, [String])
 handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
@@ -157,9 +157,9 @@ handlerBlockFetch ::
   IOLike m =>
   BlockTree TestBlock ->
   ChainRange (Point TestBlock) ->
-  AdvertisedPoints ->
+  NodeState ->
   STM m (Maybe BlockFetch, [String])
-handlerBlockFetch blockTree (ChainRange from to) AdvertisedPoints {header = HeaderPoint hp, block = BlockPoint bp} =
+handlerBlockFetch blockTree (ChainRange from to) NodeState {header = HeaderPoint hp, block = BlockPoint bp} =
   runWriterT (serveFromBpFragment (AF.sliceRange bpChain from to))
   where
     -- Check whether the requested range is contained in the fragment before the block point.

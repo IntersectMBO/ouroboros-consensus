@@ -58,7 +58,7 @@ data SharedResources m =
     -- | The currently active schedule point.
     --
     -- This is 'Maybe' because we cannot wait for the initial state otherwise.
-    srCurrentState :: StrictTVar m (Maybe AdvertisedPoints),
+    srCurrentState :: StrictTVar m (Maybe NodeState),
 
     srTracer       :: Tracer m String
   }
@@ -103,7 +103,7 @@ data PeerResources m =
 
     -- | An action used by the scheduler to update the peer's advertised points and
     -- resume processing for the ChainSync and BlockFetch servers.
-    prUpdateState :: AdvertisedPoints -> STM m ()
+    prUpdateState :: NodeState -> STM m ()
   }
 
 -- | Resources for the peer simulator.
@@ -116,12 +116,12 @@ data PeerSimulatorResources m =
     psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m TestFragH))
   }
 
--- | Create 'ChainSyncServerHandlers' for our default implementation using 'AdvertisedPoints'.
+-- | Create 'ChainSyncServerHandlers' for our default implementation using 'NodeState'.
 makeChainSyncServerHandlers ::
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
-  ChainSyncServerHandlers m AdvertisedPoints
+  ChainSyncServerHandlers m NodeState
 makeChainSyncServerHandlers currentIntersection blockTree =
   ChainSyncServerHandlers {
     csshFindIntersection = handlerFindIntersection currentIntersection blockTree,
@@ -162,8 +162,8 @@ makeChainSyncResources csrTickStarted SharedResources {srPeerId, srTracer, srBlo
 -- TVar.
 updateState ::
   IOLike m =>
-  StrictTVar m (Maybe AdvertisedPoints) ->
-  m (AdvertisedPoints -> STM m (), STM m (), STM m ())
+  StrictTVar m (Maybe NodeState) ->
+  m (NodeState -> STM m (), STM m (), STM m ())
 updateState srCurrentState =
   atomically $ do
     publisher <- newBroadcastTChan
@@ -182,7 +182,7 @@ updateState srCurrentState =
 -- for a single peer.
 --
 -- A peer performs BlockFetch and ChainSync using a state of
--- type 'AdvertisedPoints' that is updated by a separate scheduler, waking up
+-- type 'NodeState' that is updated by a separate scheduler, waking up
 -- the protocol handlers to process messages until the conditions of the new
 -- state are satisfied.
 --

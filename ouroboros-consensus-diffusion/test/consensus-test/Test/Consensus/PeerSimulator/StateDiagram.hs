@@ -54,8 +54,8 @@ import           Ouroboros.Network.Block (HeaderHash, Tip (Tip))
 import           Test.Consensus.BlockTree (BlockTree (btBranches, btTrunk),
                      BlockTreeBranch (btbSuffix), prettyBlockTree)
 import qualified Test.Consensus.PointSchedule as PS
-import           Test.Consensus.PointSchedule (AdvertisedPoints, TestFrag,
-                     TestFragH, genesisAdvertisedPoints)
+import           Test.Consensus.PointSchedule (NodeState, TestFrag, TestFragH,
+                     genesisNodeState)
 import           Test.Consensus.PointSchedule.Peers (PeerId (..))
 import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 
@@ -474,7 +474,7 @@ addTipPoint pid (PS.TipPoint (Tip s h _)) TreeSlots {lastSlot, branches} =
 
 addTipPoint _ _ treeSlots = treeSlots
 
-addPoints :: Map PeerId AdvertisedPoints -> TreeSlots -> TreeSlots
+addPoints :: Map PeerId NodeState -> TreeSlots -> TreeSlots
 addPoints peerPoints treeSlots =
   foldl' step treeSlots (Map.toList peerPoints)
   where
@@ -836,7 +836,7 @@ data PeerSimState =
     pssBlockTree  :: BlockTree TestBlock,
     pssSelection  :: TestFragH,
     pssCandidates :: Map PeerId TestFragH,
-    pssPoints     :: Map PeerId AdvertisedPoints
+    pssPoints     :: Map PeerId NodeState
   }
 
 -- TODO add an aspect for the last block of each branch?
@@ -901,7 +901,7 @@ peerSimStateDiagramSTMTracer ::
   BlockTree TestBlock ->
   STM m TestFragH ->
   STM m (Map PeerId TestFragH) ->
-  STM m (Map PeerId (Maybe AdvertisedPoints)) ->
+  STM m (Map PeerId (Maybe NodeState)) ->
   m (Tracer m ())
 peerSimStateDiagramSTMTracer stringTracer pssBlockTree selectionVar candidatesVar pointsVar = do
   peerCache <- uncheckedNewTVarM mempty
@@ -909,7 +909,7 @@ peerSimStateDiagramSTMTracer stringTracer pssBlockTree selectionVar candidatesVa
     (s, cachedPeers) <- atomically $ do
       pssSelection <- selectionVar
       pssCandidates <- candidatesVar
-      pssPoints <- fmap (fromMaybe genesisAdvertisedPoints) <$> pointsVar
+      pssPoints <- fmap (fromMaybe genesisNodeState) <$> pointsVar
       cachedPeers <- readTVar peerCache
       pure (PeerSimState {pssBlockTree, pssSelection, pssCandidates, pssPoints}, cachedPeers)
     let (blocks, newPeers) = peerSimStateDiagramWith (defaultRenderConfig {cachedPeers}) s
@@ -929,7 +929,7 @@ peerSimStateDiagramSTMTracerDebug ::
   BlockTree TestBlock ->
   STM m TestFragH ->
   STM m (Map PeerId TestFragH) ->
-  STM m (Map PeerId (Maybe AdvertisedPoints)) ->
+  STM m (Map PeerId (Maybe NodeState)) ->
   m (Tracer m ())
 peerSimStateDiagramSTMTracerDebug =
   peerSimStateDiagramSTMTracer debugTracer
