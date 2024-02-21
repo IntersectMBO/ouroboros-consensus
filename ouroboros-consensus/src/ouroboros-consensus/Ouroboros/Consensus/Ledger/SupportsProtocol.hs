@@ -70,18 +70,6 @@ class ( BlockSupportsProtocol blk
     -> LedgerState blk
     -> Forecast (LedgerView (BlockProtocol blk))
 
-  -- | Get the Genesis window corresponding to a ledger state at an intersection.
-  --
-  -- High-level requirement: \"The\" honest chain must be denser (i.e. have more
-  -- blocks) in the returned window of slots than any other possible chain
-  -- intersecting it at the given point.
-  computeGenesisWindow ::
-       LedgerConfig blk
-    -> LedgerState blk
-    -> GenesisWindow
-    -- TODO: is this the right place, should Genesis window functionality be
-    -- optional, use better types etc.
-
 -- | Relation between 'ledgerViewForecastAt' and 'applyChainTick'
 _lemma_ledgerViewForecastAt_applyChainTick
   :: ( LedgerSupportsProtocol blk

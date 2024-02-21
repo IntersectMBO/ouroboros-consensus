@@ -577,8 +577,6 @@ instance (PayloadSemantics ptype) => ValidateEnvelope (TestBlockWith ptype) wher
 instance (PayloadSemantics ptype) => LedgerSupportsProtocol (TestBlockWith ptype) where
   protocolLedgerView   _ _  = ()
   ledgerViewForecastAt _    = trivialForecast
-  computeGenesisWindow cfg _ =
-    HardFork.eraGenesisWin cfg
 
 singleNodeTestConfigWith ::
      CodecConfig (TestBlockWith ptype)

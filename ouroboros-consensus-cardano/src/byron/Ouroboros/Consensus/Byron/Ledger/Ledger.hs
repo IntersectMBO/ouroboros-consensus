@@ -275,10 +275,6 @@ instance LedgerSupportsProtocol ByronBlock where
           Origin      -> SlotNo $ 2 * k
           NotOrigin s -> SlotNo $ unSlotNo s + 1 + (2 * k)
 
-  computeGenesisWindow cfg _ = GenesisWindow (2 * k)
-    where
-      SecurityParam k = genesisSecurityParam cfg
-
 -- | To be used for a Byron-to-X (where X is typically Shelley) chain.
 byronEraParams :: Gen.Config -> HardFork.EraParams
 byronEraParams genesis = HardFork.EraParams {

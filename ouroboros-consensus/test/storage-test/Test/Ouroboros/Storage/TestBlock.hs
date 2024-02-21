@@ -628,8 +628,6 @@ instance ValidateEnvelope TestBlock where
 instance LedgerSupportsProtocol TestBlock where
   protocolLedgerView   _ _  = ()
   ledgerViewForecastAt _    = trivialForecast
-  computeGenesisWindow cfg _ =
-    HardFork.eraGenesisWin cfg
 
 instance HasHardForkHistory TestBlock where
   type HardForkIndices TestBlock = '[TestBlock]
