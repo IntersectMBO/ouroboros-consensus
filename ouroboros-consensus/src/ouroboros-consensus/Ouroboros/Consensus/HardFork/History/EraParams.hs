@@ -26,8 +26,6 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import           Ouroboros.Consensus.Config.SecurityParam
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-                     (GenesisWindow (..))
 
 {-------------------------------------------------------------------------------
   OVERVIEW

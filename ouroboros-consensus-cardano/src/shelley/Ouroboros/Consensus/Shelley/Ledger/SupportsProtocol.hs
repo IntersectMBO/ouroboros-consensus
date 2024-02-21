@@ -33,7 +33,7 @@ import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History.Util
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-                     (GenesisWindow (..), LedgerSupportsProtocol (..))
+                     (LedgerSupportsProtocol (..))
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
