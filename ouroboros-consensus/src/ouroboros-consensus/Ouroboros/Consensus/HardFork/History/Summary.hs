@@ -67,7 +67,6 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
 import           Ouroboros.Consensus.HardFork.History.EraParams
 import           Ouroboros.Consensus.HardFork.History.Util
-import           Ouroboros.Consensus.Ledger.SupportsProtocol (GenesisWindow)
 
 {-------------------------------------------------------------------------------
   Bounds

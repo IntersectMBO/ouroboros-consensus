@@ -30,7 +30,6 @@ import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
 import           Ouroboros.Consensus.HardFork.History.Summary (Bound, Summary,
                      initBound, neverForksSummary)
-import           Ouroboros.Consensus.Ledger.SupportsProtocol (GenesisWindow)
 
 {-------------------------------------------------------------------------------
   Query language

@@ -9,14 +9,12 @@ module Ouroboros.Consensus.Ledger.SupportsProtocol (
   ) where
 
 import           Control.Monad.Except
-import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Util.IOLike (NoThunks)
 
 -- | Link protocol to ledger
 class ( BlockSupportsProtocol blk
@@ -83,10 +81,6 @@ class ( BlockSupportsProtocol blk
     -> GenesisWindow
     -- TODO: is this the right place, should Genesis window functionality be
     -- optional, use better types etc.
-
-newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
-  deriving stock (Show, Eq, Ord)
-  deriving newtype (NoThunks, Num)
 
 -- | Relation between 'ledgerViewForecastAt' and 'applyChainTick'
 _lemma_ledgerViewForecastAt_applyChainTick
