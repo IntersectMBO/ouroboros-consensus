@@ -25,26 +25,26 @@ import           Control.Monad (guard)
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_, toList)
-import           Data.List (intercalate)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Word (Word64)
-import           Ouroboros.Consensus.Block (SlotNo (SlotNo, unSlotNo),
-                     blockSlot, succWithOrigin)
-import           Ouroboros.Consensus.Block.Abstract (GetHeader, Header)
+import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
                      configSecurityParam)
 import           Ouroboros.Consensus.Config.SecurityParam
                      (SecurityParam (SecurityParam))
+import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
+import           Ouroboros.Consensus.HardFork.History.Qry (qryFromExpr,
+                     runQuery, slotToGenesisWindow)
 import           Ouroboros.Consensus.Ledger.Extended (ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-                     (GenesisWindow (..), LedgerSupportsProtocol,
-                     computeGenesisWindow)
+                     (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandle (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API
                      (UpdateLoEFrag (UpdateLoEFrag))
+import           Ouroboros.Consensus.Util (eitherToMaybe, whenJust)
 import           Ouroboros.Consensus.Util.AnchoredFragment (stripCommonPrefix)
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
@@ -217,6 +217,7 @@ updateLoEFragGenesis ::
      ( IOLike m
      , Ord peer
      , LedgerSupportsProtocol blk
+     , HasHardForkHistory blk
      )
   => TopLevelConfig blk
   -> Tracer m (TraceGDDEvent peer blk)
@@ -239,16 +240,36 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles =
           cschLatestSlot (handles Map.! peer)
       pure (candidateSuffixes, handles, theirTips, latestSlots, loeFrag)
 
-    let
-      -- TODO: use a forecasted ledger view for the intersection
-      -- slot (tip of LoE frag).
-      -- REVIEW: Have we talked about this?
-      sgen = computeGenesisWindow (configLedger cfg) (ledgerState immutableLedgerSt)
-      (losingPeers, bounds) =
-        densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes theirTips latestSlots loeFrag
-      loeHead = AF.headAnchor loeFrag
+    let msgen :: Maybe GenesisWindow
+        msgen = eitherToMaybe $ runQuery qry summary
+          where
+            -- We use the Genesis window for the first slot /after/ the common
+            -- intersection. In particular, when the intersection is the last
+            -- slot of an era, we will use the Genesis window of the next era,
+            -- as all slots in the Genesis window reside in that next era.
+            slot    = succWithOrigin $ AF.headSlot loeFrag
+            qry     = qryFromExpr $ slotToGenesisWindow slot
+            summary =
+              hardForkSummary
+                (configLedger cfg)
+                -- Due to the cross-chain lemma (Property 17.3 in the Consensus
+                -- report) one could also use the ledger state at the tip of our
+                -- selection here (in which case this should never return
+                -- 'Nothing'), but this is subtle and maybe not desirable.
+                --
+                -- In any case, the immutable ledger state will also
+                -- /eventually/ catch up to the LoE tip, so @msgen@ won't be
+                -- 'Nothing' forever.
+                (ledgerState immutableLedgerSt)
 
-    traceWith tracer TraceGDDEvent {bounds, candidateSuffixes, losingPeers, loeHead}
+    whenJust msgen $ \sgen -> do
+      let
+        (losingPeers, bounds) =
+          densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes theirTips latestSlots loeFrag
+        loeHead = AF.headAnchor loeFrag
 
-    for_ losingPeers $ \peer -> cschKill (handles Map.! peer)
+      traceWith tracer TraceGDDEvent {bounds, candidateSuffixes, losingPeers, loeHead}
+
+      for_ losingPeers $ \peer -> cschKill (handles Map.! peer)
+
     pure loeFrag
