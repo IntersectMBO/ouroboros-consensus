@@ -23,7 +23,6 @@ module Test.Consensus.PointSchedule (
     ForecastRange (..)
   , GenesisTest (..)
   , GenesisWindow (..)
-  , HeaderPoint (..)
   , NodeState (..)
   , PeerSchedule
   , TipPoint (..)
@@ -50,7 +49,7 @@ import           Data.List (mapAccumL, partition, scanl')
 import           Data.Maybe (mapMaybe)
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
-import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader,
+import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..),
                      withOriginToMaybe)
 import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
@@ -60,7 +59,7 @@ import           Ouroboros.Consensus.Util.Condense (Condense (..),
                      condenseListWithPadding, padListWith)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..), tipFromHeader)
-import           Ouroboros.Network.Point (WithOrigin (At), withOrigin)
+import           Ouroboros.Network.Point (withOrigin)
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
@@ -76,9 +75,9 @@ import           Test.Consensus.PointSchedule.SinglePeer.Indices
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
-import           Test.Util.TersePrinting (terseBlock, terseFragment,
-                     terseHeader, terseTip, terseWithOrigin)
-import           Test.Util.TestBlock (Header, TestBlock)
+import           Test.Util.TersePrinting (terseBlock, terseFragment, terseTip,
+                     terseWithOrigin)
+import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
 ----------------------------------------------------------------------------------------------------
@@ -97,31 +96,19 @@ instance Condense TipPoint where
 instance CondenseList TipPoint where
   condenseList = condenseListWithPadding PadRight
 
--- | The latest header that should be sent to the client by the ChainSync server
--- in a tick.
-newtype HeaderPoint =
-  HeaderPoint (WithOrigin (Header TestBlock))
-  deriving (Eq, Show)
-
-instance Condense HeaderPoint where
-  condense (HeaderPoint header) = terseWithOrigin terseHeader header
-
-instance CondenseList HeaderPoint where
-  condenseList = condenseListWithPadding PadRight
-
 -- | The state of a peer at a given point in time.
 data NodeState =
   NodeState {
-    tip     :: TipPoint,
-    header  :: HeaderPoint,
-    nsBlock :: WithOrigin TestBlock
+    tip      :: TipPoint,
+    nsHeader :: WithOrigin TestBlock,
+    nsBlock  :: WithOrigin TestBlock
   }
   deriving (Eq, Show)
 
 instance Condense NodeState where
-  condense NodeState {tip, header, nsBlock} =
+  condense NodeState {tip, nsHeader, nsBlock} =
     "TP " ++ condense tip ++
-    " | HP " ++ condense header ++
+    " | HP " ++ terseWithOrigin terseBlock nsHeader ++
     " | BP " ++ terseWithOrigin terseBlock nsBlock
 
 instance CondenseList NodeState where
@@ -133,14 +120,14 @@ instance CondenseList NodeState where
           " | BP " ++ block
       )
       (condenseList $ tip <$> points)
-      (condenseList $ header <$> points)
+      (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsHeader) points)
       (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsBlock) points)
 
 genesisNodeState :: NodeState
 genesisNodeState =
   NodeState {
     tip = TipPoint TipGenesis,
-    header = HeaderPoint Origin,
+    nsHeader = Origin,
     nsBlock = Origin
   }
 
@@ -190,7 +177,7 @@ peerStates Peer {name, value = schedulePoints} =
 
     modPoint z = \case
       ScheduleTipPoint tip -> z {tip = TipPoint (withOrigin TipGenesis tipFromHeader tip)}
-      ScheduleHeaderPoint h -> z {header = HeaderPoint (withOrigin Origin (At . getHeader) h)}
+      ScheduleHeaderPoint nsHeader -> z {nsHeader}
       ScheduleBlockPoint nsBlock -> z {nsBlock}
 
     (times, points) = unzip schedulePoints

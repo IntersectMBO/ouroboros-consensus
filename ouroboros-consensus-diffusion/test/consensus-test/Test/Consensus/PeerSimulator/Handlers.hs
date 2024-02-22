@@ -23,7 +23,7 @@ import           Control.Monad.Writer.Strict (MonadWriter (tell),
                      WriterT (runWriterT))
 import           Data.Coerce (coerce)
 import           Data.Maybe (fromJust, fromMaybe)
-import           Ouroboros.Consensus.Block (HasHeader, Header, HeaderHash,
+import           Ouroboros.Consensus.Block (HasHeader, HeaderHash,
                      Point (GenesisPoint), castPoint, getHeader, withOrigin)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
@@ -90,9 +90,9 @@ handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
     trace $ "  last intersection is " ++ tersePoint intersection
-    withHeader intersection (coerce (header points))
+    withHeader intersection (nsHeader points)
   where
-    withHeader :: Point TestBlock -> WithOrigin (Header TestBlock) -> WriterT [String] (STM m) (Maybe RequestNext)
+    withHeader :: Point TestBlock -> WithOrigin TestBlock -> WriterT [String] (STM m) (Maybe RequestNext)
     withHeader intersection h =
       maybe noPathError (analysePath hp) (BT.findPath intersection hp blockTree)
       where
@@ -160,7 +160,7 @@ handlerBlockFetch ::
   ChainRange (Point TestBlock) ->
   NodeState ->
   STM m (Maybe BlockFetch, [String])
-handlerBlockFetch blockTree (ChainRange from to) NodeState {header = HeaderPoint hp, block = BlockPoint bp} =
+handlerBlockFetch blockTree (ChainRange from to) NodeState {nsBlock, nsHeader} =
   runWriterT (serveFromBpFragment (AF.sliceRange bpChain from to))
   where
     -- Check whether the requested range is contained in the fragment before the block point.
@@ -180,7 +180,7 @@ handlerBlockFetch blockTree (ChainRange from to) NodeState {header = HeaderPoint
         --
         -- Otherwise, we simply have to wait for BP to advance sufficiently, and we block without sending
         -- a message, to simulate a slow response.
-        case not (AF.withinFragmentBounds to hpChain) && AF.withinFragmentBounds (toPoint bp) hpChain of
+        case not (AF.withinFragmentBounds to hpChain) && AF.withinFragmentBounds (toPoint nsBlock) hpChain of
           True ->
             case AF.sliceRange (fragmentUpTo "requested point" to) from to of
               Just slice -> do
@@ -191,9 +191,9 @@ handlerBlockFetch blockTree (ChainRange from to) NodeState {header = HeaderPoint
             trace ("Waiting for next tick for range: " ++ tersePoint from ++ " -> " ++ tersePoint to)
             pure Nothing
 
-    bpChain = fragmentUpTo "block point" (toPoint bp)
+    bpChain = fragmentUpTo "block point" (toPoint nsBlock)
 
-    hpChain = fragmentUpTo "header point" (toPoint hp)
+    hpChain = fragmentUpTo "header point" (toPoint nsHeader)
 
     trace = tell . pure
 
