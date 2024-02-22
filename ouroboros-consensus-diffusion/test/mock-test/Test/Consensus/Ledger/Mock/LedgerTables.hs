@@ -17,7 +17,7 @@ type Block = SimpleBlock SimpleMockCrypto (SimplePBftExt SimpleMockCrypto PBftMo
 tests :: TestTree
 tests = testGroup "LedgerTables"
   [ testProperty "Stowable laws" (prop_stowable_laws @Block)
-  , testProperty "TableStuff laws" (prop_tablestuff_laws @Block)
+  , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @Block)
   ]
 
 instance Arbitrary (LedgerTables (LedgerState Block) ValuesMK) where

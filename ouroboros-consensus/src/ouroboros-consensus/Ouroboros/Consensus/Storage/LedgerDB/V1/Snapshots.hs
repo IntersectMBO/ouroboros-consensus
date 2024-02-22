@@ -131,6 +131,9 @@
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots (
     loadSnapshot
   , takeSnapshot
+    -- * Testing
+  , snapshotToStatePath
+  , snapshotToTablesPath
   ) where
 
 import           Codec.CBOR.Encoding

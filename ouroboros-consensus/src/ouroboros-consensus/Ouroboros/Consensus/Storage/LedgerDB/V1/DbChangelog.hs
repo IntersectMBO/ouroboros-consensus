@@ -181,6 +181,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
   , rollbackN
   , rollbackToAnchor
   , rollbackToPoint
+    -- * Testing
+  , reapplyThenPush'
+  , reapplyThenPushMany'
+  , switch
+  , switch'
   ) where
 
 import           Cardano.Slotting.Slot
@@ -199,8 +204,10 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import           Ouroboros.Consensus.Storage.LedgerDB.API
 import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
+import           Ouroboros.Consensus.Util (repeatedlyM)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.AnchoredSeq (AnchoredSeq)
 import qualified Ouroboros.Network.AnchoredSeq as AS
@@ -940,3 +947,69 @@ volatileStatesBimap f g =
       AS.bimap f g
     . adcStates
     . anchorlessChangelog
+
+{-------------------------------------------------------------------------------
+  Testing
+-------------------------------------------------------------------------------}
+reapplyThenPush' :: ApplyBlock l blk
+               => LedgerDbCfg l
+               -> blk
+               -> KeySetsReader Identity l
+               -> AnchorlessDbChangelog l
+               -> AnchorlessDbChangelog l
+reapplyThenPush' cfg b bk = runIdentity . reapplyThenPush cfg b bk
+
+reapplyThenPushMany' :: ApplyBlock l blk
+                   => LedgerDbCfg l
+                   -> [blk]
+                   -> KeySetsReader Identity l
+                   -> AnchorlessDbChangelog l
+                   -> AnchorlessDbChangelog l
+reapplyThenPushMany' cfg bs bk =
+  runIdentity . reapplyThenPushMany cfg bs bk
+
+reapplyThenPushMany ::
+     (ApplyBlock l blk, Monad m)
+  => LedgerDbCfg l
+  -> [blk]
+  -> KeySetsReader m l
+  -> AnchorlessDbChangelog l
+  -> m (AnchorlessDbChangelog l)
+reapplyThenPushMany cfg aps ksReader =
+  repeatedlyM (\ap -> reapplyThenPush cfg ap ksReader) aps
+
+switch ::
+     (ApplyBlock l blk, Monad m)
+  => LedgerDbCfg l
+  -> Word64
+  -> [blk]
+  -> KeySetsReader m l
+  -> AnchorlessDbChangelog l
+  -> m (Either ExceededRollback (AnchorlessDbChangelog l))
+switch cfg numRollbacks newBlocks ksReader db =
+  case rollbackN numRollbacks db of
+      Nothing ->
+        return $ Left $ ExceededRollback {
+            rollbackMaximum   = maxRollback db
+          , rollbackRequested = numRollbacks
+          }
+      Just db' -> case newBlocks of
+        [] -> pure $ Right db'
+        -- no blocks to apply to ledger state, return current DbChangelog
+        _ -> Right <$> reapplyThenPushMany
+                      cfg
+                      newBlocks
+                      ksReader
+                      db'
+
+switch' :: ApplyBlock l blk
+        => LedgerDbCfg l
+        -> Word64
+        -> [blk]
+        -> KeySetsReader Identity l
+        -> AnchorlessDbChangelog l
+        -> Maybe (AnchorlessDbChangelog l)
+switch' cfg n bs bk db =
+  case runIdentity $ switch cfg n bs bk db of
+    Left  ExceededRollback{} -> Nothing
+    Right db'                -> Just db'

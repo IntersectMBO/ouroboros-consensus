@@ -33,23 +33,23 @@ tests :: TestTree
 tests = testGroup "LedgerTables"
   [ testGroup "Shelley"
     [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock Proto (ShelleyEra Crypto)))
-    , testProperty "TableStuff laws" (prop_tablestuff_laws @(ShelleyBlock Proto (ShelleyEra Crypto)))
+    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock Proto (ShelleyEra Crypto)))
     ]
   , testGroup "Allegra"
     [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock Proto (AllegraEra Crypto)))
-    , testProperty "TableStuff laws" (prop_tablestuff_laws @(ShelleyBlock Proto (AllegraEra Crypto)))
+    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock Proto (AllegraEra Crypto)))
     ]
   , testGroup "Mary"
     [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock Proto (MaryEra Crypto)))
-    , testProperty "TableStuff laws" (prop_tablestuff_laws @(ShelleyBlock Proto (MaryEra Crypto)))
+    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock Proto (MaryEra Crypto)))
     ]
   , testGroup "Alonzo"
     [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock Proto (AlonzoEra Crypto)))
-    , testProperty "TableStuff laws" (prop_tablestuff_laws @(ShelleyBlock Proto (AlonzoEra Crypto)))
+    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock Proto (AlonzoEra Crypto)))
     ]
   , testGroup "Babbage"
     [ testProperty "Stowable laws" (prop_stowable_laws @(ShelleyBlock (Praos StandardCrypto) (BabbageEra StandardCrypto)))
-    , testProperty "TableStuff laws" (prop_tablestuff_laws @(ShelleyBlock (Praos StandardCrypto) (BabbageEra StandardCrypto)))
+    , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @(ShelleyBlock (Praos StandardCrypto) (BabbageEra StandardCrypto)))
     ]
   ]
 

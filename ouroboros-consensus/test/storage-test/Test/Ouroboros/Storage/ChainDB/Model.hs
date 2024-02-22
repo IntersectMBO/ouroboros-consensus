@@ -105,8 +105,8 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      IteratorResult (..), StreamFrom (..), StreamTo (..),
                      UnknownRange (..), validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
-                     (DbChangelogCfg (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
+                     (LedgerDbCfg (..))
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import           Ouroboros.Consensus.Util (repeatedly)
 import qualified Ouroboros.Consensus.Util.AnchoredFragment as Fragment
@@ -329,7 +329,7 @@ getDbChangelog ::
 getDbChangelog cfg m@Model{..} =
       DbChangelog.onChangelog
       ( DbChangelog.prune (SecurityParam (maxActualRollback k m))
-      . DbChangelog.applyThenPushMany' dbChangelogCfg blks DbChangelog.trivialKeySetsReader
+      . DbChangelog.reapplyThenPushMany' ledgerDbCfg blks DbChangelog.trivialKeySetsReader
       )
     $ DbChangelog.empty initLedger
   where
@@ -337,9 +337,9 @@ getDbChangelog cfg m@Model{..} =
 
     k = configSecurityParam cfg
 
-    dbChangelogCfg = DbChangelogCfg {
-          dbChangelogCfgSecParam = k
-        , dbChangelogCfg         = ExtLedgerCfg cfg
+    ledgerDbCfg = LedgerDbCfg {
+          ledgerDbCfgSecParam = k
+        , ledgerDbCfg         = ExtLedgerCfg cfg
         }
 
 {-------------------------------------------------------------------------------

@@ -270,7 +270,7 @@ data LedgerDbError blk =
       -- 'CallStack' of the operation on the LedgerDB is included in the error.
       ClosedDBError PrettyCallStack
       -- | A Forker is closed.
-    | ClosedForkerError PrettyCallStack
+    | ClosedForkerError ForkerKey PrettyCallStack
     deriving (Show)
     deriving anyclass (Exception)
 

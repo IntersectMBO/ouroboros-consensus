@@ -56,7 +56,7 @@ openDB ::
   -> m (LedgerDB' m blk, Word64)
 openDB
   args
-  immdb
+  stream
   replayGoal
   getBlock = case lgrFlavorArgs args of
     LedgerDbFlavorArgsV1 bss ->
@@ -65,11 +65,11 @@ openDB
                        bss
                        getBlock
         in
-          Init.openDB args initDb immdb replayGoal
+          Init.openDB args initDb stream replayGoal
     LedgerDbFlavorArgsV2 bss ->
         let initDb = V2.mkInitDb
                        args
                        bss
                        getBlock
         in
-          Init.openDB args initDb immdb replayGoal
+          Init.openDB args initDb stream replayGoal

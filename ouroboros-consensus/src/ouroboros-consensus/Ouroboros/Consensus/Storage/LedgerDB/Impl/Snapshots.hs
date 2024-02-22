@@ -34,6 +34,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots (
   , defaultSnapshotPolicy
     -- * Tracing
   , TraceSnapshotEvent (..)
+    -- * Testing
+  , decodeLBackwardsCompatible
+  , encodeL
   ) where
 
 import           Codec.CBOR.Decoding
@@ -257,6 +260,7 @@ decodeLBackwardsCompatible _ decodeLedger decodeHash =
 data SnapshotInterval =
     DefaultSnapshotInterval
   | RequestedSnapshotInterval DiffTime
+  | DisableSnapshots
   deriving stock (Eq, Generic, Show)
 
 -- | Snapshots policy
@@ -340,7 +344,7 @@ defaultSnapshotPolicy
       blocksSinceLast >= k
 
     onDiskShouldTakeSnapshot (Just timeSinceLast) blocksSinceLast =
-         timeSinceLast >= snapshotInterval
+         snapshotInterval timeSinceLast
       || substantialAmountOfBlocksWereProcessed blocksSinceLast timeSinceLast
 
     -- | We want to create a snapshot after a substantial amount of blocks were
@@ -359,9 +363,10 @@ defaultSnapshotPolicy
     -- snapshot interval (DefaultSnapshotInterval). If the latter then the
     -- snapshot interval is defaulted to k * 2 seconds - when @k = 2160@ the interval
     -- defaults to 72 minutes.
-    snapshotInterval = case requestedInterval of
-      RequestedSnapshotInterval value -> value
-      DefaultSnapshotInterval           -> secondsToDiffTime $ fromIntegral $ k * 2
+    snapshotInterval t = case requestedInterval of
+      RequestedSnapshotInterval value -> t >= value
+      DefaultSnapshotInterval         -> t >= secondsToDiffTime (fromIntegral $ k * 2)
+      DisableSnapshots                -> False
 
 {-------------------------------------------------------------------------------
   Tracing snapshot events

@@ -1,11 +1,7 @@
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE PatternSynonyms    #-}
 {-# LANGUAGE TupleSections      #-}
 
-module Main (
-    main
-  , oneWritePer100Reads
-  ) where
+module Main (main) where
 
 import           Bench.Commands (BackingStoreInitialiser, Cmd (..), run)
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
@@ -15,14 +11,17 @@ import           Data.Map.Diff.Strict (Diff)
 import qualified Data.Map.Diff.Strict as Diff
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.SOP.Dict (Dict (..))
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Ledger.Tables (DiffMK (..), KeysMK (..),
                      LedgerTables (..), ValuesMK)
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
-                     (BackingStoreSelector (..), newBackingStoreInitialiser)
+                     (newBackingStoreInitialiser)
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
                      (LMDBLimits (..))
+import           Ouroboros.Consensus.Util.Args (Complete)
 import qualified System.Directory as Dir
 import           System.FS.API (HasFS (..), SomeHasFS (..))
 import           System.FS.API.Types (MountPoint (..), mkFsPath)
@@ -55,7 +54,7 @@ benchmarks = bgroup "BackingStore" [
         oneWritePer100Reads 10_000
     ]
 
-benchCmds :: String -> BackingStoreSelector IO -> [Cmd K V D] -> Benchmark
+benchCmds :: String -> Complete BackingStoreArgs IO -> [Cmd K V D] -> Benchmark
 benchCmds name bss cmds0 =
     envWithCleanup ((,cmds0) <$> setup bss) (eCleanup . fst) $
       \ ~(e, cmds) -> bench name $ nfAppIO (runner e) cmds
@@ -87,11 +86,11 @@ tests = testGroup "Auxiliary tests" [
   Backing store selectors
 -------------------------------------------------------------------------------}
 
-bssInMem :: BackingStoreSelector m
-bssInMem = InMemoryBackingStore
+bssInMem :: Complete BackingStoreArgs IO
+bssInMem = InMemoryBackingStoreArgs
 
-bssLMDB :: BackingStoreSelector IO
-bssLMDB = LMDBBackingStore benchLMDBLimits
+bssLMDB :: Complete BackingStoreArgs IO
+bssLMDB = LMDBBackingStoreArgs benchLMDBLimits Dict
 
 benchLMDBLimits :: LMDBLimits
 benchLMDBLimits = LMDBLimits
@@ -219,7 +218,7 @@ instance NFData (Env m ks vs d) where rnf = rwhnf
 -- root, such that each benchmark run has a fresh directory to work in.
 -- 'eCleanup' will recursively remove the root temporary directory, erasing all
 -- directories created by invocations of 'eMakeNewSomeHasFS'.
-setup :: BackingStoreSelector IO -> IO (Env IO K V D)
+setup :: Complete BackingStoreArgs IO -> IO (Env IO K V D)
 setup bss = do
   sysTmpDir <- getCanonicalTemporaryDirectory
   benchTmpDir <- createTempDirectory sysTmpDir "bench_backingstore"

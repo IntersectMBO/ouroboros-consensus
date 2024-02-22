@@ -47,6 +47,7 @@ import qualified Control.Monad.Except as Exc
 import           Control.Tracer
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Either (isRight)
+import           Data.Functor.Contravariant ((>$<))
 import           Data.Functor.Identity (Identity)
 import qualified Data.List as List
 import qualified Data.List.NonEmpty as NE
@@ -84,10 +85,12 @@ import           Ouroboros.Consensus.NodeKernel as NodeKernel
 import           Ouroboros.Consensus.Protocol.Abstract
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
-import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB hiding (getForker)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
+import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
+import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
@@ -750,16 +753,27 @@ runThreadNetwork systemTime ThreadNetworkArgs
               , mcdbInitLedger     = initLedger
               , mcdbRegistry       = registry
               , mcdbNodeDBs        = nodeDBs
-              , mcdbBackingStoreSelector = LedgerDB.V1.InMemoryBackingStore
               }
-        in args { cdbCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
-                , cdbCheckInFuture  = InFuture.reference (configLedger cfg)
+            tr = instrumentationTracer <> nullDebugTracer
+        in args { cdbImmDbArgs = (cdbImmDbArgs args) {
+                      ImmutableDB.immCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
+                    , ImmutableDB.immTracer = TraceImmutableDBEvent >$< tr
+                    }
+                , cdbVolDbArgs = (cdbVolDbArgs args) {
+                      VolatileDB.volCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
+                    , VolatileDB.volTracer = TraceVolatileDBEvent >$< tr
+                    }
+                , cdbLgrDbArgs = (cdbLgrDbArgs args) {
+                      LedgerDB.lgrTracer = TraceLedgerDBEvent >$< tr
+                    }
+                , cdbsArgs = (cdbsArgs args) {
+                      cdbsCheckInFuture  = InFuture.reference (configLedger cfg)
                                         InFuture.defaultClockSkew
                                         (OracularClock.finiteSystemTime clock)
-                , cdbTracer         = instrumentationTracer <> nullDebugTracer
-                , cdbTraceLedger    = nullDebugTracer
-                -- TODO: Vary cdbGcDelay, cdbGcInterval, cdbBlockToAddSize
-                , cdbGcDelay        = 0
+                      -- TODO: Vary cdbsGcDelay, cdbsGcInterval, cdbsBlockToAddSize
+                    , cdbsGcDelay = 0
+                    , cdbsTracer = instrumentationTracer <> nullDebugTracer
+                    }
                 }
       where
         prj af = case AF.headBlockNo af of

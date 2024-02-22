@@ -578,6 +578,8 @@ test-suite consensus-test
     , deepseq
     , diff-containers                                                     >=1.1
     , fingertree-rm                                                       >=1.0
+    , fs-api
+    , fs-sim
     , generics-sop
     , hashable
     , io-classes
@@ -701,6 +703,7 @@ test-suite storage-test
     , quickcheck-state-machine  >=0.7.2
     , random
     , serialise
+    , sop-core
     , strict-mvar
     , tasty
     , tasty-hunit
@@ -765,6 +768,7 @@ benchmark backingstore-bench
     , mtl
     , ouroboros-consensus
     , QuickCheck
+    , sop-core
     , tasty
     , tasty-bench
     , tasty-quickcheck

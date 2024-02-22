@@ -33,12 +33,15 @@ import           Data.Maybe (mapMaybe)
 import           Data.Sequence.NonEmpty (NESeq (..))
 import qualified Data.Sequence.NonEmpty as NESeq
 import qualified Data.Set as Set
+import           Data.SOP.Dict
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ledger.Tables.Utils
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..))
 import qualified System.Directory as Dir
 import           System.FS.API hiding (Handle)
@@ -76,15 +79,15 @@ tests = testGroup "BackingStore" [
       testProperty "InMemory IOSim SimHasFS" testWithIOSim
   , adjustOption (scaleQuickCheckTests 10) $
       testProperty "InMemory IO SimHasFS" $ testWithIO $
-        setupBSEnv BS.InMemoryBackingStore setupSimHasFS (pure ())
+        setupBSEnv BS.InMemoryBackingStoreArgs setupSimHasFS (pure ())
   , adjustOption (scaleQuickCheckTests 10) $
       testProperty "InMemory IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv BS.InMemoryBackingStore (setupIOHasFS fp) cleanup
+        setupBSEnv BS.InMemoryBackingStoreArgs (setupIOHasFS fp) cleanup
   , adjustOption (scaleQuickCheckTests 2) $
       testProperty "LMDB IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv (BS.LMDBBackingStore testLMDBLimits) (setupIOHasFS fp) cleanup
+        setupBSEnv (BS.LMDBBackingStoreArgs testLMDBLimits Dict) (setupIOHasFS fp) cleanup
   ]
 
 scaleQuickCheckTests :: Int -> QuickCheckTests -> QuickCheckTests
@@ -107,7 +110,7 @@ testLMDBLimits = LMDB.LMDBLimits
 testWithIOSim :: Actions (Lockstep (BackingStoreState K V D)) -> Property
 testWithIOSim acts = monadicSim $ do
   BSEnv {bsRealEnv, bsCleanup} <-
-    QC.run (setupBSEnv BS.InMemoryBackingStore setupSimHasFS (pure ()))
+    QC.run (setupBSEnv BS.InMemoryBackingStoreArgs setupSimHasFS (pure ()))
   void $
     runPropertyIOLikeMonad $
       runPropertyReaderT (StateModel.runActions acts) bsRealEnv
@@ -161,7 +164,7 @@ setupTempDir = do
 
 setupBSEnv ::
      IOLike m
-  => BS.BackingStoreSelector m
+  => Complete BS.BackingStoreArgs m
   -> m (SomeHasFS m)
   -> m ()
   -> m (BSEnv m K V D)

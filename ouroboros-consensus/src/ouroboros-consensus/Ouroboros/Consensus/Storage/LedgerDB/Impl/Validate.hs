@@ -18,6 +18,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate (
     -- * Validation
   , ValidLedgerState (..)
   , validate
+    -- * Testing
+  , defaultResolveWithErrors
+  , defaultThrowLedgerErrors
   ) where
 
 import           Control.Monad (void)

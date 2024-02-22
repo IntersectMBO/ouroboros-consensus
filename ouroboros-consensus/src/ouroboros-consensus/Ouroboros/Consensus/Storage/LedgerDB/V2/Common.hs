@@ -214,7 +214,7 @@ getForkerEnv (LDBHandle varState) forkerKey f = do
     forkerEnv <- atomically $ readTVar varState >>= \case
       LedgerDBClosed   -> throwIO $ ClosedDBError @blk prettyCallStack
       LedgerDBOpen env -> readTVar (ldbForkers env) >>= (Map.lookup forkerKey >>> \case
-        Nothing        -> throwSTM $ ClosedForkerError @blk prettyCallStack
+        Nothing        -> throwSTM $ ClosedForkerError @blk forkerKey prettyCallStack
         Just forkerEnv -> pure forkerEnv)
     f forkerEnv
 
@@ -235,7 +235,7 @@ getForkerEnvSTM ::
 getForkerEnvSTM (LDBHandle varState) forkerKey f = readTVar varState >>= \case
     LedgerDBClosed   -> throwIO $ ClosedDBError @blk prettyCallStack
     LedgerDBOpen env -> readTVar (ldbForkers env) >>= (Map.lookup forkerKey >>> \case
-      Nothing        -> throwSTM $ ClosedForkerError @blk prettyCallStack
+      Nothing        -> throwSTM $ ClosedForkerError @blk forkerKey prettyCallStack
       Just forkerEnv -> f forkerEnv)
 
 newForker ::
@@ -427,9 +427,9 @@ acquireAtPoint ::
   -> m (Either GetForkerError (StateRef m l))
 acquireAtPoint ldbEnv pt = do
       dblog <- readTVarIO (ldbSeq ldbEnv)
-      let immTip = castPoint $ getTip $ anchor dblog
+      let immTip = getTip $ anchor dblog
       case currentHandle <$> rollback pt dblog of
-        Nothing     | pt < immTip -> pure $ Left PointTooOld
+        Nothing     | pointSlot pt < pointSlot immTip -> pure $ Left PointTooOld
                     | otherwise   -> pure $ Left PointNotOnChain
         Just (StateRef st tbs) ->
               Right . StateRef st <$> duplicate tbs

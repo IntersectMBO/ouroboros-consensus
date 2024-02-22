@@ -1,5 +1,6 @@
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -19,8 +20,11 @@
 module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 
 import           Cardano.Crypto.DSIGN.Mock
+import           Control.Monad.Base
 import           Control.Monad.IOSim (runSimOrThrow)
+import           Control.Tracer
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe)
 import           Network.TypedProtocol.Proofs (connect)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
@@ -32,11 +36,16 @@ import           Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
+import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream hiding
+                     (streamAPI)
 import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry,
-                     withRegistry)
+import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.Protocol.LocalStateQuery.Client
@@ -45,6 +54,9 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Examples
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
                      (AcquireFailure (..))
+import           System.FS.API
+import qualified System.FS.Sim.MockFS as MockFS
+import           System.FS.Sim.STM
 import           Test.QuickCheck hiding (Result)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -139,13 +151,13 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
         | pointSlot pt >= immutableSlot
         -> counterexample
            ("Point " <> show pt <>
-            " newer than the immutable tip, but got AcquireFailurePointTooOld")
+            " newer or equal than the immutable tip " <> show immutableSlot <>", but got AcquireFailurePointTooOld")
            (property False)
         | otherwise
         -> tabulate "Acquired" ["AcquireFailurePointTooOld"] $ property True
     checkResult Nothing = \case
       Right _result -> tabulate "Acquired" ["Success"] True
-      Left  failure -> counterexample ("acuire tip point resulted in " ++ show failure) False
+      Left  failure -> counterexample ("acquire tip point resulted in " ++ show failure) False
 
 mkClient
   :: Monad m
@@ -159,7 +171,7 @@ mkClient
 mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <- points]
 
 mkServer
-  :: IOLike m
+  :: (IOLike m, MonadBase m m)
   => ResourceRegistry m
   -> SecurityParam
   -> Chain TestBlock
@@ -169,16 +181,55 @@ mkServer rr k chain = do
     return $
       localStateQueryServer
         cfg
-        (\mpt -> fmap LedgerDB.readOnlyForker <$> LedgerDB.getForker lgrDB rr mpt)
+        (LedgerDB.getReadOnlyForker lgrDB rr)
   where
     cfg = ExtLedgerCfg $ testCfg k
 
+streamAPI :: forall m. IOLike m => StreamAPI m TestBlock TestBlock
+streamAPI = StreamAPI {..}
+  where
+    streamAfter ::
+         Point TestBlock
+      -> (Either (RealPoint TestBlock) (m (NextItem TestBlock)) -> m a)
+      -> m a
+    streamAfter _ k = do
+        k (Right (pure NoMoreItems))
+
 -- | Initialise a 'LedgerDB' with the given chain.
 initLedgerDB ::
-     SecurityParam
+     (IOLike m, MonadBase m m)
+  => SecurityParam
   -> Chain TestBlock
   -> m (LedgerDB' m TestBlock)
-initLedgerDB = undefined -- TODO(jdral_ldb): initialise a minimal LedgerDB.
+initLedgerDB s c = do
+  reg <- unsafeNewRegistry
+  fs <- uncheckedNewTVarM MockFS.empty
+  let args = LedgerDbArgs
+        { lgrSnapshotInterval = DefaultSnapshotInterval
+        , lgrHasFS            = SomeHasFS $ simHasFS fs
+        , lgrGenesis          = return testInitExtLedger
+        , lgrTracer           = nullTracer
+        , lgrFlavorArgs       = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs
+        , lgrConfig           = LedgerDB.configLedgerDb $ testCfg s
+        , lgrRegistry         = reg
+        }
+  ldb <- fst <$> LedgerDB.openDB
+    args
+    streamAPI
+    (Chain.headPoint c)
+    (\rpt -> pure $ fromMaybe (error "impossible") $ Chain.findBlock ((rpt ==) . blockRealPoint) c)
+
+  result <- LedgerDB.validate ldb reg (const $ pure ()) BlockCache.empty 0 (map getHeader $ Chain.toOldestFirst c)
+  case result of
+    LedgerDB.ValidateSuccessful forker -> do
+      atomically $ LedgerDB.forkerCommit forker
+      LedgerDB.forkerClose forker
+    LedgerDB.ValidateExceededRollBack _ ->
+          error "impossible: rollback was 0"
+    LedgerDB.ValidateLedgerError _ ->
+          error "impossible: there were no invalid blocks"
+  pure ldb
+
 
 testCfg :: SecurityParam -> TopLevelConfig TestBlock
 testCfg securityParam = TopLevelConfig {

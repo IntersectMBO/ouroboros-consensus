@@ -11,5 +11,5 @@ import           Test.Tasty.QuickCheck
 tests :: TestTree
 tests = testGroup "LedgerTables"
   [ testProperty "Stowable laws" (prop_stowable_laws @ByronBlock)
-  , testProperty "TableStuff laws" (prop_tablestuff_laws @ByronBlock)
+  , testProperty "HasLedgerTables laws" (prop_hasledgertables_laws @ByronBlock)
   ]

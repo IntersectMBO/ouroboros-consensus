@@ -2,6 +2,7 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
@@ -17,7 +18,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
   , acquireAtTip
   ) where
 
-import           Control.Monad (void)
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
@@ -100,15 +100,15 @@ closeAllForkers ldbEnv = do
   where
     forkersVar = ldbForkers ldbEnv
 
-closeForkerEnv :: IOLike m => ForkerEnv m l blk -> m ()
-closeForkerEnv ForkerEnv { foeResourceKey } = void $ release foeResourceKey
+closeForkerEnv :: ForkerEnv m l blk -> m ()
+closeForkerEnv ForkerEnv { foeBackingStoreValueHandle } = bsvhClose foeBackingStoreValueHandle
 
 {-------------------------------------------------------------------------------
   Acquiring consistent views
 -------------------------------------------------------------------------------}
 
 type Resources m l =
-    (LedgerBackingStoreValueHandle m l, AnchorlessDbChangelog l, ResourceKey m)
+    (LedgerBackingStoreValueHandle m l, AnchorlessDbChangelog l)
 
 -- | Acquire both a value handle and a db changelog at the tip. Holds a read lock
 -- while doing so.
@@ -120,7 +120,7 @@ acquireAtTip ::
 acquireAtTip ldbEnv rr =
     readLocked $ do
       dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
-      acquire ldbEnv rr dblog >>= \(vh, rk) -> pure (vh, dblog, rk)
+      (,dblog) <$> acquire ldbEnv rr dblog
 
 -- | Acquire both a value handle and a db changelog at the requested point. Holds
 -- a read lock while doing so.
@@ -140,12 +140,11 @@ acquireAtPoint ::
 acquireAtPoint ldbEnv rr pt =
     readLocked $ do
       dblog <- anchorlessChangelog <$> readTVarIO (ldbChangelog ldbEnv)
-      let immTip = castPoint $ getTip $ anchor dblog
+      let immTip = getTip $ anchor dblog
       case rollback pt dblog of
-        Nothing     | pt < immTip -> pure $ Left PointTooOld
+        Nothing     | pointSlot pt < pointSlot immTip -> pure $ Left PointTooOld
                     | otherwise   -> pure $ Left PointNotOnChain
-        Just dblog' -> do (vh, rk) <- acquire ldbEnv rr dblog'
-                          pure $ Right (vh, dblog', rk)
+        Just dblog' -> Right . (,dblog') <$> acquire ldbEnv rr dblog'
 
 -- | Acquire both a value handle and a db changelog at n blocks before the tip.
 -- Holds a read lock while doing so.
@@ -168,20 +167,20 @@ acquireAtFromTip ldbEnv rr n =
               API.rollbackMaximum   = maxRollback dblog
             , API.rollbackRequested = n
             }
-        Just dblog' -> do (vh, rk) <- acquire ldbEnv rr dblog'
-                          pure $ Right (vh, dblog', rk)
+        Just dblog' ->
+           Right . (,dblog') <$> acquire ldbEnv rr dblog'
 
 acquire ::
      IOLike m
   => LedgerDBEnv m l blk
   -> ResourceRegistry m
   -> AnchorlessDbChangelog l
-  -> m (LedgerBackingStoreValueHandle m l, ResourceKey m)
+  -> m (LedgerBackingStoreValueHandle m l)
 acquire ldbEnv rr dblog =  do
-  (rk, vh) <- allocate rr (\_ -> bsValueHandle $ ldbBackingStore ldbEnv) bsvhClose
+  (_, vh) <- allocate rr (\_ -> bsValueHandle $ ldbBackingStore ldbEnv) bsvhClose
   if bsvhAtSlot vh == adcLastFlushedSlot dblog
-    then pure (vh, rk)
-    else release rk >>
+    then pure vh
+    else bsvhClose vh >>
          error (  "Critical error: Value handles are created at "
                 <> show (bsvhAtSlot vh)
                 <> " while the db changelog is at "
@@ -204,7 +203,7 @@ newForker ::
   -> LedgerDBEnv m l blk
   -> Resources m l
   -> m (Forker m l blk)
-newForker h ldbEnv (vh, dblog, rk) = do
+newForker h ldbEnv (vh, dblog) = do
   dblogVar     <- newTVarIO dblog
   forkerKey    <- atomically $ stateTVar (ldbNextForkerKey ldbEnv) $ \r -> (r, succ r)
   let forkerEnv = ForkerEnv {
@@ -213,7 +212,6 @@ newForker h ldbEnv (vh, dblog, rk) = do
     , foeSwitchVar               = ldbChangelog ldbEnv
     , foeSecurityParam           = ledgerDbCfgSecParam $ ldbCfg ldbEnv
     , foeQueryBatchSize          = ldbQueryBatchSize ldbEnv
-    , foeResourceKey             = rk
     , foeTracer                  = LedgerDBForkerEvent . TraceForkerEventWithKey forkerKey >$< ldbTracer ldbEnv
     }
   atomically $ modifyTVar (ldbForkers ldbEnv) $ Map.insert forkerKey forkerEnv
