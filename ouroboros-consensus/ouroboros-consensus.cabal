@@ -233,9 +233,13 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
     Ouroboros.Consensus.Storage.LedgerDB
     Ouroboros.Consensus.Storage.LedgerDB.API
-    Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
+    Ouroboros.Consensus.Storage.LedgerDB.API.Config
+    Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
+    Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
+    Ouroboros.Consensus.Storage.LedgerDB.Impl.Init
+    Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
     Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate
-    Ouroboros.Consensus.Storage.LedgerDB.V1
+    Ouroboros.Consensus.Storage.LedgerDB.V1.Args
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
     Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory
@@ -247,7 +251,14 @@ library
     Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
     Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V1.Init
+    Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
     Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
+    Ouroboros.Consensus.Storage.LedgerDB.V2.Args
+    Ouroboros.Consensus.Storage.LedgerDB.V2.Common
+    Ouroboros.Consensus.Storage.LedgerDB.V2.Init
+    Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
+    Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
+    Ouroboros.Consensus.Storage.LedgerDB.V2.LSM
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
     Ouroboros.Consensus.Storage.VolatileDB.API

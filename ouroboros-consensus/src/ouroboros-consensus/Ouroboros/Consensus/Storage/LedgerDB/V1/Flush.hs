@@ -6,14 +6,15 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Flush (
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Util.IOLike
 
 flushLedgerDB :: (MonadSTM m, GetTip l, HasLedgerTables l)
               => StrictTVar m (DbChangelog l)
               -> LedgerBackingStore m l
-              -> m ()
+              -> WriteLocked m ()
 flushLedgerDB chlogVar bstore = do
-  diffs <- atomically $ do
+  diffs <- writeLocked $ atomically $ do
     ldb' <- readTVar chlogVar
     let (toFlush, toKeep) = splitForFlushing ldb'
     case toFlush of
@@ -28,8 +29,8 @@ flushLedgerDB chlogVar bstore = do
 -- immutable tip and produce two 'DbChangelog's, one to flush and one to keep.
 --
 -- The write lock must be held before calling this function.
-flushIntoBackingStore :: LedgerBackingStore m l -> DiffsToFlush l -> m ()
-flushIntoBackingStore backingStore dblog =
+flushIntoBackingStore :: LedgerBackingStore m l -> DiffsToFlush l -> WriteLocked m ()
+flushIntoBackingStore backingStore dblog = writeLocked $
   bsWrite
     backingStore
     (toFlushSlot dblog)

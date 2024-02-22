@@ -5,14 +5,13 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE FunctionalDependencies     #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE QuantifiedConstraints      #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE StandaloneKindSignatures   #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeOperators              #-}
@@ -112,9 +111,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
   , AnchorlessDbChangelog (..)
   , AnchorlessDbChangelog'
   , StatesSequence
-    -- ** Configuration
-  , DbChangelogCfg (..)
-  , configDbChangelog
     -- * Construction
   , empty
   , pruneToImmTipOnly
@@ -134,13 +130,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
     -- block](#g:findingBlocks), then prepare the ledger tables by [hydrating
     -- the ledger state](#g:hydratingTheLedgerState) and then finally call the
     -- ledger, which might throw errors.
-  , Ap (..)
-  , applyThenPush
-  , applyThenPushMany
-    -- *** Finding blocks #findingBlocks#
-  , ResolveBlock
-  , ResolvesBlocks (..)
-  , defaultResolveBlocks
+  , reapplyThenPush
     -- *** Hydrating the ledger state #hydratingTheLedgerState#
     --
     -- | When trying to get tables at a specific ledger state, we must follow a
@@ -160,7 +150,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
   , rewindTableKeySets
     -- **** Read
   , KeySetsReader
-  , PointNotFound (..)
   , UnforwardedReadSets (..)
   , getLedgerTablesFor
   , readKeySets
@@ -170,25 +159,9 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
   , RewindReadFwdError (..)
   , forwardTableKeySets
   , forwardTableKeySets'
-    -- *** Annotated ledger errors
-  , AnnLedgerError (..)
-  , AnnLedgerError'
-  , ThrowsLedgerError (..)
-  , defaultResolveWithErrors
-  , defaultThrowLedgerErrors
-    -- ** Switching to a fork
-    --
-    -- | Switching is just a rollback followed by applying a list of blocks.
-  , ExceededRollback (..)
-  , switch
     -- ** Flushing
   , DiffsToFlush (..)
   , splitForFlushing
-    -- ** Tracing events
-  , PushGoal (..)
-  , PushStart (..)
-  , Pushing (..)
-  , UpdateLedgerDbTraceEvent (..)
     -- * Queries
   , anchor
   , current
@@ -200,7 +173,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
   , volatileStatesBimap
     -- * 🧪 Testing
     -- ** Internal
-  , ValidLedgerState (..)
   , extend
   , immutableTipSlot
   , isSaturated
@@ -209,21 +181,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog (
   , rollbackN
   , rollbackToAnchor
   , rollbackToPoint
-    -- ** Pure API
-  , applyThenPush'
-  , applyThenPushMany'
-  , switch'
   ) where
 
 import           Cardano.Slotting.Slot
 import           Control.Exception as Exn
-import           Control.Monad.Except (ExceptT, MonadError (..), runExcept,
-                     runExceptT)
-import           Control.Monad.Reader (ReaderT (..), runReaderT)
-import           Control.Monad.Trans (lift)
 import           Data.Bifunctor (bimap)
 import           Data.Functor.Identity
-import           Data.Kind (Constraint, Type)
 import           Data.Map.Diff.Strict (applyDiffForKeys)
 import           Data.Monoid (Sum (..))
 import           Data.SOP (K, unK)
@@ -236,9 +199,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import           Ouroboros.Consensus.Protocol.Abstract
+import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
-import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.AnchoredSeq (AnchoredSeq)
 import qualified Ouroboros.Network.AnchoredSeq as AS
@@ -379,27 +341,6 @@ type instance HeaderHash (K @MapKind (AnchorlessDbChangelog l)) =
 type DbChangelog' blk = DbChangelog (ExtLedgerState blk)
 
 {-------------------------------------------------------------------------------
- Configuration
--------------------------------------------------------------------------------}
-
-data DbChangelogCfg l = DbChangelogCfg {
-      dbChangelogCfgSecParam :: !SecurityParam
-    , dbChangelogCfg         :: !(LedgerCfg l)
-    }
-  deriving (Generic)
-
-deriving instance NoThunks (LedgerCfg l) => NoThunks (DbChangelogCfg l)
-
-configDbChangelog ::
-     ConsensusProtocol (BlockProtocol blk)
-  => TopLevelConfig blk
-  -> DbChangelogCfg (ExtLedgerState blk)
-configDbChangelog config = DbChangelogCfg {
-      dbChangelogCfgSecParam    = configSecurityParam config
-    , dbChangelogCfg            = ExtLedgerCfg config
-    }
-
-{-------------------------------------------------------------------------------
   Construction
 -------------------------------------------------------------------------------}
 
@@ -434,149 +375,29 @@ onChangelogM f dbch = do
   anchorlessChangelog' <- f $ anchorlessChangelog dbch
   pure dbch { anchorlessChangelog =  anchorlessChangelog' }
 
-{-------------------------------------------------------------------------------
-  A ledger error annotated with the DbChangelog
--------------------------------------------------------------------------------}
-
--- | Annotated ledger errors
-data AnnLedgerError l blk = AnnLedgerError {
-      -- | The ledger DB just /before/ this block was applied
-      annLedgerState  :: AnchorlessDbChangelog l
-
-      -- | Reference to the block that had the error
-    , annLedgerErrRef :: RealPoint blk
-
-      -- | The ledger error itself
-    , annLedgerErr    :: LedgerErr l
-    }
-
-type AnnLedgerError' blk = AnnLedgerError (ExtLedgerState blk) blk
-
-class Monad m => ThrowsLedgerError m l blk where
-  throwLedgerError :: AnchorlessDbChangelog l -> RealPoint blk -> LedgerErr l -> m a
-
-instance Monad m
-      => ThrowsLedgerError (ExceptT (AnnLedgerError l blk) m) l blk where
-  throwLedgerError l r e = throwError $ AnnLedgerError l r e
-
-defaultThrowLedgerErrors :: ExceptT (AnnLedgerError l blk) m a
-                         -> m (Either (AnnLedgerError l blk) a)
-defaultThrowLedgerErrors = runExceptT
-
-defaultResolveWithErrors :: ResolveBlock m blk
-                         -> ExceptT (AnnLedgerError l blk)
-                                    (ReaderT (ResolveBlock m blk) m)
-                                    a
-                         -> m (Either (AnnLedgerError l blk) a)
-defaultResolveWithErrors resolve =
-      defaultResolveBlocks resolve
-    . defaultThrowLedgerErrors
-
-{-------------------------------------------------------------------------------
-  Apply blocks
--------------------------------------------------------------------------------}
-
-newtype ValidLedgerState l = ValidLedgerState { getValidLedgerState :: l }
-
--- | 'Ap' is used to pass information about blocks to ledger DB updates
---
--- The constructors serve two purposes:
---
--- * Specify the various parameters
---
---     1. Are we passing the block by value or by reference?
---
---     2. Are we applying or reapplying the block?
---
--- * Compute the constraint @c@ on the monad @m@ in order to run the query:
---
---     1. If we are passing a block by reference, we must be able to resolve it.
---
---     2. If we are applying rather than reapplying, we might have ledger errors.
-type Ap :: (Type -> Type) -> LedgerStateKind -> Type -> Constraint -> Type
-data Ap m l blk c where
-  ReapplyVal ::           blk -> Ap m l blk ()
-  ApplyVal   ::           blk -> Ap m l blk ( ThrowsLedgerError m l blk )
-  ReapplyRef :: RealPoint blk -> Ap m l blk ( ResolvesBlocks    m   blk )
-  ApplyRef   :: RealPoint blk -> Ap m l blk ( ResolvesBlocks    m   blk
-                                            , ThrowsLedgerError m l blk )
-
-  -- | 'Weaken' increases the constraint on the monad @m@.
-  --
-  -- This is primarily useful when combining multiple 'Ap's in a single
-  -- homogeneous structure.
-  Weaken :: (c' => c) => Ap m l blk c -> Ap m l blk c'
-
-toRealPoint :: HasHeader blk => Ap m l blk c -> RealPoint blk
-toRealPoint (ReapplyVal blk) = blockRealPoint blk
-toRealPoint (ApplyVal blk)   = blockRealPoint blk
-toRealPoint (ReapplyRef rp)  = rp
-toRealPoint (ApplyRef rp)    = rp
-toRealPoint (Weaken ap)      = toRealPoint ap
-
--- | Apply block to the current tip of the db changelog
---
--- We take in the entire 'DbChangelog' because we record that as part of errors.
-applyBlock :: forall m c l blk. (ApplyBlock l blk, Monad m, c)
+reapplyBlock :: forall m l blk. (ApplyBlock l blk, Monad m)
            => LedgerCfg l
-           -> Ap m l blk c
+           -> blk
            -> KeySetsReader m l
            -> AnchorlessDbChangelog l
-           -> m (ValidLedgerState (l DiffMK))
-applyBlock cfg ap ksReader db = case ap of
-    ReapplyVal b ->
-          ValidLedgerState
-      <$> withValues b (return . tickThenReapply cfg b)
-    ApplyVal b ->
-          ValidLedgerState
-      <$> withValues b
-          ( either (throwLedgerError db (blockRealPoint b)) return
-            . runExcept
-            . tickThenApply cfg b
-          )
-    ReapplyRef r  -> do
-      b <- doResolveBlock r
-      applyBlock cfg (ReapplyVal b) ksReader db
-    ApplyRef r -> do
-      b <- doResolveBlock r
-      applyBlock cfg (ApplyVal b) ksReader db
-    Weaken ap' ->
-      applyBlock cfg ap' ksReader db
-  where
-    l :: l EmptyMK
-    l = current db
-
-    withValues :: blk -> (l ValuesMK -> m (l DiffMK)) -> m (l DiffMK)
-    withValues = withKeysReadSets l ksReader db . getBlockKeySets
+           -> m (l DiffMK)
+reapplyBlock cfg b ksReader db =
+   withKeysReadSets (current db) ksReader db (getBlockKeySets b) (return . tickThenReapply cfg b)
 
 -- | If applying a block on top of the ledger state at the tip is succesful,
 -- extend the DbChangelog with the resulting ledger state.
 --
 -- Note that we require @c@ (from the particular choice of @Ap m l blk c@) so
 -- this sometimes can throw ledger errors.
-applyThenPush :: (ApplyBlock l blk, Monad m, c)
-              => DbChangelogCfg l
-              -> Ap m l blk c
+reapplyThenPush :: (Monad m, ApplyBlock l blk)
+              => LedgerDbCfg l
+              -> blk
               -> KeySetsReader m l
               ->    AnchorlessDbChangelog l
               -> m (AnchorlessDbChangelog l)
-applyThenPush cfg ap ksReader db =
-    (\current' -> prune (dbChangelogCfgSecParam cfg) $ extend current' db) <$>
-      applyBlock (dbChangelogCfg cfg) ap ksReader db
-
--- | Apply and push a sequence of blocks (oldest first).
-applyThenPushMany :: (ApplyBlock l blk, Monad m, c)
-                  => (Pushing blk -> m ())
-                  -> DbChangelogCfg l
-                  -> [Ap m l blk c]
-                  -> KeySetsReader m l
-                  -> AnchorlessDbChangelog l
-                  -> m (AnchorlessDbChangelog l)
-applyThenPushMany trace cfg aps ksReader = repeatedlyM pushAndTrace aps
-  where
-    pushAndTrace ap db = do
-      trace $ Pushing . toRealPoint $ ap
-      applyThenPush cfg ap ksReader db
+reapplyThenPush cfg ap ksReader db =
+    (\current' -> prune (ledgerDbCfgSecParam cfg) $ extend current' db) <$>
+      reapplyBlock (ledgerDbCfg cfg) ap ksReader db
 
 -- | Prune ledger states from the front until at we have at most @k@ in the
 -- DbChangelog, excluding the one stored at the anchor.
@@ -623,10 +444,10 @@ prune (SecurityParam k) dblog =
 -- | @L2@ | @L2 :> [ L3, L4, L5, L6 ]@ | @[ D3, D4, D5, D6 ]@ |
 -- +------+----------------------------+----------------------+
 extend :: (GetTip l, HasLedgerTables l)
-       => ValidLedgerState (l DiffMK)
+       => l DiffMK
        -> AnchorlessDbChangelog l
        -> AnchorlessDbChangelog l
-extend (ValidLedgerState newState) dblog =
+extend newState dblog =
   AnchorlessDbChangelog {
       adcLastFlushedSlot = adcLastFlushedSlot
     , adcDiffs           = ltliftA2 ext adcDiffs tablesDiff
@@ -653,52 +474,6 @@ extend (ValidLedgerState newState) dblog =
       , adcDiffs
       , adcStates
       } = dblog
-
-{-------------------------------------------------------------------------------
-  Switching to a fork
--------------------------------------------------------------------------------}
-
--- | Switch to a fork by rolling back a number of blocks and then pushing the
--- new blocks.
-switch :: (ApplyBlock l blk, Monad m, c)
-       => DbChangelogCfg l
-       -> Word64          -- ^ How many blocks to roll back
-       -> (UpdateLedgerDbTraceEvent blk -> m ())
-       -> [Ap m l blk c]  -- ^ New blocks to apply
-       -> KeySetsReader m l
-       -> AnchorlessDbChangelog l
-       -> m (Either ExceededRollback (AnchorlessDbChangelog l))
-switch cfg numRollbacks trace newBlocks ksReader db =
-  case rollbackN numRollbacks db of
-      Nothing ->
-        return $ Left $ ExceededRollback {
-            rollbackMaximum   = maxRollback db
-          , rollbackRequested = numRollbacks
-          }
-      Just db' -> case newBlocks of
-        [] -> pure $ Right db'
-        -- no blocks to apply to ledger state, return current DbChangelog
-        (firstBlock:_) -> do
-          let start   = PushStart . toRealPoint $ firstBlock
-              goal    = PushGoal  . toRealPoint . last $ newBlocks
-          Right <$> applyThenPushMany
-                      (trace . StartedPushingBlockToTheLedgerDb start goal)
-                      cfg
-                      newBlocks
-                      ksReader
-                      db'
-
--- | Exceeded maximum rollback supported by the current ledger DB state
---
--- Under normal circumstances this will not arise. It can really only happen
--- in the presence of data corruption (or when switching to a shorter fork,
--- but that is disallowed by all currently known Ouroboros protocols).
---
--- Records both the supported and the requested rollback.
-data ExceededRollback = ExceededRollback {
-      rollbackMaximum   :: Word64
-    , rollbackRequested :: Word64
-    }
 
 {-------------------------------------------------------------------------------
   Rewind
@@ -848,42 +623,6 @@ forwardTableKeySets dblog =
     (adcDiffs dblog)
 
 {-------------------------------------------------------------------------------
-  Finding blocks
--------------------------------------------------------------------------------}
-
--- | Resolve a block
---
--- Resolving a block reference to the actual block lives in @m@ because
--- it might need to read the block from disk (and can therefore not be
--- done inside an STM transaction).
---
--- NOTE: The ledger DB will only ask the 'ChainDB' for blocks it knows
--- must exist. If the 'ChainDB' is unable to fulfill the request, data
--- corruption must have happened and the 'ChainDB' should trigger
--- validation mode.
-type ResolveBlock m blk = RealPoint blk -> m blk
-
--- | Monads in which we can resolve blocks
---
--- To guide type inference, we insist that we must be able to infer the type
--- of the block we are resolving from the type of the monad.
-class Monad m => ResolvesBlocks m blk | m -> blk where
-  doResolveBlock :: ResolveBlock m blk
-
-instance Monad m => ResolvesBlocks (ReaderT (ResolveBlock m blk) m) blk where
-  doResolveBlock r = ReaderT $ \f -> f r
-
-defaultResolveBlocks :: ResolveBlock m blk
-                     -> ReaderT (ResolveBlock m blk) m a
-                     -> m a
-defaultResolveBlocks = flip runReaderT
-
--- Quite a specific instance so we can satisfy the fundep
-instance Monad m
-      => ResolvesBlocks (ExceptT e (ReaderT (ResolveBlock m blk) m)) blk where
-  doResolveBlock = lift . doResolveBlock
-
-{-------------------------------------------------------------------------------
   Reset
 -------------------------------------------------------------------------------}
 
@@ -955,16 +694,6 @@ rollbackN n dblog
 {-------------------------------------------------------------------------------
   Flushing
 -------------------------------------------------------------------------------}
-
--- | A container for differences that are inteded to be flushed to a
--- 'BackingStore'
-data DiffsToFlush l = DiffsToFlush {
-    -- | The set of differences that should be flushed into the 'BackingStore'
-    toFlushDiffs :: !(LedgerTables l DiffMK)
-    -- | At which slot the diffs were split. This must be the slot of the state
-    -- considered as "last flushed" in the kept 'DbChangelog'
-  , toFlushSlot  :: !SlotNo
-  }
 
 -- | " Flush " the 'DbChangelog' by splitting it into the diffs that should be
 -- flushed and the new 'DbChangelog'.
@@ -1042,32 +771,6 @@ splitForFlushing dblog =
           , adcStates          = newStates
           }
       }
-
-{-------------------------------------------------------------------------------
-  Trace events
--------------------------------------------------------------------------------}
-
-newtype PushStart blk = PushStart { unPushStart :: RealPoint blk }
-  deriving (Show, Eq)
-
-newtype PushGoal blk = PushGoal { unPushGoal :: RealPoint blk }
-  deriving (Show, Eq)
-
-newtype Pushing blk = Pushing { unPushing :: RealPoint blk }
-  deriving (Show, Eq)
-
-data UpdateLedgerDbTraceEvent blk =
-    -- | Event fired when we are about to push a block to the DbChangelog
-      StartedPushingBlockToTheLedgerDb
-        !(PushStart blk)
-        -- ^ Point from which we started pushing new blocks
-        (PushGoal blk)
-        -- ^ Point to which we are updating the ledger, the last event
-        -- StartedPushingBlockToTheLedgerDb will have Pushing and PushGoal
-        -- wrapping over the same RealPoint
-        !(Pushing blk)
-        -- ^ Point which block we are about to push
-  deriving (Show, Eq, Generic)
 
 {-------------------------------------------------------------------------------
   Queries
@@ -1237,39 +940,3 @@ volatileStatesBimap f g =
       AS.bimap f g
     . adcStates
     . anchorlessChangelog
-
-{-------------------------------------------------------------------------------
-  Support for testing
--------------------------------------------------------------------------------}
-
-pureBlock :: blk -> Ap m l blk ()
-pureBlock = ReapplyVal
-
-applyThenPush' :: ApplyBlock l blk
-               => DbChangelogCfg l
-               -> blk
-               -> KeySetsReader Identity l
-               -> AnchorlessDbChangelog l
-               -> AnchorlessDbChangelog l
-applyThenPush' cfg b bk = runIdentity . applyThenPush cfg (pureBlock b) bk
-
-applyThenPushMany' :: ApplyBlock l blk
-                   => DbChangelogCfg l
-                   -> [blk]
-                   -> KeySetsReader Identity l
-                   -> AnchorlessDbChangelog l
-                   -> AnchorlessDbChangelog l
-applyThenPushMany' cfg bs bk =
-  runIdentity . applyThenPushMany (const $ pure ()) cfg (map pureBlock bs) bk
-
-switch' :: ApplyBlock l blk
-        => DbChangelogCfg l
-        -> Word64
-        -> [blk]
-        -> KeySetsReader Identity l
-        -> AnchorlessDbChangelog l
-        -> Maybe (AnchorlessDbChangelog l)
-switch' cfg n bs bk db =
-  case runIdentity $ switch cfg n (const $ pure ()) (map pureBlock bs) bk db of
-    Left  ExceededRollback{} -> Nothing
-    Right db'                -> Just db'

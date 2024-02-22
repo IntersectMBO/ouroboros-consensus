@@ -1,5 +1,9 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs            #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE FlexibleInstances   #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 -- | See "Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API" for the
 -- documentation. This module just puts together the implementations for the
@@ -17,25 +21,25 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore (
     -- in this module.
     module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
     -- * Initialization
-  , BackingStoreSelector (..)
   , newBackingStore
   , restoreBackingStore
     -- * Tracing
-  , BackingStoreTraceByBackend (..)
-  , TraceBackingStoreInitEvent (..)
+  , FlavorImplSpecificTrace (..)
     -- * Testing
   , newBackingStoreInitialiser
   ) where
 
 import           Cardano.Slotting.Slot
-import           Control.Monad.IO.Class
 import           Control.Tracer
 import           Data.Functor.Contravariant
+import           Data.SOP.Dict (Dict (..))
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Basics
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
 import           System.FS.API.Types
@@ -52,8 +56,8 @@ restoreBackingStore ::
      , CanSerializeLedgerTables l
      , HasCallStack
      )
-  => Tracer m BackingStoreTraceByBackend
-  -> BackingStoreSelector m
+  => Tracer m FlavorImplSpecificTrace
+  -> Complete BackingStoreArgs m
   -> SomeHasFS m
   -> FsPath
   -> m (LedgerBackingStore m l)
@@ -67,8 +71,8 @@ newBackingStore ::
      , CanSerializeLedgerTables l
      , HasCallStack
      )
-  => Tracer m BackingStoreTraceByBackend
-  -> BackingStoreSelector m
+  => Tracer m FlavorImplSpecificTrace
+  -> Complete BackingStoreArgs m
   -> SomeHasFS m
   -> LedgerTables l ValuesMK
   -> m (LedgerBackingStore m l)
@@ -76,42 +80,40 @@ newBackingStore trcr bss someHasFS tables =
     newBackingStoreInitialiser trcr bss someHasFS (InitFromValues Origin tables)
 
 newBackingStoreInitialiser ::
+     forall m l.
      ( IOLike m
      , HasLedgerTables l
      , CanSerializeLedgerTables l
      , HasCallStack
      )
-  => Tracer m BackingStoreTraceByBackend
-  -> BackingStoreSelector m
+  => Tracer m FlavorImplSpecificTrace
+  -> Complete BackingStoreArgs m
   -> BackingStoreInitializer m l
 newBackingStoreInitialiser trcr bss =
   case bss of
-    LMDBBackingStore limits ->
+    LMDBBackingStoreArgs limits Dict ->
       LMDB.newLMDBBackingStore
-        (LMDBTrace >$< trcr)
+        (FlavorImplSpecificTraceOnDisk . OnDiskBackingStoreTrace >$< trcr)
         limits
-    InMemoryBackingStore ->
+    InMemoryBackingStoreArgs ->
       InMemory.newInMemoryBackingStore
-        (InMemoryTrace >$< trcr)
-
--- | The selector to choose which backend we would like to use.
-data BackingStoreSelector m where
-  LMDBBackingStore     :: MonadIO m => !LMDB.LMDBLimits -> BackingStoreSelector m
-  InMemoryBackingStore ::                                  BackingStoreSelector m
+        (FlavorImplSpecificTraceInMemory . InMemoryBackingStoreTrace >$< trcr)
 
 {-------------------------------------------------------------------------------
   Tracing
 -------------------------------------------------------------------------------}
 
--- | A union type to hold traces of the particular 'BackingStore' implementation
--- in use.
-data BackingStoreTraceByBackend = LMDBTrace BackingStoreTrace
-                                | InMemoryTrace BackingStoreTrace
-                                | InitEvent TraceBackingStoreInitEvent
-  deriving (Show)
+data FlavorImplSpecificTrace =
+    FlavorImplSpecificTraceInMemory FlavorImplSpecificTraceInMemory
+  | FlavorImplSpecificTraceOnDisk FlavorImplSpecificTraceOnDisk
+  deriving (Eq, Show)
 
--- | A trace event for the backing store that we have initialised.
-data TraceBackingStoreInitEvent =
-    BackingStoreInitialisedLMDB LMDB.LMDBLimits
-  | BackingStoreInitialisedInMemory
-  deriving (Show, Eq)
+data FlavorImplSpecificTraceInMemory  =
+    InMemoryBackingStoreInitialise
+  | InMemoryBackingStoreTrace BackingStoreTrace
+  deriving (Eq, Show)
+
+data FlavorImplSpecificTraceOnDisk =
+    OnDiskBackingStoreInitialise LMDB.LMDBLimits
+  | OnDiskBackingStoreTrace BackingStoreTrace
+  deriving (Eq, Show)

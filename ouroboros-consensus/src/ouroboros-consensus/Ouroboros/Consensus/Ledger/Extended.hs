@@ -23,7 +23,9 @@ module Ouroboros.Consensus.Ledger.Extended (
   , ExtValidationError (..)
     -- * Serialisation
   , decodeExtLedgerState
+  , decodeExtLedgerState'
   , encodeExtLedgerState
+  , encodeExtLedgerState'
     -- * Type family instances
   , LedgerTables (..)
   , Ticked1 (..)
@@ -43,6 +45,7 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
+import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Ticked
 
 {-------------------------------------------------------------------------------
@@ -212,6 +215,19 @@ encodeExtLedgerState encodeLedgerState
                            encodeChainDepState
                            encodeAnnTip
 
+encodeExtLedgerState' ::
+     forall blk.
+     (EncodeDisk blk (LedgerState blk EmptyMK),
+      EncodeDisk blk (ChainDepState (BlockProtocol blk)),
+      EncodeDisk blk (AnnTip blk)
+     )
+  => (CodecConfig blk -> ExtLedgerState blk EmptyMK -> Encoding)
+encodeExtLedgerState' cfg =
+  encodeExtLedgerState
+    (encodeDisk cfg)
+    (encodeDisk cfg)
+    (encodeDisk cfg)
+
 decodeExtLedgerState :: (forall s. Decoder s (LedgerState    blk mk))
                      -> (forall s. Decoder s (ChainDepState  (BlockProtocol blk)))
                      -> (forall s. Decoder s (AnnTip         blk))
@@ -227,6 +243,19 @@ decodeExtLedgerState decodeLedgerState
     decodeHeaderState' = decodeHeaderState
                            decodeChainDepState
                            decodeAnnTip
+
+decodeExtLedgerState' ::
+     forall blk.
+     (DecodeDisk blk (LedgerState blk EmptyMK),
+      DecodeDisk blk (ChainDepState (BlockProtocol blk)),
+      DecodeDisk blk (AnnTip blk)
+     )
+  => (CodecConfig blk -> forall s. Decoder s (ExtLedgerState blk EmptyMK))
+decodeExtLedgerState' cfg =
+  decodeExtLedgerState
+    (decodeDisk cfg)
+    (decodeDisk cfg)
+    (decodeDisk cfg)
 
 {-------------------------------------------------------------------------------
   Ledger Tables

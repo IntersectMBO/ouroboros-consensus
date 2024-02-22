@@ -1231,22 +1231,19 @@ decodeHardForkTxOutDefault ::
 decodeHardForkTxOutDefault = do
     CBOR.decodeListLenOf 2
     tag <- CBOR.decodeWord8
-    case getFirst $ aDecoder tag of
-      Nothing -> error $ "decodeTxOut for HardForkBlock, unknown tag: " <> show tag
-      Just x  -> x
+    aDecoder tag
   where
     each ::
-          forall x. CanSerializeLedgerTables (LedgerState x)
+         forall x. CanSerializeLedgerTables (LedgerState x)
       => Index xs x
-      -> forall s'. K (Word8 -> First (CBOR.Decoder s' (NS WrapTxOut xs))) x
-    each idx = K $ \w -> First $
-        if w /= toWord8 idx then Nothing else
-        Just
-          $ injectNS idx . WrapTxOut <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x))
+      -> forall s'. (K () -.-> K (CBOR.Decoder s' (NS WrapTxOut xs))) x
+    each idx = fn
+      (\(K ()) -> K $ injectNS idx . WrapTxOut <$> decodeValue (getLedgerTables $ codecLedgerTables @(LedgerState x)))
 
-    aDecoder = mconcat
-            $ hcollapse
-            $ hcmap
-                (Proxy @(Compose CanSerializeLedgerTables LedgerState))
-                each
-                (indices @xs)
+    aDecoder :: Word8 -> CBOR.Decoder s' (NS WrapTxOut xs)
+    aDecoder w =
+        hcollapse
+      $ flip hap (fromMaybe (error "Unkown tag") $ nsFromIndex w)
+      $ hcmap (Proxy @(Compose CanSerializeLedgerTables LedgerState))
+              each
+              (indices @xs)

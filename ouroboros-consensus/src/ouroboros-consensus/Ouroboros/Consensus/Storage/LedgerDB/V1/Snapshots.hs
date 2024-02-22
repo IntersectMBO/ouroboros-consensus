@@ -1,12 +1,8 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE DataKinds        #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeOperators    #-}
 
-{-# OPTIONS_GHC -Wno-unused-binds #-}
-
-{- | snapshots
+{- | Snapshots
 
   Snapshotting a ledger state means saving a copy of the in-memory part of the
   ledger state serialized as a file on disk, as well as flushing differences on
@@ -130,84 +126,34 @@
   threads (and specifically the @copyAndSnapshotRunner@), we will take a
   snapshot of the current immutable database anchor as described above.
 
--}
+-------------------------------------------------------------------------------}
+
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots (
-    decodeSnapshotBackwardsCompatible
-  , deleteSnapshot
-  , diskSnapshotIsTemporary
-  , encodeSnapshot
-  , listSnapshots
-  , readSnapshot
-  , snapshotToStatePath
-  , snapshotToTablesPath
+    loadSnapshot
   , takeSnapshot
-  , trimSnapshots
-  , writeSnapshot
   ) where
 
-import           Codec.CBOR.Decoding
 import           Codec.CBOR.Encoding
-import qualified Codec.CBOR.Write as CBOR
-import qualified Codec.Serialise.Decoding as Dec
-import           Control.Monad
+import           Codec.Serialise
 import           Control.Monad.Except
 import           Control.Tracer
 import qualified Data.List as List
-import           Data.Maybe
-import           Data.Ord
-import           Data.Set (Set)
-import qualified Data.Set as Set
+import           Data.Maybe (fromMaybe)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as V1
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
-import           Ouroboros.Consensus.Storage.Serialisation
-import           Ouroboros.Consensus.Util.CallStack
-import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
-                     decodeWithOrigin, readIncremental)
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
+import           Ouroboros.Consensus.Util.Args (Complete)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.Versioned
 import           System.FS.API
 import           System.FS.API.Types
-import           Text.Read
-
--- | Named snapshot are permanent, they will never be deleted when trimming.
-diskSnapshotIsPermanent :: DiskSnapshot -> Bool
-diskSnapshotIsPermanent = isJust . dsSuffix
-
--- | The snapshots that are periodically created are temporary, they will be
--- deleted when trimming
-diskSnapshotIsTemporary :: DiskSnapshot -> Bool
-diskSnapshotIsTemporary = not . diskSnapshotIsPermanent
-
--- | Read snapshot from disk
-readSnapshot ::
-     forall m blk. IOLike m
-  => SomeHasFS m
-  -> (forall s. Decoder s (ExtLedgerState blk EmptyMK))
-  -> (forall s. Decoder s (HeaderHash blk))
-  -> DiskSnapshot
-  -> ExceptT ReadIncrementalErr m (ExtLedgerState blk EmptyMK)
-readSnapshot hasFS decLedger decHash = do
-      ExceptT
-    . readIncremental hasFS decoder
-    . snapshotToStatePath
-  where
-    decoder :: Decoder s (ExtLedgerState blk EmptyMK)
-    decoder = decodeSnapshotBackwardsCompatible (Proxy @blk) decLedger decHash
-
--- | List on-disk snapshots, highest number first.
-listSnapshots :: Monad m => SomeHasFS m -> m [DiskSnapshot]
-listSnapshots (SomeHasFS HasFS{listDirectory}) =
-    aux <$> listDirectory (mkFsPath [])
-  where
-    aux :: Set String -> [DiskSnapshot]
-    aux = List.sortOn (Down . dsNumber) . mapMaybe snapshotFromPath . Set.toList
 
 -- | Try to take a snapshot of the /oldest ledger state/ in the ledger DB
 --
@@ -229,21 +175,18 @@ listSnapshots (SomeHasFS HasFS{listDirectory}) =
 --
 -- TODO: Should we delete the file if an error occurs during writing?
 takeSnapshot ::
-  forall m blk.
   ( IOLike m
   , LedgerDbSerialiseConstraints blk
   , LedgerSupportsProtocol blk
   )
   => StrictTVar m (DbChangelog' blk)
-  -> LedgerDBLock m
   -> CodecConfig blk
   -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
   -> BackingStore' m blk
   -> Maybe DiskSnapshot -- ^ Override for snapshot numbering
-  -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore dsOverride =
-  withReadLock lock $ do
+  -> ReadLocked m (Maybe (DiskSnapshot, RealPoint blk))
+takeSnapshot ldbvar ccfg tracer hasFS backingStore dsOverride = readLocked $ do
     state <- changelogLastFlushedState <$> readTVarIO ldbvar
     case pointToWithOriginRealPoint (castPoint (getTip state)) of
       Origin ->
@@ -255,71 +198,25 @@ takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore dsOverride =
         if List.any ((== number) . dsNumber) diskSnapshots then
           return Nothing
         else do
-          writeSnapshot hasFS ldbBackingStore encodeExtLedgerState' snapshot state
+          writeSnapshot hasFS backingStore (encodeExtLedgerState' ccfg) snapshot state
           traceWith tracer $ TookSnapshot snapshot t
           return $ Just (snapshot, t)
-  where
-    encodeExtLedgerState' :: ExtLedgerState blk EmptyMK -> Encoding
-    encodeExtLedgerState' = encodeExtLedgerState
-                              (encodeDisk ccfg)
-                              (encodeDisk ccfg)
-                              (encodeDisk ccfg)
 
 -- | Write snapshot to disk
 writeSnapshot ::
-     forall m blk. MonadThrow m
+     MonadThrow m
   => SomeHasFS m
   -> BackingStore' m blk
   -> (ExtLedgerState blk EmptyMK -> Encoding)
   -> DiskSnapshot
   -> ExtLedgerState blk EmptyMK
   -> m ()
-writeSnapshot (SomeHasFS hasFS) backingStore encLedger snapshot cs = do
+writeSnapshot fs@(SomeHasFS hasFS) backingStore encLedger snapshot cs = do
     createDirectory hasFS (snapshotToDirPath snapshot)
-    withFile hasFS (snapshotToStatePath snapshot) (WriteMode MustBeNew) $ \h ->
-      void $ hPut hasFS h $ CBOR.toBuilder (encoder cs)
+    writeExtLedgerState fs encLedger (snapshotToStatePath snapshot) cs
     bsCopy
       backingStore
       (snapshotToTablesPath snapshot)
-  where
-    encoder :: ExtLedgerState blk EmptyMK -> Encoding
-    encoder = encodeSnapshot encLedger
-
--- | Trim the number of on disk snapshots so that at most 'onDiskNumSnapshots'
--- snapshots are stored on disk. The oldest snapshots are deleted.
---
--- The deleted snapshots are returned.
-trimSnapshots ::
-     Monad m
-  => Tracer m (TraceSnapshotEvent r)
-  -> SomeHasFS m
-  -> DiskPolicy
-  -> m [DiskSnapshot]
-trimSnapshots tracer hasFS DiskPolicy{onDiskNumSnapshots} = do
-    -- We only trim temporary snapshots
-    diskSnapshots <- filter diskSnapshotIsTemporary <$> listSnapshots hasFS
-    -- The snapshot are most recent first, so we can simply drop from the
-    -- front to get the snapshots that are "too" old.
-    forM (drop (fromIntegral onDiskNumSnapshots) diskSnapshots) $ \snapshot -> do
-      deleteSnapshot hasFS snapshot
-      traceWith tracer $ DeletedSnapshot snapshot
-      return snapshot
-
--- | Delete snapshot from disk
-deleteSnapshot :: HasCallStack => SomeHasFS m -> DiskSnapshot -> m ()
-deleteSnapshot (SomeHasFS HasFS{removeDirectoryRecursive}) = removeDirectoryRecursive . snapshotToDirPath
-
-snapshotToDirName :: DiskSnapshot -> String
-snapshotToDirName DiskSnapshot { dsNumber, dsSuffix } =
-    show dsNumber <> suffix
-  where
-    suffix = case dsSuffix of
-      Nothing -> ""
-      Just s  -> "_" <> s
-
--- | The path within the LedgerDB's filesystem to the snapshot's directory
-snapshotToDirPath :: DiskSnapshot -> FsPath
-snapshotToDirPath = mkFsPath . (:[]) . snapshotToDirName
 
 -- | The path within the LedgerDB's filesystem to the file that contains the
 -- snapshot's serialized ledger state
@@ -331,69 +228,27 @@ snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
 snapshotToTablesPath :: DiskSnapshot -> FsPath
 snapshotToTablesPath = mkFsPath . (\x -> [x, "tables"]) . snapshotToDirName
 
--- | The path within the LedgerDB's filesystem to the directory that contains the
--- backing store
-_tablesPath :: FsPath
-_tablesPath = mkFsPath ["tables"]
-
-snapshotFromPath :: String -> Maybe DiskSnapshot
-snapshotFromPath fileName = do
-    number <- readMaybe prefix
-    return $ DiskSnapshot number suffix'
-  where
-    (prefix, suffix) = break (== '_') fileName
-
-    suffix' :: Maybe String
-    suffix' = case suffix of
-      ""      -> Nothing
-      _ : str -> Just str
-
--- | Version 1: uses versioning ('Ouroboros.Consensus.Util.Versioned') and only
--- encodes the ledger state @l@.
-snapshotEncodingVersion1 :: VersionNumber
-snapshotEncodingVersion1 = 1
-
--- | Encoder to be used in combination with 'decodeSnapshotBackwardsCompatible'.
-encodeSnapshot :: (l -> Encoding) -> l -> Encoding
-encodeSnapshot encodeLedger l =
-    encodeVersion snapshotEncodingVersion1 (encodeLedger l)
-
--- | To remain backwards compatible with existing snapshots stored on disk, we
--- must accept the old format as well as the new format.
---
--- The old format:
---
--- * The tip: @WithOrigin (RealPoint blk)@
---
--- * The chain length: @Word64@
---
--- * The ledger state: @l@
---
--- The new format is described by 'snapshotEncodingVersion1'.
---
--- This decoder will accept and ignore them. The encoder ('encodeSnapshot') will
--- no longer encode them.
-decodeSnapshotBackwardsCompatible ::
-     forall l blk.
-     Proxy blk
-  -> (forall s. Decoder s l)
-  -> (forall s. Decoder s (HeaderHash blk))
-  -> forall s. Decoder s l
-decodeSnapshotBackwardsCompatible _ decodeLedger decodeHash =
-    decodeVersionWithHook
-      decodeOldFormat
-      [(snapshotEncodingVersion1, Decode decodeVersion1)]
-  where
-    decodeVersion1 :: forall s. Decoder s l
-    decodeVersion1 = decodeLedger
-
-    decodeOldFormat :: Maybe Int -> forall s. Decoder s l
-    decodeOldFormat (Just 3) = do
-        _ <- withOriginRealPointToPoint <$>
-               decodeWithOrigin (decodeRealPoint @blk decodeHash)
-        _ <- Dec.decodeWord64
-        decodeLedger
-    decodeOldFormat mbListLen =
-        fail $
-          "decodeSnapshotBackwardsCompatible: invalid start " <>
-          show mbListLen
+loadSnapshot ::
+     ( IOLike m
+     , LedgerDbSerialiseConstraints blk
+     , LedgerSupportsProtocol blk
+     )
+  => Tracer m V1.FlavorImplSpecificTrace
+  -> Complete BackingStoreArgs m
+  -> CodecConfig blk
+  -> SomeHasFS m
+  -> DiskSnapshot
+  -> m (Either
+         (SnapshotFailure blk)
+         ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk))
+loadSnapshot tracer bss ccfg fs s = do
+  eExtLedgerSt <- runExceptT $ readExtLedgerState fs (decodeExtLedgerState' ccfg) decode (snapshotToStatePath s)
+  case eExtLedgerSt of
+    Left err -> pure (Left $ InitFailureRead err)
+    Right extLedgerSt -> do
+      case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
+        Origin        -> pure (Left InitFailureGenesis)
+        NotOrigin pt -> do
+          backingStore <- restoreBackingStore tracer bss fs (snapshotToTablesPath s)
+          let chlog  = empty extLedgerSt
+          pure (Right ((chlog, backingStore), pt))
