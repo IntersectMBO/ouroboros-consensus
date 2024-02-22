@@ -28,6 +28,7 @@ import           Control.Monad.Class.MonadTime
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Bifunctor (first)
+import           Data.Functor.Contravariant ((>$<))
 import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -41,9 +42,13 @@ import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
+                     (TraceEvent (..))
+import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDbArgs (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
+import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDbArgs (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -245,10 +250,13 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
-                , mcdbBackingStoreSelector   = LedgerDB.V1.InMemoryBackingStore
                 }
           -- TODO: Test with more interesting behaviour for cdbCheckInFuture
-          pure $ args { cdbTracer = cdbTracer }
+          pure $ args { cdbImmDbArgs = (cdbImmDbArgs args) { immTracer = TraceImmutableDBEvent >$< cdbTracer }
+                      , cdbVolDbArgs = (cdbVolDbArgs args) { volTracer = TraceVolatileDBEvent >$<  cdbTracer }
+                      , cdbLgrDbArgs = (cdbLgrDbArgs args) { lgrTracer = TraceLedgerDBEvent >$<  cdbTracer }
+                      , cdbsArgs = (cdbsArgs args) { cdbsTracer = cdbTracer }
+                      }
         (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
           allocate
             registry

@@ -44,6 +44,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (Serialise)
 import qualified Codec.Serialise as S
+import           Control.Monad.Base
 import           Control.Monad.Except (Except, runExcept)
 import           Control.Monad.State (StateT (..))
 import qualified Control.Monad.State as State
@@ -53,6 +54,7 @@ import qualified Control.Tracer as Trace
 import           Data.Bifunctor
 import           Data.Foldable (toList)
 import           Data.Functor.Classes
+import           Data.Functor.Contravariant ((>$<))
 import qualified Data.List as L
 import           Data.List.NonEmpty (nonEmpty)
 import qualified Data.Map.Diff.Strict.Internal as DS
@@ -61,6 +63,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.SOP.Dict
 import           Data.TreeDiff.Class (genericToExpr)
 import           Data.TreeDiff.Expr (Expr (App))
 import           Data.Word
@@ -75,17 +78,24 @@ import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream hiding
                      (streamAPI)
 import           Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Common
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Init hiding (openDB)
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as HD
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
                      (KeySetsReader, getLedgerTablesFor, readKeySets)
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
-import           Ouroboros.Consensus.Util
+import           Ouroboros.Consensus.Util hiding (Dict (..))
+import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block (Point (Point))
@@ -437,10 +447,10 @@ genBlock pt =
 genBlockFromLedgerState :: ExtLedgerState TestBlock mk -> Gen TestBlock
 genBlockFromLedgerState = pure . genBlock . lastAppliedPoint . ledgerState
 
-extLedgerDbConfig :: SecurityParam -> DbChangelog.DbChangelogCfg (ExtLedgerState TestBlock)
-extLedgerDbConfig secParam = DbChangelog.DbChangelogCfg {
-      dbChangelogCfgSecParam = secParam
-    , dbChangelogCfg         = ExtLedgerCfg $ singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig secParam
+extLedgerDbConfig :: SecurityParam -> LedgerDbCfg (ExtLedgerState TestBlock)
+extLedgerDbConfig secParam = LedgerDbCfg {
+      ledgerDbCfgSecParam = secParam
+    , ledgerDbCfg         = ExtLedgerCfg $ singleNodeTestConfigWith TestBlockCodecConfig TestBlockStorageConfig secParam
     }
 
 
@@ -717,7 +727,7 @@ runMock :: Cmd MockSnap -> Mock -> (Resp MockSnap, Mock)
 runMock cmd initMock =
     first Resp $ go cmd initMock
   where
-    cfg :: DbChangelog.DbChangelogCfg (ExtLedgerState TestBlock)
+    cfg :: LedgerDbCfg (ExtLedgerState TestBlock)
     cfg = extLedgerDbConfig (mockSecParam initMock)
 
     go :: Cmd MockSnap -> Mock -> (Success MockSnap, Mock)
@@ -818,7 +828,7 @@ runMock cmd initMock =
     push :: TestBlock -> StateT MockLedger (Except (ExtValidationError TestBlock)) ()
     push b = do
         ls <- State.get
-        l' <- State.lift $ tickThenApply (DbChangelog.dbChangelogCfg cfg) b (cur ls)
+        l' <- State.lift $ tickThenApply (ledgerDbCfg cfg) b (cur ls)
         State.put ((b, applyDiffs (cur ls) l'):ls)
 
     switch :: Word64
@@ -838,10 +848,10 @@ runMock cmd initMock =
 
 -- | Arguments required by 'StandaloneDB'
 data DbEnv m = DbEnv {
-      dbHasFS                :: !(SomeHasFS m)
-    , dbBackingStoreSelector :: !(BackingStoreSelector m)
-    , dbTracer               :: !(Trace.Tracer m (TraceLedgerDBEvent TestBlock))
-    , dbCleanup              :: !(m ())
+      dbHasFS            :: !(SomeHasFS m)
+    , dbBackingStoreArgs :: !(Complete BackingStoreArgs m)
+    , dbTracer           :: !(Trace.Tracer m (TraceLedgerDBEvent TestBlock))
+    , dbCleanup          :: !(m ())
     }
 
 -- | Standalone ledger DB
@@ -871,15 +881,12 @@ data StandaloneDB m = DB {
     , dbChain       :: StrictTVar m [RealPoint TestBlock]
 
       -- | Resolve blocks
-    , dbResolve     :: DbChangelog.ResolveBlock m TestBlock
+    , dbResolve     :: ResolveBlock m TestBlock
 
       -- | LedgerDB config
-    , dbLedgerDbCfg :: DbChangelog.DbChangelogCfg (ExtLedgerState TestBlock)
+    , dbLedgerDbCfg :: LedgerDbCfg (ExtLedgerState TestBlock)
 
     , dbBackingStore :: StrictTVar m (HD.LedgerBackingStore m (ExtLedgerState TestBlock))
-
-      -- | needed for restore TODO does this really belong here?
-    , sdbBackingStoreSelector :: BackingStoreSelector m
 
     , dbRegistry :: ResourceRegistry m
     , dbLock     :: LedgerDBLock m
@@ -909,14 +916,14 @@ initStandaloneDB dbEnv@DbEnv{..} dbRegistry dbSecParam = do
     dbBackingStore <- uncheckedNewTVarM
                       =<< HD.newBackingStore
                             nullTracer
-                            dbBackingStoreSelector
+                            dbBackingStoreArgs
                             dbHasFS
                             initTables -- TODO we could consider adapting the test generator to generate an initial ledger with non-empty tables.
 
-    let dbResolve :: DbChangelog.ResolveBlock m TestBlock
+    let dbResolve :: ResolveBlock m TestBlock
         dbResolve r = atomically $ getBlock r <$> readTVar dbBlocks
 
-        dbLedgerDbCfg :: DbChangelog.DbChangelogCfg (ExtLedgerState TestBlock)
+        dbLedgerDbCfg :: LedgerDbCfg (ExtLedgerState TestBlock)
         dbLedgerDbCfg = extLedgerDbConfig dbSecParam
 
     return DB{..}
@@ -947,7 +954,6 @@ initStandaloneDB dbEnv@DbEnv{..} dbRegistry dbSecParam = do
         , "block in dbChain not in dbBlocks, "
         , "or LedgerDB not re-initialized after chain truncation"
         ]
-    sdbBackingStoreSelector = dbBackingStoreSelector
 
 dbStreamAPI :: forall m. IOLike m => StandaloneDB m -> StreamAPI m TestBlock TestBlock
 dbStreamAPI DB{..} = StreamAPI {..}
@@ -999,7 +1005,7 @@ dbStreamAPI DB{..} = StreamAPI {..}
         ]
 
 runDB ::
-     forall m. IOLike m
+     forall m. (IOLike m, MonadBase m m)
   => StandaloneDB m -> Cmd DiskSnapshot -> m (Resp DiskSnapshot)
 runDB standalone@DB{..} cmd =
     case dbEnv of
@@ -1008,9 +1014,9 @@ runDB standalone@DB{..} cmd =
     streamAPI = dbStreamAPI standalone
 
     annLedgerErr' ::
-         DbChangelog.AnnLedgerError (ExtLedgerState TestBlock) TestBlock
+         LedgerDB.AnnLedgerError m (ExtLedgerState TestBlock) TestBlock
       -> ExtValidationError TestBlock
-    annLedgerErr' = DbChangelog.annLedgerErr
+    annLedgerErr' = LedgerDB.annLedgerErr
 
     reader :: KeySetsReader m (ExtLedgerState TestBlock)
     reader rewoundTableKeySets = do
@@ -1025,11 +1031,11 @@ runDB standalone@DB{..} cmd =
           uncurry Map.insert (refValPair b)
         upd (push b) $ \db ->
           fmap (first annLedgerErr') $
-            DbChangelog.defaultThrowLedgerErrors $
+            defaultThrowLedgerErrors $
                DbChangelog.onChangelogM (
-                DbChangelog.applyThenPush
+                DbChangelog.reapplyThenPush
                 dbLedgerDbCfg
-                (DbChangelog.ApplyVal b)
+                b
                 (Trans.lift . reader)) db
 
     go _ (Switch n bs) = do
@@ -1037,14 +1043,13 @@ runDB standalone@DB{..} cmd =
           repeatedly (uncurry Map.insert) (map refValPair bs)
         upd (switch n bs) $ \db ->
           fmap (first annLedgerErr') $
-            DbChangelog.defaultResolveWithErrors dbResolve $
+            defaultResolveWithErrors dbResolve $
              DbChangelog.onChangelogM (
                 fmap ignoreExceedRollback .
                 DbChangelog.switch
                   dbLedgerDbCfg
                   n
-                  (const $ pure ())
-                  (map DbChangelog.ApplyVal bs)
+                  bs
                   (Trans.lift . Trans.lift . reader)
                 )
                 db
@@ -1059,35 +1064,45 @@ runDB standalone@DB{..} cmd =
             Just _ -> do
               modifyTVar dbChlog (const db')
               pure (toFlush, bs)
-        mapM_ (flushIntoBackingStore bs) toFlush
+        mapM_ (withWriteLock dbLock . flushIntoBackingStore bs) toFlush
         pure Flushed
     go hasFS Snap = do
         bs <- atomically $ readTVar dbBackingStore
         Snapped <$>
-          takeSnapshot
-            dbChlog
-            dbLock
-            TestBlockCodecConfig
-            nullTracer
-            hasFS
-            bs
-            Nothing
+          withReadLock dbLock (
+            takeSnapshot
+              dbChlog
+              TestBlockCodecConfig
+              nullTracer
+              hasFS
+              bs
+              Nothing)
     go hasFS Restore = do
         old_db <- atomically . readTVar $ dbBackingStore
         HD.bsClose old_db
-        (initLog, db, _replayed, backingStore) <-
+        let
+            flavArgs = V1Args DisableFlushing DisableQuerySize $ dbBackingStoreArgs dbEnv
+            args = LedgerDbArgs
+                    DisableSnapshots
+                    (return (testInitExtLedgerWithState initialTestLedgerState))
+                    hasFS
+                    dbLedgerDbCfg
+                    (dbTracer dbEnv)
+                    (LedgerDbFlavorArgsV1 flavArgs)
+                    dbRegistry
+        pt <- fmap (realPointToPoint . last) . atomically $ reverse  <$> readTVar dbChain
+        (initLog, (db, backingStore), _replayed) <-
           initialize
-            nullTracer
-            nullTracer
-            (dbTracer dbEnv)
+            (LedgerReplayEvent >$< dbTracer dbEnv)
+            (LedgerDBSnapshotEvent >$< dbTracer dbEnv)
             hasFS
-            S.decode
-            S.decode
             dbLedgerDbCfg
-            undefined -- TODO(jdral_ldb)
-            (return (testInitExtLedgerWithState initialTestLedgerState))
             streamAPI
-            sdbBackingStoreSelector
+            pt
+            $ mkInitDb
+                args
+                flavArgs
+                dbResolve
 
         atomically $ do
           modifyTVar dbChlog (const db)
@@ -1138,7 +1153,7 @@ runDB standalone@DB{..} cmd =
     -- We don't currently test the case where the LedgerDB cannot support
     -- the full rollback range. See also
     -- <https://github.com/input-output-hk/ouroboros-network/issues/1025>
-    ignoreExceedRollback :: Either DbChangelog.ExceededRollback a -> a
+    ignoreExceedRollback :: Either LedgerDB.ExceededRollback a -> a
     ignoreExceedRollback (Left  _) = error "unexpected ExceededRollback"
     ignoreExceedRollback (Right a) = a
 
@@ -1439,7 +1454,7 @@ instance ToExpr DiskSnapshot
   Final state machine
 -------------------------------------------------------------------------------}
 
-semantics :: IOLike m
+semantics :: (IOLike m, MonadBase m m)
           => StandaloneDB m
           -> Cmd :@ Concrete -> m (Resp :@ Concrete)
 semantics db (At cmd) = At . fmap reference <$> runDB db (concrete <$> cmd)
@@ -1476,7 +1491,7 @@ symbolicResp m c = At <$> traverse (const genSym) resp
   where
     (resp, _mock') = step m c
 
-sm :: IOLike m
+sm :: (IOLike m, MonadBase m m)
    => SecurityParam
    -> CmdDistribution
    -> StandaloneDB m
@@ -1519,7 +1534,7 @@ inMemDbEnv = Trans.liftIO $ do
   fs <- uncheckedNewTVarM MockFS.empty
   let
     dbHasFS = SomeHasFS $ simHasFS fs
-    dbBackingStoreSelector = InMemoryBackingStore
+    dbBackingStoreArgs = InMemoryBackingStoreArgs
     dbCleanup = pure ()
     dbTracer = mkDbTracer
   pure DbEnv{..}
@@ -1533,7 +1548,7 @@ lmdbDbEnv limits = do
       tmpdir <- Temp.createTempDirectory systmpdir "init_standalone_db"
       pure (SomeHasFS $ FSIO.ioHasFS $ MountPoint tmpdir, Dir.removeDirectoryRecursive tmpdir)
   let
-    dbBackingStoreSelector = LMDBBackingStore limits
+    dbBackingStoreArgs = LMDBBackingStoreArgs limits Dict
     dbTracer = mkDbTracer
   pure DbEnv{..}
 

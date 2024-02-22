@@ -9,7 +9,7 @@ import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
                      picosecondsToDiffTime, secondsToDiffTime)
 import           Data.Word
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -40,9 +40,9 @@ data TestSetup = TestSetup {
   }
   deriving (Show)
 
--- | The represented default 'DiskPolicy'
-toDiskPolicy :: TestSetup -> DiskPolicy
-toDiskPolicy ts =defaultDiskPolicy (tsK ts) (tsSnapshotInterval ts)
+-- | The represented default 'SnapshotPolicy'
+toDiskPolicy :: TestSetup -> SnapshotPolicy
+toDiskPolicy ts = defaultSnapshotPolicy (tsK ts) (tsSnapshotInterval ts)
 
 -- | The result of the represented call to 'onDiskShouldTakeSnapshot'
 shouldTakeSnapshot :: TestSetup -> Bool
@@ -156,6 +156,7 @@ instance Arbitrary TestSetup where
         Just  d -> Nothing : fmap Just (shnk d)
 
       shrinkSnapshotInterval = \case
+        DisableSnapshots            -> []
         DefaultSnapshotInterval     -> []
         RequestedSnapshotInterval d ->
               DefaultSnapshotInterval
@@ -215,6 +216,8 @@ prop_onDiskShouldTakeSnapshot ts =
           RequestedSnapshotInterval interval ->
               (timeSinceLast >= interval) `named`
                 "time since last is greater then explicitly requested interval"
+
+          DisableSnapshots -> error "Will never call this test with this value"
 
     systemChecksHowManyBlocksWereProcessed :: DiffTime -> NamedValue Bool
     systemChecksHowManyBlocksWereProcessed timeSinceLast =

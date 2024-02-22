@@ -1,12 +1,11 @@
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE KindSignatures             #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE KindSignatures       #-}
+{-# LANGUAGE NamedFieldPuns       #-}
+{-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- | In-memory ledger DB tests.
@@ -37,9 +36,10 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
                      (tip)
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
 import           Ouroboros.Consensus.Util
 import           Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary ()
 import           Test.QuickCheck
@@ -109,20 +109,20 @@ test_encode_ledger :: Assertion
 test_encode_ledger =
     toFlatTerm (enc example_ledger) @?= golden_ledger
   where
-    enc = encodeSnapshot encode
+    enc = encodeL encode
 
 test_decode_ledger :: Assertion
 test_decode_ledger =
     fromFlatTerm dec golden_ledger @?= Right example_ledger
   where
-    dec = decodeSnapshotBackwardsCompatible (Proxy @TestBlock) decode decode
+    dec = decodeLBackwardsCompatible (Proxy @TestBlock) decode decode
 
 -- | For backwards compatibility
 test_decode_ChainSummary :: Assertion
 test_decode_ChainSummary =
     fromFlatTerm dec golden_ChainSummary @?= Right example_ledger
   where
-    dec = decodeSnapshotBackwardsCompatible (Proxy @TestBlock) decode decode
+    dec = decodeLBackwardsCompatible (Proxy @TestBlock) decode decode
 
 {-------------------------------------------------------------------------------
   Genesis
@@ -150,7 +150,7 @@ prop_pushExpectedLedger setup@ChainSetup{..} =
     expectedChain o = take (fromIntegral (csNumBlocks - o)) csChain
 
     cfg :: LedgerConfig TestBlock
-    cfg = dbChangelogCfg (csBlockConfig setup)
+    cfg = ledgerDbCfg (csBlockConfig setup)
 
 prop_pastLedger :: ChainSetup -> Property
 prop_pastLedger setup@ChainSetup{..} =
@@ -168,7 +168,7 @@ prop_pastLedger setup@ChainSetup{..} =
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
     afterPrefix :: AnchorlessDbChangelog (LedgerState TestBlock)
-    afterPrefix = applyThenPushMany' (csBlockConfig setup) prefix trivialKeySetsReader csGenSnaps
+    afterPrefix = reapplyThenPushMany' (csBlockConfig setup) prefix trivialKeySetsReader csGenSnaps
 
     -- See 'prop_snapshotsMaxRollback'
     withinReach :: Bool
@@ -216,7 +216,7 @@ prop_switchExpectedLedger setup@SwitchSetup{..} =
     expectedChain o = take (fromIntegral (ssNumBlocks - o)) ssChain
 
     cfg :: LedgerConfig TestBlock
-    cfg = dbChangelogCfg (csBlockConfig ssChainSetup)
+    cfg = ledgerDbCfg (csBlockConfig ssChainSetup)
 
 -- | Check 'prop_pastLedger' still holds after switching to a fork
 prop_pastAfterSwitch :: SwitchSetup -> Property
@@ -235,7 +235,7 @@ prop_pastAfterSwitch setup@SwitchSetup{..} =
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
     afterPrefix :: AnchorlessDbChangelog (LedgerState TestBlock)
-    afterPrefix = applyThenPushMany' (csBlockConfig ssChainSetup) prefix trivialKeySetsReader (csGenSnaps ssChainSetup)
+    afterPrefix = reapplyThenPushMany' (csBlockConfig ssChainSetup) prefix trivialKeySetsReader (csGenSnaps ssChainSetup)
 
     -- See 'prop_snapshotsMaxRollback'
     withinReach :: Bool
@@ -271,13 +271,13 @@ data ChainSetup = ChainSetup {
     }
   deriving (Show)
 
-csBlockConfig :: ChainSetup -> DbChangelogCfg (LedgerState TestBlock)
+csBlockConfig :: ChainSetup -> LedgerDbCfg (LedgerState TestBlock)
 csBlockConfig = csBlockConfig' . csSecParam
 
-csBlockConfig' :: SecurityParam -> DbChangelogCfg (LedgerState TestBlock)
-csBlockConfig' secParam = DbChangelogCfg {
-      dbChangelogCfgSecParam = secParam
-    , dbChangelogCfg         = HardFork.defaultEraParams secParam slotLength
+csBlockConfig' :: SecurityParam -> LedgerDbCfg (LedgerState TestBlock)
+csBlockConfig' secParam = LedgerDbCfg {
+      ledgerDbCfgSecParam = secParam
+    , ledgerDbCfg         = HardFork.defaultEraParams secParam slotLength
     }
   where
     slotLength = slotLengthFromSec 20
@@ -327,7 +327,7 @@ mkTestSetup csSecParam csNumBlocks csPrefixLen =
     csGenSnaps = anchorlessChangelog $ empty (convertMapKind testInitLedger)
     csChain    = take (fromIntegral csNumBlocks) $
                    iterate successorBlock (firstBlock 0)
-    csPushed   = applyThenPushMany' (csBlockConfig' csSecParam) csChain trivialKeySetsReader csGenSnaps
+    csPushed   = reapplyThenPushMany' (csBlockConfig' csSecParam) csChain trivialKeySetsReader csGenSnaps
 
 mkRollbackSetup :: ChainSetup -> Word64 -> Word64 -> Word64 -> SwitchSetup
 mkRollbackSetup ssChainSetup ssNumRollback ssNumNew ssPrefixLen =

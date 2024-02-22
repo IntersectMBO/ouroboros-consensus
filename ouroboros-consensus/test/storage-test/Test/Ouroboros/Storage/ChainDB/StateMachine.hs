@@ -118,11 +118,11 @@ import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Common as LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (split)
@@ -182,7 +182,8 @@ data Cmd blk it flr
     -- smaller than the block's slot number (such that the block is from the
     -- future) and larger or equal to the current slot, and add the block.
   | GetCurrentChain
-  | GetLedgerDB
+  -- TODO(js_ldb): reenable
+  --  GetLedgerDB
   | GetTipBlock
   | GetTipHeader
   | GetTipPoint
@@ -398,7 +399,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       AddBlock blk             -> Point               <$> advanceAndAdd st (blockSlot blk) blk
       AddFutureBlock blk s     -> Point               <$> advanceAndAdd st s               blk
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
-      GetLedgerDB              -> LedgerDB . flush    <$> atomically undefined -- TODO(jdral_ldb)
+      -- GetLedgerDB              -> LedgerDB . flush    <$> atomically getDbChangelog -- TODO(jdral_ldb)
       GetTipBlock              -> MbBlock             <$> getTipBlock
       GetTipHeader             -> MbHeader            <$> getTipHeader
       GetTipPoint              -> Point               <$> atomically getTipPoint
@@ -660,7 +661,7 @@ runPure cfg = \case
     AddBlock blk             -> ok  Point               $ update  (advanceAndAdd (blockSlot blk) blk)
     AddFutureBlock blk s     -> ok  Point               $ update  (advanceAndAdd s               blk)
     GetCurrentChain          -> ok  Chain               $ query   (Model.volatileChain k getHeader)
-    GetLedgerDB              -> ok  LedgerDB            $ query   (flush . Model.getDbChangelog cfg)
+--    GetLedgerDB              -> ok  LedgerDB            $ query   (flush . Model.getDbChangelog cfg)
     GetTipBlock              -> ok  MbBlock             $ query    Model.tipBlock
     GetTipHeader             -> ok  MbHeader            $ query   (fmap getHeader . Model.tipBlock)
     GetTipPoint              -> ok  Point               $ query    Model.tipPoint
@@ -915,7 +916,7 @@ generator
 generator genBlock m@Model {..} = At <$> frequency
     [ (30, genAddBlock)
     , (if empty then 1 else 10, return GetCurrentChain)
-    , (if empty then 1 else 10, return GetLedgerDB)
+--    , (if empty then 1 else 10, return GetLedgerDB)
     , (if empty then 1 else 10, return GetTipBlock)
       -- To check that we're on the right chain
     , (if empty then 1 else 10, return GetTipPoint)
@@ -1328,8 +1329,6 @@ deriving instance SOP.Generic         (TraceIteratorEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceIteratorEvent blk)
 deriving instance SOP.Generic         (LedgerDB.TraceLedgerDBEvent blk)
 deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceLedgerDBEvent blk)
-deriving instance SOP.Generic         (LedgerDB.TraceReplayEvent blk)
-deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceReplayEvent blk)
 deriving instance SOP.Generic         (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic         (VolatileDB.TraceEvent blk)
@@ -1705,7 +1704,7 @@ traceEventName = \case
     TraceGCEvent                ev    -> "GC."                <> constrName ev
     TraceIteratorEvent          ev    -> "Iterator."          <> constrName ev
     TraceLedgerDBEvent          ev    -> "Ledger."            <> constrName ev
-    TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
+--    TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
 
@@ -1726,12 +1725,18 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
           , mcdbInitLedger = initLedger
           , mcdbRegistry = registry
           , mcdbNodeDBs = nodeDBs
-          , mcdbBackingStoreSelector = LedgerDB.InMemoryBackingStore
           }
-  in args { cdbCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
-          , cdbCheckIntegrity = testBlockIsValid
-          , cdbBlocksToAddSize = 2
-          , cdbTracer = tracer
+  in ChainDB.updateTracer tracer $
+      args { cdbsArgs = (cdbsArgs args) {
+               ChainDB.cdbsCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
+             , ChainDB.cdbsBlocksToAddSize = 2
+             }
+           , cdbImmDbArgs = (cdbImmDbArgs args) {
+               ImmutableDB.immCheckIntegrity = testBlockIsValid
+               }
+           , cdbVolDbArgs = (cdbVolDbArgs args) {
+               VolatileDB.volCheckIntegrity = testBlockIsValid
+               }
           }
 
 tests :: TestTree

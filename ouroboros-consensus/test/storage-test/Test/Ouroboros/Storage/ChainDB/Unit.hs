@@ -40,7 +40,6 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import           Ouroboros.Consensus.Storage.Common (StreamFrom (..),
                      StreamTo (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (closeRegistry,
                      unsafeNewRegistry)
@@ -430,7 +429,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
     closeChainDbEnv (env, _) = do
       readSVar (varDB env) >>= close
       closeRegistry (registry env)
-      closeRegistry (cdbRegistry $ args env)
+      closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
     chainDbArgs registry nodeDbs tracer =
       let args = fromMinimalChainDbArgs MinimalChainDbArgs
@@ -439,9 +438,8 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
             , mcdbInitLedger = extLedgerState
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDbs
-            , mcdbBackingStoreSelector = LedgerDB.InMemoryBackingStore
             }
-      in args { cdbTracer = tracer }
+      in updateTracer tracer args
 
 instance IOLike m => SupportsUnitTest (SystemM blk m) where
 

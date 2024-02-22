@@ -1,8 +1,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module Test.LedgerTables (
-    prop_stowable_laws
-  , prop_tablestuff_laws
+    prop_hasledgertables_laws
+  , prop_stowable_laws
   ) where
 
 import           Data.Function (on)
@@ -42,16 +42,16 @@ prop_stowable_laws = \ls ls' ->
   stowLedgerTables (unstowLedgerTables ls) ==? ls .&&.
   unstowLedgerTables (stowLedgerTables ls') ==? ls'
 
--- | The TableStuff instances should follow these two laws:
+-- | The HasLedgerTables instances should follow these two laws:
 --
 -- > with . project == id
 --
 -- > project . with == id
-prop_tablestuff_laws ::
+prop_hasledgertables_laws ::
      HasLedgerTables (LedgerState blk)
   => LedgerState blk EmptyMK
   -> LedgerTables (LedgerState blk) ValuesMK
   -> Property
-prop_tablestuff_laws = \ls tbs ->
+prop_hasledgertables_laws = \ls tbs ->
   (ls `withLedgerTables` (projectLedgerTables ls)) ==? ls .&&.
   projectLedgerTables (ls `withLedgerTables` tbs) === tbs

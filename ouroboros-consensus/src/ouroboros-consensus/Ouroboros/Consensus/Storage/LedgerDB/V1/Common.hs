@@ -62,7 +62,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API
 
 {-------------------------------------------------------------------------------
@@ -212,7 +211,6 @@ data ForkerEnv m l blk = ForkerEnv {
   , foeSecurityParam           :: !SecurityParam
   , foeQueryBatchSize          :: !QueryBatchSize
     -- * Resource registry
-  , foeResourceKey             :: !(ResourceKey m)
   , foeTracer                  :: !(Tracer m TraceForkerEvent)
   }
   deriving Generic
@@ -234,7 +232,7 @@ getForkerEnv (LDBHandle varState) forkerKey f = do
     forkerEnv <- atomically $ readTVar varState >>= \case
       LedgerDBClosed   -> throwIO $ ClosedDBError @blk prettyCallStack
       LedgerDBOpen env -> readTVar (ldbForkers env) >>= (Map.lookup forkerKey >>> \case
-        Nothing        -> throwSTM $ ClosedForkerError @blk prettyCallStack
+        Nothing        -> throwSTM $ ClosedForkerError @blk forkerKey prettyCallStack
         Just forkerEnv -> pure forkerEnv)
 
     f forkerEnv
@@ -256,7 +254,7 @@ getForkerEnvSTM ::
 getForkerEnvSTM (LDBHandle varState) forkerKey f = readTVar varState >>= \case
     LedgerDBClosed   -> throwIO $ ClosedDBError @blk prettyCallStack
     LedgerDBOpen env -> readTVar (ldbForkers env) >>= (Map.lookup forkerKey >>> \case
-      Nothing        -> throwSTM $ ClosedForkerError @blk prettyCallStack
+      Nothing        -> throwSTM $ ClosedForkerError @blk forkerKey prettyCallStack
       Just forkerEnv -> f forkerEnv)
 
 {-------------------------------------------------------------------------------

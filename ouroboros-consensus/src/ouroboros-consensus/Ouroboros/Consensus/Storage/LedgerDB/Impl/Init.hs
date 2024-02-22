@@ -20,6 +20,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Init (
   , InitLog (..)
   , openDB
   , openDBInternal
+    -- * Testing
+  , initialize
   ) where
 
 import           Control.Monad (when)

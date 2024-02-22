@@ -49,6 +49,9 @@ data QueryBatchSize =
     DefaultQueryBatchSize
     -- | A requested value: the number of keys to read from disk in each batch.
   | RequestedQueryBatchSize Word64
+
+    -- | To disable queries, to be used in tests
+  | DisableQuerySize
   deriving (Show, Eq, Generic)
   deriving anyclass NoThunks
 
@@ -56,6 +59,7 @@ defaultQueryBatchSize :: QueryBatchSize -> Word64
 defaultQueryBatchSize requestedQueryBatchSize = case requestedQueryBatchSize of
     RequestedQueryBatchSize value -> value
     DefaultQueryBatchSize         -> 100_000
+    DisableQuerySize              -> 0
 
 -- | The number of diffs in the immutable part of the chain that we have to see
 -- before we flush the ledger state to disk. See 'onDiskShouldFlush'.
@@ -68,12 +72,15 @@ data FlushFrequency =
     -- | A requested value: the number of diffs in the immutable part of the
     -- chain required before flushing.
   | RequestedFlushFrequency Word64
+    -- | To disable flushing, to be used in tests
+  | DisableFlushing
   deriving (Show, Eq, Generic)
 
 defaultShouldFlush :: FlushFrequency -> (Word64 -> Bool)
 defaultShouldFlush requestedFlushFrequency = case requestedFlushFrequency of
       RequestedFlushFrequency value -> (>= value)
       DefaultFlushFrequency         -> (>= 100)
+      DisableFlushing               -> const False
 
 data LedgerDbFlavorArgs f m = V1Args {
       v1FlushFrequency :: FlushFrequency
