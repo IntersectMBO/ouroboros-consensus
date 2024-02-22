@@ -413,3 +413,15 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
   encodeCanonicalTxIn = Core.toEraCBOR @era1 . getShelleyHFCTxIn
 
   decodeCanonicalTxIn = ShelleyHFCTxIn <$> Core.fromEraCBOR @era1
+
+instance CanHardFork (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
+      => HasHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
+  type instance HardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2) =
+                  DefaultHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2)
+  injectHardForkTxOut = injectHardForkTxOutDefault
+  distribHardForkTxOut = distribHardForkTxOutDefault
+
+instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
+      => SerializeHardForkTxOut (ShelleyBasedHardForkEras proto1 era1 proto2 era2) where
+  encodeHardForkTxOut _ = encodeHardForkTxOutDefault
+  decodeHardForkTxOut _ = decodeHardForkTxOutDefault

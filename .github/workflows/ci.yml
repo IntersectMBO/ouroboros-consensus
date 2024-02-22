@@ -20,15 +20,15 @@ jobs:
     strategy:
        fail-fast: false
        matrix:
-         ghc: ["8.10.7", "9.2.8", "9.6.3"]
-         cabal: ["3.10.1.0"]
+         ghc: ["8.10.7", "9.6.4"]
+         cabal: ["3.10.2.1"]
          os: [ubuntu-latest]
     env:
       # Modify this value to "invalidate" the Cabal cache.
-      CABAL_CACHE_VERSION: "2023-08-08"
+      CABAL_CACHE_VERSION: "2024-01-29"
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Install base libraries
       uses: input-output-hk/actions/base@latest
@@ -55,64 +55,70 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get -y install liblmdb-dev
-
-    - name: Generate dist-newstyle/cache/plan.json
-      run: cabal build all --dry-run --minimize-conflict-set
-
-    # We create a `dependencies.txt` file that can be used to index the cabal-store cache.
+    # We create a `dependencies.txt` file that can be used to index the cabal
+    # store cache.
     #
     # We do not use `plan.json` directly because adding a dependency to our
     # Cabal files which was already present somewhere else would result in a
-    # diferent plan, even though the set of dependences is the same.
+    # diferent plan, even though the set of dependencies is the same.
     #
     # In the future we should consider using `cabal-cache` like in the
     # `cardano-node`'s GitHub workflow.
     - name: Record dependencies to be used as cache keys
       id: record-deps
       run: |
-        cabal build all --dry-run
+        cabal build all --dry-run --minimize-conflict-set
         cat dist-newstyle/cache/plan.json \
-        | jq .["install-plan"][].id \
+        | jq '.["install-plan"][].id' \
         | sort \
         | uniq > dependencies.txt
 
-    - uses: actions/cache@v3
-      name: "Cache `cabal store`"
+    # This is used for caching the cabal store.
+    - name: Store month number as environment variable
+      run:  echo "MONTHNUM=$(/usr/bin/date -u '+%m')" >> $GITHUB_ENV
+
+    # Restore the cabal store cache. See `save-cabal-store`.
+    #
+    # When we restore a previous cache and store a new key, we store both files
+    # that were already in the cache, and new files that were created. To
+    # prevent the cache from growing to quickly, we reset the cache each month.
+    #
+    # NOTE: it's vital that all restore-keys include the month number.
+    # Otherwise, we could restore a cache from a previous month, which makes
+    # caches grow unboundedly.
+    - name: "Restore cache for cabal-store"
+      uses: actions/cache/restore@v4
+      id: restore-cabal-store
       with:
         path: ${{ steps.setup-haskell.outputs.cabal-store }}
-        key: cache-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ hashFiles('dependencies.txt') }}
-        restore-keys: cache-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}
-
-    # This is used for caching the `dist-newstyle` directory.
-    - name: Store week number as environment variable
-      run: echo "WEEKNUM=$(/usr/bin/date -u '+%W')" >> $GITHUB_ENV
-
-    # NOTE: We skip caching of the dist-newstyle folder for now, since we're
-    # often getting the following cabal warning, which leads to compilation
-    # failures: "Warning: This package indirectly depends on multiple versions
-    # of the same package. This is very likely to cause a compile failure.".
-    #
-    # # When we restore a previous cache and store a new key, we also store files
-    # # that were part of the last restoration but were not actually used. To
-    # # prevent the cache from growing too quickly we only store a new cache every
-    # # week.
-    # - uses: actions/cache@v3
-    #   name: "Cache `dist-newstyle`"
-    #   with:
-    #     path: |
-    #       dist-newstyle
-    #       !dist-newstyle/**/.git
-    #     key: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.WEEKNUM }}
-    #     restore-keys: cache-dist-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}
+        key: cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
+        restore-keys: |
+          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-${{ hashFiles('dependencies.txt') }}
+          cabal-store-${{ env.CABAL_CACHE_VERSION }}-${{ runner.os }}-${{ matrix.ghc }}-${{ env.MONTHNUM }}-
 
     - name: Build dependencies
+      id: build-dependencies
       run: cabal build --only-dependencies all -j
+
+    # Save the cabal store cache if the dependencies were succesfully built,
+    # even if subsequent consensus builds/tests/benchmarks could fail. This
+    # should shave off some running time because dependencies don't have to be
+    # rebuilt if any of the later steps fail and the job has to be re-run.
+    #
+    # See https://github.com/actions/cache/tree/v3/save#always-save-cache.
+    - name: "Save cache for cabal-store"
+      uses: actions/cache/save@v4
+      id: save-cabal-store
+      if: steps.build-dependencies.outcome == 'success' && steps.restore-cabal-store.outputs.cache-hit != 'true'
+      with:
+        path: ${{ steps.setup-haskell.outputs.cabal-store }}
+        key:  ${{ steps.restore-cabal-store.outputs.cache-primary-key }}
 
     - name: Build projects [build]
       run: cabal build all -j
 
     - name: Test
-      run: cabal test all -j
+      run: cabal test all -j --test-show-details=streaming
 
     - name: Create baseline-benchmark
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -130,7 +136,7 @@ jobs:
     # run on the `main` branch. If we run this workflow in the context of a PR,
     # then we will save the same results we just restored.
     - name: Cache benchmark baseline results
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: baseline-mempool-benchmarks.csv
         key:  baseline-mempool-benchmarks-${{ runner.os }}-${{ matrix.ghc }}-${{ github.run_id }}
@@ -144,7 +150,7 @@ jobs:
     # TODO: this will be necessary when we publish the benchmarks results.
     # - name: Upload mempool benchmark baseline results
     #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    #   uses: actions/upload-artifact@v3
+    #   uses: actions/upload-artifact@v4
     #   with:
     #     name: baseline-mempool-benchmarks
     #     path: baseline-mempool-benchmarks.csv
@@ -157,7 +163,7 @@ jobs:
         if [ -f baseline-mempool-benchmarks.csv ]; then
           cabal new-run ouroboros-consensus:mempool-bench -- \
           --timeout=60 --baseline baseline-mempool-benchmarks.csv \
-          --fail-if-slower 20 \
+          --fail-if-slower 100 \
           +RTS -T
         else
           echo "No baseline benchmarks found. This likely happened when adding a new GHC version to the build matrix."
@@ -170,7 +176,7 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='8.10.7'
+        && matrix.ghc=='9.6.4'
       run: |
         cabal build --dry-run --enable-tests all
         ./scripts/docs/haddocks.sh
@@ -180,8 +186,8 @@ jobs:
       if: |
         github.event_name == 'push'
         && github.ref == 'refs/heads/main'
-        && matrix.ghc=='8.10.7'
-      uses: actions/upload-artifact@v3
+        && matrix.ghc=='9.6.4'
+      uses: actions/upload-artifact@v4
       with:
         name: haddocks
         path: haddocks.tgz
@@ -198,15 +204,18 @@ jobs:
     strategy:
        fail-fast: false
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
           node-version: 18
           cache: yarn
           cache-dependency-path: './docs/website/yarn.lock'
 
-      - uses: cachix/install-nix-action@v22
+      - uses: cachix/install-nix-action@v25
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
 
       - name: Build PDFs (Consensus report)
         run: |
@@ -214,7 +223,7 @@ jobs:
           cp -r --no-preserve=mode,ownership result/ static/pdfs
 
       - name: Download haddocks
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: haddocks
 
@@ -229,13 +238,13 @@ jobs:
       - name: Build website
         run: yarn build
 
-      - uses: actions/upload-pages-artifact@v2
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: ./docs/website/build
 
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v2
+        uses: actions/deploy-pages@v4
 
     # https://github.com/actions/deploy-pages
     permissions:

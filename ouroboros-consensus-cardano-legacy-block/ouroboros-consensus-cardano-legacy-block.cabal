@@ -52,7 +52,6 @@ library
     Legacy.Cardano
     Legacy.Cardano.Block
     Legacy.Cardano.CanHardFork
-    Legacy.Cardano.CanonicalTxIn
     Legacy.Cardano.Ledger
     Legacy.Cardano.Node
     Legacy.Convert

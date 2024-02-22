@@ -23,7 +23,7 @@ import           Ouroboros.Consensus.Byron.Ledger
 import           Ouroboros.Consensus.Byron.Node ()
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.CanHardFork
-import           Ouroboros.Consensus.Cardano.CanonicalTxIn ()
+import           Ouroboros.Consensus.Cardano.Ledger
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Shelley.HFEras ()
@@ -67,9 +67,10 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
   answerBlockQueryHFTraverse (IS (IS (IS (IS (IS (IS (IS idx))))))) _cfg _q _dlv =
     case idx of {}
 
+  -- TODO: remove the indrection through the NS
   queryLedgerGetTraversingFilter IZ (q :: BlockQuery ByronBlock QFTraverseTables result) = case q of {}
   queryLedgerGetTraversingFilter idx@(IS IZ) q = case q of
-    GetUTxOByAddress addrs -> \case
+    GetUTxOByAddress addrs -> \txout -> case toNS txout of
       S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
       S (S (Z (WrapTxOut x))) -> filterGetUTxOByAddressOne addrs x
       S (S (S (Z (WrapTxOut x)))) -> filterGetUTxOByAddressOne addrs x
@@ -80,7 +81,7 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
       const True
     GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
   queryLedgerGetTraversingFilter idx@(IS (IS IZ)) q = case q of
-    GetUTxOByAddress addrs -> \case
+    GetUTxOByAddress addrs -> \txout -> case toNS txout of
       S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
       S (S (Z (WrapTxOut x))) -> filterGetUTxOByAddressOne addrs x
       S (S (S (Z (WrapTxOut x)))) -> filterGetUTxOByAddressOne addrs x
@@ -91,7 +92,7 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
       const True
     GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
   queryLedgerGetTraversingFilter idx@(IS (IS (IS IZ))) q = case q of
-    GetUTxOByAddress addrs -> \case
+    GetUTxOByAddress addrs -> \txout -> case toNS txout of
       S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
       S (S (Z (WrapTxOut x))) -> filterGetUTxOByAddressOne addrs x
       S (S (S (Z (WrapTxOut x)))) -> filterGetUTxOByAddressOne addrs x
@@ -102,7 +103,7 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
       const True
     GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
   queryLedgerGetTraversingFilter idx@(IS (IS (IS (IS IZ)))) q = case q of
-    GetUTxOByAddress addrs -> \case
+    GetUTxOByAddress addrs -> \txout -> case toNS txout of
       S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
       S (S (Z (WrapTxOut x))) -> filterGetUTxOByAddressOne addrs x
       S (S (S (Z (WrapTxOut x)))) -> filterGetUTxOByAddressOne addrs x
@@ -113,7 +114,7 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
       const True
     GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
   queryLedgerGetTraversingFilter idx@(IS (IS (IS (IS (IS IZ))))) q = case q of
-    GetUTxOByAddress addrs -> \case
+    GetUTxOByAddress addrs -> \txout -> case toNS txout of
       S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
       S (S (Z (WrapTxOut x))) -> filterGetUTxOByAddressOne addrs x
       S (S (S (Z (WrapTxOut x)))) -> filterGetUTxOByAddressOne addrs x
@@ -124,7 +125,7 @@ instance CardanoHardForkConstraints c => BlockSupportsHFLedgerQuery (CardanoEras
       const True
     GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
   queryLedgerGetTraversingFilter idx@(IS (IS (IS (IS (IS (IS IZ)))))) q = case q of
-    GetUTxOByAddress addrs -> \case
+    GetUTxOByAddress addrs -> \txout -> case toNS txout of
       S (Z (WrapTxOut x)) -> filterGetUTxOByAddressOne addrs x
       S (S (Z (WrapTxOut x))) -> filterGetUTxOByAddressOne addrs x
       S (S (S (Z (WrapTxOut x)))) -> filterGetUTxOByAddressOne addrs x

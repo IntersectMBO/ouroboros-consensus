@@ -400,6 +400,21 @@ instance ShelleyBasedEra era
   decodeCanonicalTxIn = ShelleyBlockHFCTxIn <$> SL.fromEraCBOR @era
 
 {-------------------------------------------------------------------------------
+  HardForkTxOut
+-------------------------------------------------------------------------------}
+
+instance HasHardForkTxOut '[ShelleyBlock proto era] where
+  type instance HardForkTxOut '[ShelleyBlock proto era] = SL.TxOut era
+  injectHardForkTxOut IZ txOut    = txOut
+  injectHardForkTxOut (IS idx') _ = case idx' of {}
+  distribHardForkTxOut IZ        txOut = Just txOut
+  distribHardForkTxOut (IS idx') _     = case idx' of {}
+
+instance ShelleyBasedEra era => SerializeHardForkTxOut '[ShelleyBlock proto era] where
+  encodeHardForkTxOut _ = SL.toEraCBOR @era
+  decodeHardForkTxOut _ = SL.fromEraCBOR @era
+
+{-------------------------------------------------------------------------------
   Queries
 -------------------------------------------------------------------------------}
 
@@ -407,6 +422,7 @@ instance ( ShelleyCompatible proto era
          , ShelleyBasedEra era
          , Key (LedgerState (ShelleyBlock proto era)) ~ SL.TxIn (EraCrypto era)
          , Value (LedgerState (ShelleyBlock proto era)) ~ SL.TxOut era
+         , HasHardForkTxOut '[ShelleyBlock proto era]
          ) => BlockSupportsHFLedgerQuery '[ShelleyBlock proto era] where
 
   answerBlockQueryHFLookup IZ cfg q dlv   =
@@ -417,10 +433,10 @@ instance ( ShelleyCompatible proto era
     answerShelleyTraversingQueries IZ cfg q dlv
   answerBlockQueryHFTraverse (IS idx) _ _ _ = case idx of {}
 
-  queryLedgerGetTraversingFilter IZ       = \case
+  queryLedgerGetTraversingFilter idx@IZ       = \case
     GetUTxOByAddress addrs ->
-      filterGetUTxOByAddressOne addrs . unwrapTxOut . unZ
+      filterGetUTxOByAddressOne addrs
     GetUTxOWhole ->
       const True
-    GetCBOR q' -> queryLedgerGetTraversingFilter IZ q'
+    GetCBOR q' -> queryLedgerGetTraversingFilter idx q'
   queryLedgerGetTraversingFilter (IS idx) = case idx of {}

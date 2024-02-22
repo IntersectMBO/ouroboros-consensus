@@ -919,6 +919,8 @@ instance
 answerShelleyLookupQueries ::
      forall xs proto era m result.
      ( HasCanonicalTxIn xs
+     , HasHardForkTxOut xs
+     , HardForkHasLedgerTables xs
      , CanHardFork xs
      , BlockSupportsHFLedgerQuery xs
      , Monad m
@@ -951,7 +953,7 @@ answerShelleyLookupQueries idx cfg q dlv =
         $ Map.mapMaybeWithKey
             (\k v ->
                if distribCanonicalTxIn idx k `Set.member` txins
-               then distribTxOut idx v
+               then distribHardForkTxOut idx v
                else Nothing)
             values
 
@@ -975,6 +977,8 @@ answerShelleyTraversingQueries ::
      ( ShelleyCompatible proto era
      , BlockSupportsHFLedgerQuery xs
      , HasCanonicalTxIn xs
+     , HasHardForkTxOut xs
+     , HardForkHasLedgerTables xs
      , CanHardFork xs
      )
   => Monad m
@@ -1006,7 +1010,7 @@ answerShelleyTraversingQueries idx cfg q dlv = case q of
       $ Map.mapMaybeWithKey
           (\_k v ->
               if queryPredicate v
-              then distribTxOut idx v
+              then distribHardForkTxOut idx v
               else Nothing)
           vs
 

@@ -1,28 +1,34 @@
-{-# LANGUAGE EmptyCase             #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE InstanceSigs          #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE UndecidableInstances  #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE EmptyCase                  #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs               #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Legacy.Cardano.Ledger () where
 
+import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import           Control.Monad.Except
+import           Data.SOP.Index
+import           Data.Void (Void, absurd)
 import           GHC.Stack (HasCallStack)
 import           Legacy.Cardano.Block
-import           Legacy.Cardano.CanHardFork (LegacyCardanoHardForkConstraints)
-import           Legacy.Cardano.CanonicalTxIn ()
+import           Legacy.Cardano.CanHardFork
+import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Cardano ()
 import           Ouroboros.Consensus.Cardano.Block
+import           Ouroboros.Consensus.HardFork.Combinator.Ledger
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Query
-                     (BlockSupportsLedgerQuery (..))
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Legacy.Block
 
@@ -146,3 +152,56 @@ instance LegacyCardanoHardForkConstraints c
   answerPureBlockQuery _ = undefined -- TODO
   answerBlockQueryLookup _cfg q _dlv = case q of {}
   answerBlockQueryTraverse _cfg q _dlv = case q of {}
+
+{-------------------------------------------------------------------------------
+  Tables
+-------------------------------------------------------------------------------}
+
+instance LegacyCardanoHardForkConstraints c
+      => HasCanonicalTxIn (LegacyCardanoEras c) where
+  newtype instance CanonicalTxIn (LegacyCardanoEras c) = LegacyCardanoTxIn {
+      getLegacyCardanoTxIn :: Void
+    }
+    deriving stock (Show, Eq, Ord)
+    deriving newtype (NoThunks, FromCBOR, ToCBOR)
+
+  injectCanonicalTxIn IZ  byronTxIn   = absurd byronTxIn
+  injectCanonicalTxIn (IS idx) shelleyTxIn = case idx of
+      IZ                               -> absurd shelleyTxIn
+      IS IZ                            -> absurd shelleyTxIn
+      IS (IS IZ)                       -> absurd shelleyTxIn
+      IS (IS (IS IZ))                  -> absurd shelleyTxIn
+      IS (IS (IS (IS IZ)))             -> absurd shelleyTxIn
+      IS (IS (IS (IS (IS IZ))))        -> absurd shelleyTxIn
+      IS (IS (IS (IS (IS (IS idx'))))) -> case idx' of {}
+
+  distribCanonicalTxIn _ key = absurd $ getLegacyCardanoTxIn key
+
+  encodeCanonicalTxIn = toCBOR
+
+  decodeCanonicalTxIn = fromCBOR
+
+instance LegacyCardanoHardForkConstraints c => HasHardForkTxOut (LegacyCardanoEras c) where
+  type instance HardForkTxOut (LegacyCardanoEras c) = Void
+  injectHardForkTxOut idx txOut = case idx of
+      IZ                                    -> absurd txOut
+      IS IZ                                 -> absurd txOut
+      IS (IS IZ)                            -> absurd txOut
+      IS (IS (IS IZ))                       -> absurd txOut
+      IS (IS (IS (IS IZ)))                  -> absurd txOut
+      IS (IS (IS (IS (IS IZ))))             -> absurd txOut
+      IS (IS (IS (IS (IS (IS IZ)))))        -> absurd txOut
+      IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
+  distribHardForkTxOut idx txOut =  case idx of
+      IZ                                    -> absurd txOut
+      IS IZ                                 -> absurd txOut
+      IS (IS IZ)                            -> absurd txOut
+      IS (IS (IS IZ))                       -> absurd txOut
+      IS (IS (IS (IS IZ)))                  -> absurd txOut
+      IS (IS (IS (IS (IS IZ))))             -> absurd txOut
+      IS (IS (IS (IS (IS (IS IZ)))))        -> absurd txOut
+      IS (IS (IS (IS (IS (IS (IS idx')))))) -> case idx' of {}
+
+instance LegacyCardanoHardForkConstraints c => SerializeHardForkTxOut (LegacyCardanoEras c) where
+  encodeHardForkTxOut _ = toCBOR
+  decodeHardForkTxOut _ = fromCBOR

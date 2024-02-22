@@ -27,6 +27,9 @@
 -- * 'lttraverse' instead of 'btraverse' or 'btraverseC'
 --
 -- * 'ltsequence' instead of 'bsequence'.
+--
+-- TODO: if we make mapkinds of kind @(k1, k2) -> Type@ instead of @k1 -> k2 ->
+-- Type@, then we could reuse most of the @barbies@ machinery.
 module Ouroboros.Consensus.Ledger.Tables.Combinators (
     -- * Common constraints
     LedgerTableConstraints

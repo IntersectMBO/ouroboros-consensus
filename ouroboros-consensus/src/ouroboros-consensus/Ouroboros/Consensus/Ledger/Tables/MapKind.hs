@@ -214,7 +214,8 @@ instance ZeroableMK SeqDiffMK where
 -- Ledger will provide more efficient encoders than CBOR, which will produce a
 -- @'ShortByteString'@ directly.
 --
--- See also "Ouroboros.Consensus.HardFork.Combinator.Ledger.CanonicalTxIn".
+-- See also 'HasCanonicalTxIn' in
+-- "Ouroboros.Consensus.HardFork.Combinator.Ledger".
 data CodecMK k v = CodecMK {
     encodeKey   :: !(k -> CBOR.Encoding)
   , encodeValue :: !(v -> CBOR.Encoding)
