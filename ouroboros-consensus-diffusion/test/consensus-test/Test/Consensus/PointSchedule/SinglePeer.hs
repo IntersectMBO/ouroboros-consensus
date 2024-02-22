@@ -101,22 +101,20 @@ import           Data.Time.Clock (DiffTime)
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (BlockNo (unBlockNo), SlotNo)
+import           Ouroboros.Network.Block (BlockNo (unBlockNo), blockSlot)
 import qualified System.Random.Stateful as R (StatefulGen)
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
                      (HeaderPointSchedule (hpsBranch, hpsTrunk),
                      headerPointSchedule, singleJumpTipPoints, tipPointSchedule)
-import           Test.Util.TestBlock (TestBlock, tbSlot)
-
 
 -- | A point in the schedule of a single peer.
-data SchedulePoint
-  = ScheduleTipPoint TestBlock
-  | ScheduleHeaderPoint TestBlock
-  | ScheduleBlockPoint TestBlock
+data SchedulePoint blk
+  = ScheduleTipPoint blk
+  | ScheduleHeaderPoint blk
+  | ScheduleBlockPoint blk
   deriving (Eq, Show)
 
-schedulePointToBlock :: SchedulePoint -> TestBlock
+schedulePointToBlock :: SchedulePoint blk -> blk
 schedulePointToBlock (ScheduleTipPoint b)    = b
 schedulePointToBlock (ScheduleHeaderPoint b) = b
 schedulePointToBlock (ScheduleBlockPoint b)  = b
@@ -158,14 +156,14 @@ defaultPeerScheduleParams = PeerScheduleParams
 --
 --  See 'peerScheduleFromTipPoints' for generation of schedules with rollbacks
 singleJumpPeerSchedule
-  :: R.StatefulGen g m
+  :: (R.StatefulGen g m, AF.HasHeader blk)
   => g
   -> PeerScheduleParams
-  -> AF.AnchoredFragment TestBlock
-  -> m [(Time, SchedulePoint)]
+  -> AF.AnchoredFragment blk
+  -> m [(Time, SchedulePoint blk)]
 singleJumpPeerSchedule g psp chain = do
     let chainv = Vector.fromList $ AF.toOldestFirst chain
-    (tps, hps, bps) <- singleJumpRawPeerSchedule g psp tbSlot chainv
+    (tps, hps, bps) <- singleJumpRawPeerSchedule g psp chainv
     let tipPoints = map (second ScheduleTipPoint) tps
         headerPoints = map (second ScheduleHeaderPoint) hps
         blockPoints = map (second ScheduleBlockPoint) bps
@@ -175,17 +173,16 @@ singleJumpPeerSchedule g psp chain = do
       mergeOn fst headerPoints blockPoints
 
 singleJumpRawPeerSchedule
-  :: R.StatefulGen g m
+  :: (R.StatefulGen g m, AF.HasHeader b)
   => g
   -> PeerScheduleParams
-  -> (b -> SlotNo)
   -> Vector b
   -> m ([(Time, b)], [(Time, b)], [(Time, b)])
-singleJumpRawPeerSchedule g psp slotOfB chainv = do
+singleJumpRawPeerSchedule g psp chainv = do
     -- generate the tip points
     ixs <- singleJumpTipPoints g 0 (Vector.length chainv - 1)
     let tipPointBlks = map (chainv Vector.!) ixs
-        tipPointSlots = map slotOfB tipPointBlks
+        tipPointSlots = map blockSlot tipPointBlks
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
     -- generate the header point schedule
@@ -217,13 +214,13 @@ data IsTrunk = IsTrunk | IsBranch
 -- after the intersection.
 --
 peerScheduleFromTipPoints
-  :: R.StatefulGen g m
+  :: (R.StatefulGen g m, AF.HasHeader blk)
   => g
   -> PeerScheduleParams
   -> [(IsTrunk, [Int])]
-  -> AF.AnchoredFragment TestBlock
-  -> [AF.AnchoredFragment TestBlock]
-  -> m [(Time, SchedulePoint)]
+  -> AF.AnchoredFragment blk
+  -> [AF.AnchoredFragment blk]
+  -> m [(Time, SchedulePoint blk)]
 peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
     let trunk0v = Vector.fromList $ AF.toOldestFirst trunk0
         firstTrunkBlockNo = withOrigin 1 (+1) $ AF.anchorBlockNo trunk0
@@ -234,7 +231,7 @@ peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
           ]
         isTrunks = map fst tipPoints
         intersections = intersperseTrunkFragments anchorBlockIndices isTrunks
-    (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tbSlot tipPoints trunk0v branches0v intersections
+    (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tipPoints trunk0v branches0v intersections
     let tipPoints' = map (second ScheduleTipPoint) tps
         headerPoints = map (second ScheduleHeaderPoint) hps
         blockPoints = map (second ScheduleBlockPoint) bps
@@ -243,7 +240,7 @@ peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
       mergeOn fst tipPoints' $
       mergeOn fst headerPoints blockPoints
   where
-    fragmentAnchorBlockNo :: AF.AnchoredFragment TestBlock -> BlockNo
+    fragmentAnchorBlockNo :: AF.AnchoredFragment blk -> BlockNo
     fragmentAnchorBlockNo f = case AF.anchorBlockNo f of
       At s   -> s
       Origin -> 0
@@ -256,20 +253,19 @@ peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
     intersperseTrunkFragments [] _ = error "intersperseTrunkFragments: not enough intersections"
 
 rawPeerScheduleFromTipPoints
-  :: R.StatefulGen g m
+  :: (R.StatefulGen g m, AF.HasHeader b)
   => g
   -> PeerScheduleParams
-  -> (b -> SlotNo)
   -> [(IsTrunk, [Int])]
   -> Vector b
   -> [Vector b]
   -> [Maybe Int]
   -> m ([(Time, b)], [(Time, b)], [(Time, b)])
-rawPeerScheduleFromTipPoints g psp slotOfB tipPoints trunk0v branches0v intersections = do
+rawPeerScheduleFromTipPoints g psp tipPoints trunk0v branches0v intersections = do
     let (isTrunks, tpIxs) = unzip tipPoints
         pairedVectors = pairVectorsWithChunks trunk0v branches0v isTrunks
         tipPointBlks = concat $ zipWith indicesToBlocks pairedVectors tpIxs
-        tipPointSlots = map slotOfB tipPointBlks
+        tipPointSlots = map blockSlot tipPointBlks
     -- generate the tip point schedule
     ts <- tipPointSchedule g (pspSlotLength psp) (pspTipDelayInterval psp) tipPointSlots
     -- generate the header point schedule

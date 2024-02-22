@@ -254,20 +254,20 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
             noReturnToAncestors (filter isBlockPoint $ map snd ss)
           )
   where
-    showPoint :: SchedulePoint -> String
+    showPoint :: AF.HasHeader blk => SchedulePoint blk -> String
     showPoint (ScheduleTipPoint b)    = "TP " ++ show (blockHash b)
     showPoint (ScheduleHeaderPoint b) = "HP " ++ show (blockHash b)
     showPoint (ScheduleBlockPoint b)  = "BP " ++ show (blockHash b)
 
-    isTipPoint :: SchedulePoint -> Bool
+    isTipPoint :: SchedulePoint blk -> Bool
     isTipPoint (ScheduleTipPoint _) = True
     isTipPoint _                    = False
 
-    isHeaderPoint :: SchedulePoint -> Bool
+    isHeaderPoint :: SchedulePoint blk -> Bool
     isHeaderPoint (ScheduleHeaderPoint _) = True
     isHeaderPoint _                       = False
 
-    isBlockPoint :: SchedulePoint -> Bool
+    isBlockPoint :: SchedulePoint blk -> Bool
     isBlockPoint (ScheduleBlockPoint _) = True
     isBlockPoint _                      = False
 
@@ -281,7 +281,7 @@ isAncestorBlock b0 b1 =
       else Just LT
     else Nothing
 
-noReturnToAncestors :: [SchedulePoint] -> QC.Property
+noReturnToAncestors :: [SchedulePoint TestBlock] -> QC.Property
 noReturnToAncestors = go []
   where
     go _ [] = QC.property True

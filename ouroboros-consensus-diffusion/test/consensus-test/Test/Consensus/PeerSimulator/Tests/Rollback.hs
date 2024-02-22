@@ -92,9 +92,9 @@ rollbackSchedule n blockTree =
           ]
     in peersOnlyHonest $ zip (map (Time . (/30)) [0..]) schedulePoints
   where
-    banalSchedulePoints :: AnchoredFragment TestBlock -> [SchedulePoint]
+    banalSchedulePoints :: AnchoredFragment blk -> [SchedulePoint blk]
     banalSchedulePoints = concatMap banalSchedulePoints' . toOldestFirst
-    banalSchedulePoints' :: TestBlock -> [SchedulePoint]
+    banalSchedulePoints' :: blk -> [SchedulePoint blk]
     banalSchedulePoints' block = [ScheduleTipPoint block, ScheduleHeaderPoint block, ScheduleBlockPoint block]
 
 -- | Whether the alternative chain has more than 'k' blocks after the

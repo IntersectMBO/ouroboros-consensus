@@ -21,7 +21,7 @@ import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (blockNo, unBlockNo)
+import           Ouroboros.Network.Block (blockNo, blockSlot, unBlockNo)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
                      (ChainSyncTimeout (..))
 import           Ouroboros.Network.Protocol.Limits (shortWait)
@@ -46,7 +46,6 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.QuickCheck (le)
-import           Test.Util.TestBlock (TestBlock, tbSlot)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
                      adjustQuickCheckTests)
 import           Text.Printf (printf)
@@ -119,13 +118,13 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
       [] -> "No peers were killed"
       peers -> "Some peers were killed: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = At $ tbSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest $ gtSchedule genesisTest
+    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest $ gtSchedule genesisTest
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
     Classifiers {genesisWindowAfterIntersection, longerThanGenesisWindow} = classifiers genesisTest
 
-fromBlockPoint :: (Time, SchedulePoint) -> Maybe (Time, TestBlock)
+fromBlockPoint :: (Time, SchedulePoint blk) -> Maybe (Time, blk)
 fromBlockPoint (t, ScheduleBlockPoint bp) = Just (t, bp)
 fromBlockPoint _                          = Nothing
 
@@ -194,7 +193,7 @@ prop_leashingAttackStalling =
       advs <- mapM (mapM dropRandomPoints) advs0
       pure $ Peers honest advs
 
-    dropRandomPoints :: [(Time, SchedulePoint)] -> QC.Gen [(Time, SchedulePoint)]
+    dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
       let lenps = length ps
       dropCount <- QC.choose (0, max 1 $ div lenps 5)
@@ -262,7 +261,7 @@ prop_leashingAttackTimeLimited =
           (fst lastBlockPoint)
           (addTime (0.020 * fromIntegral maxBlockNo + 5 * fromIntegral peerCount) (fst firstTipPointBlock))
 
-    blockPointNos :: [(Time, SchedulePoint)] -> [Word64]
+    blockPointNos :: AF.HasHeader blk => [(Time, SchedulePoint blk)] -> [Word64]
     blockPointNos =
       map (unBlockNo . blockNo . snd) .
       mapMaybe fromBlockPoint

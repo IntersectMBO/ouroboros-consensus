@@ -227,7 +227,7 @@ peersStatesRelative peers =
       durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
    in zip durations states
 
-type PeerSchedule = [(Time, SchedulePoint)]
+type PeerSchedule = [(Time, SchedulePoint TestBlock)]
 
 -- | List of all blocks appearing in the schedule.
 peerScheduleBlocks :: PeerSchedule -> [TestBlock]
