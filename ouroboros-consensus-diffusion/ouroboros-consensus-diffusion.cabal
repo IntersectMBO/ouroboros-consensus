@@ -250,7 +250,7 @@ test-suite consensus-test
     , fs-sim                                                                 ^>=0.2
     , hashable
     , io-classes
-    , io-sim
+    , io-sim                                                                 ^>= 1.4.1.0
     , mtl
     , nothunks
     , ouroboros-consensus-diffusion

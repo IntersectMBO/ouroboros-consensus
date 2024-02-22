@@ -48,6 +48,6 @@ source-repository-package
 source-repository-package
     type: git
     location: https://github.com/input-output-hk/io-sim
-    tag: 85d633d6f9c76ffb678b36396c8fd39b2ff7219e
+    tag: 619ad497246368cef00445563c8e5bc7daf4aee7
     subdir: io-sim
-    --sha256: 10f54xg88wq2w7ylg3n33f1yiswd6w4dam7fvl12raiqj0rk21qm
+    --sha256: 0x29iz99gjw91svas0sf51pzg1z4ks4mlc9z233k3rrz8c64h8g9
