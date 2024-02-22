@@ -43,14 +43,15 @@ import           Data.Word (Word64)
 import qualified Debug.Trace as Debug
 import           GHC.Exts (IsList (..))
 import           Ouroboros.Consensus.Block (ChainHash (BlockHash), Header,
-                     blockNo, blockSlot, getHeader)
+                     WithOrigin (NotOrigin), blockHash, blockNo, blockSlot,
+                     getHeader)
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
                      atomically, modifyTVar, readTVar, uncheckedNewTVarM)
 import           Ouroboros.Network.AnchoredFragment (anchor, anchorToSlotNo)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (HeaderHash, Tip (Tip))
+import           Ouroboros.Network.Block (HeaderHash)
 import           Test.Consensus.BlockTree (BlockTree (btBranches, btTrunk),
                      BlockTreeBranch (btbSuffix), prettyBlockTree)
 import qualified Test.Consensus.PointSchedule as PS
@@ -456,20 +457,20 @@ addForks treeSlots@TreeSlots {branches} =
           }
         s = slotInt (withOrigin 0 (+ 1) (anchorToSlotNo (anchor frag)))
 
-addTipPoint :: PeerId -> PS.TipPoint -> TreeSlots -> TreeSlots
-addTipPoint pid (PS.TipPoint (Tip s h _)) TreeSlots {lastSlot, branches} =
+addTipPoint :: PeerId -> WithOrigin TestBlock -> TreeSlots -> TreeSlots
+addTipPoint pid (NotOrigin b) TreeSlots {lastSlot, branches} =
   TreeSlots {lastSlot, branches = tryBranch <$> branches}
   where
     tryBranch branch@BranchSlots {forkNo, slots}
       | tipForkNo == forkNo
-      = branch {slots = updateSlot (slotInt (s + 1)) update slots}
+      = branch {slots = updateSlot (slotInt (blockSlot b + 1)) update slots}
       | otherwise
       = branch
       where
         update slot =
           slot {aspects = SlotAspect {slotAspect = TipPoint pid, edge = NoEdge} : aspects slot}
 
-    tipForkNo = hashForkNo h
+    tipForkNo = hashForkNo (blockHash b)
 
 addTipPoint _ _ treeSlots = treeSlots
 
@@ -477,7 +478,7 @@ addPoints :: Map PeerId NodeState -> TreeSlots -> TreeSlots
 addPoints peerPoints treeSlots =
   foldl' step treeSlots (Map.toList peerPoints)
   where
-    step z (pid, ap) = addTipPoint pid (PS.tip ap) z
+    step z (pid, ap) = addTipPoint pid (PS.nsTip ap) z
 
 ----------------------------------------------------------------------------------------------------
 -- Cells

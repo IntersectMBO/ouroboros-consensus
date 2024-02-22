@@ -25,10 +25,10 @@ module Test.Consensus.PointSchedule (
   , GenesisWindow (..)
   , NodeState (..)
   , PeerSchedule
-  , TipPoint (..)
   , enrichedWith
   , genesisNodeState
   , longRangeAttack
+  , nsTipTip
   , peerSchedulesBlocks
   , peerStates
   , peersStates
@@ -75,7 +75,7 @@ import           Test.Consensus.PointSchedule.SinglePeer.Indices
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
-import           Test.Util.TersePrinting (terseBlock, terseFragment, terseTip,
+import           Test.Util.TersePrinting (terseBlock, terseFragment,
                      terseWithOrigin)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
@@ -84,30 +84,21 @@ import           Text.Printf (printf)
 -- Data types
 ----------------------------------------------------------------------------------------------------
 
--- | The current tip that a ChainSync server should advertise to the client in
--- a tick.
-newtype TipPoint =
-  TipPoint (Tip TestBlock)
-  deriving (Eq, Show)
-
-instance Condense TipPoint where
-  condense (TipPoint tip) = terseTip tip
-
-instance CondenseList TipPoint where
-  condenseList = condenseListWithPadding PadRight
-
 -- | The state of a peer at a given point in time.
 data NodeState =
   NodeState {
-    tip      :: TipPoint,
+    nsTip    :: WithOrigin TestBlock,
     nsHeader :: WithOrigin TestBlock,
     nsBlock  :: WithOrigin TestBlock
   }
   deriving (Eq, Show)
 
+nsTipTip :: NodeState -> Tip TestBlock
+nsTipTip = withOrigin TipGenesis tipFromHeader . nsTip
+
 instance Condense NodeState where
-  condense NodeState {tip, nsHeader, nsBlock} =
-    "TP " ++ condense tip ++
+  condense NodeState {nsTip, nsHeader, nsBlock} =
+    "TP " ++ terseWithOrigin terseBlock nsTip ++
     " | HP " ++ terseWithOrigin terseBlock nsHeader ++
     " | BP " ++ terseWithOrigin terseBlock nsBlock
 
@@ -119,14 +110,14 @@ instance CondenseList NodeState where
           " | HP " ++ header ++
           " | BP " ++ block
       )
-      (condenseList $ tip <$> points)
+      (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsTip) points)
       (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsHeader) points)
       (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsBlock) points)
 
 genesisNodeState :: NodeState
 genesisNodeState =
   NodeState {
-    tip = TipPoint TipGenesis,
+    nsTip = Origin,
     nsHeader = Origin,
     nsBlock = Origin
   }
@@ -176,7 +167,7 @@ peerStates Peer {name, value = schedulePoints} =
     firstTipOffset = case times of [] -> 0; (Time dt : _) -> dt
 
     modPoint z = \case
-      ScheduleTipPoint tip -> z {tip = TipPoint (withOrigin TipGenesis tipFromHeader tip)}
+      ScheduleTipPoint nsTip -> z {nsTip}
       ScheduleHeaderPoint nsHeader -> z {nsHeader}
       ScheduleBlockPoint nsBlock -> z {nsBlock}
 

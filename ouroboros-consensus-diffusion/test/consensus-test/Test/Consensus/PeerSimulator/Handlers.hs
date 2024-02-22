@@ -21,7 +21,6 @@ import           Cardano.Slotting.Slot (WithOrigin)
 import           Control.Monad.Trans (lift)
 import           Control.Monad.Writer.Strict (MonadWriter (tell),
                      WriterT (runWriterT))
-import           Data.Coerce (coerce)
 import           Data.Maybe (fromJust, fromMaybe)
 import           Ouroboros.Consensus.Block (HasHeader, HeaderHash,
                      Point (GenesisPoint), castPoint, getHeader, withOrigin)
@@ -29,7 +28,8 @@ import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (blockPoint, getTipPoint)
+import           Ouroboros.Network.Block (Tip (TipGenesis), blockPoint,
+                     getTipPoint, tipFromHeader)
 import           Ouroboros.Network.BlockFetch.ClientState
                      (ChainRange (ChainRange))
 import qualified Test.Consensus.BlockTree as BT
@@ -60,7 +60,7 @@ handlerFindIntersection ::
   NodeState ->
   STM m (Maybe FindIntersect, [String])
 handlerFindIntersection currentIntersection blockTree clientPoints points = do
-  let TipPoint tip' = tip points
+  let tip' = nsTipTip points
       tipPoint = getTipPoint tip'
       fragment = fromJust $ BT.findFragment tipPoint blockTree
   case intersectWith fragment clientPoints of
@@ -119,7 +119,7 @@ handlerRequestNext currentIntersection blockTree points =
         trace "  intersection is before our header point"
         trace $ "  fragment ahead: " ++ terseFragment fragmentAhead
         lift $ writeTVar currentIntersection $ blockPoint next
-        pure $ Just (RollForward (getHeader next) (coerce (tip points)))
+        pure $ Just (RollForward (getHeader next) (nsTipTip points))
       -- If the anchor is not the intersection but the fragment is empty, then
       -- the intersection is further than the tip that we can serve.
       (BT.PathAnchoredAtSource False, AF.Empty _) -> do
@@ -144,7 +144,7 @@ handlerRequestNext currentIntersection blockTree points =
         lift $ writeTVar currentIntersection point
         pure $ Just (RollBackward point tip')
 
-    TipPoint tip' = tip points
+    tip' = withOrigin TipGenesis tipFromHeader $ nsTip points
 
     trace = tell . pure
 
