@@ -67,7 +67,7 @@ tests =
     ]
 
 theProperty ::
-  GenesisTest (Peers (PeerSchedule TestBlock)) ->
+  GenesisTest TestBlock (Peers (PeerSchedule TestBlock)) ->
   StateView ->
   Property
 theProperty genesisTest stateView@StateView{svSelectedChain} =
@@ -144,7 +144,7 @@ prop_serveAdversarialBranches =
 
     theProperty
 
-genUniformSchedulePoints :: GenesisTest schedule -> QC.Gen (Peers (PeerSchedule TestBlock))
+genUniformSchedulePoints :: GenesisTest TestBlock schedule -> QC.Gen (Peers (PeerSchedule TestBlock))
 genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 
 -- Note [Leashing attacks]
@@ -189,7 +189,7 @@ prop_leashingAttackStalling =
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
-    genLeashingSchedule :: GenesisTest () -> QC.Gen (Peers (PeerSchedule TestBlock))
+    genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (Peers (PeerSchedule TestBlock))
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       advs <- mapM (mapM dropRandomPoints) advs0
@@ -231,7 +231,7 @@ prop_leashingAttackTimeLimited =
 
   where
     -- | A schedule which doesn't run past the last event of the honest peer
-    genTimeLimitedSchedule :: GenesisTest () -> QC.Gen (Peers (PeerSchedule TestBlock))
+    genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (Peers (PeerSchedule TestBlock))
     genTimeLimitedSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       let timeLimit = estimateTimeBound (value honest) (map value $ Map.elems advs0)

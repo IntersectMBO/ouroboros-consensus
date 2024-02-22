@@ -27,9 +27,9 @@ import           Test.Util.TestBlock (TestBlock, isAncestorOf,
 -- block tree is trimmed to keep only parts that are necessary for the shrunk
 -- schedule.
 shrinkPeerSchedules ::
-  GenesisTest (Peers (PeerSchedule TestBlock)) ->
+  GenesisTest TestBlock (Peers (PeerSchedule TestBlock)) ->
   StateView ->
-  [GenesisTest (Peers (PeerSchedule TestBlock))]
+  [GenesisTest TestBlock (Peers (PeerSchedule TestBlock))]
 shrinkPeerSchedules genesisTest _stateView =
   shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&> \shrunkSchedule ->
     let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)

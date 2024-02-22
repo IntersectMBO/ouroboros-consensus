@@ -39,7 +39,7 @@ data RunGenesisTestResult = RunGenesisTestResult {
 -- property on the final 'StateView'.
 runGenesisTest ::
   SchedulerConfig ->
-  GenesisTest (Peers (PeerSchedule TestBlock)) ->
+  GenesisTest TestBlock (Peers (PeerSchedule TestBlock)) ->
   RunGenesisTestResult
 runGenesisTest schedulerConfig genesisTest =
   runSimOrThrow $ do
@@ -60,7 +60,7 @@ runGenesisTest schedulerConfig genesisTest =
 runGenesisTest' ::
   Testable prop =>
   SchedulerConfig ->
-  GenesisTest (Peers (PeerSchedule TestBlock)) ->
+  GenesisTest TestBlock (Peers (PeerSchedule TestBlock)) ->
   (StateView -> prop) ->
   Property
 runGenesisTest' schedulerConfig genesisTest makeProperty =
@@ -74,10 +74,10 @@ runGenesisTest' schedulerConfig genesisTest makeProperty =
 -- property holds on the resulting 'StateView'.
 forAllGenesisTest ::
   Testable prop =>
-  Gen (GenesisTest (Peers (PeerSchedule TestBlock))) ->
+  Gen (GenesisTest TestBlock (Peers (PeerSchedule TestBlock))) ->
   SchedulerConfig ->
-  (GenesisTest (Peers (PeerSchedule TestBlock)) -> StateView -> [GenesisTest (Peers (PeerSchedule TestBlock))]) ->
-  (GenesisTest (Peers (PeerSchedule TestBlock)) -> StateView -> prop) ->
+  (GenesisTest TestBlock (Peers (PeerSchedule TestBlock)) -> StateView -> [GenesisTest TestBlock (Peers (PeerSchedule TestBlock))]) ->
+  (GenesisTest TestBlock (Peers (PeerSchedule TestBlock)) -> StateView -> prop) ->
   Property
 forAllGenesisTest generator schedulerConfig shrinker mkProperty =
   forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->

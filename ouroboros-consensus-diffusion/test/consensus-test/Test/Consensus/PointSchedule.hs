@@ -301,18 +301,18 @@ newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)
 
 -- | All the data used by point schedule tests.
-data GenesisTest schedule = GenesisTest {
+data GenesisTest blk schedule = GenesisTest {
   gtSecurityParam     :: SecurityParam,
   gtGenesisWindow     :: GenesisWindow,
   gtForecastRange     :: ForecastRange, -- REVIEW: Do we want to allow infinite forecast ranges?
   gtDelay             :: Delta,
-  gtBlockTree         :: BlockTree TestBlock,
+  gtBlockTree         :: BlockTree blk,
   gtChainSyncTimeouts :: ChainSyncTimeout,
   gtSlotLength        :: SlotLength,
   gtSchedule          :: schedule
   }
 
-prettyGenesisTest :: GenesisTest schedule -> [String]
+prettyGenesisTest :: GenesisTest TestBlock schedule -> [String]
 prettyGenesisTest genesisTest =
   [ "GenesisTest:"
   , "  gtSecurityParam: " ++ show (maxRollbacks gtSecurityParam)
@@ -339,7 +339,7 @@ prettyGenesisTest genesisTest =
       , gtSchedule = _
       } = genesisTest
 
-instance Functor GenesisTest where
+instance Functor (GenesisTest blk) where
   fmap f gt@GenesisTest{gtSchedule} = gt {gtSchedule = f gtSchedule}
 
 enrichedWith :: (Functor f, Monad m) => m (f a) -> (f a -> m b) -> m (f b)

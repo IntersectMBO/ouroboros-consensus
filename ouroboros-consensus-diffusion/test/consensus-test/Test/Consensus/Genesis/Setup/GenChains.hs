@@ -100,7 +100,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
 --     trunk: O─────1──2──3──4─────5──6──7
 --                     │           ╰─────6
 --                     ╰─────3──4─────5
-genChains :: QC.Gen Word -> QC.Gen (GenesisTest ())
+genChains :: QC.Gen Word -> QC.Gen (GenesisTest TestBlock ())
 genChains genNumForks = do
   (asc, honestRecipe, someHonestChainSchema) <- genHonestChainSchema
 

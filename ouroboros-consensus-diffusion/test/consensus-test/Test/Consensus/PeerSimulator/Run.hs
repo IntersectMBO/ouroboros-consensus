@@ -226,7 +226,7 @@ runPointSchedule ::
   forall m.
   (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
-  GenesisTest (Peers (PeerSchedule TestBlock)) ->
+  GenesisTest TestBlock (Peers (PeerSchedule TestBlock)) ->
   Tracer m String ->
   m StateView
 runPointSchedule schedulerConfig genesisTest tracer0 =
