@@ -241,6 +241,7 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles =
       pure (candidateSuffixes, handles, theirTips, latestSlots, loeFrag)
 
     let msgen :: Maybe GenesisWindow
+        -- This could also use 'runWithCachedSummary' if deemed desirable.
         msgen = eitherToMaybe $ runQuery qry summary
           where
             -- We use the Genesis window for the first slot /after/ the common
