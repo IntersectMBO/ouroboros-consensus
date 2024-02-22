@@ -21,6 +21,7 @@ module Ouroboros.Consensus.Node (
   , StdRunNodeArgs (..)
   , stdBfcSaltIO
   , stdChainSyncTimeout
+  , stdGsmAntiThunderingHerdIO
   , stdKeepAliveRngIO
   , stdLowLevelRunNodeArgsIO
   , stdMkChainDbHasFS
@@ -66,6 +67,7 @@ import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe, isNothing)
+import           Data.Time (NominalDiffTime)
 import           Data.Typeable (Typeable)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime hiding (getSystemStart)
@@ -82,6 +84,8 @@ import           Ouroboros.Consensus.Node.DbLock
 import           Ouroboros.Consensus.Node.DbMarker
 import           Ouroboros.Consensus.Node.ErrorPolicy
 import           Ouroboros.Consensus.Node.ExitPolicy
+import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
+import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -116,6 +120,7 @@ import           Ouroboros.Network.NodeToNode (DiffusionMode (..),
                      ExceptionInHandler (..), MiniProtocolParameters,
                      NodeToNodeVersionData (..), RemoteAddress, Socket,
                      blockFetchPipeliningMax, defaultMiniProtocolParameters)
+import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers
                      (LedgerPeersConsensusInterface (..))
 import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
@@ -185,6 +190,8 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
 
       -- | Network PeerSharing miniprotocol willingness flag
     , rnPeerSharing :: PeerSharing
+
+    , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
     }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -222,6 +229,9 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       -- | Ie 'bfcSalt'
     , llrnBfcSalt :: Int
 
+      -- | Ie 'gsmAntiThunderingHerd'
+    , llrnGsmAntiThunderingHerd :: StdGen
+
       -- | Ie 'keepAliveRng'
     , llrnKeepAliveRng :: StdGen
 
@@ -254,6 +264,10 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
 
       -- | node-to-client protocol versions to run.
     , llrnNodeToClientVersions :: Map NodeToClientVersion (BlockNodeToClientVersion blk)
+
+      -- | If the volatile tip is older than this, then the node will exit the
+      -- @CaughtUp@ state.
+    , llrnMaxCaughtUpAge :: NominalDiffTime
 
       -- | Maximum clock skew
     , llrnMaxClockSkew :: ClockSkew
@@ -365,8 +379,15 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   , ChainDB.cdbVolatileDbValidation  = ValidateAll
                   }
 
-        chainDB <- openChainDB registry inFuture cfg initLedger
-                  llrnChainDbArgsDefaults customiseChainDbArgs'
+        let finalChainDbArgs =
+              mkFinalChainDbArgs
+                registry
+                inFuture
+                cfg
+                initLedger
+                llrnChainDbArgsDefaults
+                customiseChainDbArgs'
+        chainDB <- ChainDB.openDB finalChainDbArgs
 
         continueWithCleanChainDB chainDB $ do
           btime <-
@@ -385,17 +406,30 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               , hfbtMaxClockRewind = secondsToNominalDiffTime 20
               }
 
-          nodeKernelArgs <-
-              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs) $
-              mkNodeKernelArgs
-                registry
-                llrnBfcSalt
-                llrnKeepAliveRng
-                cfg
-                rnTraceConsensus
-                btime
-                (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
-                chainDB
+          nodeKernelArgs <- do
+              durationUntilTooOld <- GSM.realDurationUntilTooOld
+                (configLedger cfg)
+                (ledgerState <$> ChainDB.getCurrentLedger chainDB)
+                llrnMaxCaughtUpAge
+                systemTime
+              let gsmMarkerFileView =
+                    case ChainDB.cdbHasFSGsmDB finalChainDbArgs of
+                        SomeHasFS x -> GSM.realMarkerFileView chainDB x
+              fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs)
+                $ mkNodeKernelArgs
+                    registry
+                    llrnBfcSalt
+                    llrnGsmAntiThunderingHerd
+                    llrnKeepAliveRng
+                    cfg
+                    rnTraceConsensus
+                    btime
+                    (InFutureCheck.realHeaderInFutureCheck llrnMaxClockSkew systemTime)
+                    chainDB
+                    llrnMaxCaughtUpAge
+                    (Just durationUntilTooOld)
+                    gsmMarkerFileView
+                    rnGetUseBootstrapPeers
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
 
@@ -550,8 +584,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 | (version, blockVersion) <- Map.toList llrnNodeToClientVersions
                 ],
             Diffusion.daLedgerPeersCtx =
-              LedgerPeersConsensusInterface
-                (getPeersFromCurrentLedgerAfterSlot kernel)
+              LedgerPeersConsensusInterface {
+                  lpGetLatestSlot = getImmTipSlot kernel,
+                  lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
+                  lpGetLedgerStateJudgement = getLedgerStateJudgement kernel
+                }
           }
 
         localRethrowPolicy :: RethrowPolicy
@@ -599,13 +636,25 @@ openChainDB ::
       -- ^ Customise the 'ChainDbArgs'
   -> m (ChainDB m blk)
 openChainDB registry inFuture cfg initLedger defArgs customiseArgs =
-    ChainDB.openDB args
-  where
-    args :: ChainDbArgs Identity m blk
-    args = customiseArgs $
-             mkChainDbArgs registry inFuture cfg initLedger
-             (nodeImmutableDbChunkInfo (configStorage cfg))
-             defArgs
+    ChainDB.openDB
+  $ mkFinalChainDbArgs registry inFuture cfg initLedger defArgs customiseArgs
+
+mkFinalChainDbArgs
+  :: forall m blk. (RunNode blk, IOLike m)
+  => ResourceRegistry m
+  -> CheckInFuture m blk
+  -> TopLevelConfig blk
+  -> ExtLedgerState blk
+     -- ^ Initial ledger
+  -> ChainDbArgs Defaults m blk
+  -> (ChainDbArgs Identity m blk -> ChainDbArgs Identity m blk)
+      -- ^ Customise the 'ChainDbArgs'
+  -> ChainDbArgs Identity m blk
+mkFinalChainDbArgs registry inFuture cfg initLedger defArgs customiseArgs =
+    customiseArgs $
+      mkChainDbArgs registry inFuture cfg initLedger
+      (nodeImmutableDbChunkInfo (configStorage cfg))
+      defArgs
 
 mkChainDbArgs ::
      forall m blk. (RunNode blk, IOLike m)
@@ -639,21 +688,31 @@ mkNodeKernelArgs ::
   => ResourceRegistry m
   -> Int
   -> StdGen
+  -> StdGen
   -> TopLevelConfig blk
   -> Tracers m (ConnectionId addrNTN) (ConnectionId addrNTC) blk
   -> BlockchainTime m
   -> InFutureCheck.SomeHeaderInFutureCheck m blk
   -> ChainDB m blk
+  -> NominalDiffTime
+  -> Maybe (GSM.WrapDurationUntilTooOld m blk)
+  -> GSM.MarkerFileView m
+  -> STM m UseBootstrapPeers
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
   bfcSalt
+  gsmAntiThunderingHerd
   keepAliveRng
   cfg
   tracers
   btime
   chainSyncFutureCheck
   chainDB
+  maxCaughtUpAge
+  gsmDurationUntilTooOld
+  gsmMarkerFileView
+  getUseBootstrapPeers
   = do
     return NodeKernelArgs
       { tracers
@@ -668,6 +727,13 @@ mkNodeKernelArgs
       , miniProtocolParameters  = defaultMiniProtocolParameters
       , blockFetchConfiguration = defaultBlockFetchConfiguration
       , keepAliveRng
+      , gsmArgs = GsmNodeKernelArgs {
+          gsmAntiThunderingHerd
+        , gsmDurationUntilTooOld
+        , gsmMarkerFileView
+        , gsmMinCaughtUpDuration = maxCaughtUpAge
+        }
+      , getUseBootstrapPeers
       }
   where
     defaultBlockFetchConfiguration :: BlockFetchConfiguration
@@ -718,6 +784,9 @@ stdMkChainDbHasFS rootPath (ChainDB.RelativeMountPoint relPath) =
 
 stdBfcSaltIO :: IO Int
 stdBfcSaltIO = randomIO
+
+stdGsmAntiThunderingHerdIO :: IO StdGen
+stdGsmAntiThunderingHerdIO = newStdGen
 
 stdKeepAliveRngIO :: IO StdGen
 stdKeepAliveRngIO = newStdGen
@@ -836,12 +905,14 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
                                     , rnPeerSharing
                                     }
                          StdRunNodeArgs{..} = do
-    llrnBfcSalt      <- stdBfcSaltIO
-    llrnKeepAliveRng <- stdKeepAliveRngIO
+    llrnBfcSalt               <- stdBfcSaltIO
+    llrnGsmAntiThunderingHerd <- stdGsmAntiThunderingHerdIO
+    llrnKeepAliveRng          <- stdKeepAliveRngIO
     pure LowLevelRunNodeArgs
       { llrnBfcSalt
       , llrnChainSyncTimeout = fromMaybe stdChainSyncTimeout srnChainSyncTimeout
       , llrnCustomiseHardForkBlockchainTimeArgs = id
+      , llrnGsmAntiThunderingHerd
       , llrnKeepAliveRng
       , llrnChainDbArgsDefaults =
           updateChainDbDefaults $ ChainDB.defaultArgs mkHasFS
@@ -878,6 +949,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
             (supportedNodeToClientVersions (Proxy @blk))
       , llrnWithCheckedDB =
           stdWithCheckedDB (Proxy @blk) srnDatabasePath networkMagic
+      , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60   -- 20 min
       , llrnMaxClockSkew =
           InFuture.defaultClockSkew
       }
