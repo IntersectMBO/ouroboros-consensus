@@ -82,7 +82,7 @@ prop_cannotRollback =
 -- chain of the given block tree.
 --
 -- PRECONDITION: Block tree with at least one alternative chain.
-rollbackSchedule :: Int -> BlockTree TestBlock -> Peers PeerSchedule
+rollbackSchedule :: AF.HasHeader blk => Int -> BlockTree blk -> Peers (PeerSchedule blk)
 rollbackSchedule n blockTree =
     let branch = firstBranch blockTree
         trunkSuffix = AF.takeOldest n (btbTrunkSuffix branch)

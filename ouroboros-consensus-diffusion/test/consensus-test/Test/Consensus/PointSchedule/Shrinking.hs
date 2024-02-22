@@ -27,9 +27,9 @@ import           Test.Util.TestBlock (TestBlock, isAncestorOf,
 -- block tree is trimmed to keep only parts that are necessary for the shrunk
 -- schedule.
 shrinkPeerSchedules ::
-  GenesisTest (Peers PeerSchedule) ->
+  GenesisTest (Peers (PeerSchedule TestBlock)) ->
   StateView ->
-  [GenesisTest (Peers PeerSchedule)]
+  [GenesisTest (Peers (PeerSchedule TestBlock))]
 shrinkPeerSchedules genesisTest _stateView =
   shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&> \shrunkSchedule ->
     let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
@@ -37,7 +37,7 @@ shrinkPeerSchedules genesisTest _stateView =
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
 -- unchanged.
-shrinkPeerSchedule :: PeerSchedule -> [PeerSchedule]
+shrinkPeerSchedule :: (PeerSchedule blk) -> [PeerSchedule blk]
 shrinkPeerSchedule = shrinkList (const [])
 
 -- | Shrink the 'others' field of a 'Peers' structure by attempting to remove
@@ -50,7 +50,7 @@ shrinkOtherPeers shrink Peers{honest, others} =
 -- | Remove blocks from the given block tree that are not necessary for the
 -- given peer schedules. If entire branches are unused, they are removed. If the
 -- trunk is unused, then it remains as an empty anchored fragment.
-trimBlockTree' :: Peers PeerSchedule -> BlockTree TestBlock -> BlockTree TestBlock
+trimBlockTree' :: Peers (PeerSchedule TestBlock) -> BlockTree TestBlock -> BlockTree TestBlock
 trimBlockTree' = keepOnlyAncestorsOf . peerSchedulesBlocks
 
 -- | Given some blocks and a block tree, keep only the prefix of the block tree

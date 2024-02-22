@@ -47,6 +47,7 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.QuickCheck (le)
+import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
                      adjustQuickCheckTests)
 import           Text.Printf (printf)
@@ -66,7 +67,7 @@ tests =
     ]
 
 theProperty ::
-  GenesisTest (Peers PeerSchedule) ->
+  GenesisTest (Peers (PeerSchedule TestBlock)) ->
   StateView ->
   Property
 theProperty genesisTest stateView@StateView{svSelectedChain} =
@@ -143,7 +144,7 @@ prop_serveAdversarialBranches =
 
     theProperty
 
-genUniformSchedulePoints :: GenesisTest schedule -> QC.Gen (Peers PeerSchedule)
+genUniformSchedulePoints :: GenesisTest schedule -> QC.Gen (Peers (PeerSchedule TestBlock))
 genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 
 -- Note [Leashing attacks]
@@ -188,7 +189,7 @@ prop_leashingAttackStalling =
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
-    genLeashingSchedule :: GenesisTest () -> QC.Gen (Peers PeerSchedule)
+    genLeashingSchedule :: GenesisTest () -> QC.Gen (Peers (PeerSchedule TestBlock))
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       advs <- mapM (mapM dropRandomPoints) advs0
@@ -230,7 +231,7 @@ prop_leashingAttackTimeLimited =
 
   where
     -- | A schedule which doesn't run past the last event of the honest peer
-    genTimeLimitedSchedule :: GenesisTest () -> QC.Gen (Peers PeerSchedule)
+    genTimeLimitedSchedule :: GenesisTest () -> QC.Gen (Peers (PeerSchedule TestBlock))
     genTimeLimitedSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       let timeLimit = estimateTimeBound (value honest) (map value $ Map.elems advs0)
@@ -239,7 +240,7 @@ prop_leashingAttackTimeLimited =
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 
-    estimateTimeBound :: PeerSchedule -> [PeerSchedule] -> Time
+    estimateTimeBound :: AF.HasHeader blk => PeerSchedule blk -> [PeerSchedule blk] -> Time
     estimateTimeBound honest advs =
       let firstTipPointBlock = headCallStack (mapMaybe fromTipPoint honest)
           lastBlockPoint = last (mapMaybe fromBlockPoint honest)

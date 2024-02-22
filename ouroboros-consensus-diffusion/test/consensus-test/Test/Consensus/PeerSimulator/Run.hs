@@ -202,7 +202,7 @@ runScheduler ::
   IOLike m =>
   Tracer m String ->
   Tracer m () ->
-  Peers PeerSchedule ->
+  Peers (PeerSchedule TestBlock) ->
   Map PeerId (PeerResources m) ->
   m ()
 runScheduler tracer stateTracer ps peers = do
@@ -226,7 +226,7 @@ runPointSchedule ::
   forall m.
   (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
-  GenesisTest (Peers PeerSchedule) ->
+  GenesisTest (Peers (PeerSchedule TestBlock)) ->
   Tracer m String ->
   m StateView
 runPointSchedule schedulerConfig genesisTest tracer0 =

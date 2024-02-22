@@ -1,11 +1,11 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE FlexibleInstances #-}
 
 -- | Data types and generators for point schedules.
 --
@@ -123,7 +123,11 @@ genesisNodeState =
     nsBlock = Origin
   }
 
-prettyPeersSchedule :: Peers PeerSchedule -> [String]
+prettyPeersSchedule ::
+  forall blk.
+  (CondenseList (NodeState blk)) =>
+  Peers (PeerSchedule blk) ->
+  [String]
 prettyPeersSchedule peers =
   zipWith3
     (\number time peerState ->
@@ -133,7 +137,7 @@ prettyPeersSchedule peers =
     (showDT . fst . snd <$> numberedPeersStates)
     (condenseList $ (snd . snd) <$> numberedPeersStates)
   where
-    numberedPeersStates :: [(Int, (Time, Peer (NodeState TestBlock)))]
+    numberedPeersStates :: [(Int, (Time, Peer (NodeState blk)))]
     numberedPeersStates = zip [0..] (peersStates peers)
 
     showDT :: Time -> String
@@ -157,7 +161,7 @@ prettyPeersSchedule peers =
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
-peerStates :: Peer PeerSchedule -> [(Time, Peer (NodeState TestBlock))]
+peerStates :: Peer (PeerSchedule blk) -> [(Time, Peer (NodeState blk))]
 peerStates Peer {name, value = schedulePoints} =
   drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisNodeState points))
   where
@@ -177,25 +181,25 @@ peerStates Peer {name, value = schedulePoints} =
 -- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
 --
 -- The resulting schedule contains all the peers. Items are sorted by time.
-peersStates :: Peers PeerSchedule -> [(Time, Peer (NodeState TestBlock))]
+peersStates :: Peers (PeerSchedule blk) -> [(Time, Peer (NodeState blk))]
 peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
 
 -- | Same as 'peersStates' but returns the duration of a state instead of the
 -- absolute time at which it starts holding.
-peersStatesRelative :: Peers PeerSchedule -> [(DiffTime, Peer (NodeState TestBlock))]
+peersStatesRelative :: Peers (PeerSchedule blk) -> [(DiffTime, Peer (NodeState blk))]
 peersStatesRelative peers =
   let (starts, states) = unzip $ peersStates peers
       durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
    in zip durations states
 
-type PeerSchedule = [(Time, SchedulePoint TestBlock)]
+type PeerSchedule blk = [(Time, SchedulePoint blk)]
 
 -- | List of all blocks appearing in the schedule.
-peerScheduleBlocks :: PeerSchedule -> [TestBlock]
+peerScheduleBlocks :: (PeerSchedule blk) -> [blk]
 peerScheduleBlocks = mapMaybe (withOriginToMaybe . schedulePointToBlock . snd)
 
 -- | List of all blocks appearing in the schedules.
-peerSchedulesBlocks :: Peers PeerSchedule -> [TestBlock]
+peerSchedulesBlocks :: Peers (PeerSchedule blk) -> [blk]
 peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList
 
 ----------------------------------------------------------------------------------------------------
@@ -209,10 +213,10 @@ peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersLis
 -- The honest peer gets a substantially larger (and disconnected) delay interval to ensure
 -- that k+1 blocks are sent fast enough to trigger selection of a fork.
 longRangeAttack ::
-  StatefulGen g m =>
-  BlockTree TestBlock ->
+  (StatefulGen g m, AF.HasHeader blk) =>
+  BlockTree blk ->
   g ->
-  m (Peers PeerSchedule)
+  m (Peers (PeerSchedule blk))
 longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
   adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
@@ -231,10 +235,10 @@ longRangeAttack _ _ =
 -- Include rollbacks in a percentage of adversaries, in which case that peer uses two branchs.
 --
 uniformPoints ::
-  StatefulGen g m =>
-  BlockTree TestBlock ->
+  (StatefulGen g m, AF.HasHeader blk) =>
+  BlockTree blk ->
   g ->
-  m (Peers PeerSchedule)
+  m (Peers (PeerSchedule blk))
 uniformPoints BlockTree {btTrunk, btBranches} g = do
   honestTip0 <- firstTip btTrunk
   honest <- mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []

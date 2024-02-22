@@ -26,7 +26,6 @@ import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
@@ -61,7 +60,7 @@ prop_timeouts mustTimeout = do
     )
 
   where
-    dullSchedule :: DiffTime -> AF.AnchoredFragment TestBlock -> Peers PeerSchedule
+    dullSchedule :: AF.HasHeader blk => DiffTime -> AF.AnchoredFragment blk -> Peers (PeerSchedule blk)
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
