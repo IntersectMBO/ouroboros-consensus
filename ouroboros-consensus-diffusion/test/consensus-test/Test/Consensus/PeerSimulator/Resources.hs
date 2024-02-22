@@ -113,7 +113,7 @@ data PeerSimulatorResources m =
     psrPeers      :: Map PeerId (PeerResources m),
 
     -- | The shared candidate fragments used by ChainDB, ChainSync and BlockFetch.
-    psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m TestFragH))
+    psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m (AF.AnchoredFragment (Header TestBlock))))
   }
 
 -- | Create 'ChainSyncServerHandlers' for our default implementation using 'NodeState'.

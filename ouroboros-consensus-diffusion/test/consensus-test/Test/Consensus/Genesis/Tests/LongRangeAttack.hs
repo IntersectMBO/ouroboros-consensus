@@ -8,7 +8,7 @@
 module Test.Consensus.Genesis.Tests.LongRangeAttack (tests) where
 
 import           Data.Functor (($>))
-import           Ouroboros.Consensus.Block.Abstract (HeaderHash)
+import           Ouroboros.Consensus.Block.Abstract (Header, HeaderHash)
 import           Ouroboros.Network.AnchoredFragment (headAnchor)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.Genesis.Setup
@@ -60,7 +60,7 @@ prop_longRangeAttack =
     (\_ -> not . isHonestTestFragH . svSelectedChain)
 
   where
-    isHonestTestFragH :: TestFragH -> Bool
+    isHonestTestFragH :: AF.AnchoredFragment (Header TestBlock) -> Bool
     isHonestTestFragH frag = case headAnchor frag of
         AF.AnchorGenesis   -> True
         AF.Anchor _ hash _ -> isHonestTestHeaderHash hash

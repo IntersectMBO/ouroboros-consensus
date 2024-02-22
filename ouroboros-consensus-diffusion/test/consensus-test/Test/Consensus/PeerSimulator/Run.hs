@@ -33,6 +33,7 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike,
                      MonadDelay (threadDelay), MonadSTM (atomically),
                      StrictTVar, readTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
                      bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
@@ -52,7 +53,7 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
-                     NodeState, PeerSchedule, TestFragH, peersStatesRelative,
+                     NodeState, PeerSchedule, peersStatesRelative,
                      prettyPeersSchedule)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId, Peers,
                      getPeerIds)
@@ -123,7 +124,7 @@ startChainSyncConnectionThread ::
   ChainSyncResources m ->
   ChainSyncTimeout ->
   StateViewTracers m ->
-  StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
+  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header TestBlock)))) ->
   m ()
 startChainSyncConnectionThread
   registry

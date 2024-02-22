@@ -128,7 +128,7 @@ genChains genNumForks = do
   where
     gtSlotLength = slotLengthFromSec 20
 
-    genAdversarialFragment :: [TestBlock] -> Int -> (Int, [S]) -> TestFrag
+    genAdversarialFragment :: [TestBlock] -> Int -> (Int, [S]) -> AnchoredFragment TestBlock
     genAdversarialFragment goodBlocks forkNo (prefixCount, slotsA)
       = mkTestFragment (mkTestBlocks prefix slotsA forkNo)
       where

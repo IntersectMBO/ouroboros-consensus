@@ -27,8 +27,6 @@ module Test.Consensus.PointSchedule (
   , HeaderPoint (..)
   , NodeState (..)
   , PeerSchedule
-  , TestFrag
-  , TestFragH
   , TipPoint (..)
   , enrichedWith
   , genesisNodeState
@@ -61,7 +59,6 @@ import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
 import           Ouroboros.Consensus.Util.Condense (Condense (..),
                      CondenseList (..), PaddingDirection (..),
                      condenseListWithPadding)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..), tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At), withOrigin)
@@ -88,10 +85,6 @@ import           Text.Printf (printf)
 ----------------------------------------------------------------------------------------------------
 -- Data types
 ----------------------------------------------------------------------------------------------------
-
-type TestFrag = AnchoredFragment TestBlock
-
-type TestFragH = AnchoredFragment (Header TestBlock)
 
 -- | The current tip that a ChainSync server should advertise to the client in
 -- a tick.
