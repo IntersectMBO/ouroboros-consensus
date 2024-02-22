@@ -10,7 +10,7 @@
   };
   inputs = {
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
-    flake-utils.follows = "haskellNix/flake-utils";
+    flake-utils.url = "github:numtide/flake-utils";
     haskellNix = {
       url = "github:input-output-hk/haskell.nix";
       inputs.hackage.follows = "hackageNix";
@@ -28,9 +28,13 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-compat = {
-      url = "github:edolstra/flake-compat";
+      url = "github:nix-community/flake-compat";
       flake = false;
     };
+
+    # for cabal-docspec
+    cabal-extras = { url = "github:phadej/cabal-extras/cabal-docspec-0.0.0.20230517"; flake = false; };
+    gentle-introduction = { url = "github:phadej/gentle-introduction"; flake = false; };
   };
   outputs = inputs:
     let

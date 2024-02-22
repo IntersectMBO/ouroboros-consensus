@@ -11,11 +11,6 @@
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
--- Get an invalid redundant constraint warning due to
--- https://gitlab.haskell.org/ghc/ghc/-/issues/23323
--- which hopefully will be fixed in ghc-9.6.3.
-{-# OPTIONS_GHC -Wno-redundant-constraints #-}
-
 -- | Tests for the computation of blockchain time.
 --
 -- The @BlockchainTime@ in consensus used to be ubiquitous throughout the code

@@ -1,9 +1,8 @@
-{-# LANGUAGE DeriveFunctor       #-}
+{-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE PatternSynonyms     #-}
-{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE PolyKinds           #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
@@ -16,12 +15,15 @@ module Ouroboros.Consensus.Fragment.Validated (
   , validatedFragment
   , validatedLedger
   , validatedTip
+    -- * Monadic
+  , newM
   ) where
 
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Util.Assert
+import           Ouroboros.Consensus.Util.IOLike hiding (invariant)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -34,16 +36,16 @@ data ValidatedFragment b l = UnsafeValidatedFragment {
       -- | Chain fragment
       validatedFragment :: !(AnchoredFragment b)
 
-      -- | Ledger after after validation
+      -- | Ledger after validation
     , validatedLedger   :: !l
     }
-  deriving (Functor)
+  deriving (Functor, Foldable, Traversable)
 
 {-# COMPLETE ValidatedFragment #-}
 
 pattern ValidatedFragment ::
      (GetTip l, HasHeader b, HeaderHash b ~ HeaderHash l, HasCallStack)
-  => AnchoredFragment b -> l -> ValidatedFragment b l
+  => AnchoredFragment b -> l mk -> ValidatedFragment b (l mk)
 pattern ValidatedFragment f l <- UnsafeValidatedFragment f l
   where
     ValidatedFragment f l = new f l
@@ -52,11 +54,19 @@ validatedTip :: HasHeader b => ValidatedFragment b l -> Point b
 validatedTip = AF.headPoint . validatedFragment
 
 invariant ::
-     forall l b.
-     (GetTip l, HasHeader b, HeaderHash b ~ HeaderHash l)
-  => ValidatedFragment b l
+     forall l mk b.
+     (GetTip l , HasHeader b, HeaderHash b ~ HeaderHash l)
+  => ValidatedFragment b (l mk)
   -> Either String ()
-invariant (ValidatedFragment fragment ledger)
+invariant (ValidatedFragment fragment ledger) =
+  pointInvariant (getTip ledger :: Point l) fragment
+
+pointInvariant ::
+     forall l b. (HeaderHash b ~ HeaderHash l, HasHeader b)
+  => Point l
+  -> AnchoredFragment b
+  -> Either String ()
+pointInvariant ledgerTip0 fragment
     | ledgerTip /= headPoint
     = Left $ concat [
           "ledger tip "
@@ -68,19 +78,49 @@ invariant (ValidatedFragment fragment ledger)
     = Right ()
   where
    ledgerTip, headPoint :: Point b
-   ledgerTip = castPoint $ getTip ledger
+   ledgerTip = castPoint ledgerTip0
    headPoint = castPoint $ AF.headPoint fragment
 
 -- | Constructor for 'ValidatedFragment' that checks the invariant
 new ::
-     forall l b.
+     forall l mk b.
      (GetTip l, HasHeader b, HeaderHash b ~ HeaderHash l, HasCallStack)
   => AnchoredFragment b
-  -> l
-  -> ValidatedFragment b l
+  -> l mk
+  -> ValidatedFragment b (l mk)
 new fragment ledger =
     assertWithMsg (invariant validated) $
       validated
+  where
+    validated :: ValidatedFragment b (l mk)
+    validated = UnsafeValidatedFragment {
+          validatedFragment = fragment
+        , validatedLedger   = ledger
+        }
+
+{-------------------------------------------------------------------------------
+  Monadic
+-------------------------------------------------------------------------------}
+
+invariantM ::
+     forall m l b.
+     (MonadSTM m, GetTipSTM m l, HasHeader b, HeaderHash b ~ HeaderHash l)
+  => ValidatedFragment b l
+  -> m (Either String ())
+invariantM (UnsafeValidatedFragment fragment ledger) = do
+    ledgerTip <- getTipM ledger
+    pure $ pointInvariant ledgerTip fragment
+
+-- | Constructor for 'ValidatedFragment' that checks the invariant
+newM ::
+     forall m l b.
+     (MonadSTM m, GetTipSTM m l, HasHeader b, HeaderHash b ~ HeaderHash l, HasCallStack)
+  => AnchoredFragment b
+  -> l
+  -> m (ValidatedFragment b l)
+newM fragment ledger = do
+    msg <- invariantM validated
+    pure $ assertWithMsg msg validated
   where
     validated :: ValidatedFragment b l
     validated = UnsafeValidatedFragment {

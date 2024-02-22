@@ -1,10 +1,11 @@
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE NamedFieldPuns        #-}
 {-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeApplications      #-}
 
 -- | Intended for qualified import
 module Ouroboros.Consensus.Network.NodeToClient (
@@ -39,6 +40,7 @@ import           Codec.CBOR.Read (DeserialiseFailure)
 import           Codec.Serialise (Serialise)
 import           Control.Tracer
 import           Data.ByteString.Lazy (ByteString)
+import           Data.Typeable
 import           Data.Void (Void)
 import           Network.TypedProtocol.Codec
 import           Ouroboros.Consensus.Block
@@ -60,7 +62,6 @@ import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Serialised, decodePoint, decodeTip,
                      encodePoint, encodeTip)
 import           Ouroboros.Network.BlockFetch
@@ -97,7 +98,8 @@ data Handlers m peer blk = Handlers {
         :: LocalTxSubmissionServer (GenTx blk) (ApplyTxErr blk) m ()
 
     , hStateQueryServer
-        :: LocalStateQueryServer blk (Point blk) (Query blk) m ()
+       :: ResourceRegistry m
+       -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
 
     , hTxMonitorServer
         :: LocalTxMonitorServer (GenTxId blk) (GenTx blk) SlotNo m ()
@@ -108,7 +110,7 @@ mkHandlers
      ( IOLike m
      , LedgerSupportsMempool blk
      , LedgerSupportsProtocol blk
-     , QueryLedger blk
+     , BlockSupportsLedgerQuery blk
      , ConfigSupportsNode blk
      )
   => NodeKernelArgs m addrNTN addrNTC blk
@@ -125,12 +127,8 @@ mkHandlers NodeKernelArgs {cfg, tracers} NodeKernel {getChainDB, getMempool} =
             (Node.localTxSubmissionServerTracer tracers)
             getMempool
       , hStateQueryServer =
-          localStateQueryServer
-            (ExtLedgerCfg cfg)
-            (ChainDB.getTipPoint getChainDB)
-            (ChainDB.getPastLedger getChainDB)
-            (castPoint . AF.anchorPoint <$> ChainDB.getCurrentChain getChainDB)
-
+            localStateQueryServer (ExtLedgerCfg cfg)
+          . ChainDB.getReadOnlyForkerAtPoint getChainDB
       , hTxMonitorServer =
           localTxMonitorServer
             getMempool
@@ -174,7 +172,7 @@ type ClientCodecs blk  m =
 defaultCodecs :: forall m blk.
                  ( MonadST m
                  , SerialiseNodeToClientConstraints blk
-                 , ShowQuery (BlockQuery blk)
+                 , forall fp. ShowQuery (BlockQuery blk fp)
                  , StandardHash blk
                  , Serialise (HeaderHash blk)
                  )
@@ -204,7 +202,7 @@ defaultCodecs ccfg version networkVersion = Codecs {
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
           (queryEncodeNodeToClient ccfg queryVersion version . SomeSecond)
-          ((\(SomeSecond qry) -> Some qry) <$> queryDecodeNodeToClient ccfg queryVersion version)
+          ((\(SomeSecond q) -> Some q) <$> queryDecodeNodeToClient ccfg queryVersion version)
           (encodeResult ccfg version)
           (decodeResult ccfg version)
 
@@ -233,7 +231,7 @@ defaultCodecs ccfg version networkVersion = Codecs {
 clientCodecs :: forall m blk.
                 ( MonadST m
                 , SerialiseNodeToClientConstraints blk
-                , ShowQuery (BlockQuery blk)
+                , forall fp. ShowQuery (BlockQuery blk fp)
                 , StandardHash blk
                 , Serialise (HeaderHash blk)
                 )
@@ -263,7 +261,7 @@ clientCodecs ccfg version networkVersion = Codecs {
           (encodePoint (encodeRawHash p))
           (decodePoint (decodeRawHash p))
           (queryEncodeNodeToClient ccfg queryVersion version . SomeSecond)
-          ((\(SomeSecond qry) -> Some qry) <$> queryDecodeNodeToClient ccfg queryVersion version)
+          ((\(SomeSecond q) -> Some q) <$> queryDecodeNodeToClient ccfg queryVersion version)
           (encodeResult ccfg version)
           (decodeResult ccfg version)
 
@@ -287,7 +285,7 @@ clientCodecs ccfg version networkVersion = Codecs {
     dec = decodeNodeToClient ccfg version
 
 -- | Identity codecs used in tests.
-identityCodecs :: (Monad m, QueryLedger blk)
+identityCodecs :: (Monad m, SameDepIndex2 (BlockQuery blk))
                => Codecs blk CodecFailure m
                     (AnyMessage (ChainSync (Serialised blk) (Point blk) (Tip blk)))
                     (AnyMessage (LocalTxSubmission (GenTx blk) (ApplyTxErr blk)))
@@ -341,7 +339,7 @@ showTracers :: ( Show peer
                , Show (GenTx blk)
                , Show (GenTxId blk)
                , Show (ApplyTxErr blk)
-               , ShowQuery (BlockQuery blk)
+               , forall fp. ShowQuery (BlockQuery blk fp)
                , HasHeader blk
                )
             => Tracer m String -> Tracers m peer blk e
@@ -383,10 +381,10 @@ mkApps
      , Exception e
      , ShowProxy blk
      , ShowProxy (ApplyTxErr blk)
-     , ShowProxy (BlockQuery blk)
      , ShowProxy (GenTx blk)
      , ShowProxy (GenTxId blk)
-     , ShowQuery (BlockQuery blk)
+     , ShowProxy (Query blk)
+     , forall fp. ShowQuery (BlockQuery blk fp)
      )
   => NodeKernel m addrNTN addrNTC blk
   -> Tracers m addrNTC blk e
@@ -431,11 +429,12 @@ mkApps kernel Tracers {..} Codecs {..} Handlers {..} =
       -> m ((), Maybe bSQ)
     aStateQueryServer them channel = do
       labelThisThread "LocalStateQueryServer"
-      runPeer
-        (contramap (TraceLabelPeer them) tStateQueryTracer)
-        cStateQueryCodec
-        channel
-        (localStateQueryServerPeer hStateQueryServer)
+      withRegistry $ \rr ->
+        runPeer
+          (contramap (TraceLabelPeer them) tStateQueryTracer)
+          cStateQueryCodec
+          channel
+          (localStateQueryServerPeer (hStateQueryServer rr))
 
     aTxMonitorServer
       :: addrNTC

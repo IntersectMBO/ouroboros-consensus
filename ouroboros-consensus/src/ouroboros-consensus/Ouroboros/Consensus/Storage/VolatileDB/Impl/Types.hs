@@ -93,6 +93,7 @@ data TraceEvent blk
     | BlockAlreadyHere (HeaderHash blk)
     | Truncate (ParseError blk) FsPath BlockOffset
     | InvalidFileNames [FsPath]
+    | DBClosed
   deriving (Eq, Generic, Show)
 
 {------------------------------------------------------------------------------

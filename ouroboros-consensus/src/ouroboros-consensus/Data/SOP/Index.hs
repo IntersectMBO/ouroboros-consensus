@@ -1,13 +1,15 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE ConstraintKinds     #-}
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE GADTs               #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE RankNTypes          #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE BangPatterns             #-}
+{-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE LambdaCase               #-}
+{-# LANGUAGE PolyKinds                #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeOperators            #-}
 -- |
 
 module Data.SOP.Index (
@@ -31,13 +33,16 @@ module Data.SOP.Index (
   , npWithIndices
   , nsFromIndex
   , nsToIndex
+  , toWord8
   ) where
 
 import           Data.Coerce
+import           Data.Kind (Type)
 import           Data.SOP.Dict
 import           Data.SOP.Strict
 import           Data.Word
 
+type Index :: [k] -> k -> Type
 data Index xs x where
   IZ ::               Index (x ': xs) x
   IS :: Index xs x -> Index (y ': xs) x
@@ -189,3 +194,8 @@ nsFromIndex n = go 0 sList
       | i == n    = Just $ Z $ K ()
       | otherwise = S <$> go (i + 1) sList
     go !_ SNil    = Nothing
+
+toWord8 :: Index xs x -> Word8
+toWord8 = \case
+      IZ      -> 0
+      IS idx' -> 1 + toWord8 idx'

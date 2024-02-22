@@ -1,19 +1,25 @@
-{-# LANGUAGE ConstraintKinds       #-}
-{-# LANGUAGE DataKinds             #-}
-{-# LANGUAGE DeriveAnyClass        #-}
-{-# LANGUAGE DeriveGeneric         #-}
-{-# LANGUAGE FlexibleContexts      #-}
-{-# LANGUAGE FlexibleInstances     #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE NamedFieldPuns        #-}
-{-# LANGUAGE OverloadedStrings     #-}
-{-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE TypeApplications      #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE TypeOperators         #-}
-{-# LANGUAGE UndecidableInstances  #-}
+{-# LANGUAGE ConstraintKinds         #-}
+{-# LANGUAGE DataKinds               #-}
+{-# LANGUAGE DeriveAnyClass          #-}
+{-# LANGUAGE DeriveGeneric           #-}
+{-# LANGUAGE DerivingStrategies      #-}
+{-# LANGUAGE FlexibleContexts        #-}
+{-# LANGUAGE FlexibleInstances       #-}
+{-# LANGUAGE MultiParamTypeClasses   #-}
+{-# LANGUAGE NamedFieldPuns          #-}
+{-# LANGUAGE OverloadedStrings       #-}
+{-# LANGUAGE PolyKinds               #-}
+{-# LANGUAGE RankNTypes              #-}
+{-# LANGUAGE RecordWildCards         #-}
+{-# LANGUAGE ScopedTypeVariables     #-}
+{-# LANGUAGE TypeApplications        #-}
+{-# LANGUAGE TypeFamilyDependencies  #-}
+{-# LANGUAGE TypeOperators           #-}
+{-# LANGUAGE UndecidableInstances    #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Cardano.CanHardFork (
     ByronPartialLedgerConfig (..)
   , CardanoHardForkConstraints
@@ -24,11 +30,14 @@ module Ouroboros.Consensus.Cardano.CanHardFork (
   , translateChainDepStateAcrossShelley
   ) where
 
+
 import qualified Cardano.Chain.Common as CC
 import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
 import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
+import           Cardano.Ledger.Allegra.Translation
+                     (shelleyToAllegraAVVMsToDelete)
 import           Cardano.Ledger.Crypto (ADDRHASH, Crypto, DSIGN, HASH)
 import qualified Cardano.Ledger.Era as SL
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
@@ -42,13 +51,16 @@ import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import           Control.Monad
 import           Control.Monad.Except (runExcept, throwError)
 import           Data.Coerce (coerce)
+import qualified Data.Map.Diff.Strict.Internal as Diff.Internal
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe, mapMaybe)
 import           Data.Proxy
+import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import           Data.SOP.Strict (hpure, unComp, (:.:) (..))
 import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
+import           Data.Void (absurd)
 import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -66,6 +78,7 @@ import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
 import           Ouroboros.Consensus.Protocol.PBFT.State (PBftState)
@@ -75,6 +88,7 @@ import qualified Ouroboros.Consensus.Protocol.Praos as Praos
 import           Ouroboros.Consensus.Protocol.TPraos
 import qualified Ouroboros.Consensus.Protocol.TPraos as TPraos
 import           Ouroboros.Consensus.Protocol.Translate (TranslateProto)
+import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Node ()
 import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
@@ -131,7 +145,7 @@ import           Ouroboros.Consensus.Util.RedundantConstraints
 
 byronTransition :: PartialLedgerConfig ByronBlock
                 -> Word16   -- ^ Shelley major protocol version
-                -> LedgerState ByronBlock
+                -> LedgerState ByronBlock mk
                 -> Maybe EpochNo
 byronTransition ByronPartialLedgerConfig{..} shelleyMajorVersion state =
       takeAny
@@ -269,6 +283,16 @@ type CardanoHardForkConstraints c =
   , DSIGN    c ~ Ed25519DSIGN
   )
 
+-- | When performing era translations, two eras have special behaviours on the
+-- ledger tables:
+--
+-- * Byron to Shelley: as Byron has no tables, the whole UTxO set is computed as
+--     insertions, note that it uses 'calculateAdditions'
+--
+-- * Shelley to Allegra: some special addresses (the so called /AVVM/
+--     addresses), were deleted in this transition, which influenced things like
+--     the calculation of later rewards. In this transition, we consume the
+--     'shelleyToAllegraAVVMsToDelete' as deletions in the ledger tables.
 instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
   hardForkEraTranslation = EraTranslation {
       translateLedgerState   =
@@ -278,6 +302,14 @@ instance CardanoHardForkConstraints c => CanHardFork (CardanoEras c) where
         $ PCons translateLedgerStateMaryToAlonzoWrapper
         $ PCons translateLedgerStateAlonzoToBabbageWrapper
         $ PCons translateLedgerStateBabbageToConwayWrapper
+        $ PNil
+    , translateLedgerTables  =
+          PCons translateLedgerTablesByronToShelleyWrapper
+        $ PCons translateLedgerTablesShelleyToAllegraWrapper
+        $ PCons translateLedgerTablesAllegraToMaryWrapper
+        $ PCons translateLedgerTablesMaryToAlonzoWrapper
+        $ PCons translateLedgerTablesAlonzoToBabbageWrapper
+        $ PCons translateLedgerTablesBabbageToConwayWrapper
         $ PNil
     , translateChainDepState =
           PCons translateChainDepStateByronToShelleyWrapper
@@ -383,25 +415,39 @@ translateLedgerStateByronToShelleyWrapper ::
      )
   => RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       TranslateLedgerState
        ByronBlock
        (ShelleyBlock (TPraos c) (ShelleyEra c))
 translateLedgerStateByronToShelleyWrapper =
-    RequireBoth $ \_ (WrapLedgerConfig cfgShelley) ->
-    Translate   $ \epochNo ledgerByron ->
-      ShelleyLedgerState {
-        shelleyLedgerTip =
-          translatePointByronToShelley
-            (ledgerTipPoint ledgerByron)
-            (byronLedgerTipBlockNo ledgerByron)
-      , shelleyLedgerState =
-          SL.translateToShelleyLedgerState
-            (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
-            epochNo
-            (byronLedgerState ledgerByron)
-      , shelleyLedgerTransition =
-          ShelleyTransitionInfo{shelleyAfterVoting = 0}
-      }
+      RequireBoth
+    $ \_ (WrapLedgerConfig cfgShelley) ->
+        TranslateLedgerState {
+            translateLedgerStateWith = \epochNo ledgerByron ->
+                forgetTrackingValues
+              . calculateAdditions
+              . unstowLedgerTables
+              $ ShelleyLedgerState {
+                    shelleyLedgerTip =
+                      translatePointByronToShelley
+                      (ledgerTipPoint ledgerByron)
+                      (byronLedgerTipBlockNo ledgerByron)
+                  , shelleyLedgerState =
+                      SL.translateToShelleyLedgerState
+                        (toFromByronTranslationContext (shelleyLedgerGenesis cfgShelley))
+                        epochNo
+                        (byronLedgerState ledgerByron)
+                  , shelleyLedgerTransition =
+                      ShelleyTransitionInfo{shelleyAfterVoting = 0}
+                  , shelleyLedgerTables = emptyLedgerTables
+                  }
+          }
+
+translateLedgerTablesByronToShelleyWrapper ::
+     TranslateLedgerTables ByronBlock (ShelleyBlock (TPraos c) (ShelleyEra c))
+translateLedgerTablesByronToShelleyWrapper = TranslateLedgerTables {
+      translateTxInWith  = absurd
+    , translateTxOutWith = absurd
+    }
 
 translateChainDepStateByronToShelleyWrapper ::
      RequiringBoth
@@ -468,7 +514,7 @@ crossEraForecastByronToShelleyWrapper =
          ShelleyLedgerConfig (ShelleyEra c)
       -> Bound
       -> SlotNo
-      -> LedgerState ByronBlock
+      -> LedgerState ByronBlock mk
       -> Except
            OutsideForecastRange
            (Ticked (WrapLedgerView (ShelleyBlock (TPraos c) (ShelleyEra c))))
@@ -508,13 +554,65 @@ translateLedgerStateShelleyToAllegraWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       TranslateLedgerState
        (ShelleyBlock (TPraos c) (ShelleyEra c))
        (ShelleyBlock (TPraos c) (AllegraEra c))
 translateLedgerStateShelleyToAllegraWrapper =
     ignoringBoth $
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' () . Comp
+      TranslateLedgerState {
+          translateLedgerStateWith = \_epochNo ls ->
+              -- In the Shelley to Allegra transition, the AVVM addresses have
+              -- to be deleted, and their balance has to be moved to the
+              -- reserves. For this matter, the Ledger keeps track of these
+              -- small set of entries since the Byron to Shelley transition and
+              -- provides them to us through 'shelleyToAllegraAVVMsToDelete'.
+              --
+              -- In the long run, the ledger will already use ledger states
+              -- parametrized by the map kind and therefore will already provide
+              -- the differences in this translation.
+              let avvms           = SL.unUTxO
+                                  $ shelleyToAllegraAVVMsToDelete
+                                  $ shelleyLedgerState ls
+
+                  -- While techically we can diff the LedgerTables, it becomes
+                  -- complex doing so, as we cannot perform operations with
+                  -- 'LedgerTables l1 mk' and 'LedgerTables l2 mk'. Because of
+                  -- this, for now we choose to generate the differences out of
+                  -- thin air and when the time comes in which ticking produces
+                  -- differences, we will have to revisit this.
+                  avvmsAsDeletions = LedgerTables
+                                   . DiffMK
+                                   . Diff.Internal.fromMapDeletes
+                                   . Map.mapMaybe translateTxOut
+                                   $ avvms
+
+                  -- This 'stowLedgerTables' + 'withLedgerTables' injects the
+                  -- values provided by the Ledger so that the translation
+                  -- operation finds those entries in the UTxO and destroys
+                  -- them, modifying the reserves accordingly.
+                  stowedState = stowLedgerTables
+                              . withLedgerTables ls
+                              . LedgerTables
+                              . ValuesMK
+                              $ avvms
+
+                  resultingState = unFlip . unComp
+                                 . SL.translateEra' ()
+                                 . Comp   . Flip
+                                 $ stowedState
+
+              in resultingState `withLedgerTables` avvmsAsDeletions
+        }
+
+translateLedgerTablesShelleyToAllegraWrapper ::
+     (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
+  => TranslateLedgerTables
+      (ShelleyBlock (TPraos c) (ShelleyEra c))
+       (ShelleyBlock (TPraos c) (AllegraEra c))
+translateLedgerTablesShelleyToAllegraWrapper = TranslateLedgerTables {
+      translateTxInWith  = id
+    , translateTxOutWith = translateTxOut
+    }
 
 translateTxShelleyToAllegraWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -533,24 +631,37 @@ translateValidatedTxShelleyToAllegraWrapper = InjectValidatedTx $
     fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp
 
 {-------------------------------------------------------------------------------
-  Translation from Shelley to Allegra
+  Translation from Allegra to Mary
 -------------------------------------------------------------------------------}
 
 translateLedgerStateAllegraToMaryWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       TranslateLedgerState
        (ShelleyBlock (TPraos c) (AllegraEra c))
        (ShelleyBlock (TPraos c) (MaryEra c))
 translateLedgerStateAllegraToMaryWrapper =
     ignoringBoth $
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' () . Comp
+      TranslateLedgerState {
+          translateLedgerStateWith = \_epochNo ->
+                noNewTickingDiffs
+              . unFlip
+              . unComp
+              . SL.translateEra' ()
+              . Comp
+              . Flip
+        }
 
-{-------------------------------------------------------------------------------
-  Translation from Allegra to Mary
--------------------------------------------------------------------------------}
+translateLedgerTablesAllegraToMaryWrapper ::
+     (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
+  => TranslateLedgerTables
+       (ShelleyBlock (TPraos c) (AllegraEra c))
+       (ShelleyBlock (TPraos c) (MaryEra c))
+translateLedgerTablesAllegraToMaryWrapper = TranslateLedgerTables {
+      translateTxInWith  = id
+    , translateTxOutWith = translateTxOut
+    }
 
 translateTxAllegraToMaryWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
@@ -576,13 +687,30 @@ translateLedgerStateMaryToAlonzoWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       TranslateLedgerState
        (ShelleyBlock (TPraos c) (MaryEra c))
        (ShelleyBlock (TPraos c) (AlonzoEra c))
 translateLedgerStateMaryToAlonzoWrapper =
     RequireBoth $ \_cfgMary cfgAlonzo ->
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' (getAlonzoTranslationContext cfgAlonzo) . Comp
+      TranslateLedgerState {
+          translateLedgerStateWith = \_epochNo ->
+                noNewTickingDiffs
+              . unFlip
+              . unComp
+              . SL.translateEra' (getAlonzoTranslationContext cfgAlonzo)
+              . Comp
+              . Flip
+        }
+
+translateLedgerTablesMaryToAlonzoWrapper ::
+     (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
+  => TranslateLedgerTables
+       (ShelleyBlock (TPraos c) (MaryEra c))
+       (ShelleyBlock (TPraos c) (AlonzoEra c))
+translateLedgerTablesMaryToAlonzoWrapper = TranslateLedgerTables {
+      translateTxInWith  = id
+    , translateTxOutWith = translateTxOut
+    }
 
 getAlonzoTranslationContext ::
      WrapLedgerConfig (ShelleyBlock (TPraos c) (AlonzoEra c))
@@ -617,23 +745,42 @@ translateLedgerStateAlonzoToBabbageWrapper ::
      (Praos.PraosCrypto c, TPraos.PraosCrypto c)
   => RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       TranslateLedgerState
        (ShelleyBlock (TPraos c) (AlonzoEra c))
        (ShelleyBlock (Praos c) (BabbageEra c))
 translateLedgerStateAlonzoToBabbageWrapper =
-    RequireBoth $ \_cfgAlonzo _cfgBabbage ->
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' () . Comp . transPraosLS
+  RequireBoth $ \_cfgAlonzo _cfgBabbage ->
+      TranslateLedgerState {
+          translateLedgerStateWith = \_epochNo ->
+                noNewTickingDiffs
+              . unFlip
+              . unComp
+              . SL.translateEra' ()
+              . Comp
+              . Flip
+              . transPraosLS
+        }
   where
     transPraosLS ::
-      LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c)) ->
-      LedgerState (ShelleyBlock (Praos c)  (AlonzoEra c))
-    transPraosLS (ShelleyLedgerState wo nes st) =
+      LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c)) mk ->
+      LedgerState (ShelleyBlock (Praos c)  (AlonzoEra c)) mk
+    transPraosLS (ShelleyLedgerState wo nes st tb) =
       ShelleyLedgerState
         { shelleyLedgerTip        = fmap castShelleyTip wo
         , shelleyLedgerState      = nes
         , shelleyLedgerTransition = st
+        , shelleyLedgerTables     = coerce tb
         }
+
+translateLedgerTablesAlonzoToBabbageWrapper ::
+     Praos.PraosCrypto c
+  => TranslateLedgerTables
+       (ShelleyBlock (TPraos c) (AlonzoEra c))
+       (ShelleyBlock (Praos c) (BabbageEra c))
+translateLedgerTablesAlonzoToBabbageWrapper = TranslateLedgerTables {
+      translateTxInWith  = id
+    , translateTxOutWith = translateTxOut
+    }
 
 translateTxAlonzoToBabbageWrapper ::
      (Praos.PraosCrypto c)
@@ -679,13 +826,30 @@ translateLedgerStateBabbageToConwayWrapper ::
      (Praos.PraosCrypto c)
   => RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       TranslateLedgerState
        (ShelleyBlock (Praos c) (BabbageEra c))
        (ShelleyBlock (Praos c) (ConwayEra c))
 translateLedgerStateBabbageToConwayWrapper =
-    RequireBoth $ \_cfgBabbage cfgConway ->
-      Translate $ \_epochNo ->
-        unComp . SL.translateEra' (getConwayTranslationContext cfgConway) . Comp
+  RequireBoth $ \_cfgBabbage cfgConway ->
+      TranslateLedgerState {
+          translateLedgerStateWith = \_epochNo ->
+                noNewTickingDiffs
+              . unFlip
+              . unComp
+              . SL.translateEra' (getConwayTranslationContext cfgConway)
+              . Comp
+              . Flip
+        }
+
+translateLedgerTablesBabbageToConwayWrapper ::
+     Praos.PraosCrypto c
+  => TranslateLedgerTables
+       (ShelleyBlock (Praos c) (BabbageEra c))
+       (ShelleyBlock (Praos c) (ConwayEra c))
+translateLedgerTablesBabbageToConwayWrapper = TranslateLedgerTables {
+      translateTxInWith  = id
+    , translateTxOutWith = translateTxOut
+    }
 
 getConwayTranslationContext ::
      WrapLedgerConfig (ShelleyBlock (Praos c) (ConwayEra c))

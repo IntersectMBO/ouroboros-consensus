@@ -74,6 +74,7 @@ import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Slots (NumSlots (..))
 import           Test.Util.TestEnv
 
+
 -- | No Byron era, so our crypto can be trivial.
 type Crypto = MockCrypto ShortHash
 
@@ -250,7 +251,8 @@ prop_simple_shelleyAllegra_convergence TestSetup
       }
 
     testOutput :: TestOutput ShelleyAllegraBlock
-    testOutput = runTestNetwork setupTestConfig testConfigB TestConfigMB {
+    testOutput =
+        runTestNetwork setupTestConfig testConfigB TestConfigMB {
           nodeInfo = \(CoreNodeId nid) ->
             let protocolParamsShelleyBased =
                   ProtocolParamsShelleyBased {

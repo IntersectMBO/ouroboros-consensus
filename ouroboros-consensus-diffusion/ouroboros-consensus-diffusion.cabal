@@ -107,14 +107,14 @@ library
     , contra-tracer
     , deepseq
     , filepath
-    , fs-api
+    , fs-api                       ^>=0.1
     , hashable
     , io-classes                   ^>=1.1
     , mtl
     , ouroboros-consensus          ^>=0.9
-    , ouroboros-network            >=0.7    && <0.8  || ^>=0.8
+    , ouroboros-network            ^>=0.7   || ^>=0.8
     , ouroboros-network-api        ^>=0.5
-    , ouroboros-network-framework  ^>=0.6
+    , ouroboros-network-framework  ^>=0.6   || ^>=0.7
     , ouroboros-network-protocols  ^>=0.5
     , random
     , serialise                    ^>=0.2
@@ -122,6 +122,7 @@ library
     , text                         ^>=2.0
     , time
     , transformers
+    , transformers-base
     , typed-protocols
 
 library diffusion-testlib
@@ -150,7 +151,7 @@ library diffusion-testlib
     , containers
     , contra-tracer
     , fgl
-    , fs-sim                                                        >=0.2
+    , fs-sim                                                        ^>=0.2
     , graphviz                                                      >=2999.20.1.0
     , io-classes
     , io-sim
@@ -167,6 +168,7 @@ library diffusion-testlib
     , random
     , si-timers
     , text
+    , transformers-base
     , typed-protocols
 
 library mock-testlib
@@ -209,6 +211,7 @@ test-suite mock-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
+    Test.Consensus.Ledger.Mock.LedgerTables
     Test.ThreadNet.BFT
     Test.ThreadNet.LeaderSchedule
     Test.ThreadNet.PBFT
@@ -243,12 +246,13 @@ test-suite consensus-test
     , base
     , binary
     , bytestring
+    , cardano-binary
     , cardano-slotting
     , containers
     , diffusion-testlib
     , directory
-    , fs-api
-    , fs-sim                                                        >=0.2
+    , fs-api                                                        ^>=0.1
+    , fs-sim                                                        ^>=0.2
     , io-sim
     , mtl
     , nothunks

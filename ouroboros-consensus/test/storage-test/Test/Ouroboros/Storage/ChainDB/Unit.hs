@@ -16,6 +16,7 @@ module Test.Ouroboros.Storage.ChainDB.Unit (tests) where
 
 import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Control.Monad (replicateM, unless, void)
+import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Except (Except, ExceptT, MonadError, runExcept,
                      runExceptT, throwError)
 import           Control.Monad.Reader (MonadReader, ReaderT, ask, runReaderT)
@@ -28,6 +29,7 @@ import           Ouroboros.Consensus.Block.RealPoint
                      (pointToWithOriginRealPoint)
 import           Ouroboros.Consensus.Config (TopLevelConfig,
                      configSecurityParam)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -98,14 +100,14 @@ followerSwitchesToNewChain
 followerSwitchesToNewChain =
   let fork i = TestBody i True
   in do
-    b1 <- addBlock $ firstBlock 0 $ fork 0
-    b2 <- addBlock $ mkNextBlock b1 1 $ fork 0
+    b1 <- addBlock $ firstBlock 0     $ fork 0 -- b1 on top of G
+    b2 <- addBlock $ mkNextBlock b1 1 $ fork 0 -- b2 on top of b1
     f <- newFollower
     followerForward f [blockPoint b2] >>= \case
       Right (Just pt) -> assertEqual (blockPoint b2) pt "Expected to be at b2"
       _               -> failWith "Expecting a success"
-    b3 <- addBlock $ mkNextBlock b1 2 $ fork 1
-    void $ addBlock $ mkNextBlock b1 3 $ fork 1 -- b4
+    b3 <- addBlock $ mkNextBlock b1 2 $ fork 1 -- b3 on top of b1
+    b4 <- addBlock $ mkNextBlock b3 3 $ fork 1 -- b4 on top of b3
     followerInstruction f >>= \case
       Right (Just (RollBack actual))
         -- Expect to rollback to the intersection point between [b1, b2] and
@@ -115,6 +117,10 @@ followerSwitchesToNewChain =
     followerInstruction f >>= \case
       Right (Just (AddBlock actual))
         -> assertEqual b3 (extractBlock actual) "Instructed to add wrong block"
+      _ -> failWith "Expecting instruction to add a block"
+    followerInstruction f >>= \case
+      Right (Just (AddBlock actual))
+        -> assertEqual b4 (extractBlock actual) "Instructed to add wrong block"
       _ -> failWith "Expecting instruction to add a block"
 
 
@@ -228,7 +234,7 @@ runSystemIO expr = runSystem withChainDbEnv expr >>= toAssertion
   where
     chunkInfo      = ImmutableDB.simpleChunkInfo 100
     topLevelConfig = mkTestCfg chunkInfo
-    withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo testInitExtLedger
+    withChainDbEnv = withTestChainDbEnv topLevelConfig chunkInfo $ convertMapKind testInitExtLedger
 
 
 newtype TestFailure = TestFailure String deriving (Show)
@@ -325,8 +331,11 @@ withModelContext f = do
   pure a
 
 
-instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, Eq blk)
-      => SupportsUnitTest (ModelM blk) where
+instance ( Model.ModelSupportsBlock blk
+         , LedgerSupportsProtocol blk
+         , Eq blk
+         , LedgerTablesAreTrivial (LedgerState blk)
+         ) => SupportsUnitTest (ModelM blk) where
 
   type FollowerId (ModelM blk) = Model.FollowerId
   type IteratorId (ModelM blk) = Model.IteratorId
@@ -389,10 +398,10 @@ runSystem withChainDbEnv expr
 
 -- | Provide a standard ChainDbEnv for testing.
 withTestChainDbEnv
-  :: (IOLike m, TestConstraints blk)
+  :: (IOLike m, TestConstraints blk, MonadBase m m)
   => TopLevelConfig blk
   -> ImmutableDB.ChunkInfo
-  -> ExtLedgerState blk
+  -> ExtLedgerState blk ValuesMK
   -> (ChainDBEnv m blk -> m [TraceEvent blk] -> m a)
   -> m a
 withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
@@ -420,7 +429,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
     closeChainDbEnv (env, _) = do
       readSVar (varDB env) >>= close
       closeRegistry (registry env)
-      closeRegistry (cdbRegistry $ args env)
+      closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
     chainDbArgs registry nodeDbs tracer =
       let args = fromMinimalChainDbArgs MinimalChainDbArgs
@@ -430,8 +439,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDbs
             }
-      in args { cdbTracer = tracer }
-
+      in updateTracer tracer args
 
 instance IOLike m => SupportsUnitTest (SystemM blk m) where
 

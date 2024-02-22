@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE RecordWildCards      #-}
-{-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}

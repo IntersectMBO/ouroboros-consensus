@@ -82,8 +82,9 @@ library
     Ouroboros.Consensus.Cardano.ByronHFC
     Ouroboros.Consensus.Cardano.CanHardFork
     Ouroboros.Consensus.Cardano.Condense
+    Ouroboros.Consensus.Cardano.Ledger
     Ouroboros.Consensus.Cardano.Node
-    Ouroboros.Consensus.Cardano.ShelleyBased
+    Ouroboros.Consensus.Cardano.QueryHF
     Ouroboros.Consensus.Shelley.Crypto
     Ouroboros.Consensus.Shelley.Eras
     Ouroboros.Consensus.Shelley.HFEras
@@ -128,7 +129,7 @@ library
     , cardano-ledger-babbage        ^>=1.4
     , cardano-ledger-binary
     , cardano-ledger-byron
-    , cardano-ledger-conway         ^>=1.5
+    , cardano-ledger-conway         ^>=1.6
     , cardano-ledger-core           ^>=1.4
     , cardano-ledger-mary
     , cardano-ledger-shelley        ^>=1.4.1
@@ -140,6 +141,7 @@ library
     , containers                    >=0.5      && <0.7
     , cryptonite                    >=0.25     && <0.31
     , deepseq
+    , diff-containers               >=1.1
     , formatting                    >=6.3      && <7.2
     , measures
     , microlens
@@ -226,6 +228,7 @@ library byron-testlib
     , cardano-ledger-binary:{cardano-ledger-binary, testlib}
     , cardano-ledger-byron
     , cardano-ledger-byron-test
+    , cardano-slotting
     , containers
     , hedgehog-quickcheck
     , mtl
@@ -243,6 +246,7 @@ test-suite byron-test
   main-is:        Main.hs
   other-modules:
     Test.Consensus.Byron.Golden
+    Test.Consensus.Byron.LedgerTables
     Test.Consensus.Byron.Serialisation
     Test.ThreadNet.Byron
     Test.ThreadNet.DualByron
@@ -332,6 +336,7 @@ test-suite shelley-test
   other-modules:
     Test.Consensus.Shelley.Coherence
     Test.Consensus.Shelley.Golden
+    Test.Consensus.Shelley.LedgerTables
     Test.Consensus.Shelley.Serialisation
     Test.ThreadNet.Shelley
 
@@ -341,6 +346,8 @@ test-suite shelley-test
     , cardano-crypto-class
     , cardano-ledger-alonzo
     , cardano-ledger-alonzo-test
+    , cardano-ledger-babbage-test
+    , cardano-ledger-babbage:testlib
     , cardano-ledger-core
     , cardano-ledger-shelley
     , cardano-protocol-tpraos
@@ -396,6 +403,7 @@ library cardano-testlib
     , containers
     , microlens
     , mtl
+    , nothunks
     , ouroboros-consensus-cardano
     , ouroboros-consensus-diffusion:{ouroboros-consensus-diffusion, diffusion-testlib}
     , ouroboros-consensus-protocol:{ouroboros-consensus-protocol, protocol-testlib}
@@ -413,6 +421,7 @@ test-suite cardano-test
     Test.Consensus.Cardano.ByronCompatibility
     Test.Consensus.Cardano.Golden
     Test.Consensus.Cardano.Serialisation
+    Test.Consensus.Cardano.Translation
     Test.ThreadNet.AllegraMary
     Test.ThreadNet.Cardano
     Test.ThreadNet.MaryAlonzo
@@ -423,16 +432,23 @@ test-suite cardano-test
     , byron-testlib
     , bytestring
     , cardano-crypto-class
+    , cardano-data
     , cardano-ledger-alonzo
+    , cardano-ledger-alonzo-test
+    , cardano-ledger-babbage-test
+    , cardano-ledger-binary
     , cardano-ledger-byron
     , cardano-ledger-conway
+    , cardano-ledger-conway-test
     , cardano-ledger-core
     , cardano-ledger-shelley
+    , cardano-ledger-shelley-test
     , cardano-protocol-tpraos
     , cardano-slotting
     , cardano-testlib
     , cborg
     , containers
+    , diff-containers                                               >=1.1
     , filepath
     , microlens
     , ouroboros-consensus-cardano
@@ -513,7 +529,7 @@ library cardano-tools
     , contra-tracer
     , directory
     , filepath
-    , fs-api
+    , fs-api                         ^>=0.1
     , microlens
     , mtl
     , network
@@ -526,7 +542,6 @@ library cardano-tools
     , ouroboros-network-api
     , ouroboros-network-framework
     , ouroboros-network-protocols
-    , serialise                      >=0.2   && <0.3
     , text
     , text-builder
     , transformers
@@ -586,29 +601,6 @@ executable immdb-server
     , optparse-applicative
     , ouroboros-consensus
     , ouroboros-consensus-cardano:cardano-tools
-
-executable beacon
-  import:         common-exe
-  hs-source-dirs: app
-  main-is:        beacon.hs
-  build-depends:
-    , ansi-terminal
-    , base
-    , bytestring
-    , cassava
-    , Chart              >=1.9
-    , Chart-cairo        >=1.9
-    , containers
-    , directory
-    , extra
-    , process
-    , text
-    , vector
-    , vector-algorithms
-
-  -- Chart does not compile on 9.6 right now: https://github.com/timbod7/haskell-chart/issues/248
-  if (os(windows) || impl(ghc >=9.6))
-    buildable: False
 
 test-suite tools-test
   import:         common-test

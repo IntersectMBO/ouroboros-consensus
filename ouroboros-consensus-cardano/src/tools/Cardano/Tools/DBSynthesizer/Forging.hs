@@ -28,6 +28,7 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
                      tickChainDepState)
 import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -35,6 +36,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
                      blockProcessed, getCurrentChain, getPastLedger)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
                      (noPunishment)
+import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.IOLike (atomically)
 import           Ouroboros.Network.AnchoredFragment as AF (Anchor (..),
                      AnchoredFragment, AnchoredSeq (..), headPoint)
@@ -148,7 +150,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
           _   -> exitEarly' "NoLeader"
 
         -- Tick the ledger state for the 'SlotNo' we're producing a block for
-        let tickedLedgerState :: Ticked (LedgerState blk)
+        let tickedLedgerState :: Ticked1 (LedgerState blk) DiffMK
             tickedLedgerState =
               applyChainTick
                 (configLedger cfg)
@@ -164,7 +166,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
             cfg
             bcBlockNo
             currentSlot
-            tickedLedgerState
+            (forgetLedgerTables tickedLedgerState)
             txs
             proof
 

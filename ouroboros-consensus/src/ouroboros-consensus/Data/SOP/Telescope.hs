@@ -1,17 +1,20 @@
-{-# LANGUAGE ConstraintKinds      #-}
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE EmptyCase            #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE PolyKinds            #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ConstraintKinds          #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE EmptyCase                #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE LambdaCase               #-}
+{-# LANGUAGE MultiParamTypeClasses    #-}
+{-# LANGUAGE PolyKinds                #-}
+{-# LANGUAGE QuantifiedConstraints    #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE StandaloneDeriving       #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeApplications         #-}
+{-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE TypeOperators            #-}
+{-# LANGUAGE UndecidableInstances     #-}
 
 -- | Intended for qualified import
 --
@@ -48,8 +51,10 @@ module Data.SOP.Telescope (
   , scanl
   ) where
 
+import           Data.Coerce (coerce)
 import           Data.Functor.Product
 import           Data.Kind
+import           Data.SOP.Classes
 import           Data.SOP.Counting
 import           Data.SOP.InPairs (InPairs (..), Requiring (..))
 import qualified Data.SOP.InPairs as InPairs
@@ -96,6 +101,7 @@ import           Prelude hiding (scanl, sequence, zipWith)
 -- In addition to the standard SOP operators, the new operators that make
 -- a 'Telescope' a telescope are 'extend', 'retract' and 'align'; see their
 -- documentation for details.
+type Telescope :: forall k. (k -> Type) -> (k -> Type) -> [k] -> Type
 data Telescope (g :: k -> Type) (f :: k -> Type) (xs :: [k]) where
   TZ :: !(f x) ->                        Telescope g f (x ': xs)
   TS :: !(g x) -> !(Telescope g f xs) -> Telescope g f (x ': xs)
@@ -134,6 +140,17 @@ sequence = go
     go :: Telescope g (m :.: f) xs' -> m (Telescope g f xs')
     go (TZ (Comp fx)) = TZ <$> fx
     go (TS gx t)      = TS gx <$> go t
+
+instance (forall x y. LiftedCoercible g g x y)
+      => HTrans (Telescope g) (Telescope g) where
+  htrans p transf = \case
+      TZ fx   -> TZ $ transf fx
+      TS gx t -> TS (coerce gx) $ htrans p transf t
+  hcoerce = \case
+      TZ fx   -> TZ $ coerce fx
+      TS gx t -> TS (coerce gx) $ hcoerce t
+
+type instance Same (Telescope g) = Telescope g
 
 {-------------------------------------------------------------------------------
   Bifunctor analogues of class methods
