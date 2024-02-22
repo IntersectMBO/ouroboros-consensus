@@ -57,7 +57,7 @@ handlerFindIntersection ::
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
   [Point TestBlock] ->
-  NodeState ->
+  NodeState TestBlock ->
   STM m (Maybe FindIntersect, [String])
 handlerFindIntersection currentIntersection blockTree clientPoints points = do
   let tip' = nsTipTip points
@@ -84,7 +84,7 @@ handlerRequestNext ::
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
-  NodeState ->
+  NodeState TestBlock ->
   STM m (Maybe RequestNext, [String])
 handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
@@ -158,7 +158,7 @@ handlerBlockFetch ::
   IOLike m =>
   BlockTree TestBlock ->
   ChainRange (Point TestBlock) ->
-  NodeState ->
+  NodeState TestBlock ->
   STM m (Maybe BlockFetch, [String])
 handlerBlockFetch blockTree (ChainRange from to) NodeState {nsBlock, nsHeader} =
   runWriterT (serveFromBpFragment (AF.sliceRange bpChain from to))

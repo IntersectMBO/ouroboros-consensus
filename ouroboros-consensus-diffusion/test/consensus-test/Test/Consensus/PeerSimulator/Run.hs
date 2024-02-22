@@ -171,7 +171,7 @@ dispatchTick ::
   Tracer m String ->
   Tracer m () ->
   Map PeerId (PeerResources m) ->
-  (Int, (DiffTime, Peer NodeState)) ->
+  (Int, (DiffTime, Peer (NodeState TestBlock))) ->
   m ()
 dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
   case peers Map.!? pid of

@@ -474,7 +474,7 @@ addTipPoint pid (NotOrigin b) TreeSlots {lastSlot, branches} =
 
 addTipPoint _ _ treeSlots = treeSlots
 
-addPoints :: Map PeerId NodeState -> TreeSlots -> TreeSlots
+addPoints :: Map PeerId (NodeState TestBlock) -> TreeSlots -> TreeSlots
 addPoints peerPoints treeSlots =
   foldl' step treeSlots (Map.toList peerPoints)
   where
@@ -836,7 +836,7 @@ data PeerSimState =
     pssBlockTree  :: BlockTree TestBlock,
     pssSelection  :: AF.AnchoredFragment (Header TestBlock),
     pssCandidates :: Map PeerId (AF.AnchoredFragment (Header TestBlock)),
-    pssPoints     :: Map PeerId NodeState
+    pssPoints     :: Map PeerId (NodeState TestBlock)
   }
 
 -- TODO add an aspect for the last block of each branch?
@@ -901,7 +901,7 @@ peerSimStateDiagramSTMTracer ::
   BlockTree TestBlock ->
   STM m (AF.AnchoredFragment (Header TestBlock)) ->
   STM m (Map PeerId (AF.AnchoredFragment (Header TestBlock))) ->
-  STM m (Map PeerId (Maybe NodeState)) ->
+  STM m (Map PeerId (Maybe (NodeState TestBlock))) ->
   m (Tracer m ())
 peerSimStateDiagramSTMTracer stringTracer pssBlockTree selectionVar candidatesVar pointsVar = do
   peerCache <- uncheckedNewTVarM mempty
@@ -929,7 +929,7 @@ peerSimStateDiagramSTMTracerDebug ::
   BlockTree TestBlock ->
   STM m (AF.AnchoredFragment (Header TestBlock)) ->
   STM m (Map PeerId (AF.AnchoredFragment (Header TestBlock))) ->
-  STM m (Map PeerId (Maybe NodeState)) ->
+  STM m (Map PeerId (Maybe (NodeState TestBlock))) ->
   m (Tracer m ())
 peerSimStateDiagramSTMTracerDebug =
   peerSimStateDiagramSTMTracer debugTracer

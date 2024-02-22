@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 -- | Data types and generators for point schedules.
 --
@@ -85,24 +86,24 @@ import           Text.Printf (printf)
 ----------------------------------------------------------------------------------------------------
 
 -- | The state of a peer at a given point in time.
-data NodeState =
+data NodeState blk =
   NodeState {
-    nsTip    :: WithOrigin TestBlock,
-    nsHeader :: WithOrigin TestBlock,
-    nsBlock  :: WithOrigin TestBlock
+    nsTip    :: WithOrigin blk,
+    nsHeader :: WithOrigin blk,
+    nsBlock  :: WithOrigin blk
   }
   deriving (Eq, Show)
 
-nsTipTip :: NodeState -> Tip TestBlock
+nsTipTip :: AF.HasHeader blk => NodeState blk -> Tip blk
 nsTipTip = withOrigin TipGenesis tipFromHeader . nsTip
 
-instance Condense NodeState where
+instance Condense (NodeState TestBlock) where
   condense NodeState {nsTip, nsHeader, nsBlock} =
     "TP " ++ terseWithOrigin terseBlock nsTip ++
     " | HP " ++ terseWithOrigin terseBlock nsHeader ++
     " | BP " ++ terseWithOrigin terseBlock nsBlock
 
-instance CondenseList NodeState where
+instance CondenseList (NodeState TestBlock) where
   condenseList points =
     zipWith3
       (\tip header block ->
@@ -114,7 +115,7 @@ instance CondenseList NodeState where
       (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsHeader) points)
       (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsBlock) points)
 
-genesisNodeState :: NodeState
+genesisNodeState :: NodeState blk
 genesisNodeState =
   NodeState {
     nsTip = Origin,
@@ -132,7 +133,7 @@ prettyPeersSchedule peers =
     (showDT . fst . snd <$> numberedPeersStates)
     (condenseList $ (snd . snd) <$> numberedPeersStates)
   where
-    numberedPeersStates :: [(Int, (Time, Peer NodeState))]
+    numberedPeersStates :: [(Int, (Time, Peer (NodeState TestBlock)))]
     numberedPeersStates = zip [0..] (peersStates peers)
 
     showDT :: Time -> String
@@ -156,7 +157,7 @@ prettyPeersSchedule peers =
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
-peerStates :: Peer PeerSchedule -> [(Time, Peer NodeState)]
+peerStates :: Peer PeerSchedule -> [(Time, Peer (NodeState TestBlock))]
 peerStates Peer {name, value = schedulePoints} =
   drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisNodeState points))
   where
@@ -176,12 +177,12 @@ peerStates Peer {name, value = schedulePoints} =
 -- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
 --
 -- The resulting schedule contains all the peers. Items are sorted by time.
-peersStates :: Peers PeerSchedule -> [(Time, Peer NodeState)]
+peersStates :: Peers PeerSchedule -> [(Time, Peer (NodeState TestBlock))]
 peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
 
 -- | Same as 'peersStates' but returns the duration of a state instead of the
 -- absolute time at which it starts holding.
-peersStatesRelative :: Peers PeerSchedule -> [(DiffTime, Peer NodeState)]
+peersStatesRelative :: Peers PeerSchedule -> [(DiffTime, Peer (NodeState TestBlock))]
 peersStatesRelative peers =
   let (starts, states) = unzip $ peersStates peers
       durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]

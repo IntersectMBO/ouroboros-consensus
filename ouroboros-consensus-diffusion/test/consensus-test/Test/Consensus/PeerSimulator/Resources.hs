@@ -58,7 +58,7 @@ data SharedResources m =
     -- | The currently active schedule point.
     --
     -- This is 'Maybe' because we cannot wait for the initial state otherwise.
-    srCurrentState :: StrictTVar m (Maybe NodeState),
+    srCurrentState :: StrictTVar m (Maybe (NodeState TestBlock)),
 
     srTracer       :: Tracer m String
   }
@@ -103,7 +103,7 @@ data PeerResources m =
 
     -- | An action used by the scheduler to update the peer's advertised points and
     -- resume processing for the ChainSync and BlockFetch servers.
-    prUpdateState :: NodeState -> STM m ()
+    prUpdateState :: NodeState TestBlock -> STM m ()
   }
 
 -- | Resources for the peer simulator.
@@ -121,7 +121,7 @@ makeChainSyncServerHandlers ::
   IOLike m =>
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
-  ChainSyncServerHandlers m NodeState
+  ChainSyncServerHandlers m (NodeState TestBlock)
 makeChainSyncServerHandlers currentIntersection blockTree =
   ChainSyncServerHandlers {
     csshFindIntersection = handlerFindIntersection currentIntersection blockTree,
@@ -162,8 +162,8 @@ makeChainSyncResources csrTickStarted SharedResources {srPeerId, srTracer, srBlo
 -- TVar.
 updateState ::
   IOLike m =>
-  StrictTVar m (Maybe NodeState) ->
-  m (NodeState -> STM m (), STM m (), STM m ())
+  StrictTVar m (Maybe (NodeState TestBlock)) ->
+  m (NodeState TestBlock -> STM m (), STM m (), STM m ())
 updateState srCurrentState =
   atomically $ do
     publisher <- newBroadcastTChan
