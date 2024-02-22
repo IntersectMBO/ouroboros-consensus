@@ -15,8 +15,8 @@ import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule
-                     (GenesisTest (gtBlockTree, gtSchedule), PeerSchedule,
-                     peerSchedulesBlocks)
+                     (GenesisTest (gtBlockTree, gtSchedule), GenesisTestFull,
+                     PeerSchedule, PeersSchedule, peerSchedulesBlocks)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock, isAncestorOf,
@@ -27,9 +27,9 @@ import           Test.Util.TestBlock (TestBlock, isAncestorOf,
 -- block tree is trimmed to keep only parts that are necessary for the shrunk
 -- schedule.
 shrinkPeerSchedules ::
-  GenesisTest TestBlock (Peers (PeerSchedule TestBlock)) ->
+  GenesisTestFull TestBlock ->
   StateView ->
-  [GenesisTest TestBlock (Peers (PeerSchedule TestBlock))]
+  [GenesisTestFull TestBlock]
 shrinkPeerSchedules genesisTest _stateView =
   shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&> \shrunkSchedule ->
     let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
@@ -50,7 +50,7 @@ shrinkOtherPeers shrink Peers{honest, others} =
 -- | Remove blocks from the given block tree that are not necessary for the
 -- given peer schedules. If entire branches are unused, they are removed. If the
 -- trunk is unused, then it remains as an empty anchored fragment.
-trimBlockTree' :: Peers (PeerSchedule TestBlock) -> BlockTree TestBlock -> BlockTree TestBlock
+trimBlockTree' :: PeersSchedule TestBlock -> BlockTree TestBlock -> BlockTree TestBlock
 trimBlockTree' = keepOnlyAncestorsOf . peerSchedulesBlocks
 
 -- | Given some blocks and a block tree, keep only the prefix of the block tree

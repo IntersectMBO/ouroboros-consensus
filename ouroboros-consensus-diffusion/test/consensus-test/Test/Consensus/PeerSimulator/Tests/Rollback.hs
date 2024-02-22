@@ -20,7 +20,7 @@ import           Test.Consensus.Genesis.Setup.Classifiers
 import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers, peersOnlyHonest)
+import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..),
                      scheduleBlockPoint, scheduleHeaderPoint, scheduleTipPoint)
 import           Test.QuickCheck
@@ -82,7 +82,7 @@ prop_cannotRollback =
 -- chain of the given block tree.
 --
 -- PRECONDITION: Block tree with at least one alternative chain.
-rollbackSchedule :: AF.HasHeader blk => Int -> BlockTree blk -> Peers (PeerSchedule blk)
+rollbackSchedule :: AF.HasHeader blk => Int -> BlockTree blk -> PeersSchedule blk
 rollbackSchedule n blockTree =
     let branch = firstBranch blockTree
         trunkSuffix = AF.takeOldest n (btbTrunkSuffix branch)

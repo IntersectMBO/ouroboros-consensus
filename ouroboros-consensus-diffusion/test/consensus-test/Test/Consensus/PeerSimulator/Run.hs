@@ -39,7 +39,6 @@ import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
                      ControlMessageSTM)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
-import           Test.Consensus.Genesis.Setup.GenChains (GenesisTest)
 import           Test.Consensus.Network.Driver.Limits.Extras
 import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
 import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient,
@@ -53,9 +52,9 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
-                     NodeState, PeerSchedule, peersStatesRelative,
-                     prettyPeersSchedule)
-import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId, Peers,
+                     GenesisTestFull, NodeState, PeersSchedule,
+                     peersStatesRelative, prettyPeersSchedule)
+import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
@@ -202,7 +201,7 @@ runScheduler ::
   IOLike m =>
   Tracer m String ->
   Tracer m () ->
-  Peers (PeerSchedule TestBlock) ->
+  PeersSchedule TestBlock ->
   Map PeerId (PeerResources m) ->
   m ()
 runScheduler tracer stateTracer ps peers = do
@@ -226,7 +225,7 @@ runPointSchedule ::
   forall m.
   (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
-  GenesisTest TestBlock (Peers (PeerSchedule TestBlock)) ->
+  GenesisTestFull TestBlock ->
   Tracer m String ->
   m StateView
 runPointSchedule schedulerConfig genesisTest tracer0 =

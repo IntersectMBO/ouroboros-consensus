@@ -19,7 +19,7 @@ import           Test.Consensus.PeerSimulator.Run
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers, peersOnlyHonest)
+import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
 import           Test.QuickCheck
@@ -60,7 +60,7 @@ prop_timeouts mustTimeout = do
     )
 
   where
-    dullSchedule :: AF.HasHeader blk => DiffTime -> AF.AnchoredFragment blk -> Peers (PeerSchedule blk)
+    dullSchedule :: AF.HasHeader blk => DiffTime -> AF.AnchoredFragment blk -> PeersSchedule blk
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1

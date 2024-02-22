@@ -23,9 +23,11 @@
 module Test.Consensus.PointSchedule (
     ForecastRange (..)
   , GenesisTest (..)
+  , GenesisTestFull
   , GenesisWindow (..)
   , NodeState (..)
   , PeerSchedule
+  , PeersSchedule
   , enrichedWith
   , genesisNodeState
   , longRangeAttack
@@ -126,7 +128,7 @@ genesisNodeState =
 prettyPeersSchedule ::
   forall blk.
   (CondenseList (NodeState blk)) =>
-  Peers (PeerSchedule blk) ->
+  PeersSchedule blk ->
   [String]
 prettyPeersSchedule peers =
   zipWith3
@@ -181,12 +183,12 @@ peerStates Peer {name, value = schedulePoints} =
 -- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
 --
 -- The resulting schedule contains all the peers. Items are sorted by time.
-peersStates :: Peers (PeerSchedule blk) -> [(Time, Peer (NodeState blk))]
+peersStates :: PeersSchedule blk -> [(Time, Peer (NodeState blk))]
 peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
 
 -- | Same as 'peersStates' but returns the duration of a state instead of the
 -- absolute time at which it starts holding.
-peersStatesRelative :: Peers (PeerSchedule blk) -> [(DiffTime, Peer (NodeState blk))]
+peersStatesRelative :: PeersSchedule blk -> [(DiffTime, Peer (NodeState blk))]
 peersStatesRelative peers =
   let (starts, states) = unzip $ peersStates peers
       durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
@@ -198,8 +200,10 @@ type PeerSchedule blk = [(Time, SchedulePoint blk)]
 peerScheduleBlocks :: (PeerSchedule blk) -> [blk]
 peerScheduleBlocks = mapMaybe (withOriginToMaybe . schedulePointToBlock . snd)
 
+type PeersSchedule blk = Peers (PeerSchedule blk)
+
 -- | List of all blocks appearing in the schedules.
-peerSchedulesBlocks :: Peers (PeerSchedule blk) -> [blk]
+peerSchedulesBlocks :: PeersSchedule blk -> [blk]
 peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList
 
 ----------------------------------------------------------------------------------------------------
@@ -216,7 +220,7 @@ longRangeAttack ::
   (StatefulGen g m, AF.HasHeader blk) =>
   BlockTree blk ->
   g ->
-  m (Peers (PeerSchedule blk))
+  m (PeersSchedule blk)
 longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
   adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
@@ -238,7 +242,7 @@ uniformPoints ::
   (StatefulGen g m, AF.HasHeader blk) =>
   BlockTree blk ->
   g ->
-  m (Peers (PeerSchedule blk))
+  m (PeersSchedule blk)
 uniformPoints BlockTree {btTrunk, btBranches} g = do
   honestTip0 <- firstTip btTrunk
   honest <- mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
@@ -311,6 +315,8 @@ data GenesisTest blk schedule = GenesisTest {
   gtSlotLength        :: SlotLength,
   gtSchedule          :: schedule
   }
+
+type GenesisTestFull blk = GenesisTest blk (PeersSchedule blk)
 
 prettyGenesisTest :: GenesisTest TestBlock schedule -> [String]
 prettyGenesisTest genesisTest =
