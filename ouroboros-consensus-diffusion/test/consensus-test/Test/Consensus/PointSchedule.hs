@@ -20,8 +20,7 @@
 -- and once it fulfills the state's criteria, it yields control back to the scheduler,
 -- who then activates the next tick's peer.
 module Test.Consensus.PointSchedule (
-    BlockPoint (..)
-  , ForecastRange (..)
+    ForecastRange (..)
   , GenesisTest (..)
   , GenesisWindow (..)
   , HeaderPoint (..)
@@ -58,7 +57,7 @@ import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
 import           Ouroboros.Consensus.Util.Condense (Condense (..),
                      CondenseList (..), PaddingDirection (..),
-                     condenseListWithPadding)
+                     condenseListWithPadding, padListWith)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..), tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At), withOrigin)
@@ -110,32 +109,20 @@ instance Condense HeaderPoint where
 instance CondenseList HeaderPoint where
   condenseList = condenseListWithPadding PadRight
 
--- | The latest block that should be sent to the client by the BlockFetch server
--- in a tick.
-newtype BlockPoint =
-  BlockPoint (WithOrigin TestBlock)
-  deriving (Eq, Show)
-
-instance Condense BlockPoint where
-  condense (BlockPoint block) = terseWithOrigin terseBlock block
-
-instance CondenseList BlockPoint where
-  condenseList = condenseListWithPadding PadRight
-
 -- | The state of a peer at a given point in time.
 data NodeState =
   NodeState {
-    tip    :: TipPoint,
-    header :: HeaderPoint,
-    block  :: BlockPoint
+    tip     :: TipPoint,
+    header  :: HeaderPoint,
+    nsBlock :: WithOrigin TestBlock
   }
   deriving (Eq, Show)
 
 instance Condense NodeState where
-  condense NodeState {tip, header, block} =
+  condense NodeState {tip, header, nsBlock} =
     "TP " ++ condense tip ++
     " | HP " ++ condense header ++
-    " | BP " ++ condense block
+    " | BP " ++ terseWithOrigin terseBlock nsBlock
 
 instance CondenseList NodeState where
   condenseList points =
@@ -147,14 +134,14 @@ instance CondenseList NodeState where
       )
       (condenseList $ tip <$> points)
       (condenseList $ header <$> points)
-      (condenseList $ block <$> points)
+      (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsBlock) points)
 
 genesisNodeState :: NodeState
 genesisNodeState =
   NodeState {
     tip = TipPoint TipGenesis,
     header = HeaderPoint Origin,
-    block = BlockPoint Origin
+    nsBlock = Origin
   }
 
 prettyPeersSchedule :: Peers PeerSchedule -> [String]
@@ -204,7 +191,7 @@ peerStates Peer {name, value = schedulePoints} =
     modPoint z = \case
       ScheduleTipPoint tip -> z {tip = TipPoint (withOrigin TipGenesis tipFromHeader tip)}
       ScheduleHeaderPoint h -> z {header = HeaderPoint (withOrigin Origin (At . getHeader) h)}
-      ScheduleBlockPoint b -> z {block = BlockPoint b}
+      ScheduleBlockPoint nsBlock -> z {nsBlock}
 
     (times, points) = unzip schedulePoints
 
