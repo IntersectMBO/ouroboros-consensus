@@ -19,6 +19,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
+import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockNo, blockSlot, unBlockNo)
@@ -125,8 +126,8 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
     Classifiers {genesisWindowAfterIntersection, longerThanGenesisWindow} = classifiers genesisTest
 
 fromBlockPoint :: (Time, SchedulePoint blk) -> Maybe (Time, blk)
-fromBlockPoint (t, ScheduleBlockPoint bp) = Just (t, bp)
-fromBlockPoint _                          = Nothing
+fromBlockPoint (t, ScheduleBlockPoint (NotOrigin bp)) = Just (t, bp)
+fromBlockPoint _                                      = Nothing
 
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.

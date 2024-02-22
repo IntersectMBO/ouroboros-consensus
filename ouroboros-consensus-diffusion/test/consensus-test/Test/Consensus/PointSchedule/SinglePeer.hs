@@ -90,6 +90,9 @@ module Test.Consensus.PointSchedule.SinglePeer (
   , singleJumpPeerSchedule
     -- * Exposed for testing
   , mergeOn
+  , scheduleBlockPoint
+  , scheduleHeaderPoint
+  , scheduleTipPoint
   , zipMany
   ) where
 
@@ -109,12 +112,21 @@ import           Test.Consensus.PointSchedule.SinglePeer.Indices
 
 -- | A point in the schedule of a single peer.
 data SchedulePoint blk
-  = ScheduleTipPoint blk
-  | ScheduleHeaderPoint blk
-  | ScheduleBlockPoint blk
+  = ScheduleTipPoint (WithOrigin blk)
+  | ScheduleHeaderPoint (WithOrigin blk)
+  | ScheduleBlockPoint (WithOrigin blk)
   deriving (Eq, Show)
 
-schedulePointToBlock :: SchedulePoint blk -> blk
+scheduleTipPoint :: blk -> SchedulePoint blk
+scheduleTipPoint = ScheduleTipPoint . At
+
+scheduleHeaderPoint :: blk -> SchedulePoint blk
+scheduleHeaderPoint = ScheduleHeaderPoint . At
+
+scheduleBlockPoint :: blk -> SchedulePoint blk
+scheduleBlockPoint = ScheduleBlockPoint . At
+
+schedulePointToBlock :: SchedulePoint blk -> WithOrigin blk
 schedulePointToBlock (ScheduleTipPoint b)    = b
 schedulePointToBlock (ScheduleHeaderPoint b) = b
 schedulePointToBlock (ScheduleBlockPoint b)  = b
@@ -164,9 +176,9 @@ singleJumpPeerSchedule
 singleJumpPeerSchedule g psp chain = do
     let chainv = Vector.fromList $ AF.toOldestFirst chain
     (tps, hps, bps) <- singleJumpRawPeerSchedule g psp chainv
-    let tipPoints = map (second ScheduleTipPoint) tps
-        headerPoints = map (second ScheduleHeaderPoint) hps
-        blockPoints = map (second ScheduleBlockPoint) bps
+    let tipPoints = map (second scheduleTipPoint) tps
+        headerPoints = map (second scheduleHeaderPoint) hps
+        blockPoints = map (second scheduleBlockPoint) bps
     -- merge the schedules
     pure $
       mergeOn fst tipPoints $
@@ -232,9 +244,9 @@ peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
         isTrunks = map fst tipPoints
         intersections = intersperseTrunkFragments anchorBlockIndices isTrunks
     (tps, hps, bps) <- rawPeerScheduleFromTipPoints g psp tipPoints trunk0v branches0v intersections
-    let tipPoints' = map (second ScheduleTipPoint) tps
-        headerPoints = map (second ScheduleHeaderPoint) hps
-        blockPoints = map (second ScheduleBlockPoint) bps
+    let tipPoints' = map (second scheduleTipPoint) tps
+        headerPoints = map (second scheduleHeaderPoint) hps
+        blockPoints = map (second scheduleBlockPoint) bps
     -- merge the schedules
     pure $
       mergeOn fst tipPoints' $

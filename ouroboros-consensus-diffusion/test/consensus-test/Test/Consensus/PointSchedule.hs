@@ -50,9 +50,11 @@ import           Control.Monad.ST (ST)
 import           Data.Foldable (toList)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
+import           Data.Maybe (mapMaybe)
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
-import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
+import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader,
+                     withOriginToMaybe)
 import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
@@ -62,7 +64,7 @@ import           Ouroboros.Consensus.Util.Condense (Condense (..),
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (..), tipFromHeader)
-import           Ouroboros.Network.Point (WithOrigin (At))
+import           Ouroboros.Network.Point (WithOrigin (At), withOrigin)
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
@@ -207,9 +209,9 @@ peerStates Peer {name, value = schedulePoints} =
     firstTipOffset = case times of [] -> 0; (Time dt : _) -> dt
 
     modPoint z = \case
-      ScheduleTipPoint tip -> z {tip = TipPoint (tipFromHeader tip)}
-      ScheduleHeaderPoint h -> z {header = HeaderPoint (At (getHeader h))}
-      ScheduleBlockPoint b -> z {block = BlockPoint (At b)}
+      ScheduleTipPoint tip -> z {tip = TipPoint (withOrigin TipGenesis tipFromHeader tip)}
+      ScheduleHeaderPoint h -> z {header = HeaderPoint (withOrigin Origin (At . getHeader) h)}
+      ScheduleBlockPoint b -> z {block = BlockPoint b}
 
     (times, points) = unzip schedulePoints
 
@@ -231,7 +233,7 @@ type PeerSchedule = [(Time, SchedulePoint TestBlock)]
 
 -- | List of all blocks appearing in the schedule.
 peerScheduleBlocks :: PeerSchedule -> [TestBlock]
-peerScheduleBlocks = map (schedulePointToBlock . snd)
+peerScheduleBlocks = mapMaybe (withOriginToMaybe . schedulePointToBlock . snd)
 
 -- | List of all blocks appearing in the schedules.
 peerSchedulesBlocks :: Peers PeerSchedule -> [TestBlock]

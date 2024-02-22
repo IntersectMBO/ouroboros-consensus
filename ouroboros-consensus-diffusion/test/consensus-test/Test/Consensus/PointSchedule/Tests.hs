@@ -28,6 +28,7 @@ import           Test.QuickCheck.Random
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import qualified Test.Util.QuickCheck as QC
+import           Test.Util.TersePrinting (terseBlock, terseWithOrigin)
 import           Test.Util.TestBlock (TestBlock, TestHash (unTestHash),
                      firstBlock, modifyFork, successorBlock, tbSlot)
 import           Test.Util.TestEnv
@@ -236,7 +237,7 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
       pure $
           (QC.counterexample ("hps = " ++ show (map (second showPoint) hps)) $
            QC.counterexample ("tps' = " ++ show (map (second showPoint) tps')) $
-             headerPointsFollowTipPoints isAncestorBlock
+             headerPointsFollowTipPoints isAncestorBlock'
                (map (second schedulePointToBlock) hps)
                (map (second schedulePointToBlock) tps')
           )
@@ -254,10 +255,10 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
             noReturnToAncestors (filter isBlockPoint $ map snd ss)
           )
   where
-    showPoint :: AF.HasHeader blk => SchedulePoint blk -> String
-    showPoint (ScheduleTipPoint b)    = "TP " ++ show (blockHash b)
-    showPoint (ScheduleHeaderPoint b) = "HP " ++ show (blockHash b)
-    showPoint (ScheduleBlockPoint b)  = "BP " ++ show (blockHash b)
+    showPoint :: SchedulePoint TestBlock -> String
+    showPoint (ScheduleTipPoint b)    = "TP " ++ terseWithOrigin terseBlock b
+    showPoint (ScheduleHeaderPoint b) = "HP " ++ terseWithOrigin terseBlock b
+    showPoint (ScheduleBlockPoint b)  = "BP " ++ terseWithOrigin terseBlock b
 
     isTipPoint :: SchedulePoint blk -> Bool
     isTipPoint (ScheduleTipPoint _) = True
@@ -281,6 +282,12 @@ isAncestorBlock b0 b1 =
       else Just LT
     else Nothing
 
+isAncestorBlock' :: WithOrigin TestBlock -> WithOrigin TestBlock -> Maybe Ordering
+isAncestorBlock' Origin Origin   = Just EQ
+isAncestorBlock' Origin _        = Just LT
+isAncestorBlock' _ Origin        = Just GT
+isAncestorBlock' (At b0) (At b1) = isAncestorBlock b0 b1
+
 noReturnToAncestors :: [SchedulePoint TestBlock] -> QC.Property
 noReturnToAncestors = go []
   where
@@ -288,14 +295,14 @@ noReturnToAncestors = go []
     go ancestors (p : ss) =
       let b = schedulePointToBlock p
        in   foldr (QC..&&.) (QC.property True)
-              (map (isNotAncestorOf b) ancestors)
+              (map (isNotAncestorOf' b) ancestors)
           QC..&&.
             go (b : ancestors) ss
 
-    isNotAncestorOf :: TestBlock -> TestBlock -> QC.Property
-    isNotAncestorOf b0 b1 =
-      QC.counterexample ("return to ancestor: " ++ show (blockHash b0) ++ " -> " ++ show (blockHash b1)) $
-        QC.property $ isNothing $ isAncestorBlock b0 b1
+    isNotAncestorOf' :: WithOrigin TestBlock -> WithOrigin TestBlock -> QC.Property
+    isNotAncestorOf' b0 b1 =
+      QC.counterexample ("return to ancestor: " ++ terseWithOrigin terseBlock b0 ++ " -> " ++ terseWithOrigin terseBlock b1) $
+        QC.property $ isNothing $ isAncestorBlock' b0 b1
 
 genTimeInterval :: DiffTime -> QC.Gen (DiffTime, DiffTime)
 genTimeInterval trange = do

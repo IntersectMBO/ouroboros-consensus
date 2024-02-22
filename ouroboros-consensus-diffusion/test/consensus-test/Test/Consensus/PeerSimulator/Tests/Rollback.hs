@@ -21,7 +21,8 @@ import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (Peers, peersOnlyHonest)
-import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
+import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..),
+                     scheduleBlockPoint, scheduleHeaderPoint, scheduleTipPoint)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -95,7 +96,7 @@ rollbackSchedule n blockTree =
     banalSchedulePoints :: AnchoredFragment blk -> [SchedulePoint blk]
     banalSchedulePoints = concatMap banalSchedulePoints' . toOldestFirst
     banalSchedulePoints' :: blk -> [SchedulePoint blk]
-    banalSchedulePoints' block = [ScheduleTipPoint block, ScheduleHeaderPoint block, ScheduleBlockPoint block]
+    banalSchedulePoints' block = [scheduleTipPoint block, scheduleHeaderPoint block, scheduleBlockPoint block]
 
 -- | Whether the alternative chain has more than 'k' blocks after the
 -- intersection with the honest chain.

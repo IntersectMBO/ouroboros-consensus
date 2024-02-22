@@ -20,7 +20,8 @@ import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (Peers, peersOnlyHonest)
-import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
+import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
+                     scheduleHeaderPoint, scheduleTipPoint)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -64,11 +65,11 @@ prop_timeouts mustTimeout = do
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
        in peersOnlyHonest $ [
-            (Time 0, ScheduleTipPoint tipBlock),
-            (Time 0, ScheduleHeaderPoint tipBlock),
-            (Time 0, ScheduleBlockPoint tipBlock),
+            (Time 0, scheduleTipPoint tipBlock),
+            (Time 0, scheduleHeaderPoint tipBlock),
+            (Time 0, scheduleBlockPoint tipBlock),
             -- This last point does not matter, it is only here to leave the
             -- connection open (aka. keep the test running) long enough to
             -- pass the timeout by 'offset'.
-            (Time (timeout + offset), ScheduleTipPoint tipBlock)
+            (Time (timeout + offset), scheduleTipPoint tipBlock)
             ]
