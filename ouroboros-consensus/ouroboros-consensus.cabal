@@ -277,6 +277,7 @@ library
     , ouroboros-network-api        ^>=0.7
     , ouroboros-network-mock       ^>=0.1
     , ouroboros-network-protocols  ^>=0.8
+    , primitive
     , psqueues                     ^>=0.2.3
     , quiet                        ^>=0.2
     , semialign                    >=1.1
@@ -294,7 +295,6 @@ library
     , transformers
     , typed-protocols              ^>=0.1.1
     , vector                       ^>=0.13
-    , primitive
 
   -- GHC 8.10.7 on aarch64-darwin cannot use text-2
   build-depends:   text >=1.2.5.0 && <2.2
@@ -545,7 +545,6 @@ test-suite consensus-test
     , typed-protocols-examples
     , unstable-consensus-testlib
     , unstable-mock-block
-    , primitive
 
 test-suite infra-test
   import:         common-test

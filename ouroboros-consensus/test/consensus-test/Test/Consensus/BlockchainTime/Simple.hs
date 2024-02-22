@@ -45,7 +45,6 @@ import qualified Control.Monad.Class.MonadTimer as MonadTimer
 import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Except (Except, runExcept, throwError)
 import           Control.Monad.IOSim
-import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..), lift)
 import           Control.Tracer
 import           Data.Fixed
@@ -321,7 +320,7 @@ prop_delayNoClockShift =
 -- | Note that that under load, the returned list could be missing certain slots
 -- or contain more slots than requested. This means that tests using this
 -- function can fail, also see issue #3894.
-testOverrideDelay :: forall m. (IOLike m, MonadTime m, MonadDelay (OverrideDelay m), PrimMonad m)
+testOverrideDelay :: forall m. (IOLike m, MonadTime m, MonadDelay (OverrideDelay m))
                   => SystemStart
                   -> SlotLength
                   -> NominalDiffTime
@@ -362,6 +361,7 @@ newtype OverrideDelay m a = OverrideDelay {
            , MonadEventlog
            , MonadThrow
            , MonadCatch
+           , MonadEvaluate
            , MonadMask
            , MonadMonotonicTime
            , MonadMonotonicTimeNSec
@@ -369,10 +369,14 @@ newtype OverrideDelay m a = OverrideDelay {
            , MonadTime
            , MonadThread
            , MonadFork
-           , PrimMonad
            , MonadST
-           , MonadEvaluate
            )
+
+
+instance PrimMonad m => PrimMonad (OverrideDelay m) where
+  type PrimState (OverrideDelay m) = PrimState m
+  primitive = OverrideDelay . primitive
+  {-# INLINE primitive #-}
 
 deriving via AllowThunk (OverrideDelay s a)
          instance NoThunks (OverrideDelay s a)
