@@ -57,8 +57,6 @@ import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mempool
 import           Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Mock.Ledger hiding (TxId)
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-                     (PointNotFound (..))
 import           Ouroboros.Consensus.Util (repeatedly, repeatedlyM)
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike
@@ -606,9 +604,6 @@ withTestMempool setup@TestSetup {..} prop =
 
       -- Set up the LedgerInterface
       varCurrentLedgerState <- uncheckedNewTVarM testLedgerState
-      let f :: Ord k => ValuesMK k v -> KeysMK k v -> ValuesMK k v
-          f (ValuesMK v) (KeysMK k) =
-            ValuesMK (Map.restrictKeys v k)
       let ledgerInterface = LedgerInterface
             { getCurrentLedgerState = forgetLedgerTables <$> readTVar varCurrentLedgerState
             , getLedgerTablesAtFor = \pt txs -> do
@@ -616,10 +611,8 @@ withTestMempool setup@TestSetup {..} prop =
                       $ map getTransactionKeySets txs
                 st <- atomically $ readTVar varCurrentLedgerState
                 if castPoint (getTip st) == pt
-                  then pure $ Right $ ltliftA2 f
-                                                      (projectLedgerTables st)
-                                                      keys
-                  else pure $ Left $ PointNotFound pt
+                  then pure $ Just $ restrictValues' st keys
+                  else pure Nothing
             }
 
       -- Set up the Tracer

@@ -24,10 +24,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceEvent (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import           Ouroboros.Consensus.Storage.LedgerDB (Forker')
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-                     (BackingStoreSelector (..), BackingStoreTraceByBackend)
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
@@ -67,8 +66,8 @@ data ChainDbArgs f m blk = ChainDbArgs {
 
       -- Misc
     , cdbTracer                 :: Tracer m (TraceEvent blk)
-    , cdbTraceLedger            :: Tracer m (AnchorlessDbChangelog' blk)
-    , cdbBsTracer               :: Tracer m BackingStoreTraceByBackend
+    , cdbTraceLedger            :: Tracer m (Forker' m blk)
+    , cdbBsTracer               :: Tracer m LedgerDB.V1.BackingStoreTraceByBackend
     , cdbRegistry               :: HKD f (ResourceRegistry m)
     , cdbGcDelay                :: DiffTime
     , cdbGcInterval             :: DiffTime
@@ -79,7 +78,7 @@ data ChainDbArgs f m blk = ChainDbArgs {
       -- up.
 
       -- LedgerDB Backing Store
-    , cdbBackingStoreSelector   :: !(BackingStoreSelector m)
+    , cdbBackingStoreSelector   :: !(LedgerDB.V1.BackingStoreSelector m)
       -- ^ Which implementation of the backing store to use
     }
 
@@ -144,12 +143,12 @@ defaultArgs ::
      Monad m
   => (RelativeMountPoint -> SomeHasFS m)
   -> LedgerDB.DiskPolicy
-  -> BackingStoreSelector m
+  -> LedgerDB.V1.BackingStoreSelector m
   -> ChainDbArgs Defaults m blk
 defaultArgs mkFS diskPolicy bss =
   toChainDbArgs (ImmutableDB.defaultArgs immFS)
                 (VolatileDB.defaultArgs  volFS)
-                (LedgerDB.defaultArgs    lgrFS diskPolicy bss)
+                (LedgerDB.defaultArgs    lgrFS diskPolicy bss undefined undefined) -- TODO(jdral_ldb)
                 defaultSpecificArgs
   where
     immFS, volFS, lgrFS :: SomeHasFS m
@@ -194,8 +193,9 @@ fromChainDbArgs ChainDbArgs{..} = (
         , lgrGenesis              = cdbGenesis
         , lgrTracer               = contramap TraceLedgerDBEvent cdbTracer
         , lgrBsTracer             = cdbBsTracer
-        , lgrTraceLedger          = cdbTraceLedger
         , lgrBackingStoreSelector = cdbBackingStoreSelector
+        , lgrFlushFrequency       = undefined -- TODO(jdral_ldb)
+        , lgrQueryBatchSize       = undefined -- TODO(jdral_ldb)
         }
     , ChainDbSpecificArgs {
           cdbsTracer          = cdbTracer
@@ -239,7 +239,7 @@ toChainDbArgs ImmutableDB.ImmutableDbArgs {..}
     , cdbImmutableDbCacheConfig = immCacheConfig
       -- Misc
     , cdbTracer                 = cdbsTracer
-    , cdbTraceLedger            = lgrTraceLedger
+    , cdbTraceLedger            = undefined -- TODO(jdral_ldb)
     , cdbBsTracer               = lgrBsTracer
     , cdbRegistry               = cdbsRegistry
     , cdbGcDelay                = cdbsGcDelay

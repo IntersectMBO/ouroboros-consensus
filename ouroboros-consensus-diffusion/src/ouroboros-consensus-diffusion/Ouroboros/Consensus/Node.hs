@@ -52,6 +52,7 @@ module Ouroboros.Consensus.Node (
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
+import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, contramap, traceWith)
@@ -91,6 +92,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo,
                      ValidationPolicy (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
 import           Ouroboros.Consensus.Storage.VolatileDB
                      (BlockValidationPolicy (..))
 import           Ouroboros.Consensus.Util.Args
@@ -181,7 +183,7 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
     , rnPeerSharing :: PeerSharing
 
       -- | Whether to use the LMDB or the in-memory backend for UTxO-HD.
-    , rnBackingStoreSelector :: !(BackingStoreSelector m)
+    , rnBackingStoreSelector :: !(LedgerDB.V1.BackingStoreSelector m)
     }
 
 -- | Arguments that usually only tests /directly/ specify.
@@ -289,6 +291,7 @@ runWith :: forall m addrNTN addrNTC versionDataNTN versionDataNTC blk p2p.
      , IOLike m, MonadTime m, MonadTimer m
      , Hashable addrNTN, Ord addrNTN, Typeable addrNTN
      , HasCallStack
+     , MonadBase m m
      )
   => RunNodeArgs m addrNTN addrNTC blk p2p
   -> (addrNTN -> CBOR.Encoding)
@@ -566,7 +569,7 @@ stdWithCheckedDB pb databasePath networkMagic body = do
     hasFS      = ioHasFS mountPoint
 
 openChainDB
-  :: forall m blk. (RunNode blk, IOLike m)
+  :: forall m blk. (RunNode blk, IOLike m, MonadBase m m)
   => ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk
@@ -783,7 +786,7 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
     -- versions to the latest " official " release (as chosen by Network and
     -- Consensus Team, with input from Node Team)
   , srnTraceChainDB                 :: Tracer m (ChainDB.TraceEvent blk)
-  , srnTraceBackingStore            :: Tracer m BackingStoreTraceByBackend
+  , srnTraceBackingStore            :: Tracer m LedgerDB.V1.BackingStoreTraceByBackend
   , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
     -- ^ Determine whether to use the system default mempool capacity or explicitly set
     -- capacity of the mempool.
@@ -866,8 +869,6 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
         k   = configSecurityParam cfg
       in defaultDiskPolicy k
            srnSnapshotInterval
-           srnFlushFrequency
-           srnQueryBatchSize
 
     mkHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS IO
     mkHasFS = stdMkChainDbHasFS srnDatabasePath

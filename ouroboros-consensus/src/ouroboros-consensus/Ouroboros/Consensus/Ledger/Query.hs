@@ -64,7 +64,7 @@ import           Ouroboros.Consensus.Node.Serialisation
                      (SerialiseNodeToClient (..), SerialiseResult (..),
                      SerialiseResult' (..))
 import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..), SomeSecond (..))
 import           Ouroboros.Consensus.Util.DepPair
 import           Ouroboros.Consensus.Util.IOLike
@@ -148,10 +148,10 @@ class
   -- For the hard fork block this will be instantiated to
   -- @answerBlockQueryHFOne@.
   answerBlockQueryLookup ::
-       Monad m
+       MonadSTM m
     => ExtLedgerCfg blk
     -> BlockQuery blk QFLookupTables result
-    -> LedgerDBView' m blk
+    -> ReadOnlyForker' m blk
     -> m result
 
   -- | Answer a query that requires to traverse the ledger tables. As consensus
@@ -163,10 +163,10 @@ class
   -- For the hard fork block this will be instantiated to
   -- @answerBlockQueryHFAll@.
   answerBlockQueryTraverse ::
-       Monad m
+       MonadSTM m
     => ExtLedgerCfg blk
     -> BlockQuery blk QFTraverseTables result
-    -> LedgerDBView' m blk
+    -> ReadOnlyForker' m blk
     -> m result
 
 {-------------------------------------------------------------------------------
@@ -209,28 +209,29 @@ data Query blk result where
 -- | Answer the given query about the extended ledger state.
 answerQuery ::
      forall blk m result.
-     (BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk, Monad m, IsLedger (LedgerState blk))
+     (BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk, MonadSTM m)
   => ExtLedgerCfg blk
-  -> LedgerDBView' m blk
+  -> ReadOnlyForker' m blk
   -> Query blk result
   -> m result
-answerQuery config dlv query = case query of
+answerQuery config forker query = case query of
     BlockQuery (blockQuery :: BlockQuery blk footprint result) ->
       case sing :: Sing footprint of
         SQFNoTables ->
-          pure $ answerPureBlockQuery config blockQuery st
+          answerPureBlockQuery config blockQuery <$>
+            atomically (LedgerDB.roforkerGetLedgerState forker)
         SQFLookupTables ->
-          answerBlockQueryLookup config blockQuery dlv
+          answerBlockQueryLookup config blockQuery forker
         SQFTraverseTables ->
-          answerBlockQueryTraverse config blockQuery dlv
+          answerBlockQueryTraverse config blockQuery forker
     GetSystemStart ->
       pure $ getSystemStart (topLevelConfigBlock (getExtLedgerCfg config))
     GetChainBlockNo ->
-      pure $ headerStateBlockNo (headerState st)
+      headerStateBlockNo . headerState <$>
+        atomically (LedgerDB.roforkerGetLedgerState forker)
     GetChainPoint ->
-      pure $ headerStatePoint (headerState st)
-  where
-    st = current $ viewChangelog dlv
+      headerStatePoint . headerState <$>
+        atomically (LedgerDB.roforkerGetLedgerState forker)
 
 {-------------------------------------------------------------------------------
   Query instances

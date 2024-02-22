@@ -11,7 +11,7 @@
 
 -- | An implementation of a 'BackingStore' using a TVar. This is the
 -- implementation known as \"InMemory\".
-module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory (
+module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory (
     -- * Constructor
     newInMemoryBackingStore
     -- * Errors
@@ -34,7 +34,7 @@ import qualified Data.Set as Set
 import           Data.String (fromString)
 import           GHC.Generics
 import           Ouroboros.Consensus.Ledger.Basics
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
                      MonadSTM (STM, atomically), MonadThrow (throwIO), NoThunks,
                      StrictTVar, newTVarIO, readTVar, throwSTM, writeTVar)

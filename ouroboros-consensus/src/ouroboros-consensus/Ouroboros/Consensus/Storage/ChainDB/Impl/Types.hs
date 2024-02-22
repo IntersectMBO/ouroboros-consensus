@@ -86,8 +86,9 @@ import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB,
                      ImmutableDbSerialiseConstraints)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB (Forker', LedgerDB',
+                     LedgerDbSerialiseConstraints, TraceLedgerDBEvent,
+                     TraceReplayEvent, TraceValidateEvent)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDB,
                      VolatileDbSerialiseConstraints)
@@ -163,7 +164,7 @@ data ChainDbState m blk
 data ChainDbEnv m blk = CDB
   { cdbImmutableDB     :: !(ImmutableDB m blk)
   , cdbVolatileDB      :: !(VolatileDB m blk)
-  , cdbLedgerDB        :: !(LedgerDB m blk)
+  , cdbLedgerDB        :: !(LedgerDB' m blk)
   , cdbChain           :: !(StrictTVar m (AnchoredFragment (Header blk)))
     -- ^ Contains the current chain fragment.
     --
@@ -232,7 +233,7 @@ data ChainDbEnv m blk = CDB
     -- Note that 'copyToImmutableDB' can still be executed concurrently with all
     -- others functions, just not with itself.
   , cdbTracer          :: !(Tracer m (TraceEvent blk))
-  , cdbTraceLedger     :: !(Tracer m (AnchorlessDbChangelog' blk))
+  , cdbTraceLedger     :: !(Tracer m (Forker' m blk))
   , cdbRegistry        :: !(ResourceRegistry m)
     -- ^ Resource registry that will be used to (re)start the background
     -- threads, see 'cdbBgThreads'.
@@ -695,7 +696,7 @@ data TraceValidationEvent blk =
       -- ^ Candidate chain containing headers from the future
       [Header blk]
       -- ^ Headers from the future, exceeding clock skew
-  | UpdateLedgerDbTraceEvent (UpdateLedgerDbTraceEvent blk)
+  | UpdateLedgerDbTraceEvent (TraceValidateEvent blk)
   deriving (Generic)
 
 deriving instance

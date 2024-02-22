@@ -6,10 +6,13 @@
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE StandaloneKindSignatures   #-}
 {-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
@@ -20,6 +23,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
   , getEnv
   , getEnv1
   , getEnv2
+  , getEnv5
   , getEnvSTM
   , getEnvSTM1
     -- * Forkers
@@ -36,7 +40,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
     -- * Constraints
   , LedgerDbSerialiseConstraints
     -- * Exposed internals for testing purposes
-  , TestInternals (..)
+  , Internals (..)
+  , Internals'
   ) where
 
 import           Codec.Serialise.Class
@@ -53,16 +58,20 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.LedgerDB.API as API
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding
+import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
                      (ResolveBlock)
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Consensus.Util.MonadSTM.RAWLock as Lock
+import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API
 
 {-------------------------------------------------------------------------------
@@ -168,6 +177,14 @@ getEnv2 ::
   -> a -> b -> m r
 getEnv2 h f a b = getEnv h (\env -> f env a b)
 
+-- | Variant 'of 'getEnv' for functions taking five arguments.
+getEnv5 ::
+     (IOLike m, HasCallStack, HasHeader blk)
+  => LedgerDBHandle m l blk
+  -> (LedgerDBEnv m l blk -> a -> b -> c -> d -> e -> m r)
+  -> a -> b -> c -> d -> e -> m r
+getEnv5 h f a b c d e = getEnv h (\env -> f env a b c d e)
+
 -- | Variant of 'getEnv' that works in 'STM'.
 getEnvSTM ::
      forall m l blk r. (IOLike m, HasCallStack, HasHeader blk)
@@ -207,6 +224,8 @@ data ForkerEnv m l blk = ForkerEnv {
     -- * Config
   , foeSecurityParam           :: !SecurityParam
   , foeQueryBatchSize          :: !QueryBatchSize
+    -- * Resource registry
+  , foeResourceKey             :: !(ResourceKey m)
   }
   deriving Generic
 
@@ -315,6 +334,13 @@ type LedgerDbSerialiseConstraints blk =
   Exposed internals for testing purposes
 -------------------------------------------------------------------------------}
 
+type Internals' m blk = Internals m (ExtLedgerState blk) blk
+
 -- TODO: fill in as required
-type TestInternals :: (Type -> Type) -> LedgerStateKind -> Type -> Type
-data TestInternals m l blk = TestInternals
+type Internals :: (Type -> Type) -> LedgerStateKind -> Type -> Type
+data Internals m l blk = Internals {
+    intTakeSnapshot         :: (l ~ ExtLedgerState blk) => DiskSnapshot -> m ()
+    -- | Reapplies a block to the tip of the LedgerDB, and adds the result as
+    -- the new tip of the LedgerDB.
+  , intReapplyThenPushBlock :: (l ~ ExtLedgerState blk) => blk -> m ()
+  }

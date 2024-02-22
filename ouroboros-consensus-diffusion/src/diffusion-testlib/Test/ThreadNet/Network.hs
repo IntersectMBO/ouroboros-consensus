@@ -40,6 +40,7 @@ import           Codec.CBOR.Read (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM as MonadSTM
 import qualified Control.Exception as Exn
 import           Control.Monad
+import           Control.Monad.Base (MonadBase)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import qualified Control.Monad.Except as Exc
@@ -85,9 +86,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB hiding (getForker)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Enclose (pattern FallingEdge)
@@ -290,6 +290,7 @@ runThreadNetwork :: forall m blk.
                     , TxGen blk
                     , TracingConstraints blk
                     , HasCallStack
+                    , MonadBase m m
                     )
                  => SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
 runThreadNetwork systemTime ThreadNetworkArgs
@@ -601,19 +602,16 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> (SlotNo -> STM m ())
       -> LedgerConfig blk
       -> STM m (Point blk)
-      -> m ( AnchorlessDbChangelog' blk
-           , BackingStoreValueHandle' m blk
-           , LedgerDBView' m blk
-           )
+      -> (ResourceRegistry m -> m (ReadOnlyForker' m blk))
       -> Mempool m blk
       -> [GenTx blk]
          -- ^ valid transactions the node should immediately propagate
       -> m ()
-    forkCrucialTxs clock s0 registry unblockForge lcfg getTipPoint mdlv mempool txs0 = do
+    forkCrucialTxs clock s0 registry unblockForge lcfg getTipPoint mforker mempool txs0 = do
       void $ forkLinkedThread registry "crucialTxs" $ do
         let
             wouldBeValid :: SlotNo
-                         -> (RangeQuery (LedgerTables (ExtLedgerState blk) KeysMK) -> m (LedgerTables (ExtLedgerState blk) ValuesMK))
+                         -> (RangeQuery (ExtLedgerState blk) -> m (LedgerTables (ExtLedgerState blk) ValuesMK))
                          -> Ticked1 (LedgerState blk) DiffMK
                          -> GenTx blk
                          -> m Bool
@@ -632,17 +630,20 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 or <$> mapM (wouldBeValid slot doRangeQuery (snapshotState snap)) txs0
 
         let loop (slot, mempFp) = do
-              (ldb, vh, dlv) <- mdlv
-              let ledger       = ledgerState $ current $ viewChangelog dlv
-                  doRangeQuery = ledgerDBViewRangeRead dlv
+              forker <- mforker registry
+              extLedger <- atomically $ roforkerGetLedgerState forker
+              let ledger       = ledgerState extLedger
+                  doRangeQuery = roforkerRangeReadTables forker
               -- This node would include these crucial txs if it leads in
               -- this slot.
               let ledger' = applyChainTick lcfg slot ledger
-              snap1 <- getSnapshotFor mempool slot ledger' (adcDiffs ldb) vh
+                  readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+              snap1 <- getSnapshotFor mempool slot ledger' readTables
               -- Other nodes might include these crucial txs when leading
               -- in the next slot.
               let ledger'' = applyChainTick lcfg (succ slot) ledger
-              snap2 <- getSnapshotFor mempool (succ slot) ledger'' (adcDiffs ldb) vh
+              snap2 <- getSnapshotFor mempool (succ slot) ledger'' readTables
+              roforkerClose forker
 
 
               -- Don't attempt to add them if we're sure they'll be invalid.
@@ -697,15 +698,17 @@ runThreadNetwork systemTime ThreadNetworkArgs
                    -> OracularClock m
                    -> TopLevelConfig blk
                    -> Seed
-                   -> m (a, b, LedgerDBView' m blk)
+                   -> (ResourceRegistry m -> m (ReadOnlyForker' m blk))
                       -- ^ How to get the current ledger state
                    -> Mempool m blk
                    -> m ()
-    forkTxProducer coreNodeId registry clock cfg nodeSeed mdlv mempool =
+    forkTxProducer coreNodeId registry clock cfg nodeSeed mforker mempool =
         void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
-          (_, _, dlv) <- mdlv
-          let emptySt      = current $ viewChangelog dlv
-              doRangeQuery = ledgerDBViewRangeRead dlv
+          forker <- mforker registry
+          emptySt' <- atomically $ roforkerGetLedgerState forker
+          let emptySt      = emptySt'
+              doRangeQuery = roforkerRangeReadTables forker
+          roforkerClose forker
           fullLedgerSt <- fmap ledgerState $ do
                 -- FIXME: we know that the range query implemetation will add at
                 -- most 1 to the number of requested keys, hence the
@@ -747,7 +750,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
               , mcdbInitLedger     = initLedger
               , mcdbRegistry       = registry
               , mcdbNodeDBs        = nodeDBs
-              , mcdbBackingStoreSelector = InMemoryBackingStore
+              , mcdbBackingStoreSelector = LedgerDB.V1.InMemoryBackingStore
               }
         in args { cdbCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
                 , cdbCheckInFuture  = InFuture.reference (configLedger cfg)
@@ -1058,14 +1061,13 @@ runThreadNetwork systemTime ThreadNetworkArgs
                   -- tests about the peer sharing protocol itself.
                   (NTN.mkHandlers nodeKernelArgs nodeKernel (\_ -> return []))
 
-      -- Create a 'DiskLedgerView' to be used in 'forkTxProducer'. This function
-      -- needs the 'DiskLedgerView' to elaborate a complete UTxO set to generate
+      -- Create a 'ReadOnlyForker' to be used in 'forkTxProducer'. This function
+      -- needs the read-only forker to elaborate a complete UTxO set to generate
       -- transactions.
-      let getValueHandle = do
-            eLDBView <- ChainDB.getLedgerDBViewAtPoint chainDB Nothing
-            case eLDBView of
-              Left e          -> error $ show e
-              Right l@(LedgerDBView { viewHandle, viewChangelog }) -> pure (viewChangelog, viewHandle, l)
+      let getForker rr = do
+            ChainDB.getReadOnlyForkerAtPoint chainDB rr Nothing >>= \case
+              Left e  -> error $ show e
+              Right l -> pure l
 
       -- In practice, a robust wallet/user can persistently add a transaction
       -- until it appears on the chain. This thread adds robustness for the
@@ -1090,7 +1092,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
         unblockForge
         (configLedger pInfoConfig)
         (ledgerTipPoint . ledgerState <$> ChainDB.getCurrentLedger chainDB)
-        getValueHandle
+        getForker
         mempool
         txs0
 
@@ -1104,7 +1106,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
         (seed `combineWith` unCoreNodeId coreNodeId)
         -- Uses the same varRNG as the block producer, but we split the RNG
         -- each time, so this is fine.
-        getValueHandle
+        getForker
         mempool
 
       return (nodeKernel, LimitedApp app)

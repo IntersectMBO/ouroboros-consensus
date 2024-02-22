@@ -2,6 +2,7 @@
 {-# LANGUAGE DataKinds                #-}
 {-# LANGUAGE DeriveTraversable        #-}
 {-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE MultiParamTypeClasses    #-}
 {-# LANGUAGE QuantifiedConstraints    #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies             #-}
@@ -27,7 +28,9 @@ module Ouroboros.Consensus.Ledger.Basics (
   , pureLedgerResult
     -- * GetTip
   , GetTip (..)
+  , GetTipSTM (..)
   , getTipHash
+  , getTipM
   , getTipSlot
     -- * Associated types by block type
   , LedgerConfig
@@ -37,10 +40,10 @@ module Ouroboros.Consensus.Ledger.Basics (
   ) where
 
 import           Data.Kind (Constraint, Type)
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ticked
+import           Ouroboros.Consensus.Util.IOLike
 
 {-------------------------------------------------------------------------------
   Tip
@@ -60,6 +63,13 @@ getTipHash = pointHash . getTip
 
 getTipSlot :: GetTip l => l mk -> WithOrigin SlotNo
 getTipSlot = pointSlot . getTip
+
+type GetTipSTM :: (Type -> Type) -> Type -> Constraint
+class GetTipSTM m l where
+  getTipSTM :: l -> STM m (Point l)
+
+getTipM :: (GetTipSTM m l, MonadSTM m) => l -> m (Point l)
+getTipM = atomically . getTipSTM
 
 {-------------------------------------------------------------------------------
   Events directly from the ledger
@@ -207,7 +217,7 @@ applyChainTick = lrResult ..: applyChainTickLedgerResult
 -- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
 type LedgerState :: Type -> LedgerStateKind
 data family LedgerState blk mk
-type TickedLedgerState blk mk = Ticked1   (LedgerState blk) mk
+type TickedLedgerState blk = Ticked1 (LedgerState blk)
 
 type instance HeaderHash (LedgerState blk) = HeaderHash blk
 

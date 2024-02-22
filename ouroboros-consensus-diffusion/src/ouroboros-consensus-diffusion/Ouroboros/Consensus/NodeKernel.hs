@@ -66,9 +66,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunis
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
 import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog hiding (tip)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
@@ -276,14 +274,14 @@ forkBlockForging
 forkBlockForging IS{..} blockForging =
     forkLinkedWatcher registry threadLabel
     $ knownSlotWatcher btime
-    $ withEarlyExit_ . go
+    $ \currentSlot -> withRegistry (\rr -> withEarlyExit_ $ go rr currentSlot)
   where
     threadLabel :: String
     threadLabel =
         "NodeKernel.blockForging." <> Text.unpack (forgeLabel blockForging)
 
-    go :: SlotNo -> WithEarlyExit m ()
-    go currentSlot = withRegistry $ \reg -> do
+    go :: ResourceRegistry m -> SlotNo -> WithEarlyExit m ()
+    go reg currentSlot = do
       trace $ TraceStartLeadershipCheck currentSlot
 
       -- Figure out which block to connect to
@@ -302,25 +300,22 @@ forkBlockForging IS{..} blockForging =
 
       trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
 
-      -- Get ledger state and ledger db view corresponding to bcPrevPoint
+      -- Get forker corresponding to bcPrevPoint
       --
       -- This might fail if, in between choosing 'bcPrevPoint' and this call to
-      -- 'getPastLedger', we switched to a fork where 'bcPrevPoint' is no longer
-      -- on our chain. When that happens, we simply give up on the chance to
-      -- produce a block.
-      eLedgerDBView <- lift $ ChainDB.getLedgerDBViewAtPoint chainDB (Just bcPrevPoint)
-      -- before 'earlyExit' we need to 'lbsvhClose' this value handle. Once we get
+      -- 'ChainDB.getReadOnlyForkerAtPoint', we switched to a fork where 'bcPrevPoint'
+      -- is no longer on our chain. When that happens, we simply give up on the
+      -- chance to produce a block.
+      forkerEith <- lift $ ChainDB.getReadOnlyForkerAtPoint chainDB reg (Just bcPrevPoint)
+      -- before 'earlyExit' we need to 'roforkerClose' this value handle. Once we get
       -- a snapshot we can just close it.
-      (vh, chdiffs, unticked) <- case eLedgerDBView of
+      forker <- case forkerEith of
         Left _ -> do
           trace $ TraceNoLedgerState currentSlot bcPrevPoint
           exitEarly
-        Right (LedgerDBView { viewHandle, viewChangelog }) -> do
-          _ <- allocate reg (\_ -> pure viewHandle) (lift . bsvhClose)
-          pure ( viewHandle
-               , adcDiffs         viewChangelog
-               , LedgerDB.current viewChangelog
-               )
+        Right forker -> pure forker
+
+      unticked <- lift $ atomically $ LedgerDB.roforkerGetLedgerState forker
 
       trace $ TraceLedgerState currentSlot bcPrevPoint
 
@@ -406,12 +401,15 @@ forkBlockForging IS{..} blockForging =
             h = castHash $ snapshotTipHash snap
         pure (h, snapshotSlotNo snap)
 
+      let readTables = fmap castLedgerTables . roforkerReadTables forker . castLedgerTables
+
       mempoolSnapshot <- lift $ getSnapshotFor
                                   mempool
                                   currentSlot
                                   tickedLedgerState
-                                  chdiffs
-                                  vh
+                                  readTables
+
+      lift $ roforkerClose forker
 
       let txs = map fst $ snapshotTxs mempoolSnapshot
 

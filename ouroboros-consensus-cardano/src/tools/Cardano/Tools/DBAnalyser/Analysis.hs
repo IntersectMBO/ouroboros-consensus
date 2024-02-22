@@ -16,14 +16,13 @@ module Cardano.Tools.DBAnalyser.Analysis (
   ) where
 
 import qualified Cardano.Slotting.Slot as Slotting
-import           Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
+import           Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
 import           Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
-import           Codec.CBOR.Encoding (Encoding)
 import           Control.Monad (unless, void, when)
 import           Control.Monad.Except (runExcept)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
-import           Data.Foldable (foldl')
+import           Data.Foldable (foldMap')
 import           Data.List (intercalate)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text.IO as Text.IO
@@ -55,16 +54,14 @@ import           Ouroboros.Consensus.Storage.Common (BlockComponent (..),
                      StreamFrom (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
-import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes,
-                     encodeDisk)
+import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
+                     LedgerDB')
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import           Ouroboros.Consensus.Storage.Serialisation (SizeInBytes)
 import           Ouroboros.Consensus.Ticked
+import           Ouroboros.Consensus.Util (eitherToMaybe)
 import qualified Ouroboros.Consensus.Util.IOLike as IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           System.FS.API (SomeHasFS (..))
 import qualified System.IO as IO
 import qualified Text.Builder as Builder
 
@@ -100,7 +97,7 @@ runAnalysis ::
      , LedgerSupportsMempool.HasTxs blk
      , LedgerSupportsMempool blk
      , LedgerSupportsProtocol blk
-     , LedgerDbSerialiseConstraints blk
+     , CanStowLedgerTables (LedgerState blk)
      )
   => AnalysisName -> Analysis blk
 runAnalysis analysisName env@(AnalysisEnv { tracer }) = do
@@ -125,15 +122,14 @@ runAnalysis analysisName env@(AnalysisEnv { tracer }) = do
 type Analysis blk = AnalysisEnv IO blk -> IO (Maybe AnalysisResult)
 
 data AnalysisEnv m blk = AnalysisEnv {
-      cfg        :: TopLevelConfig blk
-    , policy     :: DiskPolicy
-    , initLedger :: ExtLedgerState blk EmptyMK
-    , db         :: Either (ImmutableDB IO blk) (ChainDB IO blk)
-    , registry   :: ResourceRegistry IO
-    , ledgerDbFS :: SomeHasFS IO
-    , limit      :: Limit
-    , tracer     :: Tracer m (TraceEvent blk)
-    , bstore     :: BackingStore' m blk
+      cfg         :: TopLevelConfig blk
+    , initLedger  :: ExtLedgerState blk EmptyMK
+    , db          :: Either (ImmutableDB IO blk) (ChainDB IO blk)
+    , registry    :: ResourceRegistry IO
+    , limit       :: Limit
+    , tracer      :: Tracer m (TraceEvent blk)
+    , ledgerDB    :: LedgerDB' IO blk
+    , intLedgerDB :: LedgerDB.Internals' IO blk
     }
 
 data TraceEvent blk =
@@ -335,40 +331,29 @@ showEBBs AnalysisEnv { db, registry, initLedger, limit, tracer } = do
 -------------------------------------------------------------------------------}
 
 storeLedgerStateAt ::
-     forall blk .
-     ( LedgerDbSerialiseConstraints blk
-     , HasAnalysis blk
-     , LedgerSupportsProtocol blk
-     )
+     forall blk . HasAnalysis blk
   => SlotNo -> Analysis blk
 storeLedgerStateAt slotNo aenv = do
-    void $ processAllUntil db registry GetBlock initLedger limit (DbChangelog.empty initLedger) process
+    void $ processAllUntil_ db registry GetBlock initLedger limit process
     pure Nothing
   where
     AnalysisEnv { db
                 , registry
                 , initLedger
-                , cfg
                 , limit
-                , ledgerDbFS
                 , tracer
-                , policy
-                , bstore } = aenv
+                , ledgerDB
+                , intLedgerDB } = aenv
 
-    process :: DbChangelog' blk -> blk -> IO (NextStep, DbChangelog' blk)
-    process ldb blk = do
-      ldb' <- onChangelogM (DbChangelog.applyThenPush (configDbChangelog cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
-      ldb'' <-
-        if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
-        then do
-          let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
-          mapM_ (flushIntoBackingStore bstore) toFlush
-          pure toKeep
-        else pure ldb'
+    process :: blk -> IO NextStep
+    process blk = do
+      LedgerDB.intReapplyThenPushBlock intLedgerDB blk
+      LedgerDB.tryFlush ledgerDB
+
       when (unBlockNo (blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-      when (blockSlot blk >= slotNo) $ storeLedgerState blk ldb''
+      when (blockSlot blk >= slotNo) $ storeLedgerState blk
       when (blockSlot blk > slotNo) $ issueWarning blk
-      return (continue blk, ldb'')
+      return (continue blk)
 
     continue :: blk -> NextStep
     continue blk
@@ -382,23 +367,13 @@ storeLedgerStateAt slotNo aenv = do
 
     storeLedgerState ::
          blk
-      -> DbChangelog' blk
       -> IO ()
-    storeLedgerState blk ldb = do
+    storeLedgerState blk = do
       let snapshot = DiskSnapshot
                       (unSlotNo $ blockSlot blk)
                       (Just $ "db-analyser")
-      writeSnapshot ledgerDbFS bstore encLedger snapshot
-        $ DbChangelog.current $ anchorlessChangelog ldb
+      LedgerDB.intTakeSnapshot intLedgerDB snapshot
       traceWith tracer $ SnapshotStoredEvent (blockSlot blk)
-
-    encLedger :: ExtLedgerState blk EmptyMK -> Encoding
-    encLedger =
-      let ccfg = configCodec cfg
-      in encodeExtLedgerState
-           (encodeDisk ccfg)
-           (encodeDisk ccfg)
-           (encodeDisk ccfg)
 
 countBlocks ::
      forall blk .
@@ -419,34 +394,42 @@ countBlocks (AnalysisEnv { db, registry, initLedger, limit, tracer }) = do
 checkNoThunksEvery ::
   forall blk.
   ( HasAnalysis blk,
-    LedgerSupportsProtocol blk
+    LedgerSupportsProtocol blk,
+    CanStowLedgerTables (LedgerState blk)
   ) =>
   Word64 ->
   Analysis blk
 checkNoThunksEvery
   nBlocks
-  (AnalysisEnv {db, registry, initLedger, cfg, limit, policy, bstore}) = do
+  (AnalysisEnv {db, registry, initLedger, cfg, limit, ledgerDB, intLedgerDB}) = do
     putStrLn $
       "Checking for thunks in each block where blockNo === 0 (mod " <> show nBlocks <> ")."
-    void $ processAll db registry GetBlock initLedger limit (DbChangelog.empty initLedger) process
+    void $ processAll_ db registry GetBlock initLedger limit process
     pure Nothing
   where
-    process :: DbChangelog' blk -> blk -> IO (DbChangelog' blk)
-    process oldLedgerDB blk = do
+    process :: blk -> IO ()
+    process blk = do
+      oldLedger <- LedgerDB.readLedgerStateAtTipFor ledgerDB (getBlockKeySets blk)
+
       let ledgerCfg     = ExtLedgerCfg cfg
-      -- this is an inline of LedgerDB.Update.applyBlock
-      appliedResult <- withKeysReadSets (DbChangelog.current $ anchorlessChangelog oldLedgerDB) (readKeySets bstore) (anchorlessChangelog oldLedgerDB) (getBlockKeySets blk) $ return . tickThenApplyLedgerResult ledgerCfg blk
-      let newLedger     = either (error . show) lrResult $ runExcept $ appliedResult
+          appliedResult = tickThenApplyLedgerResult ledgerCfg blk oldLedger
+          newLedger     = either (error . show) lrResult $ runExcept appliedResult
+          newLedger'    = applyDiffs oldLedger newLedger
           bn            = blockNo blk
-      when (unBlockNo bn `mod` nBlocks == 0 ) $ IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
-      let intermediateLedgerDB = onChangelog (DbChangelog.prune (dbChangelogCfgSecParam $ configDbChangelog cfg)
-                               . DbChangelog.extend (ValidLedgerState newLedger)) oldLedgerDB
-      if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog intermediateLedgerDB
-      then do
-        let (toFlush, toKeep) = DbChangelog.splitForFlushing intermediateLedgerDB
-        mapM_ (flushIntoBackingStore bstore) toFlush
-        pure toKeep
-      else pure intermediateLedgerDB
+      when (unBlockNo bn `mod` nBlocks == 0 ) $ do
+        -- Check the new ledger state with new values stowed. This checks that
+        -- the ledger has no thunks in their ledgerstate type.
+        IOLike.evaluate (stowLedgerTables $ ledgerState newLedger') >>= checkNoThunks bn
+        -- Check the new ledger state with diffs in the tables. This should
+        -- catch any additional thunks in the diffs tables.
+        IOLike.evaluate (ledgerState newLedger) >>= checkNoThunks bn
+        -- Check the new ledger state with values in the ledger tables. This
+        -- should catch any additional thunks in the values tables.
+        IOLike.evaluate (ledgerState newLedger') >>= checkNoThunks bn
+
+      LedgerDB.intReapplyThenPushBlock intLedgerDB blk
+      LedgerDB.tryFlush ledgerDB
+
 
     checkNoThunks :: NoThunksMK mk => BlockNo -> LedgerState blk mk -> IO ()
     checkNoThunks bn ls =
@@ -468,27 +451,27 @@ traceLedgerProcessing ::
   ) =>
   Analysis blk
 traceLedgerProcessing
-  (AnalysisEnv {db, registry, initLedger, cfg, limit, policy, bstore}) = do
-    void $ processAll db registry GetBlock initLedger limit (DbChangelog.empty initLedger) process
+  (AnalysisEnv {db, registry, initLedger, cfg, limit, ledgerDB, intLedgerDB}) = do
+    void $ processAll_ db registry GetBlock initLedger limit process
     pure Nothing
   where
     process
-      :: DbChangelog' blk
-      -> blk
-      -> IO (DbChangelog' blk)
-    process oldLedger blk = do
-      ldb' <- onChangelogM (DbChangelog.applyThenPush (configDbChangelog cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) oldLedger
-      let traces        =
-            HasAnalysis.emitTraces $
-              HasAnalysis.WithLedgerState blk (ledgerState (DbChangelog.current $ anchorlessChangelog oldLedger)) (ledgerState (DbChangelog.current $ anchorlessChangelog ldb'))
+      :: blk
+      -> IO ()
+    process blk = do
+      oldLedger <- LedgerDB.readLedgerStateAtTipFor ledgerDB (getBlockKeySets blk)
+
+      let ledgerCfg     = ExtLedgerCfg cfg
+          appliedResult = tickThenApplyLedgerResult ledgerCfg blk oldLedger
+          newLedger     = either (error . show) lrResult $ runExcept appliedResult
+          newLedger'    = applyDiffs oldLedger newLedger
+          traces        =
+            (HasAnalysis.emitTraces $
+              HasAnalysis.WithLedgerState blk (ledgerState oldLedger) (ledgerState newLedger'))
       mapM_ Debug.traceMarkerIO traces
 
-      if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
-      then do
-        let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
-        mapM_ (flushIntoBackingStore bstore) toFlush
-        pure toKeep
-      else pure ldb'
+      LedgerDB.intReapplyThenPushBlock intLedgerDB blk
+      LedgerDB.tryFlush ledgerDB
 
 {-------------------------------------------------------------------------------
   Analysis: maintain a ledger state and time the five major ledger calculations
@@ -513,14 +496,14 @@ benchmarkLedgerOps ::
      , LedgerSupportsProtocol blk
      )
   => Maybe FilePath -> Analysis blk
-benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, policy, bstore} =
+benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, ledgerDB, intLedgerDB} =
     withFile mOutfile $ \outFileHandle -> do
-      let line = Builder.run $ showHeaders separator
+      let line = Builder.run $ DP.showHeaders separator
                              <> separator
                              <> "...era-specific stats"
       Text.IO.hPutStrLn outFileHandle line
 
-      void $ processAll db registry GetBlock initLedger limit (DbChangelog.empty initLedger) (process outFileHandle)
+      void $ processAll_ db registry GetBlock initLedger limit (process outFileHandle)
       pure Nothing
   where
     withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
@@ -535,10 +518,11 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, p
 
     process ::
          IO.Handle
-      -> DbChangelog' blk
       -> blk
-      -> IO (DbChangelog' blk)
-    process outFileHandle ldb blk = do
+      -> IO ()
+    process outFileHandle blk = do
+        !oldLedger <- LedgerDB.readLedgerStateAtTipFor ledgerDB (getBlockKeySets blk)
+
         prevRtsStats <- GC.getRTSStats
         let
           -- Compute how many nanoseconds the mutator used from the last
@@ -552,34 +536,22 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, p
               pure (r, tNow - tPrev)
 
         let slot = blockSlot      blk
-        let prevLedgerState = DbChangelog.current $ anchorlessChangelog ldb
+        let !prevLedgerState = forgetLedgerTables oldLedger
         -- We do not use strictness annotation on the resulting tuples since
         -- 'time' takes care of forcing the evaluation of its argument's result.
         (tkLdgrView, tForecast) <- time $ forecast            slot prevLedgerState
-        (tkHdrSt,    tHdrTick)  <- time $ tickTheHeaderState  slot prevLedgerState tkLdgrView
-        (hdrSt',     tHdrApp)   <- time $ applyTheHeader                           tkLdgrView tkHdrSt
-        (tkLdgrSt,   tBlkTick)  <- time $ tickTheLedgerState  slot prevLedgerState
-        (hydTkLdgrSt, tHydBlk)  <- time $ hydrateTheTickedState                    tkLdgrSt
-        (ldgrSt',    tBlkApp)   <- time $ applyTheBlock                                       hydTkLdgrSt
-
-        -- this is an inline of DbChangelog.Update.pushLedgerState
-        let st   = ExtLedgerState (prependDiffs tkLdgrSt ldgrSt') hdrSt'
-            ldb' = onChangelog (DbChangelog.prune (dbChangelogCfgSecParam $ configDbChangelog cfg)
-                 . DbChangelog.extend (ValidLedgerState st)) ldb
-
-        (ldb'', tFlush) <-
-          if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
-          then do
-            let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
-            ((), tFlush) <- time $ mapM_ (flushIntoBackingStore bstore) toFlush
-            pure (toKeep, tFlush)
-          else pure (ldb', 0)
+        (tkHdrSt,    tHdrTick)  <- time $ tickTheHeaderState  slot prevLedgerState  tkLdgrView
+        (_hdrSt',    tHdrApp)   <- time $ applyTheHeader                            tkLdgrView tkHdrSt
+        let !prevLedgerState' = forgetLedgerTables prevLedgerState
+        (tkLdgrSt,   tBlkTick)  <- time $ tickTheLedgerState  slot prevLedgerState'
+        let !tkdLdgrSt' = applyDiffs oldLedger tkLdgrSt
+        (_ldgrSt',   tBlkApp)   <- time $ applyTheBlock                                        tkdLdgrSt'
 
         currentRtsStats <- GC.getRTSStats
         let
           currentMinusPrevious f = f currentRtsStats - f prevRtsStats
           slotDataPoint =
-            SlotDataPoint
+            DP.SlotDataPoint
             { slot            = realPointSlot rp
             , slotGap         = slot `slotCount` getTipSlot prevLedgerState
             , totalTime       = currentMinusPrevious GC.elapsed_ns          `div` 1000
@@ -591,21 +563,20 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, p
             , mut_headerApply = tHdrApp   `div` 1000
             , mut_blockTick   = tBlkTick  `div` 1000
             , mut_blockApply  = tBlkApp   `div` 1000
-            , mut_hydrate     = tHydBlk   `div` 1000
-            , mut_flush       = tFlush    `div` 1000
             }
 
           slotCount (SlotNo i) = \case
             Slotting.Origin        -> i
             Slotting.At (SlotNo j) -> i - j
 
-          line = Builder.run $  showData slotDataPoint separator
+          line = Builder.run $  DP.showData slotDataPoint separator
                              <> separator
                              <> Builder.intercalate separator (HasAnalysis.blockStats blk)
 
         Text.IO.hPutStrLn outFileHandle line
 
-        pure ldb''
+        LedgerDB.intReapplyThenPushBlock intLedgerDB blk
+        LedgerDB.tryFlush ledgerDB
       where
         rp = blockRealPoint blk
 
@@ -638,17 +609,6 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit, p
             case runExcept $ validateHeader cfg tickedLedgerView (getHeader blk) tickedHeaderState of
               Left err -> fail $ "benchmark doesn't support invalid headers: " <> show rp <> " " <> show err
               Right x -> pure x
-
-        hydrateTheTickedState ::
-             Ticked1 (LedgerState blk) DiffMK
-          -> IO (Ticked1 (LedgerState blk) ValuesMK)
-        hydrateTheTickedState st = do
-          let ks = getBlockKeySets blk
-              aks = rewindTableKeySets (anchorlessChangelog ldb) ks
-          urs <- readKeySets bstore aks
-          case forwardTableKeySets (anchorlessChangelog ldb) urs of
-            Left err        -> error $ "Rewind;read;forward failed" <> show err
-            Right forwarded -> pure $ applyDiffs forwarded st
 
         tickTheLedgerState ::
              SlotNo
@@ -688,26 +648,13 @@ reproMempoolForge numBlks env = do
       _ -> fail $ "--repro-mempool-and-forge only supports"
                <> "1 or 2 blocks at a time, not " <> show numBlks
 
-    ref <- IOLike.newTVarIO (DbChangelog.empty initLedger)
-
     mempool <- Mempool.openMempoolWithoutSyncThread
       Mempool.LedgerInterface {
-          Mempool.getCurrentLedgerState = ledgerState . DbChangelog.current . DbChangelog.anchorlessChangelog <$> IOLike.readTVar ref
+          Mempool.getCurrentLedgerState = ledgerState <$> LedgerDB.getVolatileTip ledgerDB
         , Mempool.getLedgerTablesAtFor = \pt txs -> do
             let keys = castLedgerTables
-                  $ foldl' (<>) emptyLedgerTables
-                  $ map getTransactionKeySets txs
-            let f = do
-                  lgrDb <- anchorlessChangelog <$> IOLike.atomically (IOLike.readTVar ref)
-                  case DbChangelog.rollback pt lgrDb of
-                    Nothing -> pure $ Left $ PointNotFound pt
-                    Just l  -> do
-                      eValues <-
-                        getLedgerTablesFor l keys (readKeySets bstore)
-                      case eValues of
-                        Right v -> pure $ Right v
-                        Left _  -> f
-            fmap castLedgerTables <$> f
+                    $ foldMap' getTransactionKeySets txs
+            fmap castLedgerTables . eitherToMaybe <$> LedgerDB.readLedgerTablesAtFor ledgerDB pt keys
       }
       lCfg
       -- one megabyte should generously accomodate two blocks' worth of txs
@@ -715,7 +662,7 @@ reproMempoolForge numBlks env = do
       nullTracer
       LedgerSupportsMempool.txInBlockSize
 
-    void $ processAll db registry GetBlock initLedger limit Nothing (process howManyBlocks ref mempool)
+    void $ processAll db registry GetBlock initLedger limit Nothing (process howManyBlocks mempool)
     pure Nothing
   where
     AnalysisEnv {
@@ -725,8 +672,8 @@ reproMempoolForge numBlks env = do
     , registry
     , limit
     , tracer
-    , policy
-    , bstore
+    , ledgerDB
+    , intLedgerDB
     } = env
 
     lCfg :: LedgerConfig blk
@@ -741,12 +688,11 @@ reproMempoolForge numBlks env = do
 
     process
       :: ReproMempoolForgeHowManyBlks
-      -> IOLike.StrictTVar IO (DbChangelog' blk)
       -> Mempool.Mempool IO blk
       -> Maybe blk
       -> blk
       -> IO (Maybe blk)
-    process howManyBlocks ref mempool mbBlk blk' = (\() -> Just blk') <$> do
+    process howManyBlocks mempool mbBlk blk' = (\() -> Just blk') <$> do
       -- add this block's transactions to the mempool
       do
         results <- Mempool.addTxs mempool $ LedgerSupportsMempool.extractTxs blk'
@@ -760,33 +706,32 @@ reproMempoolForge numBlks env = do
       case scrutinee of
         Nothing  -> pure ()
         Just blk -> do
-          ldb <- IOLike.readTVarIO ref
+          LedgerDB.withPrivateTipForker ledgerDB $ \forker -> do
+            st <- IOLike.atomically $ LedgerDB.forkerGetLedgerState forker
 
-          -- time the suspected slow parts of the forge thread that created
-          -- this block
-          --
-          -- Primary caveat: that thread's mempool may have had more transactions in it.
-          do
-            let slot = blockSlot blk
-            vh <- bsValueHandle bstore
-            (ticked, durTick) <- timed $ IOLike.evaluate $
-              applyChainTick lCfg slot (ledgerState $ DbChangelog.current $ anchorlessChangelog ldb)
-            ((), durSnap) <- timed $ do
-              snap <- Mempool.getSnapshotFor mempool slot ticked (adcDiffs $ anchorlessChangelog ldb) vh
+            -- time the suspected slow parts of the forge thread that created
+            -- this block
+            --
+            -- Primary caveat: that thread's mempool may have had more transactions in it.
+            do
+              let slot = blockSlot blk
+              (ticked, durTick) <- timed $ IOLike.evaluate $
+                applyChainTick lCfg slot (ledgerState st)
+              ((), durSnap) <- timed $ do
+                snap <- Mempool.getSnapshotFor mempool slot ticked $
+                  fmap castLedgerTables . LedgerDB.forkerReadTables forker . castLedgerTables
 
-              pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotState snap `seq` ()
+                pure $ length (Mempool.snapshotTxs snap) `seq` Mempool.snapshotState snap `seq` ()
 
-            bsvhClose vh
-
-            let sizes = HasAnalysis.blockTxSizes blk
-            traceWith tracer $
-              BlockMempoolAndForgeRepro
-                (blockNo blk)
-                slot
-                (length sizes)
-                (sum sizes)
-                durTick
-                durSnap
+              let sizes = HasAnalysis.blockTxSizes blk
+              traceWith tracer $
+                BlockMempoolAndForgeRepro
+                  (blockNo blk)
+                  slot
+                  (length sizes)
+                  (sum sizes)
+                  durTick
+                  durSnap
 
           -- advance the ledger state to include this block
           --
@@ -796,16 +741,8 @@ reproMempoolForge numBlks env = do
           -- since it currently matches the call in the forging thread, which is
           -- the primary intention of this Analysis. Maybe GHC's CSE is already
           -- doing this sharing optimization?
-          ldb' <- onChangelogM (DbChangelog.applyThenPush (configDbChangelog cfg) (DbChangelog.ReapplyVal blk) (readKeySets bstore)) ldb
-          ldb'' <-
-            if onDiskShouldFlush policy $ DbChangelog.flushableLength $ anchorlessChangelog ldb'
-            then do
-              let (toFlush, toKeep) = DbChangelog.splitForFlushing ldb'
-              mapM_ (flushIntoBackingStore bstore) toFlush
-              pure toKeep
-            else pure ldb'
-
-          IOLike.atomically $ IOLike.writeTVar ref $! ldb''
+          LedgerDB.intReapplyThenPushBlock intLedgerDB blk
+          LedgerDB.tryFlush ledgerDB
 
           -- this flushes blk from the mempool, since every tx in it is now on the chain
           void $ Mempool.syncWithLedger mempool
@@ -835,6 +772,18 @@ processAllUntil ::
   -> (st -> b -> IO (NextStep, st))
   -> IO st
 processAllUntil = either processAllImmutableDB processAllChainDB
+
+processAllUntil_ ::
+     forall blk b mk. (HasHeader blk, HasAnnTip blk)
+  => Either (ImmutableDB IO blk) (ChainDB IO blk)
+  -> ResourceRegistry IO
+  -> BlockComponent blk b
+  -> ExtLedgerState blk mk
+  -> Limit
+  -> (b -> IO NextStep)
+  -> IO ()
+processAllUntil_ db rr blockComponent initLedger limit callback =
+    processAllUntil db rr blockComponent initLedger limit () (\() x -> (,()) <$> callback x)
 
 processAll ::
      forall blk b st mk. (HasHeader blk, HasAnnTip blk)

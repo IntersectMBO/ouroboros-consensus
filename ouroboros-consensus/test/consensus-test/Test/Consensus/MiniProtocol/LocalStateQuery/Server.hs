@@ -20,8 +20,6 @@ module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 
 import           Cardano.Crypto.DSIGN.Mock
 import           Control.Monad.IOSim (runSimOrThrow)
-import           Control.Tracer (nullTracer, traceWith)
-import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Network.TypedProtocol.Proofs (connect)
 import           Ouroboros.Consensus.Block
@@ -30,17 +28,15 @@ import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Query (Query (..))
-import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
+import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as LedgerDB
-import           Ouroboros.Consensus.Util (StaticEither (..), fromStaticLeft)
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry,
+                     withRegistry)
 import           Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           Ouroboros.Network.Protocol.LocalStateQuery.Client
@@ -49,9 +45,6 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Examples
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
                      (AcquireFailure (..))
-import           System.FS.API (HasFS, SomeHasFS (..))
-import qualified System.FS.Sim.MockFS as Mock
-import           System.FS.Sim.STM (simHasFS)
 import           Test.QuickCheck hiding (Result)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -94,9 +87,9 @@ prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain ac
          replicate n Nothing
       ++ (Just . blockPoint <$> treeToBlocks bt)
 
-    actualOutcome = runSimOrThrow $ do
+    actualOutcome = runSimOrThrow $ withRegistry $ \rr ->do
       let client = mkClient points
-      server <- mkServer k chain
+      server <- mkServer rr k chain
       (\(a, _, _) -> a) <$>
         connect
           (localStateQueryClientPeer client)
@@ -167,84 +160,25 @@ mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <-
 
 mkServer
   :: IOLike m
-  => SecurityParam
+  => ResourceRegistry m
+  -> SecurityParam
   -> Chain TestBlock
   -> m (LocalStateQueryServer TestBlock (Point TestBlock) (Query TestBlock) m ())
-mkServer k chain = do
+mkServer rr k chain = do
     lgrDB <- initLedgerDB k chain
     return $
       localStateQueryServer
         cfg
-        (\case
-            Nothing -> do
-              eview <- LedgerDB.acquireLDBReadView lgrDB (StaticLeft ()) (pure ())
-              case eview of
-                (_, StaticLeft x) -> pure $ Right x
-            Just pt -> do
-              eview <- LedgerDB.acquireLDBReadView lgrDB (StaticRight pt) (pure ())
-              case eview of
-                (_, StaticRight x) -> pure x
-        )
+        (\mpt -> fmap LedgerDB.readOnlyForker <$> LedgerDB.getForker lgrDB rr mpt)
   where
     cfg = ExtLedgerCfg $ testCfg k
 
 -- | Initialise a 'LedgerDB' with the given chain.
-initLedgerDB
-  :: forall m. IOLike m
-  => SecurityParam
+initLedgerDB ::
+     SecurityParam
   -> Chain TestBlock
-  -> m (LedgerDB.LedgerDB m TestBlock)
-initLedgerDB k chain = do
-    varDB          <- newTVarIO genesisLedgerDB
-    varPrevApplied <- newTVarIO mempty
-    rawLock        <- LedgerDB.mkLedgerDBLock
-    ledgerDB <- do
-      v <- uncheckedNewTVarM Mock.empty
-      bstore <- LedgerDB.newBackingStore
-        mempty
-        LedgerDB.InMemoryBackingStore
-        (SomeHasFS (simHasFS v))
-        trivialLedgerTables
-      let st = LedgerDB.LedgerDBState varDB bstore rawLock varPrevApplied
-      LedgerDB.mkLedgerDB st args resolve
-
-    ((), seP) <- LedgerDB.acquireLDBReadView ledgerDB (StaticLeft ()) (pure ())
-    let vh = fromStaticLeft seP
-    LedgerDB.validate ledgerDB (LedgerDB.viewHandle vh) (LedgerDB.anchorlessChangelog $ genesisLedgerDB) BlockCache.empty 0 (traceWith nullTracer)
-      (map getHeader (Chain.toOldestFirst chain)) >>= \case
-        LedgerDB.ValidateExceededRollBack _ ->
-          error "impossible: rollback was 0"
-        LedgerDB.ValidateLedgerError _ ->
-          error "impossible: there were no invalid blocks"
-        LedgerDB.ValidateSuccessful ledgerDB' -> do
-          atomically $ LedgerDB.setCurrent ledgerDB ledgerDB'
-          LedgerDB.tryFlush ledgerDB
-          return ledgerDB
-  where
-    resolve :: RealPoint TestBlock -> m TestBlock
-    resolve = return . (blockMapping Map.!)
-
-    blockMapping :: Map (RealPoint TestBlock) TestBlock
-    blockMapping = Map.fromList
-      [(blockRealPoint b, b) | b <- Chain.toOldestFirst chain]
-
-    cfg = testCfg k
-
-    genesisLedgerDB = LedgerDB.empty (convertMapKind testInitExtLedger)
-
-    args = LedgerDB.LedgerDBArgs
-      { LedgerDB.lgrTopLevelConfig       = cfg
-      , LedgerDB.lgrHasFS                = SomeHasFS (error "lgrHasFS" :: HasFS m ())
-      , LedgerDB.lgrDiskPolicy           = LedgerDB.defaultDiskPolicy k
-                                            LedgerDB.DefaultSnapshotInterval
-                                            LedgerDB.DefaultFlushFrequency
-                                            LedgerDB.DefaultQueryBatchSize
-      , LedgerDB.lgrGenesis              = return testInitExtLedger
-      , LedgerDB.lgrTracer               = nullTracer
-      , LedgerDB.lgrTraceLedger          = nullTracer
-      , LedgerDB.lgrBsTracer             = nullTracer
-      , LedgerDB.lgrBackingStoreSelector = LedgerDB.InMemoryBackingStore
-      }
+  -> m (LedgerDB' m TestBlock)
+initLedgerDB = undefined -- TODO(jdral_ldb): initialise a minimal LedgerDB.
 
 testCfg :: SecurityParam -> TopLevelConfig TestBlock
 testCfg securityParam = TopLevelConfig {

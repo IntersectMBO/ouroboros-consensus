@@ -27,9 +27,9 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbCh
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbCh
                      (empty)
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots

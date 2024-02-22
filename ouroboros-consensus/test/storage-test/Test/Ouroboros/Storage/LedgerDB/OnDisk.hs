@@ -74,13 +74,17 @@ import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream hiding
                      (streamAPI)
-import           Ouroboros.Consensus.Storage.LedgerDB
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as HD
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB as LMDB
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-                     (KeySetsReader, PointNotFound (..), getLedgerTablesFor,
-                     readKeySets)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DbChangelog as DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.API as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as HD
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
+                     (KeySetsReader, getLedgerTablesFor, readKeySets)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -512,7 +516,7 @@ data Success ss =
   | Ledger (ExtLedgerState TestBlock EmptyMK)
   | Snapped (Maybe (ss, RealPoint TestBlock))
   | Restored (MockInitLog ss, ExtLedgerState TestBlock EmptyMK)
-  | Tables (Either (PointNotFound TestBlock) (LedgerTables (ExtLedgerState TestBlock) ValuesMK))
+  | Tables (Either GetForkerError (LedgerTables (ExtLedgerState TestBlock) ValuesMK))
   | Flushed
   deriving (Show, Eq, Functor, Foldable, Traversable)
 
@@ -805,11 +809,11 @@ runMock cmd initMock =
 
     go (GetTablesAtFor pt keys) mock = (,mock) $
       if pointSlot pt < pointSlot (immutableTipSlot mock)
-      then Tables $ Left $ PointNotFound pt
+      then Tables $ Left PointTooOld
       else
         case L.find (\(_, st) -> castPoint (getTip st) == pt) (mockLedger mock) of
-          Nothing      -> Tables $ Left $ PointNotFound pt
-          Just (_, st) -> Tables $ Right $ restrictValues st keys
+          Nothing      -> Tables $ Left PointNotOnChain
+          Just (_, st) -> Tables $ Right $ restrictValues' st keys
 
     push :: TestBlock -> StateT MockLedger (Except (ExtValidationError TestBlock)) ()
     push b = do
@@ -1067,6 +1071,7 @@ runDB standalone@DB{..} cmd =
             nullTracer
             hasFS
             bs
+            Nothing
     go hasFS Restore = do
         old_db <- atomically . readTVar $ dbBackingStore
         HD.bsClose old_db
@@ -1079,10 +1084,7 @@ runDB standalone@DB{..} cmd =
             S.decode
             S.decode
             dbLedgerDbCfg
-            (defaultDiskPolicy (SecurityParam 100)
-               DefaultSnapshotInterval
-               DefaultFlushFrequency
-               DefaultQueryBatchSize)
+            undefined -- TODO(jdral_ldb)
             (return (testInitExtLedgerWithState initialTestLedgerState))
             streamAPI
             sdbBackingStoreSelector
@@ -1109,8 +1111,12 @@ runDB standalone@DB{..} cmd =
           db :: DbChangelog.AnchorlessDbChangelog' TestBlock <- DbChangelog.anchorlessChangelog <$> readTVar dbChlog
           bstore <- readTVar dbBackingStore
           pure (bstore, db)
+        let immTip = getTip $ DbChangelog.anchor lgrDb
         case DbChangelog.rollback pt lgrDb of
-          Nothing -> pure $ Tables $ Left $ PointNotFound pt
+          Nothing | pointSlot pt < pointSlot immTip
+                  -> pure $ Tables $ Left PointTooOld
+                  | otherwise
+                  -> pure $ Tables $ Left PointNotOnChain
           Just l  -> do
             eValues <- getLedgerTablesFor l keys (readKeySets bstore)
             case eValues of

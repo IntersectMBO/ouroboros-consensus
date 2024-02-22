@@ -34,7 +34,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
                      (TraceChainSyncServerEvent)
 import           Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
                      (TraceLocalTxSubmissionServerEvent (..))
-import           Ouroboros.Consensus.Storage.LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
                      (BackingStoreTraceByBackend)
 import           Ouroboros.Network.BlockFetch (FetchDecision,
                      TraceFetchClientState, TraceLabelPeer)
@@ -59,7 +59,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , txOutboundTracer              :: f (TraceLabelPeer remotePeer (TraceTxSubmissionOutbound (GenTxId blk) (GenTx blk)))
   , localTxSubmissionServerTracer :: f (TraceLocalTxSubmissionServerEvent blk)
   , mempoolTracer                 :: f (TraceEventMempool blk)
-  , backingStoreTracer            :: f BackingStoreTraceByBackend
+  , backingStoreTracer            :: f LedgerDB.V1.BackingStoreTraceByBackend
   , forgeTracer                   :: f (TraceLabelCreds (TraceForgeEvent blk))
   , blockchainTimeTracer          :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer          :: f (TraceLabelCreds (ForgeStateInfo blk))

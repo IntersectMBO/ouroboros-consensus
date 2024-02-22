@@ -54,7 +54,6 @@ import           Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..), TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
 import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Util.IOLike
 
@@ -167,9 +166,7 @@ data LedgerInterface m blk = LedgerInterface
     , getLedgerTablesAtFor
         :: Point blk
         -> [GenTx blk]
-        -> m (Either
-              (PointNotFound blk)
-              (LedgerTables (LedgerState blk) ValuesMK))
+        -> m (Maybe (LedgerTables (LedgerState blk) ValuesMK))
     }
 
 -- | Create a 'LedgerInterface' from a 'ChainDB'.
@@ -180,7 +177,7 @@ chainDBLedgerInterface ::
   => ChainDB m blk -> LedgerInterface m blk
 chainDBLedgerInterface chainDB = LedgerInterface
     { getCurrentLedgerState =
-        ledgerState . current . anchorlessChangelog <$> ChainDB.getDbChangelog chainDB
+        ledgerState <$> ChainDB.getCurrentLedger chainDB
     , getLedgerTablesAtFor = \pt txs -> do
         let keys = castLedgerTables
                  $ foldl' (<>) emptyLedgerTables
@@ -318,7 +315,7 @@ revalidateTxsFor
   -> RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
   let ReapplyTxsResult err val st' =
-        reapplyTxs cfg slot (map txTicketTx txTickets) (st `withLedgerTables` castLedgerTables values)
+        reapplyTxs cfg slot (map txTicketTx txTickets) (values `applyDiffs` st)
 
       -- TODO: This is ugly, but I couldn't find a way to sneak the 'TxTicket' into
       -- 'reapplyTxs'.

@@ -25,8 +25,6 @@ import           Ouroboros.Consensus.Mempool.Capacity
 import           Ouroboros.Consensus.Mempool.Impl.Common
 import           Ouroboros.Consensus.Mempool.TxSeq (TxTicket (..))
 import qualified Ouroboros.Consensus.Mempool.TxSeq as TxSeq
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
-                     (PointNotFound (..))
 import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.IOLike
 
@@ -159,7 +157,7 @@ doAddTx mpEnv wti tx =
         pure i
       mTbs <- getLedgerTablesAtFor ldgrInterface (isTip is) [tx]
       case mTbs of
-        Right tbs -> do
+        Just tbs -> do
           traceWith trcr $ TraceMempoolLedgerFound (isTip is)
           case pureTryAddTx cfg txSize wti tx is tbs of
             NoSpaceLeft -> do
@@ -168,7 +166,7 @@ doAddTx mpEnv wti tx =
             Processed outcome@(TransactionProcessingResult is' _ _) -> do
               atomically $ putTMVar istate $ fromMaybe is is'
               pure outcome
-        Left PointNotFound{} -> do
+        Nothing -> do
           traceWith trcr $ TraceMempoolLedgerNotFound (isTip is)
           -- We couldn't retrieve the values because the state is no longer on
           -- the db. We need to resync.
@@ -259,10 +257,10 @@ implRemoveTxs mpEnv toRemove = do
         toKeep' = [ txForgetValidated . TxSeq.txTicketTx $ tx | tx <- toKeep ]
     mTbs <- getLedgerTablesAtFor ldgrInterface (castPoint (getTip ls)) toKeep'
     case mTbs of
-      Left PointNotFound{} -> do
+      Nothing -> do
         atomically $ putTMVar istate is
         implRemoveTxs mpEnv toRemove
-      Right tbs -> do
+      Just tbs -> do
         let (is', t) = pureRemoveTxs
                          capacityOverride
                          cfg
@@ -350,7 +348,7 @@ implSyncWithLedger mpEnv = do
               ]
     mTbs <- getLedgerTablesAtFor ldgrInterface pt txs
     case mTbs of
-      Right tbs -> do
+      Just tbs -> do
         let (is', mTrace) = pureSyncWithLedger
                               capacityOverride
                               cfg
@@ -362,7 +360,7 @@ implSyncWithLedger mpEnv = do
         whenJust mTrace (traceWith trcr)
         traceWith trcr TraceMempoolSyncDone
         return (snapshotFromIS is', mTrace)
-      Left PointNotFound{} -> do
+      Nothing -> do
         -- If the point is gone, resync
         atomically $ putTMVar istate is
         implSyncWithLedger mpEnv

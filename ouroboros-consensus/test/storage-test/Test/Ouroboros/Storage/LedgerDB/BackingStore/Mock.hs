@@ -53,7 +53,7 @@ import           Control.Monad.State (MonadState, State, StateT (StateT), gets,
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block.Abstract (SlotNo, WithOrigin (..))
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified System.FS.API.Types as FS
 
 {-------------------------------------------------------------------------------

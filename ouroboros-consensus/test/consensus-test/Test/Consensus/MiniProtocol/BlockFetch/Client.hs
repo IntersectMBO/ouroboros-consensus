@@ -23,6 +23,7 @@
 module Test.Consensus.MiniProtocol.BlockFetch.Client (tests) where
 
 import           Control.Monad (replicateM)
+import           Control.Monad.Base
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
@@ -42,7 +43,7 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -120,7 +121,7 @@ data BlockFetchClientOutcome = BlockFetchClientOutcome {
 
 runBlockFetchTest ::
      forall m.
-     (IOLike m, MonadTime m)
+     (IOLike m, MonadTime m, MonadBase m m)
   => BlockFetchClientTestSetup
   -> m BlockFetchClientOutcome
 runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
@@ -244,7 +245,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
-                , mcdbBackingStoreSelector   = LedgerDB.InMemoryBackingStore
+                , mcdbBackingStoreSelector   = LedgerDB.V1.InMemoryBackingStore
                 }
           -- TODO: Test with more interesting behaviour for cdbCheckInFuture
           pure $ args { cdbTracer = cdbTracer }

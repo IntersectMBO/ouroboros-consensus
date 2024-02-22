@@ -96,9 +96,9 @@ import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Shelley.Ledger.Query.PParamsLegacyEncoder
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract (ProtoCrypto)
 import           Ouroboros.Consensus.Storage.LedgerDB
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (ShowProxy (..))
+import           Ouroboros.Consensus.Util.IOLike (MonadSTM (atomically))
 import           Ouroboros.Network.Block (Serialised (..), decodePoint,
                      encodePoint, mkSerialised)
 
@@ -394,29 +394,26 @@ instance ( ShelleyCompatible proto era
       hst = headerState ext
       st  = shelleyLedgerState lst
 
-  answerBlockQueryLookup cfg qry dlv = case qry of
+  answerBlockQueryLookup cfg qry forker = case qry of
     GetUTxOByTxIn ks -> do
-      values <- ledgerDBViewRead dlv $ LedgerTables $ KeysMK ks
-      pure
-        . flip SL.getUTxOSubset ks
+      values <- LedgerDB.roforkerReadTables forker $ LedgerTables $ KeysMK ks
+      flip SL.getUTxOSubset ks
         . shelleyLedgerState
         . ledgerState
         . stowLedgerTables
-        $ current (viewChangelog dlv) `withLedgerTables` values
+        . flip withLedgerTables values
+        <$> atomically (LedgerDB.roforkerGetLedgerState forker)
     GetCBOR qry'     ->
       mkSerialised (encodeShelleyResult maxBound qry') <$>
-            answerBlockQueryLookup cfg qry' dlv
+            answerBlockQueryLookup cfg qry' forker
 
-  answerBlockQueryTraverse cfg qry dlv = case qry of
+  answerBlockQueryTraverse cfg qry forker = case qry of
     GetUTxOByAddress addrs -> loop (filterGetUTxOByAddressOne addrs) Nothing emptyUtxo
     GetUTxOWhole           -> loop (const True) Nothing emptyUtxo
     GetCBOR q'             ->
       mkSerialised (encodeShelleyResult maxBound q') <$>
-       answerBlockQueryTraverse cfg q' dlv
+       answerBlockQueryTraverse cfg q' forker
    where
-    dbReadRange    = ledgerDBViewRangeRead dlv
-    queryBatchSize = viewQueryBatchSize dlv
-
     emptyUtxo               = SL.UTxO Map.empty
 
     combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
@@ -435,7 +432,7 @@ instance ( ShelleyCompatible proto era
     toKeys (ValuesMK vs) = KeysMK $ Map.keysSet vs
 
     loop queryPredicate !prev !acc = do
-      extValues <- dbReadRange RangeQuery{rqPrev = prev, rqCount = fromIntegral queryBatchSize}
+      extValues <- LedgerDB.roforkerRangeReadTablesDefault forker prev
       if ltcollapse $ ltmap (K2 . f) extValues
         then pure acc
         else loop queryPredicate
@@ -929,23 +926,23 @@ answerShelleyLookupQueries ::
   => Index xs (ShelleyBlock proto era)
   -> ExtLedgerCfg (ShelleyBlock proto era)
   -> BlockQuery (ShelleyBlock proto era) QFLookupTables result
-  -> LedgerDBView' m (HardForkBlock xs)
+  -> ReadOnlyForker' m (HardForkBlock xs)
   -> m result
-answerShelleyLookupQueries idx cfg q dlv =
+answerShelleyLookupQueries idx cfg q forker =
     case q of
       GetUTxOByTxIn txins ->
         answerGetUtxOByTxIn txins
       GetCBOR q'          ->
             mkSerialised (encodeShelleyResult maxBound q')
-        <$> answerBlockQueryHFLookup idx cfg q' dlv
+        <$> answerBlockQueryHFLookup idx cfg q' forker
   where
     answerGetUtxOByTxIn ::
          Set.Set (SL.TxIn (EraCrypto era))
       -> m (SL.UTxO era)
     answerGetUtxOByTxIn txins = do
       LedgerTables (ValuesMK values) <-
-        ledgerDBViewRead
-          dlv
+        LedgerDB.roforkerReadTables
+          forker
           (castLedgerTables $ injectLedgerTables idx (LedgerTables $ KeysMK txins))
       pure
         $ SL.UTxO
@@ -985,18 +982,15 @@ answerShelleyTraversingQueries ::
   => Index xs (ShelleyBlock proto era)
   -> ExtLedgerCfg (ShelleyBlock proto era)
   -> BlockQuery (ShelleyBlock proto era) QFTraverseTables result
-  -> LedgerDBView' m (HardForkBlock xs)
+  -> ReadOnlyForker' m (HardForkBlock xs)
   -> m result
-answerShelleyTraversingQueries idx cfg q dlv = case q of
+answerShelleyTraversingQueries idx cfg q forker = case q of
     GetUTxOByAddress{} -> loop (queryLedgerGetTraversingFilter idx q) Nothing emptyUtxo
     GetUTxOWhole       -> loop (queryLedgerGetTraversingFilter idx q) Nothing emptyUtxo
     GetCBOR q'         ->
       mkSerialised (encodeShelleyResult maxBound q') <$>
-       answerBlockQueryHFTraverse idx cfg q' dlv
+       answerBlockQueryHFTraverse idx cfg q' forker
   where
-    dbReadRange    = ledgerDBViewRangeRead dlv
-    queryBatchSize = viewQueryBatchSize dlv
-
     emptyUtxo               = SL.UTxO Map.empty
 
     combUtxo (SL.UTxO l) vs = SL.UTxO $ Map.union l vs
@@ -1026,7 +1020,7 @@ answerShelleyTraversingQueries idx cfg q dlv = case q of
       -> SL.UTxO era
       -> m (SL.UTxO era)
     loop queryPredicate !prev !acc = do
-      extValues <- dbReadRange RangeQuery{rqPrev = prev, rqCount = fromIntegral queryBatchSize}
+      extValues <- LedgerDB.roforkerRangeReadTablesDefault forker prev
       if ltcollapse $ ltmap (K2 . f) extValues
         then pure acc
         else loop queryPredicate

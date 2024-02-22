@@ -10,7 +10,7 @@
   redefinitions are largely analogous to their counterparts, though they thread
   through explicit CBOR encoders and decoders.
 -}
-module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Bridge (
+module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge (
     -- * Internal: peek and poke
     peekMDBVal
   , pokeMDBVal

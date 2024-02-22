@@ -10,12 +10,12 @@
 --
 -- * "Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB": an external
 --   disk-based database.
-module Ouroboros.Consensus.Storage.LedgerDB.BackingStore (
+module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore (
     -- * API
     --
     -- | Most of the documentation on the behaviour of the 'BackingStore' lives
     -- in this module.
-    module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API
+    module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
     -- * Initialization
   , BackingStoreSelector (..)
   , newBackingStore
@@ -33,9 +33,9 @@ import           Control.Tracer
 import           Data.Functor.Contravariant
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Basics
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory as InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB as LMDB
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
 import           System.FS.API.Types

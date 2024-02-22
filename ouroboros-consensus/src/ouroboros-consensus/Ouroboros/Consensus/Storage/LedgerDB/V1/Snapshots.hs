@@ -162,9 +162,10 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.LedgerDB.API
-import           Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API
-import           Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+import           Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Common
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.CBOR (ReadIncrementalErr,
@@ -239,8 +240,9 @@ takeSnapshot ::
   -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
   -> BackingStore' m blk
+  -> Maybe DiskSnapshot -- ^ Override for snapshot numbering
   -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore =
+takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore dsOverride =
   withReadLock lock $ do
     state <- changelogLastFlushedState <$> readTVarIO ldbvar
     case pointToWithOriginRealPoint (castPoint (getTip state)) of
@@ -248,7 +250,7 @@ takeSnapshot ldbvar lock ccfg tracer hasFS ldbBackingStore =
         return Nothing
       NotOrigin t -> do
         let number   = unSlotNo (realPointSlot t)
-            snapshot = DiskSnapshot number Nothing
+            snapshot = fromMaybe (DiskSnapshot number Nothing) dsOverride
         diskSnapshots <- listSnapshots hasFS
         if List.any ((== number) . dsNumber) diskSnapshots then
           return Nothing

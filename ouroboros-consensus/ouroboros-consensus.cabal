@@ -234,15 +234,16 @@ library
     Ouroboros.Consensus.Storage.LedgerDB
     Ouroboros.Consensus.Storage.LedgerDB.API
     Ouroboros.Consensus.Storage.LedgerDB.API.DiskPolicy
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Bridge
-    Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB.Status
-    Ouroboros.Consensus.Storage.LedgerDB.DbChangelog
+    Ouroboros.Consensus.Storage.LedgerDB.Impl.Validate
     Ouroboros.Consensus.Storage.LedgerDB.V1
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge
+    Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
     Ouroboros.Consensus.Storage.LedgerDB.V1.Common
+    Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
     Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
     Ouroboros.Consensus.Storage.LedgerDB.V1.Forker
     Ouroboros.Consensus.Storage.LedgerDB.V1.Init
@@ -452,6 +453,7 @@ library consensus-testlib
     , tasty-quickcheck
     , template-haskell
     , time
+    , transformers-base
     , tree-diff
     , utf8-string
 
@@ -565,8 +567,6 @@ test-suite consensus-test
     , deepseq
     , diff-containers                                                     >=1.1
     , fingertree-rm                                                       >=1.0
-    , fs-api                                                              ^>=0.1
-    , fs-sim                                                              ^>=0.2
     , generics-sop
     , hashable
     , io-classes
@@ -593,6 +593,7 @@ test-suite consensus-test
     , tasty-quickcheck
     , time
     , transformers
+    , transformers-base
     , tree-diff
     , typed-protocols
     , typed-protocols-examples
@@ -697,6 +698,7 @@ test-suite storage-test
     , text
     , time
     , transformers
+    , transformers-base
     , tree-diff
     , vector
 
@@ -707,8 +709,6 @@ benchmark mempool-bench
   main-is:        Main.hs
   other-modules:
     Bench.Consensus.Mempool
-    Bench.Consensus.Mempool.Params
-    Bench.Consensus.Mempool.Scenario
     Bench.Consensus.Mempool.TestBlock
     Bench.Consensus.MempoolWithMockedLedgerItf
 
@@ -724,9 +724,6 @@ benchmark mempool-bench
     , contra-tracer
     , deepseq
     , diff-containers      >=1.1
-    , directory
-    , fs-api
-    , mtl
     , nothunks
     , ouroboros-consensus
     , serialise
@@ -734,7 +731,6 @@ benchmark mempool-bench
     , tasty
     , tasty-bench
     , tasty-hunit
-    , temporary
     , text
     , transformers
     , tree-diff

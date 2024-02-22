@@ -36,9 +36,9 @@ import qualified Data.Set as Set
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables
 import           Ouroboros.Consensus.Ledger.Tables.Utils
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore as BS
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.InMemory as InMemory
-import qualified Ouroboros.Consensus.Storage.LedgerDB.BackingStore.Impl.LMDB as LMDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..))
 import qualified System.Directory as Dir
 import           System.FS.API hiding (Handle)

@@ -122,6 +122,7 @@ library
     , text                         ^>=2.0
     , time
     , transformers
+    , transformers-base
     , typed-protocols
 
 library diffusion-testlib
@@ -167,6 +168,7 @@ library diffusion-testlib
     , random
     , si-timers
     , text
+    , transformers-base
     , typed-protocols
 
 library mock-testlib

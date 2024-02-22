@@ -16,7 +16,7 @@
 --
 -- See "Ouroboros.Consensus.Storage.LedgerDB.BackingStore" for the
 -- implementations provided.
-module Ouroboros.Consensus.Storage.LedgerDB.BackingStore.API (
+module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API (
     -- * Backing store
     BackingStore (..)
   , BackingStore'

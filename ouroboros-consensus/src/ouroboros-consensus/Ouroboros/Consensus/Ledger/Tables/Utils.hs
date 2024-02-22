@@ -36,6 +36,7 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
   , prependTrackingDiffs'
   , reapplyTracking
   , restrictValues
+  , restrictValues'
     -- * Testing
   , rawApplyDiffs
   , rawAttachAndApplyDiffs
@@ -286,7 +287,12 @@ rawRestrictValues ::
   -> ValuesMK k v
 rawRestrictValues (ValuesMK v) (KeysMK k) = ValuesMK $ v `Map.restrictKeys` k
 
-restrictValues ::
+restrictValues' ::
      (Castable l l'', Castable l' l'', HasLedgerTables l, HasLedgerTables l')
   => l ValuesMK -> l' KeysMK -> LedgerTables l'' ValuesMK
-restrictValues l1 l2 = ltliftA2 rawRestrictValues (ltprj l1) (ltprj l2)
+restrictValues' l1 l2 = ltliftA2 rawRestrictValues (ltprj l1) (ltprj l2)
+
+restrictValues ::
+     (Castable l l', HasLedgerTables l, HasLedgerTables l')
+  => l ValuesMK -> l' KeysMK -> l ValuesMK
+restrictValues l1 l2 = over l1 $ ltliftA2 rawRestrictValues (ltprj l1) (ltprj l2)
