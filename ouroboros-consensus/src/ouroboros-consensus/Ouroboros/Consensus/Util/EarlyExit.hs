@@ -31,15 +31,14 @@ import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Class.MonadTimer
 import qualified Control.Monad.Class.MonadTimer.SI as TimerSI
-import           Control.Monad.ST (ST)
 import           Control.Monad.Trans.Class
 import           Control.Monad.Trans.Maybe
 import           Data.Function (on)
 import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
-import           Ouroboros.Consensus.Util.IOLike (IOLike (..), StrictSVar,
-                     StrictTVar)
+import           Ouroboros.Consensus.Util.IOLike (IOLike (..), PrimMonad (..),
+                     StrictSVar, StrictTVar)
 import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar)
 
 {-------------------------------------------------------------------------------
@@ -251,14 +250,16 @@ instance MonadFork m => MonadFork (WithEarlyExit m) where
   throwTo            = lift .: throwTo
   yield              = lift yield
 
+
+instance PrimMonad m => PrimMonad (WithEarlyExit m) where
+  type PrimState (WithEarlyExit m) = PrimState m
+  primitive = lift . primitive
+  {-# INLINE primitive #-}
+
 instance MonadST m => MonadST (WithEarlyExit m) where
-  withLiftST f = lowerLiftST $ \(_proxy :: Proxy s) liftST ->
-     let liftST' :: forall a. ST s a -> WithEarlyExit m a
-         liftST' = lift . liftST
-     in f liftST'
-    where
-      lowerLiftST :: (forall s. Proxy s -> (forall a. ST s a -> m a) -> b) -> b
-      lowerLiftST g = withLiftST $ g Proxy
+  stToIO       = lift . stToIO
+  withLiftST k = k stToIO
+
 
 instance MonadMonotonicTimeNSec m => MonadMonotonicTimeNSec (WithEarlyExit m) where
   getMonotonicTimeNSec = lift getMonotonicTimeNSec
