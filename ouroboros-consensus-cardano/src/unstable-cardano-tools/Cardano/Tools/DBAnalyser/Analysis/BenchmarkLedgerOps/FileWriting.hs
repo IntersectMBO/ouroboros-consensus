@@ -15,13 +15,13 @@ import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.Metadata a
 import           Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint
                      (SlotDataPoint)
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
+import qualified Cardano.Tools.DBAnalyser.CSV as CSV
 import           Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
-import qualified Data.Text.IO as Text.IO
 import           System.FilePath.Posix (takeExtension)
 import qualified System.IO as IO
 import qualified Text.Builder as Builder
-import           Text.Builder (Builder, decimal, intercalate)
+import           Text.Builder (Builder, decimal)
 
 {-------------------------------------------------------------------------------
   Output format
@@ -59,11 +59,17 @@ csvSeparator = "\t"
 -- | Write a header for the data points.
 --
 -- This is only needed for the CSV output format.
+--
+-- The position of each header matches the position in which the corresponding
+-- field value is written in 'writeDatapoint'. Eg, if 'writeHeader' writes:
+--
+-- > "slot slotGap totalTime" ...
+--
+-- then the third value written by 'writeDataPoint' will correspond to 'totalTime'.
+--
 writeHeader :: IO.Handle -> OutputFormat -> IO ()
 writeHeader outFileHandle CSV  =
-     Text.IO.hPutStrLn outFileHandle
-   $ Builder.run
-   $ showHeaders csvSeparator
+    CSV.writeHeaderLine outFileHandle (CSV.Separator csvSeparator) dataPointCsvBuilder
 writeHeader _             JSON = pure ()
 
 -- | NOTE: This function is not thread safe.
@@ -73,11 +79,10 @@ writeDataPoint ::
   -> SlotDataPoint
   -> IO ()
 writeDataPoint outFileHandle CSV  slotDataPoint =
-      Text.IO.hPutStrLn outFileHandle
-    $ Builder.run
-    $ showData slotDataPoint csvSeparator
+    CSV.computeAndWriteLinePure
+        outFileHandle (CSV.Separator csvSeparator) dataPointCsvBuilder slotDataPoint
 writeDataPoint outFileHandle JSON slotDataPoint =
-  BSL.hPut outFileHandle $ Aeson.encode slotDataPoint
+    BSL.hPut outFileHandle $ Aeson.encode slotDataPoint
 
 -- | Write metadata to a JSON file if this is the selected
 -- format. Perform a no-op otherwise.
@@ -91,22 +96,8 @@ writeMetadata  outFileHandle JSON =
   Operations to assist CSV printing
 -------------------------------------------------------------------------------}
 
--- | Return the headers that correspond to the fields of 'SlotDataPoint'.
---
--- The position of each header matches the position in which the corresponding
--- field value is returned in 'showData'. Eg, if show headers returns:
---
--- > "slot slotGap totalTime" ...
---
--- then the third value returned by 'showData' will correspond to 'totalTime'.
-showHeaders :: Builder -> Builder
-showHeaders sep = intercalate sep $ fmap fst           showHeadersAndData
-
-showData :: SlotDataPoint -> Builder -> Builder
-showData dp sep = intercalate sep $ fmap (($ dp) . snd) showHeadersAndData
-
-showHeadersAndData :: [(Builder, SlotDataPoint -> Builder)]
-showHeadersAndData =
+dataPointCsvBuilder :: [(Builder, SlotDataPoint -> Builder)]
+dataPointCsvBuilder =
     [ ("slot"                  , decimal . unSlotNo . DP.slot)
     , ("slotGap"               , decimal . DP.slotGap)
     , ("totalTime"             , decimal . DP.totalTime)

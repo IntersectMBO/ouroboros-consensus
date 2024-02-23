@@ -1,25 +1,29 @@
-{-# LANGUAGE BangPatterns        #-}
-{-# LANGUAGE BlockArguments      #-}
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE PatternSynonyms     #-}
-{-# LANGUAGE RecordWildCards     #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
-{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE BangPatterns               #-}
+{-# LANGUAGE BlockArguments             #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE PatternSynonyms            #-}
+{-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE TupleSections              #-}
+{-# LANGUAGE TypeApplications           #-}
 module Cardano.Tools.DBAnalyser.Analysis (
     AnalysisEnv (..)
   , AnalysisName (..)
   , AnalysisResult (..)
   , Limit (..)
+  , NumberOfBlocks (..)
   , runAnalysis
   ) where
 
 import qualified Cardano.Slotting.Slot as Slotting
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.FileWriting as F
 import qualified Cardano.Tools.DBAnalyser.Analysis.BenchmarkLedgerOps.SlotDataPoint as DP
+import           Cardano.Tools.DBAnalyser.CSV (computeAndWriteLine,
+                     writeHeaderLine)
 import           Cardano.Tools.DBAnalyser.HasAnalysis (HasAnalysis)
 import qualified Cardano.Tools.DBAnalyser.HasAnalysis as HasAnalysis
 import           Codec.CBOR.Encoding (Encoding)
@@ -86,6 +90,11 @@ data AnalysisName =
   | TraceLedgerProcessing
   | BenchmarkLedgerOps (Maybe FilePath)
   | ReproMempoolAndForge Int
+    -- | Compute different block application metrics every 'NumberOfBlocks'.
+    --
+    -- The metrics will be written to the provided file path, or to
+    -- the standard output if no file path is specified.
+  | GetBlockApplicationMetrics NumberOfBlocks (Maybe FilePath)
   deriving Show
 
 data AnalysisResult =
@@ -93,6 +102,8 @@ data AnalysisResult =
   | ResultMaxHeaderSize Word16
   deriving (Eq, Show)
 
+newtype NumberOfBlocks = NumberOfBlocks { unNumberOfBlocks :: Word64 }
+  deriving (Eq, Show, Num, Read)
 
 runAnalysis ::
      forall blk .
@@ -110,18 +121,19 @@ runAnalysis analysisName env@(AnalysisEnv { tracer }) = do
     traceWith tracer DoneEvent
     pure result
   where
-    go ShowSlotBlockNo               = showSlotBlockNo env
-    go CountTxOutputs                = countTxOutputs env
-    go ShowBlockHeaderSize           = showHeaderSize env
-    go ShowBlockTxsSize              = showBlockTxsSize env
-    go ShowEBBs                      = showEBBs env
-    go OnlyValidation                = pure Nothing
-    go (StoreLedgerStateAt slotNo)   = storeLedgerStateAt slotNo env
-    go CountBlocks                   = countBlocks env
-    go (CheckNoThunksEvery nBks)     = checkNoThunksEvery nBks env
-    go TraceLedgerProcessing         = traceLedgerProcessing env
-    go (ReproMempoolAndForge nBks)   = reproMempoolForge nBks env
-    go (BenchmarkLedgerOps mOutfile) = benchmarkLedgerOps mOutfile env
+    go ShowSlotBlockNo                                = showSlotBlockNo env
+    go CountTxOutputs                                 = countTxOutputs env
+    go ShowBlockHeaderSize                            = showHeaderSize env
+    go ShowBlockTxsSize                               = showBlockTxsSize env
+    go ShowEBBs                                       = showEBBs env
+    go OnlyValidation                                 = pure Nothing
+    go (StoreLedgerStateAt slotNo)                    = storeLedgerStateAt slotNo env
+    go CountBlocks                                    = countBlocks env
+    go (CheckNoThunksEvery nBks)                      = checkNoThunksEvery nBks env
+    go TraceLedgerProcessing                          = traceLedgerProcessing env
+    go (ReproMempoolAndForge nBks)                    = reproMempoolForge nBks env
+    go (BenchmarkLedgerOps mOutfile)                  = benchmarkLedgerOps mOutfile env
+    go (GetBlockApplicationMetrics nrBlocks mOutfile) = getBlockApplicationMetrics nrBlocks mOutfile env
 
 type Analysis blk = AnalysisEnv IO blk -> IO (Maybe AnalysisResult)
 
@@ -502,10 +514,6 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
       void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle outFormat)
       pure Nothing
   where
-    withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
-    withFile (Just outfile) = IO.withFile outfile IO.WriteMode
-    withFile Nothing        = \f -> f IO.stdout
-
     ccfg = topLevelConfigProtocol cfg
     lcfg = topLevelConfigLedger   cfg
 
@@ -613,6 +621,48 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
             case runExcept (lrResult <$> applyBlockLedgerResult lcfg blk tickedLedgerSt) of
               Left err -> fail $ "benchmark doesn't support invalid blocks: " <> show rp <> " " <> show err
               Right x  -> pure x
+
+withFile :: Maybe FilePath -> (IO.Handle -> IO r) -> IO r
+withFile (Just outfile) = IO.withFile outfile IO.WriteMode
+withFile Nothing        = \f -> f IO.stdout
+
+{-------------------------------------------------------------------------------
+  Analysis: trace ledger state metrics
+-------------------------------------------------------------------------------}
+
+getBlockApplicationMetrics ::
+    forall blk .
+    ( HasAnalysis blk
+    , LedgerSupportsProtocol blk
+    )
+  => NumberOfBlocks -> Maybe FilePath -> Analysis blk
+getBlockApplicationMetrics (NumberOfBlocks nrBlocks) mOutFile env = do
+    withFile mOutFile $ \outFileHandle -> do
+        writeHeaderLine outFileHandle separator (HasAnalysis.blockApplicationMetrics @blk)
+        void $ processAll db registry GetBlock initLedger limit initLedger (process outFileHandle)
+        pure Nothing
+  where
+    separator = ", "
+
+    AnalysisEnv {db, registry, initLedger, cfg, limit } = env
+
+    process :: IO.Handle -> ExtLedgerState blk -> blk -> IO (ExtLedgerState blk)
+    process outFileHandle currLedgerSt blk = do
+      let nextLedgerSt = tickThenReapply (ExtLedgerCfg cfg) blk currLedgerSt
+      when (unBlockNo (blockNo blk) `mod` nrBlocks == 0) $ do
+          let blockApplication =
+                HasAnalysis.WithLedgerState blk
+                                            (ledgerState currLedgerSt)
+                                            (ledgerState nextLedgerSt)
+
+          computeAndWriteLine outFileHandle
+                              separator
+                              (HasAnalysis.blockApplicationMetrics @blk)
+                              blockApplication
+
+          IO.hFlush outFileHandle
+
+      return nextLedgerSt
 
 {-------------------------------------------------------------------------------
   Analysis: reforge the blocks, via the mempool

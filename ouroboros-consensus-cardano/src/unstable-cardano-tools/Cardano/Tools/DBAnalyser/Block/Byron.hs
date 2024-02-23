@@ -39,6 +39,9 @@ instance HasAnalysis ByronBlock where
     blockStats blk = [ decimal $ length $ blockTxSizes blk
                      , decimal $ sum $ blockTxSizes blk
                      ]
+    -- For the time being we do not support any block application
+    -- metrics for the Byron era only.
+    blockApplicationMetrics = []
 
 instance HasProtocolInfo ByronBlock where
     data Args ByronBlock =

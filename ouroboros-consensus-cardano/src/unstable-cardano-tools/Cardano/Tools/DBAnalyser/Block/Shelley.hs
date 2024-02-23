@@ -100,6 +100,10 @@ instance ( ShelleyCompatible proto era
       txs = case Shelley.shelleyBlockRaw blk of
         SL.Block _ body -> Core.fromTxSeq @era body
 
+    -- For the time being we do not support any block application
+    -- metrics for Shelley-only eras.
+  blockApplicationMetrics = []
+
 class PerEraAnalysis era where
     txExUnitsSteps :: Maybe (Core.Tx era -> Word64)
 

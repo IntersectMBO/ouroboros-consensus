@@ -113,6 +113,7 @@ parseAnalysis = asum [
         , metavar "INT"
         ]
     , benchmarkLedgerOpsParser
+    , getBlockApplicationMetrics
     , pure OnlyValidation
     ]
 
@@ -149,6 +150,22 @@ benchmarkLedgerOpsParser =
                   <> " Prints one line of stats per block to the given output file "
                   <> " (defaults to stdout)."
           ]
+
+getBlockApplicationMetrics :: Parser AnalysisName
+getBlockApplicationMetrics =  do
+  fGetBlockApplicationMetrics <- partialGetBlockApplicationMetricsParser
+  mOutputFile                 <- pMaybeOutputFile
+  pure $ fGetBlockApplicationMetrics mOutputFile
+  where
+    partialGetBlockApplicationMetricsParser =
+          GetBlockApplicationMetrics . NumberOfBlocks
+      <$> option auto (mconcat [ long    "get-block-application-metrics"
+                               , metavar "NUM"
+                               , help $  "Compute block application metrics every 'NUM' blocks (it currently supports slot and block numbers and UTxO size). "
+                                 <> "Stores the result to the given output file "
+                                 <> " (defaults to stdout)."
+                               ]
+                      )
 
 pMaybeOutputFile :: Parser (Maybe FilePath)
 pMaybeOutputFile =

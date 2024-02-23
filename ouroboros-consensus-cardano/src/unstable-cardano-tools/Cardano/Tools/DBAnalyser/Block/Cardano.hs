@@ -23,8 +23,10 @@ module Cardano.Tools.DBAnalyser.Block.Cardano (
   , CardanoBlockArgs
   ) where
 
+import qualified Cardano.Chain.Block as Byron.Block
 import qualified Cardano.Chain.Genesis as Byron.Genesis
 import qualified Cardano.Chain.Update as Byron.Update
+import qualified Cardano.Chain.UTxO as Byron.UTxO
 import           Cardano.Crypto (RequiresNetworkMagic (..))
 import qualified Cardano.Crypto as Crypto
 import qualified Cardano.Crypto.Hash.Class as CryptoClass
@@ -33,7 +35,11 @@ import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL (natVersion)
 import           Cardano.Ledger.Binary.Version (getVersion)
+import           Cardano.Ledger.Core (TxOut)
 import           Cardano.Ledger.Crypto
+import qualified Cardano.Ledger.Shelley.LedgerState as Shelley.LedgerState
+import qualified Cardano.Ledger.Shelley.UTxO as Shelley.UTxO
+import           Cardano.Ledger.TxIn (TxIn)
 import           Cardano.Node.Types (AdjustFilePaths (..))
 import qualified Cardano.Tools.DBAnalyser.Block.Byron as BlockByron
 import           Cardano.Tools.DBAnalyser.Block.Shelley ()
@@ -42,6 +48,8 @@ import           Control.Monad (when)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.ByteString as BS
+import qualified Data.Compact as Compact
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           Data.SOP.BasicFunctors
@@ -50,8 +58,10 @@ import qualified Data.SOP.Telescope as Telescope
 import           Data.String (IsString (..))
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock)
+import qualified Ouroboros.Consensus.Byron.Ledger.Ledger as Byron.Ledger
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block (CardanoEras)
+import qualified Ouroboros.Consensus.Cardano.Block as Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node (TriggerHardFork (..),
                      protocolInfoCardano)
 import           Ouroboros.Consensus.HardFork.Combinator (HardForkBlock (..),
@@ -64,10 +74,13 @@ import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Shelley.HFEras ()
+import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           System.Directory (makeAbsolute)
 import           System.FilePath (takeDirectory, (</>))
+import qualified Text.Builder as Builder
+import           Text.Builder (Builder)
 
 analyseBlock ::
      (forall blk. HasAnalysis blk => blk -> a)
@@ -268,6 +281,88 @@ instance (HasAnnTip (CardanoBlock StandardCrypto), GetPrevHash (CardanoBlock Sta
   emitTraces = analyseWithLedgerState emitTraces
 
   blockStats = analyseBlock blockStats
+
+  blockApplicationMetrics =
+      [ ("Slot Number", \(WithLedgerState blk _preSt _postSt) ->
+            pure $ Builder.decimal $ unSlotNo $ blockSlot blk
+        )
+      , ("Block Number", \(WithLedgerState blk _preSt _postSt) ->
+            pure $ Builder.decimal $ unBlockNo $ blockNo blk
+        )
+      , ("UTxO size (via Compact)", \(WithLedgerState _blk _preSt postSt) -> do
+            let compactSize utxo = do
+                    compactedUtxo     <- Compact.compact utxo
+                    compactedUtxoSize <- Compact.compactSize compactedUtxo
+                    pure $ Builder.decimal $ compactedUtxoSize
+
+            dispatch postSt
+                     (applyToByronUtxo        compactSize)
+                     (applyToShelleyBasedUtxo compactSize)
+        )
+      , ("UTxO map size",  \(WithLedgerState _blk _preSt postSt) -> do
+            let mapSize = pure . Builder.decimal . Map.size
+            dispatch postSt
+                     (applyToByronUtxo        mapSize)
+                     (applyToShelleyBasedUtxo mapSize)
+        )
+      ]
+
+dispatch ::
+     LedgerState (CardanoBlock StandardCrypto)
+  -> (LedgerState ByronBlock -> IO Builder)
+  -> (forall proto era. LedgerState (ShelleyBlock proto era) -> IO Builder)
+  -> IO Builder
+dispatch cardanoSt fByron fShelley =
+    hcollapse $
+        hap (   fn k_fByron
+             :* fn k_fShelley
+             :* fn k_fShelley
+             :* fn k_fShelley
+             :* fn k_fShelley
+             :* fn k_fShelley
+             :* fn k_fShelley
+             :* Nil
+            )
+            (hardForkLedgerStatePerEra cardanoSt)
+  where
+    k_fByron   = K . fByron
+
+    k_fShelley ::
+         forall proto era.
+         LedgerState (ShelleyBlock proto era)
+      -> K (IO Builder) (ShelleyBlock proto era)
+    k_fShelley = K . fShelley
+
+applyToByronUtxo ::
+    (Map Byron.UTxO.CompactTxIn Byron.UTxO.CompactTxOut -> IO Builder)
+  -> LedgerState ByronBlock
+  -> IO Builder
+applyToByronUtxo f st  =
+   f $ getByronUtxo st
+
+getByronUtxo :: LedgerState ByronBlock
+             -> Map Byron.UTxO.CompactTxIn Byron.UTxO.CompactTxOut
+getByronUtxo = Byron.UTxO.unUTxO
+             . Byron.Block.cvsUtxo
+             . Byron.Ledger.byronLedgerState
+
+applyToShelleyBasedUtxo ::
+     (Map (TxIn (Cardano.Block.EraCrypto era)) (TxOut era) -> IO Builder)
+  -> LedgerState (ShelleyBlock proto era)
+  -> IO Builder
+applyToShelleyBasedUtxo f st = do
+    f $ getShelleyBasedUtxo st
+
+getShelleyBasedUtxo ::
+     LedgerState (ShelleyBlock proto era)
+  -> Map (TxIn (Cardano.Block.EraCrypto era)) (TxOut era)
+getShelleyBasedUtxo = (\(Shelley.UTxO.UTxO xs)->  xs)
+                    . Shelley.LedgerState.utxosUtxo
+                    . Shelley.LedgerState.lsUTxOState
+                    . Shelley.LedgerState.esLState
+                    . Shelley.LedgerState.nesEs
+                    . Shelley.Ledger.shelleyLedgerState
+
 
 type CardanoBlockArgs = Args (CardanoBlock StandardCrypto)
 
