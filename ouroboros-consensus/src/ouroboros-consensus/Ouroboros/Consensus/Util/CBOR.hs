@@ -39,7 +39,9 @@ import qualified Codec.CBOR.Read as CBOR.R
 import           Control.Exception (assert)
 import           Control.Monad
 import           Control.Monad.Except
-import           Control.Monad.ST
+import           Control.Monad.Primitive
+import           Control.Monad.ST hiding (stToIO)
+import qualified Control.Monad.ST as ST
 import qualified Control.Monad.ST.Lazy as ST.Lazy
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -67,7 +69,7 @@ data IDecodeIO a =
   | Fail !ByteString !CBOR.R.ByteOffset CBOR.R.DeserialiseFailure
 
 fromIDecode :: CBOR.R.IDecode RealWorld a -> IDecodeIO a
-fromIDecode (CBOR.R.Partial k)     = Partial $ fmap fromIDecode . stToIO . k
+fromIDecode (CBOR.R.Partial k)     = Partial $ fmap fromIDecode . ST.stToIO . k
 fromIDecode (CBOR.R.Done bs off x) = Done bs off x
 fromIDecode (CBOR.R.Fail bs off e) = Fail bs off e
 
@@ -185,27 +187,26 @@ data ReadIncrementalErr =
 -- 'withStreamIncrementalOffsets'.
 readIncremental :: forall m a. IOLike m
                 => SomeHasFS m
-                -> (forall s . CBOR.D.Decoder s a)
+                -> CBOR.D.Decoder (PrimState m) a
                 -> FsPath
                 -> m (Either ReadIncrementalErr a)
-readIncremental = \(SomeHasFS hasFS) decoder fp -> withLiftST $ \liftST -> do
+readIncremental = \(SomeHasFS hasFS) decoder fp -> do
     withFile hasFS fp ReadMode $ \h ->
-      go hasFS liftST h =<< liftST (CBOR.R.deserialiseIncremental decoder)
+      go hasFS h =<< stToIO (CBOR.R.deserialiseIncremental decoder)
   where
     go :: HasFS m h
-       -> (forall x. ST s x -> m x)
        -> Handle h
-       -> CBOR.R.IDecode s a
+       -> CBOR.R.IDecode (PrimState m) a
        -> m (Either ReadIncrementalErr a)
-    go hasFS@HasFS{..} liftST h (CBOR.R.Partial k) = do
+    go hasFS@HasFS{..} h (CBOR.R.Partial k) = do
         bs   <- hGetSome h (fromIntegral defaultChunkSize)
-        dec' <- liftST $ k (checkEmpty bs)
-        go hasFS liftST h dec'
-    go _ _ _ (CBOR.R.Done leftover _ a) =
+        dec' <- stToIO $ k (checkEmpty bs)
+        go hasFS h dec'
+    go _ _ (CBOR.R.Done leftover _ a) =
         return $ if BS.null leftover
                    then Right a
                    else Left $ TrailingBytes leftover
-    go _ _ _ (CBOR.R.Fail _ _ err) =
+    go _ _ (CBOR.R.Fail _ _ err) =
         return $ Left $ ReadFailed err
 
     checkEmpty :: ByteString -> Maybe ByteString
@@ -227,39 +228,37 @@ readIncremental = \(SomeHasFS hasFS) decoder fp -> withLiftST $ \liftST -> do
 withStreamIncrementalOffsets ::
      forall m h a r. (IOLike m, HasCallStack)
   => HasFS m h
-  -> (forall s . CBOR.D.Decoder s (LBS.ByteString -> a))
+  -> CBOR.D.Decoder (PrimState m) (LBS.ByteString -> a)
   -> FsPath
   -> (Stream (Of (Word64, (Word64, a))) m (Maybe (ReadIncrementalErr, Word64)) -> m r)
   -> m r
 withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
-    withLiftST $ \liftST ->
-      withFile hasFS fp ReadMode $ \h -> k $ do
-        fileSize <- S.lift $ hGetSize h
-        if fileSize == 0 then
-          -- If the file is empty, we will immediately get "end of input"
-          return Nothing
-        else
-          S.lift (liftST (CBOR.R.deserialiseIncremental decoder)) >>=
-            go liftST h 0 Nothing [] fileSize
+    withFile hasFS fp ReadMode $ \h -> k $ do
+      fileSize <- S.lift $ hGetSize h
+      if fileSize == 0 then
+        -- If the file is empty, we will immediately get "end of input"
+        return Nothing
+      else
+        S.lift (stToIO (CBOR.R.deserialiseIncremental decoder)) >>=
+          go h 0 Nothing [] fileSize
   where
     -- TODO stream from HasFS?
-    go :: (forall x. ST s x -> m x)
-       -> Handle h
+    go :: Handle h
        -> Word64                   -- ^ Offset
        -> Maybe ByteString         -- ^ Unconsumed bytes from last time
        -> [ByteString]             -- ^ Chunks pushed for this item (rev order)
        -> Word64                   -- ^ Total file size
-       -> CBOR.R.IDecode s (LBS.ByteString -> a)
+       -> CBOR.R.IDecode (PrimState m) (LBS.ByteString -> a)
        -> Stream (Of (Word64, (Word64, a))) m (Maybe (ReadIncrementalErr, Word64))
-    go liftST h offset mbUnconsumed bss fileSize dec = case dec of
+    go h offset mbUnconsumed bss fileSize dec = case dec of
       CBOR.R.Partial k -> do
         -- First use the unconsumed bytes from a previous read before read
         -- some more bytes from the file.
         bs   <- case mbUnconsumed of
           Just unconsumed -> return unconsumed
           Nothing         -> S.lift $ hGetSome h (fromIntegral defaultChunkSize)
-        dec' <- S.lift $ liftST $ k (checkEmpty bs)
-        go liftST h offset Nothing (bs:bss) fileSize dec'
+        dec' <- S.lift $ stToIO $ k (checkEmpty bs)
+        go h offset Nothing (bs:bss) fileSize dec'
 
       CBOR.R.Done leftover size mkA -> do
         let nextOffset = offset + fromIntegral size
@@ -288,8 +287,8 @@ withStreamIncrementalOffsets hasFS@HasFS{..} decoder fp = \k ->
             -> return Nothing
           -- Some more bytes, so try to read the next @a@.
           mbLeftover ->
-            S.lift (liftST (CBOR.R.deserialiseIncremental decoder)) >>=
-            go liftST h nextOffset mbLeftover [] fileSize
+            S.lift (stToIO (CBOR.R.deserialiseIncremental decoder)) >>=
+            go h nextOffset mbLeftover [] fileSize
 
       CBOR.R.Fail _ _ err -> return $ Just (ReadFailed err, offset)
 

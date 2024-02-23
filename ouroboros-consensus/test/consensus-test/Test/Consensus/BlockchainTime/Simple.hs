@@ -45,6 +45,7 @@ import qualified Control.Monad.Class.MonadTimer as MonadTimer
 import           Control.Monad.Class.MonadTimer.SI
 import           Control.Monad.Except (Except, runExcept, throwError)
 import           Control.Monad.IOSim
+import           Control.Monad.Primitive
 import           Control.Monad.Reader (ReaderT (..), lift)
 import           Control.Tracer
 import           Data.Fixed
@@ -320,7 +321,7 @@ prop_delayNoClockShift =
 -- | Note that that under load, the returned list could be missing certain slots
 -- or contain more slots than requested. This means that tests using this
 -- function can fail, also see issue #3894.
-testOverrideDelay :: forall m. (IOLike m, MonadTime m, MonadDelay (OverrideDelay m))
+testOverrideDelay :: forall m. (IOLike m, MonadTime m, MonadDelay (OverrideDelay m), PrimMonad m)
                   => SystemStart
                   -> SlotLength
                   -> NominalDiffTime
@@ -368,6 +369,7 @@ newtype OverrideDelay m a = OverrideDelay {
            , MonadTime
            , MonadThread
            , MonadFork
+           , PrimMonad
            , MonadST
            , MonadEvaluate
            )
@@ -557,7 +559,7 @@ instance (MonadAsync m, MonadMask m, MonadThrow (STM m)) => MonadAsync (Override
   waitCatchSTM = OverrideDelaySTM . lift . waitCatchSTM . unOverrideDelayAsync
   pollSTM      = OverrideDelaySTM . lift . pollSTM . unOverrideDelayAsync
 
-instance (IOLike m, MonadDelay (OverrideDelay m)) => IOLike (OverrideDelay m) where
+instance (IOLike m, MonadDelay (OverrideDelay m), PrimMonad m) => IOLike (OverrideDelay m) where
   forgetSignKeyKES = OverrideDelay . lift . forgetSignKeyKES
 
 overrideDelay :: UTCTime
