@@ -27,7 +27,7 @@ import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_, toList)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, isJust)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
@@ -143,20 +143,29 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
               endOfGenesisWindow `min` claimedTip
             where
               claimedTip = succWithOrigin $ getTipSlotNo theirTip
-          hasBlockAfterGenesisWindow =
+          lastSlotCandidate = succWithOrigin (AF.headSlot candidateSuffix)
+          maybeForecast = latestSlots Map.!? peer
+          lastSlotForecast = maybe 0 succ maybeForecast
+          candidateHasBlockAfter =
             -- Note that if
             -- > NotOrigin s = AF.headSlot candidateSuffix
             -- this check is equivalent to
             -- > s >= endOfGenesisWindow
-              max (succWithOrigin (AF.headSlot candidateSuffix))
-              (fromMaybe 0 (latestSlots Map.!? peer))
-            > endOfGenesisWindow
+            lastSlotCandidate > endOfGenesisWindow
+          forecastHasBlockAfter =
+            lastSlotForecast > endOfGenesisWindow
+          hasBlockAfterGenesisWindow =
+            candidateHasBlockAfter || forecastHasBlockAfter
           upperBound =
               lowerBound
             + if hasBlockAfterGenesisWindow
               then 0
               else unSlotNo (intervalLength unresolvedSlotsLB unresolvedSlotsUB)
-          offersMoreThanK = AF.length candidateSuffix > fromIntegral k
+          offersMoreThanK
+            | candidateHasBlockAfter
+            = AF.length candidateSuffix > fromIntegral k
+            | otherwise
+            = AF.length candidateSuffix >= fromIntegral k
       pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound})
 
     losingPeers = nubOrd $ do
