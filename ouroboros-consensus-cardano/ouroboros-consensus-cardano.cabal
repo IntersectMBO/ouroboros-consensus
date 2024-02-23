@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            ouroboros-consensus-cardano
-version:         0.13.0.0
+version:         0.14.0.0
 synopsis:
   The instantation of the Ouroboros consensus layer used by Cardano
 
@@ -140,7 +140,7 @@ library
     , microlens
     , mtl
     , nothunks
-    , ouroboros-consensus           ^>=0.15
+    , ouroboros-consensus           ^>=0.16
     , ouroboros-consensus-protocol  ^>=0.7
     , ouroboros-network-api         ^>=0.7
     , serialise                     ^>=0.2
@@ -183,7 +183,7 @@ library unstable-byronspec
     , containers                 >=0.5   && <0.7
     , mtl
     , nothunks
-    , ouroboros-consensus        ^>=0.15
+    , ouroboros-consensus        ^>=0.16
     , serialise                  ^>=0.2
     , small-steps
     , transformers
@@ -524,9 +524,9 @@ library unstable-cardano-tools
     , mtl
     , network
     , nothunks
-    , ouroboros-consensus            ^>=0.15
+    , ouroboros-consensus            ^>=0.16
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-diffusion  ^>=0.10
+    , ouroboros-consensus-diffusion  ^>=0.11
     , ouroboros-consensus-protocol   ^>=0.7
     , ouroboros-network
     , ouroboros-network-api

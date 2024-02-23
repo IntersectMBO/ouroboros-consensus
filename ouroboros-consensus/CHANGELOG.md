@@ -2,6 +2,33 @@
 
 # Changelog entries
 
+<a id='changelog-0.16.0.0'></a>
+## 0.16.0.0 — 2024-02-23
+
+### Non-Breaking
+
+- Integrate with network-packages and io-sim 1.4.1 packages
+- Bump dependencies version bounds
+
+### Breaking
+
+- `cdbDiskPolicy :: DiskPolicy` for `ChainDbArgs` is replaced by `cdbDiskPolicyArgs :: DiskPolicyArgs`
+- similarly, `lgrDiskPolicy :: DiskPolicy` for `LgrDbArgs` is replaced by `lgrDiskPolicyArgs :: DiskPolicyArgs`
+- `defaultDiskPolicy` is renamed to `mkDiskPolicy` and requires `DiskPolicyArgs` instead of a `SnapshotInterval`
+
+- Mempool API: generalize types of `addTxs` and `addLocalTxs` to any
+  `Traversable`.
+
+- Added `cdbsHasFSGsmDB` to the ChainDB args, for the GSM's persistent marker
+  file.
+
+- Added arguments to `bracketChainSyncClient` and `ChainSync.DynamicEnv` for
+  tracking idling peers.
+
+- Added arguments to `readFetchModeDefault` for sensitivity to the GSM state:
+  when using bootstrap peers, simply mimic the GSM state. Otherwise, fall back
+  to the legacy logic.
+
 <a id='changelog-0.15.0.0'></a>
 ## 0.15.0.0 — 2024-01-29
 

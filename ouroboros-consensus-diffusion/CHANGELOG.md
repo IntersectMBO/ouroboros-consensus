@@ -2,6 +2,36 @@
 
 # Changelog entries
 
+<a id='changelog-0.11.0.0'></a>
+## 0.11.0.0 — 2024-02-23
+
+### Non-Breaking
+
+- Added `getImmTipSlot` to `NodeKernel` exports.
+
+- Integrate with network-packages and io-sim 1.4.1 packages
+- Bump dependencies version bounds
+
+### Breaking
+
+- The field `srnSnapshotInterval :: SnapshotInterval` of `StdRunNodeArgs` is replaced by `srnDiskPolicyArgs :: DiskPolicyArgs`. `DiskPolicyArgs` is a product of `SnapshotInterval` and `NumOfDiskSnapshots`. To maintain current behavior the default value `DefaultNumOfDiskSnapshots` can be provided for the latter.
+
+- Added the Genesis State Machine (GSM), though for now it is merely the
+  simpler [Bootstrap Peers State
+  Machine](https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/BootstrapPeersIER).
+
+- Added `rnGetUseBootstrapPeers` to `RunNodeArgs`, for dynamically
+  enabling/disabling the GSM. The proper GSM must always be running, despite
+  the TVar it owns being ignored when it's disabled, since it may be enabled at
+  any time.
+
+- Added `llrnMaxCaughtUpAge` to the low-level args; defaults to 20min.
+
+- Added `gsmTracer` to the node's tracers.
+
+- Added `getNodeIdlers` to the `NodeKernel` interface; tracking peers that have
+  last sent `MsgAwaitReply`.
+
 <a id='changelog-0.10.0.0'></a>
 ## 0.10.0.0 — 2024-01-29
 
