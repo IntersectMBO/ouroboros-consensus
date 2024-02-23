@@ -51,10 +51,11 @@ import           Data.Foldable (toList)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
 import           Data.Time (DiffTime)
+import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
-import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (GenesisWindow (..))
+import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
 import           Ouroboros.Consensus.Util.Condense (Condense (..),
@@ -366,9 +367,6 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
       pure defaultPeerScheduleParams {pspTipDelayInterval = (tipL, tipU), pspHeaderDelayInterval = (headerL, headerU)}
 
     rollbackProb = 0.2
-
-newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
-  deriving (Show)
 
 newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)

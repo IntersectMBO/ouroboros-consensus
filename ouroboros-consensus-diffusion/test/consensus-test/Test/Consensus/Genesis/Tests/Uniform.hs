@@ -289,9 +289,9 @@ prop_loeStalling =
         pure gt {gtChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}}
     )
 
-    (defaultPointScheduleConfig {
+    (defaultSchedulerConfig {
       scEnableLoE = True,
-      scChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}
+      scEnableChainSyncTimeouts = True
     })
 
     shrinkPeerSchedules

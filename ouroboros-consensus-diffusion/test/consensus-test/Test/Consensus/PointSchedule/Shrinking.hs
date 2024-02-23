@@ -40,14 +40,13 @@ shrinkPeerSchedules genesisTest _stateView =
 -- the honest peer; and it does not remove ticks from the schedules of the
 -- remaining adversaries.
 shrinkByRemovingAdversaries ::
-  GenesisTest ->
-  Peers PeerSchedule ->
+  GenesisTest (Peers PeerSchedule) ->
   StateView ->
-  [(GenesisTest, Peers PeerSchedule)]
-shrinkByRemovingAdversaries genesisTest schedule _stateView =
-  shrinkOtherPeers (const []) schedule <&> \shrunkSchedule ->
+  [(GenesisTest (Peers PeerSchedule))]
+shrinkByRemovingAdversaries genesisTest _stateView =
+  shrinkOtherPeers (const []) (gtSchedule genesisTest) <&> \shrunkSchedule ->
     let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
-     in (genesisTest{gtBlockTree = trimmedBlockTree}, shrunkSchedule)
+     in (genesisTest{gtSchedule = shrunkSchedule, gtBlockTree = trimmedBlockTree})
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
 -- unchanged.
