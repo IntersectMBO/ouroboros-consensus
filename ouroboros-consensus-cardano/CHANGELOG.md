@@ -2,6 +2,16 @@
 
 # Changelog entries
 
+<a id='changelog-0.14.0.0'></a>
+## 0.14.0.0 — 2024-02-23
+
+### Non-Breaking
+
+- Remove redundant `DiskPolicy` argument from call to `ChainDB.defaultArgs`
+
+- Integrate with network-packages and io-sim 1.4.1 packages
+- Bump dependencies version bounds
+
 <a id='changelog-0.13.0.0'></a>
 ## 0.13.0.0 — 2024-01-29
 
