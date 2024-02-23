@@ -270,24 +270,25 @@ library
     , filelock
     , fs-api                       ^>=0.2
     , hashable
-    , io-classes                   ^>=1.3
+    , io-classes                   ^>=1.4.1
     , measures
     , mtl
     , nothunks                     ^>=0.1.5
-    , ouroboros-network-api        ^>=0.6.2
+    , ouroboros-network-api        ^>=0.7
     , ouroboros-network-mock       ^>=0.1
-    , ouroboros-network-protocols  ^>=0.7
+    , ouroboros-network-protocols  ^>=0.8
+    , primitive
     , psqueues                     ^>=0.2.3
     , quiet                        ^>=0.2
     , semialign                    >=1.1
     , serialise                    ^>=0.2
-    , si-timers                    ^>=1.3
+    , si-timers                    ^>=1.4
     , sop-core                     ^>=0.5
     , sop-extras                   ^>=0.1
     , streaming
     , strict-checked-vars          ^>=0.2
     , strict-sop-core              ^>=0.1
-    , strict-stm                   ^>=1.3
+    , strict-stm                   ^>=1.4
     , text
     , these                        ^>=1.2
     , time

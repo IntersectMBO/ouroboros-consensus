@@ -27,6 +27,7 @@ module Ouroboros.Consensus.Util.IOLike (
   , linkTo
     -- *** MonadST
   , MonadST (..)
+  , PrimMonad (..)
     -- *** MonadTime
   , DiffTime
   , MonadMonotonicTime (..)
@@ -54,6 +55,7 @@ import           Control.Monad.Class.MonadST
 import           Control.Monad.Class.MonadThrow
 import           Control.Monad.Class.MonadTime.SI
 import           Control.Monad.Class.MonadTimer.SI
+import           Control.Monad.Primitive
 import           Data.Functor (void)
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
@@ -79,6 +81,7 @@ class ( MonadAsync              m
       , MonadEvaluate           m
       , Alternative        (STM m)
       , MonadCatch         (STM m)
+      , PrimMonad               m
       , forall a. NoThunks (m a)
       , forall a. NoThunks a => NoThunks (StrictTVar m a)
       , forall a. NoThunks a => NoThunks (StrictSVar m a)

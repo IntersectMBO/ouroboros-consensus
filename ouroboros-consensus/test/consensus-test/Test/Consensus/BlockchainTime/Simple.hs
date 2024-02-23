@@ -361,6 +361,7 @@ newtype OverrideDelay m a = OverrideDelay {
            , MonadEventlog
            , MonadThrow
            , MonadCatch
+           , MonadEvaluate
            , MonadMask
            , MonadMonotonicTime
            , MonadMonotonicTimeNSec
@@ -369,8 +370,13 @@ newtype OverrideDelay m a = OverrideDelay {
            , MonadThread
            , MonadFork
            , MonadST
-           , MonadEvaluate
            )
+
+
+instance PrimMonad m => PrimMonad (OverrideDelay m) where
+  type PrimState (OverrideDelay m) = PrimState m
+  primitive = OverrideDelay . primitive
+  {-# INLINE primitive #-}
 
 deriving via AllowThunk (OverrideDelay s a)
          instance NoThunks (OverrideDelay s a)
