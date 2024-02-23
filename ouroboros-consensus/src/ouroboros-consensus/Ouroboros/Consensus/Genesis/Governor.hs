@@ -115,7 +115,9 @@ data DensityBounds blk =
     fragment        :: AnchoredFragment (Header blk),
     offersMoreThanK :: Bool,
     lowerBound      :: Word64,
-    upperBound      :: Word64
+    upperBound      :: Word64,
+    hasBlockAfter   :: Bool,
+    lastSlot        :: Either SlotNo SlotNo
   }
 
 densityDisconnect ::
@@ -166,7 +168,9 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
             = AF.length candidateSuffix > fromIntegral k
             | otherwise
             = AF.length candidateSuffix >= fromIntegral k
-      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound})
+          lastSlot | isJust maybeForecast, lastSlotForecast >= lastSlotCandidate = Left lastSlotForecast
+                   | otherwise = Right lastSlotCandidate
+      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter = hasBlockAfterGenesisWindow, lastSlot})
 
     losingPeers = nubOrd $ do
       (peer0 , DensityBounds {fragment = frag0, upperBound = ub0}) <- Map.toList densityBounds
@@ -213,7 +217,8 @@ data TraceGDDEvent peer blk =
     bounds            :: Map peer (DensityBounds blk),
     candidateSuffixes :: Map peer (AnchoredFragment (Header blk)),
     losingPeers       :: [peer],
-    loeHead           :: AF.Anchor (Header blk)
+    loeHead           :: AF.Anchor (Header blk),
+    sgen              :: GenesisWindow
   }
 
 -- | Run the Genesis disconnection logic once.
@@ -278,7 +283,7 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles =
           densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes theirTips latestSlots loeFrag
         loeHead = AF.headAnchor loeFrag
 
-      traceWith tracer TraceGDDEvent {bounds, candidateSuffixes, losingPeers, loeHead}
+      traceWith tracer TraceGDDEvent {sgen, bounds, candidateSuffixes, losingPeers, loeHead}
 
       for_ losingPeers $ \peer -> cschKill (handles Map.! peer)
 

@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE NamedFieldPuns     #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE TypeApplications   #-}
 {-# LANGUAGE TypeFamilies       #-}
 
 -- | Helpers for tracing used by the peer simulator.
@@ -17,6 +18,8 @@ import           Control.Tracer (Tracer (Tracer), traceWith)
 import           Data.List (intercalate)
 import qualified Data.Map as Map
 import           Data.Time.Clock (diffTimeToPicoseconds)
+import           Ouroboros.Consensus.Block (GenesisWindow (..), Header,
+                     fromWithOrigin, succWithOrigin)
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
                      TraceGDDEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -24,12 +27,14 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceAddBlockEvent (..))
+import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
-import           Test.Util.TersePrinting (terseHFragment, terseHeader,
-                     tersePoint, terseRealPoint)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Block (SlotNo (SlotNo), castPoint, unSlotNo)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
+import           Test.Util.TersePrinting (terseAnchor, terseHFragment,
+                     terseHeader, tersePoint, terseRealPoint)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
@@ -81,23 +86,48 @@ mkChainSyncClientTracer tracer =
     trace = traceUnitWith tracer "ChainSyncClient"
 
 mkGDDTracer ::
-  IOLike m =>
   Tracer m String ->
   Tracer m (TraceGDDEvent PeerId TestBlock)
 mkGDDTracer tracer =
-  Tracer $ \TraceGDDEvent {bounds, candidateSuffixes, losingPeers, loeHead} ->
-    traceWith tracer $ unlines [
-      "GDG | Density bounds: " ++ showPeers (showBounds <$> bounds),
-      "      New candidate tips: " ++ showPeers (show <$> Map.map AF.headPoint candidateSuffixes),
-      "      Losing peers: " ++ show losingPeers,
-      "      Setting loeFrag: " ++ show loeHead
-      ]
+  Tracer $ \TraceGDDEvent {sgen = GenesisWindow sgen, bounds, candidateSuffixes, losingPeers, loeHead} ->
+    traceWith tracer $ unlines ([
+      "GDG | Window: " ++ window sgen loeHead,
+      "      Candidates:"
+      ] ++
+      showPeers (terseHFragment . fragment <$> bounds) ++
+      ["      Density bounds:"] ++
+      showPeers (showBounds <$> bounds) ++
+      ["      New candidate tips:"] ++
+      showPeers (tersePoint . castPoint <$> Map.map AF.headPoint candidateSuffixes) ++
+      [
+        "      Losing peers: " ++ show losingPeers,
+      "      Setting loeFrag: " ++ terseAnchor (AF.castAnchor loeHead)
+      ])
   where
-    showBounds DensityBounds {offersMoreThanK, lowerBound, upperBound} =
-      show lowerBound ++ "/" ++ show upperBound ++ "[" ++ (if offersMoreThanK then "+" else " ") ++ "]"
+    showBounds DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, lastSlot} =
+      show lowerBound ++ "/" ++ show upperBound ++ "[" ++ more ++ "], " ++ lastPoint ++ slot lastSlot ++ block
+      where
+        more = if offersMoreThanK then "+" else " "
 
-    showPeers :: Map.Map PeerId String -> String
-    showPeers = intercalate ", " . fmap (\ (peer, v) -> show peer ++ " -> " ++ v) . Map.toList
+        block = if hasBlockAfter then ", has block" else " "
+
+        lastPoint =
+          "point: " ++
+          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.lastPoint fragment)) ++
+          ", "
+
+        slot = \case
+          Right (SlotNo inCandidate) -> "last: " ++ show inCandidate
+          Left (SlotNo forecasted) -> "forecast: " ++ show forecasted
+
+    window sgen loeHead =
+      show winStart ++ " -> " ++ show winEnd
+      where
+        winEnd = winStart + sgen - 1
+        SlotNo winStart = succWithOrigin (AF.anchorToSlotNo loeHead)
+
+    showPeers :: Map.Map PeerId String -> [String]
+    showPeers = fmap (\ (peer, v) -> "        " ++ condense peer ++ ": " ++ v) . Map.toList
 
 prettyTime :: MonadMonotonicTime m => m String
 prettyTime = do

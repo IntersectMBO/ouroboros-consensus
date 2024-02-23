@@ -134,7 +134,7 @@ prop_serveAdversarialBranches = forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
-    (defaultPointScheduleConfig
+    (defaultSchedulerConfig
        {scTraceState = False, scTrace = False, scEnableLoE = True})
 
     -- We cannot shrink by removing points from the adversarial schedules.
