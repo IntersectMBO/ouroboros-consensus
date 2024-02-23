@@ -563,7 +563,7 @@ instance (MonadAsync m, MonadMask m, MonadThrow (STM m)) => MonadAsync (Override
   waitCatchSTM = OverrideDelaySTM . lift . waitCatchSTM . unOverrideDelayAsync
   pollSTM      = OverrideDelaySTM . lift . pollSTM . unOverrideDelayAsync
 
-instance (IOLike m, MonadDelay (OverrideDelay m), PrimMonad m) => IOLike (OverrideDelay m) where
+instance (IOLike m, MonadDelay (OverrideDelay m)) => IOLike (OverrideDelay m) where
   forgetSignKeyKES = OverrideDelay . lift . forgetSignKeyKES
 
 overrideDelay :: UTCTime
