@@ -15,18 +15,22 @@ module Test.Consensus.PeerSimulator.ScheduledServer (
   , runHandler
   , runHandlerWithTrace
   ) where
-import           Control.Tracer (Tracer (Tracer), traceWith)
+
+import           Control.Tracer (Tracer, traceWith)
 import           Data.Foldable (traverse_)
-import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Consensus.Util.IOLike (IOLike,
                      MonadSTM (STM, atomically))
+import           Test.Consensus.PeerSimulator.Trace
+                     (TraceScheduledServerHandlerEvent (..))
+import           Test.Consensus.PointSchedule.Peers (PeerId)
+import           Test.Util.TestBlock (TestBlock)
 
-data ScheduledServer m a =
+data ScheduledServer m state =
   ScheduledServer {
-    ssPeerId       :: String,
-    ssCurrentState :: STM m (Maybe a),
+    ssPeerId       :: PeerId,
+    ssCurrentState :: STM m (Maybe state),
     ssTickStarted  :: STM m (),
-    ssTracer       :: Tracer m String
+    ssCommonTracer :: Tracer m (TraceScheduledServerHandlerEvent state TestBlock)
   }
 
 nextTickState :: IOLike m => ScheduledServer m a -> m (Maybe a)
@@ -62,9 +66,9 @@ ensureCurrentState server =
 -- protocol result and emit them here.
 runHandlerWithTrace ::
   IOLike m =>
-  Tracer m String ->
-  STM m (a, [String]) ->
-  m a
+  Tracer m traceMsg ->
+  STM m (state, [traceMsg]) ->
+  m state
 runHandlerWithTrace tracer handler = do
   (result, handlerMessages) <- atomically handler
   traverse_ (traceWith tracer) handlerMessages
@@ -82,24 +86,24 @@ runHandlerWithTrace tracer handler = do
 -- message with the server's continuation in it.
 runHandler ::
   IOLike m =>
-  Condense a =>
-  ScheduledServer m a ->
+  ScheduledServer m state ->
   String ->
-  (a -> STM m (Maybe msg, [String])) ->
+  (state -> STM m (Maybe msg, [traceMsg])) ->
+  Tracer m traceMsg ->
   (msg -> m h) ->
   m h
-runHandler server@ScheduledServer{ssTracer} handlerName handler dispatchMessage =
+runHandler server@ScheduledServer{ssCommonTracer} handlerName handler handlerTracer dispatchMessage =
   run
   where
     run = do
       currentState <- ensureCurrentState server
-      trace ("handling " ++ handlerName)
-      trace ("  state is " ++ condense currentState)
-      maybe restart dispatchMessage =<< runHandlerWithTrace handlerTracer (handler currentState)
+      traceWith ssCommonTracer $ TraceHandling handlerName currentState
+      maybe restart done =<< runHandlerWithTrace handlerTracer (handler currentState)
 
     restart = do
-      trace "  cannot serve at this point; waiting for node state and starting again"
+      traceWith ssCommonTracer $ TraceRestarting handlerName
       awaitOnlineState server *> run
 
-    trace = traceWith ssTracer
-    handlerTracer = Tracer $ \ msg -> traceWith ssTracer (handlerName ++ " | " ++ msg)
+    done msg = do
+      traceWith ssCommonTracer $ TraceDoneHandling handlerName
+      dispatchMessage msg

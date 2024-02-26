@@ -325,8 +325,8 @@ data GenesisTest blk schedule = GenesisTest {
 
 type GenesisTestFull blk = GenesisTest blk (PeersSchedule blk)
 
-prettyGenesisTest :: GenesisTest TestBlock schedule -> [String]
-prettyGenesisTest genesisTest =
+prettyGenesisTest :: (schedule -> [String]) -> GenesisTest TestBlock schedule -> [String]
+prettyGenesisTest prettySchedule genesisTest =
   [ "GenesisTest:"
   , "  gtSecurityParam: " ++ show (maxRollbacks gtSecurityParam)
   , "  gtGenesisWindow: " ++ show (unGenesisWindow gtGenesisWindow)
@@ -343,6 +343,8 @@ prettyGenesisTest genesisTest =
   , "  gtBlockTree:"
   ] ++ map (("    " ++) . terseFragment) (allFragments gtBlockTree)
     ++ map ("    " ++) (prettyBlockTree gtBlockTree)
+    ++ ["  gtSchedule:"]
+    ++ map ("    " ++) (prettySchedule gtSchedule)
   where
     GenesisTest {
         gtSecurityParam
@@ -353,7 +355,7 @@ prettyGenesisTest genesisTest =
       , gtChainSyncTimeouts = ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout}
       , gtLoPBucketParams = LoPBucketParams{lbpCapacity, lbpRate}
       , gtSlotLength
-      , gtSchedule = _
+      , gtSchedule
       } = genesisTest
 
 instance Functor (GenesisTest blk) where

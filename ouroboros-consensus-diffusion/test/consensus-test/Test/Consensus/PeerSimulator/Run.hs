@@ -14,7 +14,7 @@ module Test.Consensus.PeerSimulator.Run (
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTime.SI (DiffTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer, nullTracer, traceWith)
+import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
@@ -56,7 +56,7 @@ import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
                      GenesisTestFull, LoPBucketParams (..), NodeState,
-                     PeersSchedule, peersStatesRelative, prettyPeersSchedule)
+                     PeersSchedule, peersStatesRelative)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
 import           Test.Util.ChainDB
@@ -123,7 +123,7 @@ debugScheduler conf = conf { scDebug = True }
 startChainSyncConnectionThread ::
   (IOLike m, MonadTimer m) =>
   ResourceRegistry m ->
-  Tracer m String ->
+  Tracer m (TraceEvent TestBlock) ->
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
   FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
@@ -177,7 +177,7 @@ startBlockFetchConnectionThread
 -- for new instructions.
 dispatchTick ::
   IOLike m =>
-  Tracer m String ->
+  Tracer m (TraceSchedulerEvent TestBlock) ->
   Tracer m () ->
   Map PeerId (PeerResources m) ->
   (Int, (DiffTime, Peer (NodeState TestBlock))) ->
@@ -185,22 +185,11 @@ dispatchTick ::
 dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
-      time <- prettyTime
-      traceLinesWith tracer [
-        hline,
-        "Time is " ++ time,
-        "Tick:",
-        "  number: " ++ show number,
-        "  duration: " ++ show duration,
-        "  peer: " ++ condense pid,
-        "  state: " ++ condense state
-        ]
+      traceWith tracer $ TraceNewTick number duration (Peer pid state)
       atomically (prUpdateState state)
       threadDelay duration
       traceWith stateTracer ()
     Nothing -> error "“The impossible happened,” as GHC would say."
-  where
-    hline = "--------------------------------------------------------------------------------"
 
 -- | Iterate over a 'PointSchedule', sending each tick to the associated peer in turn,
 -- giving each peer a chunk of computation time, sequentially, until it satisfies the
@@ -209,25 +198,15 @@ dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
 -- client.
 runScheduler ::
   IOLike m =>
-  Tracer m String ->
+  Tracer m (TraceSchedulerEvent TestBlock) ->
   Tracer m () ->
   PeersSchedule TestBlock ->
   Map PeerId (PeerResources m) ->
   m ()
 runScheduler tracer stateTracer ps peers = do
-  traceLinesWith tracer ("Point schedule:" : map ("  " ++) (prettyPeersSchedule ps))
-  traceStartOfTime
+  traceWith tracer TraceBeginningOfTime
   mapM_ (dispatchTick tracer stateTracer peers) (zip [0..] (peersStatesRelative ps))
-  traceEndOfTime
-  where
-    traceStartOfTime =
-      traceWith tracer "Running point schedule ..."
-    traceEndOfTime =
-      traceLinesWith tracer [
-        hline,
-        "Finished running point schedule"
-        ]
-    hline = "--------------------------------------------------------------------------------"
+  traceWith tracer TraceEndOfTime
 
 -- | Construct STM resources, set up ChainSync and BlockFetch threads, and
 -- send all ticks in a 'PointSchedule' to all given peers in turn.
@@ -236,7 +215,7 @@ runPointSchedule ::
   (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
-  Tracer m String ->
+  Tracer m (TraceEvent TestBlock) ->
   m StateView
 runPointSchedule schedulerConfig genesisTest tracer0 =
   withRegistry $ \registry -> do
@@ -265,7 +244,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     stateTracer <- mkStateTracer
     startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
     void $ forkLinkedThread registry "ChainSel trigger" (reprocessLoEBlocksOnCandidateChange chainDb getCandidates)
-    runScheduler tracer stateTracer gtSchedule (psrPeers resources)
+    runScheduler (Tracer $ traceWith tracer . TraceSchedulerEvent) stateTracer gtSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
     GenesisTest {
@@ -279,6 +258,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
 
     config = defaultCfg k gtForecastRange
 
+    -- FIXME: This type of configuration should move to `PeerSimulator.Trace.mkTracer`.
     tracer = if scTrace schedulerConfig then tracer0 else nullTracer
 
     chainSyncTimeouts_ =
@@ -296,7 +276,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
 mkChainDb ::
   IOLike m =>
   SchedulerConfig ->
-  Tracer m String ->
+  Tracer m (TraceEvent TestBlock) ->
   TopLevelConfig TestBlock ->
   ResourceRegistry m ->
   UpdateLoEFrag m TestBlock ->
@@ -313,7 +293,7 @@ mkChainDb schedulerConfig tracer nodeCfg registry updateLoEFrag = do
           , mcdbNodeDBs
           }
         ) {
-            cdbTracer = mkCdbTracer tracer,
+            cdbTracer = Tracer (traceWith tracer . TraceChainDBEvent),
             cdbLoE
         }
     (_, (chainDB, ChainDB.Impl.Internal{intAddBlockRunner})) <-

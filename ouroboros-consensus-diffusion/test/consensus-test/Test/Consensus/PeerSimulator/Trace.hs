@@ -5,36 +5,234 @@
 
 -- | Helpers for tracing used by the peer simulator.
 module Test.Consensus.PeerSimulator.Trace (
-    mkCdbTracer
-  , mkChainSyncClientTracer
-  , prettyTime
+    TraceChainSyncClientTerminationEvent (..)
+  , TraceEvent (..)
+  , TraceScheduledBlockFetchServerEvent (..)
+  , TraceScheduledChainSyncServerEvent (..)
+  , TraceScheduledServerHandlerEvent (..)
+  , TraceSchedulerEvent (..)
+  , mkTracerTestBlock
   , traceLinesWith
-  , traceUnitWith
   ) where
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
-import           Data.Time.Clock (diffTimeToPicoseconds)
+import           Data.List (intersperse)
+import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds)
+import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceAddBlockEvent (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
-import           Test.Consensus.PointSchedule.Peers (PeerId)
-import           Test.Util.TersePrinting (terseHFragment, terseHeader,
-                     tersePoint, terseRealPoint)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import           Ouroboros.Network.Block (Tip)
+import           Test.Consensus.PointSchedule (NodeState)
+import           Test.Consensus.PointSchedule.Peers (Peer (Peer), PeerId)
+import           Test.Util.TersePrinting (terseBlock, terseFragment,
+                     terseHFragment, terseHeader, tersePoint, terseRealPoint,
+                     terseTip)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
-mkCdbTracer ::
-  IOLike m =>
+-- * Trace events for the peer simulator
+
+-- | Trace messages sent by the scheduler.
+data TraceSchedulerEvent blk
+  = -- | Right before running the first tick (at time @0@) of the schedule.
+    TraceBeginningOfTime
+  | -- | Right after running the last tick of the schedule.
+    TraceEndOfTime
+  | -- | When beginning a new tick. Contains the tick number (counting from
+    -- @0@), the duration of the tick and the states.
+    TraceNewTick Int DiffTime (Peer (NodeState blk))
+
+type HandlerName = String
+
+data TraceScheduledServerHandlerEvent state blk
+  = TraceHandling HandlerName state
+  | TraceRestarting HandlerName
+  | TraceDoneHandling HandlerName
+
+data TraceScheduledChainSyncServerEvent state blk
+  = TraceHandlerEventCS (TraceScheduledServerHandlerEvent state blk)
+  | TraceLastIntersection (Point blk)
+  | TraceClientIsDone
+  | TraceIntersectionFound (Point blk)
+  | TraceIntersectionNotFound
+  | TraceRollForward (Header blk) (Tip blk)
+  | TraceRollBackward (Point blk) (Tip blk)
+  | TraceChainIsFullyServed
+  | TraceIntersectionIsHeaderPoint
+  | TraceIntersectionIsStrictAncestorOfHeaderPoint (AnchoredFragment blk)
+  | TraceIntersectionIsStrictDescendentOfHeaderPoint
+
+data TraceScheduledBlockFetchServerEvent state blk
+  = TraceHandlerEventBF (TraceScheduledServerHandlerEvent state blk)
+  | TraceSendingBlocks [blk]
+  | TraceNoBlocks
+  | TraceStartingBatch (AnchoredFragment blk)
+  | TraceWaitingForRange (Point blk) (Point blk)
+  | TraceSendingBlock blk
+  | TraceBatchIsDone
+  | TraceBlockPointIsBehind
+
+data TraceChainSyncClientTerminationEvent
+  = TraceExceededSizeLimit
+  | TraceExceededTimeLimit
+  | TraceTerminatedByGDDGovernor
+  | TraceTerminatedByLoP
+
+data TraceEvent blk
+  = TraceSchedulerEvent (TraceSchedulerEvent blk)
+  | TraceScheduledChainSyncServerEvent PeerId (TraceScheduledChainSyncServerEvent (NodeState blk) blk)
+  | TraceScheduledBlockFetchServerEvent PeerId (TraceScheduledBlockFetchServerEvent (NodeState blk) blk)
+  | TraceChainDBEvent (ChainDB.TraceEvent blk)
+  | TraceChainSyncClientEvent PeerId (TraceChainSyncClientEvent blk)
+  | TraceChainSyncClientTerminationEvent PeerId TraceChainSyncClientTerminationEvent
+
+-- * 'TestBlock'-specific tracers for the peer simulator
+
+mkTracerTestBlock ::
+  (IOLike m) =>
   Tracer m String ->
-  Tracer m (ChainDB.Impl.TraceEvent TestBlock)
-mkCdbTracer tracer =
-  Tracer $ \case
-    ChainDB.Impl.TraceAddBlockEvent event ->
+  Tracer m (TraceEvent TestBlock)
+mkTracerTestBlock = Tracer . traceEventTestBlockWith
+
+traceEventTestBlockWith ::
+  (MonadMonotonicTime m) =>
+  Tracer m String ->
+  TraceEvent TestBlock ->
+  m ()
+traceEventTestBlockWith tracer = \case
+    TraceSchedulerEvent traceEvent -> traceSchedulerEventTestBlockWith tracer traceEvent
+    TraceScheduledChainSyncServerEvent peerId traceEvent -> traceScheduledChainSyncServerEventTestBlockWith tracer peerId traceEvent
+    TraceScheduledBlockFetchServerEvent peerId traceEvent -> traceScheduledBlockFetchServerEventTestBlockWith tracer peerId traceEvent
+    TraceChainDBEvent traceEvent -> traceChainDBEventTestBlockWith tracer traceEvent
+    TraceChainSyncClientEvent peerId traceEvent -> traceChainSyncClientEventTestBlockWith peerId tracer traceEvent
+    TraceChainSyncClientTerminationEvent peerId traceEvent -> traceChainSyncClientTerminationEventTestBlockWith peerId tracer traceEvent
+
+traceSchedulerEventTestBlockWith ::
+  (MonadMonotonicTime m) =>
+  Tracer m String ->
+  TraceSchedulerEvent TestBlock ->
+  m ()
+traceSchedulerEventTestBlockWith tracer = \case
+    TraceBeginningOfTime ->
+      traceWith tracer "Running point schedule ..."
+    TraceEndOfTime ->
+      traceLinesWith tracer
+        [ hline,
+          "Finished running point schedule"
+        ]
+    TraceNewTick number duration (Peer pid state) -> do
+      time <- prettyTime -- TODO: push into a time-specific tracer printing this at new time
+      traceLinesWith tracer
+        [ hline,
+          "Time is " ++ time,
+          "Tick:",
+          "  number: " ++ show number,
+          "  duration: " ++ show duration,
+          "  peer: " ++ condense pid,
+          "  state: " ++ condense state
+        ]
+  where
+    hline = "--------------------------------------------------------------------------------"
+
+traceScheduledServerHandlerEventTestBlockWith ::
+  Tracer m String ->
+  String ->
+  TraceScheduledServerHandlerEvent (NodeState TestBlock) TestBlock ->
+  m ()
+traceScheduledServerHandlerEventTestBlockWith tracer unit = \case
+    TraceHandling handler state ->
+      traceLines
+        [ "handling " ++ handler,
+          "  state is " ++ condense state
+        ]
+    TraceRestarting _->
+      trace "  cannot serve at this point; waiting for node state and starting again"
+    TraceDoneHandling handler ->
+      trace $ "done handling " ++ handler
+  where
+    trace = traceUnitWith tracer unit
+    traceLines = traceUnitLinesWith tracer unit
+
+traceScheduledChainSyncServerEventTestBlockWith ::
+  Tracer m String ->
+  PeerId ->
+  TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock ->
+  m ()
+traceScheduledChainSyncServerEventTestBlockWith tracer peerId = \case
+    TraceHandlerEventCS traceEvent -> traceScheduledServerHandlerEventTestBlockWith tracer unit traceEvent
+    TraceLastIntersection point ->
+      trace $ "  last intersection is " ++ tersePoint point
+    TraceClientIsDone ->
+      trace "received MsgDoneClient"
+    TraceIntersectionNotFound ->
+      trace "  no intersection found"
+    TraceIntersectionFound point ->
+      trace $ "  intersection found: " ++ tersePoint point
+    TraceRollForward header tip ->
+      traceLines [
+        "  gotta serve " ++ terseHeader header,
+        "  tip is      " ++ terseTip tip
+      ]
+    TraceRollBackward point tip ->
+      traceLines [
+        "  gotta roll back to " ++ tersePoint point,
+        "  new tip is      " ++ terseTip tip
+      ]
+    TraceChainIsFullyServed ->
+      trace "  chain has been fully served"
+    TraceIntersectionIsHeaderPoint ->
+      trace "  intersection is exactly our header point"
+    TraceIntersectionIsStrictAncestorOfHeaderPoint fragment ->
+      traceLines
+        [ "  intersection is before our header point",
+          "  fragment ahead: " ++ terseFragment fragment
+        ]
+    TraceIntersectionIsStrictDescendentOfHeaderPoint ->
+      trace "  intersection is further than our header point"
+  where
+    unit = "ScheduledChainSyncServer " ++ condense peerId
+    trace = traceUnitWith tracer unit
+    traceLines = traceUnitLinesWith tracer unit
+
+traceScheduledBlockFetchServerEventTestBlockWith ::
+  Tracer m String ->
+  PeerId ->
+  TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock ->
+  m ()
+traceScheduledBlockFetchServerEventTestBlockWith tracer peerId = \case
+    TraceHandlerEventBF traceEvent -> traceScheduledServerHandlerEventTestBlockWith tracer unit traceEvent
+    TraceSendingBlocks blocks ->
+      trace $ "  sending blocks: " ++ unwords (terseBlock <$> blocks)
+    TraceNoBlocks ->
+      trace "  no blocks available"
+    TraceStartingBatch fragment ->
+      trace $ "Starting batch for slice " ++ terseFragment fragment
+    TraceWaitingForRange pointFrom pointTo ->
+      trace $ "Waiting for next tick for range: " ++ tersePoint pointFrom ++ " -> " ++ tersePoint pointTo
+    TraceSendingBlock block ->
+      trace $ "Sending " ++ terseBlock block
+    TraceBatchIsDone ->
+      trace "Batch is done"
+    TraceBlockPointIsBehind ->
+      trace "BP is behind"
+  where
+    unit = "ScheduledBlockFetchServer " ++ condense peerId
+    trace = traceUnitWith tracer unit
+
+traceChainDBEventTestBlockWith ::
+  (Monad m) =>
+  Tracer m String ->
+  ChainDB.TraceEvent TestBlock ->
+  m ()
+traceChainDBEventTestBlockWith tracer = \case
+    ChainDB.TraceAddBlockEvent event ->
       case event of
         AddedToCurrentChain _ _ _ newFragment ->
           trace $ "Added to current chain; now: " ++ terseHFragment newFragment
@@ -55,12 +253,12 @@ mkCdbTracer tracer =
   where
     trace = traceUnitWith tracer "ChainDB"
 
-mkChainSyncClientTracer ::
+traceChainSyncClientEventTestBlockWith ::
   PeerId ->
   Tracer m String ->
-  Tracer m (TraceChainSyncClientEvent TestBlock)
-mkChainSyncClientTracer pid tracer =
-  Tracer $ \case
+  TraceChainSyncClientEvent TestBlock ->
+  m ()
+traceChainSyncClientEventTestBlockWith pid tracer = \case
     TraceRolledBack point ->
       trace $ "Rolled back to: " ++ tersePoint point
     TraceFoundIntersection point _ourTip _theirTip ->
@@ -85,6 +283,25 @@ mkChainSyncClientTracer pid tracer =
   where
     trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
 
+traceChainSyncClientTerminationEventTestBlockWith ::
+  PeerId ->
+  Tracer m String ->
+  TraceChainSyncClientTerminationEvent ->
+  m ()
+traceChainSyncClientTerminationEventTestBlockWith pid tracer = \case
+    TraceExceededSizeLimit ->
+      trace "Terminated because of size limit exceeded."
+    TraceExceededTimeLimit ->
+      trace "Terminated because of time limit exceeded."
+    TraceTerminatedByGDDGovernor ->
+      trace "Terminated by the GDD governor."
+    TraceTerminatedByLoP ->
+      trace "Terminated by the limit on patience."
+  where
+    trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
+
+-- * Other utilities
+
 prettyTime :: MonadMonotonicTime m => m String
 prettyTime = do
   Time time <- getMonotonicTime
@@ -94,14 +311,19 @@ prettyTime = do
       minutes = seconds `quot` 60
   pure $ printf "%02d:%02d.%03d" minutes (seconds `rem` 60) (milliseconds `rem` 1_000)
 
--- | Trace using the given tracer, printing the current time (typically the time
--- of the simulation) and the unit name.
-traceUnitWith :: Tracer m String -> String -> String -> m ()
-traceUnitWith tracer unit msg =
-  traceWith tracer $ printf "%s | %s" unit msg
-
 traceLinesWith ::
   Tracer m String ->
   [String] ->
   m ()
-traceLinesWith tracer = traceWith tracer . unlines
+traceLinesWith tracer = traceWith tracer . mconcat . intersperse "\n"
+
+-- | Trace using the given tracer, printing the current time (typically the time
+-- of the simulation) and the unit name.
+traceUnitLinesWith :: Tracer m String -> String -> [String] -> m ()
+traceUnitLinesWith tracer unit msgs =
+  traceLinesWith tracer $ map (printf "%s | %s" unit) msgs
+
+-- | Trace using the given tracer, printing the current time (typically the time
+-- of the simulation) and the unit name.
+traceUnitWith :: Tracer m String -> String -> String -> m ()
+traceUnitWith tracer unit msg = traceUnitLinesWith tracer unit [msg]
