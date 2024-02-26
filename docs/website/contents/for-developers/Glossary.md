@@ -137,10 +137,12 @@ In the latest Cardano era, each epoch lasts for 432000 slots (= 5 days).
 
 The ledger rules take snapshots of the nonce and stake distribution at different points of time in the course of an epoch. A snapshot may only be _used_ when it has stabilized, which means that their block has become immutable (being older than `k` blocks). Currently, Cardano `mainnet` uses an epoch length of `10k/f` slots, divided into three parts:
 
-- Part 1, length `4k/f` - At the beginning of this part, which forms the boundary with the previous epoch, the stake distribution snapshot is taken.
+Note that nothing in the implementation happens on the transition from Part 1 to Part 2 (in contrast to "from Part 2 to Part 3"), so there exist no concrete values for the individual length of these two phases. The length of Part 3 is however explicitly recorded in the implementation, so the length of Part 1 and Part 2 combined is `10k/f` minus the length of Part 3.
+
+- Part 1, at least length `3k/f` - At the beginning of this part, which forms the boundary with the previous epoch, the stake distribution snapshot is taken.
   At the end of this part, the stake distribution has stabilized.
 
-- Part 2, length `3k/f` - At the end of this part, the nonce snapshot is taken.
+- Part 2, at least length `k/f` - At the end of this part, the nonce snapshot is taken.
 
   The nonce is snapshotted after the stake distribution to prevent _identity grinding_.
   However, this does not prevent _nonce grinding_.
@@ -148,11 +150,14 @@ The ledger rules take snapshots of the nonce and stake distribution at different
   It must contain at least one honest block (created by an honest party as defined above), so that the nonce cannot be solely influenced by the adversary – otherwise they could identity grind before Part 1, knowing what the nonce would be due to owning all the blocks up to its snapshot.
   This criterion is a minimum requirement and wildly unrealistic not to be satisfied with `mainnet` parameters.
 
-  The nonce snapshot could likely be taken earlier without sacrificing security, like after Part 1.
-  Waiting another `3k/f` is playing it extra safe.
+  The nonce snapshot could likely be taken earlier without sacrificing security, like already after `3k/f` after the start of the epoch.
+  Waiting all the way until the start of Part 3 is playing it extra safe.
 
-- Part 3, length `3k/f` - At the end of this part, the nonce snapshot has stabilized and can be used for the leader schedule of the next epoch.
+- Part 3, length `4k/f` since the Conway era, and `3k/f` for all prior Shelley-based eras - At the end of this part, the nonce snapshot has stabilized and can be used for the leader schedule of the next epoch.
 
+  Most importantly, Part 3 has to be at least `3k/f` slots (one stability window) long for the nonce to stabilize before the start of the next epoch (such that all pools agree on the leader schedule).
+
+  As advised by the IOG researchers, the nonce should be snapshotted even a bit earlier for intricate reasons related to Ouroboros Genesis. See erratum 17.3 in the [Shelley ledger specs](https://github.com/IntersectMBO/cardano-ledger/blob/master/README.md) for context.
 
 ## :Eventual consensus
 

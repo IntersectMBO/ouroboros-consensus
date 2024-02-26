@@ -9,8 +9,6 @@ import           Ouroboros.Consensus.Protocol.Abstract
 -- | Translate across protocols
 class TranslateProto protoFrom protoTo
   where
-  translateConsensusConfig ::
-    ConsensusConfig protoFrom -> ConsensusConfig protoTo
   -- | Translate the ledger view.
   translateLedgerView ::
     LedgerView protoFrom -> LedgerView protoTo
@@ -20,6 +18,5 @@ class TranslateProto protoFrom protoTo
 -- | Degenerate instance - we may always translate from a protocol to itself.
 instance TranslateProto singleProto singleProto
   where
-  translateConsensusConfig = id
   translateLedgerView = id
   translateChainDepState = id
