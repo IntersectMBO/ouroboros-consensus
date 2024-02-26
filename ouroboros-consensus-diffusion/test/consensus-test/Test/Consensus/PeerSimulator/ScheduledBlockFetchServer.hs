@@ -20,37 +20,36 @@ import           Test.Consensus.PeerSimulator.ScheduledServer
 import           Test.Consensus.PeerSimulator.Trace
 import           Test.Consensus.PointSchedule (NodeState)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
-import           Test.Util.TestBlock (TestBlock)
 
-data SendBlocks =
-  SendBlock TestBlock [TestBlock]
+data SendBlocks blk =
+  SendBlock blk [blk]
   |
   BatchDone
 
-data BlockFetch =
-  StartBatch [TestBlock]
+data BlockFetch blk =
+  StartBatch [blk]
   |
   NoBlocks
 
-data BlockFetchServerHandlers m state =
+data BlockFetchServerHandlers m state blk =
   BlockFetchServerHandlers {
-    bfshBlockFetch :: ChainRange (Point TestBlock) -> state -> STM m (Maybe BlockFetch, [TraceScheduledBlockFetchServerEvent state TestBlock]),
-    bfshSendBlocks :: [TestBlock] -> state -> STM m (Maybe SendBlocks, [TraceScheduledBlockFetchServerEvent state TestBlock])
+    bfshBlockFetch :: ChainRange (Point blk) -> state -> STM m (Maybe (BlockFetch blk), [TraceScheduledBlockFetchServerEvent state blk]),
+    bfshSendBlocks :: [blk] -> state -> STM m (Maybe (SendBlocks blk), [TraceScheduledBlockFetchServerEvent state blk])
   }
 
 -- | Resources used by a BlockFetch server mock.
-data ScheduledBlockFetchServer m state =
+data ScheduledBlockFetchServer m state blk =
   ScheduledBlockFetchServer {
-    sbfsServer   :: ScheduledServer m state,
-    sbfsTracer   :: Tracer m (TraceScheduledBlockFetchServerEvent state TestBlock),
-    sbfsHandlers :: BlockFetchServerHandlers m state
+    sbfsServer   :: ScheduledServer m state blk,
+    sbfsTracer   :: Tracer m (TraceScheduledBlockFetchServerEvent state blk),
+    sbfsHandlers :: BlockFetchServerHandlers m state blk
   }
 
 scheduledBlockFetchServer ::
-  forall m a .
+  forall m state blk.
   IOLike m =>
-  ScheduledBlockFetchServer m a ->
-  BlockFetchServer TestBlock (Point TestBlock) m ()
+  ScheduledBlockFetchServer m state blk ->
+  BlockFetchServer blk (Point blk) m ()
 scheduledBlockFetchServer ScheduledBlockFetchServer {sbfsServer, sbfsTracer, sbfsHandlers} =
   server
   where
@@ -81,10 +80,10 @@ runScheduledBlockFetchServer ::
   IOLike m =>
   PeerId ->
   STM m () ->
-  STM m (Maybe (NodeState TestBlock)) ->
-  Tracer m (TraceEvent TestBlock) ->
-  BlockFetchServerHandlers m (NodeState TestBlock) ->
-  BlockFetchServer TestBlock (Point TestBlock) m ()
+  STM m (Maybe (NodeState blk)) ->
+  Tracer m (TraceEvent blk) ->
+  BlockFetchServerHandlers m (NodeState blk) blk ->
+  BlockFetchServer blk (Point blk) m ()
 runScheduledBlockFetchServer ssPeerId ssTickStarted ssCurrentState tracer sbfsHandlers =
   scheduledBlockFetchServer ScheduledBlockFetchServer {
     sbfsServer = ScheduledServer {

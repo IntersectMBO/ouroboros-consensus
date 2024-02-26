@@ -25,9 +25,8 @@ import           Control.Monad.Writer.Strict (MonadWriter (tell),
 import           Data.List (isSuffixOf)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (fromJust, fromMaybe)
-import           Ouroboros.Consensus.Block (HasHeader, HeaderHash,
-                     Point (GenesisPoint), blockHash, castPoint, getHeader,
-                     withOrigin)
+import           Ouroboros.Consensus.Block (GetHeader, HasHeader, HeaderHash,
+                     Point (GenesisPoint), blockHash, getHeader, withOrigin)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -51,14 +50,14 @@ import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 
-toPoint :: (HasHeader block, HeaderHash block ~ TestHash) => WithOrigin block -> Point TestBlock
-toPoint = castPoint . withOrigin GenesisPoint blockPoint
-
 -- | More efficient implementation of a check used in some of the handlers,
 -- determining whether the first argument is on the chain that ends in the
 -- second argument.
 -- We would usually call @withinFragmentBounds@ for this, but since we're
 -- using 'TestBlock', looking at the hash is cheaper.
+--
+-- TODO: Unify with 'Test.UtilTestBlock.isAncestorOf' which basically does the
+-- same thing except not on 'WithOrigin'.
 isAncestorOf ::
   HasHeader blk1 =>
   HasHeader blk2 =>
@@ -80,12 +79,12 @@ isAncestorOf Origin _ = True
 -- Extracts the fragment up to the current advertised tip from the block tree,
 -- then searches for any of the client's points in it.
 handlerFindIntersection ::
-  IOLike m =>
-  StrictTVar m (Point TestBlock) ->
-  BlockTree TestBlock ->
-  [Point TestBlock] ->
-  NodeState TestBlock ->
-  STM m (Maybe FindIntersect, [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock])
+  (IOLike m, HasHeader blk) =>
+  StrictTVar m (Point blk) ->
+  BlockTree blk ->
+  [Point blk] ->
+  NodeState blk ->
+  STM m (Maybe (FindIntersect blk), [TraceScheduledChainSyncServerEvent (NodeState blk) blk])
 handlerFindIntersection currentIntersection blockTree clientPoints points = do
   let tip' = nsTipTip points
       tipPoint = getTipPoint tip'
@@ -107,12 +106,12 @@ handlerFindIntersection currentIntersection blockTree clientPoints points = do
 -- - HP before intersection (special case for the point scheduler architecture)
 -- - Anchor != intersection
 handlerRequestNext ::
-  forall m .
-  IOLike m =>
-  StrictTVar m (Point TestBlock) ->
-  BlockTree TestBlock ->
-  NodeState TestBlock ->
-  STM m (Maybe RequestNext, [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock])
+  forall m blk.
+  (IOLike m, HasHeader blk, GetHeader blk) =>
+  StrictTVar m (Point blk) ->
+  BlockTree blk ->
+  NodeState blk ->
+  STM m (Maybe (RequestNext blk), [TraceScheduledChainSyncServerEvent (NodeState blk) blk])
 handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
@@ -120,16 +119,16 @@ handlerRequestNext currentIntersection blockTree points =
     withHeader intersection (nsHeader points)
   where
     withHeader ::
-      Point TestBlock ->
-      WithOrigin TestBlock ->
+      Point blk ->
+      WithOrigin blk ->
       WriterT
-        [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock]
+        [TraceScheduledChainSyncServerEvent (NodeState blk) blk]
         (STM m)
-        (Maybe RequestNext)
+        (Maybe (RequestNext blk))
     withHeader intersection h =
       maybe noPathError (analysePath hp) (BT.findPath intersection hp blockTree)
       where
-        hp = toPoint h
+        hp = withOrigin GenesisPoint blockPoint h
 
     noPathError = error "serveHeader: intersection and headerPoint should always be in the block tree"
 
@@ -179,9 +178,9 @@ handlerRequestNext currentIntersection blockTree points =
 
 -- REVIEW: We call this a lot, and I assume it creates some significant overhead.
 -- We should figure out a cheaper way to achieve what we're doing with the result.
--- Since we're in TestBlock, we can at least check whether a block can extend another block,
+-- Since we're in blk, we can at least check whether a block can extend another block,
 -- but then we won't be able to generalize later.
-fragmentUpTo :: BlockTree TestBlock -> String -> Point TestBlock -> AnchoredFragment TestBlock
+fragmentUpTo :: HasHeader blk => BlockTree blk -> String -> Point blk -> AnchoredFragment blk
 fragmentUpTo blockTree desc b =
   fromMaybe fatal (BT.findFragment b blockTree)
   where
@@ -193,12 +192,12 @@ fragmentUpTo blockTree desc b =
 -- If BP moved to a fork without serving all blocks corresponding to advertised headers, serve them.
 -- Otherwise, stall.
 handlerBlockFetch ::
-  forall m .
-  IOLike m =>
-  BlockTree TestBlock ->
-  ChainRange (Point TestBlock) ->
-  NodeState TestBlock ->
-  STM m (Maybe BlockFetch, [TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock])
+  forall m blk.
+  (IOLike m, HasHeader blk) =>
+  BlockTree blk ->
+  ChainRange (Point blk) ->
+  NodeState blk ->
+  STM m (Maybe (BlockFetch blk), [TraceScheduledBlockFetchServerEvent (NodeState blk) blk])
 handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
   runWriterT (serveFromBpFragment (AF.sliceRange hpChain from to))
   where
@@ -213,7 +212,7 @@ handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
         trace $ TraceWaitingForRange from to
         pure Nothing
 
-    hpChain = fragmentUpTo blockTree "header point" (toPoint nsHeader)
+    hpChain = fragmentUpTo blockTree "header point" (withOrigin GenesisPoint blockPoint nsHeader)
 
     trace = tell . pure
 
@@ -296,7 +295,7 @@ handlerSendBlocks ::
   IOLike m =>
   [TestBlock] ->
   NodeState TestBlock ->
-  STM m (Maybe SendBlocks, [TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock])
+  STM m (Maybe (SendBlocks TestBlock), [TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock])
 handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
   runWriterT (checkDone blocks)
   where
