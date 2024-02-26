@@ -30,7 +30,7 @@ import           Test.Util.Tracer (recordingTracerTVar)
 -- | See 'runGenesisTest'.
 data RunGenesisTestResult = RunGenesisTestResult {
   rgtrTrace :: String,
-  rgtrStateView :: StateView
+  rgtrStateView :: StateView TestBlock
   }
 
 -- | Runs the given 'GenesisTest' and 'PointSchedule' and evaluates the given
@@ -59,7 +59,7 @@ runGenesisTest' ::
   Testable prop =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
-  (StateView -> prop) ->
+  (StateView TestBlock -> prop) ->
   Property
 runGenesisTest' schedulerConfig genesisTest makeProperty =
     counterexample rgtrTrace $ makeProperty rgtrStateView
@@ -74,8 +74,8 @@ forAllGenesisTest ::
   Testable prop =>
   Gen (GenesisTestFull TestBlock) ->
   SchedulerConfig ->
-  (GenesisTestFull TestBlock -> StateView -> [GenesisTestFull TestBlock]) ->
-  (GenesisTestFull TestBlock -> StateView -> prop) ->
+  (GenesisTestFull TestBlock -> StateView TestBlock -> [GenesisTestFull TestBlock]) ->
+  (GenesisTestFull TestBlock -> StateView TestBlock -> prop) ->
   Property
 forAllGenesisTest generator schedulerConfig shrinker mkProperty =
   forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->

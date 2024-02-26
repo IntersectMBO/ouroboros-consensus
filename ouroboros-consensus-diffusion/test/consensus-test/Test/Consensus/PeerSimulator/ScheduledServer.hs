@@ -23,21 +23,20 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike,
 import           Test.Consensus.PeerSimulator.Trace
                      (TraceScheduledServerHandlerEvent (..))
 import           Test.Consensus.PointSchedule.Peers (PeerId)
-import           Test.Util.TestBlock (TestBlock)
 
-data ScheduledServer m state =
+data ScheduledServer m state blk =
   ScheduledServer {
     ssPeerId       :: PeerId,
     ssCurrentState :: STM m (Maybe state),
     ssTickStarted  :: STM m (),
-    ssCommonTracer :: Tracer m (TraceScheduledServerHandlerEvent state TestBlock)
+    ssCommonTracer :: Tracer m (TraceScheduledServerHandlerEvent state blk)
   }
 
-nextTickState :: IOLike m => ScheduledServer m a -> m (Maybe a)
+nextTickState :: IOLike m => ScheduledServer m state blk -> m (Maybe state)
 nextTickState ScheduledServer {ssCurrentState, ssTickStarted} =
   atomically (ssTickStarted >> ssCurrentState)
 
-retryOffline :: IOLike m => ScheduledServer m a -> Maybe a -> m a
+retryOffline :: IOLike m => ScheduledServer m state blk -> Maybe state -> m state
 retryOffline server = maybe (awaitOnlineState server) pure
 
 -- | Block until the peer simulator has updated the concurrency primitive that
@@ -45,7 +44,7 @@ retryOffline server = maybe (awaitOnlineState server) pure
 -- If the new state is 'Nothing', the point schedule has declared this peer as
 -- offline for the current tick, so it will not resume operation and wait for
 -- the next update.
-awaitOnlineState :: IOLike m => ScheduledServer m a -> m a
+awaitOnlineState :: IOLike m => ScheduledServer m state blk -> m state
 awaitOnlineState server =
   retryOffline server =<< nextTickState server
 
@@ -55,7 +54,7 @@ awaitOnlineState server =
 -- Since processing of a tick always ends when the handler finishes
 -- after serving the last point, this function is only relevant for the
 -- initial state update.
-ensureCurrentState :: IOLike m => ScheduledServer m a -> m a
+ensureCurrentState :: IOLike m => ScheduledServer m state blk -> m state
 ensureCurrentState server =
   retryOffline server =<< atomically (ssCurrentState server)
 
@@ -86,7 +85,7 @@ runHandlerWithTrace tracer handler = do
 -- message with the server's continuation in it.
 runHandler ::
   IOLike m =>
-  ScheduledServer m state ->
+  ScheduledServer m state blk ->
   String ->
   (state -> STM m (Maybe msg, [traceMsg])) ->
   Tracer m traceMsg ->

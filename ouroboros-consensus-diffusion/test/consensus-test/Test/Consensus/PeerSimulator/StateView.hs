@@ -1,4 +1,5 @@
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE NamedFieldPuns    #-}
 
 module Test.Consensus.PeerSimulator.StateView (
     ChainSyncException (..)
@@ -42,20 +43,19 @@ instance Condense ChainSyncException where
 -- (for instance the fragment that is selected by the ChainDB) but also
 -- information about the mocked peers (for instance the exceptions raised in the
 -- mocked ChainSync server threads).
-data StateView = StateView {
-    svSelectedChain       :: AnchoredFragment (Header TestBlock),
+data StateView blk = StateView {
+    svSelectedChain       :: AnchoredFragment (Header blk),
     svChainSyncExceptions :: [ChainSyncException]
   }
-  deriving Show
 
-instance Condense StateView where
+instance Condense (StateView TestBlock) where
   condense StateView {svSelectedChain, svChainSyncExceptions} =
     "SelectedChain: " ++ terseHFragment svSelectedChain ++ "\n"
     ++ "ChainSyncExceptions:\n" ++ unlines (("  - " ++) . condense <$> svChainSyncExceptions)
 
 -- | Return the list of peer ids for all peers whose ChainSync thread was killed
 -- by the node under test (that is it received 'ThreadKilled').
-chainSyncKilled :: StateView -> [PeerId]
+chainSyncKilled :: StateView blk -> [PeerId]
 chainSyncKilled stateView =
   mapMaybe
     (\ChainSyncException{csePeerId, cseException} ->
@@ -92,8 +92,8 @@ defaultStateViewTracers = do
 snapshotStateView ::
   IOLike m =>
   StateViewTracers m ->
-  ChainDB m TestBlock ->
-  m StateView
+  ChainDB m blk ->
+  m (StateView blk)
 snapshotStateView StateViewTracers{svtGetChainSyncExceptions} chainDb = do
   svChainSyncExceptions <- svtGetChainSyncExceptions
   svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
