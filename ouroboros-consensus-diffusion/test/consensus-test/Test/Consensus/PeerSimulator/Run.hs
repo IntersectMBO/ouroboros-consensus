@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -22,6 +23,8 @@ import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Genesis.Governor
                      (reprocessLoEBlocksOnCandidateChange, updateLoEFragStall)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncLoPBucketConfig (..),
                      ChainSyncLoPBucketEnabledConfig (..))
@@ -36,12 +39,14 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike,
                      MonadDelay (threadDelay), MonadSTM (atomically),
                      StrictTVar, readTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
+                     HasHeader)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
                      bracketSyncWithFetchClient, newFetchClientRegistry)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
                      ControlMessageSTM)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
+import           Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import           Test.Consensus.Network.Driver.Limits.Extras
 import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
 import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient,
@@ -121,18 +126,18 @@ debugScheduler conf = conf { scDebug = True }
 -- Execution is started asynchronously, returning an action that kills the thread,
 -- to allow extraction of a potential exception.
 startChainSyncConnectionThread ::
-  (IOLike m, MonadTimer m) =>
+  (IOLike m, MonadTimer m, LedgerSupportsProtocol blk, ShowProxy blk, ShowProxy (Header blk)) =>
   ResourceRegistry m ->
-  Tracer m (TraceEvent TestBlock) ->
-  TopLevelConfig TestBlock ->
-  ChainDbView m TestBlock ->
-  FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
-  SharedResources m ->
-  ChainSyncResources m ->
+  Tracer m (TraceEvent blk) ->
+  TopLevelConfig blk ->
+  ChainDbView m blk ->
+  FetchClientRegistry PeerId (Header blk) blk m ->
+  SharedResources m blk ->
+  ChainSyncResources m blk ->
   ChainSyncTimeout ->
   ChainSyncLoPBucketConfig ->
   StateViewTracers m ->
-  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header TestBlock)))) ->
+  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
   m ()
 startChainSyncConnectionThread
   registry
@@ -154,12 +159,12 @@ startChainSyncConnectionThread
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
 -- register it for synchronization with the ChainSync client.
 startBlockFetchConnectionThread ::
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m, HasHeader blk, HasHeader (Header blk)) =>
   ResourceRegistry m ->
-  FetchClientRegistry PeerId (Header TestBlock) TestBlock m ->
+  FetchClientRegistry PeerId (Header blk) blk m ->
   ControlMessageSTM m ->
-  SharedResources m ->
-  BlockFetchResources m ->
+  SharedResources m blk ->
+  BlockFetchResources m blk ->
   m ()
 startBlockFetchConnectionThread
   registry
@@ -177,10 +182,10 @@ startBlockFetchConnectionThread
 -- for new instructions.
 dispatchTick ::
   IOLike m =>
-  Tracer m (TraceSchedulerEvent TestBlock) ->
+  Tracer m (TraceSchedulerEvent blk) ->
   Tracer m () ->
-  Map PeerId (PeerResources m) ->
-  (Int, (DiffTime, Peer (NodeState TestBlock))) ->
+  Map PeerId (PeerResources m blk) ->
+  (Int, (DiffTime, Peer (NodeState blk))) ->
   m ()
 dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
   case peers Map.!? pid of
@@ -198,10 +203,10 @@ dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
 -- client.
 runScheduler ::
   IOLike m =>
-  Tracer m (TraceSchedulerEvent TestBlock) ->
+  Tracer m (TraceSchedulerEvent blk) ->
   Tracer m () ->
-  PeersSchedule TestBlock ->
-  Map PeerId (PeerResources m) ->
+  PeersSchedule blk ->
+  Map PeerId (PeerResources m blk) ->
   m ()
 runScheduler tracer stateTracer ps peers = do
   traceWith tracer TraceBeginningOfTime
@@ -216,7 +221,7 @@ runPointSchedule ::
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
   Tracer m (TraceEvent TestBlock) ->
-  m StateView
+  m (StateView TestBlock)
 runPointSchedule schedulerConfig genesisTest tracer0 =
   withRegistry $ \registry -> do
     stateViewTracers <- defaultStateViewTracers

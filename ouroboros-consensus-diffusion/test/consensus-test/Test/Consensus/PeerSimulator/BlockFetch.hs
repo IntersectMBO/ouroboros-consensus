@@ -22,6 +22,7 @@ import           Data.Map.Strict (Map)
 import           Network.TypedProtocol.Channel (createConnectedChannels)
 import           Network.TypedProtocol.Driver.Simple
                      (runConnectedPeersPipelined)
+import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -55,7 +56,7 @@ startBlockFetchLogic ::
   -> STM m (Map peer (AnchoredFragment (Header TestBlock)))
   -> m ()
 startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates = do
-    let slotForgeTime :: BlockFetchClientInterface.SlotForgeTimeOracle m TestBlock
+    let slotForgeTime :: BlockFetchClientInterface.SlotForgeTimeOracle m blk
         slotForgeTime _ = pure dawnOfTime
 
         blockFetchConsensusInterface =
@@ -88,10 +89,10 @@ startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates = do
         blockFetchCfg
 
 startKeepAliveThread ::
-     forall m peer.
+     forall m peer blk.
      (Ord peer, IOLike m)
   => ResourceRegistry m
-  -> FetchClientRegistry peer (Header TestBlock) TestBlock m
+  -> FetchClientRegistry peer (Header blk) blk m
   -> peer
   -> m ()
 startKeepAliveThread registry fetchClientRegistry peerId =
@@ -100,11 +101,11 @@ startKeepAliveThread registry fetchClientRegistry peerId =
         atomically retry
 
 runBlockFetchClient ::
-     (Ord peer, IOLike m, MonadTime m, MonadTimer m)
+     (Ord peer, IOLike m, MonadTime m, MonadTimer m, HasHeader blk, HasHeader (Header blk))
   => peer
-  -> FetchClientRegistry peer (Header TestBlock) TestBlock m
+  -> FetchClientRegistry peer (Header blk) blk m
   -> ControlMessageSTM m
-  -> BlockFetchServer TestBlock (Point TestBlock) m ()
+  -> BlockFetchServer blk (Point blk) m ()
   -> m ()
 runBlockFetchClient peerId fetchClientRegistry controlMsgSTM server =
     bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId $ \clientCtx -> do
