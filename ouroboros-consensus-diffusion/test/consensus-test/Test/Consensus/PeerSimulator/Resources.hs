@@ -26,7 +26,6 @@ import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
-import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
                      StrictTVar, readTVar, uncheckedNewTVarM, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -40,6 +39,7 @@ import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
                      (BlockFetchServerHandlers (..),
                      runScheduledBlockFetchServer)
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
+import           Test.Consensus.PeerSimulator.Trace (TraceEvent)
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
@@ -61,7 +61,7 @@ data SharedResources m =
     -- This is 'Maybe' because we cannot wait for the initial state otherwise.
     srCurrentState :: StrictTVar m (Maybe (NodeState TestBlock)),
 
-    srTracer       :: Tracer m String
+    srTracer       :: Tracer m (TraceEvent TestBlock)
   }
 
 -- | The data used by the point scheduler to interact with the mocked protocol handler in
@@ -143,7 +143,7 @@ makeChainSyncResources csrTickStarted SharedResources {srPeerId, srTracer, srBlo
   csrCurrentIntersection <- uncheckedNewTVarM $ AF.Point Origin
   let
     handlers = makeChainSyncServerHandlers csrCurrentIntersection srBlockTree
-    csrServer = runScheduledChainSyncServer (condense srPeerId) csrTickStarted (readTVar srCurrentState) srTracer handlers
+    csrServer = runScheduledChainSyncServer srPeerId csrTickStarted (readTVar srCurrentState) srTracer handlers
   pure ChainSyncResources {csrTickStarted, csrServer, csrCurrentIntersection}
 
 makeBlockFetchResources ::
@@ -161,7 +161,9 @@ makeBlockFetchResources bfrTickStarted SharedResources {srPeerId, srTracer, srBl
       bfshBlockFetch = handlerBlockFetch srBlockTree,
       bfshSendBlocks = handlerSendBlocks
     }
-    bfrServer = runScheduledBlockFetchServer (condense srPeerId) bfrTickStarted (readTVar srCurrentState) srTracer handlers
+    bfrServer =
+      runScheduledBlockFetchServer srPeerId bfrTickStarted (readTVar srCurrentState)
+        srTracer handlers
 
 -- | Create the concurrency transactions for communicating the begin of a peer's
 -- tick and its new state to the ChainSync and BlockFetch servers.
@@ -207,7 +209,7 @@ updateState srCurrentState =
 -- TODO pass BFR and CSR to runScheduled... rather than passing the individual resources in and storing the result
 makePeerResources ::
   IOLike m =>
-  Tracer m String ->
+  Tracer m (TraceEvent TestBlock) ->
   BlockTree TestBlock ->
   PeerId ->
   m (PeerResources m)
@@ -222,7 +224,7 @@ makePeerResources srTracer srBlockTree srPeerId = do
 -- | Create resources for all given peers operating on the given block tree.
 makePeerSimulatorResources ::
   IOLike m =>
-  Tracer m String ->
+  Tracer m (TraceEvent TestBlock) ->
   BlockTree TestBlock ->
   NonEmpty PeerId ->
   m (PeerSimulatorResources m)

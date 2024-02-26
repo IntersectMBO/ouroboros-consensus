@@ -19,7 +19,7 @@ import           Test.Consensus.Genesis.Setup.Classifiers (classifiers, Classifi
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
-import           Test.Consensus.PeerSimulator.Trace (traceLinesWith)
+import           Test.Consensus.PeerSimulator.Trace (traceLinesWith, mkTracerTestBlock)
 import           Test.Consensus.PointSchedule
 import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -44,9 +44,9 @@ runGenesisTest schedulerConfig genesisTest =
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
-    traceLinesWith tracer $ prettyGenesisTest genesisTest
+    traceLinesWith tracer $ prettyGenesisTest prettyPeersSchedule genesisTest
 
-    rgtrStateView <- runPointSchedule schedulerConfig genesisTest tracer
+    rgtrStateView <- runPointSchedule schedulerConfig genesisTest (mkTracerTestBlock tracer)
     traceWith tracer (condense rgtrStateView)
     rgtrTrace <- unlines <$> getTrace
 
