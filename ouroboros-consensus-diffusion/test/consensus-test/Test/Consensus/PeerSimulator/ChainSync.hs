@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -13,11 +14,14 @@ import           Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncLoPBucketConfig, Consensus,
                      bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), StrictTVar, uncheckedNewTVarM)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -46,18 +50,18 @@ import           Test.Consensus.PeerSimulator.Trace
                      TraceEvent (..))
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestBlock (TestBlock)
 
 -- | A basic ChainSync client. It wraps around 'chainSyncClient', but simplifies
 -- quite a few aspects. In particular, the size of the pipeline cannot exceed 20
 -- messages and the “in future” checks are disabled.
-basicChainSyncClient :: forall m.
-  IOLike m =>
+basicChainSyncClient ::
+  forall m blk.
+  (IOLike m, LedgerSupportsProtocol blk) =>
   PeerId ->
-  Tracer m (TraceEvent TestBlock) ->
-  TopLevelConfig TestBlock ->
-  ChainDbView m TestBlock ->
-  StrictTVar m (AnchoredFragment (Header TestBlock)) ->
+  Tracer m (TraceEvent blk) ->
+  TopLevelConfig blk ->
+  ChainDbView m blk ->
+  StrictTVar m (AnchoredFragment (Header blk)) ->
   -- ^ A TVar containing the fragment of headers for that peer, kept up to date
   -- by the ChainSync client.
   (m (), m ()) ->
@@ -65,7 +69,7 @@ basicChainSyncClient :: forall m.
   (m (), m (), m ()) ->
   -- ^ Three monadic actions called to pause and resume the LoP bucket and to
   -- add a token to the LoP bucket.
-  Consensus ChainSyncClientPipelined TestBlock m
+  Consensus ChainSyncClientPipelined blk m
 basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) =
   chainSyncClient
     CSClient.ConfigEnv {
@@ -88,7 +92,7 @@ basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, st
       }
   where
     dummyHeaderInFutureCheck ::
-      InFutureCheck.SomeHeaderInFutureCheck m TestBlock
+      InFutureCheck.SomeHeaderInFutureCheck m blk
     dummyHeaderInFutureCheck =
       InFutureCheck.SomeHeaderInFutureCheck InFutureCheck.HeaderInFutureCheck
       { InFutureCheck.proxyArrival = Proxy
@@ -101,13 +105,13 @@ basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, st
 -- 'basicChainSyncClient', synchronously. Exceptions are caught, sent to the
 -- 'StateViewTracers' and logged.
 runChainSyncClient ::
-  (IOLike m, MonadTimer m) =>
-  Tracer m (TraceEvent TestBlock) ->
-  TopLevelConfig TestBlock ->
-  ChainDbView m TestBlock ->
+  (IOLike m, MonadTimer m, LedgerSupportsProtocol blk, ShowProxy blk, ShowProxy (Header blk)) =>
+  Tracer m (TraceEvent blk) ->
+  TopLevelConfig blk ->
+  ChainDbView m blk ->
   PeerId ->
   -- ^ The id of the peer to which the client connects.
-  ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m () ->
+  ChainSyncServer (Header blk) (Point blk) (Tip blk) m () ->
   -- ^ The ChainSync server to which the client connects.
   ChainSyncTimeout ->
   -- ^ Timeouts for this client.
@@ -115,7 +119,7 @@ runChainSyncClient ::
   -- ^ Configuration for the LoP bucket.
   StateViewTracers m ->
   -- ^ Tracers used to record information for the future 'StateView'.
-  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header TestBlock)))) ->
+  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
   -- ^ A TVar containing a map of fragments of headers for each peer. This
   -- function will (via 'bracketChainSyncClient') register and de-register a
   -- TVar for the fragment of the peer.

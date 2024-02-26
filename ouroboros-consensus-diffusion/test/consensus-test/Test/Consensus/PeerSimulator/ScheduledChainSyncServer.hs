@@ -13,6 +13,7 @@ module Test.Consensus.PeerSimulator.ScheduledChainSyncServer (
   ) where
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
+import           Ouroboros.Consensus.Block (Header)
 import           Ouroboros.Consensus.Block.Abstract (Point (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM))
 import           Ouroboros.Network.Block (Tip (..))
@@ -28,41 +29,40 @@ import           Test.Consensus.PeerSimulator.Trace
                      TraceScheduledChainSyncServerEvent (..))
 import           Test.Consensus.PointSchedule (NodeState)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
-import           Test.Util.TestBlock (Header (..), TestBlock)
 
 -- | Pure representation of the messages produced by the handler for the @StNext@
 -- protocol state of a ChainSync server.
-data RequestNext =
-  RollForward (Header TestBlock) (Tip TestBlock)
+data RequestNext blk =
+  RollForward (Header blk) (Tip blk)
   |
-  RollBackward (Point TestBlock) (Tip TestBlock)
+  RollBackward (Point blk) (Tip blk)
   |
   AwaitReply
 
 -- | Pure representation of the messages produced by the handler for the @StIntersect@
 -- protocol state of a ChainSync server.
-data FindIntersect =
-  IntersectFound (Point TestBlock) (Tip TestBlock)
+data FindIntersect blk =
+  IntersectFound (Point blk) (Tip blk)
   |
-  IntersectNotFound (Tip TestBlock)
+  IntersectNotFound (Tip blk)
 
 -- | Handlers for the request a ChainSync server might receive from a client.
 -- These take an abstract argument that corresponds to the state of a point
 -- schedule tick and return the simplified protocol message types.
 --
 -- See 'runHandlerWithTrace' for the meaning of @[String]@.
-data ChainSyncServerHandlers m state =
+data ChainSyncServerHandlers m state blk =
   ChainSyncServerHandlers {
-    csshRequestNext      :: state -> STM m (Maybe RequestNext, [TraceScheduledChainSyncServerEvent state TestBlock]),
-    csshFindIntersection :: [Point TestBlock] -> state -> STM m (Maybe FindIntersect, [TraceScheduledChainSyncServerEvent state TestBlock])
+    csshRequestNext      :: state -> STM m (Maybe (RequestNext blk), [TraceScheduledChainSyncServerEvent state blk]),
+    csshFindIntersection :: [Point blk] -> state -> STM m (Maybe (FindIntersect blk), [TraceScheduledChainSyncServerEvent state blk])
   }
 
 -- | Resources used by a ChainSync server mock.
-data ScheduledChainSyncServer m state =
+data ScheduledChainSyncServer m state blk =
   ScheduledChainSyncServer {
-    scssServer   :: ScheduledServer m state,
-    scssTracer   :: Tracer m (TraceScheduledChainSyncServerEvent state TestBlock),
-    scssHandlers :: ChainSyncServerHandlers m state
+    scssServer   :: ScheduledServer m state blk,
+    scssTracer   :: Tracer m (TraceScheduledChainSyncServerEvent state blk),
+    scssHandlers :: ChainSyncServerHandlers m state blk
   }
 
 -- | Declare a mock ChainSync protocol server in its typed-protocols encoding
@@ -78,8 +78,8 @@ data ScheduledChainSyncServer m state =
 -- interface separated from the scheduling and protocol plumbing infrastructure.
 scheduledChainSyncServer ::
   IOLike m =>
-  ScheduledChainSyncServer m a ->
-  ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
+  ScheduledChainSyncServer m a blk ->
+  ChainSyncServer (Header blk) (Point blk) (Tip blk) m ()
 scheduledChainSyncServer ScheduledChainSyncServer {scssHandlers, scssTracer, scssServer} =
   go
   where
@@ -136,10 +136,10 @@ runScheduledChainSyncServer ::
   IOLike m =>
   PeerId ->
   STM m () ->
-  STM m (Maybe (NodeState TestBlock)) ->
-  Tracer m (TraceEvent TestBlock) ->
-  ChainSyncServerHandlers m (NodeState TestBlock) ->
-  ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m ()
+  STM m (Maybe (NodeState blk)) ->
+  Tracer m (TraceEvent blk) ->
+  ChainSyncServerHandlers m (NodeState blk) blk ->
+  ChainSyncServer (Header blk) (Point blk) (Tip blk) m ()
 runScheduledChainSyncServer ssPeerId ssTickStarted ssCurrentState tracer scssHandlers =
   scheduledChainSyncServer ScheduledChainSyncServer {
     scssServer = ScheduledServer {

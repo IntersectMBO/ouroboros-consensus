@@ -28,7 +28,7 @@ import           Test.Util.TestBlock (TestBlock, isAncestorOf,
 -- schedule.
 shrinkPeerSchedules ::
   GenesisTestFull TestBlock ->
-  StateView ->
+  StateView TestBlock ->
   [GenesisTestFull TestBlock]
 shrinkPeerSchedules genesisTest _stateView =
   shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&> \shrunkSchedule ->
