@@ -28,7 +28,6 @@ import           Data.Maybe (fromJust, fromMaybe)
 import           Ouroboros.Consensus.Block (HasHeader, HeaderHash,
                      Point (GenesisPoint), blockHash, castPoint, getHeader,
                      withOrigin)
-import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -45,9 +44,11 @@ import           Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
 import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
                      (FindIntersect (..),
                      RequestNext (AwaitReply, RollBackward, RollForward))
+import           Test.Consensus.PeerSimulator.Trace
+                     (TraceScheduledBlockFetchServerEvent (..),
+                     TraceScheduledChainSyncServerEvent (..))
 import           Test.Consensus.PointSchedule
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TersePrinting (terseBlock, terseFragment, tersePoint)
 import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 
 toPoint :: (HasHeader block, HeaderHash block ~ TestHash) => WithOrigin block -> Point TestBlock
@@ -84,7 +85,7 @@ handlerFindIntersection ::
   BlockTree TestBlock ->
   [Point TestBlock] ->
   NodeState TestBlock ->
-  STM m (Maybe FindIntersect, [String])
+  STM m (Maybe FindIntersect, [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock])
 handlerFindIntersection currentIntersection blockTree clientPoints points = do
   let tip' = nsTipTip points
       tipPoint = getTipPoint tip'
@@ -111,14 +112,20 @@ handlerRequestNext ::
   StrictTVar m (Point TestBlock) ->
   BlockTree TestBlock ->
   NodeState TestBlock ->
-  STM m (Maybe RequestNext, [String])
+  STM m (Maybe RequestNext, [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock])
 handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
-    trace $ "  last intersection is " ++ tersePoint intersection
+    trace $ TraceLastIntersection intersection
     withHeader intersection (nsHeader points)
   where
-    withHeader :: Point TestBlock -> WithOrigin TestBlock -> WriterT [String] (STM m) (Maybe RequestNext)
+    withHeader ::
+      Point TestBlock ->
+      WithOrigin TestBlock ->
+      WriterT
+        [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock]
+        (STM m)
+        (Maybe RequestNext)
     withHeader intersection h =
       maybe noPathError (analysePath hp) (BT.findPath intersection hp blockTree)
       where
@@ -134,22 +141,21 @@ handlerRequestNext currentIntersection blockTree points =
       -- stalling as an adversarial behaviour), then we ask the client to wait;
       -- otherwise we just do nothing.
       (BT.PathAnchoredAtSource True, AF.Empty _) | getTipPoint tip' == hp -> do
-        trace "  chain has been fully served"
+        trace TraceChainIsFullyServed
         pure (Just AwaitReply)
       (BT.PathAnchoredAtSource True, AF.Empty _) -> do
-        trace "  intersection is exactly our header point"
+        trace TraceIntersectionIsHeaderPoint
         pure Nothing
       -- If the anchor is the intersection and the fragment is non-empty, then
       -- we have something to serve.
       (BT.PathAnchoredAtSource True, fragmentAhead@(next AF.:< _)) -> do
-        trace "  intersection is before our header point"
-        trace $ "  fragment ahead: " ++ terseFragment fragmentAhead
+        trace $ TraceIntersectionIsStrictAncestorOfHeaderPoint fragmentAhead
         lift $ writeTVar currentIntersection $ blockPoint next
         pure $ Just (RollForward (getHeader next) (nsTipTip points))
       -- If the anchor is not the intersection but the fragment is empty, then
       -- the intersection is further than the tip that we can serve.
       (BT.PathAnchoredAtSource False, AF.Empty _) -> do
-        trace "  intersection is further than our header point"
+        trace TraceIntersectionIsStrictDescendentOfHeaderPoint
         -- REVIEW: The following is a hack that allows the honest peer to not
         -- get disconnected when it falls behind. Why does a peer doing that not
         -- get disconnected from?
@@ -163,10 +169,7 @@ handlerRequestNext currentIntersection blockTree points =
       -- If the anchor is not the intersection and the fragment is non-empty,
       -- then we require a rollback
       (BT.PathAnchoredAtSource False, fragment) -> do
-        trace $ "  we will require a rollback to" ++ condense (AF.anchorPoint fragment)
-        trace $ "  fragment: " ++ condense fragment
-        let
-          point = AF.anchorPoint fragment
+        let point = AF.anchorPoint fragment
         lift $ writeTVar currentIntersection point
         pure $ Just (RollBackward point tip')
 
@@ -195,7 +198,7 @@ handlerBlockFetch ::
   BlockTree TestBlock ->
   ChainRange (Point TestBlock) ->
   NodeState TestBlock ->
-  STM m (Maybe BlockFetch, [String])
+  STM m (Maybe BlockFetch, [TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock])
 handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
   runWriterT (serveFromBpFragment (AF.sliceRange hpChain from to))
   where
@@ -204,10 +207,10 @@ handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
     -- must refuse.
     serveFromBpFragment = \case
       Just slice -> do
-        trace ("Starting batch for slice " ++ terseFragment slice)
+        trace $ TraceStartingBatch slice
         pure (Just (StartBatch (AF.toOldestFirst slice)))
       Nothing    -> do
-        trace ("Waiting for next tick for range: " ++ tersePoint from ++ " -> " ++ tersePoint to)
+        trace $ TraceWaitingForRange from to
         pure Nothing
 
     hpChain = fragmentUpTo blockTree "header point" (toPoint nsHeader)
@@ -293,13 +296,13 @@ handlerSendBlocks ::
   IOLike m =>
   [TestBlock] ->
   NodeState TestBlock ->
-  STM m (Maybe SendBlocks, [String])
+  STM m (Maybe SendBlocks, [TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock])
 handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
   runWriterT (checkDone blocks)
   where
     checkDone = \case
       [] -> do
-        trace "Batch done"
+        trace TraceBatchIsDone
         pure (Just BatchDone)
       (next : future) ->
         blocksLeft next future
@@ -308,12 +311,12 @@ handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
       | isAncestorOf (At next) nsBlock
       || compensateForScheduleRollback next
       = do
-        trace ("Sending " ++ terseBlock next)
+        trace $ TraceSendingBlock next
         pure (Just (SendBlock next future))
 
       | otherwise
       = do
-        trace "BP is behind"
+        trace TraceBlockPointIsBehind
         pure Nothing
 
     -- Here we encode the conditions for the special situation mentioned above.

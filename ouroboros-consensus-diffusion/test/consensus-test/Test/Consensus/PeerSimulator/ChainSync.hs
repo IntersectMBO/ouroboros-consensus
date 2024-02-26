@@ -7,7 +7,7 @@ module Test.Consensus.PeerSimulator.ChainSync (runChainSyncClient) where
 
 import           Control.Exception (AsyncException (ThreadKilled))
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (Tracer, nullTracer, traceWith)
+import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
@@ -18,7 +18,6 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), StrictTVar, uncheckedNewTVarM)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
@@ -42,8 +41,9 @@ import           Test.Consensus.Network.Driver.Limits.Extras
 import           Test.Consensus.PeerSimulator.StateView
                      (ChainSyncException (ChainSyncException),
                      StateViewTracers (StateViewTracers, svtChainSyncExceptionsTracer))
-import           Test.Consensus.PeerSimulator.Trace (mkChainSyncClientTracer,
-                     traceUnitWith)
+import           Test.Consensus.PeerSimulator.Trace
+                     (TraceChainSyncClientTerminationEvent (..),
+                     TraceEvent (..))
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
@@ -51,7 +51,7 @@ import           Test.Util.TestBlock (TestBlock)
 basicChainSyncClient :: forall m.
   IOLike m =>
   PeerId ->
-  Tracer m String ->
+  Tracer m (TraceEvent TestBlock) ->
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
   StrictTVar m (AnchoredFragment (Header TestBlock)) ->
@@ -62,7 +62,7 @@ basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, st
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
-      , CSClient.tracer                  = mkChainSyncClientTracer peerId tracer
+      , CSClient.tracer                  = Tracer (traceWith tracer . TraceChainSyncClientEvent peerId)
       , CSClient.cfg
       , CSClient.chainDbView
       , CSClient.someHeaderInFutureCheck = dummyHeaderInFutureCheck
@@ -91,7 +91,7 @@ basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, st
 
 runChainSyncClient ::
   (IOLike m, MonadTimer m) =>
-  Tracer m String ->
+  Tracer m (TraceEvent TestBlock) ->
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
   PeerId ->
@@ -129,16 +129,19 @@ runChainSyncClient
         Left exn -> do
           traceWith svtChainSyncExceptionsTracer $ ChainSyncException peerId exn
           case fromException exn of
-            Just (ExceededSizeLimit _) -> trace "Terminating because of size limit exceeded."
-            Just (ExceededTimeLimit _) -> trace "Terminating because of time limit exceeded."
+            Just (ExceededSizeLimit _) ->
+              traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceExceededSizeLimit
+            Just (ExceededTimeLimit _) ->
+              traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceExceededTimeLimit
             Nothing -> pure ()
           case fromException exn of
-            Just ThreadKilled -> trace "Terminated by GDD governor."
+            Just ThreadKilled ->
+              traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceTerminatedByGDDGovernor
             _                 -> pure ()
           case fromException exn of
-            Just CSClient.EmptyBucket -> trace "Terminating because of empty bucket."
+            Just CSClient.EmptyBucket ->
+              traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceTerminatedByLoP
             _ -> pure ()
   where
     ntnVersion :: NodeToNodeVersion
     ntnVersion = maxBound
-    trace = traceUnitWith tracer $ "ChainSyncClient " ++ condense peerId
