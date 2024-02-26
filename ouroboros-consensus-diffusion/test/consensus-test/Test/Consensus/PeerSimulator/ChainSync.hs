@@ -8,6 +8,7 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
+import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
@@ -16,7 +17,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), StrictTVar)
+                     IOLike, MonadCatch (try), StrictTVar, uncheckedNewTVarM)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (createConnectedChannels)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
@@ -50,8 +51,9 @@ basicChainSyncClient :: forall m.
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
   StrictTVar m TestFragH ->
+  (m (), m ()) ->
   Consensus ChainSyncClientPipelined TestBlock m
-basicChainSyncClient tracer cfg chainDbView varCandidate =
+basicChainSyncClient tracer cfg chainDbView varCandidate (startIdling, stopIdling) =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
@@ -65,8 +67,8 @@ basicChainSyncClient tracer cfg chainDbView varCandidate =
       , CSClient.controlMessageSTM   = return Continue
       , CSClient.headerMetricsTracer = nullTracer
       , CSClient.varCandidate
-      , CSClient.startIdling         = pure ()
-      , CSClient.stopIdling          = pure ()
+      , CSClient.startIdling
+      , CSClient.stopIdling
       }
   where
     dummyHeaderInFutureCheck ::
@@ -99,15 +101,18 @@ runChainSyncClient
   chainSyncTimeouts
   StateViewTracers {svtChainSyncExceptionsTracer}
   varCandidates
-  =
-    bracketChainSyncClient nullTracer chainDbView varCandidates peerId ntnVersion $ \ varCandidate -> do
+  = do
+    -- We don't need this shared Set yet. If we need it at some point,
+    -- it ought to be passed to `runChainSyncClient`.
+    varIdling <- uncheckedNewTVarM $ Set.empty
+    bracketChainSyncClient nullTracer chainDbView varCandidates varIdling peerId ntnVersion $ \ varCandidate idleManagers -> do
       res <- try $ runConnectedPeersPipelinedWithLimits
         createConnectedChannels
         nullTracer
         codecChainSyncId
         chainSyncNoSizeLimits
         (timeLimitsChainSync chainSyncTimeouts)
-        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate))
+        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate idleManagers))
         (chainSyncServerPeer server)
       case res of
         Left exn -> do
