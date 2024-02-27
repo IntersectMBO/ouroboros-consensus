@@ -13,7 +13,8 @@ module Test.Consensus.Genesis.Tests.Uniform (tests) where
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
 import           Control.Monad.IOSim (runSimOrThrow)
-import           Data.List (group, intercalate, sort)
+import           Data.List (intercalate, sort)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Time.Clock (DiffTime)
@@ -194,7 +195,7 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
     dropRandomPoints ps = do
       let lenps = length ps
       dropCount <- QC.choose (0, max 1 $ div lenps 5)
-      let dedup = map head . group
+      let dedup = map NE.head . NE.group
       is <- fmap (dedup . sort) $ replicateM dropCount $ QC.choose (0, lenps - 1)
       pure $ dropElemsAt ps is
 
@@ -271,4 +272,6 @@ prop_leashingAttackTimeLimited = QC.expectFailure <$> do
     fromTipPoint _                        = Nothing
 
 headCallStack :: HasCallStack => [a] -> a
-headCallStack xs = if null xs then error "headCallStack: empty list" else head xs
+headCallStack = \case
+  x:_ -> x
+  _   -> error "headCallStack: empty list"
