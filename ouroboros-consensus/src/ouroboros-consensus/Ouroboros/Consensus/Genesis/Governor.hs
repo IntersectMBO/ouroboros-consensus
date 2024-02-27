@@ -10,7 +10,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Ouroboros.Consensus.Genesis.Governor (
-    updateLoEFragStall
+    reprocessLoEBlocksOnCandidateChange
+  , updateLoEFragStall
   , updateLoEFragUnconditional
   ) where
 
@@ -18,13 +19,11 @@ import           Control.Monad.Except ()
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block.Abstract (GetHeader, Header)
-import           Ouroboros.Consensus.Config.SecurityParam
-                     (SecurityParam (SecurityParam))
 import           Ouroboros.Consensus.Storage.ChainDB.API
-                     (UpdateLoEFrag (UpdateLoEFrag))
 import           Ouroboros.Consensus.Util.AnchoredFragment (stripCommonPrefix)
 import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
                      (MonadSTM (STM, atomically))
+import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -84,3 +83,20 @@ updateLoEFragStall getCandidates =
     atomically $ do
       candidates <- getCandidates
       pure (fst (sharedCandidatePrefix curChain candidates))
+
+-- | Background task that wakes up whenever a candidate fragment changes and
+-- triggers ChainSel for any block that has been postponed because of the LoE.
+reprocessLoEBlocksOnCandidateChange ::
+  Ord peer =>
+  MonadSTM m =>
+  GetHeader blk =>
+  ChainDB m blk ->
+  STM m (Map peer (AnchoredFragment (Header blk))) ->
+  m ()
+reprocessLoEBlocksOnCandidateChange chainDb getCandidates =
+  spin mempty
+  where
+    spin prev =
+      atomically (blockUntilChanged (Map.map AF.headPoint) prev getCandidates) >>= \ (_, newTips) -> do
+        reprocessLoEAsync chainDb
+        spin newTips
