@@ -113,9 +113,9 @@ instance CondenseList (NodeState TestBlock) where
           " | HP " ++ header ++
           " | BP " ++ block
       )
-      (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsTip) points)
-      (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsHeader) points)
-      (padListWith PadLeft $ map (terseWithOrigin terseBlock . nsBlock) points)
+      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsTip) points)
+      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsHeader) points)
+      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsBlock) points)
 
 genesisNodeState :: NodeState blk
 genesisNodeState =
