@@ -140,6 +140,9 @@ data ChainDB m blk = ChainDB {
       -- NOTE: back pressure can be applied when overloaded.
       addBlockAsync      :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
 
+      -- | Trigger reprocessing of blocks postponed by the LoE.
+    , reprocessLoEAsync  :: m ()
+
       -- | Get the current chain fragment
       --
       -- Suppose the current chain is
