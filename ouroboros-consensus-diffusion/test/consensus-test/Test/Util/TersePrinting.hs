@@ -15,8 +15,9 @@ module Test.Util.TersePrinting (
   ) where
 
 import           Cardano.Slotting.Block (BlockNo (BlockNo))
-import           Data.List (group, intercalate)
+import           Data.List (intercalate)
 import           Data.List.NonEmpty (NonEmpty ((:|)), toList)
+import qualified Data.List.NonEmpty as NE
 import           Ouroboros.Consensus.Block (Header,
                      Point (BlockPoint, GenesisPoint), RealPoint,
                      SlotNo (SlotNo), blockHash, blockNo, blockSlot,
@@ -33,7 +34,7 @@ import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
 --
 -- > runLengthEncoding [0, 0, 1, 0, 2, 2, 2] = [(2, 0), (1, 1), (1, 0), (3, 2)]
 runLengthEncoding :: Eq a => [a] -> [(Int, a)]
-runLengthEncoding xs = [(length ys, head ys) | ys <- group xs]
+runLengthEncoding xs = [(length ys, NE.head ys) | ys <- NE.group xs]
 
 -- | Print the given 'BlockNo', 'SlotNo' and 'TestHash' in a terse way:
 -- @block-slot[hash]@. @hash@ only shows if there is a non-zero element in it.
