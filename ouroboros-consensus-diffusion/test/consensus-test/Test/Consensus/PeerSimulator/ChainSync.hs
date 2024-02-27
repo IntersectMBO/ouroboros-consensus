@@ -48,17 +48,18 @@ import           Test.Util.TestBlock (TestBlock)
 
 basicChainSyncClient :: forall m.
   IOLike m =>
+  PeerId ->
   Tracer m String ->
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
   StrictTVar m (AnchoredFragment (Header TestBlock)) ->
   (m (), m ()) ->
   Consensus ChainSyncClientPipelined TestBlock m
-basicChainSyncClient tracer cfg chainDbView varCandidate (startIdling, stopIdling) =
+basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, stopIdling) =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
-      , CSClient.tracer                  = mkChainSyncClientTracer tracer
+      , CSClient.tracer                  = mkChainSyncClientTracer peerId tracer
       , CSClient.cfg
       , CSClient.chainDbView
       , CSClient.someHeaderInFutureCheck = dummyHeaderInFutureCheck
@@ -113,7 +114,7 @@ runChainSyncClient
         codecChainSyncId
         chainSyncNoSizeLimits
         (timeLimitsChainSync chainSyncTimeouts)
-        (chainSyncClientPeerPipelined (basicChainSyncClient tracer cfg chainDbView varCandidate idleManagers))
+        (chainSyncClientPeerPipelined (basicChainSyncClient peerId tracer cfg chainDbView varCandidate idleManagers))
         (chainSyncServerPeer server)
       case res of
         Left exn -> do
