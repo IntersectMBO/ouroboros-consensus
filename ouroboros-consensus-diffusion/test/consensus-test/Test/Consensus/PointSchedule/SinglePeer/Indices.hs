@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 -- | Schedule generators for a single peer
 --
@@ -133,7 +134,7 @@ tipPointSchedule g slotLength msgDelayInterval slots = do
     let -- pairs of times corresponding to the start and end of each interval
         -- between tip points
         slotTimes = map toDiffTime slots
-        timePairs = zip slotTimes $ tail slotTimes ++ [last slotTimes + 1]
+        timePairs = zip slotTimes $ (drop 1 slotTimes) ++ [last slotTimes + 1]
     go timePairs
   where
     go :: [(DiffTime, DiffTime)] -> m [DiffTime]
@@ -244,7 +245,7 @@ headerPointSchedule
 headerPointSchedule g msgDelayInterval xs =
    let -- Pair each  branch with the maximum time at which its header points
        -- should be offered
-       xs' = zip xs $ map (Just . fst . headCallStack . snd) (tail xs) ++ [Nothing]
+       xs' = zip xs $ map (Just . fst . headCallStack . snd) (drop 1 xs) ++ [Nothing]
     in snd <$> mapAccumM genHPBranchSchedule (0, 0) xs'
 
   where
@@ -313,4 +314,6 @@ mapAccumM f acc (x:xs) = do
     pure (acc'', y:ys)
 
 headCallStack :: HasCallStack => [a] -> a
-headCallStack xs = if null xs then error "headCallStack: empty list" else head xs
+headCallStack = \case
+  x:_ -> x
+  _   -> error "headCallStack: empty list"

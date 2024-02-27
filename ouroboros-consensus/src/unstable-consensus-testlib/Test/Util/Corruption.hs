@@ -31,7 +31,9 @@ applyCorruption (Corruption n) bs
     | Lazy.null bs
     = bs
     | otherwise
-    = before <> Lazy.cons (Lazy.head atAfter + 1) (Lazy.tail atAfter)
+    = before <> case Lazy.uncons atAfter of
+      Nothing       -> error "split bytestring after last byte"
+      Just (hd, tl) -> Lazy.cons (hd + 1) tl
   where
     offset = fromIntegral n `mod` Lazy.length bs
     (before, atAfter) = Lazy.splitAt offset bs

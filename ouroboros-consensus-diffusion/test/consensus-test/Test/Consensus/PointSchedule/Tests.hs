@@ -331,7 +331,9 @@ dedupSorted :: Eq a => [a] -> [a]
 dedupSorted = map headCallStack . group
 
 headCallStack :: HasCallStack => [a] -> a
-headCallStack xs = if null xs then error "headCallStack: empty list" else head xs
+headCallStack = \case
+  x:_ -> x
+  _   -> error "headCallStack: empty list"
 
 headerPointsFollowTipPoints :: Show a => (a -> a -> Maybe Ordering) -> [(DiffTime, a)] -> [(DiffTime, a)] -> QC.Property
 headerPointsFollowTipPoints _ [] [] = QC.property True
