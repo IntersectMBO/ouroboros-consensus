@@ -65,7 +65,9 @@ prop_rollback wantRollback = do
     rollbackSchedule :: BlockTree TestBlock -> PointSchedule
     rollbackSchedule blockTree =
       let trunk = btTrunk blockTree
-          branch = btbSuffix $ head $ btBranches blockTree
+          branch = case btBranches blockTree of
+            [b] -> btbSuffix b
+            _   -> error "The block tree must have exactly one alternative branch"
           states = banalStates trunk ++ banalStates branch
           peers = peersOnlyHonest states
           pointSchedule = balanced defaultPointScheduleConfig peers
@@ -84,7 +86,9 @@ prop_rollback wantRollback = do
     -- not this? (or a generalised version of this)
     canRollbackFromTrunkTip :: SecurityParam -> BlockTree TestBlock -> Bool
     canRollbackFromTrunkTip (SecurityParam k) blockTree =
-      let BlockTreeBranch{btbSuffix, btbTrunkSuffix} = head $ btBranches blockTree
+      let BlockTreeBranch{btbSuffix, btbTrunkSuffix} = case btBranches blockTree of
+            [b] -> b
+            _   -> error "The block tree must have exactly one alternative branch"
           lengthSuffix = AF.length btbSuffix
           lengthTrunkSuffix = AF.length btbTrunkSuffix
        in lengthTrunkSuffix <= fromIntegral k && lengthSuffix > lengthTrunkSuffix
