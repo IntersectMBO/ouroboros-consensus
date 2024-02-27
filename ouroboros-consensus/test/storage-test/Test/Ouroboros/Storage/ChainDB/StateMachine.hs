@@ -1672,7 +1672,7 @@ traceEventName = \case
     TraceInitChainSelEvent      ev    -> "InitChainSel."      <> case ev of
       InitChainSelValidation    ev' -> constrName ev'
       StartedInitChainSelection     -> "StartedInitChainSelection"
-      InitalChainSelected           -> "InitalChainSelected"
+      InitialChainSelected          -> "InitialChainSelected"
     TraceOpenEvent              ev    -> "Open."              <> constrName ev
     TraceGCEvent                ev    -> "GC."                <> constrName ev
     TraceIteratorEvent          ev    -> "Iterator."          <> constrName ev
