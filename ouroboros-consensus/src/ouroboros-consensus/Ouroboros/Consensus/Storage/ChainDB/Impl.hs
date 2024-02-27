@@ -157,7 +157,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                           varFutureBlocks
                           (Args.cdbCheckInFuture args)
                           (Args.cdbLoE args)
-      traceWith initChainSelTracer InitalChainSelected
+      traceWith initChainSelTracer InitialChainSelected
 
       let chain  = VF.validatedFragment chainAndLedger
           ledger = VF.validatedLedger   chainAndLedger
@@ -174,7 +174,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       varKillBgThreads   <- newTVarIO $ return ()
       copyFuse           <- newFuse "copy to immutable db"
       chainSelFuse       <- newFuse "chain selection"
-      blocksToAdd        <- newBlocksToAdd (Args.cdbBlocksToAddSize args)
+      chainSelQueue      <- newChainSelQueue (Args.cdbBlocksToAddSize args)
 
       let env = CDB { cdbImmutableDB     = immutableDB
                     , cdbVolatileDB      = volatileDB
@@ -199,13 +199,14 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     , cdbChunkInfo       = Args.cdbChunkInfo args
                     , cdbCheckIntegrity  = Args.cdbCheckIntegrity args
                     , cdbCheckInFuture   = Args.cdbCheckInFuture args
-                    , cdbBlocksToAdd     = blocksToAdd
+                    , cdbChainSelQueue   = chainSelQueue
                     , cdbFutureBlocks    = varFutureBlocks
                     , cdbLoE             = Args.cdbLoE args
                     }
       h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
       let chainDB = API.ChainDB
             { addBlockAsync         = getEnv2    h ChainSel.addBlockAsync
+            , reprocessLoEAsync     = getEnv     h ChainSel.reprocessLoEAsync
             , getCurrentChain       = getEnvSTM  h Query.getCurrentChain
             , getLedgerDB           = getEnvSTM  h Query.getLedgerDB
             , getTipBlock           = getEnv     h Query.getTipBlock
