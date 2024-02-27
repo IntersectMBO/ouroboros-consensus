@@ -349,22 +349,30 @@ storeLedgerStateAt ::
      )
   => SlotNo -> Analysis blk
 storeLedgerStateAt slotNo (AnalysisEnv { db, registry, initLedger, cfg, limit, ledgerDbFS, tracer }) = do
-    void $ processAllUntil db registry GetBlock initLedger limit initLedger process
+    void $ processAllUntil db registry GetBlock initLedger limit ((20000 :: Int), initLedger) process
     pure Nothing
   where
-    process :: ExtLedgerState blk -> blk -> IO (NextStep, ExtLedgerState blk)
-    process oldLedger blk = do
+    process (!i, !oldLedger) blk = do
       let ledgerCfg = ExtLedgerCfg cfg
-          newLedger = tickThenReapply ledgerCfg blk oldLedger
-      when (blockSlot blk >= slotNo) $ storeLedgerState blk newLedger
-      when (blockSlot blk > slotNo) $ issueWarning blk
-      when ((unBlockNo $ blockNo blk) `mod` 1000 == 0) $ reportProgress blk
-      return (continue blk, newLedger)
+          !newLedger = tickThenReapply ledgerCfg blk oldLedger
+      when (i == 0) $ do
+        Debug.traceMarkerIO "Starting to store ledger state 0"
+        storeLedgerState blk newLedger
+        Debug.traceMarkerIO "Ledger state snapshot stored 0"
+        reportProgress blk
+      when (i == 1) $ do
+        Debug.traceMarkerIO "Starting to store ledger state 1"
+        storeLedgerState blk newLedger
+        Debug.traceMarkerIO "Ledger state snapshot stored 1"
+      when (i == 2) $ do
+        Debug.traceMarkerIO "Starting to store ledger state 2"
+        storeLedgerState blk newLedger
+        Debug.traceMarkerIO "Ledger state snapshot stored 2"
+      return (continue i, (i - 1, newLedger))
 
-    continue :: blk -> NextStep
-    continue blk
-      | blockSlot blk >= slotNo = Stop
-      | otherwise               = Continue
+    continue i
+      | i <= 0    = Stop
+      | otherwise = Continue
 
     issueWarning blk   = let event = SnapshotWarningEvent slotNo (blockSlot blk)
                          in traceWith tracer event
