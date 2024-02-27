@@ -20,7 +20,8 @@ import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import           Ouroboros.Consensus.Genesis.Governor (updateLoEFragStall)
+import           Ouroboros.Consensus.Genesis.Governor
+                     (reprocessLoEBlocksOnCandidateChange, updateLoEFragStall)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Storage.ChainDB.API
@@ -254,6 +255,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
           = pure nullTracer
     stateTracer <- mkStateTracer
     startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
+    void $ forkLinkedThread registry "ChainSel trigger" (reprocessLoEBlocksOnCandidateChange chainDb getCandidates)
     runScheduler tracer stateTracer gtSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where

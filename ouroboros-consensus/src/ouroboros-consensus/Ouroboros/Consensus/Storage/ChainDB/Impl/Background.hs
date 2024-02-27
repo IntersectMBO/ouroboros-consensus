@@ -60,7 +60,7 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockResult (..),
                      BlockComponent (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel
-                     (addBlockSync)
+                     (chainSelSync)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
                      (LgrDbSerialiseConstraints)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
@@ -502,7 +502,7 @@ dumpGcSchedule (GcSchedule varQueue) = toList <$> readTVar varQueue
   Adding blocks to the ChainDB
 -------------------------------------------------------------------------------}
 
--- | Read blocks from 'cdbBlocksToAdd' and add them synchronously to the
+-- | Read blocks from 'cdbChainSelQueue' and add them synchronously to the
 -- ChainDB.
 addBlockRunner ::
      ( IOLike m
@@ -517,18 +517,26 @@ addBlockRunner ::
 addBlockRunner fuse cdb@CDB{..} = forever $ do
     let trace = traceWith cdbTracer . TraceAddBlockEvent
     trace $ PoppedBlockFromQueue RisingEdge
-    -- if the `addBlockSync` does not complete because it was killed by an async
+    -- if the `chainSelSync` does not complete because it was killed by an async
     -- exception (or it errored), notify the blocked thread
     withFuse fuse $
       bracketOnError
-        (lift $ getBlockToAdd cdbBlocksToAdd)
-        (\blkToAdd -> lift $ atomically $ do
-            _ <- tryPutTMVar (varBlockWrittenToDisk blkToAdd)
-                   False
-            _ <- tryPutTMVar (varBlockProcessed blkToAdd)
-                   (FailedToAddBlock "Failed to add block synchronously")
-            closeBlocksToAdd cdbBlocksToAdd)
-        (\blkToAdd -> do
-            lift $ trace $ PoppedBlockFromQueue $ FallingEdgeWith $
-              blockRealPoint $ blockToAdd blkToAdd
-            addBlockSync cdb blkToAdd)
+        (lift $ getChainSelMessage cdbChainSelQueue)
+        (\message -> lift $ atomically $ do
+          case message of
+            ChainSelReprocessLoEBlocks -> pure ()
+            ChainSelAddBlock BlockToAdd{varBlockWrittenToDisk, varBlockProcessed} -> do
+              _ <- tryPutTMVar varBlockWrittenToDisk
+                              False
+              _ <- tryPutTMVar varBlockProcessed
+                              (FailedToAddBlock "Failed to add block synchronously")
+              pure ()
+          closeChainSelQueue cdbChainSelQueue)
+        (\message -> do
+          lift $ case message of
+            ChainSelReprocessLoEBlocks ->
+              trace PoppedReprocessLoEBlocksFromQueue
+            ChainSelAddBlock BlockToAdd{blockToAdd} ->
+              trace $ PoppedBlockFromQueue $ FallingEdgeWith $
+                      blockRealPoint blockToAdd
+          chainSelSync cdb message)
