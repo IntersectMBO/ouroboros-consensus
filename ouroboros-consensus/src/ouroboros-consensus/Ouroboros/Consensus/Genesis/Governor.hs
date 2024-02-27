@@ -18,8 +18,6 @@ import           Control.Monad.Except ()
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block.Abstract (GetHeader, Header)
-import           Ouroboros.Consensus.Config.SecurityParam
-                     (SecurityParam (SecurityParam))
 import           Ouroboros.Consensus.Storage.ChainDB.API
                      (UpdateLoEFrag (UpdateLoEFrag))
 import           Ouroboros.Consensus.Util.AnchoredFragment (stripCommonPrefix)
