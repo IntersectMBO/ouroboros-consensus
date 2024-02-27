@@ -19,8 +19,10 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceAddBlockEvent (..))
+import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
+import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.TersePrinting (terseHFragment, terseHeader,
                      tersePoint, terseRealPoint)
 import           Test.Util.TestBlock (TestBlock)
@@ -39,12 +41,14 @@ mkCdbTracer tracer =
         SwitchedToAFork _ _ _ newFragment ->
           trace $ "Switched to a fork; now: " ++ terseHFragment newFragment
         StoreButDontChange point ->
-          trace $ "Did not add block due to LoE: " ++ terseRealPoint point
+          trace $ "Did not select block due to LoE: " ++ terseRealPoint point
         IgnoreBlockOlderThanK point ->
           trace $ "Ignored block older than k: " ++ terseRealPoint point
         ChainSelectionLoEDebug curChain loeFrag0 -> do
           trace $ "Current chain: " ++ terseHFragment curChain
           trace $ "LoE fragment: " ++ terseHFragment loeFrag0
+        AddedReprocessLoEBlocksToQueue ->
+          trace $ "Requested ChainSel run"
 
         _ -> pure ()
     _ -> pure ()
@@ -53,9 +57,10 @@ mkCdbTracer tracer =
 
 mkChainSyncClientTracer ::
   IOLike m =>
+  PeerId ->
   Tracer m String ->
   Tracer m (TraceChainSyncClientEvent TestBlock)
-mkChainSyncClientTracer tracer =
+mkChainSyncClientTracer pid tracer =
   Tracer $ \case
     TraceRolledBack point ->
       trace $ "Rolled back to: " ++ tersePoint point
@@ -71,7 +76,7 @@ mkChainSyncClientTracer tracer =
       trace $ "Downloaded header: " ++ terseHeader header
     _ -> pure ()
   where
-    trace = traceUnitWith tracer "ChainSyncClient"
+    trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
 
 prettyTime :: MonadMonotonicTime m => m String
 prettyTime = do

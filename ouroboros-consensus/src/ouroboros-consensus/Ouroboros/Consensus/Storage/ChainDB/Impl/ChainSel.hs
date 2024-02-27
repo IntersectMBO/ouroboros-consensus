@@ -12,9 +12,10 @@
 -- adding a block.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
     addBlockAsync
-  , addBlockSync
+  , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
+  , reprocessLoEAsync
     -- * Exported for testing purposes
   , olderThanK
   ) where
@@ -25,6 +26,7 @@ import           Control.Monad.Except ()
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
 import           Control.Tracer (Tracer, nullTracer, traceWith)
+import           Data.Foldable (for_)
 import           Data.Function (on)
 import           Data.Functor.Contravariant ((>$<))
 import           Data.List (partition, sortBy)
@@ -60,7 +62,7 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      InvalidBlockReason (..), LoE (..), LoELimit (..),
                      processLoE)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
-                     (InvalidBlockPunishment)
+                     (InvalidBlockPunishment, noPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
                      (BlockCache)
@@ -231,8 +233,8 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
 -- | Add a block to the ChainDB, /asynchronously/.
 --
 -- This adds a 'BlockToAdd' corresponding to the given block to the
--- 'cdbBlocksToAdd' queue. The entries in that queue are processed using
--- 'addBlockSync', see that function for more information.
+-- 'cdbChainSelQueue' queue. The entries in that queue are processed using
+-- 'chainSelSync', see that function for more information.
 --
 -- When the queue is full, this function will still block.
 --
@@ -256,8 +258,17 @@ addBlockAsync ::
   -> InvalidBlockPunishment m
   -> blk
   -> m (AddBlockPromise m blk)
-addBlockAsync CDB { cdbTracer, cdbBlocksToAdd } =
-    addBlockToAdd (TraceAddBlockEvent >$< cdbTracer) cdbBlocksToAdd
+addBlockAsync CDB { cdbTracer, cdbChainSelQueue } =
+    addBlockToAdd (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
+
+-- | Schedule reprocessing of blocks postponed by the LoE.
+reprocessLoEAsync ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  m ()
+reprocessLoEAsync CDB {cdbTracer, cdbChainSelQueue} =
+  addReprocessLoEBlocks (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
 -- | Add a block to the ChainDB, /synchronously/.
 --
@@ -267,7 +278,7 @@ addBlockAsync CDB { cdbTracer, cdbBlocksToAdd } =
 --
 -- When the slot of the block is > the current slot, a chain selection will be
 -- scheduled in the slot of the block.
-addBlockSync ::
+chainSelSync ::
      forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
@@ -276,9 +287,40 @@ addBlockSync ::
      , HasCallStack
      )
   => ChainDbEnv m blk
-  -> BlockToAdd m blk
+  -> ChainSelMessage m blk
   -> Electric m ()
-addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
+
+-- Reprocess headers that were postponed by the LoE.
+-- When we try to extend the current chain with a new block beyond the LoE
+-- limit, the block will be added to the DB without modifying the chain.
+-- When the LoE fragment advances later, these blocks have to be scheduled
+-- for ChainSel again, but this does not happen automatically.
+-- So we fetch all direct successors of each of the chain's blocks and run
+-- ChainSel for them.
+-- We run a background thread that polls the candidate fragments and sends
+-- 'ChainSelReprocessLoEBlocks' whenever we receive a new header or lose a
+-- peer.
+-- If 'cdbLoE' is 'LoEDisabled', this task is skipped.
+chainSelSync cdb@CDB{..} ChainSelReprocessLoEBlocks
+  | LoEDisabled <- cdbLoE = pure ()
+
+  | otherwise = do
+    (succsOf, chain) <- lift $ atomically $ do
+      invalid <- forgetFingerprint <$> readTVar cdbInvalid
+      (,)
+        <$> (ignoreInvalidSuc cdbVolatileDB invalid <$>
+          VolatileDB.filterByPredecessor cdbVolatileDB)
+        <*> Query.getCurrentChain cdb
+    let
+        succsOf' = Set.toList . succsOf . pointHash . castPoint
+        chainPoints = AF.anchorPoint chain : (blockPoint <$> AF.toOldestFirst chain)
+        loeHashes = succsOf' =<< chainPoints
+    loeHeaders <- lift (mapM (VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader) loeHashes)
+    for_ loeHeaders $ \hdr ->
+      unless (AF.withinFragmentBounds (blockPoint hdr) chain) $ do
+        void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
+
+chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) = do
     (isMember, invalid, curChain) <- lift $ atomically $ (,,)
       <$> VolatileDB.getIsMember          cdbVolatileDB
       <*> (forgetFingerprint <$> readTVar cdbInvalid)
