@@ -9,9 +9,9 @@
 
 -- | Data types and generators for point schedules.
 --
--- Each generator takes a set of 'AnchoredFragment's corresponding to the tested peers'
--- chains, and converts them to a point schedule consisting of a sequence of states
--- ('AdvertisedPoints'), each of which is associated with a single peer.
+-- Each generator takes a set of 'AnchoredFragment's corresponding to the tested
+-- peers' chains, and converts them to a point schedule consisting of a sequence
+-- of 'NodeState's, each of which is associated with a single peer.
 --
 -- When a schedule is executed in a test, each tick is processed in order.
 -- The peer associated with the current tick is considered "active", which means that
