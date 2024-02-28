@@ -104,13 +104,13 @@ rollbackSchedule n blockTree =
 -- PRECONDITION: Block tree with exactly one alternative chain, otherwise
 -- this property does not make sense. With no alternative chain, this will
 -- even crash.
-alternativeChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
+alternativeChainIsLongEnough :: AF.HasHeader blk => SecurityParam -> BlockTree blk -> Bool
 alternativeChainIsLongEnough (SecurityParam k) blockTree =
   let BlockTreeBranch{btbSuffix} = firstBranch blockTree
       lengthSuffix = AF.length btbSuffix
    in lengthSuffix > fromIntegral k
 
-firstBranch :: BlockTree TestBlock -> BlockTreeBranch TestBlock
+firstBranch :: BlockTree blk -> BlockTreeBranch blk
 firstBranch tree = case btBranches tree of
   b:_ -> b
   _   -> error "The block tree must have at least one branch"
