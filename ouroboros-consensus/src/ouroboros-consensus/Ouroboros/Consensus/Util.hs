@@ -12,6 +12,7 @@
 {-# LANGUAGE PolyKinds                  #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE StandaloneKindSignatures   #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
 -- | Miscellaneous utilities
@@ -57,6 +58,8 @@ module Ouroboros.Consensus.Util (
   , checkThat
     -- * Sets
   , allDisjoint
+    -- * Maps
+  , dimap
     -- * Composition
   , (......:)
   , (.....:)
@@ -94,6 +97,8 @@ import           Data.Functor.Product
 import           Data.Kind (Type)
 import           Data.List (foldl', maximumBy)
 import           Data.List.NonEmpty (NonEmpty (..), (<|))
+import           Data.Map (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -102,6 +107,7 @@ import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           GHC.Stack
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Network.Protocol.LocalStateQuery.Codec (Some (..))
 import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 
 {-------------------------------------------------------------------------------
@@ -111,9 +117,6 @@ import           Ouroboros.Network.Util.ShowProxy (ShowProxy (..))
 class Empty a
 instance Empty a
 
-data Some (f :: k -> Type) where
-    Some :: f a -> Some f
-
 -- | Pair of functors instantiated to the /same/ existential
 data SomePair (f :: k -> Type) (g :: k -> Type) where
     SomePair :: f a -> g a -> SomePair f g
@@ -122,7 +125,8 @@ data SomePair (f :: k -> Type) (g :: k -> Type) where
 --
 -- @SomeSecond f a@ is isomorphic to @Some (f a)@, but is more convenient in
 -- partial applications.
-data SomeSecond (f :: Type -> Type -> Type) a where
+type SomeSecond :: (k1 -> k2 -> Type) -> k1 -> Type
+data SomeSecond f a where
   SomeSecond :: !(f a b) -> SomeSecond f a
 
 mustBeRight :: Either Void a -> a
@@ -348,6 +352,15 @@ allDisjoint = go Set.empty
     go acc (xs:xss) = Set.disjoint acc xs && go (Set.union acc xs) xss
 
 {-------------------------------------------------------------------------------
+  Maps
+-------------------------------------------------------------------------------}
+
+-- | Map over keys and values
+dimap :: Ord k2 => (k1 -> k2) -> (v1 -> v2) -> Map k1 v1 -> Map k2 v2
+dimap keyFn valFn = Map.foldlWithKey update Map.empty
+  where update m k1 v1 =  Map.insert (keyFn k1) (valFn v1) m
+
+{-------------------------------------------------------------------------------
   Composition
 -------------------------------------------------------------------------------}
 
@@ -368,6 +381,7 @@ allDisjoint = go Set.empty
 
 (......:) :: (y -> z) -> (x0 -> x1 -> x2 -> x3 -> x4 -> x5 -> x6 -> y) -> (x0 -> x1 -> x2 -> x3 -> x4 -> x5 -> x6 -> z)
 (f ......: g) x0 x1 x2 x3 x4 x5 x6 = f (g x0 x1 x2 x3 x4 x5 x6)
+
 {-------------------------------------------------------------------------------
   Product
 -------------------------------------------------------------------------------}

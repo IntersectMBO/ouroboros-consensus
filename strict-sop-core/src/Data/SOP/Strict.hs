@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE PolyKinds     #-}
 
 -- | Strict variant of SOP
 module Data.SOP.Strict (

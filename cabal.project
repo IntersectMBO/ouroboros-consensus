@@ -21,6 +21,7 @@ index-state:
 packages:
   ouroboros-consensus
   ouroboros-consensus-cardano
+  ouroboros-consensus-cardano-legacy-block
   ouroboros-consensus-protocol
   ouroboros-consensus-diffusion
   sop-extras
@@ -30,4 +31,19 @@ packages:
 tests: true
 benchmarks: true
 
+optional-packages:
+  latex-svg-image
+
 import: ./asserts.cabal
+
+--
+-- source-repository-packages
+--
+
+source-repository-package
+  type: git
+  location: https://github.com/jasagredo/latex-svg
+  tag: 05dc866baadcdd04a23ed1a488440372f97afb70
+  --sha256: 1amaipl1f516m4yh9x02cqsbv50riszmbdjdmvfpw19vspv1szsx
+  subdir:
+    latex-svg-image

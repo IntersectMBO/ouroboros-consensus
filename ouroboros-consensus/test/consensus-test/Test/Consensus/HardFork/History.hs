@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs                     #-}
 {-# LANGUAGE LambdaCase                #-}
 {-# LANGUAGE NamedFieldPuns            #-}
+{-# LANGUAGE PolyKinds                 #-}
 {-# LANGUAGE RankNTypes                #-}
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
@@ -40,6 +41,7 @@ import qualified Data.List as L
 import           Data.Maybe (catMaybes, fromMaybe)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Counting
+import           Data.SOP.Functors (K1 (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.NonEmpty
 import           Data.SOP.Sing hiding (shape)
@@ -847,14 +849,14 @@ mockHardForkLedgerView = \(HF.Shape pss) (HF.Transitions ts) (Chain ess) ->
               -> Exactly  (x ': xs) HF.EraParams
               -> AtMost         xs  EpochNo
               -> NonEmpty (x ': xs) [Event]
-              -> Telescope (K Past) (Current (AnnForecast (K ()) (K ()))) (x : xs)
+              -> Telescope (K Past) (Current (AnnForecast (K1 ()) (K ()))) (x : xs)
     mockState start (ExactlyCons ps _) ts (NonEmptyOne es) =
         TZ $ Current start $ AnnForecast {
             annForecast      = Forecast {
                 forecastAt  = tip es -- forecast at tip of ledger
               , forecastFor = \_for -> return $ K ()
               }
-          , annForecastState = K ()
+          , annForecastState = K1 ()
           , annForecastTip   = tip es
           , annForecastEnd   = HF.mkUpperBound ps start <$> atMostHead ts
           }

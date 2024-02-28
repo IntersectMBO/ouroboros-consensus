@@ -1,3 +1,4 @@
+<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Orphans/Arbitrary.hs
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleContexts           #-}
@@ -10,6 +11,20 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
+=======
+{-# LANGUAGE DataKinds            #-}
+{-# LANGUAGE DerivingVia          #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE GADTs                #-}
+{-# LANGUAGE NumericUnderscores   #-}
+{-# LANGUAGE PolyKinds            #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE StandaloneDeriving   #-}
+{-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE TypeOperators        #-}
+{-# LANGUAGE UndecidableInstances #-}
+>>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT):ouroboros-consensus/src/consensus-testlib/Test/Util/Orphans/Arbitrary.hs
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Util.Orphans.Arbitrary (
@@ -27,6 +42,7 @@ import           Data.Coerce (coerce)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Dict (Dict (..), all_NP, mapAll)
+import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.NonEmpty (IsNonEmpty, ProofNonEmpty (..),
                      checkIsNonEmpty, isNonEmpty)
 import           Data.SOP.Sing
@@ -264,6 +280,9 @@ instance (All (Arbitrary `Compose` f) xs, IsNonEmpty xs)
   Telescope & HardForkState
 -------------------------------------------------------------------------------}
 
+instance Arbitrary (f y x) => Arbitrary (Flip f (x :: kx) (y :: ky)) where
+  arbitrary = Flip <$> arbitrary
+
 instance Arbitrary Bound where
   arbitrary =
       Bound
@@ -290,25 +309,25 @@ instance ( IsNonEmpty xs
           ]
   shrink = hctraverse' (Proxy @(Arbitrary `Compose` f)) shrink
 
-instance (IsNonEmpty xs, SListI xs, All (Arbitrary `Compose` LedgerState) xs)
-      => Arbitrary (LedgerState (HardForkBlock xs)) where
+instance (IsNonEmpty xs, SListI xs, All (Arbitrary `Compose` Flip LedgerState mk) xs)
+      => Arbitrary (LedgerState (HardForkBlock xs) mk) where
   arbitrary = case (dictKPast, dictCurrentLedgerState) of
       (Dict, Dict) -> inj <$> arbitrary
     where
       inj ::
-           Telescope (K Past) (Current LedgerState) xs
-        -> LedgerState (HardForkBlock xs)
+           Telescope (K Past) (Current (Flip LedgerState mk)) xs
+        -> LedgerState (HardForkBlock xs) mk
       inj = coerce
 
       dictKPast :: Dict (All (Arbitrary `Compose` (K Past))) xs
       dictKPast = all_NP $ hpure Dict
 
       dictCurrentLedgerState ::
-           Dict (All (Arbitrary `Compose` (Current LedgerState))) xs
+           Dict (All (Arbitrary `Compose` (Current (Flip LedgerState mk)))) xs
       dictCurrentLedgerState =
           mapAll
-            @(Arbitrary `Compose` LedgerState)
-            @(Arbitrary `Compose` Current LedgerState)
+            @(Arbitrary `Compose` Flip LedgerState mk)
+            @(Arbitrary `Compose` Current (Flip LedgerState mk))
             (\Dict -> Dict)
             Dict
 
@@ -386,8 +405,8 @@ instance Arbitrary QueryVersion where
   arbitrary = arbitraryBoundedEnum
   shrink v = if v == minBound then [] else [pred v]
 
-instance Arbitrary (SomeSecond BlockQuery blk)
+instance Arbitrary (SomeBlockQuery (BlockQuery blk))
       => Arbitrary (SomeSecond Query blk) where
   arbitrary = do
-    SomeSecond someBlockQuery <- arbitrary
+    SomeBlockQuery someBlockQuery <- arbitrary
     return (SomeSecond (BlockQuery someBlockQuery))
