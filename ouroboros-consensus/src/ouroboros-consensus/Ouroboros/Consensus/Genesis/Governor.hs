@@ -34,30 +34,23 @@ updateLoEFragUnconditional ::
   MonadSTM m =>
   UpdateLoEFrag m blk
 updateLoEFragUnconditional =
-  UpdateLoEFrag $ \ curChain _ setLoEFrag -> atomically (setLoEFrag curChain)
+  UpdateLoEFrag $ \ curChain _ -> pure curChain
 
--- | Compute the fragment between the immutable tip, as given by the anchor
--- of @curChain@, and the earliest intersection of the @candidates@.
--- This excludes the selection from the set of intersected fragments since we
--- need to be able to select k+1 blocks on a new chain when a fork's peer is
--- killed on which we had selected k blocks, where the selection would
--- otherwise keep the LoE fragment at the killed peer's intersection.
+-- | Compute the fragment @loeFrag@ between the immutable tip and the
+-- earliest intersection between @curChain@ and any of the @candidates@.
+--
+-- The immutable tip is the anchor of @curChain@.
+--
+-- The function also yields the suffixes of the intersection of @loeFrag@ with
+-- every candidate fragment.
 sharedCandidatePrefix ::
   GetHeader blk =>
-  SecurityParam ->
   AnchoredFragment (Header blk) ->
   Map peer (AnchoredFragment (Header blk)) ->
-  AnchoredFragment (Header blk)
-sharedCandidatePrefix (SecurityParam k) curChain candidates =
-  trunc
+  (AnchoredFragment (Header blk), Map peer (AnchoredFragment (Header blk)))
+sharedCandidatePrefix curChain candidates =
+  stripCommonPrefix (AF.anchor curChain) immutableTipSuffixes
   where
-    trunc | excess > 0 = snd (AF.splitAt excess shared)
-          | otherwise = shared
-
-    excess = AF.length shared - fromIntegral k
-
-    shared = fst (stripCommonPrefix (AF.anchor curChain) immutableTipSuffixes)
-
     immutableTip = AF.anchorPoint curChain
 
     splitAfterImmutableTip frag =
@@ -84,11 +77,10 @@ sharedCandidatePrefix (SecurityParam k) curChain candidates =
 updateLoEFragStall ::
   MonadSTM m =>
   GetHeader blk =>
-  SecurityParam ->
   STM m (Map peer (AnchoredFragment (Header blk))) ->
   UpdateLoEFrag m blk
-updateLoEFragStall k getCandidates =
-  UpdateLoEFrag $ \ curChain _ setLoEFrag ->
+updateLoEFragStall getCandidates =
+  UpdateLoEFrag $ \ curChain _ ->
     atomically $ do
       candidates <- getCandidates
-      setLoEFrag (sharedCandidatePrefix k curChain candidates)
+      pure (fst (sharedCandidatePrefix curChain candidates))
