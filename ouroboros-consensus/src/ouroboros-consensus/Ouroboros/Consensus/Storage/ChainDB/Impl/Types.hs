@@ -268,14 +268,12 @@ data ChainDbEnv m blk = CDB
     -- The number of blocks from the future is bounded by the number of
     -- upstream peers multiplied by the max clock skew divided by the slot
     -- length.
-  , cdbLoEFrag         :: !(StrictTVar m (AnchoredFragment (Header blk)))
+  , cdbLoE             :: LoE m blk
     -- ^ Fragment whose tip indicates the Limit on Eagerness, i.e. we are not
     -- allowed to select a chain from which we could not switch back to a chain
     -- containing it. The fragment is usually anchored at a recent immutable
     -- tip; if it does not, it will conservatively be treated as the empty
     -- fragment anchored in the current immutable tip.
-  , cdbLoE             :: LoE m blk
-    -- ^ See 'Args.cdbLoELimit'.
   } deriving (Generic)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
@@ -648,6 +646,9 @@ data TraceAddBlockEvent blk =
     -- | The block doesn't fit onto any other block, so we store it and ignore
     -- it.
   | StoreButDontChange (RealPoint blk)
+
+    -- | Debugging information about chain selection and LoE
+  | ChainSelectionLoEDebug (AnchoredFragment (Header blk)) (AnchoredFragment (Header blk))
 
     -- | The new block fits onto the current chain (first
     -- fragment) and we have successfully used it to extend our (new) current
