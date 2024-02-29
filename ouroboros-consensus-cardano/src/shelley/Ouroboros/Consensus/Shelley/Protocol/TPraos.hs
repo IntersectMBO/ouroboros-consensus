@@ -23,11 +23,11 @@ import           Control.Monad (when)
 import           Control.Monad.Except (liftEither, throwError)
 import           Data.Bifunctor (first)
 import           Data.Either (isRight)
-import           Data.Word (Word32)
-import           Numeric.Natural (Natural)
 import qualified Data.Map.Strict as Map
+import           Data.Word (Word32)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
+import           Numeric.Natural (Natural)
 import           Ouroboros.Consensus.Protocol.Signed (Signed,
                      SignedHeader (headerSigned))
 import           Ouroboros.Consensus.Protocol.TPraos
