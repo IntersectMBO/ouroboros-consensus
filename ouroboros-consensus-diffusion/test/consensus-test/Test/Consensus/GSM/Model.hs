@@ -60,7 +60,7 @@ data Command r =
     --
     -- Mocks the necessary ChainSync client behavior.
   |
-    ReadJudgment
+    ReadGsmState
   |
     ReadMarker
   |
@@ -89,7 +89,7 @@ data Command r =
 
 type Response :: (Type -> Type) -> Type
 data Response r =
-    ReadThisJudgment LedgerStateJudgement
+    ReadThisGsmState GSM.GsmState
   |
     ReadThisMarker MarkerState
   |
@@ -127,7 +127,7 @@ initModel j = Model {
   ,
     mClock = SI.Time 0
   ,
-    mIdlers = Set.empty
+    mIdlers = idlers
   ,
     mNotables = Set.empty
   ,
@@ -136,10 +136,15 @@ initModel j = Model {
     mSelection = Selection 0 s
   ,
     mState = case j of
-        TooOld      -> ModelTooOld
-        YoungEnough -> ModelYoungEnough (SI.Time (-10000))
+        TooOld
+          | haaSatisfied -> ModelSyncing
+          | otherwise    -> ModelPreSyncing
+        YoungEnough      -> ModelCaughtUp (SI.Time (-10000))
   }
   where
+    idlers       = Set.empty
+    haaSatisfied = isHaaSatisfied idlers
+
     s = S $ case j of
         TooOld      -> (-11)
         YoungEnough -> 0
@@ -165,7 +170,7 @@ precondition model = pre $ \case
         "modify after disconnect" `atom` (peer `Map.member` cands)
     NewCandidate peer _bdel ->
         "double connect" `atom` (peer `Map.notMember` cands)
-    ReadJudgment ->
+    ReadGsmState ->
         QSM.Top
     ReadMarker ->
         QSM.Top
@@ -204,7 +209,7 @@ transition model cmd resp = fixupModelState cmd $ case (cmd, resp) of
           }
     (NewCandidate peer bdel, Unit) ->
         model' { mCandidates = Map.insert peer (Candidate (b + bdel)) cands }
-    (ReadJudgment, ReadThisJudgment{}) ->
+    (ReadGsmState, ReadThisGsmState{}) ->
         model'
     (ReadMarker, ReadThisMarker{}) ->
         model'
@@ -238,7 +243,17 @@ transition model cmd resp = fixupModelState cmd $ case (cmd, resp) of
 fixupModelState :: Command r -> Model r -> Model r
 fixupModelState cmd model =
     case st of
-        ModelTooOld
+        ModelPreSyncing
+          | haaSatisfied ->
+            avoidTransientState
+          $ addNotableWhen PreSyncingToSyncingN True
+          $ model { mState = ModelSyncing }
+          | otherwise ->
+            model
+        ModelSyncing
+          | not haaSatisfied ->
+            addNotableWhen SyncingToPreSyncingN True
+          $ model { mState = ModelPreSyncing }
           | caughtUp ->
             -- ASSUMPTION This new state was /NOT/ incurred by the 'TimePasses'
             -- command.
@@ -246,16 +261,17 @@ fixupModelState cmd model =
             -- Therefore the current clock is necessarily the correct timestamp
             -- to record.
             addNotableWhen CaughtUpN True
-          $ model { mState = ModelYoungEnough clk }
+          $ model { mState = ModelCaughtUp clk }
           | otherwise ->
             model
-        ModelYoungEnough timestamp
+        ModelCaughtUp timestamp
           | flicker timestamp ->
             addNotableWhen FlickerN    True
-          $ model { mState = ModelYoungEnough (flickerTimestamp timestamp) }
+          $ model { mState = ModelCaughtUp (flickerTimestamp timestamp) }
           | fellBehind timestamp ->
-            addNotableWhen FellBehindN True
-          $ model { mState = ModelTooOld }
+            avoidTransientState
+          $ addNotableWhen FellBehindN True
+          $ model { mState = ModelPreSyncing }
           | otherwise ->
             -- NB in this branch, these notables are mutually exclusive
             addNotableWhen TooOldN (expiryAge < clk)
@@ -276,10 +292,11 @@ fixupModelState cmd model =
         mState = st
       } = model
 
+    haaSatisfied         = isHaaSatisfied $ Map.keysSet cands
     caughtUp             = some && allIdling && all ok cands
     fellBehind timestamp = expiry timestamp < clk   -- NB 'boringDur' prevents ==
 
-    flicker timestamp = fellBehind timestamp && caughtUp
+    flicker timestamp = fellBehind timestamp && caughtUp && haaSatisfied
 
     some = 0 < Map.size cands
 
@@ -288,7 +305,7 @@ fixupModelState cmd model =
     ok cand =
         GSM.WhetherCandidateIsBetter False == candidateOverSelection sel cand
 
-    -- the first time the node would transition to OnlyBootstrap
+    -- the first time the node would transition to PreSyncing
     expiry          timestamp = expiryAge `max` expiryThrashing timestamp
     expiryAge                 = SI.addTime ageLimit (onset sel)
     expiryThrashing timestamp = SI.addTime thrashLimit timestamp
@@ -302,13 +319,13 @@ fixupModelState cmd model =
     --
     -- NOTE Superficially, in the real implementation, the Diffusion Layer
     -- should be discarding all peers when transitioning from CaughtUp to
-    -- OnlyBootstrap. However, it would be plausible for an implementation to
-    -- retain any bootstrap peers it happened to have, so the idiosyncratic
-    -- behavior of the system under test in this module is not totally
-    -- irrelevant.
+    -- PreSyncing. However, it would be plausible for an implementation to
+    -- retain any bootstrap/ledger peers it happened to have, so the
+    -- idiosyncratic behavior of the system under test in this module is not
+    -- totally irrelevant.
     --
-    -- the /last/ time the node instantaneously visited OnlyBootstrap during
-    -- the 'TimePasses' command, assuming it did so at least once
+    -- the /last/ time the node instantaneously visited PreSyncing during the
+    -- 'TimePasses' command, assuming it did so at least once
     flickerTimestamp timestamp = case cmd of
         ExtendSelection sdel | sdel < 0 ->
           clk
@@ -324,20 +341,22 @@ fixupModelState cmd model =
              <>
                 show cmd
 
+    avoidTransientState = fixupModelState cmd
+
 postcondition ::
      Model Concrete
   -> Command Concrete
   -> Response Concrete
   -> QSM.Logic
 postcondition model _cmd = \case
-    ReadThisJudgment j' ->
-        j' QSM..== j
+    ReadThisGsmState s' ->
+        s' QSM..== s
     ReadThisMarker m' ->
-        m' QSM..== toMarker j
+        m' QSM..== toMarker s
     Unit ->
         QSM.Top
   where
-    j = toJudgment $ mState model
+    s = toGsmState $ mState model
 
 generator ::
      Maybe UpstreamPeer
@@ -364,7 +383,7 @@ generator ub model = Just $ QC.frequency $
     | notNull new
     ]
  <>
-    [ (,) 20 $ pure ReadJudgment ]
+    [ (,) 20 $ pure ReadGsmState ]
  <>
     [ (,) 20 $ pure ReadMarker ]
  <>
@@ -399,7 +418,10 @@ generator ub model = Just $ QC.frequency $
         [ (,) 10 $ choose (1, 70) ]
      <>
         [ (,) 1 $ choose (300, 600)
-        | case mState model of ModelYoungEnough{} -> True; ModelTooOld -> False
+        | case mState model of
+            ModelCaughtUp{}   -> True
+            ModelPreSyncing{} -> False
+            ModelSyncing{}    -> False
         ]
 
     -- sdels that would not cause the selection to be in the future
@@ -434,7 +456,7 @@ shrinker _model = \case
         [ ModifyCandidate peer bdel' | bdel' <- shrinkB bdel, bdel' /= 0 ]
     NewCandidate peer bdel ->
         [ NewCandidate peer bdel' | bdel' <- shrinkB bdel, bdel' /= 0  ]
-    ReadJudgment ->
+    ReadGsmState ->
         []
     ReadMarker ->
         []
@@ -456,16 +478,16 @@ mock model = \case
         Unit
     NewCandidate{} ->
         Unit
-    ReadJudgment ->
-        ReadThisJudgment j
+    ReadGsmState ->
+        ReadThisGsmState s
     ReadMarker ->
-        ReadThisMarker $ toMarker j
+        ReadThisMarker $ toMarker s
     StartIdling{} ->
         Unit
     TimePasses{} ->
         Unit
   where
-    j = toJudgment $ mState model
+    s = toGsmState $ mState model
 
 -----
 
@@ -506,10 +528,12 @@ newtype WhetherPrevTimePasses = WhetherPrevTimePasses Bool
   deriving anyclass (TD.ToExpr)
 
 data ModelState =
-    ModelTooOld
+    ModelPreSyncing
   |
-    ModelYoungEnough !SI.Time
-    -- ^ when the model most recently transitioned to 'YoungEnough'
+    ModelSyncing
+  |
+    ModelCaughtUp !SI.Time
+    -- ^ when the model most recently transitioned to 'GSM.CaughtUp'.
   deriving stock    (Eq, Ord, Generic, Show)
   deriving anyclass (TD.ToExpr)
 
@@ -523,14 +547,20 @@ data Notable =
     -- ^ there was a "big" 'TimesPasses' command
   |
     CaughtUpN
-    -- ^ the node transitioned from OnlyBootstrap to CaughtUp
+    -- ^ the node transitioned from Syncing to CaughtUp
   |
     FellBehindN
-    -- ^ the node transitioned from CaughtUp to OnlyBootstrap
+    -- ^ the node transitioned from CaughtUp to PreSyncing
+  |
+    SyncingToPreSyncingN
+    -- ^ the node transition from Syncing to PreSyncing
+  |
+    PreSyncingToSyncingN
+    -- ^ the node transition from PreSyncing to Syncing
   |
     FlickerN
-    -- ^ the node transitioned from CaughtUp to OnlyBootstrap and back to
-    -- CaughtUp "instantly"
+    -- ^ the node transitioned from CaughtUp to PreSyncing to Syncing and back
+    -- to CaughtUp "instantly"
   |
     NotThrashingN
     -- ^ the anti-thrashing would have allowed 'FellBehindN', but the selection
@@ -545,8 +575,7 @@ instance TD.ToExpr Notable where toExpr = TD.defaultExprViaShow
 
 ----- orphans
 
-instance TD.ToExpr SI.Time              where toExpr = TD.defaultExprViaShow
-instance TD.ToExpr LedgerStateJudgement where toExpr = TD.defaultExprViaShow
+instance TD.ToExpr SI.Time where toExpr = TD.defaultExprViaShow
 
 deriving instance Read LedgerStateJudgement
 
@@ -573,17 +602,28 @@ candidateOverSelection (Selection b _s) (Candidate b') =
     -- I'm not quite sure
     GSM.WhetherCandidateIsBetter (b < b')
 
+isHaaSatisfied :: Set.Set UpstreamPeer -> Bool
+isHaaSatisfied peers =
+    -- There currently are at most 5 peers; we arbitrarily require to
+    -- be connected to at least three to consider the Honest
+    -- Availability Assumption to be satisfied.
+    --
+    -- TODO We could let QuickCheck generate a random predicate for us.
+    Set.size peers >= 3
+
 -----
 
-toJudgment :: ModelState -> LedgerStateJudgement
-toJudgment = \case
-    ModelTooOld        -> TooOld
-    ModelYoungEnough{} -> YoungEnough
+toGsmState :: ModelState -> GSM.GsmState
+toGsmState = \case
+    ModelPreSyncing -> GSM.PreSyncing
+    ModelSyncing    -> GSM.Syncing
+    ModelCaughtUp{} -> GSM.CaughtUp
 
-toMarker :: LedgerStateJudgement -> MarkerState
+toMarker :: GSM.GsmState -> MarkerState
 toMarker = \case
-    TooOld      -> Absent
-    YoungEnough -> Present
+    GSM.PreSyncing -> Absent
+    GSM.Syncing    -> Absent
+    GSM.CaughtUp   -> Present
 
 -----
 
@@ -637,7 +677,7 @@ boringDur model dur =
         mState = st
       } = model
 
-    -- the first time the node would transition to OnlyBootstrap
+    -- the first time the node would transition to PreSyncing
     expiry          timestamp = expiryAge `max` expiryThrashing timestamp
     expiryAge                 = SI.addTime ageLimit (onset sel)
     expiryThrashing timestamp = SI.addTime thrashLimit timestamp
@@ -647,8 +687,9 @@ boringDur model dur =
     boringSelection = "boringDur selection" `atom` (clk' /= expiryAge)
 
     boringState = case st of
-        ModelTooOld                -> QSM.Top
-        ModelYoungEnough timestamp ->
+        ModelPreSyncing         -> QSM.Top
+        ModelSyncing            -> QSM.Top
+        ModelCaughtUp timestamp ->
             let gap = clk' `SI.diffTime` expiry timestamp
                 n   =
                   mod

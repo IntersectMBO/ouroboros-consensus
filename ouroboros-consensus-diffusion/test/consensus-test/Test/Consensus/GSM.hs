@@ -94,8 +94,8 @@ semantics vars cmd = pre $ case cmd of
             v <- newTVar $! Candidate (b + bdel)
             modifyTVar varCandidates $ Map.insert peer v
         pure Unit
-    ReadJudgment -> do
-        fmap ReadThisJudgment $ atomically $ readTVar varJudgment
+    ReadGsmState -> do
+        fmap ReadThisGsmState $ atomically $ readTVar varGsmState
     ReadMarker -> do
         fmap ReadThisMarker $ atomically $ readTVar varMarker
     StartIdling peer -> do
@@ -109,7 +109,7 @@ semantics vars cmd = pre $ case cmd of
         varSelection
         varCandidates
         varIdlers
-        varJudgment
+        varGsmState
         varMarker
         varEvents
       = vars
@@ -170,25 +170,27 @@ prop_sequential1 ::
   -> QSM.Commands Command Response
   -> QC.Property
 prop_sequential1 j0 cmds = runSimQC $ do
+    let s0 = case j0 of
+          TooOld      -> GSM.PreSyncing
+          YoungEnough -> GSM.CaughtUp
+
     -- these variables are part of the 'GSM.GsmView'
     varSelection  <- newTVarIO (mSelection $ initModel j0)
     varCandidates <- newTVarIO Map.empty
     varIdlers     <- newTVarIO Set.empty
-    varJudgment   <- newTVarIO j0
-    varMarker     <- newTVarIO (toMarker j0)
+    varGsmState   <- newTVarIO s0
+    varMarker     <- newTVarIO (toMarker s0)
 
     -- this variable is for better 'QC.counterexample' messages
     varEvents <- newRecorder
-    let tracer = Tracer $ push varEvents . EvGsmWrite . \case
-            GSM.GsmEventEnterCaughtUp{} -> YoungEnough
-            GSM.GsmEventLeaveCaughtUp{} -> TooOld
+    let tracer = Tracer $ push varEvents . EvGsm
 
     let vars =
             Vars
                 varSelection
                 varCandidates
                 varIdlers
-                varJudgment
+                varGsmState
                 varMarker
                 varEvents
 
@@ -218,12 +220,15 @@ prop_sequential1 j0 cmds = runSimQC $ do
                 atomically $ do
                     writeTVar varMarker $ if b then Present else Absent
           ,
-            GSM.writeLedgerStateJudgement = \x -> atomically $ do
-                writeTVar varJudgment x
+            GSM.writeGsmState = \x -> atomically $ do
+                writeTVar varGsmState x
+          ,
+            GSM.isHaaSatisfied =
+                isHaaSatisfied . Map.keysSet <$> readTVar varCandidates
           }
         gsmEntryPoint = case j0 of
-            TooOld      -> GSM.enterOnlyBootstrap gsm
-            YoungEnough -> GSM.enterCaughtUp      gsm
+            TooOld      -> GSM.enterPreSyncing gsm
+            YoungEnough -> GSM.enterCaughtUp   gsm
 
     ((hist, model', res), mbExn) <- id
       $ withAsync gsmEntryPoint
@@ -249,12 +254,12 @@ prop_sequential1 j0 cmds = runSimQC $ do
             Nothing  -> QC.property ()
             Just exn -> QC.counterexample (show exn) False
 
-    -- effectively add a 'ReadJudgment' to the end of the command list
+    -- effectively add a 'ReadGsmState' to the end of the command list
     lastCheck <- do
-        actual <- semantics vars ReadJudgment
-        let expected = mock model' ReadJudgment
+        actual <- semantics vars ReadGsmState
+        let expected = mock model' ReadGsmState
         pure $ case (actual, expected) of
-            (ReadThisJudgment x, ReadThisJudgment y) ->
+            (ReadThisGsmState x, ReadThisGsmState y) ->
                 QC.counterexample "lastCheck" $ x QC.=== y
             _ ->
                 error "impossible! lastCheck response"
@@ -324,7 +329,7 @@ For this 'prop_sequential1' repro
    Command (ExtendSelection (S (-4))) Unit []
    Command ReadMarker (ReadThisMarker Absent) []
 
-   (Command ReadJudgment _ [])   -- this last command is baked into the property
+   (Command ReadGsmState _ [])   -- this last command is baked into the property
 @
 
 If we yield after the command, then both GSM flicker writes happen during the
@@ -334,7 +339,7 @@ If we yield before the command, then both GSM flicker writes happen during the
 'ReadMarker'.
 
 If we don't yield, one write happens during the ReadMarker and the other
-happens /between/ 'ReadMarker' and 'ReadJudgment'.
+happens /between/ 'ReadMarker' and 'ReadGsmState'.
 
 It seems most intuitive for the updates to happen "as part of" the
 'ExtendSelection', so I'm favoring yielding after.
@@ -369,8 +374,8 @@ data Ev =
     EvEnd
     -- ^ 'semantics' stopped stimulating the GSM code being tested
   |
-    EvGsmWrite LedgerStateJudgement
-    -- ^ the GSM code being tested wrote to the TVar
+    EvGsm (GSM.TraceGsmEvent Selection)
+    -- ^ the GSM code being tested emitted an event
   deriving (Show)
 
 newtype EvRecorder m = EvRecorder (StrictTVar m [(SI.Time, Ev)])
@@ -393,7 +398,7 @@ data Vars m = Vars
     (StrictTVar m Selection)
     (StrictTVar m (Map.Map UpstreamPeer (StrictTVar m Candidate)))
     (StrictTVar m (Set.Set UpstreamPeer))
-    (StrictTVar m LedgerStateJudgement)
+    (StrictTVar m GSM.GsmState)
     (StrictTVar m MarkerState)
     (EvRecorder m)
 
