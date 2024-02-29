@@ -175,7 +175,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       copyFuse           <- newFuse "copy to immutable db"
       chainSelFuse       <- newFuse "chain selection"
       blocksToAdd        <- newBlocksToAdd (Args.cdbBlocksToAddSize args)
-      varLoEFrag         <- newTVarIO (AF.Empty AF.AnchorGenesis)
 
       let env = CDB { cdbImmutableDB     = immutableDB
                     , cdbVolatileDB      = volatileDB
@@ -202,7 +201,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     , cdbCheckInFuture   = Args.cdbCheckInFuture args
                     , cdbBlocksToAdd     = blocksToAdd
                     , cdbFutureBlocks    = varFutureBlocks
-                    , cdbLoEFrag         = varLoEFrag
                     , cdbLoE             = Args.cdbLoE args
                     }
       h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
@@ -220,7 +218,6 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , stream                = Iterator.stream  h
             , newFollower           = Follower.newFollower h
             , getIsInvalidBlock     = getEnvSTM  h Query.getIsInvalidBlock
-            , setLoEFrag            = writeTVar varLoEFrag
             , closeDB               = closeDB h
             , isOpen                = isOpen  h
             }

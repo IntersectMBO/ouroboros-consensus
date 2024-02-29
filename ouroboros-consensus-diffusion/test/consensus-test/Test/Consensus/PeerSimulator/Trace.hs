@@ -42,6 +42,10 @@ mkCdbTracer tracer =
           trace $ "Did not add block due to LoE: " ++ terseRealPoint point
         IgnoreBlockOlderThanK point ->
           trace $ "Ignored block older than k: " ++ terseRealPoint point
+        ChainSelectionLoEDebug curChain loeFrag0 -> do
+          trace $ "Current chain: " ++ terseHFragment curChain
+          trace $ "LoE fragment: " ++ terseHFragment loeFrag0
+
         _ -> pure ()
     _ -> pure ()
   where
