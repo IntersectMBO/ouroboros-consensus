@@ -239,18 +239,21 @@ loadSnapshot ::
   -> Complete BackingStoreArgs m
   -> CodecConfig blk
   -> SomeHasFS m
+  -> SomeHasFS m
+  -> Bool
+  -> Bool
   -> DiskSnapshot
   -> m (Either
          (SnapshotFailure blk)
          ((DbChangelog' blk, LedgerBackingStore m (ExtLedgerState blk)), RealPoint blk))
-loadSnapshot tracer bss ccfg fs s = do
-  eExtLedgerSt <- runExceptT $ readExtLedgerState fs (decodeExtLedgerState' ccfg) decode (snapshotToStatePath s)
+loadSnapshot tracer bss ccfg fs ssdfs tablessd statessd s = do
+  eExtLedgerSt <- runExceptT $ readExtLedgerState (if statessd then ssdfs else fs) (decodeExtLedgerState' ccfg) decode (snapshotToStatePath s)
   case eExtLedgerSt of
     Left err -> pure (Left $ InitFailureRead err)
     Right extLedgerSt -> do
       case pointToWithOriginRealPoint (castPoint (getTip extLedgerSt)) of
         Origin        -> pure (Left InitFailureGenesis)
         NotOrigin pt -> do
-          backingStore <- restoreBackingStore tracer bss fs (snapshotToTablesPath s)
+          backingStore <- restoreBackingStore tracer bss ssdfs (if tablessd then ssdfs else fs) (snapshotToTablesPath s)
           let chlog  = empty extLedgerSt
           pure (Right ((chlog, backingStore), pt))

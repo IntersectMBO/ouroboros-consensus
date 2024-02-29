@@ -333,19 +333,21 @@ initFromLMDBs ::
      -- ^ Configuration for the LMDB database that we initialise from.
   -> FS.SomeHasFS m
      -- ^ Abstraction over the filesystem.
+  -> FS.SomeHasFS m
+     -- ^ Abstraction over the filesystem.
   -> FS.FsPath
      -- ^ The path that contains the LMDB database that we want to initialise from.
   -> FS.FsPath
      -- ^ The path where the new LMDB database should be initialised.
   -> m ()
-initFromLMDBs tracer limits shfs@(FS.SomeHasFS fs) from0 to0 = do
+initFromLMDBs tracer limits ssdhfs shfs@(FS.SomeHasFS fs) from0 to0 = do
     Trace.traceWith tracer $ API.BSInitialisingFromCopy from0
     from <- guardDbDir DirMustExist shfs from0
     -- On Windows, if we don't choose the mapsize carefully it will make the
     -- snapshot grow. Therefore we are using the current filesize as mapsize
     -- when opening the snapshot to avoid this.
     stat <- FS.withFile fs (from0 { FS.fsPathToList = FS.fsPathToList from0 ++ [Strict.pack "data.mdb"] }) FS.ReadMode (FS.hGetSize fs)
-    to <- guardDbDirWithRetry DirMustNotExist shfs to0
+    to <- guardDbDirWithRetry DirMustNotExist ssdhfs to0
     bracket
       (liftIO $ LMDB.openEnvironment from ((unLMDBLimits limits) { LMDB.mapSize = fromIntegral stat }))
       (liftIO . LMDB.closeEnvironment)
@@ -376,9 +378,10 @@ newLMDBBackingStore ::
      -- an existing LMDB database, we use these same configuration parameters
      -- to open the existing LMDB database.
   -> FS.SomeHasFS m
+  -> FS.SomeHasFS m
   -> API.InitFrom (LedgerTables l ValuesMK)
   -> m (API.LedgerBackingStore m l)
-newLMDBBackingStore dbTracer limits sfs initFrom = do
+newLMDBBackingStore dbTracer limits ssdfs snapfs initFrom = do
    Trace.traceWith dbTracer API.BSOpening
 
    db@Db { dbEnv
@@ -402,11 +405,11 @@ newLMDBBackingStore dbTracer limits sfs initFrom = do
      dbStatusLock  <- Status.new Open
 
      -- get the filepath for this db creates the directory if appropriate
-     dbFilePath <- guardDbDirWithRetry DirMustNotExist sfs path
+     dbFilePath <- guardDbDirWithRetry DirMustNotExist ssdfs path
 
      -- copy from another lmdb path if appropriate
      case initFrom of
-       API.InitFromCopy fp -> initFromLMDBs dbTracer limits sfs fp path
+       API.InitFromCopy fp -> initFromLMDBs dbTracer limits ssdfs snapfs fp path
        _                   -> pure ()
 
      -- open this database
@@ -458,7 +461,7 @@ newLMDBBackingStore dbTracer limits sfs initFrom = do
               traceAlreadyClosed = Trace.traceWith dbTracer API.BSAlreadyClosed
 
            bsCopy bsp = Status.withReadAccess dbStatusLock LMDBErrClosed $ do
-             to <- guardDbDir DirMustNotExist sfs bsp
+             to <- guardDbDir DirMustNotExist snapfs bsp
              lmdbCopy path dbTracer dbEnv to
 
            bsValueHandle = Status.withReadAccess dbStatusLock LMDBErrClosed $ do

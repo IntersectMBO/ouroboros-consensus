@@ -71,10 +71,11 @@ mkInitDb args bss getBlock =
       (_, backingStore) <-
         allocate
           lgrRegistry
-          (\_ -> newBackingStore bsTracer baArgs lgrHasFS (projectLedgerTables st))
+          (\_ -> newBackingStore bsTracer baArgs lgrSSDHasFS (if lgrSnapshotTablesSSD then lgrSSDHasFS else lgrHasFS) (projectLedgerTables st))
           bsClose
       pure (chlog, backingStore)
-  , initFromSnapshot = loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS
+  , initFromSnapshot =
+      loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS  lgrSSDHasFS lgrSnapshotTablesSSD lgrSnapshotStateSSD
   , closeDb = bsClose . snd
   , initReapplyBlock = \cfg blk (chlog, bstore) -> do
       !chlog' <- onChangelogM (reapplyThenPush cfg blk (readKeySets bstore)) chlog
@@ -120,6 +121,9 @@ mkInitDb args bss getBlock =
 
     LedgerDbArgs {
         lgrHasFS
+      , lgrSSDHasFS
+      , lgrSnapshotTablesSSD
+      , lgrSnapshotStateSSD
       , lgrTracer
       , lgrSnapshotPolicyArgs
       , lgrConfig

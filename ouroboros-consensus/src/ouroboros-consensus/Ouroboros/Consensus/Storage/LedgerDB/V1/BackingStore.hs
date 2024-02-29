@@ -45,6 +45,7 @@ import           System.FS.API
 
 type BackingStoreInitializer m l =
      SomeHasFS m
+  -> SomeHasFS m
   -> InitFrom (LedgerTables l ValuesMK)
   -> m (LedgerBackingStore m l)
 
@@ -58,10 +59,11 @@ restoreBackingStore ::
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
   -> SomeHasFS m
+  -> SomeHasFS m
   -> FsPath
   -> m (LedgerBackingStore m l)
-restoreBackingStore trcr bss someHasFs loadPath =
-    newBackingStoreInitialiser trcr bss someHasFs (InitFromCopy loadPath)
+restoreBackingStore trcr bss someHasFs snapFs loadPath =
+    newBackingStoreInitialiser trcr bss someHasFs snapFs (InitFromCopy loadPath)
 
 -- | Create a 'BackingStore' from the given initial tables.
 newBackingStore ::
@@ -73,10 +75,11 @@ newBackingStore ::
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
   -> SomeHasFS m
+  -> SomeHasFS m
   -> LedgerTables l ValuesMK
   -> m (LedgerBackingStore m l)
-newBackingStore trcr bss someHasFS tables =
-    newBackingStoreInitialiser trcr bss someHasFS (InitFromValues Origin tables)
+newBackingStore trcr bss someHasFS snapFs tables =
+    newBackingStoreInitialiser trcr bss someHasFS snapFs (InitFromValues Origin tables)
 
 newBackingStoreInitialiser ::
      forall m l.
