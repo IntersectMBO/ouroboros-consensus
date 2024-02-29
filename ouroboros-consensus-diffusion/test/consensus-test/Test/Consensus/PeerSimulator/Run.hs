@@ -233,7 +233,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     stateViewTracers <- defaultStateViewTracers
     resources <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
-        updateLoEFrag = updateLoEFragStall k getCandidates
+        updateLoEFrag = updateLoEFragStall getCandidates
     chainDb <- mkChainDb schedulerConfig tracer config registry updateLoEFrag
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = CSClient.defaultChainDbView chainDb
