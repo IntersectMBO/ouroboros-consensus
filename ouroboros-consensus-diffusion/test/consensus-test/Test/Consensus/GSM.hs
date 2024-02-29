@@ -125,14 +125,14 @@ sm ::
      IOLike m
   => Maybe UpstreamPeer
   -> Vars m
-  -> LedgerStateJudgement
+  -> Context
   -> QSM.StateMachine Model Command m Response
-sm ub vars j = QSM.StateMachine {
+sm ub vars ctx = QSM.StateMachine {
     QSM.cleanup = \_model -> pure ()
   ,
     QSM.generator = generator ub
   ,
-    QSM.initModel = initModel j
+    QSM.initModel = initModel ctx
   ,
     QSM.invariant = Nothing
   ,
@@ -140,42 +140,49 @@ sm ub vars j = QSM.StateMachine {
   ,
     QSM.postcondition = postcondition
   ,
-    QSM.precondition = precondition
+    QSM.precondition = precondition ctx
   ,
     QSM.semantics = semantics vars
   ,
     QSM.shrinker = shrinker
   ,
-    QSM.transition = transition
+    QSM.transition = transition ctx
   }
 
 prop_sequential ::
      Maybe UpstreamPeer
   -> LedgerStateJudgement
+  -> QC.Fun (Set.Set UpstreamPeer) Bool
   -> QC.Property
-prop_sequential ub j0 =
+prop_sequential ub j0 (QC.Fn isHaaSatisfied) =
     QSM.forAllCommands
         commandArbitrarySM
         mbMinimumCommandLen
-        (prop_sequential1 j0)
+        (prop_sequential1 ctx)
   where
+    ctx = Context {
+        cInitialJudgement = j0
+      ,
+        cIsHaaSatisfied = isHaaSatisfied
+      }
+
     mbMinimumCommandLen = Just 20   -- just a guess
 
     -- NB the monad is irrelevant here but is ambiguous, so we merely ascribe a
     -- convenient concrete one
-    commandArbitrarySM = sm ub (undefined :: Vars IO) j0
+    commandArbitrarySM = sm ub (undefined :: Vars IO) ctx
 
 prop_sequential1 ::
-     LedgerStateJudgement
+     Context
   -> QSM.Commands Command Response
   -> QC.Property
-prop_sequential1 j0 cmds = runSimQC $ do
+prop_sequential1 ctx cmds = runSimQC $ do
     let s0 = case j0 of
           TooOld      -> GSM.PreSyncing
           YoungEnough -> GSM.CaughtUp
 
     -- these variables are part of the 'GSM.GsmView'
-    varSelection  <- newTVarIO (mSelection $ initModel j0)
+    varSelection  <- newTVarIO (mSelection $ initModel ctx)
     varCandidates <- newTVarIO Map.empty
     varIdlers     <- newTVarIO Set.empty
     varGsmState   <- newTVarIO s0
@@ -194,10 +201,10 @@ prop_sequential1 j0 cmds = runSimQC $ do
                 varMarker
                 varEvents
 
-    let executionSM = sm (Just maxBound) vars j0
+    let executionSM = sm (Just maxBound) vars ctx
 
         -- NB the specific IO type is unused here
-        prettySM = sm undefined undefined j0
+        prettySM = sm undefined undefined ctx
 
     let gsm = GSM.realGsmEntryPoints (id, tracer) GSM.GsmView {
             GSM.antiThunderingHerd = Nothing
@@ -283,6 +290,12 @@ prop_sequential1 j0 cmds = runSimQC $ do
             )
       $ QSM.checkCommandNames cmds
       $ noExn QC..&&. lastCheck QC..&&. res QC.=== QSM.Ok
+  where
+    Context {
+        cInitialJudgement = j0
+      ,
+        cIsHaaSatisfied = isHaaSatisfied
+      } = ctx
 
 -----
 
@@ -356,7 +369,7 @@ first command, for consistency.
 prop_yield_regression :: QC.Property
 prop_yield_regression =
    QC.once
- $ prop_sequential1 YoungEnough
+ $ prop_sequential1 ctx
  $ QSM.Commands
      [ QSM.Command (NewCandidate Amara (B 1)) Unit []
      , QSM.Command (StartIdling Amara) Unit []
@@ -364,6 +377,12 @@ prop_yield_regression =
      , QSM.Command (ExtendSelection (S (-4))) Unit []
      , QSM.Command ReadMarker (ReadThisMarker Absent) []
      ]
+  where
+    ctx = Context {
+        cInitialJudgement = YoungEnough
+      ,
+        cIsHaaSatisfied = \_peers -> True
+      }
 
 ----- trivial event accumulator, useful for debugging test failures
 

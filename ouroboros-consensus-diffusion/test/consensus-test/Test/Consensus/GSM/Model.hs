@@ -97,6 +97,12 @@ data Response r =
   deriving stock    (Generic1, Read, Show)
   deriving anyclass (QSM.Foldable, QSM.Functor, QSM.Traversable)
 
+data Context = Context {
+    cInitialJudgement :: LedgerStateJudgement
+  ,
+    cIsHaaSatisfied   :: Set.Set UpstreamPeer -> Bool
+  }
+
 type Model :: (Type -> Type) -> Type
 data Model r = Model {
     mCandidates :: Map.Map UpstreamPeer Candidate
@@ -121,8 +127,8 @@ addNotableWhen n b model =
     if not b then model else
     model { mNotables = n `Set.insert` mNotables model }
 
-initModel :: LedgerStateJudgement -> Model r
-initModel j = Model {
+initModel :: Context -> Model r
+initModel ctx = Model {
     mCandidates = Map.empty
   ,
     mClock = SI.Time 0
@@ -137,13 +143,18 @@ initModel j = Model {
   ,
     mState = case j of
         TooOld
-          | haaSatisfied -> ModelSyncing
-          | otherwise    -> ModelPreSyncing
-        YoungEnough      -> ModelCaughtUp (SI.Time (-10000))
+          | isHaaSatisfied idlers -> ModelSyncing
+          | otherwise             -> ModelPreSyncing
+        YoungEnough               -> ModelCaughtUp (SI.Time (-10000))
   }
   where
-    idlers       = Set.empty
-    haaSatisfied = isHaaSatisfied idlers
+    Context {
+        cInitialJudgement = j
+      ,
+        cIsHaaSatisfied = isHaaSatisfied
+      } = ctx
+
+    idlers = Set.empty
 
     s = S $ case j of
         TooOld      -> (-11)
@@ -154,10 +165,10 @@ initModel j = Model {
 -- the library generated, which ensures the preconditions. On the other hand,
 -- if you're debugging a failure by manually altering commands, then these
 -- annotations may be helpful.
-precondition :: Model Symbolic -> Command Symbolic -> QSM.Logic
-precondition model = pre $ \case
+precondition :: Context -> Model Symbolic -> Command Symbolic -> QSM.Logic
+precondition ctx model = pre $ \case
     cmd@ExtendSelection{} ->
-        let model' = transition model cmd Unit
+        let model' = transition ctx model cmd Unit
         in
             "syncing node got ahead" `atom` selectionIsBehind model
          QSM..&&
@@ -191,8 +202,8 @@ precondition model = pre $ \case
 
     pre f cmd = f cmd QSM..// show cmd
 
-transition :: Model r -> Command r -> Response r -> Model r
-transition model cmd resp = fixupModelState cmd $ case (cmd, resp) of
+transition :: Context -> Model r -> Command r -> Response r -> Model r
+transition ctx model cmd resp = fixupModelState ctx cmd $ case (cmd, resp) of
     (Disconnect peer, Unit) ->
         model' {
             mCandidates = Map.delete peer cands
@@ -240,8 +251,8 @@ transition model cmd resp = fixupModelState cmd $ case (cmd, resp) of
 
 -- | Update the 'mState', assuming that's the only stale field in the given
 -- 'Model'
-fixupModelState :: Command r -> Model r -> Model r
-fixupModelState cmd model =
+fixupModelState :: Context -> Command r -> Model r -> Model r
+fixupModelState ctx cmd model =
     case st of
         ModelPreSyncing
           | haaSatisfied ->
@@ -292,6 +303,10 @@ fixupModelState cmd model =
         mState = st
       } = model
 
+    Context {
+        cIsHaaSatisfied = isHaaSatisfied
+      } = ctx
+
     haaSatisfied         = isHaaSatisfied $ Map.keysSet cands
     caughtUp             = some && allIdling && all ok cands
     fellBehind timestamp = expiry timestamp < clk   -- NB 'boringDur' prevents ==
@@ -341,7 +356,7 @@ fixupModelState cmd model =
              <>
                 show cmd
 
-    avoidTransientState = fixupModelState cmd
+    avoidTransientState = fixupModelState ctx cmd
 
 postcondition ::
      Model Concrete
@@ -505,7 +520,7 @@ newtype S = S Int
 
 data UpstreamPeer = Amara | Bao | Cait | Dhani | Eric
   deriving stock    (Bounded, Enum, Eq, Ord, Generic, Read, Show)
-  deriving anyclass (TD.ToExpr)
+  deriving anyclass (TD.ToExpr, QC.CoArbitrary, QC.Function)
 
 -- | The cumulative growth relative to whatever length the initial selection
 -- was and the slot relative to the start of the test (which is assumed to be
@@ -601,15 +616,6 @@ candidateOverSelection (Selection b _s) (Candidate b') =
     -- TODO this ignores CandidateDoesNotIntersect, which seems harmless, but
     -- I'm not quite sure
     GSM.WhetherCandidateIsBetter (b < b')
-
-isHaaSatisfied :: Set.Set UpstreamPeer -> Bool
-isHaaSatisfied peers =
-    -- There currently are at most 5 peers; we arbitrarily require to
-    -- be connected to at least three to consider the Honest
-    -- Availability Assumption to be satisfied.
-    --
-    -- TODO We could let QuickCheck generate a random predicate for us.
-    Set.size peers >= 3
 
 -----
 
