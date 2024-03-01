@@ -14,6 +14,7 @@ module Main (main) where
 
 import qualified Ouroboros.Consensus.Util.Tests (tests)
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Tests (tests)
+import qualified Test.Ouroboros.Consensus.Util.LeakyBucket.Tests (tests)
 import           Test.Tasty (TestTree, testGroup)
 import qualified Test.Util.ChainUpdates.Tests (tests)
 import qualified Test.Util.Schedule.Tests (tests)
@@ -29,6 +30,7 @@ tests =
   testGroup "test-infra"
   [ Ouroboros.Consensus.Util.Tests.tests
   , Test.Ouroboros.Consensus.ChainGenerator.Tests.tests
+  , Test.Ouroboros.Consensus.Util.LeakyBucket.Tests.tests
   , Test.Util.ChainUpdates.Tests.tests
   , Test.Util.Schedule.Tests.tests
   , Test.Util.Split.Tests.tests
