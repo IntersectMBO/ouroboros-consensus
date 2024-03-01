@@ -71,6 +71,9 @@ basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, st
       , CSClient.varCandidate
       , CSClient.startIdling
       , CSClient.stopIdling
+      , CSClient.pauseLoPBucket = pure ()
+      , CSClient.resumeLoPBucket = pure ()
+      , CSClient.grantLoPToken = pure ()
       }
   where
     dummyHeaderInFutureCheck ::
@@ -107,7 +110,7 @@ runChainSyncClient
     -- We don't need this shared Set yet. If we need it at some point,
     -- it ought to be passed to `runChainSyncClient`.
     varIdling <- uncheckedNewTVarM $ Set.empty
-    bracketChainSyncClient nullTracer chainDbView varCandidates varIdling peerId ntnVersion $ \ varCandidate idleManagers -> do
+    bracketChainSyncClient nullTracer chainDbView varCandidates varIdling peerId ntnVersion CSClient.ChainSyncLoPBucketDisabled $ \ varCandidate idleManagers _lopBucket -> do
       res <- try $ runConnectedPeersPipelinedWithLimits
         createConnectedChannels
         nullTracer
