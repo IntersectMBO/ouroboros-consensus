@@ -53,11 +53,13 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , Our (..)
   , Their (..)
     -- * Trace events
+  , ChainSyncLoPBucketConfig (..)
+  , ChainSyncLoPBucketEnabledConfig (..)
   , InvalidBlockReason
   , TraceChainSyncClientEvent (..)
   ) where
 
-import           Control.Monad (join)
+import           Control.Monad (join, void)
 import           Control.Monad.Except (runExcept, throwError)
 import           Control.Tracer
 import           Data.Kind (Type)
@@ -96,6 +98,7 @@ import           Ouroboros.Consensus.Util.Assert (assertWithMsg)
 import           Ouroboros.Consensus.Util.EarlyExit (WithEarlyExit, exitEarly)
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
+import qualified Ouroboros.Consensus.Util.LeakyBucket as LeakyBucket
 import           Ouroboros.Consensus.Util.STM (Fingerprint, Watcher (..),
                      WithFingerprint (..), withWatcher)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
@@ -133,6 +136,24 @@ data ChainDbView m blk = ChainDbView {
           (WithFingerprint
               (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
   }
+
+-- | Configuration of the leaky bucket when it is enabled.
+data ChainSyncLoPBucketEnabledConfig = ChainSyncLoPBucketEnabledConfig {
+    -- | The capacity of the bucket (think number of tokens).
+    csbcCapacity :: Integer,
+    -- | The rate of the bucket (think tokens per second).
+    csbcRate     :: Rational
+  }
+
+-- | Configuration of the leaky bucket.
+data ChainSyncLoPBucketConfig
+  =
+    -- | Fully disable the leaky bucket. The background thread that is used to
+    -- run it will not even be started.
+    ChainSyncLoPBucketDisabled
+  |
+    -- | Enable the leaky bucket.
+    ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig
 
 defaultChainDbView ::
      (IOLike m, LedgerSupportsProtocol blk)
@@ -176,8 +197,10 @@ bracketChainSyncClient ::
     -- used by the GSM to determine that the node is done syncing.
  -> peer
  -> NodeToNodeVersion
+ -> ChainSyncLoPBucketConfig
  -> (     StrictTVar m (AnchoredFragment (Header blk))
        -> (m (), m ())
+       -> (m (), m (), m ())
        -> m a
     )
  -> m a
@@ -188,6 +211,7 @@ bracketChainSyncClient
     varIdling
     peer
     version
+    csBucketConfig
     body
   =
     bracket newCandidateVar releaseCandidateVar
@@ -195,11 +219,15 @@ bracketChainSyncClient
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
             (invalidBlockWatcher varCandidate)
-      $ body
-            varCandidate
-            ( atomically $ modifyTVar varIdling $ Set.insert peer
-            , atomically $ modifyTVar varIdling $ Set.delete peer
-            )
+      $ LeakyBucket.execAgainstBucket lopBucketConfig
+      $ \lopBucket ->
+            body
+                varCandidate
+                ( atomically $ modifyTVar varIdling $ Set.insert peer
+                , atomically $ modifyTVar varIdling $ Set.delete peer )
+                ( LeakyBucket.setPaused lopBucket True
+                , LeakyBucket.setPaused lopBucket False
+                , void $ LeakyBucket.fill lopBucket 1 )
   where
     newCandidateVar = do
         varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
@@ -213,6 +241,20 @@ bracketChainSyncClient
     invalidBlockWatcher varCandidate =
         invalidBlockRejector
             tracer version getIsInvalidBlock (readTVar varCandidate)
+
+    -- | Wrapper around 'LeakyBucket.execAgainstBucket' that handles the
+    -- disabled bucket by running the given action with dummy handlers.
+    lopBucketConfig :: MonadThrow m => LeakyBucket.Config m
+    lopBucketConfig =
+      case csBucketConfig of
+        ChainSyncLoPBucketDisabled -> LeakyBucket.dummyConfig
+        ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig {csbcCapacity, csbcRate} ->
+            LeakyBucket.Config
+              { capacity = fromInteger $ csbcCapacity,
+                rate = csbcRate,
+                onEmpty = throwIO EmptyBucket,
+                fillOnOverflow = True
+              }
 
 -- Our task: after connecting to an upstream node, try to maintain an
 -- up-to-date header-only fragment representing their chain. We maintain
@@ -337,6 +379,10 @@ data UnknownIntersectionState blk = UnknownIntersectionState {
     ourHeaderStateHistory :: !(HeaderStateHistory blk)
     -- ^ 'HeaderStateHistory' corresponding to the tip (most recent block) of
     -- 'ourFrag'.
+  ,
+    uBestBlockNo          :: !BlockNo
+    -- ^ The best block number of any header sent by this peer, to be used by
+    -- the limit on patience.
   }
   deriving (Generic)
 
@@ -389,6 +435,10 @@ data KnownIntersectionState blk = KnownIntersectionState {
     -- headers in 'theirFrag', including the anchor.
     --
     -- See the \"Candidate fragment size\" note above.
+  ,
+    kBestBlockNo            :: !BlockNo
+    -- ^ The best block number of any header sent by this peer, to be used by
+    -- the limit on patience.
   }
   deriving (Generic)
 
@@ -523,6 +573,13 @@ data DynamicEnv m blk = DynamicEnv {
   , stopIdling          :: m ()
     -- ^ Remove the peer from the idling set argument of
     -- 'bracketChainSyncClient'
+  , pauseLoPBucket      :: m ()
+    -- ^ Stop the LoP bucket from leaking. Can be called on an already-paused
+    -- bucket.
+  , resumeLoPBucket     :: m ()
+    -- ^ Ensure that the LoP bucket is leaking. Can be called on an
+    -- already-leaking bucket.
+  , grantLoPToken       :: m ()
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -602,6 +659,7 @@ chainSyncClient cfgEnv dynEnv =
                 cfgEnv
                 dynEnv
                 (mkIntEnv headerInFutureCheck)
+                (BlockNo 0)
                 (ForkTooDeep GenesisPoint)
   where
     ConfigEnv {
@@ -615,7 +673,8 @@ chainSyncClient cfgEnv dynEnv =
       } = chainDbView
 
     DynamicEnv {
-        stopIdling
+        stopIdling,
+        resumeLoPBucket
       } = dynEnv
 
     mkIntEnv ::
@@ -661,7 +720,7 @@ chainSyncClient cfgEnv dynEnv =
                   recvMsgRollForward  = \_hdr _tip -> go n' s
                 , recvMsgRollBackward = \_pt  _tip -> go n' s
                 }
-      in Stateful $ \s -> do stopIdling; go n0 s
+      in Stateful $ \s -> do (stopIdling >> resumeLoPBucket); go n0 s
 
     terminate ::
         ChainSyncClientResult
@@ -678,6 +737,7 @@ chainSyncClient cfgEnv dynEnv =
                 ourFrag
               , theirFrag
               , theirHeaderStateHistory
+              , kBestBlockNo
               } = kis
         ourFrag' <- getCurrentChain
 
@@ -714,6 +774,7 @@ chainSyncClient cfgEnv dynEnv =
                             HeaderStateHistory.trim
                                 (AF.length trimmedCandidate)
                                 theirHeaderStateHistory
+                      , kBestBlockNo
                       }
 
 {-------------------------------------------------------------------------------
@@ -728,6 +789,8 @@ findIntersectionTop ::
   => ConfigEnv m blk
   -> DynamicEnv m blk
   -> InternalEnv m blk arrival judgment
+  -> BlockNo
+     -- ^ Peer's best block; needed to build an 'UnknownIntersectionState'.
   -> (Our (Tip blk) -> Their (Tip blk) -> ChainSyncClientResult)
      -- ^ Exception to throw when no intersection is found.
   -> Stateful m blk () (ClientPipelinedStIdle 'Z)
@@ -761,10 +824,12 @@ findIntersectionTop cfgEnv dynEnv intEnv =
     -- intersect, disconnect by throwing the exception obtained by calling the
     -- passed function.
     findIntersection ::
-        (Our (Tip blk) -> Their (Tip blk) -> ChainSyncClientResult)
+        BlockNo
+        -- ^ Peer's best block; needed to build an 'UnknownIntersectionState'.
+     -> (Our (Tip blk) -> Their (Tip blk) -> ChainSyncClientResult)
         -- ^ Exception to throw when no intersection is found.
      -> Stateful m blk () (ClientPipelinedStIdle 'Z)
-    findIntersection mkResult = Stateful $ \() -> do
+    findIntersection uBestBlockNo mkResult = Stateful $ \() -> do
         (ourFrag, ourHeaderStateHistory) <- atomically $ (,)
             <$> getCurrentChain
             <*> getHeaderStateHistory
@@ -781,6 +846,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
             uis = UnknownIntersectionState {
                 ourFrag               = ourFrag
               , ourHeaderStateHistory = ourHeaderStateHistory
+              , uBestBlockNo
               }
 
         return
@@ -807,6 +873,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
         let UnknownIntersectionState {
                 ourFrag
               , ourHeaderStateHistory
+              , uBestBlockNo
               } = uis
         traceWith tracer $
             TraceFoundIntersection
@@ -852,6 +919,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                      , ourFrag
                      , theirFrag
                      , theirHeaderStateHistory
+                     , kBestBlockNo            = uBestBlockNo
                      }
             continueWithState kis $
                 knownIntersectionStateTop cfgEnv dynEnv intEnv theirTip
@@ -889,6 +957,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
       , headerMetricsTracer
       , startIdling
       , stopIdling
+      , pauseLoPBucket
+      , resumeLoPBucket
       , varCandidate
       } = dynEnv
 
@@ -952,6 +1022,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                           cfgEnv
                           dynEnv
                           intEnv
+                          (kBestBlockNo kis)
                           NoMoreIntersection
 
     requestNext ::
@@ -973,12 +1044,12 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
         case (n, decision) of
           (Zero, (Request, mkPipelineDecision')) ->
               SendMsgRequestNext
-                  startIdling   -- on MsgAwaitReply
+                  (startIdling >> pauseLoPBucket)   -- on MsgAwaitReply
                   (handleNext kis mkPipelineDecision' Zero)
 
           (_, (Pipeline, mkPipelineDecision')) ->
               SendMsgRequestNextPipelined
-                startIdling   -- on MsgAwaitReply
+                (startIdling >> pauseLoPBucket)   -- on MsgAwaitReply
             $ requestNext
                   kis
                   mkPipelineDecision'
@@ -991,7 +1062,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   (   Just
                     $ pure
                     $ SendMsgRequestNextPipelined
-                        startIdling   -- on MsgAwaitReply
+                        (startIdling >> pauseLoPBucket)   -- on MsgAwaitReply
                     $ requestNext
                           kis
                           mkPipelineDecision'
@@ -1011,9 +1082,12 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
      -> MkPipelineDecision
      -> Nat n
      -> Consensus (ClientStNext n) blk m
-    handleNext kis mkPipelineDecision n = ClientStNext {
+    handleNext kis mkPipelineDecision n =
+      -- Unconditionally restart the leaky LoP bucket when receiving any
+      -- message.
+      ClientStNext {
         recvMsgRollForward = \hdr theirTip -> do
-            stopIdling
+            (stopIdling >> resumeLoPBucket)
             traceWith tracer $ TraceDownloadedHeader hdr
             continueWithState kis $
                 rollForward
@@ -1023,7 +1097,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     (Their theirTip)
       ,
         recvMsgRollBackward = \intersection theirTip -> do
-            stopIdling
+            (stopIdling >> resumeLoPBucket)
             let intersection' :: Point blk
                 intersection' = castPoint intersection
             traceWith tracer $ TraceRolledBack intersection'
@@ -1052,7 +1126,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
-            checkTime cfgEnv intEnv kis arrival slotNo >>= \case
+            checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
                     continueWithState ()
                   $ drainThePipe n
@@ -1060,17 +1134,19 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         cfgEnv
                         dynEnv
                         intEnv
+                        (kBestBlockNo kis)
                         NoMoreIntersection
 
                 StillIntersects ledgerView kis' -> do
                     kis'' <-
                         checkValid cfgEnv intEnv hdr theirTip kis' ledgerView
+                    kis''' <- checkLoP cfgEnv dynEnv hdr kis''
 
-                    atomically $ writeTVar varCandidate (theirFrag kis'')
+                    atomically $ writeTVar varCandidate (theirFrag kis''')
                     atomically
                       $ traceWith headerMetricsTracer (slotNo, arrivalTime)
 
-                    continueWithState kis''
+                    continueWithState kis'''
                       $ nextStep mkPipelineDecision n theirTip
 
     rollBackward ::
@@ -1089,6 +1165,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   , ourFrag
                   , theirFrag
                   , theirHeaderStateHistory
+                  , kBestBlockNo
                   } = kis
             in
             case attemptRollback
@@ -1151,6 +1228,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                             , ourFrag                 = ourFrag
                             , theirFrag               = theirFrag'
                             , theirHeaderStateHistory = theirHeaderStateHistory'
+                            , kBestBlockNo
                             }
                   atomically $ writeTVar varCandidate theirFrag'
 
@@ -1222,19 +1300,21 @@ checkKnownInvalid cfgEnv dynEnv intEnv hdr = case scrutinee of
 --
 -- Finally, the client will block on the intersection a second time, if
 -- necessary, since it's possible for a ledger state to determine the slot's
--- onset's timestamp without also determining the slot's 'LedgerView'.
+-- onset's timestamp without also determining the slot's 'LedgerView'. During
+-- this pause, the LoP bucket is paused.
 checkTime ::
   forall m blk arrival judgment.
      ( IOLike m
      , LedgerSupportsProtocol blk
      )
   => ConfigEnv m blk
+  -> DynamicEnv m blk
   -> InternalEnv m blk arrival judgment
   -> KnownIntersectionState blk
   -> arrival
   -> SlotNo
   -> m (UpdatedIntersectionState blk (LedgerView (BlockProtocol blk)))
-checkTime cfgEnv intEnv =
+checkTime cfgEnv dynEnv intEnv =
     \kis arrival slotNo -> castEarlyExitIntersects $ do
         Intersects kis2 lst        <- checkArrivalTime kis arrival
         Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
@@ -1243,7 +1323,10 @@ checkTime cfgEnv intEnv =
               EarlyExit.lift $
                   traceWith (tracer cfgEnv)
                 $ TraceWaitingBeyondForecastHorizon slotNo
+              -- Pause the bucket if LedgerView-Starved.
+              EarlyExit.lift $ pauseLoPBucket dynEnv
               res <- readLedgerState kis2 (projectLedgerView slotNo)
+              EarlyExit.lift $ resumeLoPBucket dynEnv
               EarlyExit.lift $
                   traceWith (tracer cfgEnv)
                 $ TraceAccessingForecastHorizon slotNo
@@ -1376,6 +1459,7 @@ checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
           , ourFrag
           , theirFrag
           , theirHeaderStateHistory
+          , kBestBlockNo
           } = kis
 
     let hdrPoint = headerPoint hdr
@@ -1411,6 +1495,7 @@ checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
           , ourFrag                 = ourFrag
           , theirFrag               = theirFrag'
           , theirHeaderStateHistory = theirHeaderStateHistory'
+          , kBestBlockNo
           }
   where
     ConfigEnv {
@@ -1420,6 +1505,27 @@ checkValid cfgEnv intEnv hdr theirTip kis ledgerView = do
     InternalEnv {
         disconnect
       } = intEnv
+
+-- | Check the limit on patience. If the block number of the new header is
+-- better than anything (valid) we have seen from this peer so far, we add a
+-- token to their leaky bucket and we remember this new record. Has to happen
+-- only after validation of the block.
+checkLoP ::
+  forall m blk.
+   ( IOLike m
+   , HasHeader (Header blk) )
+  => ConfigEnv m blk
+  -> DynamicEnv m blk
+  -> Header blk
+  -> KnownIntersectionState blk
+  -> m (KnownIntersectionState blk)
+checkLoP ConfigEnv{tracer} DynamicEnv{grantLoPToken} hdr kis@KnownIntersectionState{kBestBlockNo} =
+  if blockNo hdr > kBestBlockNo
+    then do grantLoPToken
+            traceWith tracer $ TraceGaveLoPToken True hdr kBestBlockNo
+            pure $ kis{kBestBlockNo = blockNo hdr}
+    else do traceWith tracer $ TraceGaveLoPToken False hdr kBestBlockNo
+            pure kis
 
 {-------------------------------------------------------------------------------
   Utilities used in the *top functions
@@ -1703,6 +1809,9 @@ data ChainSyncClientException =
   |
     InFutureHeaderExceedsClockSkew !InFutureCheck.HeaderArrivalException
     -- ^ A header arrived from the far future.
+  |
+    EmptyBucket
+    -- ^ The peer lost its race against the bucket.
 
 deriving instance Show ChainSyncClientException
 
@@ -1729,11 +1838,15 @@ instance Eq ChainSyncClientException where
         (InFutureHeaderExceedsClockSkew a )
         (InFutureHeaderExceedsClockSkew a')
       = a == a'
+    (==)
+        EmptyBucket EmptyBucket
+      = True
 
     HeaderError{}                    == _ = False
     InvalidIntersection{}            == _ = False
     InvalidBlock{}                   == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
+    EmptyBucket                      == _ = False
 
 instance Exception ChainSyncClientException
 
@@ -1770,6 +1883,11 @@ data TraceChainSyncClientEvent blk =
     TraceAccessingForecastHorizon SlotNo
     -- ^ The 'SlotNo', which was previously beyond the forecast horizon, has now
     -- entered it, and we can resume processing.
+  |
+    TraceGaveLoPToken Bool (Header blk) BlockNo
+    -- ^ Whether we added a token to the LoP bucket of the peer. Also carries
+    -- the considered header and the best block number known prior to this
+    -- header.
 
 deriving instance
   ( BlockSupportsProtocol blk

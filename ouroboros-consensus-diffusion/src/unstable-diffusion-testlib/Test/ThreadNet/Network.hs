@@ -1035,6 +1035,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                      , mustReplyTimeout = waitForever
                      , idleTimeout      = waitForever
                      })
+                  CSClient.ChainSyncLoPBucketDisabled
                   nullMetric
                   -- The purpose of this test is not testing protocols, so
                   -- returning constant empty list is fine if we have thorough
