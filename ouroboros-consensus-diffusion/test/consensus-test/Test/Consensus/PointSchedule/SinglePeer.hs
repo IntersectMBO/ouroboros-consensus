@@ -235,6 +235,7 @@ peerScheduleFromTipPoints
   -> m [(Time, SchedulePoint blk)]
 peerScheduleFromTipPoints g psp tipPoints trunk0 branches0 = do
     let trunk0v = Vector.fromList $ AF.toOldestFirst trunk0
+        -- NOTE: Is this still correct? Shouldn't it be `withOrigin 0 (+1)`?
         firstTrunkBlockNo = withOrigin 1 (+1) $ AF.anchorBlockNo trunk0
         branches0v = map (Vector.fromList . AF.toOldestFirst) branches0
         anchorBlockIndices =
