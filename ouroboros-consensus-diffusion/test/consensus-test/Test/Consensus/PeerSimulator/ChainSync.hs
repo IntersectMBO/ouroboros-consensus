@@ -1,4 +1,6 @@
 {-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE NumericUnderscores  #-}
+{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Consensus.PeerSimulator.ChainSync (runChainSyncClient) where
@@ -12,7 +14,8 @@ import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     Consensus, bracketChainSyncClient, chainSyncClient)
+                     ChainSyncLoPBucketConfig, Consensus,
+                     bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
@@ -45,7 +48,6 @@ import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 
-
 basicChainSyncClient :: forall m.
   IOLike m =>
   PeerId ->
@@ -54,8 +56,9 @@ basicChainSyncClient :: forall m.
   ChainDbView m TestBlock ->
   StrictTVar m (AnchoredFragment (Header TestBlock)) ->
   (m (), m ()) ->
+  (m (), m (), m ()) ->
   Consensus ChainSyncClientPipelined TestBlock m
-basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, stopIdling) =
+basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
@@ -71,9 +74,9 @@ basicChainSyncClient peerId tracer cfg chainDbView varCandidate (startIdling, st
       , CSClient.varCandidate
       , CSClient.startIdling
       , CSClient.stopIdling
-      , CSClient.pauseLoPBucket = pure ()
-      , CSClient.resumeLoPBucket = pure ()
-      , CSClient.grantLoPToken = pure ()
+      , CSClient.pauseLoPBucket
+      , CSClient.resumeLoPBucket
+      , CSClient.grantLoPToken
       }
   where
     dummyHeaderInFutureCheck ::
@@ -94,6 +97,7 @@ runChainSyncClient ::
   PeerId ->
   ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m () ->
   ChainSyncTimeout ->
+  ChainSyncLoPBucketConfig ->
   StateViewTracers m ->
   StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header TestBlock)))) ->
   m ()
@@ -104,37 +108,37 @@ runChainSyncClient
   peerId
   server
   chainSyncTimeouts
+  lopBucketConfig
   StateViewTracers {svtChainSyncExceptionsTracer}
   varCandidates
   = do
     -- We don't need this shared Set yet. If we need it at some point,
     -- it ought to be passed to `runChainSyncClient`.
     varIdling <- uncheckedNewTVarM $ Set.empty
-    bracketChainSyncClient nullTracer chainDbView varCandidates varIdling peerId ntnVersion CSClient.ChainSyncLoPBucketDisabled $ \ varCandidate idleManagers _lopBucket -> do
+    bracketChainSyncClient nullTracer chainDbView varCandidates varIdling peerId ntnVersion lopBucketConfig $ \ varCandidate idleManagers lopBucket -> do
       res <- try $ runConnectedPeersPipelinedWithLimits
         createConnectedChannels
         nullTracer
         codecChainSyncId
         chainSyncNoSizeLimits
         (timeLimitsChainSync chainSyncTimeouts)
-        (chainSyncClientPeerPipelined (basicChainSyncClient peerId tracer cfg chainDbView varCandidate idleManagers))
+        (chainSyncClientPeerPipelined (basicChainSyncClient peerId tracer cfg chainDbView varCandidate idleManagers lopBucket))
         (chainSyncServerPeer server)
       case res of
+        Right _ -> pure ()
         Left exn -> do
           traceWith svtChainSyncExceptionsTracer $ ChainSyncException peerId exn
           case fromException exn of
-            Just (ExceededSizeLimit _) ->
-              traceUnitWith tracer ("ChainSyncClient " ++ condense peerId) "Terminating because of size limit exceeded."
-            Just (ExceededTimeLimit _) ->
-              traceUnitWith tracer ("ChainSyncClient " ++ condense peerId) "Terminating because of time limit exceeded."
-            Nothing ->
-              pure ()
+            Just (ExceededSizeLimit _) -> trace "Terminating because of size limit exceeded."
+            Just (ExceededTimeLimit _) -> trace "Terminating because of time limit exceeded."
+            Nothing -> pure ()
           case fromException exn of
-            Just ThreadKilled ->
-              traceUnitWith tracer ("ChainSyncClient " ++ condense peerId) "Terminated by GDD governor."
-            _ ->
-              pure ()
-        Right _ -> pure ()
+            Just ThreadKilled -> trace "Terminated by GDD governor."
+            _                 -> pure ()
+          case fromException exn of
+            Just CSClient.EmptyBucket -> trace "Terminating because of empty bucket."
+            _ -> pure ()
   where
     ntnVersion :: NodeToNodeVersion
     ntnVersion = maxBound
+    trace = traceUnitWith tracer $ "ChainSyncClient " ++ condense peerId

@@ -93,7 +93,11 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
     isForecastable bt =
       -- FIXME: We are using `scg` here but what we really mean is `sfor`.
       -- Distinguish `scg` vs. `sgen` vs. `sfor` and use the latter here.
-      let slotNos = map blockSlot $ AF.toOldestFirst $ btbFull bt in
+      -- NOTE: We only care about the difference between slot numbers so it is
+      -- not a problem to add @1@ to all of them. However, we do care VERY MUCH
+      -- that this list includes the anchor.
+      let slotNos = (succWithOrigin $ anchorToSlotNo $ anchor $ btbFull bt)
+                    : (map ((+1) . blockSlot) $ AF.toOldestFirst $ btbFull bt) in
       all (\(SlotNo prev, SlotNo next) -> next - prev <= scg) (zip slotNos (drop 1 slotNos))
 
     allAdversariesKPlus1InForecast =
