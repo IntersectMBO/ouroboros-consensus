@@ -234,7 +234,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
   -- | Not supported in eras before Conway
   GetConstitution
     :: CG.ConwayEraGov era
-    => BlockQuery (ShelleyBlock proto era) (Maybe (LC.Constitution era))
+    => BlockQuery (ShelleyBlock proto era) (CG.Constitution era)
 
   -- | Although this query was introduced as part of Conway, it is general and
   --  so has non-degenerate semantics for eras before Conway.
@@ -275,7 +275,7 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     => Set (SL.Credential 'ColdCommitteeRole (EraCrypto era) )
     -> Set (SL.Credential 'HotCommitteeRole (EraCrypto era))
     -> Set SL.MemberStatus
-    -> BlockQuery (ShelleyBlock proto era) (Maybe (SL.CommitteeMembersState (EraCrypto era)))
+    -> BlockQuery (ShelleyBlock proto era) (SL.CommitteeMembersState (EraCrypto era))
 
   -- | Not supported in eras before Conway.
   GetFilteredVoteDelegatees
