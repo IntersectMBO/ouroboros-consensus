@@ -260,7 +260,7 @@ test-suite consensus-test
     , binary
     , bytestring
     , cardano-crypto-class
-    , cardano-slotting
+    , cardano-slotting:{cardano-slotting, testlib}
     , containers
     , contra-tracer
     , directory
