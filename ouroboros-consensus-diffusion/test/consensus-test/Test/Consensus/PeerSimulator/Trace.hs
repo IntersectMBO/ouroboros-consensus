@@ -56,7 +56,6 @@ mkCdbTracer tracer =
     trace = traceUnitWith tracer "ChainDB"
 
 mkChainSyncClientTracer ::
-  IOLike m =>
   PeerId ->
   Tracer m String ->
   Tracer m (TraceChainSyncClientEvent TestBlock)
@@ -74,7 +73,15 @@ mkChainSyncClientTracer pid tracer =
       trace $ "Validated header: " ++ terseHeader header
     TraceDownloadedHeader header ->
       trace $ "Downloaded header: " ++ terseHeader header
-    _ -> pure ()
+    TraceGaveLoPToken didGive header bestBlockNo ->
+      trace $
+        (if didGive then "Gave" else "Did not give")
+        ++ " LoP token to " ++ terseHeader header
+        ++ " compared to " ++ show bestBlockNo
+    TraceException exception ->
+      trace $ "Threw an exception: " ++ show exception
+    TraceTermination result ->
+      trace $ "Terminated with result: " ++ show result
   where
     trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
 
