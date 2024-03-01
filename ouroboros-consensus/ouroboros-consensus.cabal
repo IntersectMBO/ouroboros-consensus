@@ -438,7 +438,7 @@ library unstable-mock-block
     , bytestring
     , cardano-binary
     , cardano-crypto-class
-    , cardano-slotting
+    , cardano-slotting:{cardano-slotting, testlib}
     , cborg
     , containers
     , deepseq
@@ -510,7 +510,7 @@ test-suite consensus-test
     , base-deriving-via
     , cardano-binary
     , cardano-crypto-class
-    , cardano-slotting
+    , cardano-slotting:{cardano-slotting, testlib}
     , cborg
     , containers
     , contra-tracer
@@ -613,7 +613,7 @@ test-suite storage-test
     , binary
     , bytestring
     , cardano-crypto-class
-    , cardano-slotting
+    , cardano-slotting:{cardano-slotting, testlib}
     , cborg
     , containers
     , contra-tracer

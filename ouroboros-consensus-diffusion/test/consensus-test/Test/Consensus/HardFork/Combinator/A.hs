@@ -86,6 +86,7 @@ import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Network.Block (Serialised, unwrapCBORinCBOR,
                      wrapCBORinCBOR)
 import           Ouroboros.Network.Magic
+import           Test.Cardano.Slotting.Numeric ()
 import           Test.Util.Time (dawnOfTime)
 
 {-------------------------------------------------------------------------------

@@ -103,6 +103,7 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           System.FS.API.Lazy
+import           Test.Cardano.Slotting.Numeric ()
 import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.SignableRepresentation ()
