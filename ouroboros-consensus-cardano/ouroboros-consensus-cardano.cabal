@@ -247,6 +247,7 @@ test-suite byron-test
     , cardano-ledger-binary
     , cardano-ledger-byron
     , cardano-ledger-byron-test
+    , cardano-slotting:testlib
     , cborg
     , constraints
     , containers
