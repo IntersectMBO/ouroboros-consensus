@@ -239,6 +239,7 @@ library
     Ouroboros.Consensus.Util.FileLock
     Ouroboros.Consensus.Util.HList
     Ouroboros.Consensus.Util.IOLike
+    Ouroboros.Consensus.Util.LeakyBucket
     Ouroboros.Consensus.Util.MonadSTM.NormalForm
     Ouroboros.Consensus.Util.MonadSTM.RAWLock
     Ouroboros.Consensus.Util.MonadSTM.StrictSVar
@@ -559,18 +560,21 @@ test-suite infra-test
     Test.Ouroboros.Consensus.ChainGenerator.Tests.BitVector
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Counting
     Test.Ouroboros.Consensus.ChainGenerator.Tests.Honest
+    Test.Ouroboros.Consensus.Util.LeakyBucket.Tests
     Test.Util.ChainUpdates.Tests
     Test.Util.Schedule.Tests
     Test.Util.Split.Tests
 
   build-depends:
     , base
+    , io-sim
     , mtl
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , QuickCheck
     , random
     , tasty
     , tasty-quickcheck
+    , time
     , unstable-consensus-testlib
     , vector
 
