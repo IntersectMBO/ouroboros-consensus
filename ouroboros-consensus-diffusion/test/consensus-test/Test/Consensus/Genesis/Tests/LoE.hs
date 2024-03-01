@@ -43,6 +43,7 @@ tests =
 
 -- | Tests that the selection advances in presence of the LoE when a peer is
 -- killed by something that is not LoE-aware, eg. the timeouts.
+-- NOTE: Same as 'LoP.prop_delayAttack' with timeouts instead of LoP.
 prop_adversaryHitsTimeouts :: Bool -> Property
 prop_adversaryHitsTimeouts timeoutsEnabled =
   noShrinking $
@@ -55,7 +56,8 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
       -- NOTE: Crucially, there must be timeouts for this test.
       ( defaultSchedulerConfig
           { scEnableChainSyncTimeouts = timeoutsEnabled,
-            scEnableLoE = True
+            scEnableLoE = True,
+            scEnableLoP = False
           }
       )
       shrinkPeerSchedules

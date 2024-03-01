@@ -25,6 +25,7 @@ module Test.Consensus.PointSchedule (
   , GenesisTest (..)
   , GenesisTestFull
   , GenesisWindow (..)
+  , LoPBucketParams (..)
   , NodeState (..)
   , PeerSchedule
   , PeersSchedule
@@ -304,6 +305,11 @@ newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
 newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)
 
+data LoPBucketParams = LoPBucketParams {
+  lbpCapacity :: Integer,
+  lbpRate     :: Rational
+  }
+
 -- | All the data used by point schedule tests.
 data GenesisTest blk schedule = GenesisTest {
   gtSecurityParam     :: SecurityParam,
@@ -312,6 +318,7 @@ data GenesisTest blk schedule = GenesisTest {
   gtDelay             :: Delta,
   gtBlockTree         :: BlockTree blk,
   gtChainSyncTimeouts :: ChainSyncTimeout,
+  gtLoPBucketParams   :: LoPBucketParams,
   gtSlotLength        :: SlotLength,
   gtSchedule          :: schedule
   }
@@ -330,6 +337,9 @@ prettyGenesisTest genesisTest =
   , "    canAwait = " ++ show canAwaitTimeout
   , "    intersect = " ++ show intersectTimeout
   , "    mustReply = " ++ show mustReplyTimeout
+  , "  gtLoPBucketParams: "
+  , "    lbpCapacity = " ++ show lbpCapacity ++ " tokens"
+  , "    lbpRate = " ++ show lbpRate ++ " ≅ " ++ printf "%.2f" (fromRational lbpRate :: Float) ++ " tokens per second"
   , "  gtBlockTree:"
   ] ++ map (("    " ++) . terseFragment) (allFragments gtBlockTree)
     ++ map ("    " ++) (prettyBlockTree gtBlockTree)
@@ -341,6 +351,7 @@ prettyGenesisTest genesisTest =
       , gtDelay = Delta delta
       , gtBlockTree
       , gtChainSyncTimeouts = ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout}
+      , gtLoPBucketParams = LoPBucketParams{lbpCapacity, lbpRate}
       , gtSlotLength
       , gtSchedule = _
       } = genesisTest
