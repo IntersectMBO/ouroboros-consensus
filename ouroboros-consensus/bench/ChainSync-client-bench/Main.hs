@@ -137,6 +137,9 @@ oneBenchRun
               , CSClient.varCandidate
               , CSClient.startIdling = pure ()
               , CSClient.stopIdling  = pure ()
+              , CSClient.pauseLoPBucket = pure ()
+              , CSClient.resumeLoPBucket = pure ()
+              , CSClient.grantLoPToken = pure ()
               }
 
     server :: ChainSyncServer H (Point B) (Tip B) IO ()

@@ -538,10 +538,11 @@ mkApps ::
   -> (NodeToNodeVersion -> Codecs blk addrNTN e m bCS bCS bBF bBF bTX bKA bPS)
   -> ByteLimits bCS bBF bTX bKA
   -> m ChainSyncTimeout
+  -> CsClient.ChainSyncLoPBucketConfig
   -> ReportPeerMetrics m (ConnectionId addrNTN)
   -> Handlers m addrNTN blk
   -> Apps m addrNTN bCS bBF bTX bKA bPS NodeToNodeInitiatorResult ()
-mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPeerMetrics {..} Handlers {..} =
+mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucketConfig ReportPeerMetrics {..} Handlers {..} =
     Apps {..}
   where
     aChainSyncClient
@@ -569,7 +570,9 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
             (getNodeCandidates kernel)
             (getNodeIdlers     kernel)
             them
-            version $ \varCandidate (startIdling, stopIdling) -> do
+            version
+            lopBucketConfig
+            $ \varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
                 runPipelinedPeerWithLimits
@@ -589,6 +592,9 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout ReportPe
                         , CsClient.varCandidate
                         , CsClient.startIdling
                         , CsClient.stopIdling
+                        , CsClient.pauseLoPBucket
+                        , CsClient.resumeLoPBucket
+                        , CsClient.grantLoPToken
                         }
               return (ChainSyncInitiatorResult r, trailing)
 
