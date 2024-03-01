@@ -82,10 +82,10 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended hiding (ledgerState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainDbView (..), ChainSyncClientException,
-                     ChainSyncClientResult (..), ConfigEnv (..), Consensus,
-                     DynamicEnv (..), Our (..), Their (..),
-                     TraceChainSyncClientEvent (..), bracketChainSyncClient,
-                     chainSyncClient)
+                     ChainSyncClientResult (..), ChainSyncLoPBucketConfig (..),
+                     ConfigEnv (..), Consensus, DynamicEnv (..), Our (..),
+                     Their (..), TraceChainSyncClientEvent (..),
+                     bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)
@@ -401,12 +401,16 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
             -- Note that this tests passes in the exact difference between the
             -- client's and server's clock as the tolerable clock skew.
 
+        lopBucketConfig :: ChainSyncLoPBucketConfig
+        lopBucketConfig = ChainSyncLoPBucketDisabled
+
         client :: StrictTVar m (AnchoredFragment (Header TestBlock))
                -> (m (), m ())
+               -> (m (), m (), m ())
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client varCandidate (startIdling, stopIdling) =
+        client varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -423,6 +427,9 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , varCandidate
                 , startIdling
                 , stopIdling
+                , pauseLoPBucket
+                , resumeLoPBucket
+                , grantLoPToken
                 }
 
     -- Set up the server
@@ -495,12 +502,14 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  varCandidates
                  varIdlers
                  serverId
-                 maxBound $ \varCandidate idlingSignals -> do
+                 maxBound
+                 lopBucketConfig
+                 $ \varCandidate idlingSignals lopBucket -> do
                    atomically $ modifyTVar varFinalCandidates $
                      Map.insert serverId varCandidate
                    result <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
-                       chainSyncClientPeerPipelined $ client varCandidate idlingSignals
+                       chainSyncClientPeerPipelined $ client varCandidate idlingSignals lopBucket
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
                    return ()
               `catchAlsoLinked` \ex -> do
