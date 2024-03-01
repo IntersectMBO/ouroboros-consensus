@@ -53,8 +53,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
       -- NOTE: Crucially, there must be timeouts for this test, and no LoP.
       ( defaultSchedulerConfig
           { scEnableChainSyncTimeouts = timeoutsEnabled,
-            scEnableLoE = True,
-            scEnableLoP = False
+            scEnableLoE = True
           }
       )
       shrinkPeerSchedules
