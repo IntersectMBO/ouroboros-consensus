@@ -1,0 +1,16 @@
+digraph STS {
+        CHAIN -> BBODY
+        CHAIN -> PRTCL
+        CHAIN -> TICK
+        CHAIN -> TICKN
+        TICKN -> PRTCL [style=dotted]
+
+        BBODY -> PRTCL [style=dotted]
+        BBODY -> TICK [style=dotted]
+        PRTCL -> TICK [style=dotted]
+
+        PRTCL -> UPDN
+        PRTCL -> OCERT
+
+        BBODY -> LEDGERS
+}
