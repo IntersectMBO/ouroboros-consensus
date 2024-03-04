@@ -12,6 +12,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
+import           Control.Monad.Class.MonadAsync (link2Only, link2)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTime.SI (DiffTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -136,7 +137,7 @@ startChainSyncConnectionThread ::
   ChainSyncLoPBucketConfig ->
   StateViewTracers m ->
   StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
-  m ()
+  m (Thread m (), Thread m ())
 startChainSyncConnectionThread
   registry
   tracer
@@ -150,13 +151,14 @@ startChainSyncConnectionThread
   tracers
   varCandidates = do
     (clientChannel, serverChannel) <- createConnectedChannels
-    void $
+    clientThread <-
       forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
         bracketSyncWithFetchClient fetchClientRegistry srPeerId $
           ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varCandidates clientChannel
-    void $
+    serverThread <-
       forkLinkedThread registry ("ChainSyncServer" <> condense srPeerId) $
         ChainSync.runChainSyncServer csrServer serverChannel
+    pure (clientThread, serverThread)
 
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
 -- register it for synchronization with the ChainSync client.
@@ -167,7 +169,7 @@ startBlockFetchConnectionThread ::
   ControlMessageSTM m ->
   SharedResources m blk ->
   BlockFetchResources m blk ->
-  m ()
+  m (Thread m (), Thread m ())
 startBlockFetchConnectionThread
   registry
   fetchClientRegistry
@@ -175,12 +177,13 @@ startBlockFetchConnectionThread
   SharedResources {srPeerId}
   BlockFetchResources {bfrServer} = do
     (clientChannel, serverChannel) <- createConnectedChannels
-    void $
+    clientThread <-
       forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
         BlockFetch.runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM clientChannel
-    void $
+    serverThread <-
       forkLinkedThread registry ("BlockFetchServer" <> condense srPeerId) $
         BlockFetch.runBlockFetchServer bfrServer serverChannel
+    pure (clientThread, serverThread)
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -238,9 +241,12 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = CSClient.defaultChainDbView chainDb
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
-      startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrCandidates resources)
-      BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
-      startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared prBlockFetch
+      forkLinkedThread registry ("Peer overview " ++ (show $ srPeerId prShared)) $
+        withRegistry $ \peerRegistry -> do
+          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrCandidates resources)
+          BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry (srPeerId prShared)
+          (bfClient, bfServer) <- startBlockFetchConnectionThread peerRegistry tracer stateViewTracers fetchClientRegistry (pure Continue) prShared prBlockFetch
+          waitAnyThread [csClient, csServer, bfClient, bfServer]
     -- The block fetch logic needs to be started after the block fetch clients
     -- otherwise, an internal assertion fails because getCandidates yields more
     -- peer fragments than registered clients.
