@@ -43,11 +43,11 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      HasHeader)
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
                      bracketSyncWithFetchClient, newFetchClientRegistry)
+import           Ouroboros.Network.Channel (createConnectedChannels)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..),
                      ControlMessageSTM)
 import           Ouroboros.Network.Protocol.ChainSync.Codec
 import           Ouroboros.Network.Util.ShowProxy (ShowProxy)
-import           Test.Consensus.Network.Driver.Limits.Extras
 import qualified Test.Consensus.PeerSimulator.BlockFetch as BlockFetch
 import qualified Test.Consensus.PeerSimulator.ChainSync as ChainSync
 import           Test.Consensus.PeerSimulator.Config
@@ -148,16 +148,20 @@ startChainSyncConnectionThread
   chainSyncTimeouts_
   chainSyncLoPBucketConfig
   tracers
-  varCandidates =
+  varCandidates = do
+    (clientChannel, serverChannel) <- createConnectedChannels
     void $
-    forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
-    bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-    ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId csrServer chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varCandidates
+      forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
+        bracketSyncWithFetchClient fetchClientRegistry srPeerId $
+          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varCandidates clientChannel
+    void $
+      forkLinkedThread registry ("ChainSyncServer" <> condense srPeerId) $
+        ChainSync.runChainSyncServer csrServer serverChannel
 
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
 -- register it for synchronization with the ChainSync client.
 startBlockFetchConnectionThread ::
-  (IOLike m, MonadTime m, MonadTimer m, HasHeader blk, HasHeader (Header blk)) =>
+  (IOLike m, MonadTime m, MonadTimer m, HasHeader blk, HasHeader (Header blk), ShowProxy blk) =>
   ResourceRegistry m ->
   FetchClientRegistry PeerId (Header blk) blk m ->
   ControlMessageSTM m ->
@@ -169,10 +173,14 @@ startBlockFetchConnectionThread
   fetchClientRegistry
   controlMsgSTM
   SharedResources {srPeerId}
-  BlockFetchResources {bfrServer} =
+  BlockFetchResources {bfrServer} = do
+    (clientChannel, serverChannel) <- createConnectedChannels
     void $
-    forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
-    BlockFetch.runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM bfrServer
+      forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
+        BlockFetch.runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM clientChannel
+    void $
+      forkLinkedThread registry ("BlockFetchServer" <> condense srPeerId) $
+        BlockFetch.runBlockFetchServer bfrServer serverChannel
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -229,10 +237,9 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     chainDb <- mkChainDb schedulerConfig tracer config registry updateLoEFrag
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = CSClient.defaultChainDbView chainDb
-    for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
+    for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
       startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrCandidates resources)
       BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
-    for_ (psrPeers resources) $ \PeerResources {prShared, prBlockFetch} ->
       startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared prBlockFetch
     -- The block fetch logic needs to be started after the block fetch clients
     -- otherwise, an internal assertion fails because getCandidates yields more
@@ -267,7 +274,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     chainSyncTimeouts_ =
       if scEnableChainSyncTimeouts schedulerConfig
         then gtChainSyncTimeouts
-        else chainSyncNoTimeouts
+        else ChainSync.chainSyncNoTimeouts
 
     chainSyncLoPBucketConfig =
       if scEnableLoP schedulerConfig

@@ -9,6 +9,7 @@
 -- | Functions that call to the BlockFetch API to start clients and servers
 module Test.Consensus.PeerSimulator.BlockFetch (
     runBlockFetchClient
+  , runBlockFetchServer
   , startBlockFetchLogic
   , startKeepAliveThread
   ) where
@@ -19,15 +20,14 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (nullTracer)
 import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
-import           Network.TypedProtocol.Channel (createConnectedChannels)
-import           Network.TypedProtocol.Driver.Simple
-                     (runConnectedPeersPipelined)
+import           Network.TypedProtocol.Codec (AnyMessage)
 import           Ouroboros.Consensus.Block (HasHeader)
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes))
 import           Ouroboros.Consensus.Storage.ChainDB.API
+import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, atomically,
                      retry)
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -36,16 +36,18 @@ import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
                      FetchClientRegistry, FetchMode (..), blockFetchLogic,
                      bracketFetchClient, bracketKeepAliveClient)
 import           Ouroboros.Network.BlockFetch.Client (blockFetchClient)
+import           Ouroboros.Network.Channel (Channel)
 import           Ouroboros.Network.ControlMessage (ControlMessageSTM)
+import           Ouroboros.Network.Driver (runPeer, runPipelinedPeer)
 import           Ouroboros.Network.NodeToNode.Version (NodeToNodeVersion,
                      isPipeliningEnabled)
 import           Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
 import           Ouroboros.Network.Protocol.BlockFetch.Server
                      (BlockFetchServer (..), blockFetchServerPeer)
+import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
 import           Test.Util.Time (dawnOfTime)
-
 
 startBlockFetchLogic ::
      forall m peer.
@@ -101,23 +103,24 @@ startKeepAliveThread registry fetchClientRegistry peerId =
         atomically retry
 
 runBlockFetchClient ::
-     (Ord peer, IOLike m, MonadTime m, MonadTimer m, HasHeader blk, HasHeader (Header blk))
+     (Ord peer, IOLike m, MonadTime m, MonadTimer m, HasHeader blk, HasHeader (Header blk), ShowProxy blk)
   => peer
   -> FetchClientRegistry peer (Header blk) blk m
   -> ControlMessageSTM m
-  -> BlockFetchServer blk (Point blk) m ()
+  -> Channel m (AnyMessage (BlockFetch blk (Point blk)))
   -> m ()
-runBlockFetchClient peerId fetchClientRegistry controlMsgSTM server =
-    bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId $ \clientCtx -> do
-      let bfClient = blockFetchClient ntnVersion controlMsgSTM nullTracer clientCtx
-          bfServer = blockFetchServerPeer server
-
-      fst <$> runConnectedPeersPipelined
-              createConnectedChannels
-              nullTracer
-              codecBlockFetchId
-              bfClient
-              bfServer
+runBlockFetchClient peerId fetchClientRegistry controlMsgSTM channel = do
+    bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId $ \clientCtx ->
+      void $ runPipelinedPeer nullTracer codecBlockFetchId channel
+        (blockFetchClient ntnVersion controlMsgSTM nullTracer clientCtx)
   where
     ntnVersion :: NodeToNodeVersion
     ntnVersion = maxBound
+
+runBlockFetchServer ::
+  (IOLike m, ShowProxy blk) =>
+  BlockFetchServer blk (Point blk) m () ->
+  Channel m (AnyMessage (BlockFetch blk (Point blk))) ->
+  m ()
+runBlockFetchServer server channel = do
+  void $ runPeer nullTracer codecBlockFetchId channel (blockFetchServerPeer server)
