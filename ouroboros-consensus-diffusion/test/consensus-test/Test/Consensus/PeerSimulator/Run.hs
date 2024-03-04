@@ -48,10 +48,8 @@ import           Ouroboros.Network.ControlMessage (ControlMessage (..),
 import           Ouroboros.Network.Protocol.ChainSync.Codec
 import           Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import           Test.Consensus.Network.Driver.Limits.Extras
-import qualified Test.Consensus.PeerSimulator.BlockFetch as PeerSimulator.BlockFetch
-import           Test.Consensus.PeerSimulator.BlockFetch (runBlockFetchClient,
-                     startBlockFetchLogic)
-import           Test.Consensus.PeerSimulator.ChainSync (runChainSyncClient)
+import qualified Test.Consensus.PeerSimulator.BlockFetch as BlockFetch
+import qualified Test.Consensus.PeerSimulator.ChainSync as ChainSync
 import           Test.Consensus.PeerSimulator.Config
 import           Test.Consensus.PeerSimulator.Resources
 import           Test.Consensus.PeerSimulator.StateDiagram
@@ -97,7 +95,7 @@ data SchedulerConfig =
     , scEnableLoE               :: Bool
 
     -- | Whether to enable to LoP. The parameters of the LoP come from
-    -- 'GenesisTest'. TODO: Same separation for timeouts.
+    -- 'GenesisTest'.
     , scEnableLoP               :: Bool
   }
 
@@ -154,7 +152,7 @@ startChainSyncConnectionThread
     void $
     forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
     bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-    runChainSyncClient tracer cfg chainDbView srPeerId csrServer chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varCandidates
+    ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId csrServer chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varCandidates
 
 -- | Start the BlockFetch client, using the supplied 'FetchClientRegistry' to
 -- register it for synchronization with the ChainSync client.
@@ -174,7 +172,7 @@ startBlockFetchConnectionThread
   BlockFetchResources {bfrServer} =
     void $
     forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
-    runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM bfrServer
+    BlockFetch.runBlockFetchClient srPeerId fetchClientRegistry controlMsgSTM bfrServer
 
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
@@ -233,7 +231,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     let chainDbView = CSClient.defaultChainDbView chainDb
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync} -> do
       startChainSyncConnectionThread registry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrCandidates resources)
-      PeerSimulator.BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
+      BlockFetch.startKeepAliveThread registry fetchClientRegistry (srPeerId prShared)
     for_ (psrPeers resources) $ \PeerResources {prShared, prBlockFetch} ->
       startBlockFetchConnectionThread registry fetchClientRegistry (pure Continue) prShared prBlockFetch
     -- The block fetch logic needs to be started after the block fetch clients
@@ -247,7 +245,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
           | otherwise
           = pure nullTracer
     stateTracer <- mkStateTracer
-    startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
+    BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
     void $ forkLinkedThread registry "ChainSel trigger" (reprocessLoEBlocksOnCandidateChange chainDb getCandidates)
     runScheduler (Tracer $ traceWith tracer . TraceSchedulerEvent) stateTracer gtSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
@@ -263,7 +261,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
 
     config = defaultCfg k gtForecastRange
 
-    -- FIXME: This type of configuration should move to `PeerSimulator.Trace.mkTracer`.
+    -- FIXME: This type of configuration should move to `Trace.mkTracer`.
     tracer = if scTrace schedulerConfig then tracer0 else nullTracer
 
     chainSyncTimeouts_ =
