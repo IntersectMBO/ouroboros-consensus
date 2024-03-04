@@ -1,0 +1,18 @@
+\section{Common Interface}
+\label{sec:common-interface}
+
+\subsection{$\mathsf{NEWEPOCH}$ Transition}
+\label{sec:newepoch-trans}
+
+The New Epoch Transition ($\mathsf{NEWEPOCH}$) performs some upkeep when a new epoch begins.
+
+\begin{figure}[htb]
+  \emph{New Epoch Transitions}
+  \begin{equation*}
+    \vdash \var{\_} \trans{newepoch}{\_} \var{\_} \subseteq
+    \powerset (\NewEpochState \times \Epoch \times \NewEpochState)
+  \end{equation*}
+  \caption{New Epoch transition-system types}
+  \label{fig:ts-types:newepoch}
+\end{figure}
+
