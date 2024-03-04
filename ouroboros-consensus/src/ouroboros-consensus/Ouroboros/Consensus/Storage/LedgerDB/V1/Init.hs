@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns        #-}
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -7,6 +8,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
+
+#if __GLASGOW_HASKELL__ <= 906
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+#endif
 
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Init (mkInitDb) where
 

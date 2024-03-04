@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                     #-}
 {-# LANGUAGE ConstraintKinds         #-}
 {-# LANGUAGE DataKinds               #-}
 {-# LANGUAGE DerivingStrategies      #-}
@@ -14,6 +15,12 @@
 {-# LANGUAGE UndecidableSuperClasses #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+#if __GLASGOW_HASKELL__ <= 906
+{-# OPTIONS_GHC -Wno-incomplete-patterns
+                -Wno-incomplete-uni-patterns
+                -Wno-incomplete-record-updates
+                -Wno-overlapping-patterns #-}
+#endif
 
 module Ouroboros.Consensus.Cardano.QueryHF () where
 
