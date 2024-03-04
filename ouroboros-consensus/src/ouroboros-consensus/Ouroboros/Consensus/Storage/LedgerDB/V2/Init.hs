@@ -89,6 +89,10 @@ mkInitDb args flavArgs getBlock =
                , ldbCfg            = lgrConfig
                , ldbHasFS          = lgrHasFS
                , ldbResolveBlock   = getBlock
+                 -- TODO(js): if we are going to keep this querying style for
+                 -- V2, then QueryBatchSize should be accessible from here and
+                 -- we should provide that instead.
+               , ldbQueryBatchSize = Nothing
                }
         h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
         pure $ implMkLedgerDb h bss

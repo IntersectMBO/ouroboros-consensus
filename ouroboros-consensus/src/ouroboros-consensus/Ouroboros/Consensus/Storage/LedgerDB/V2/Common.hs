@@ -1,3 +1,4 @@
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
@@ -97,6 +98,7 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
   , ldbCfg            :: !(LedgerDbCfg l)
   , ldbHasFS          :: !(SomeHasFS m)
   , ldbResolveBlock   :: !(ResolveBlock m blk)
+  , ldbQueryBatchSize :: !(Maybe Int)
   } deriving (Generic)
 
 deriving instance ( IOLike m
@@ -188,6 +190,8 @@ data ForkerEnv m l blk = ForkerEnv {
   , foeSwitchVar          :: !(StrictTVar m (LedgerSeq m l))
     -- | Config
   , foeSecurityParam      :: !SecurityParam
+    -- | The batch size
+  , foeQueryBatchSize     :: !(Maybe Int)
     -- | Config
   , foeTracer             :: !(Tracer m TraceForkerEvent)
     -- | Release the resources
@@ -261,6 +265,7 @@ newForker h ldbEnv rr st = do
         foeLedgerSeq          = lseqVar
       , foeSwitchVar          = ldbSeq ldbEnv
       , foeSecurityParam      = ledgerDbCfgSecParam $ ldbCfg ldbEnv
+      , foeQueryBatchSize     = ldbQueryBatchSize ldbEnv
       , foeTracer             = tr
       , foeResourcesToRelease = toRelease
       }
@@ -268,7 +273,6 @@ newForker h ldbEnv rr st = do
     pure $ Forker {
         forkerReadTables             = getForkerEnv1   h forkerKey implForkerReadTables
       , forkerRangeReadTables        = getForkerEnv1   h forkerKey implForkerRangeReadTables
-      , forkerRangeReadTablesDefault = getForkerEnv1   h forkerKey implForkerRangeReadTablesDefault
       , forkerGetLedgerState         = getForkerEnvSTM h forkerKey implForkerGetLedgerState
       , forkerReadStatistics         = getForkerEnv    h forkerKey implForkerReadStatistics
       , forkerPush                   = getForkerEnv1   h forkerKey implForkerPush
@@ -304,32 +308,22 @@ implForkerReadTables env ks = do
     pure tbs
 
 implForkerRangeReadTables ::
-     -- (MonadSTM m, GetTip l, HasLedgerTables l)
-  -- =>
-  ForkerEnv m l blk
-  -> RangeQuery l
+     (MonadSTM m, GetTip l, HasLedgerTables l)
+  => ForkerEnv m l blk
+  -> RangeQueryPrevious l
   -> m (LedgerTables l ValuesMK)
-implForkerRangeReadTables _env _rq0 = undefined -- TODO (js) -- do
-    -- traceWith (foeTracer env) ForkerRangeReadTablesStart
-    -- ldb <- readTVarIO $ foeLedgerSeq env
-    -- case rqPrev rq0 of
-    --   Nothing -> readRange (tables $ currentHandle ldb) undefined
-    --   Just (LedgerTables (KeysMK ks)) -> do
-    --     LedgerTables (ValuesMK m) <- readRange (tables $ currentHandle ldb) undefined
-    --     let tbs = LedgerTables $ ValuesMK (maybe m (snd . flip Map.split m) (Set.lookupMax ks))
-    --     traceWith (foeTracer env) ForkerRangeReadTablesEnd
-    --     pure tbs
-
-implForkerRangeReadTablesDefault ::
-     -- (MonadSTM m, HasLedgerTables l, GetTip l)
-  -- =>
-  ForkerEnv m l blk
-  -> Maybe (LedgerTables l KeysMK)
-  -> m (LedgerTables l ValuesMK)
-implForkerRangeReadTablesDefault env prev =
-    implForkerRangeReadTables env (RangeQuery prev n)
-  where
-    n = undefined -- defaultQueryBatchSize $ foeQueryBatchSize env
+implForkerRangeReadTables env rq0 = do
+    traceWith (foeTracer env) ForkerRangeReadTablesStart
+    ldb <- readTVarIO $ foeLedgerSeq env
+    let n = maybe 100_000 id $ foeQueryBatchSize env
+    case rq0 of
+      NoPreviousQuery -> readRange (tables $ currentHandle ldb) (Nothing, n)
+      PreviousQueryWasFinal -> pure $ LedgerTables emptyMK
+      PreviousQueryWasUpTo k -> do
+        LedgerTables (ValuesMK m) <- readRange (tables $ currentHandle ldb) (Just k, n)
+        let tbs = LedgerTables $ ValuesMK $ snd $ Map.split k m
+        traceWith (foeTracer env) ForkerRangeReadTablesEnd
+        pure tbs
 
 implForkerGetLedgerState ::
      (MonadSTM m, GetTip l)

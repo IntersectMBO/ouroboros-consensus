@@ -75,7 +75,7 @@ data LedgerTablesHandle m l = LedgerTablesHandle {
     close       :: !(m ())
   , duplicate   :: !(m (LedgerTablesHandle m l))
   , read        :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
-  , readRange   :: !((Key l, Key l) -> m (LedgerTables l ValuesMK))
+  , readRange   :: !((Maybe (Key l), Int) -> m (LedgerTables l ValuesMK))
   , write       :: !(LedgerTables l DiffMK -> m ())
   , writeToDisk :: !(String -> m ())
   , tablesSize  :: !(m (Maybe Int))

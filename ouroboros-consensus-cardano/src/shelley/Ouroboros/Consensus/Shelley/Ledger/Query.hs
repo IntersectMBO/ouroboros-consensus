@@ -500,7 +500,7 @@ instance ( ShelleyCompatible proto era
     toKeys (ValuesMK vs) = KeysMK $ Map.keysSet vs
 
     loop queryPredicate !prev !acc = do
-      extValues <- LedgerDB.roforkerRangeReadTablesDefault forker prev
+      extValues <- LedgerDB.roforkerRangeReadTables forker prev
       if ltcollapse $ ltmap (K2 . f) extValues
         then pure acc
         else loop queryPredicate
@@ -1163,7 +1163,7 @@ answerShelleyTraversingQueries idx cfg q forker = case q of
       -> SL.UTxO era
       -> m (SL.UTxO era)
     loop queryPredicate !prev !acc = do
-      extValues <- LedgerDB.roforkerRangeReadTablesDefault forker prev
+      extValues <- LedgerDB.roforkerRangeReadTables forker prev
       if ltcollapse $ ltmap (K2 . f) extValues
         then pure acc
         else loop queryPredicate

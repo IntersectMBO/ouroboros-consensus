@@ -123,6 +123,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
   , ForkerKey (..)
   , GetForkerError (..)
   , RangeQuery (..)
+  , RangeQueryPrevious (..)
   , Statistics (..)
   , forkerCurrentPoint
   , getReadOnlyForker
@@ -301,10 +302,7 @@ data Forker m l blk = Forker {
     -- | Read ledger tables from disk.
   , forkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
     -- | Range-read ledger tables from disk.
-  , forkerRangeReadTables :: !(RangeQuery l -> m (LedgerTables l ValuesMK))
-    -- | Like 'forkerRangeReadTables', but using the 'QueryBatchSize' that the
-    -- 'LedgerDB' was opened with.
-  , forkerRangeReadTablesDefault :: !(Maybe (LedgerTables l KeysMK) -> m (LedgerTables l ValuesMK))
+  , forkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK))
     -- | Get the full ledger state without tables.
     --
     -- If empty ledger state is all you need, use 'getVolatileTip',
@@ -338,12 +336,10 @@ instance (GetTip l, HeaderHash l ~ HeaderHash blk, MonadSTM m)
       => GetTipSTM m (Forker m l blk) where
   getTipSTM forker = castPoint . getTip <$> forkerGetLedgerState forker
 
--- TODO: This type is unsuitable for FlavorV2 queries, in particular for LSM
--- queries. Those will work by splitting the UTxO set in chunks, which means
--- that there is no number of keys to read, but instead what fraction of the
--- UTxO range of keys to consult.
+data RangeQueryPrevious l = NoPreviousQuery | PreviousQueryWasFinal | PreviousQueryWasUpTo (Key l)
+
 data RangeQuery l = RangeQuery {
-    rqPrev  :: !(Maybe (LedgerTables l KeysMK))
+    rqPrev  :: !(RangeQueryPrevious l)
   , rqCount :: !Int
   }
 
@@ -427,9 +423,7 @@ data ReadOnlyForker m l blk = ReadOnlyForker {
     -- | See 'forkerReadTables'
   , roforkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
     -- | See 'forkerRangeReadTables'.
-  , roforkerRangeReadTables :: !(RangeQuery l -> m (LedgerTables l ValuesMK))
-    -- | See 'forkerRangeReadTablesDefault'
-  , roforkerRangeReadTablesDefault :: !(Maybe (LedgerTables l KeysMK) -> m (LedgerTables l ValuesMK))
+  , roforkerRangeReadTables :: !(RangeQueryPrevious l -> m (LedgerTables l ValuesMK))
     -- | See 'forkerGetLedgerState'
   , roforkerGetLedgerState  :: !(STM m (l EmptyMK))
     -- | See 'forkerReadStatistics'
@@ -445,7 +439,6 @@ readOnlyForker forker = ReadOnlyForker {
       roforkerClose = forkerClose forker
     , roforkerReadTables = forkerReadTables forker
     , roforkerRangeReadTables = forkerRangeReadTables forker
-    , roforkerRangeReadTablesDefault = forkerRangeReadTablesDefault forker
     , roforkerGetLedgerState = forkerGetLedgerState forker
     , roforkerReadStatistics = forkerReadStatistics forker
     }

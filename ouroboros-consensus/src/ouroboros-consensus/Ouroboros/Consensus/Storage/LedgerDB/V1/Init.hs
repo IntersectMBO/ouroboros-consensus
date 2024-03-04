@@ -12,6 +12,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Init (mkInitDb) where
 
 import           Control.Monad
 import           Control.Monad.Base
+import Control.Tracer (nullTracer)
 import           Data.Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
@@ -117,7 +118,7 @@ mkInitDb args bss getBlock =
       pure $ implMkLedgerDb h
   }
   where
-    bsTracer = LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
+    bsTracer = nullTracer --LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
 
     LedgerDbArgs {
         lgrHasFS
