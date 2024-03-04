@@ -22,7 +22,8 @@ import           Ouroboros.Consensus.Util.IOLike (IOLike, SomeException,
                      atomically)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
-import           Test.Util.TersePrinting (terseHFragment)
+import           Test.Util.TersePrinting (terseBlock, terseHFragment,
+                     terseMaybe)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
 
@@ -45,12 +46,14 @@ instance Condense ChainSyncException where
 -- mocked ChainSync server threads).
 data StateView blk = StateView {
     svSelectedChain       :: AnchoredFragment (Header blk),
-    svChainSyncExceptions :: [ChainSyncException]
+    svChainSyncExceptions :: [ChainSyncException],
+    svTipBlock            :: Maybe blk
   }
 
 instance Condense (StateView TestBlock) where
-  condense StateView {svSelectedChain, svChainSyncExceptions} =
+  condense StateView {svSelectedChain, svChainSyncExceptions, svTipBlock} =
     "SelectedChain: " ++ terseHFragment svSelectedChain ++ "\n"
+    ++ "TipBlock: " ++ terseMaybe terseBlock svTipBlock ++ "\n"
     ++ "ChainSyncExceptions:\n" ++ unlines (("  - " ++) . condense <$> svChainSyncExceptions)
 
 -- | Return the list of peer ids for all peers whose ChainSync thread was killed
@@ -97,4 +100,5 @@ snapshotStateView ::
 snapshotStateView StateViewTracers{svtGetChainSyncExceptions} chainDb = do
   svChainSyncExceptions <- svtGetChainSyncExceptions
   svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
-  pure StateView {svSelectedChain, svChainSyncExceptions}
+  svTipBlock <- ChainDB.getTipBlock chainDb
+  pure StateView {svSelectedChain, svChainSyncExceptions, svTipBlock}
