@@ -243,6 +243,7 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.StateDiagram
     Test.Consensus.PeerSimulator.StateView
     Test.Consensus.PeerSimulator.Tests
+    Test.Consensus.PeerSimulator.Tests.LinkedThreads
     Test.Consensus.PeerSimulator.Tests.Rollback
     Test.Consensus.PeerSimulator.Tests.Timeouts
     Test.Consensus.PeerSimulator.Trace
