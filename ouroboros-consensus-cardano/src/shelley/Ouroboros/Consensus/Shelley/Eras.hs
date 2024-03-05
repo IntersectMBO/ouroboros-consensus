@@ -349,6 +349,17 @@ instance SupportsTwoPhaseValidation (BabbageEra c) where
                 )
             )
         ) -> True
+    SL.UtxowFailure
+      ( Babbage.UtxoFailure
+          ( Babbage.AlonzoInBabbageUtxoPredFailure
+              ( Alonzo.UtxosFailure
+                  ( Alonzo.ValidationTagMismatch
+                      (Alonzo.IsValid _claimedFlag)
+                      _validationErrs
+                  )
+              )
+          )
+      ) -> True
     _ -> False
 
 instance SupportsTwoPhaseValidation (ConwayEra c) where
