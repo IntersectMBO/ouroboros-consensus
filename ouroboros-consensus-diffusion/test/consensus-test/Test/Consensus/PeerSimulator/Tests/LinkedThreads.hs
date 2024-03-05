@@ -5,6 +5,7 @@
 -- contains a collection of smoke tests to make sure of that.
 module Test.Consensus.PeerSimulator.Tests.LinkedThreads (tests) where
 
+import           Control.Monad.Class.MonadAsync (AsyncCancelled (..))
 import           Control.Monad.Class.MonadTime.SI (Time (Time))
 import           Data.Functor (($>))
 import           Data.Maybe (fromJust)
@@ -44,14 +45,31 @@ prop_chainSyncKillsBlockFetch = do
     )
     (defaultSchedulerConfig {scEnableChainSyncTimeouts = True})
     (\_ _ -> [])
-    ( \_ StateView {svChainSyncExceptions, svTipBlock} ->
-        -- FIXME: Also check that there is an exception in the BlockFetch client.
+    ( \_ stateView@StateView {svTipBlock} ->
         svTipBlock == Nothing
-          && case svChainSyncExceptions of
-            [ChainSyncException _pid exn] ->
+          && case exceptionsByComponent ChainSyncClient stateView of
+            [exn] ->
               case fromException exn of
                 Just (ExceededTimeLimit _) -> True
                 _                          -> False
+            _ -> False
+          && case exceptionsByComponent BlockFetchClient stateView of
+            [exn] ->
+              case fromException exn of
+                Just (AsyncCancelled) -> True
+                _                     -> False
+            _ -> False
+          && case exceptionsByComponent ChainSyncServer stateView of
+            [exn] ->
+              case fromException exn of
+                Just (AsyncCancelled) -> True
+                _                     -> False
+            _ -> False
+          && case exceptionsByComponent BlockFetchServer stateView of
+            [exn] ->
+              case fromException exn of
+                Just (AsyncCancelled) -> True
+                _                     -> False
             _ -> False
     )
   where

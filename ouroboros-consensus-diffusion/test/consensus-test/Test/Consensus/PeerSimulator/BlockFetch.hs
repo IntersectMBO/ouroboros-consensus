@@ -14,10 +14,11 @@ module Test.Consensus.PeerSimulator.BlockFetch (
   , startKeepAliveThread
   ) where
 
+import           Control.Exception (SomeException)
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
-import           Control.Tracer (nullTracer)
+import           Control.Tracer (Tracer, nullTracer, traceWith)
 import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import           Network.TypedProtocol.Codec (AnyMessage)
@@ -28,8 +29,8 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
                      (NumCoreNodes (NumCoreNodes))
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import           Ouroboros.Consensus.Util (ShowProxy)
-import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, atomically,
-                     retry)
+import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
+                     IOLike, STM, atomically, retry, try)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..),
@@ -45,6 +46,12 @@ import           Ouroboros.Network.Protocol.BlockFetch.Codec (codecBlockFetchId)
 import           Ouroboros.Network.Protocol.BlockFetch.Server
                      (BlockFetchServer (..), blockFetchServerPeer)
 import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch)
+import           Test.Consensus.PeerSimulator.StateView
+                     (PeerSimulatorComponentResult (..),
+                     PeerSimulatorResult (..),
+                     StateViewTracers (StateViewTracers, svtPeerSimulatorResultsTracer))
+import           Test.Consensus.PeerSimulator.Trace (TraceEvent)
+import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
 import           Test.Util.Time (dawnOfTime)
@@ -103,24 +110,47 @@ startKeepAliveThread registry fetchClientRegistry peerId =
         atomically retry
 
 runBlockFetchClient ::
-     (Ord peer, IOLike m, MonadTime m, MonadTimer m, HasHeader blk, HasHeader (Header blk), ShowProxy blk)
-  => peer
-  -> FetchClientRegistry peer (Header blk) blk m
+     (IOLike m, MonadTime m, MonadTimer m, HasHeader blk, HasHeader (Header blk), ShowProxy blk)
+  => Tracer m (TraceEvent blk)
+  -> PeerId
+  -> StateViewTracers blk m
+  -> FetchClientRegistry PeerId (Header blk) blk m
   -> ControlMessageSTM m
   -> Channel m (AnyMessage (BlockFetch blk (Point blk)))
   -> m ()
-runBlockFetchClient peerId fetchClientRegistry controlMsgSTM channel = do
-    bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId $ \clientCtx ->
-      void $ runPipelinedPeer nullTracer codecBlockFetchId channel
+runBlockFetchClient _tracer peerId StateViewTracers {svtPeerSimulatorResultsTracer} fetchClientRegistry controlMsgSTM channel = do
+    bracketFetchClient fetchClientRegistry ntnVersion isPipeliningEnabled peerId $ \clientCtx -> do
+      res <- try $ runPipelinedPeer nullTracer codecBlockFetchId channel
         (blockFetchClient ntnVersion controlMsgSTM nullTracer clientCtx)
+      case res of
+        Right ((), msgRes) -> traceWith svtPeerSimulatorResultsTracer $
+          PeerSimulatorResult peerId $ SomeBlockFetchClientResult $ Right msgRes
+        Left exn -> do
+          traceWith svtPeerSimulatorResultsTracer $
+            PeerSimulatorResult peerId $ SomeBlockFetchClientResult $ Left exn
+          -- NOTE: here we are able to trace exceptions, as what is done in `runChainSyncClient`
+          case fromException exn of
+            (_ :: Maybe SomeException) -> pure ()
   where
     ntnVersion :: NodeToNodeVersion
     ntnVersion = maxBound
 
 runBlockFetchServer ::
   (IOLike m, ShowProxy blk) =>
+  Tracer m (TraceEvent blk) ->
+  PeerId ->
+  StateViewTracers blk m ->
   BlockFetchServer blk (Point blk) m () ->
   Channel m (AnyMessage (BlockFetch blk (Point blk))) ->
   m ()
-runBlockFetchServer server channel = do
-  void $ runPeer nullTracer codecBlockFetchId channel (blockFetchServerPeer server)
+runBlockFetchServer _tracer peerId StateViewTracers {svtPeerSimulatorResultsTracer} server channel = do
+  res <- try $ runPeer nullTracer codecBlockFetchId channel (blockFetchServerPeer server)
+  case res of
+    Right ((), msgRes) -> traceWith svtPeerSimulatorResultsTracer $
+      PeerSimulatorResult peerId $ SomeBlockFetchServerResult $ Right msgRes
+    Left exn -> do
+      traceWith svtPeerSimulatorResultsTracer $
+        PeerSimulatorResult peerId $ SomeBlockFetchServerResult $ Left exn
+      -- NOTE: here we are able to trace exceptions, as what is done in `runChainSyncClient`
+      case fromException exn of
+        (_ :: Maybe SomeException) -> pure ()
