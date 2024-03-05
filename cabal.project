@@ -21,7 +21,6 @@ index-state:
 packages:
   ouroboros-consensus
   ouroboros-consensus-cardano
-  ouroboros-consensus-cardano-legacy-block
   ouroboros-consensus-protocol
   ouroboros-consensus-diffusion
   sop-extras
