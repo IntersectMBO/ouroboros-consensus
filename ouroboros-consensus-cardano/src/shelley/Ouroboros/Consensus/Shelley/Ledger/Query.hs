@@ -476,8 +476,8 @@ instance ( ShelleyCompatible proto era
             answerBlockQueryLookup cfg qry' forker
 
   answerBlockQueryTraverse cfg qry forker = case qry of
-    GetUTxOByAddress addrs -> loop (filterGetUTxOByAddressOne addrs) Nothing emptyUtxo
-    GetUTxOWhole           -> loop (const True) Nothing emptyUtxo
+    GetUTxOByAddress addrs -> loop (filterGetUTxOByAddressOne addrs) NoPreviousQuery emptyUtxo
+    GetUTxOWhole           -> loop (const True) NoPreviousQuery emptyUtxo
     GetCBOR q'             ->
       mkSerialised (encodeShelleyResult maxBound q') <$>
        answerBlockQueryTraverse cfg q' forker
@@ -496,15 +496,14 @@ instance ( ShelleyCompatible proto era
     f :: ValuesMK k v -> Bool
     f (ValuesMK vs) = Map.null vs
 
-    toKeys :: ValuesMK k v -> KeysMK k v
-    toKeys (ValuesMK vs) = KeysMK $ Map.keysSet vs
+    toKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
 
     loop queryPredicate !prev !acc = do
       extValues <- LedgerDB.roforkerRangeReadTables forker prev
       if ltcollapse $ ltmap (K2 . f) extValues
         then pure acc
         else loop queryPredicate
-               (Just $ ltmap toKeys extValues)
+               (PreviousQueryWasUpTo $ toKey extValues)
                (combUtxo acc $ partial queryPredicate extValues)
 
 instance SameDepIndex2 (BlockQuery (ShelleyBlock proto era)) where
@@ -1128,8 +1127,8 @@ answerShelleyTraversingQueries ::
   -> ReadOnlyForker' m (HardForkBlock xs)
   -> m result
 answerShelleyTraversingQueries idx cfg q forker = case q of
-    GetUTxOByAddress{} -> loop (queryLedgerGetTraversingFilter idx q) Nothing emptyUtxo
-    GetUTxOWhole       -> loop (queryLedgerGetTraversingFilter idx q) Nothing emptyUtxo
+    GetUTxOByAddress{} -> loop (queryLedgerGetTraversingFilter idx q) NoPreviousQuery emptyUtxo
+    GetUTxOWhole       -> loop (queryLedgerGetTraversingFilter idx q) NoPreviousQuery emptyUtxo
     GetCBOR q'         ->
       mkSerialised (encodeShelleyResult maxBound q') <$>
        answerBlockQueryHFTraverse idx cfg q' forker
@@ -1154,18 +1153,12 @@ answerShelleyTraversingQueries idx cfg q forker = case q of
     f :: ValuesMK k v -> Bool
     f (ValuesMK vs) = Map.null vs
 
-    toKeys :: ValuesMK k v -> KeysMK k v
-    toKeys (ValuesMK vs) = KeysMK $ Map.keysSet vs
+    toKey (LedgerTables (ValuesMK vs)) = fst $ Map.findMax vs
 
-    loop ::
-         (Value (LedgerState (HardForkBlock xs)) -> Bool)
-      -> Maybe (LedgerTables (ExtLedgerState (HardForkBlock xs)) KeysMK)
-      -> SL.UTxO era
-      -> m (SL.UTxO era)
     loop queryPredicate !prev !acc = do
       extValues <- LedgerDB.roforkerRangeReadTables forker prev
       if ltcollapse $ ltmap (K2 . f) extValues
         then pure acc
         else loop queryPredicate
-               (Just $ ltmap toKeys extValues)
+               (PreviousQueryWasUpTo $ toKey extValues)
                (combUtxo acc $ partial queryPredicate extValues)
