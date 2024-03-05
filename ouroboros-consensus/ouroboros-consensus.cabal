@@ -280,11 +280,11 @@ library
     Ouroboros.Consensus.Util.Versioned
 
   build-depends:
-    , base                         >=4.14   && <4.20
+    , base                         >=4.14    && <4.20
     , base16-bytestring
-    , bimap                        >=0.4    && <0.6
-    , binary                       >=0.8    && <0.11
-    , bytestring                   >=0.10   && <0.13
+    , bimap                        >=0.4     && <0.6
+    , binary                       >=0.8     && <0.11
+    , bytestring                   >=0.10    && <0.13
     , cardano-binary
     , cardano-crypto-class
     , cardano-lmdb                 >=0.3.0.0
@@ -294,13 +294,13 @@ library
     , cardano-strict-containers
     , cborg                        ^>=0.2.2
     , constraints
-    , containers                   >=0.5    && <0.7
+    , containers                   >=0.5     && <0.7
     , contra-tracer
     , deepseq
     , diff-containers              >=1.1
     , filelock
-    , fs-api                       ^>=0.2
     , fingertree-rm                >=1.0
+    , fs-api                       ^>=0.2
     , hashable
     , io-classes                   ^>=1.4.1
     , measures
@@ -316,10 +316,10 @@ library
     , semialign                    >=1.1
     , serialise                    ^>=0.2
     , si-timers                    ^>=1.4
+    , singletons
     , sop-core                     ^>=0.5
     , sop-extras                   ^>=0.1
     , streaming
-    , singletons
     , strict-checked-vars          ^>=0.2
     , strict-sop-core              ^>=0.1
     , strict-stm                   ^>=1.4
@@ -335,7 +335,7 @@ library
   build-depends:   text >=1.2.5.0 && <2.2
 
   -- documentation
-  ghc-options:      -Wno-unused-packages
+  ghc-options:     -Wno-unused-packages
   build-depends:
     , directory
     , latex-svg-image
@@ -345,6 +345,7 @@ library unstable-consensus-testlib
   visibility:      public
   hs-source-dirs:  src/unstable-consensus-testlib
   exposed-modules:
+    Test.LedgerTables
     Test.Ouroboros.Consensus.ChainGenerator.Adversarial
     Test.Ouroboros.Consensus.ChainGenerator.BitVector
     Test.Ouroboros.Consensus.ChainGenerator.Counting
@@ -354,7 +355,6 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.ChainGenerator.Slot
     Test.Ouroboros.Consensus.ChainGenerator.Some
     Test.QuickCheck.Extras
-    Test.LedgerTables
     Test.Util.BoolProps
     Test.Util.ChainDB
     Test.Util.ChainUpdates
@@ -565,9 +565,9 @@ test-suite consensus-test
     , containers
     , contra-tracer
     , deepseq
-    , fs-api                                                              ^>=0.2
     , diff-containers                                                     >=1.1
     , fingertree-rm                                                       >=1.0
+    , fs-api                                                              ^>=0.2
     , fs-sim
     , generics-sop
     , hashable
@@ -582,6 +582,8 @@ test-suite consensus-test
     , ouroboros-network-mock
     , ouroboros-network-protocols:{ouroboros-network-protocols, testlib}
     , QuickCheck
+    , quickcheck-classes
+    , quickcheck-monoid-subclasses
     , quickcheck-state-machine:no-vendored-treediff
     , quiet
     , random
@@ -590,11 +592,6 @@ test-suite consensus-test
     , sop-core
     , sop-extras
     , strict-sop-core
-    , quickcheck-classes
-    , quickcheck-monoid-subclasses
-    , random
-    , serialise
-    , si-timers
     , strict-stm
     , tasty
     , tasty-hunit
@@ -684,16 +681,13 @@ test-suite storage-test
     , cardano-crypto-class
     , cardano-slotting
     , cborg
-    , containers
-    , contra-tracer
-    , fs-api                                         ^>=0.2
-    , fs-sim                                         ^>=0.2
-    , unstable-consensus-testlib
     , constraints
     , containers
     , contra-tracer
-    , diff-containers           >=1.1
+    , diff-containers                                >=1.1
     , directory
+    , fs-api                                         ^>=0.2
+    , fs-sim                                         ^>=0.2
     , generics-sop
     , hashable
     , io-classes
@@ -706,9 +700,9 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
+    , quickcheck-dynamic                             >=3.3.1
+    , quickcheck-lockstep                            >=0.3
     , quickcheck-state-machine:no-vendored-treediff  ^>=0.9
-    , quickcheck-dynamic        >=3.3.1
-    , quickcheck-lockstep       >=0.3
     , random
     , serialise
     , sop-core
@@ -744,7 +738,7 @@ benchmark mempool-bench
     , containers
     , contra-tracer
     , deepseq
-    , diff-containers      >=1.1
+    , diff-containers              >=1.1
     , nothunks
     , ouroboros-consensus
     , serialise
@@ -787,10 +781,9 @@ benchmark backingstore-bench
   build-depends:
     , base
     , cardano-slotting
-    , unstable-consensus-testlib
     , containers
     , deepseq
-    , diff-containers      >=1.1
+    , diff-containers             >=1.1
     , directory
     , fs-api
     , io-classes
@@ -802,3 +795,4 @@ benchmark backingstore-bench
     , tasty-bench
     , tasty-quickcheck
     , temporary
+    , unstable-consensus-testlib
