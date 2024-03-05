@@ -1,21 +1,4 @@
-.aux
-.lof
-.log
-.lot
-.fls
-.out
-.toc
-.fmt
-.fot
-.cb
-.cb2
-.lb
-.pdf
-.fdb_latexmk
-.bcf
-.blg
--blx.aux
--blx.bib
-.run.xml
-.synctex.gz
+*.lof
+!consensus-spec.bbl
+!rules.pdf
 
