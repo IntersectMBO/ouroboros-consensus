@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE RecordWildCards     #-}
@@ -11,10 +12,10 @@ module Test.Consensus.PeerSimulator.ChainSync (
   , runChainSyncServer
   ) where
 
-import           Control.Exception (AsyncException (ThreadKilled))
+import           Control.Exception (AsyncException (ThreadKilled),
+                     SomeException)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
-import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
 import qualified Data.Set as Set
@@ -52,8 +53,9 @@ import           Ouroboros.Network.Protocol.ChainSync.Server (ChainSyncServer,
 import           Ouroboros.Network.Protocol.ChainSync.Type (ChainSync)
 import           Ouroboros.Network.Protocol.Limits (ProtocolSizeLimits (..))
 import           Test.Consensus.PeerSimulator.StateView
-                     (ChainSyncException (ChainSyncException),
-                     StateViewTracers (StateViewTracers, svtChainSyncExceptionsTracer))
+                     (PeerSimulatorComponentResult (..),
+                     PeerSimulatorResult (..),
+                     StateViewTracers (StateViewTracers, svtPeerSimulatorResultsTracer))
 import           Test.Consensus.PeerSimulator.Trace
                      (TraceChainSyncClientTerminationEvent (..),
                      TraceEvent (..))
@@ -124,7 +126,7 @@ runChainSyncClient ::
   -- ^ Timeouts for this client.
   ChainSyncLoPBucketConfig ->
   -- ^ Configuration for the LoP bucket.
-  StateViewTracers m ->
+  StateViewTracers blk m ->
   -- ^ Tracers used to record information for the future 'StateView'.
   StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
   -- ^ A TVar containing a map of fragments of headers for each peer. This
@@ -139,7 +141,7 @@ runChainSyncClient
   peerId
   chainSyncTimeouts
   lopBucketConfig
-  StateViewTracers {svtChainSyncExceptionsTracer}
+  StateViewTracers {svtPeerSimulatorResultsTracer}
   varCandidates
   channel = do
     -- We don't need this shared Set yet. If we need it at some point,
@@ -164,11 +166,13 @@ runChainSyncClient
               channel
               (chainSyncClientPeerPipelined (basicChainSyncClient peerId tracer cfg chainDbView varCandidate idleManagers lopBucket))
         case res of
-          Right _  -> pure ()
+          Right res' -> traceWith svtPeerSimulatorResultsTracer $
+            PeerSimulatorResult peerId $ SomeChainSyncClientResult $ Right res'
           Left exn -> traceException exn
     where
       traceException exn = do
-        traceWith svtChainSyncExceptionsTracer $ ChainSyncException peerId exn
+        traceWith svtPeerSimulatorResultsTracer $
+          PeerSimulatorResult peerId $ SomeChainSyncClientResult $ Left exn
         case fromException exn of
           Just (ExceededSizeLimit _) ->
             traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceExceededSizeLimit
@@ -198,8 +202,19 @@ chainSyncNoTimeouts =
 
 runChainSyncServer ::
   (IOLike m, ShowProxy blk, ShowProxy (Header blk)) =>
+  Tracer m (TraceEvent blk) ->
+  PeerId ->
+  StateViewTracers blk m ->
   ChainSyncServer (Header blk) (Point blk) (Tip blk) m () ->
   Channel m (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))) ->
   m ()
-runChainSyncServer server channel =
-  void $ runPeer nullTracer codecChainSyncId channel (chainSyncServerPeer server)
+runChainSyncServer _tracer peerId StateViewTracers {svtPeerSimulatorResultsTracer} server channel =
+  (try $ runPeer nullTracer codecChainSyncId channel (chainSyncServerPeer server)) >>= \case
+    Right ((), msgRes) -> traceWith svtPeerSimulatorResultsTracer $
+      PeerSimulatorResult peerId $ SomeChainSyncServerResult $ Right msgRes
+    Left exn -> do
+      traceWith svtPeerSimulatorResultsTracer $
+        PeerSimulatorResult peerId $ SomeChainSyncServerResult $ Left exn
+      -- NOTE: here we are able to trace exceptions, as what is done in `runChainSyncClient`
+      case fromException exn of
+        (_ :: Maybe SomeException) -> pure ()

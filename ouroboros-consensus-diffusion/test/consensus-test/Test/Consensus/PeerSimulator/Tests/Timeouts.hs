@@ -48,11 +48,11 @@ prop_timeouts mustTimeout = do
     (\_ _ -> [])
 
     (\_ stateView ->
-      case svChainSyncExceptions stateView of
+      case exceptionsByComponent ChainSyncClient stateView of
         [] ->
           counterexample ("result: " ++ condense (svSelectedChain stateView)) (not mustTimeout)
         [exn] ->
-          case fromException $ cseException exn of
+          case fromException exn of
             Just (ExceededTimeLimit _) -> property mustTimeout
             _ -> counterexample ("exception: " ++ show exn) False
         exns ->
