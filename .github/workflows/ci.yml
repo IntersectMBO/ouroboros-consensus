@@ -51,6 +51,9 @@ jobs:
         cabal clean
         cabal update
 
+    - name: Install lmdb
+      run: |
+        sudo apt-get update
     # We create a `dependencies.txt` file that can be used to index the cabal
     # store cache.
     #

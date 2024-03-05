@@ -155,7 +155,7 @@ initializationLedgerJudgement ::
      ( L.GetTip (L.LedgerState blk)
      , Monad m
      )
-  => m (L.LedgerState blk)
+  => m (L.LedgerState blk L.EmptyMK)
   -> Maybe (WrapDurationUntilTooOld m blk)
      -- ^ 'Nothing' if @blk@ has no age limit
   -> MarkerFileView m
@@ -386,7 +386,7 @@ realDurationUntilTooOld ::
      , MonadSTM m
      )
   => L.LedgerConfig blk
-  -> STM m (L.LedgerState blk)
+  -> STM m (L.LedgerState blk L.EmptyMK)
   -> NominalDiffTime
      -- ^ If the volatile tip is older than this, then the node will exit the
      -- @CaughtUp@ state.

@@ -7,6 +7,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures             #-}
 {-# LANGUAGE LambdaCase                 #-}
+{-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -41,6 +42,7 @@ import           Cardano.Slotting.EpochInfo
 import           Data.Kind (Type)
 import           Data.SOP.Constraint
 import           Data.SOP.Strict
+import           Data.SOP.Functors
 import           Data.Typeable
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
@@ -73,13 +75,16 @@ instance Typeable xs => ShowProxy (HardForkBlock xs) where
 type instance BlockProtocol (HardForkBlock xs) = HardForkProtocol xs
 type instance HeaderHash    (HardForkBlock xs) = OneEraHash       xs
 
-newtype instance LedgerState (HardForkBlock xs) = HardForkLedgerState {
-      hardForkLedgerStatePerEra :: HardForkState LedgerState xs
+newtype instance LedgerState (HardForkBlock xs) mk = HardForkLedgerState {
+      hardForkLedgerStatePerEra :: HardForkState (Flip LedgerState mk) xs
     }
 
-deriving stock   instance CanHardFork xs => Show (LedgerState (HardForkBlock xs))
-deriving stock   instance CanHardFork xs => Eq   (LedgerState (HardForkBlock xs))
-deriving newtype instance CanHardFork xs => NoThunks (LedgerState (HardForkBlock xs))
+deriving stock   instance (ShowMK mk,     CanHardFork xs)
+              => Show     (LedgerState (HardForkBlock xs) mk)
+deriving stock   instance (EqMK mk,       CanHardFork xs)
+              => Eq       (LedgerState (HardForkBlock xs) mk)
+deriving newtype instance (NoThunksMK mk, CanHardFork xs)
+              => NoThunks (LedgerState (HardForkBlock xs) mk)
 
 {-------------------------------------------------------------------------------
   Protocol config

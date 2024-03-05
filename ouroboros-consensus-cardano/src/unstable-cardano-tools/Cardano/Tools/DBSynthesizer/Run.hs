@@ -34,6 +34,12 @@ import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (defaultArgs,
                      getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (cdbTracer,
                      withDB)
+<<<<<<< HEAD
+=======
+import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
+                     (BackingStoreSelector (InMemoryBackingStore))
+>>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
 import           Ouroboros.Consensus.Util.IOLike (atomically)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block
@@ -115,9 +121,18 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
         let
             epochSize   = sgEpochLength confShelleyGenesis
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
+<<<<<<< HEAD
             dbArgs      = Node.mkChainDbArgs
                 registry InFuture.dontCheck pInfoConfig pInfoInitLedger chunkInfo $
                     ChainDB.defaultArgs (Node.stdMkChainDbHasFS confDbDir)
+=======
+            k           = configSecurityParam pInfoConfig
+            diskPolicy  = defaultDiskPolicy k
+                            DefaultSnapshotInterval
+            dbArgs      = Node.mkChainDbArgs
+                registry InFuture.dontCheck pInfoConfig pInfoInitLedger chunkInfo $
+                    ChainDB.defaultArgs (Node.stdMkChainDbHasFS confDbDir) diskPolicy InMemoryBackingStore
+>>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
 
         forgers <- blockForging
         let fCount = length forgers

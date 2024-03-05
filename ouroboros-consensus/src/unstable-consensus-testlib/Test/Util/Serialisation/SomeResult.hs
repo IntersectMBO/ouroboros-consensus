@@ -13,7 +13,7 @@ import           Ouroboros.Consensus.Ledger.Query (BlockQuery)
 -- need them in the tests.
 data SomeResult blk where
   SomeResult :: (Eq result, Show result, Typeable result)
-             => BlockQuery blk result -> result -> SomeResult blk
+             => BlockQuery blk fp result -> result -> SomeResult blk
 
 instance Show (SomeResult blk) where
   show (SomeResult _ result) = show result

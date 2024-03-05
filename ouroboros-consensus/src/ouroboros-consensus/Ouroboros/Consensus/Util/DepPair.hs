@@ -1,10 +1,13 @@
-{-# LANGUAGE DefaultSignatures     #-}
-{-# LANGUAGE GADTs                 #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PatternSynonyms       #-}
-{-# LANGUAGE RankNTypes            #-}
-{-# LANGUAGE TypeFamilies          #-}
-{-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE DataKinds                #-}
+{-# LANGUAGE DefaultSignatures        #-}
+{-# LANGUAGE GADTs                    #-}
+{-# LANGUAGE MultiParamTypeClasses    #-}
+{-# LANGUAGE PatternSynonyms          #-}
+{-# LANGUAGE PolyKinds                #-}
+{-# LANGUAGE RankNTypes               #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeFamilies             #-}
+{-# LANGUAGE TypeOperators            #-}
 
 module Ouroboros.Consensus.Util.DepPair (
     -- * Dependent pairs
@@ -13,6 +16,7 @@ module Ouroboros.Consensus.Util.DepPair (
   , depPairFirst
     -- * Compare indices
   , SameDepIndex (..)
+  , SameDepIndex2 (..)
     -- * Trivial dependency
   , TrivialDependency (..)
   , fromTrivialDependency
@@ -22,7 +26,7 @@ module Ouroboros.Consensus.Util.DepPair (
   , (:~:) (..)
   ) where
 
-import           Data.Kind (Type)
+import           Data.Kind (Constraint, Type)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors (I (..))
 import           Data.Type.Equality ((:~:) (..))
@@ -54,11 +58,16 @@ depPairFirst f (GenDepPair ix a) = GenDepPair (f ix) a
   Compare indices
 -------------------------------------------------------------------------------}
 
+type SameDepIndex :: (Type -> Type) -> Constraint
 class SameDepIndex f where
   sameDepIndex :: f a -> f b -> Maybe (a :~: b)
 
   default sameDepIndex :: TrivialDependency f => f a -> f b -> Maybe (a :~: b)
   sameDepIndex ix ix' = Just $ hasSingleIndex ix ix'
+
+type SameDepIndex2 :: (k1 -> k2 -> Type) -> Constraint
+class SameDepIndex2 f where
+  sameDepIndex2 :: f x a -> f y b -> Maybe ('(x, a) :~: '(y, b))
 
 {-------------------------------------------------------------------------------
   Trivial dependencies

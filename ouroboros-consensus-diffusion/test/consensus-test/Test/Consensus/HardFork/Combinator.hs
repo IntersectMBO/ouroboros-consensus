@@ -1,7 +1,4 @@
 {-# LANGUAGE DataKinds                  #-}
-{-# LANGUAGE DeriveAnyClass             #-}
-{-# LANGUAGE DeriveFoldable             #-}
-{-# LANGUAGE DeriveFunctor              #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DeriveTraversable          #-}
 {-# LANGUAGE DerivingVia                #-}
@@ -13,23 +10,29 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.HardFork.Combinator (tests) where
 
+import           Cardano.Binary (FromCBOR (fromCBOR), ToCBOR (toCBOR))
 import qualified Data.Map.Strict as Map
 import           Data.SOP.Counting
+import           Data.SOP.Functors (Flip (..))
+import           Data.SOP.Index (Index (..))
 import           Data.SOP.InPairs (RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
 import           Data.SOP.OptNP (OptNP (..))
 import           Data.SOP.Strict
 import qualified Data.SOP.Tails as Tails
+import           Data.Void (Void, absurd)
 import           Data.Word
 import           GHC.Generics (Generic)
+import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
@@ -42,6 +45,7 @@ import qualified Ouroboros.Consensus.HardFork.History as History
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -224,7 +228,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         , pInfoInitLedger = ExtLedgerState {
               ledgerState = HardForkLedgerState $
                               initHardForkState
-                                initLedgerState
+                                (Flip initLedgerState)
             , headerState = genesisHeaderState $
                               initHardForkState
                                 (WrapChainDepState initChainDepState)
@@ -239,7 +243,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         $ OptNil
       ]
 
-    initLedgerState :: LedgerState BlockA
+    initLedgerState :: LedgerState BlockA ValuesMK
     initLedgerState = LgrA {
           lgrA_tip        = GenesisPoint
         , lgrA_transition = Nothing
@@ -358,6 +362,36 @@ instance TxGen TestBlock where
   testGenTxs _ _ _ _ _ _ = return []
 
 {-------------------------------------------------------------------------------
+  Canonical TxIn
+-------------------------------------------------------------------------------}
+
+instance HasCanonicalTxIn '[BlockA, BlockB] where
+  newtype instance CanonicalTxIn '[BlockA, BlockB] = BlockABTxIn {
+      getBlockABTxIn :: Void
+    }
+    deriving stock (Show, Eq, Ord)
+    deriving newtype (NoThunks, FromCBOR, ToCBOR)
+
+  injectCanonicalTxIn IZ             key = absurd key
+  injectCanonicalTxIn (IS IZ)        key = absurd key
+  injectCanonicalTxIn (IS (IS idx')) _   = case idx' of {}
+
+  distribCanonicalTxIn _ key = absurd $ getBlockABTxIn key
+
+  encodeCanonicalTxIn = toCBOR
+
+  decodeCanonicalTxIn = fromCBOR
+
+instance HasHardForkTxOut '[BlockA, BlockB] where
+  type HardForkTxOut '[BlockA, BlockB] = DefaultHardForkTxOut '[BlockA, BlockB]
+  injectHardForkTxOut = injectHardForkTxOutDefault
+  distribHardForkTxOut = distribHardForkTxOutDefault
+
+instance SerializeHardForkTxOut '[BlockA, BlockB] where
+  encodeHardForkTxOut _ = encodeHardForkTxOutDefault
+  decodeHardForkTxOut _ = decodeHardForkTxOutDefault
+
+{-------------------------------------------------------------------------------
   Hard fork
 -------------------------------------------------------------------------------}
 
@@ -366,6 +400,7 @@ type TestBlock = HardForkBlock '[BlockA, BlockB]
 instance CanHardFork '[BlockA, BlockB] where
   hardForkEraTranslation = EraTranslation {
         translateLedgerState   = PCons ledgerState_AtoB   PNil
+      , translateLedgerTables  = PCons ledgerTables_AtoB  PNil
       , translateChainDepState = PCons chainDepState_AtoB PNil
       , crossEraForecast       = PCons forecast_AtoB      PNil
       }
@@ -406,11 +441,22 @@ instance SerialiseHFC '[BlockA, BlockB]
 ledgerState_AtoB ::
      RequiringBoth
        WrapLedgerConfig
-       (Translate LedgerState)
+       TranslateLedgerState
        BlockA
        BlockB
-ledgerState_AtoB = InPairs.ignoringBoth $ Translate $ \_ LgrA{..} -> LgrB {
-      lgrB_tip = castPoint lgrA_tip
+ledgerState_AtoB =
+    InPairs.ignoringBoth
+  $ TranslateLedgerState {
+        translateLedgerStateWith = \_ LgrA{..} ->
+            LgrB {
+              lgrB_tip = castPoint lgrA_tip
+            }
+    }
+
+ledgerTables_AtoB :: TranslateLedgerTables BlockA BlockB
+ledgerTables_AtoB =  TranslateLedgerTables {
+      translateTxInWith  = id
+    , translateTxOutWith = Just . id
     }
 
 chainDepState_AtoB ::
@@ -439,3 +485,20 @@ injectTx_AtoB ::
        BlockB
 injectTx_AtoB =
     InPairs.ignoringBoth $ Pair2 cannotInjectTx cannotInjectValidatedTx
+
+{-------------------------------------------------------------------------------
+  Query HF
+-------------------------------------------------------------------------------}
+
+instance BlockSupportsHFLedgerQuery '[BlockA, BlockB] where
+  answerBlockQueryHFLookup IZ _cfg (q :: BlockQuery BlockA QFLookupTables result) = case q of {}
+  answerBlockQueryHFLookup (IS IZ) _cfg (q :: BlockQuery BlockB QFLookupTables result) = case q of {}
+  answerBlockQueryHFLookup (IS (IS idx)) _cfg _q = case idx of {}
+
+  answerBlockQueryHFTraverse IZ _cfg (q :: BlockQuery BlockA QFTraverseTables result) = case q of {}
+  answerBlockQueryHFTraverse (IS IZ) _cfg (q :: BlockQuery BlockB QFTraverseTables result) = case q of {}
+  answerBlockQueryHFTraverse (IS (IS idx)) _cfg _q = case idx of {}
+
+  queryLedgerGetTraversingFilter IZ (q :: BlockQuery BlockA QFTraverseTables result) = case q of {}
+  queryLedgerGetTraversingFilter (IS IZ) (q :: BlockQuery BlockB QFTraverseTables result) = case q of {}
+  queryLedgerGetTraversingFilter (IS (IS idx)) _q = case idx of {}

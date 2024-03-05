@@ -33,7 +33,7 @@ import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory,
 import           Ouroboros.Consensus.HardFork.History (PastHorizonException)
 import           Ouroboros.Consensus.HardFork.History.Qry (runQuery,
                      slotToWallclock)
-import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState)
+import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState, EmptyMK)
 import           Ouroboros.Consensus.Util.Time (nominalDelay)
 import           Ouroboros.Network.Block (HasHeader)
 
@@ -65,7 +65,7 @@ data HeaderInFutureCheck m blk arrival judgment = HeaderInFutureCheck {
     -- returns 'Ouroboros.Consensus.HardFork.HistoryPastHorizon'.
     judgeHeaderArrival ::
          LedgerConfig blk
-      -> LedgerState blk
+      -> LedgerState blk EmptyMK
       -> arrival
       -> Except PastHorizonException judgment
   ,

@@ -23,7 +23,9 @@ import           Text.Builder (Builder)
 --  1. Header tick.
 --  2. Header application.
 --  3. Block tick.
---  4. Block application.
+--  4. Ledger state hydrate.
+--  5. Block application.
+--  6. Diffs flushing
 --
 -- It is up to the user of a slot data point to decide which units the data
 -- represent (eg milliseconds, nanoseconds, etc)

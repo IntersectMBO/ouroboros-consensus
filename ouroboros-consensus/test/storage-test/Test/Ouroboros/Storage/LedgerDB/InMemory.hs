@@ -1,12 +1,11 @@
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE KindSignatures             #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE ScopedTypeVariables        #-}
-{-# LANGUAGE TypeApplications           #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
+{-# LANGUAGE KindSignatures       #-}
+{-# LANGUAGE NamedFieldPuns       #-}
+{-# LANGUAGE RecordWildCards      #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- | In-memory ledger DB tests.
@@ -37,7 +36,10 @@ import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Storage.LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
+                     (tip)
 import           Ouroboros.Consensus.Util
 import           Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary ()
 import           Test.QuickCheck
@@ -107,20 +109,20 @@ test_encode_ledger :: Assertion
 test_encode_ledger =
     toFlatTerm (enc example_ledger) @?= golden_ledger
   where
-    enc = encodeSnapshot encode
+    enc = encodeL encode
 
 test_decode_ledger :: Assertion
 test_decode_ledger =
     fromFlatTerm dec golden_ledger @?= Right example_ledger
   where
-    dec = decodeSnapshotBackwardsCompatible (Proxy @TestBlock) decode decode
+    dec = decodeLBackwardsCompatible (Proxy @TestBlock) decode decode
 
 -- | For backwards compatibility
 test_decode_ChainSummary :: Assertion
 test_decode_ChainSummary =
     fromFlatTerm dec golden_ChainSummary @?= Right example_ledger
   where
-    dec = decodeSnapshotBackwardsCompatible (Proxy @TestBlock) decode decode
+    dec = decodeLBackwardsCompatible (Proxy @TestBlock) decode decode
 
 {-------------------------------------------------------------------------------
   Genesis
@@ -128,9 +130,9 @@ test_decode_ChainSummary =
 
 prop_genesisCurrent :: Property
 prop_genesisCurrent =
-    ledgerDbCurrent genSnaps === testInitLedger
+    current genSnaps === convertMapKind testInitLedger
   where
-    genSnaps = ledgerDbWithAnchor testInitLedger
+    genSnaps = anchorlessChangelog $ empty (convertMapKind testInitLedger)
 
 {-------------------------------------------------------------------------------
   Constructing snapshots
@@ -140,8 +142,8 @@ prop_pushExpectedLedger :: ChainSetup -> Property
 prop_pushExpectedLedger setup@ChainSetup{..} =
     classify (chainSetupSaturated setup) "saturated" $
       conjoin [
-          l === refoldLedger cfg (expectedChain o) testInitLedger
-        | (o, l) <- ledgerDbSnapshots csPushed
+          l === convertMapKind (refoldLedger cfg (expectedChain o) (convertMapKind testInitLedger))
+        | (o, l) <- snapshots csPushed
         ]
   where
     expectedChain :: Word64 -> [TestBlock]
@@ -154,9 +156,9 @@ prop_pastLedger :: ChainSetup -> Property
 prop_pastLedger setup@ChainSetup{..} =
     classify (chainSetupSaturated setup) "saturated"    $
     classify withinReach                 "within reach" $
-          ledgerDbPast tip csPushed
+          getPastLedgerAt tip csPushed
       === if withinReach
-            then Just (ledgerDbCurrent afterPrefix)
+            then Just (current afterPrefix)
             else Nothing
   where
     prefix :: [TestBlock]
@@ -165,12 +167,12 @@ prop_pastLedger setup@ChainSetup{..} =
     tip :: Point TestBlock
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
-    afterPrefix :: LedgerDB (LedgerState TestBlock)
-    afterPrefix = ledgerDbPushMany' (csBlockConfig setup) prefix csGenSnaps
+    afterPrefix :: AnchorlessDbChangelog (LedgerState TestBlock)
+    afterPrefix = reapplyThenPushMany' (csBlockConfig setup) prefix trivialKeySetsReader csGenSnaps
 
     -- See 'prop_snapshotsMaxRollback'
     withinReach :: Bool
-    withinReach = (csNumBlocks - csPrefixLen) <= ledgerDbMaxRollback csPushed
+    withinReach = (csNumBlocks - csPrefixLen) <= maxRollback csPushed
 
 {-------------------------------------------------------------------------------
   Rollback
@@ -178,7 +180,7 @@ prop_pastLedger setup@ChainSetup{..} =
 
 prop_maxRollbackGenesisZero :: Property
 prop_maxRollbackGenesisZero =
-        ledgerDbMaxRollback (ledgerDbWithAnchor testInitLedger)
+        maxRollback (anchorlessChangelog $ empty (convertMapKind testInitLedger))
     === 0
 
 prop_snapshotsMaxRollback :: ChainSetup -> Property
@@ -186,9 +188,9 @@ prop_snapshotsMaxRollback setup@ChainSetup{..} =
     classify (chainSetupSaturated setup) "saturated" $
       conjoin [
           if chainSetupSaturated setup
-            then (ledgerDbMaxRollback csPushed) `ge` k
-            else (ledgerDbMaxRollback csPushed) `ge` (min k csNumBlocks)
-        , (ledgerDbMaxRollback csPushed) `le` k
+            then (maxRollback csPushed) `ge` k
+            else (maxRollback csPushed) `ge` (min k csNumBlocks)
+        , (maxRollback csPushed) `le` k
         ]
   where
     SecurityParam k = csSecParam
@@ -196,7 +198,7 @@ prop_snapshotsMaxRollback setup@ChainSetup{..} =
 prop_switchSameChain :: SwitchSetup -> Property
 prop_switchSameChain setup@SwitchSetup{..} =
     classify (switchSetupSaturated setup) "saturated" $
-          ledgerDbSwitch' (csBlockConfig ssChainSetup) ssNumRollback blockInfo csPushed
+          switch' (csBlockConfig ssChainSetup) ssNumRollback blockInfo trivialKeySetsReader csPushed
       === Just csPushed
   where
     ChainSetup{csPushed} = ssChainSetup
@@ -206,8 +208,8 @@ prop_switchExpectedLedger :: SwitchSetup -> Property
 prop_switchExpectedLedger setup@SwitchSetup{..} =
     classify (switchSetupSaturated setup) "saturated" $
       conjoin [
-          l === refoldLedger cfg (expectedChain o) testInitLedger
-        | (o, l) <- ledgerDbSnapshots ssSwitched
+          l === convertMapKind (refoldLedger cfg (expectedChain o) (convertMapKind testInitLedger))
+        | (o, l) <- snapshots ssSwitched
         ]
   where
     expectedChain :: Word64 -> [TestBlock]
@@ -221,9 +223,9 @@ prop_pastAfterSwitch :: SwitchSetup -> Property
 prop_pastAfterSwitch setup@SwitchSetup{..} =
     classify (switchSetupSaturated setup) "saturated"    $
     classify withinReach                  "within reach" $
-          ledgerDbPast tip ssSwitched
+          getPastLedgerAt tip ssSwitched
       === if withinReach
-            then Just (ledgerDbCurrent afterPrefix)
+            then Just (current afterPrefix)
             else Nothing
   where
     prefix :: [TestBlock]
@@ -232,12 +234,12 @@ prop_pastAfterSwitch setup@SwitchSetup{..} =
     tip :: Point TestBlock
     tip = maybe GenesisPoint blockPoint (lastMaybe prefix)
 
-    afterPrefix :: LedgerDB (LedgerState TestBlock)
-    afterPrefix = ledgerDbPushMany' (csBlockConfig ssChainSetup) prefix (csGenSnaps ssChainSetup)
+    afterPrefix :: AnchorlessDbChangelog (LedgerState TestBlock)
+    afterPrefix = reapplyThenPushMany' (csBlockConfig ssChainSetup) prefix trivialKeySetsReader (csGenSnaps ssChainSetup)
 
     -- See 'prop_snapshotsMaxRollback'
     withinReach :: Bool
-    withinReach = (ssNumBlocks - ssPrefixLen) <= ledgerDbMaxRollback ssSwitched
+    withinReach = (ssNumBlocks - ssPrefixLen) <= maxRollback ssSwitched
 
 {-------------------------------------------------------------------------------
   Test setup
@@ -259,13 +261,13 @@ data ChainSetup = ChainSetup {
     , csPrefixLen :: Word64
 
       -- | Derived: genesis snapshots
-    , csGenSnaps  :: LedgerDB (LedgerState TestBlock)
+    , csGenSnaps  :: AnchorlessDbChangelog (LedgerState TestBlock)
 
       -- | Derived: the actual blocks that got applied (old to new)
     , csChain     :: [TestBlock]
 
       -- | Derived: the snapshots after all blocks were applied
-    , csPushed    :: LedgerDB (LedgerState TestBlock)
+    , csPushed    :: AnchorlessDbChangelog (LedgerState TestBlock)
     }
   deriving (Show)
 
@@ -281,7 +283,7 @@ csBlockConfig' secParam = LedgerDbCfg {
     slotLength = slotLengthFromSec 20
 
 chainSetupSaturated :: ChainSetup -> Bool
-chainSetupSaturated ChainSetup{..} = ledgerDbIsSaturated csSecParam csPushed
+chainSetupSaturated ChainSetup{..} = isSaturated csSecParam csPushed
 
 data SwitchSetup = SwitchSetup {
       -- | Chain setup
@@ -311,7 +313,7 @@ data SwitchSetup = SwitchSetup {
     , ssChain       :: [TestBlock]
 
       -- | Derived; the snapshots after the switch was performed
-    , ssSwitched    :: LedgerDB (LedgerState TestBlock)
+    , ssSwitched    :: AnchorlessDbChangelog (LedgerState TestBlock)
     }
   deriving (Show)
 
@@ -322,10 +324,10 @@ mkTestSetup :: SecurityParam -> Word64 -> Word64 -> ChainSetup
 mkTestSetup csSecParam csNumBlocks csPrefixLen =
     ChainSetup {..}
   where
-    csGenSnaps = ledgerDbWithAnchor testInitLedger
+    csGenSnaps = anchorlessChangelog $ empty (convertMapKind testInitLedger)
     csChain    = take (fromIntegral csNumBlocks) $
                    iterate successorBlock (firstBlock 0)
-    csPushed   = ledgerDbPushMany' (csBlockConfig' csSecParam) csChain csGenSnaps
+    csPushed   = reapplyThenPushMany' (csBlockConfig' csSecParam) csChain trivialKeySetsReader csGenSnaps
 
 mkRollbackSetup :: ChainSetup -> Word64 -> Word64 -> Word64 -> SwitchSetup
 mkRollbackSetup ssChainSetup ssNumRollback ssNumNew ssPrefixLen =
@@ -346,7 +348,7 @@ mkRollbackSetup ssChainSetup ssNumRollback ssNumNew ssPrefixLen =
                          take (fromIntegral (csNumBlocks - ssNumRollback)) csChain
                        , ssNewBlocks
                        ]
-    ssSwitched  = fromJust $ ledgerDbSwitch' (csBlockConfig ssChainSetup) ssNumRollback ssNewBlocks csPushed
+    ssSwitched  = fromJust $ switch' (csBlockConfig ssChainSetup) ssNumRollback ssNewBlocks trivialKeySetsReader csPushed
 
 instance Arbitrary ChainSetup where
   arbitrary = do
@@ -371,7 +373,7 @@ instance Arbitrary ChainSetup where
 instance Arbitrary SwitchSetup where
   arbitrary = do
       chainSetup  <- arbitrary
-      numRollback <- choose (0, ledgerDbMaxRollback (csPushed chainSetup))
+      numRollback <- choose (0, maxRollback (csPushed chainSetup))
       numNew      <- choose (numRollback, 2 * numRollback)
       prefixLen   <- choose (0, csNumBlocks chainSetup - numRollback + numNew)
       return $ mkRollbackSetup chainSetup numRollback numNew prefixLen
@@ -380,7 +382,7 @@ instance Arbitrary SwitchSetup where
         -- If we shrink the chain setup, we might restrict max rollback
         [ mkRollbackSetup ssChainSetup' ssNumRollback ssNumNew ssPrefixLen
         | ssChainSetup' <- shrink ssChainSetup
-        , ssNumRollback <= ledgerDbMaxRollback (csPushed ssChainSetup')
+        , ssNumRollback <= maxRollback (csPushed ssChainSetup')
         ]
         -- Number of new blocks must be at least the rollback
       , [ mkRollbackSetup ssChainSetup ssNumRollback ssNumNew' ssPrefixLen

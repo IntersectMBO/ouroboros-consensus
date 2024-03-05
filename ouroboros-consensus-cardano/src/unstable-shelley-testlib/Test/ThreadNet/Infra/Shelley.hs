@@ -75,7 +75,7 @@ import           Lens.Micro
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config.SecurityParam
-import qualified Ouroboros.Consensus.Mempool as Mempool
+import qualified Ouroboros.Consensus.Mempool.Capacity as TxLimits
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (PraosCanBeLeader),
@@ -423,7 +423,7 @@ mkProtocolShelley genesis initialNonce protVer coreNode =
         }
       ProtocolParamsShelley {
           shelleyProtVer                = protVer
-        , shelleyMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
+        , shelleyMaxTxCapacityOverrides = TxLimits.mkOverrides TxLimits.noOverridesMeasure
         }
 
 {-------------------------------------------------------------------------------

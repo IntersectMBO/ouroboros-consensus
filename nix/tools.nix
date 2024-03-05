@@ -14,6 +14,13 @@ in
 
   cabal = tool "cabal" "latest" { };
 
+  cabal-docspec = tool "cabal-docspec" "git" {
+    src = inputs.cabal-extras;
+    cabalProject = ''
+      packages: peura cabal-docspec ${inputs.gentle-introduction}
+    '';
+  };
+
   cabal-multi-repl = (final.haskell-nix.cabalProject {
     # cabal master commit containing https://github.com/haskell/cabal/pull/8726
     src = final.fetchFromGitHub {

@@ -145,7 +145,7 @@ data BlockForging m blk = BlockForging {
            TopLevelConfig blk
         -> BlockNo                      -- Current block number
         -> SlotNo                       -- Current slot number
-        -> TickedLedgerState blk        -- Current ledger state
+        -> TickedLedgerState blk EmptyMK     -- Current ledger state
         -> [Validated (GenTx blk)]      -- Contents of the mempool
         -> IsLeader (BlockProtocol blk) -- Proof we are leader
         -> m blk
@@ -162,7 +162,7 @@ data BlockForging m blk = BlockForging {
 takeLargestPrefixThatFits ::
      TxLimits blk
   => MempoolCapacity.TxOverrides blk
-  -> TickedLedgerState blk
+  -> TickedLedgerState blk mk
   -> [Validated (GenTx blk)]
   -> [Validated (GenTx blk)]
 takeLargestPrefixThatFits overrides ledger txs =

@@ -23,6 +23,7 @@ module Data.SOP.InPairs (
     -- * SOP-like operators
   , hcmap
   , hcpure
+  , hczipWith
   , hmap
   , hpure
     -- * Requiring
@@ -39,7 +40,7 @@ import           Data.Proxy
 import           Data.SOP.Constraint
 import           Data.SOP.NonEmpty
 import           Data.SOP.Sing
-import           Data.SOP.Strict hiding (hcmap, hcpure, hmap, hpure)
+import           Data.SOP.Strict hiding (hcmap, hcpure, hmap, hpure, hczipWith)
 
 {-------------------------------------------------------------------------------
   InPairs
@@ -94,6 +95,19 @@ hcpure _ f =
     go :: (c x, All c xs') => SList xs' -> InPairs f (x ': xs')
     go SNil  = PNil
     go SCons = PCons f (go sList)
+
+hczipWith ::
+     forall proxy c f f' f'' xs. All c xs
+  => proxy c
+  -> (forall x y. (c x, c y) => f x y -> f' x y -> f'' x y)
+  -> InPairs f   xs
+  -> InPairs f'  xs
+  -> InPairs f'' xs
+hczipWith _ f = go
+  where
+    go :: All c xs' => InPairs f xs' -> InPairs f' xs' -> InPairs f'' xs'
+    go PNil PNil                 = PNil
+    go (PCons x xs) (PCons y ys) = PCons (f x y) (go xs ys)
 
 {-------------------------------------------------------------------------------
   RequiringBoth

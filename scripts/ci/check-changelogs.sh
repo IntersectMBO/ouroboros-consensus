@@ -4,7 +4,7 @@
 # - NO_CHANGELOG_LABEL: disables the check for changelog fragments additions
 # - BASE_REF: what to compare this branch against
 
-packages=(ouroboros-consensus ouroboros-consensus-diffusion ouroboros-consensus-protocol ouroboros-consensus-cardano sop-extras strict-sop-core)
+packages=(ouroboros-consensus ouroboros-consensus-diffusion ouroboros-consensus-protocol ouroboros-consensus-cardano sop-extras strict-sop-core ouroboros-consensus-cardano-legacy-block)
 
 echo "Checking that changelog and .cabal versions match:"
 for p in "${packages[@]}"; do
