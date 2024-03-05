@@ -77,11 +77,11 @@ mkInitDb args bss getBlock =
       (_, backingStore) <-
         allocate
           lgrRegistry
-          (\_ -> newBackingStore bsTracer baArgs lgrSSDHasFS (if lgrSnapshotTablesSSD then lgrSSDHasFS else lgrHasFS) (projectLedgerTables st))
+          (\_ -> newBackingStore bsTracer baArgs ldbLiveTablesHasFS ldbTablesHasFS (projectLedgerTables st))
           bsClose
       pure (chlog, backingStore)
   , initFromSnapshot =
-      loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) lgrHasFS  lgrSSDHasFS lgrSnapshotTablesSSD lgrSnapshotStateSSD
+      loadSnapshot bsTracer baArgs (configCodec . getExtLedgerCfg . ledgerDbCfg $ lgrConfig) ldbStateHasFS ldbTablesHasFS ldbLiveTablesHasFS
   , closeDb = bsClose . snd
   , initReapplyBlock = \cfg blk (chlog, bstore) -> do
       !chlog' <- onChangelogM (reapplyThenPush cfg blk (readKeySets bstore)) chlog
@@ -105,24 +105,30 @@ mkInitDb args bss getBlock =
       forkers <- newTVarIO Map.empty
       nextForkerKey <- newTVarIO (ForkerKey 0)
       let env = LedgerDBEnv {
-                 ldbChangelog      = varDB
-               , ldbBackingStore   = lgrBackingStore
-               , ldbLock           = flushLock
-               , ldbPrevApplied    = prevApplied
-               , ldbForkers        = forkers
-               , ldbNextForkerKey  = nextForkerKey
-               , ldbSnapshotPolicy = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
-               , ldbTracer         = lgrTracer
-               , ldbCfg            = lgrConfig
-               , ldbHasFS          = lgrHasFS
-               , ldbShouldFlush    = defaultShouldFlush flushFreq
-               , ldbQueryBatchSize = queryBatchSize
-               , ldbResolveBlock   = getBlock
+                 ldbChangelog       = varDB
+               , ldbBackingStore    = lgrBackingStore
+               , ldbLock            = flushLock
+               , ldbPrevApplied     = prevApplied
+               , ldbForkers         = forkers
+               , ldbNextForkerKey   = nextForkerKey
+               , ldbSnapshotPolicy  = defaultSnapshotPolicy (ledgerDbCfgSecParam lgrConfig) lgrSnapshotPolicyArgs
+               , ldbTracer          = lgrTracer
+               , ldbCfg             = lgrConfig
+               , ldbTablesHasFS
+               , ldbStateHasFS
+               , ldbLiveTablesHasFS
+               , ldbShouldFlush     = defaultShouldFlush flushFreq
+               , ldbQueryBatchSize  = queryBatchSize
+               , ldbResolveBlock    = getBlock
                }
       h <- LDBHandle <$> newTVarIO (LedgerDBOpen env)
       pure $ implMkLedgerDb h
   }
   where
+    ldbTablesHasFS     = if lgrSnapshotTablesSSD then lgrSSDHasFS else lgrHasFS
+    ldbStateHasFS      = if lgrSnapshotStateSSD  then lgrSSDHasFS else lgrHasFS
+    ldbLiveTablesHasFS = lgrSSDHasFS
+
     bsTracer = nullTracer --LedgerDBFlavorImplEvent . FlavorImplSpecificTraceV1 >$< lgrTracer
 
     LedgerDbArgs {
@@ -244,12 +250,13 @@ implTryTakeSnapshot env mTime nrBlocks =
                                           (ldbChangelog env)
                                           (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
                                           (LedgerDBSnapshotEvent >$< ldbTracer env)
-                                          (ldbHasFS env)
+                                          (ldbStateHasFS env)
                                           (ldbBackingStore env)
                                           Nothing)
       void $ trimSnapshots
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
-                (ldbHasFS env)
+                (ldbStateHasFS env)
+                (ldbTablesHasFS env)
                 (ldbSnapshotPolicy env)
       (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
     else
@@ -310,7 +317,7 @@ implIntTakeSnapshot env diskSnapshot = void $ withReadLock (ldbLock env) $
       (ldbChangelog env)
       (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
       (LedgerDBSnapshotEvent >$< ldbTracer env)
-      (ldbHasFS env)
+      (ldbStateHasFS env)
       (ldbBackingStore env)
       (Just diskSnapshot)
 

@@ -242,6 +242,7 @@ implTryTakeSnapshot bss env mTime nrBlocks =
       void $ trimSnapshots
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
                 (ldbHasFS env)
+                (ldbHasFS env)
                 (ldbSnapshotPolicy env)
       (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
     else

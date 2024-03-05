@@ -180,15 +180,17 @@ trimSnapshots ::
      Monad m
   => Tracer m (TraceSnapshotEvent r)
   -> SomeHasFS m
+  -> SomeHasFS m
   -> SnapshotPolicy
   -> m [DiskSnapshot]
-trimSnapshots tracer hasFS SnapshotPolicy{onDiskNumSnapshots} = do
+trimSnapshots tracer hasFS ssdhasFS SnapshotPolicy{onDiskNumSnapshots} = do
     -- We only trim temporary snapshots
     diskSnapshots <- filter diskSnapshotIsTemporary <$> listSnapshots hasFS
     -- The snapshot are most recent first, so we can simply drop from the
     -- front to get the snapshots that are "too" old.
     forM (drop (fromIntegral onDiskNumSnapshots) diskSnapshots) $ \snapshot -> do
       deleteSnapshot hasFS snapshot
+      deleteSnapshot ssdhasFS snapshot
       traceWith tracer $ DeletedSnapshot snapshot
       return snapshot
 

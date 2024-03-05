@@ -128,13 +128,15 @@ data LedgerDBEnv m l blk = LedgerDBEnv {
   , ldbForkers        :: !(StrictTVar m (Map ForkerKey (ForkerEnv m l blk)))
   , ldbNextForkerKey  :: !(StrictTVar m ForkerKey)
 
-  , ldbSnapshotPolicy :: !SnapshotPolicy
-  , ldbTracer         :: !(Tracer m (TraceLedgerDBEvent blk))
-  , ldbCfg            :: !(LedgerDbCfg l)
-  , ldbHasFS          :: !(SomeHasFS m)
-  , ldbShouldFlush    :: !(Word64 -> Bool)
-  , ldbQueryBatchSize :: !QueryBatchSize
-  , ldbResolveBlock   :: !(ResolveBlock m blk)
+  , ldbSnapshotPolicy  :: !SnapshotPolicy
+  , ldbTracer          :: !(Tracer m (TraceLedgerDBEvent blk))
+  , ldbCfg             :: !(LedgerDbCfg l)
+  , ldbTablesHasFS     :: !(SomeHasFS m)
+  , ldbStateHasFS      :: !(SomeHasFS m)
+  , ldbLiveTablesHasFS :: !(SomeHasFS m)
+  , ldbShouldFlush     :: !(Word64 -> Bool)
+  , ldbQueryBatchSize  :: !QueryBatchSize
+  , ldbResolveBlock    :: !(ResolveBlock m blk)
   } deriving (Generic)
 
 deriving instance ( IOLike m
