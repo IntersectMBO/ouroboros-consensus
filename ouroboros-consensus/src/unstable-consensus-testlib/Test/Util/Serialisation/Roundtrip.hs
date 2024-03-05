@@ -58,23 +58,15 @@ import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
 import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
-<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Roundtrip.hs
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
-                     decodeExtLedgerState, encodeExtLedgerState)
-import           Ouroboros.Consensus.Ledger.Query (BlockQuery, Query (..),
-                     QueryVersion)
+import           Ouroboros.Consensus.Ledger.Extended (decodeExtLedgerState',
+                     encodeExtLedgerState')
+import           Ouroboros.Consensus.Ledger.Query
 import qualified Ouroboros.Consensus.Ledger.Query as Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx,
                      GenTxId)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-=======
-import           Ouroboros.Consensus.Ledger.Query
-import qualified Ouroboros.Consensus.Ledger.Query as Query
-import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx,
-                     GenTxId)
 import           Ouroboros.Consensus.Ledger.Tables (EmptyMK)
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT):ouroboros-consensus/src/consensus-testlib/Test/Util/Serialisation/Roundtrip.hs
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run (SerialiseNodeToClientConstraints,
                      SerialiseNodeToNodeConstraints (..))
@@ -250,7 +242,7 @@ roundtrip_all_skipping
      , Arbitrary' blk
      , Arbitrary' (Header blk)
      , Arbitrary' (HeaderHash blk)
-     , Arbitrary' (LedgerState blk)
+     , Arbitrary' (LedgerState blk EmptyMK)
      , Arbitrary' (AnnTip blk)
      , Arbitrary' (ChainDepState (BlockProtocol blk))
 
@@ -264,7 +256,7 @@ roundtrip_all_skipping
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) blk
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (GenTx blk)
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (ApplyTxErr blk)
-     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeSecond BlockQuery blk)
+     , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeBlockQuery (BlockQuery blk))
      , ArbitraryWithVersion (BlockNodeToClientVersion blk) (SomeResult blk)
      , ArbitraryWithVersion (QueryVersion, BlockNodeToClientVersion blk) (SomeSecond Query blk)
      )
@@ -311,13 +303,8 @@ roundtrip_SerialiseDisk ccfg dictNestedHdr =
                 nestedHdr
       -- Since the 'LedgerState' is a large data structure, we lower the
       -- number of tests to avoid slowing down the testsuite too much
-<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Roundtrip.hs
     , adjustQuickCheckTests (`div` 10) $
-      rt (Proxy @(LedgerState blk)) "LedgerState"
-=======
-    , adjustOption (\(QuickCheckTests n) -> QuickCheckTests (1 `max` (div n 10))) $
       rt (Proxy @(LedgerState blk EmptyMK)) "LedgerState"
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT):ouroboros-consensus/src/consensus-testlib/Test/Util/Serialisation/Roundtrip.hs
     , rt (Proxy @(AnnTip blk)) "AnnTip"
     , rt (Proxy @(ChainDepState (BlockProtocol blk))) "ChainDepState"
     ]
@@ -552,7 +539,6 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
               (const <$> decodeThroughSerialised (decodeDisk ccfg) (dec version))
               blk
       -- See roundtrip_SerialiseNodeToNode for more info
-<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Roundtrip.hs
     , let testLabel = "roundtrip Serialised blk compat" in
         testProperty testLabel $
           \(WithVersion version blk) ->
@@ -566,23 +552,9 @@ roundtrip_SerialiseNodeToClient shouldCheckCBORvalidity ccfg =
           \(WithVersion version (SomeResult query result :: SomeResult blk)) ->
             roundtripAnd
               (shouldCheckCBORvalidity testLabel)
-              (encodeResult ccfg version query)
-              (const <$> decodeResult ccfg version query)
+              (encodeResult' ccfg version query)
+              (const <$> decodeResult' ccfg version query)
               result
-=======
-    , testProperty "roundtrip Serialised blk compat" $
-        \(WithVersion version blk) ->
-          roundtrip @blk
-            (encodeThroughSerialised (encodeDisk ccfg) (enc version))
-            (dec version)
-            blk
-    , testProperty "roundtrip Result" $
-        \(WithVersion version (SomeResult query result :: SomeResult blk)) ->
-          roundtrip
-            (encodeResult' ccfg version query)
-            (decodeResult' ccfg version query)
-            result
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT):ouroboros-consensus/src/consensus-testlib/Test/Util/Serialisation/Roundtrip.hs
     ]
   where
     enc :: SerialiseNodeToClient blk a
@@ -755,7 +727,6 @@ decodeThroughSerialised dec decSerialised = do
   Roundtrip tests for examples
 ------------------------------------------------------------------------------}
 
-<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Serialisation/Roundtrip.hs
 examplesRoundtrip ::
      forall blk . (SerialiseDiskConstraints blk, Eq blk, Show blk, LedgerSupportsProtocol blk)
   => CodecConfig blk
@@ -767,7 +738,7 @@ examplesRoundtrip codecConfig examples =
     , testRoundtripFor "Ledger state"          (encodeDisk codecConfig) (const <$> decodeDisk codecConfig) exampleLedgerState
     , testRoundtripFor "Annotated tip"         (encodeDisk codecConfig) (const <$> decodeDisk codecConfig) exampleAnnTip
     , testRoundtripFor "Chain dependent state" (encodeDisk codecConfig) (const <$> decodeDisk codecConfig) exampleChainDepState
-    , testRoundtripFor "Extended ledger state" encodeExt                (const <$> decodeExt)              exampleExtLedgerState
+    , testRoundtripFor "Extended ledger state" (encodeExtLedgerState' codecConfig) (const <$> decodeExtLedgerState' codecConfig)  exampleExtLedgerState
     ]
   where
     testRoundtripFor ::
@@ -796,25 +767,3 @@ examplesRoundtrip codecConfig examples =
             ("Ledger state"         , Just "Conway") -> expectFailBecause _3740 $ runTest
             ("Extended ledger state", Just "Conway") -> expectFailBecause _3740 $ runTest
             _                                        ->                           runTest
-=======
--- | To easily generate all the possible @result@s of the 'Query' GADT, we
--- introduce an existential that also bundles the corresponding 'Query' as
--- evidence. We also capture 'Eq', 'Show', and 'Typeable' constraints, as we
--- need them in the tests.
-data SomeResult blk where
-  SomeResult :: (Eq result, Show result, Typeable result)
-             => BlockQuery blk fp result -> result -> SomeResult blk
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT):ouroboros-consensus/src/consensus-testlib/Test/Util/Serialisation/Roundtrip.hs
-
-    encodeExt =
-      encodeExtLedgerState
-        (encodeDisk codecConfig)
-        (encodeDisk codecConfig)
-        (encodeDisk codecConfig)
-
-    decodeExt :: forall s. Decoder s (ExtLedgerState blk)
-    decodeExt =
-      decodeExtLedgerState
-        (decodeDisk codecConfig)
-        (decodeDisk codecConfig)
-        (decodeDisk codecConfig)

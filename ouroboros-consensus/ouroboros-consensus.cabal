@@ -401,11 +401,12 @@ library unstable-consensus-testlib
     , base16-bytestring
     , binary
     , bytestring
-    , cardano-binary:testlib
+    , cardano-binary:{cardano-binary, testlib}
     , cardano-crypto-class
     , cardano-prelude
     , cardano-slotting:testlib
     , cardano-strict-containers
+    , strict-stm
     , cborg
     , constraints
     , containers

@@ -1,4 +1,5 @@
-<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Orphans/Arbitrary.hs
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleContexts           #-}
@@ -11,20 +12,6 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
-=======
-{-# LANGUAGE DataKinds            #-}
-{-# LANGUAGE DerivingVia          #-}
-{-# LANGUAGE FlexibleContexts     #-}
-{-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE NumericUnderscores   #-}
-{-# LANGUAGE PolyKinds            #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE StandaloneDeriving   #-}
-{-# LANGUAGE TypeApplications     #-}
-{-# LANGUAGE TypeOperators        #-}
-{-# LANGUAGE UndecidableInstances #-}
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT):ouroboros-consensus/src/consensus-testlib/Test/Util/Orphans/Arbitrary.hs
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Util.Orphans.Arbitrary (

@@ -14,29 +14,22 @@ module Test.Util.ChainDB (
 
 
 import           Control.Tracer (nullTracer)
-<<<<<<< HEAD
-import           Data.Functor.Identity (Identity)
 import           Ouroboros.Consensus.Config
                      (TopLevelConfig (topLevelConfigLedger))
-=======
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
-                     (TopLevelConfig (topLevelConfigLedger), configCodec)
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
+                     (configCodec)
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture (..))
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.HardFork.History.EraParams (EraParams,
                      eraEpochSize)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, ValuesMK)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
-<<<<<<< HEAD
 import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
-=======
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import           Ouroboros.Consensus.Storage.ImmutableDB
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
                      (configLedgerDb)
@@ -46,9 +39,10 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
-import           Ouroboros.Consensus.Util.IOLike hiding (invariant)
+import           Ouroboros.Consensus.Util.IOLike hiding (invariant, StrictTVar, newTVar)
 import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import           System.FS.API (SomeHasFS (..))
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS
 import           System.FS.Sim.STM (simHasFS)
@@ -61,16 +55,18 @@ data NodeDBs db = NodeDBs {
     nodeDBsImm :: db
   , nodeDBsVol :: db
   , nodeDBsLgr :: db
+  , nodeDBsLgrSSD :: db
   , nodeDBsGsm :: db
   }
   deriving (Functor, Foldable, Traversable)
 
 emptyNodeDBs :: MonadSTM m => m (NodeDBs (StrictTVar m MockFS))
-emptyNodeDBs = NodeDBs
-  <$> uncheckedNewTVarM Mock.empty
-  <*> uncheckedNewTVarM Mock.empty
-  <*> uncheckedNewTVarM Mock.empty
-  <*> uncheckedNewTVarM Mock.empty
+emptyNodeDBs = atomically $ NodeDBs
+  <$> newTVar Mock.empty
+  <*> newTVar Mock.empty
+  <*> newTVar Mock.empty
+  <*> newTVar Mock.empty
+  <*> newTVar Mock.empty
 
 -- | Minimal set of arguments for creating a ChainDB instance for testing purposes.
 data MinimalChainDbArgs m blk = MinimalChainDbArgs {
@@ -84,6 +80,7 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs {
   , mcdbNodeDBs        :: NodeDBs (StrictTVar m MockFS)
   -- ^ File systems underlying the immutable, volatile and ledger databases.
   -- Would be useful to default this to StrictTVar's containing empty MockFS's.
+  , mcdbGSMHasFS       :: StrictTVar m MockFS
   }
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
@@ -94,42 +91,10 @@ mkTestChunkInfo = simpleChunkInfo . eraEpochSize . topLevelConfigLedger
 fromMinimalChainDbArgs ::
      ( MonadThrow m
      , MonadSTM m
+     , ConsensusProtocol (BlockProtocol blk)
      )
   => MinimalChainDbArgs m blk -> Complete ChainDbArgs m blk
 fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
-<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/ChainDB.hs
-    cdbHasFSImmutableDB       = SomeHasFS $ simHasFS (nodeDBsImm mcdbNodeDBs')
-  , cdbHasFSVolatileDB        = SomeHasFS $ simHasFS (nodeDBsVol mcdbNodeDBs')
-  , cdbHasFSLgrDB             = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs')
-  , cdbHasFSGsmDB             = SomeHasFS $ simHasFS (nodeDBsGsm mcdbNodeDBs')
-
-  , cdbImmutableDbValidation  = ImmutableDB.ValidateAllChunks
-  , cdbVolatileDbValidation   = VolatileDB.ValidateAll
-  , cdbMaxBlocksPerFile       = VolatileDB.mkBlocksPerFile 4
-  , cdbDiskPolicyArgs         = LedgerDB.defaultDiskPolicyArgs
-  -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 * k seconds, where k is the
-  -- security parameter.
-  , cdbTopLevelConfig         = mcdbTopLevelConfig
-  , cdbChunkInfo              = mcdbChunkInfo
-  , cdbCheckIntegrity         = const True
-  -- Getting a verified block component does not do any integrity checking, both for the
-  -- ImmutableDB, as the VolatileDB. This is done in @extractBlockComponent@ in the iterator for the
-  -- ImmutableDB, and in @getBlockComponent@ for the VolatileDB.
-  , cdbGenesis                = return mcdbInitLedger
-  , cdbCheckInFuture          = CheckInFuture $ \vf -> pure (VF.validatedFragment vf, [])
-  -- Blocks are never in the future.
-  , cdbImmutableDbCacheConfig = ImmutableDB.CacheConfig 2 60
-  -- Cache at most 2 chunks and expire each chunk after 60 seconds of being unused.
-  , cdbTracer                 = nullTracer
-  , cdbTraceLedger            = nullTracer
-  , cdbRegistry               = mcdbRegistry
-  , cdbGcDelay                = 1
-  , cdbGcInterval             = 1
-  , cdbBlocksToAddSize        = 1
-  }
-  where
-    mcdbNodeDBs' = unsafeToUncheckedStrictTVar <$> mcdbNodeDBs
-=======
       cdbImmDbArgs = ImmutableDbArgs {
             immCacheConfig      = ImmutableDB.CacheConfig 2 60
             -- Cache at most 2 chunks and expire each chunk after 60 seconds of
@@ -155,11 +120,14 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , volValidationPolicy = VolatileDB.ValidateAll
         }
     , cdbLgrDbArgs = LedgerDbArgs {
-          lgrSnapshotInterval = LedgerDB.DefaultSnapshotInterval
+          lgrSnapshotPolicyArgs = LedgerDB.SnapshotPolicyArgs LedgerDB.DefaultSnapshotInterval undefined
           -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
           -- k seconds, where k is the security parameter.
         , lgrGenesis          = return mcdbInitLedger
         , lgrHasFS            = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
+        , lgrSSDHasFS            = SomeHasFS $ simHasFS (nodeDBsLgrSSD mcdbNodeDBs)
+        , lgrSnapshotTablesSSD = False
+        , lgrSnapshotStateSSD = False
         , lgrTracer           = nullTracer
         , lgrRegistry         = mcdbRegistry
         , lgrConfig           = configLedgerDb mcdbTopLevelConfig
@@ -172,10 +140,10 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , cdbsCheckInFuture   = CheckInFuture $ \vf -> pure (VF.validatedFragment vf, [])
           -- Blocks are never in the future
         , cdbsGcDelay         = 1
+        , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS mcdbGSMHasFS
         , cdbsGcInterval      = 1
         , cdbsRegistry        = mcdbRegistry
         , cdbsTracer          = nullTracer
         , cdbsTopLevelConfig  = mcdbTopLevelConfig
         }
     }
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT):ouroboros-consensus/src/consensus-testlib/Test/Util/ChainDB.hs

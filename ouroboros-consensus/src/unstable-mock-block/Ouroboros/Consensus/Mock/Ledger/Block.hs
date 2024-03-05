@@ -98,15 +98,9 @@ import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Mock.Ledger.Address
 import           Ouroboros.Consensus.Mock.Ledger.State
 import qualified Ouroboros.Consensus.Mock.Ledger.UTxO as Mock
-<<<<<<< HEAD:ouroboros-consensus/src/unstable-mock-block/Ouroboros/Consensus/Mock/Ledger/Block.hs
 import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..),
                      SizeInBytes)
-import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE,
-                     (..:), (.:))
-=======
-import           Ouroboros.Consensus.Storage.Common (BinaryBlockInfo (..))
 import           Ouroboros.Consensus.Util (ShowProxy (..), hashFromBytesShortE)
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT):ouroboros-consensus/src/mock-block/Ouroboros/Consensus/Mock/Ledger/Block.hs
 import           Ouroboros.Consensus.Util.Condense
 import           Test.Util.Orphans.Serialise ()
 

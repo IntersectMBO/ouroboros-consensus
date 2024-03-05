@@ -10,12 +10,8 @@
 
 module Test.Util.Orphans.ToExpr () where
 
-<<<<<<< HEAD:ouroboros-consensus/src/unstable-consensus-testlib/Test/Util/Orphans/ToExpr.hs
 import           Data.TreeDiff
-=======
-import           Cardano.Ledger.TreeDiff
 import qualified Data.TreeDiff.OMap as TD
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT):ouroboros-consensus/src/consensus-testlib/Test/Util/Orphans/ToExpr.hs
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract

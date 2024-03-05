@@ -1,6 +1,10 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE NamedFieldPuns    #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Util.Orphans.NoThunks () where
 
 import           Control.Concurrent.Class.MonadMVar
@@ -13,6 +17,7 @@ import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
 import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
 import           System.FS.Sim.FsTree
+import           System.FS.API.Types
 import           System.FS.Sim.MockFS
 
 instance NoThunks a => NoThunks (StrictSVar (IOSim s) a) where
@@ -37,6 +42,7 @@ instance NoThunks a => NoThunks (StrictTVar (IOSim s) a) where
   fs-sim
 -------------------------------------------------------------------------------}
 
+deriving instance NoThunks FsPath
 deriving instance NoThunks MockFS
 deriving instance NoThunks a => NoThunks (FsTree a)
 deriving instance NoThunks HandleMock
