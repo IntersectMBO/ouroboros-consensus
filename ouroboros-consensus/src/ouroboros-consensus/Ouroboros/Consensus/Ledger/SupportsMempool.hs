@@ -53,6 +53,7 @@ data WhetherToIntervene
     -- ^ We trust local clients, so if a problematic-yet-valid transaction
     -- arrives over NTC, we reject it in order to avoid the ledger penalizing
     -- them for it.
+    deriving (Show)
 
 class ( UpdateLedger blk
       , NoThunks (GenTx blk)
