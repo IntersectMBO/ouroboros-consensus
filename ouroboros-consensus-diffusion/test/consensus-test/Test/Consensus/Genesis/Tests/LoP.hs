@@ -22,8 +22,8 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers,
-                     mkPeers, peersOnlyHonest)
+import           Test.Consensus.PointSchedule.Peers (Peers, mkPeers,
+                     peersOnlyHonest)
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
@@ -66,10 +66,10 @@ prop_wait mustTimeout =
     -- NOTE: Crucially, there must not be timeouts for this test.
     (defaultSchedulerConfig {scEnableChainSyncTimeouts = False, scEnableLoP = True})
     shrinkPeerSchedules
-    ( \_ StateView {svChainSyncExceptions} ->
-        case svChainSyncExceptions of
+    ( \_ stateView ->
+        case exceptionsByComponent ChainSyncClient stateView of
           [] -> not mustTimeout
-          [ChainSyncException _pid exn] ->
+          [exn] ->
             case fromException exn of
               Just CSClient.EmptyBucket -> mustTimeout
               _                         -> False
@@ -101,8 +101,8 @@ prop_waitBehindForecastHorizon =
     -- NOTE: Crucially, there must not be timeouts for this test.
     (defaultSchedulerConfig {scEnableChainSyncTimeouts = False, scEnableLoP = True})
     shrinkPeerSchedules
-    ( \_ StateView {svChainSyncExceptions} ->
-        case svChainSyncExceptions of
+    ( \_ stateView ->
+        case exceptionsByComponent ChainSyncClient stateView of
           [] -> True
           _  -> False
     )
@@ -146,10 +146,10 @@ prop_serve mustTimeout =
     -- NOTE: Crucially, there must not be timeouts for this test.
     (defaultSchedulerConfig {scEnableChainSyncTimeouts = False, scEnableLoP = True})
     shrinkPeerSchedules
-    ( \_ StateView {svChainSyncExceptions} ->
-        case svChainSyncExceptions of
+    ( \_ stateView ->
+        case exceptionsByComponent ChainSyncClient stateView of
           [] -> not mustTimeout
-          [ChainSyncException _pid exn] ->
+          [exn] ->
             case fromException exn of
               Just CSClient.EmptyBucket -> mustTimeout
               _                         -> False
@@ -201,7 +201,7 @@ prop_delayAttack lopEnabled =
           }
       )
       shrinkPeerSchedules
-      ( \GenesisTest {gtBlockTree} StateView {svSelectedChain, svChainSyncExceptions} ->
+      ( \GenesisTest {gtBlockTree} stateView@StateView {svSelectedChain} ->
           let -- The tip of the blocktree trunk.
               treeTipPoint = AF.headPoint $ btTrunk gtBlockTree
               -- The tip of the selection.
@@ -211,9 +211,9 @@ prop_delayAttack lopEnabled =
               selectedCorrect = lopEnabled == (treeTipPoint == selectedTipPoint)
               -- If LoP is enabled, then we expect exactly one `EmptyBucket`
               -- exception in the adversary's ChainSync.
-              exceptionsCorrect = case svChainSyncExceptions of
+              exceptionsCorrect = case exceptionsByComponent ChainSyncClient stateView of
                 [] -> not lopEnabled
-                [ChainSyncException (PeerId _) exn] ->
+                [exn] ->
                   lopEnabled == (fromException exn == Just CSClient.EmptyBucket)
                 _ -> False
            in selectedCorrect && exceptionsCorrect

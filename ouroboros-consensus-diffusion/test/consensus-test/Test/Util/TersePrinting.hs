@@ -8,6 +8,7 @@ module Test.Util.TersePrinting (
   , terseFragment
   , terseHFragment
   , terseHeader
+  , terseMaybe
   , tersePoint
   , terseRealPoint
   , terseTip
@@ -115,3 +116,8 @@ terseFragment fragment =
 -- | Same as 'terseFragment' for fragments of headers.
 terseHFragment :: AnchoredFragment (Header TestBlock) -> String
 terseHFragment = terseFragment . mapAnchoredFragment (\(TestHeader block) -> block)
+
+-- | Same as 'terseWithOrigin' for 'Maybe'.
+terseMaybe :: (a -> String) -> Maybe a -> String
+terseMaybe _ Nothing       = "X"
+terseMaybe terseA (Just a) = terseA a
