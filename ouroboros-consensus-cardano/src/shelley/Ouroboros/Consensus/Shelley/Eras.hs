@@ -314,6 +314,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
                -- reject the transaction, protecting the local wallet
 
 class SupportsTwoPhaseValidation era where
+  -- NOTE: this class won't be needed once https://github.com/IntersectMBO/cardano-ledger/issues/4167 is implemented.
   isIncorrectClaimedFlag :: proxy era -> SL.PredicateFailure (Core.EraRule "LEDGER" era) -> Bool
 
 instance SupportsTwoPhaseValidation (AlonzoEra c) where
@@ -349,6 +350,17 @@ instance SupportsTwoPhaseValidation (BabbageEra c) where
                 )
             )
         ) -> True
+    SL.UtxowFailure
+      ( Babbage.UtxoFailure
+          ( Babbage.AlonzoInBabbageUtxoPredFailure
+              ( Alonzo.UtxosFailure
+                  ( Alonzo.ValidationTagMismatch
+                      (Alonzo.IsValid _claimedFlag)
+                      _validationErrs
+                  )
+              )
+          )
+      ) -> True
     _ -> False
 
 instance SupportsTwoPhaseValidation (ConwayEra c) where
@@ -368,8 +380,18 @@ instance SupportsTwoPhaseValidation (ConwayEra c) where
                 )
             )
         ) -> True
+    SL.ConwayUtxowFailure
+      ( Babbage.UtxoFailure
+          ( Babbage.AlonzoInBabbageUtxoPredFailure
+              ( Alonzo.UtxosFailure
+                  ( Alonzo.ValidationTagMismatch
+                      (Alonzo.IsValid _claimedFlag)
+                      _validationErrs
+                  )
+              )
+          )
+      ) -> True
     _ -> False
-
 
 {-------------------------------------------------------------------------------
   Tx family wrapper
