@@ -12,7 +12,8 @@ module Test.Consensus.Genesis.Setup (
   , runGenesisTest'
   ) where
 
-import           Control.Monad.IOSim (runSimOrThrow)
+import           Control.Exception (throw)
+import           Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import           Control.Tracer (debugTracer, traceWith)
 import           Ouroboros.Consensus.Util.Condense
 import           Test.Consensus.Genesis.Setup.Classifiers (classifiers, Classifiers (..))
@@ -33,6 +34,15 @@ data RunGenesisTestResult = RunGenesisTestResult {
   rgtrStateView :: StateView TestBlock
   }
 
+-- | Like 'runSimStrictShutdown' but fail when the main thread terminates if
+-- there are other threads still running or blocked. If one is trying to follow
+-- a strict thread clean-up policy then this helps testing for that.
+runSimStrictShutdownOrThrow :: forall a. (forall s. IOSim s a) -> a
+runSimStrictShutdownOrThrow action =
+  case runSimStrictShutdown action of
+    Left e -> throw e
+    Right x -> x
+
 -- | Runs the given 'GenesisTest' and 'PointSchedule' and evaluates the given
 -- property on the final 'StateView'.
 runGenesisTest ::
@@ -40,7 +50,7 @@ runGenesisTest ::
   GenesisTestFull TestBlock ->
   RunGenesisTestResult
 runGenesisTest schedulerConfig genesisTest =
-  runSimOrThrow $ do
+  runSimStrictShutdownOrThrow $ do
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
