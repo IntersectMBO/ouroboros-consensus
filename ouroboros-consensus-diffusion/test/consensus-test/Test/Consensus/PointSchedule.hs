@@ -21,7 +21,8 @@
 -- and once it fulfills the state's criteria, it yields control back to the scheduler,
 -- who then activates the next tick's peer.
 module Test.Consensus.PointSchedule (
-    ForecastRange (..)
+    BlockFetchTimeout (..)
+  , ForecastRange (..)
   , GenesisTest (..)
   , GenesisTestFull
   , GenesisWindow (..)
@@ -310,17 +311,26 @@ data LoPBucketParams = LoPBucketParams {
   lbpRate     :: Rational
   }
 
+-- | Similar to 'ChainSyncTimeout' for BlockFetch. Only the states in which the
+-- server has agency are specified. REVIEW: Should it be upstreamed to
+-- ouroboros-network-protocols?
+data BlockFetchTimeout = BlockFetchTimeout
+  { busyTimeout      :: Maybe DiffTime,
+    streamingTimeout :: Maybe DiffTime
+  }
+
 -- | All the data used by point schedule tests.
-data GenesisTest blk schedule = GenesisTest {
-  gtSecurityParam     :: SecurityParam,
-  gtGenesisWindow     :: GenesisWindow,
-  gtForecastRange     :: ForecastRange, -- REVIEW: Do we want to allow infinite forecast ranges?
-  gtDelay             :: Delta,
-  gtBlockTree         :: BlockTree blk,
-  gtChainSyncTimeouts :: ChainSyncTimeout,
-  gtLoPBucketParams   :: LoPBucketParams,
-  gtSlotLength        :: SlotLength,
-  gtSchedule          :: schedule
+data GenesisTest blk schedule = GenesisTest
+  { gtSecurityParam      :: SecurityParam,
+    gtGenesisWindow      :: GenesisWindow,
+    gtForecastRange      :: ForecastRange, -- REVIEW: Do we want to allow infinite forecast ranges?
+    gtDelay              :: Delta,
+    gtBlockTree          :: BlockTree blk,
+    gtChainSyncTimeouts  :: ChainSyncTimeout,
+    gtBlockFetchTimeouts :: BlockFetchTimeout,
+    gtLoPBucketParams    :: LoPBucketParams,
+    gtSlotLength         :: SlotLength,
+    gtSchedule           :: schedule
   }
 
 type GenesisTestFull blk = GenesisTest blk (PeersSchedule blk)

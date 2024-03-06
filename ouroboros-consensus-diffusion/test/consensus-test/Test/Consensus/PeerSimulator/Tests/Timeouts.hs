@@ -14,9 +14,7 @@ import           Ouroboros.Network.Driver.Limits
 import           Ouroboros.Network.Protocol.ChainSync.Codec (mustReplyTimeout)
 import           Test.Consensus.BlockTree (btTrunk)
 import           Test.Consensus.Genesis.Setup
-import           Test.Consensus.PeerSimulator.Run
-                     (SchedulerConfig (scEnableChainSyncTimeouts),
-                     defaultSchedulerConfig)
+import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
@@ -42,17 +40,17 @@ prop_timeouts mustTimeout = do
         let schedule = dullSchedule (fromJust $ mustReplyTimeout gtChainSyncTimeouts) (btTrunk gtBlockTree)
         pure $ gt $> schedule
     )
-
-    (defaultSchedulerConfig { scEnableChainSyncTimeouts = True })
+    -- Timeouts are enabled by default
+    defaultSchedulerConfig
 
     (\_ _ -> [])
 
     (\_ stateView ->
-      case svChainSyncExceptions stateView of
+      case exceptionsByComponent ChainSyncClient stateView of
         [] ->
           counterexample ("result: " ++ condense (svSelectedChain stateView)) (not mustTimeout)
         [exn] ->
-          case fromException $ cseException exn of
+          case fromException exn of
             Just (ExceededTimeLimit _) -> property mustTimeout
             _ -> counterexample ("exception: " ++ show exn) False
         exns ->

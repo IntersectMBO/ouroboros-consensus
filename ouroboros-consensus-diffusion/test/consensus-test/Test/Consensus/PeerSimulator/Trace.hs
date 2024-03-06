@@ -5,14 +5,15 @@
 
 -- | Helpers for tracing used by the peer simulator.
 module Test.Consensus.PeerSimulator.Trace (
-    TraceChainSyncClientTerminationEvent (..)
+    TraceBlockFetchClientTerminationEvent (..)
+  , TraceChainSyncClientTerminationEvent (..)
   , TraceEvent (..)
   , TraceScheduledBlockFetchServerEvent (..)
   , TraceScheduledChainSyncServerEvent (..)
   , TraceScheduledServerHandlerEvent (..)
   , TraceSchedulerEvent (..)
-  , mkTracerTestBlock
   , traceLinesWith
+  , tracerTestBlock
   ) where
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
@@ -26,7 +27,8 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceAddBlockEvent (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
-                     Time (Time), getMonotonicTime)
+                     Time (Time), atomically, getMonotonicTime, readTVarIO,
+                     uncheckedNewTVarM, writeTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Tip)
 import           Test.Consensus.PointSchedule (NodeState)
@@ -80,10 +82,14 @@ data TraceScheduledBlockFetchServerEvent state blk
   | TraceBlockPointIsBehind
 
 data TraceChainSyncClientTerminationEvent
-  = TraceExceededSizeLimit
-  | TraceExceededTimeLimit
+  = TraceExceededSizeLimitCS
+  | TraceExceededTimeLimitCS
   | TraceTerminatedByGDDGovernor
   | TraceTerminatedByLoP
+
+data TraceBlockFetchClientTerminationEvent
+  = TraceExceededSizeLimitBF
+  | TraceExceededTimeLimitBF
 
 data TraceEvent blk
   = TraceSchedulerEvent (TraceSchedulerEvent blk)
@@ -92,54 +98,80 @@ data TraceEvent blk
   | TraceChainDBEvent (ChainDB.TraceEvent blk)
   | TraceChainSyncClientEvent PeerId (TraceChainSyncClientEvent blk)
   | TraceChainSyncClientTerminationEvent PeerId TraceChainSyncClientTerminationEvent
+  | TraceBlockFetchClientTerminationEvent PeerId TraceBlockFetchClientTerminationEvent
 
 -- * 'TestBlock'-specific tracers for the peer simulator
 
-mkTracerTestBlock ::
+tracerTestBlock ::
   (IOLike m) =>
   Tracer m String ->
-  Tracer m (TraceEvent TestBlock)
-mkTracerTestBlock = Tracer . traceEventTestBlockWith
+  m (Tracer m (TraceEvent TestBlock))
+tracerTestBlock tracer0 = do
+  -- NOTE: Mostly, we read the traces on a per-tick basis, so it is important
+  -- that ticks are visually separated. Also, giving the time on each line can
+  -- get quite verbose when most of the time is the same as the beginning of the
+  -- tick (in IOSim anyways). So we keep track of the tick time and we prefix
+  -- lines by the time only if they differ. This allows seeing the time-based
+  -- events (timeouts, LoP) better while keeping the interface uncluttered, and
+  -- it behaves well in IO (where it prefixes all lines by the time).
+  tickTimeVar <- uncheckedNewTVarM $ Time (-1)
+  let setTickTime = atomically . writeTVar tickTimeVar
+      tracer = Tracer $ \msg -> do
+        time <- getMonotonicTime
+        tickTime <- readTVarIO tickTimeVar
+        let timeHeader = prettyTime time ++ " "
+            prefix = if time /= tickTime
+              then timeHeader
+              else replicate (length timeHeader) ' '
+        traceWith tracer0 $ concat $ intersperse "\n" $ map (prefix ++) $ lines msg
+  pure $ Tracer $ traceEventTestBlockWith setTickTime tracer0 tracer
 
 traceEventTestBlockWith ::
   (MonadMonotonicTime m) =>
+  (Time -> m ()) ->
   Tracer m String ->
+  -- ^ Underlying, non-time- and tick-aware tracer. To be used only with lines
+  -- that should not be prefixed by time.
+  Tracer m String ->
+  -- ^ Normal, time- and tick-aware tracer. Should be used by default.
   TraceEvent TestBlock ->
   m ()
-traceEventTestBlockWith tracer = \case
-    TraceSchedulerEvent traceEvent -> traceSchedulerEventTestBlockWith tracer traceEvent
+traceEventTestBlockWith setTickTime tracer0 tracer = \case
+    TraceSchedulerEvent traceEvent -> traceSchedulerEventTestBlockWith setTickTime tracer0 tracer traceEvent
     TraceScheduledChainSyncServerEvent peerId traceEvent -> traceScheduledChainSyncServerEventTestBlockWith tracer peerId traceEvent
     TraceScheduledBlockFetchServerEvent peerId traceEvent -> traceScheduledBlockFetchServerEventTestBlockWith tracer peerId traceEvent
     TraceChainDBEvent traceEvent -> traceChainDBEventTestBlockWith tracer traceEvent
     TraceChainSyncClientEvent peerId traceEvent -> traceChainSyncClientEventTestBlockWith peerId tracer traceEvent
     TraceChainSyncClientTerminationEvent peerId traceEvent -> traceChainSyncClientTerminationEventTestBlockWith peerId tracer traceEvent
+    TraceBlockFetchClientTerminationEvent peerId traceEvent -> traceBlockFetchClientTerminationEventTestBlockWith peerId tracer traceEvent
 
 traceSchedulerEventTestBlockWith ::
   (MonadMonotonicTime m) =>
+  (Time -> m ()) ->
+  Tracer m String ->
   Tracer m String ->
   TraceSchedulerEvent TestBlock ->
   m ()
-traceSchedulerEventTestBlockWith tracer = \case
+traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
     TraceBeginningOfTime ->
-      traceWith tracer "Running point schedule ..."
+      traceWith tracer0 "Running point schedule ..."
     TraceEndOfTime ->
-      traceLinesWith tracer
-        [ hline,
+      traceLinesWith tracer0
+        [ "╶──────────────────────────────────────────────────────────────────────────────╴",
           "Finished running point schedule"
         ]
     TraceNewTick number duration (Peer pid state) -> do
-      time <- prettyTime -- TODO: push into a time-specific tracer printing this at new time
-      traceLinesWith tracer
-        [ hline,
-          "Time is " ++ time,
+      time <- getMonotonicTime
+      setTickTime time
+      traceLinesWith tracer0
+        [ "┌──────────────────────────────────────────────────────────────────────────────┐",
+          "└─ " ++ prettyTime time,
           "Tick:",
           "  number: " ++ show number,
           "  duration: " ++ show duration,
           "  peer: " ++ condense pid,
           "  state: " ++ condense state
         ]
-  where
-    hline = "--------------------------------------------------------------------------------"
 
 traceScheduledServerHandlerEventTestBlockWith ::
   Tracer m String ->
@@ -197,7 +229,7 @@ traceScheduledChainSyncServerEventTestBlockWith tracer peerId = \case
     TraceIntersectionIsStrictDescendentOfHeaderPoint ->
       trace "  intersection is further than our header point"
   where
-    unit = "ScheduledChainSyncServer " ++ condense peerId
+    unit = "ChainSyncServer " ++ condense peerId
     trace = traceUnitWith tracer unit
     traceLines = traceUnitLinesWith tracer unit
 
@@ -223,7 +255,7 @@ traceScheduledBlockFetchServerEventTestBlockWith tracer peerId = \case
     TraceBlockPointIsBehind ->
       trace "BP is behind"
   where
-    unit = "ScheduledBlockFetchServer " ++ condense peerId
+    unit = "BlockFetchServer " ++ condense peerId
     trace = traceUnitWith tracer unit
 
 traceChainDBEventTestBlockWith ::
@@ -247,7 +279,6 @@ traceChainDBEventTestBlockWith tracer = \case
           trace $ "LoE fragment: " ++ terseHFragment loeFrag0
         AddedReprocessLoEBlocksToQueue ->
           trace $ "Requested ChainSel run"
-
         _ -> pure ()
     _ -> pure ()
   where
@@ -289,9 +320,9 @@ traceChainSyncClientTerminationEventTestBlockWith ::
   TraceChainSyncClientTerminationEvent ->
   m ()
 traceChainSyncClientTerminationEventTestBlockWith pid tracer = \case
-    TraceExceededSizeLimit ->
+    TraceExceededSizeLimitCS ->
       trace "Terminated because of size limit exceeded."
-    TraceExceededTimeLimit ->
+    TraceExceededTimeLimitCS ->
       trace "Terminated because of time limit exceeded."
     TraceTerminatedByGDDGovernor ->
       trace "Terminated by the GDD governor."
@@ -300,16 +331,28 @@ traceChainSyncClientTerminationEventTestBlockWith pid tracer = \case
   where
     trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
 
+traceBlockFetchClientTerminationEventTestBlockWith ::
+  PeerId ->
+  Tracer m String ->
+  TraceBlockFetchClientTerminationEvent ->
+  m ()
+traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
+    TraceExceededSizeLimitBF ->
+      trace "Terminated because of size limit exceeded."
+    TraceExceededTimeLimitBF ->
+      trace "Terminated because of time limit exceeded."
+  where
+    trace = traceUnitWith tracer ("BlockFetchClient " ++ condense pid)
+
 -- * Other utilities
 
-prettyTime :: MonadMonotonicTime m => m String
-prettyTime = do
-  Time time <- getMonotonicTime
+prettyTime :: Time -> String
+prettyTime (Time time) =
   let ps = diffTimeToPicoseconds time
       milliseconds = ps `quot` 1_000_000_000
       seconds = milliseconds `quot` 1_000
       minutes = seconds `quot` 60
-  pure $ printf "%02d:%02d.%03d" minutes (seconds `rem` 60) (milliseconds `rem` 1_000)
+  in printf "%02d:%02d.%03d" minutes (seconds `rem` 60) (milliseconds `rem` 1_000)
 
 traceLinesWith ::
   Tracer m String ->
@@ -317,11 +360,18 @@ traceLinesWith ::
   m ()
 traceLinesWith tracer = traceWith tracer . mconcat . intersperse "\n"
 
+-- Not really the maximum length, just a quick hack for a smoother display
+maxUnitLength :: Int
+maxUnitLength = length "BlockFetchServer adversary 9"
+
+padUnit :: String -> String
+padUnit unit = unit ++ replicate (maxUnitLength - length unit) ' '
+
 -- | Trace using the given tracer, printing the current time (typically the time
 -- of the simulation) and the unit name.
 traceUnitLinesWith :: Tracer m String -> String -> [String] -> m ()
 traceUnitLinesWith tracer unit msgs =
-  traceLinesWith tracer $ map (printf "%s | %s" unit) msgs
+  traceLinesWith tracer $ map (printf "%s | %s" $ padUnit unit) msgs
 
 -- | Trace using the given tracer, printing the current time (typically the time
 -- of the simulation) and the unit name.

@@ -32,8 +32,7 @@ import           Ouroboros.Network.Protocol.Limits (shortWait)
 import           Test.Consensus.BlockTree (BlockTree (..), btbSuffix)
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-import           Test.Consensus.Network.Driver.Limits.Extras
-                     (chainSyncNoTimeouts)
+import           Test.Consensus.PeerSimulator.ChainSync (chainSyncNoTimeouts)
 import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
