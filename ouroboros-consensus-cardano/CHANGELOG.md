@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.14.0.1'></a>
+## 0.14.0.1 — 2024-03-06
+
+### Patch
+
+- Bugfix: Add an extra case to `isIncorrectClaimedFlag` for `Babbage` and `Conway` (https://github.com/IntersectMBO/ouroboros-consensus/issues/973).
+
 <a id='changelog-0.14.0.0'></a>
 ## 0.14.0.0 — 2024-02-23
 
