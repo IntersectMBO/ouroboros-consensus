@@ -177,6 +177,11 @@ Lastly the user can provide the analysis that should be run on the chain:
   - time spent in the mutator in microseconds
   - time spent in GC in microseconds
 
+* `--get-block-application-metrics NUM` computes different block application metrics every `NUM` blocks.
+It currently outputs block number, slot number, UTxO size in MB, and UTxO map size.
+In the [`scripts`](./scripts) directory we provide a `plot_utxo-growth.py` script that can be used to plot the these results.
+See this file for usage information.
+
 If no analysis flag is provided, then the ChainDB will be opened, all the chunks
 in the immutable and volatile databases will be validated (see
 [validation](#database-validation)), and the tool will exit.
