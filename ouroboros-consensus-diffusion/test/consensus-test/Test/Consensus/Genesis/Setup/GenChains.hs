@@ -11,11 +11,13 @@ module Test.Consensus.Genesis.Setup.GenChains (
   , genChains
   ) where
 
-import           Cardano.Slotting.Time (slotLengthFromSec)
+import           Cardano.Slotting.Time (SlotLength, getSlotLength,
+                     slotLengthFromSec)
 import           Control.Monad (replicateM)
 import qualified Control.Monad.Except as Exn
 import           Data.List (foldl')
-import           Data.Proxy (Proxy (Proxy))
+import           Data.Proxy (Proxy (..))
+import           Data.Time.Clock (DiffTime, secondsToDiffTime)
 import qualified Data.Vector.Unboxed as Vector
 import           Data.Word (Word8)
 import           Ouroboros.Consensus.Block.Abstract hiding (Header)
@@ -23,8 +25,10 @@ import           Ouroboros.Consensus.Protocol.Abstract
                      (SecurityParam (SecurityParam))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Protocol.ChainSync.Codec
+                     (ChainSyncTimeout (..))
+import           Ouroboros.Network.Protocol.Limits (shortWait)
 import qualified Test.Consensus.BlockTree as BT
-import           Test.Consensus.Network.Driver.Limits.Extras (chainSyncTimeouts)
 import           Test.Consensus.PointSchedule
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Adversarial as A
 import           Test.Ouroboros.Consensus.ChainGenerator.Adversarial
@@ -122,6 +126,7 @@ genChains genNumForks = do
     gtDelay = delta,
     gtSlotLength,
     gtChainSyncTimeouts = chainSyncTimeouts gtSlotLength asc,
+    gtBlockFetchTimeouts = blockFetchTimeouts,
     gtLoPBucketParams = LoPBucketParams { lbpCapacity = 10_000, lbpRate = 1_000 }, -- REVIEW: Do we want to generate those randomly?
     gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
     gtSchedule = ()
@@ -153,3 +158,44 @@ genChains genNumForks = do
 
     incSlot :: SlotNo -> TestBlock -> TestBlock
     incSlot n b = b { tbSlot = tbSlot b + n }
+
+chainSyncTimeouts ::
+  SlotLength ->
+  Asc ->
+  ChainSyncTimeout
+chainSyncTimeouts t f =
+  ChainSyncTimeout
+    { canAwaitTimeout,
+      intersectTimeout,
+      mustReplyTimeout,
+      idleTimeout
+    }
+  where
+    canAwaitTimeout :: Maybe DiffTime
+    canAwaitTimeout = shortWait -- 10s
+    intersectTimeout :: Maybe DiffTime
+    intersectTimeout = shortWait -- 10s
+    idleTimeout :: Maybe DiffTime
+    idleTimeout = Just 3673 -- taken from Ouroboros.Consensus.Node.stdChainSyncTimeout
+    -- | The following timeout is derived from the average length of a streak of
+    -- empty slots. If the probability of the election of a leader is @f@ and
+    -- @Y@ is a probability, then a streak of empty slots will be shorter than
+    -- @log (1 - Y) / log (1 - f)@ with probability @Y@. Main net nodes pick a
+    -- random value for @Y@ between 99.9% and 99.999%. For our use case, we
+    -- choose the tightest bound of 99.9%.
+    mustReplyTimeout :: Maybe DiffTime
+    mustReplyTimeout =
+      Just $
+        secondsToDiffTime $
+          round $
+            realToFrac (getSlotLength t)
+              * log (1 - 0.999)
+              / log (1 - ascVal f)
+
+-- FIXME: Choose sensible values, maybe depending on SlotLength, Asc, etc.
+blockFetchTimeouts :: BlockFetchTimeout
+blockFetchTimeouts =
+  BlockFetchTimeout
+    { busyTimeout = Just 10000,
+      streamingTimeout = Just 10000
+    }

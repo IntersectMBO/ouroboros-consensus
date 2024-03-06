@@ -19,8 +19,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers,
-                     mkPeers)
+import           Test.Consensus.PointSchedule.Peers (Peers, mkPeers)
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
@@ -61,15 +60,15 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
           }
       )
       shrinkPeerSchedules
-      ( \GenesisTest {gtBlockTree} StateView {svSelectedChain, svChainSyncExceptions} ->
+      ( \GenesisTest {gtBlockTree} stateView@StateView {svSelectedChain} ->
         tabulate "binary log buckets of the length of the honest chain" [show (round @_ @Int (2 ** (realToFrac @_ @Double (round @_ @Int (logBase 2 (realToFrac @_ @Double (1 + AF.length (btTrunk gtBlockTree))))))))] $
         counterexample ("Selection is not the honest tip: " ++ tersePoint (AF.headPoint (btTrunk gtBlockTree)) ++ " / " ++ tersePoint (AF.castPoint (AF.headPoint svSelectedChain))) $
           let treeTipPoint = AF.headPoint $ btTrunk gtBlockTree
               selectedTipPoint = AF.castPoint $ AF.headPoint svSelectedChain
               selectedCorrect = timeoutsEnabled == (treeTipPoint == selectedTipPoint)
-              exceptionsCorrect = case svChainSyncExceptions of
+              exceptionsCorrect = case exceptionsByComponent ChainSyncClient stateView of
                 [] -> not timeoutsEnabled
-                [ChainSyncException (PeerId _) exn] ->
+                [exn] ->
                   case fromException exn of
                     Just (ExceededTimeLimit _) -> timeoutsEnabled
                     _                          -> False
