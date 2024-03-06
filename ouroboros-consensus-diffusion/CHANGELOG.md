@@ -2,6 +2,13 @@
 
 # Changelog entries
 
+<a id='changelog-0.11.0.1'></a>
+## 0.11.0.1 — 2024-03-06
+
+### Patch
+
+- Bugfix: DiskPolicyArgs were not being passed down to the ChainDB which resulted in default values for SnapshotInterval.
+
 <a id='changelog-0.11.0.0'></a>
 ## 0.11.0.0 — 2024-02-23
 
