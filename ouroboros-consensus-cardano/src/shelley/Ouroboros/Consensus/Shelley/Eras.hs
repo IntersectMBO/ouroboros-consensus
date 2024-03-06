@@ -379,8 +379,18 @@ instance SupportsTwoPhaseValidation (ConwayEra c) where
                 )
             )
         ) -> True
+    SL.ConwayUtxowFailure
+      ( Babbage.UtxoFailure
+          ( Babbage.AlonzoInBabbageUtxoPredFailure
+              ( Alonzo.UtxosFailure
+                  ( Alonzo.ValidationTagMismatch
+                      (Alonzo.IsValid _claimedFlag)
+                      _validationErrs
+                  )
+              )
+          )
+      ) -> True
     _ -> False
-
 
 {-------------------------------------------------------------------------------
   Tx family wrapper
