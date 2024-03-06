@@ -964,7 +964,9 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
          ChainDbArgs Defaults IO blk
       -> ChainDbArgs Defaults IO blk
     updateChainDbDefaults =
-        (\x -> x { ChainDB.cdbTracer = srnTraceChainDB }) .
+        (\x -> x { ChainDB.cdbTracer         = srnTraceChainDB
+                 , ChainDB.cdbDiskPolicyArgs = srnDiskPolicyArgs
+                 }) .
         (if not srnChainDbValidateOverride then id else \x -> x
           { ChainDB.cdbImmutableDbValidation = ValidateAllChunks
           , ChainDB.cdbVolatileDbValidation  = ValidateAll
