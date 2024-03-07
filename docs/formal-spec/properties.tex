@@ -23,7 +23,7 @@ of those from Section 8.1 of \cite{byron_chain_spec}.
 In any given chain state, the consensus layer needs to be able to validate the
 block headers without having to download the block bodies.
 Property~\ref{prop:header-only-validation} states that if an extension of a
-chain that spans less than $\StabilityWindow$ slots is valid, then validating the
+chain that spans less than $\RandomnessStabilisationWindow$ slots is valid, then validating the
 headers of that extension is also valid. This property is useful for its
 converse: if the header validation check for a sequence of headers does not
 pass, then we know that the block validation that corresponds to those headers
@@ -167,7 +167,7 @@ It is very similar to $\mathsf{CHAIN}$, the differences being:
     and chain extensions $E$ with corresponding headers $H$ such that:
   %
   $$
-  0 \leq t_E - t  \leq \StabilityWindow
+  0 \leq t_E - t  \leq \RandomnessStabilisationWindow
   $$
   %
   we have:
@@ -186,7 +186,7 @@ It is very similar to $\mathsf{CHAIN}$, the differences being:
   For all states $s$ with slot number $t$, and chain
   extensions $E = [b_0, \ldots, b_n]$ with corresponding headers $H$ such that:
   $$
-  0 \leq t_E - t  \leq \StabilityWindow
+  0 \leq t_E - t  \leq \RandomnessStabilisationWindow
   $$
   we have that for all $i \in [1, n]$:
   $$
