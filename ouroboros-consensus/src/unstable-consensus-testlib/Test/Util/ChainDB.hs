@@ -39,13 +39,13 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
-import           Ouroboros.Consensus.Util.IOLike hiding (invariant, StrictTVar, newTVar)
+import           Ouroboros.Consensus.Util.IOLike hiding (invariant)
 import           Ouroboros.Consensus.Util.ResourceRegistry (ResourceRegistry)
 import           System.FS.API (SomeHasFS (..))
-import           Control.Concurrent.Class.MonadSTM.Strict.TVar
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS
 import           System.FS.Sim.STM (simHasFS)
+import           Test.Util.Orphans.NoThunks ()
 
 -- | A vector with an element for each database of a node
 --
@@ -105,7 +105,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
             -- done in @extractBlockComponent@ in the iterator for the
             -- ImmutableDB, and in @getBlockComponent@ for the VolatileDB.
           , immChunkInfo        = mcdbChunkInfo
-          , immHasFS            = SomeHasFS $ simHasFS (nodeDBsImm mcdbNodeDBs)
+          , immHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsImm mcdbNodeDBs)
           , immRegistry         = mcdbRegistry
           , immTracer           = nullTracer
           , immCodecConfig      = configCodec mcdbTopLevelConfig
@@ -114,18 +114,18 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
     , cdbVolDbArgs = VolatileDbArgs {
           volCheckIntegrity   = const True
         , volCodecConfig      = configCodec mcdbTopLevelConfig
-        , volHasFS            = SomeHasFS $ simHasFS (nodeDBsVol mcdbNodeDBs)
+        , volHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsVol mcdbNodeDBs)
         , volMaxBlocksPerFile = VolatileDB.mkBlocksPerFile 4
         , volTracer           = nullTracer
         , volValidationPolicy = VolatileDB.ValidateAll
         }
     , cdbLgrDbArgs = LedgerDbArgs {
-          lgrSnapshotPolicyArgs = LedgerDB.SnapshotPolicyArgs LedgerDB.DefaultSnapshotInterval undefined
+          lgrSnapshotPolicyArgs = LedgerDB.SnapshotPolicyArgs LedgerDB.DefaultSnapshotInterval LedgerDB.DefaultNumOfDiskSnapshots
           -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
           -- k seconds, where k is the security parameter.
         , lgrGenesis          = return mcdbInitLedger
-        , lgrHasFS            = SomeHasFS $ simHasFS (nodeDBsLgr mcdbNodeDBs)
-        , lgrSSDHasFS            = SomeHasFS $ simHasFS (nodeDBsLgrSSD mcdbNodeDBs)
+        , lgrHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgr mcdbNodeDBs)
+        , lgrSSDHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgrSSD mcdbNodeDBs)
         , lgrSnapshotTablesSSD = False
         , lgrSnapshotStateSSD = False
         , lgrTracer           = nullTracer
@@ -140,7 +140,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , cdbsCheckInFuture   = CheckInFuture $ \vf -> pure (VF.validatedFragment vf, [])
           -- Blocks are never in the future
         , cdbsGcDelay         = 1
-        , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS mcdbGSMHasFS
+        , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS $ unsafeToUncheckedStrictTVar mcdbGSMHasFS
         , cdbsGcInterval      = 1
         , cdbsRegistry        = mcdbRegistry
         , cdbsTracer          = nullTracer

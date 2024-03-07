@@ -406,7 +406,6 @@ library unstable-consensus-testlib
     , cardano-prelude
     , cardano-slotting:testlib
     , cardano-strict-containers
-    , strict-stm
     , cborg
     , constraints
     , containers
