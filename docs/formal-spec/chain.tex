@@ -271,8 +271,10 @@ the candidate nonce $\eta_c$ and the evolving nonce $\eta_v$.
 
 The transition rule $\mathsf{UPDN}$ takes the slot \var{s} as signal. There are
 two different cases for $\mathsf{UPDN}$: one where \var{s} is not yet
-\RandomnessStabilisationWindow{} slots from the beginning of the next epoch and one where
-\var{s} is less than \RandomnessStabilisationWindow{} slots until the start of the next epoch.
+\RandomnessStabilisationWindow{}\footnote{Note that in pre-Conway eras \StabilityWindow{}
+was used instead of \RandomnessStabilisationWindow{}.} slots from the beginning
+of the next epoch and one where \var{s} is less than \RandomnessStabilisationWindow{}
+slots until the start of the next epoch.
 
 Note that in \ref{eq:update-both}, the nonce candidate $\eta_c$ transitions to
 $\eta_v\seedOp\eta$, not $\eta_c\seedOp\eta$. The reason for this is that even
