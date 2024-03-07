@@ -65,15 +65,11 @@ import qualified Data.Map.Diff.Strict.Internal as DS
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
+import           Data.Maybe.Strict
 import           Data.Set (Set)
 import qualified Data.Set as Set
-<<<<<<< HEAD
-import           Data.TreeDiff
-=======
 import           Data.SOP.Dict
-import           Data.TreeDiff.Class (genericToExpr)
-import           Data.TreeDiff.Expr (Expr (App))
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+import           Data.TreeDiff
 import           Data.Word
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
@@ -102,7 +98,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V1.Flush
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Lock
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots
-import           Ouroboros.Consensus.Util hiding (Dict (..))
+import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -111,11 +107,7 @@ import           Ouroboros.Network.Point (Block (Block))
 import           Prelude hiding (elem)
 import qualified System.Directory as Dir
 import           System.FS.API
-<<<<<<< HEAD
-=======
-import           System.FS.API.Types
 import qualified System.FS.IO as FSIO
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
 import qualified System.IO.Temp as Temp
@@ -367,6 +359,7 @@ deriving anyclass instance ToExpr v => ToExpr (DS.Delta v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Diff k v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.RootMeasure k v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.InternalMeasure k v)
+deriving anyclass instance (ToExpr v) => ToExpr (StrictMaybe v)
 deriving anyclass instance (ToExpr k, ToExpr v) => ToExpr (DS.Element k v)
 deriving anyclass instance ToExpr DS.Length
 deriving anyclass instance ToExpr DS.SlotNoUB
@@ -930,6 +923,7 @@ initStandaloneDB dbEnv@DbEnv{..} dbRegistry dbSecParam = do
                             nullTracer
                             dbBackingStoreArgs
                             dbHasFS
+                            dbHasFS
                             initTables -- TODO we could consider adapting the test generator to generate an initial ledger with non-empty tables.
 
     let dbResolve :: ResolveBlock m TestBlock
@@ -1095,9 +1089,12 @@ runDB standalone@DB{..} cmd =
         let
             flavArgs = V1Args DisableFlushing DisableQuerySize $ dbBackingStoreArgs dbEnv
             args = LedgerDbArgs
-                    DisableSnapshots
+                    (SnapshotPolicyArgs DisableSnapshots DefaultNumOfDiskSnapshots)
                     (return (testInitExtLedgerWithState initialTestLedgerState))
                     hasFS
+                    hasFS
+                    False
+                    False
                     dbLedgerDbCfg
                     (dbTracer dbEnv)
                     (LedgerDbFlavorArgsV1 flavArgs)
@@ -1164,13 +1161,8 @@ runDB standalone@DB{..} cmd =
 
     -- We don't currently test the case where the LedgerDB cannot support
     -- the full rollback range. See also
-<<<<<<< HEAD
     -- <https://github.com/IntersectMBO/ouroboros-network/issues/1025>
-    ignoreExceedRollback :: Either ExceededRollback a -> a
-=======
-    -- <https://github.com/input-output-hk/ouroboros-network/issues/1025>
     ignoreExceedRollback :: Either LedgerDB.ExceededRollback a -> a
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
     ignoreExceedRollback (Left  _) = error "unexpected ExceededRollback"
     ignoreExceedRollback (Right a) = a
 
@@ -1548,7 +1540,7 @@ mkDbTracer = nullTracer
 inMemDbEnv :: Trans.MonadIO m
   => m (DbEnv IO)
 inMemDbEnv = Trans.liftIO $ do
-  fs <- uncheckedNewTVarM MockFS.empty
+  fs <- unsafeToUncheckedStrictTVar <$> uncheckedNewTVarM MockFS.empty
   let
     dbHasFS = SomeHasFS $ simHasFS fs
     dbBackingStoreArgs = InMemoryBackingStoreArgs
@@ -1571,17 +1563,6 @@ lmdbDbEnv limits = do
 
 -- Ideally we'd like to use @IOSim s@ instead of IO, but unfortunately
 -- QSM requires monads that implement MonadIO.
-<<<<<<< HEAD
-propCmds :: SecurityParam
-         -> QSM.Commands (At Cmd) (At Resp)
-         -> QC.PropertyM IO ()
-propCmds secParam cmds = do
-    fs <- QC.run $ uncheckedNewTVarM MockFS.empty
-    let dbEnv :: DbEnv IO
-        dbEnv = DbEnv (SomeHasFS (simHasFS (unsafeToUncheckedStrictTVar fs))) secParam
-    db <- QC.run $ initStandaloneDB dbEnv
-    let sm' = sm secParam db
-=======
 propCmds ::
      DbEnv IO
   -> CmdDistribution
@@ -1592,7 +1573,6 @@ propCmds ::
 propCmds dbEnv cd secParam rr cmds = do
     db <- QC.run $ initStandaloneDB dbEnv rr secParam
     let sm' = sm secParam cd db
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
     (hist, _model, res) <- runCommands sm' cmds
     prettyCommands sm' hist
       $ checkCommandNames cmds

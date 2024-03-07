@@ -681,7 +681,10 @@ test-suite storage-test
     , cardano-crypto-class
     , cardano-slotting
     , cborg
+    , cardano-ledger-binary:testlib
+    , cardano-strict-containers
     , constraints
+    , strict-stm
     , containers
     , contra-tracer
     , diff-containers                                >=1.1

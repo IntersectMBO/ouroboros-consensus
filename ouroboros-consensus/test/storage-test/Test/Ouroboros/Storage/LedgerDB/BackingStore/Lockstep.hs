@@ -42,10 +42,11 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as BS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
                      (LMDBErr (..))
-import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..), handle)
+import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..),
+                     StrictMVar, handle, readMVar, swapMVar)
 import           System.FS.API hiding (Handle)
 import qualified System.FS.API.Types as FS
-import           System.FS.API.Types hiding (Handle)
+import           Test.Cardano.Ledger.Binary.Arbitrary ()
 import qualified Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock as Mock
 import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock (Err (..),
                      Mock (..), ValueHandle (..), runMockState)
@@ -148,6 +149,7 @@ maxOpenValueHandles = 32
 
 type BackingStoreInitializer m ks vs d =
      SomeHasFS m
+  -> SomeHasFS m
   -> BS.InitFrom vs
   -> m (BS.BackingStore m ks vs d)
 
@@ -581,10 +583,10 @@ runIO action lookUp = ReaderT $ \renv ->
       -> m a
     aux renv = \case
         BSInitFromValues sl (Values vs) -> catchErr $ do
-          bs <- bsi sfhs (BS.InitFromValues sl vs)
+          bs <- bsi sfhs sfhs (BS.InitFromValues sl vs)
           void $ swapMVar bsVar bs
         BSInitFromCopy bsp -> catchErr $ do
-          bs <- bsi sfhs (BS.InitFromCopy bsp)
+          bs <- bsi sfhs sfhs (BS.InitFromCopy bsp)
           void $ swapMVar bsVar bs
         BSClose            -> catchErr $
           readMVar bsVar >>= BS.bsClose

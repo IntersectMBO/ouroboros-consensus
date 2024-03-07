@@ -119,11 +119,8 @@ import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
-<<<<<<< HEAD
-import           Ouroboros.Consensus.Storage.Common (SizeInBytes)
-=======
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+import           Ouroboros.Consensus.Storage.Common (SizeInBytes)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
@@ -374,13 +371,8 @@ data ChainDBEnv m blk = ChainDBEnv {
     -- ^ Needed to reopen a ChainDB, i.e., open a new one.
   }
 
-<<<<<<< HEAD
 open ::
-     (IOLike m, TestConstraints blk)
-=======
-open
-  :: (IOLike m, TestConstraints blk, MonadBase m m)
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+     (IOLike m, TestConstraints blk, MonadBase m m)
   => ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
     (chainDB, internal) <- openDBInternal args False
@@ -389,13 +381,8 @@ open args = do
     return ChainDBState { chainDB, internal, addBlockAsync }
 
 -- PRECONDITION: the ChainDB is closed
-<<<<<<< HEAD
 reopen ::
-     (IOLike m, TestConstraints blk)
-=======
-reopen
-  :: (IOLike m, TestConstraints blk, MonadBase m m)
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+     (IOLike m, TestConstraints blk, MonadBase m m)
   => ChainDBEnv m blk -> m ()
 reopen ChainDBEnv { varDB, args } = do
     chainDBState <- open args
@@ -412,15 +399,9 @@ run :: forall m blk.
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
 run env@ChainDBEnv { varDB, .. } cmd =
-<<<<<<< HEAD
     readTVarIO varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
-      AddBlock blk             -> Point               <$> (advanceAndAdd st (blockSlot blk) blk)
-      AddFutureBlock blk s     -> Point               <$> (advanceAndAdd st s               blk)
-=======
-    readSVar varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
       AddBlock blk             -> Point               <$> advanceAndAdd st (blockSlot blk) blk
       AddFutureBlock blk s     -> Point               <$> advanceAndAdd st s               blk
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
       -- GetLedgerDB              -> LedgerDB . flush    <$> atomically getDbChangelog -- TODO(jdral_ldb)
       GetTipBlock              -> MbBlock             <$> getTipBlock
@@ -495,10 +476,10 @@ run env@ChainDBEnv { varDB, .. } cmd =
 -- this was already the case in before the introduction of UTxO HD: if the
 -- current chain contained more than K blocks, then the ledger states before the
 -- immutable tip were not compared by the 'GetLedgerDB' command.
-flush ::
-     (LedgerSupportsProtocol blk)
-  => DbChangelog.DbChangelog' blk -> DbChangelog.DbChangelog' blk
-flush = snd . DbChangelog.splitForFlushing
+-- flush ::
+--      (LedgerSupportsProtocol blk)
+--   => DbChangelog.DbChangelog' blk -> DbChangelog.DbChangelog' blk
+-- flush = snd . DbChangelog.splitForFlushing
 
 persistBlks :: IOLike m => ShouldGarbageCollect -> ChainDB.Internal m blk -> m ()
 persistBlks collectGarbage ChainDB.Internal{..} = do
@@ -1595,8 +1576,17 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       varCurSlot         <- uncheckedNewTVarM 0
       varNextId          <- uncheckedNewTVarM 0
       nodeDBs            <- emptyNodeDBs
-      let args = mkArgs testCfg chunkInfo (testInitExtLedger `withLedgerTables` emptyLedgerTables) threadRegistry nodeDBs tracer
-                   maxClockSkew varCurSlot
+      gsmhasfs           <- atomically $ newTVar Mock.empty
+      let args = mkArgs
+                   testCfg
+                   chunkInfo
+                   (testInitExtLedger `withLedgerTables` emptyLedgerTables)
+                   threadRegistry
+                   nodeDBs
+                   gsmhasfs
+                   tracer
+                   maxClockSkew
+                   varCurSlot
 
       (hist, model, res, trace) <- bracket
         (open args >>= newTVarIO)
@@ -1737,17 +1727,19 @@ mkArgs :: IOLike m
        -> ExtLedgerState Blk ValuesMK
        -> ResourceRegistry m
        -> NodeDBs (StrictTVar m MockFS)
+       -> StrictTVar m MockFS
        -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
        -> ChainDbArgs Identity m Blk
-mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot =
+mkArgs cfg chunkInfo initLedger registry nodeDBs gsmhasfs tracer (MaxClockSkew maxClockSkew) varCurSlot =
   let args = fromMinimalChainDbArgs MinimalChainDbArgs {
             mcdbTopLevelConfig = cfg
           , mcdbChunkInfo = chunkInfo
           , mcdbInitLedger = initLedger
           , mcdbRegistry = registry
           , mcdbNodeDBs = nodeDBs
+          , mcdbGSMHasFS = gsmhasfs
           }
   in ChainDB.updateTracer tracer $
       args { cdbsArgs = (cdbsArgs args) {

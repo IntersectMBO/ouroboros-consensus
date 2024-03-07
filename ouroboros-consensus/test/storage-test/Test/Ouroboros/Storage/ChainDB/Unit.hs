@@ -45,6 +45,7 @@ import           Ouroboros.Consensus.Util.ResourceRegistry (closeRegistry,
                      unsafeNewRegistry)
 import           Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint)
 import qualified Ouroboros.Network.Mock.Chain as Mock
+import qualified System.FS.Sim.MockFS as Mock
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
 import           Test.Ouroboros.Storage.ChainDB.Model (Model)
 import qualified Test.Ouroboros.Storage.ChainDB.StateMachine as SM
@@ -331,16 +332,8 @@ withModelContext f = do
   pure a
 
 
-<<<<<<< HEAD
-instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk)
+instance (Model.ModelSupportsBlock blk, LedgerSupportsProtocol blk, LedgerTablesAreTrivial (LedgerState blk))
       => SupportsUnitTest (ModelM blk) where
-=======
-instance ( Model.ModelSupportsBlock blk
-         , LedgerSupportsProtocol blk
-         , Eq blk
-         , LedgerTablesAreTrivial (LedgerState blk)
-         ) => SupportsUnitTest (ModelM blk) where
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
 
   type FollowerId (ModelM blk) = Model.FollowerId
   type IteratorId (ModelM blk) = Model.IteratorId
@@ -402,13 +395,8 @@ runSystem withChainDbEnv expr
 
 
 -- | Provide a standard ChainDbEnv for testing.
-<<<<<<< HEAD
 withTestChainDbEnv ::
-     (IOLike m, TestConstraints blk)
-=======
-withTestChainDbEnv
-  :: (IOLike m, TestConstraints blk, MonadBase m m)
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+     (IOLike m, TestConstraints blk, MonadBase m m)
   => TopLevelConfig blk
   -> ImmutableDB.ChunkInfo
   -> ExtLedgerState blk ValuesMK
@@ -423,8 +411,9 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
       varCurSlot <- uncheckedNewTVarM 0
       varNextId <- uncheckedNewTVarM 0
       nodeDbs <- emptyNodeDBs
+      gsmhasfs <- newTVarIO Mock.empty
       (tracer, getTrace) <- recordingTracerTVar
-      let args = chainDbArgs threadRegistry nodeDbs tracer
+      let args = chainDbArgs threadRegistry nodeDbs tracer gsmhasfs
       varDB <- open args >>= newTVarIO
       let env = ChainDBEnv
             { varDB
@@ -441,11 +430,12 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
       closeRegistry (registry env)
       closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
-    chainDbArgs registry nodeDbs tracer =
+    chainDbArgs registry nodeDbs tracer gsmhasfs =
       let args = fromMinimalChainDbArgs MinimalChainDbArgs
             { mcdbTopLevelConfig = topLevelConfig
             , mcdbChunkInfo = chunkInfo
             , mcdbInitLedger = extLedgerState
+            , mcdbGSMHasFS = gsmhasfs
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDbs
             }
