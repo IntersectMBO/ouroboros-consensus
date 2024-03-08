@@ -30,13 +30,16 @@ data BlockFetch =
   -- ^ Negative response to the client's request for blocks.
   deriving (Eq, Show)
 
--- | Resources used by a BlockFetch server mock.
+-- | Resources used by a scheduled BlockFetch server. This comprises a generic
+-- 'ScheduledServer' and BlockFetch-specific handlers.
 data ScheduledBlockFetchServer m a =
   ScheduledBlockFetchServer {
     sbfsServer  :: ScheduledServer m a,
     sbfsHandler :: ChainRange (Point TestBlock) -> a -> STM m (Maybe BlockFetch, [String])
   }
 
+-- | Make a 'BlockFetchServer' able to run with the normal infrastructure from a
+-- 'ScheduledBlockFetchServer'.
 scheduledBlockFetchServer ::
   forall m a .
   Condense a =>
