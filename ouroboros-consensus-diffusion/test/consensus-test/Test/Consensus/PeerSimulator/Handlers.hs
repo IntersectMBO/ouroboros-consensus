@@ -25,7 +25,7 @@ import           Control.Monad.Writer.Strict (MonadWriter (tell),
 import           Data.List (isSuffixOf)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (fromJust, fromMaybe)
-import           Ouroboros.Consensus.Block (GetHeader, HasHeader, HeaderHash,
+import           Ouroboros.Consensus.Block (HasHeader, HeaderHash,
                      Point (GenesisPoint), blockHash, getHeader, withOrigin)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
@@ -106,12 +106,12 @@ handlerFindIntersection currentIntersection blockTree clientPoints points = do
 -- - header point before intersection (special case for the point scheduler architecture)
 -- - Anchor != intersection
 handlerRequestNext ::
-  forall m blk.
-  (IOLike m, HasHeader blk, GetHeader blk) =>
-  StrictTVar m (Point blk) ->
-  BlockTree blk ->
-  NodeState blk ->
-  STM m (Maybe (RequestNext blk), [TraceScheduledChainSyncServerEvent (NodeState blk) blk])
+  forall m.
+  (IOLike m) =>
+  StrictTVar m (Point TestBlock) ->
+  BlockTree TestBlock ->
+  NodeState TestBlock ->
+  STM m (Maybe (RequestNext TestBlock), [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock])
 handlerRequestNext currentIntersection blockTree points =
   runWriterT $ do
     intersection <- lift $ readTVar currentIntersection
@@ -119,27 +119,27 @@ handlerRequestNext currentIntersection blockTree points =
     withHeader intersection (nsHeader points)
   where
     withHeader ::
-      Point blk ->
-      WithOrigin blk ->
+      Point TestBlock ->
+      WithOrigin TestBlock ->
       WriterT
-        [TraceScheduledChainSyncServerEvent (NodeState blk) blk]
+        [TraceScheduledChainSyncServerEvent (NodeState TestBlock) TestBlock]
         (STM m)
-        (Maybe (RequestNext blk))
+        (Maybe (RequestNext TestBlock))
     withHeader intersection h =
-      maybe noPathError (analysePath hp) (BT.findPath intersection hp blockTree)
+      maybe noPathError analysePath (BT.findPath intersection hp blockTree)
       where
         hp = withOrigin GenesisPoint blockPoint h
 
     noPathError = error "serveHeader: intersection and headerPoint should always be in the block tree"
 
-    analysePath hp = \case
+    analysePath = \case
       -- If the anchor is the intersection (the source of the path-finding) but
       -- the fragment is empty, then the intersection is exactly our header
       -- point and there is nothing to do. If additionally the header point is
-      -- also the tip point (because we served our whole chain, or we are
-      -- stalling as an adversarial behaviour), then we ask the client to wait;
-      -- otherwise we just do nothing.
-      (BT.PathAnchoredAtSource True, AF.Empty _) | getTipPoint tip' == hp -> do
+      -- also the tip point or a descendent of it (because we served our whole
+      -- chain, or we are stalling as an adversarial behaviour), then we ask the
+      -- client to wait; otherwise we just do nothing.
+      (BT.PathAnchoredAtSource True, AF.Empty _) | isAncestorOf (nsTip points) (nsHeader points) -> do
         trace TraceChainIsFullyServed
         pure (Just AwaitReply)
       (BT.PathAnchoredAtSource True, AF.Empty _) -> do
@@ -204,8 +204,8 @@ handlerBlockFetch ::
   -- ^ The current advertised points (tip point, header point and block point).
   -- They are in the block tree.
   STM m (Maybe (BlockFetch blk), [TraceScheduledBlockFetchServerEvent (NodeState blk) blk])
-handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
-  runWriterT (serveFromBpFragment (AF.sliceRange hpChain from to))
+handlerBlockFetch blockTree (ChainRange from to) _ =
+  runWriterT (serveFromBpFragment (AF.sliceRange chain from to))
   where
     -- Check whether the requested range is contained in the fragment before the header point.
     -- We may only initiate batch serving if the full range is available; if the server has only some of the blocks, it
@@ -218,7 +218,7 @@ handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
         trace $ TraceWaitingForRange from to
         pure Nothing
 
-    hpChain = fragmentUpTo blockTree "header point" (withOrigin GenesisPoint blockPoint nsHeader)
+    chain = fragmentUpTo blockTree "upper range bound" to
 
     trace = tell . pure
 
