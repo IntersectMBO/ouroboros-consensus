@@ -46,7 +46,7 @@ runTest schedulerConfig genesisTest schedule makeProperty = do
     (recordingTracer, getTrace) <- recordingTracerTVar
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
-    -- FIXME: should also go in 'prettyGenesisTest' (or 'prettyBlockTree')
+    -- TODO: should also go in 'prettyGenesisTest' (or 'prettyBlockTree')
     for_ (allFragments gtBlockTree) \ bt -> traceWith tracer (terseFrag bt)
 
     traceLinesWith tracer $ [

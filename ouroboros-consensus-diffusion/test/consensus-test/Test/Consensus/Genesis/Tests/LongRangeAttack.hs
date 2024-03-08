@@ -41,7 +41,10 @@ tests =
 
 prop_longRangeAttack :: QC.Gen QC.Property
 prop_longRangeAttack = do
+  -- | Create a block tree with @1@ alternative chain.
   genesisTest <- genChains (pure 1)
+
+  -- | Create a 'longRangeAttack' schedule based on the generated chains.
   schedule <- fromSchedulePoints <$> stToGen (longRangeAttack (gtBlockTree genesisTest))
   let cls = classifiers genesisTest
 

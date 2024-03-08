@@ -8,6 +8,11 @@
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
+-- | Peer simulator tests based on randomly generated schedules. They share the
+-- same property stating that the immutable tip should be on the trunk of the
+-- block tree with the right age (roughly @k@ blocks from the tip). Contrary to
+-- other tests cases (eg. long range attack), the schedules are not particularly
+-- biased towards a specific situation.
 module Test.Consensus.Genesis.Tests.Uniform (tests) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
@@ -142,8 +147,8 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 
 -- Note [Leashing attacks]
 --
--- A leashing attack would be rehearsed by a point schedule meeting either of
--- two conditions:
+-- A leashing attack would be successfully conducted by a point schedule meeting
+-- either of two conditions:
 --
 -- 1) it causes the node under test to stop making progress (i.e. the immutable
 --    tip doesn't get close to the last genesis window of the honest chain), or
