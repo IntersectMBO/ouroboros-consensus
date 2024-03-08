@@ -10,16 +10,15 @@ module Test.Consensus.PeerSimulator.StateView (
   , PeerSimulatorResult (..)
   , StateView (..)
   , StateViewTracers (..)
-  , chainSyncKilled
+  , collectDisconnectedPeers
   , defaultStateViewTracers
   , exceptionsByComponent
   , pscrToException
   , snapshotStateView
   ) where
 
-import           Control.Exception (AsyncException (ThreadKilled),
-                     fromException)
 import           Control.Tracer (Tracer)
+import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
 import           Data.Maybe (mapMaybe)
 import           Network.TypedProtocol.Codec (AnyMessage)
@@ -151,28 +150,11 @@ instance Condense (StateView TestBlock) where
     ++ "TipBlock: " ++ terseMaybe terseBlock svTipBlock ++ "\n"
     ++ "PeerSimulatorResults:\n" ++ unlines (fmap ("  - " ++) $ condenseList $ sort svPeerSimulatorResults)
 
--- | Return the list of peer ids for all peers whose ChainSync thread was killed
--- by the node under test (that is it received 'ThreadKilled').
-chainSyncKilled :: StateView blk -> [PeerId]
-chainSyncKilled stateView =
-  mapMaybe
-    (\PeerSimulatorResult{psePeerId, pseResult} ->
-       if wasKilled pseResult
-         then Just psePeerId
-         else Nothing)
-    (svPeerSimulatorResults stateView)
-  where
-    wasKilled :: PeerSimulatorComponentResult blk -> Bool
-    wasKilled res =
-      let exnM = case res of
-            SomeChainSyncClientResult  (Left exn) -> Just exn
-            SomeChainSyncServerResult  (Left exn) -> Just exn
-            SomeBlockFetchClientResult (Left exn) -> Just exn
-            SomeBlockFetchServerResult (Left exn) -> Just exn
-            _                                     -> Nothing
-      in case exnM >>= fromException of
-        Just ThreadKilled -> True
-        _                 -> False
+-- | Return the list of peer ids for all peers whose ChainSync thread or
+-- BlockFetch thread was terminated.
+collectDisconnectedPeers :: StateView blk -> [PeerId]
+collectDisconnectedPeers stateView = nubOrd $
+    map psePeerId (svPeerSimulatorResults stateView)
 
 -- | State view tracers are a lightweight mechanism to record information that
 -- can later be used to produce a state view. This mechanism relies on
