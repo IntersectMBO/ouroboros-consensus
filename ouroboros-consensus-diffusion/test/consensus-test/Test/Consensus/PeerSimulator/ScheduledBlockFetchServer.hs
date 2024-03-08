@@ -70,7 +70,6 @@ scheduledBlockFetchServer ScheduledBlockFetchServer {sbfsServer, sbfsTracer, sbf
     blockFetch range =
       runHandler sbfsServer "BlockFetch" (bfshBlockFetch range) sbfsTracer $ \case
         StartBatch blocks -> do
-          trace $ TraceSendingBlocks blocks
           pure $ SendMsgStartBatch (sendBlocks blocks)
         NoBlocks -> do
           trace $ TraceNoBlocks
