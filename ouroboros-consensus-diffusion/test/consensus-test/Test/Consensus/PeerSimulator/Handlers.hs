@@ -75,9 +75,9 @@ handlerFindIntersection currentIntersection blockTree clientPoints points = do
 -- Finds the potential path from the current intersection to the advertised header point for this turn,
 -- which can have four distinct configurations for the anchor point and the path:
 --
--- - Anchor == intersection == HP
--- - HP after intersection == HP
--- - HP before intersection (special case for the point scheduler architecture)
+-- - Anchor == intersection == header point
+-- - header point after intersection == header point
+-- - header point before intersection (special case for the point scheduler architecture)
 -- - Anchor != intersection
 handlerRequestNext ::
   forall m .
@@ -150,9 +150,9 @@ handlerRequestNext currentIntersection blockTree points =
 
 -- | Handle the BlockFetch message (it actually has only one unnamed entry point).
 --
--- If the requested range ends not after BP, send them.
--- If BP moved to a fork without serving all blocks corresponding to advertised headers, serve them.
--- Otherwise, stall.
+-- If the requested range ends not after the block point, send them. If the
+-- block point moved to a fork without serving all blocks corresponding to
+-- advertised headers, serve them. Otherwise, stall.
 handlerBlockFetch ::
   forall m .
   IOLike m =>
@@ -170,16 +170,20 @@ handlerBlockFetch blockTree (ChainRange from to) AdvertisedPoints {header = Head
         trace ("Sending slice " ++ terseFrag slice)
         pure (Just (StartBatch (AF.toOldestFirst slice)))
       Nothing    -> do
-        -- If we cannot serve blocks from the BP chain, decide whether to yield control to the scheduler
-        -- or serve blocks anyway.
+        -- If we cannot serve blocks from the block point chain (that is the
+        -- chain on which the block point is), decide whether to yield control
+        -- to the scheduler or serve blocks anyway.
         --
-        -- If the @to@ point is not part of the HP chain but BP is, we must have switched to a fork without ensuring
-        -- that BP advances to the last HP advertised on the old chain.
-        -- This should be a precondition violation, but because it would make the schedule generator more complex, we
-        -- simply serve the missing blocks anyway here.
+        -- If the @to@ point is not part of the header point chain but the block
+        -- point is, we must have switched to a fork without ensuring that the
+        -- block point advances to the last header point advertised on the old
+        -- chain. This should be a precondition violation, but because it would
+        -- make the schedule generator more complex, we simply serve the missing
+        -- blocks anyway here.
         --
-        -- Otherwise, we simply have to wait for BP to advance sufficiently, and we block without sending
-        -- a message, to simulate a slow response.
+        -- Otherwise, we simply have to wait for the block point to advance
+        -- sufficiently, and we block without sending a message, to simulate a
+        -- slow response.
         case not (AF.withinFragmentBounds to hpChain) && AF.withinFragmentBounds (toPoint bp) hpChain of
           True ->
             case AF.sliceRange (fragmentUpTo "requested point" to) from to of
