@@ -86,16 +86,26 @@ basicChainSyncClient tracer cfg chainDbView varCandidate (startIdling, stopIdlin
       , InFutureCheck.handleHeaderArrival = \_ -> pure Nothing
       }
 
+-- | Create and run a ChainSync client using 'bracketChainSyncClient' and
+-- 'basicChainSyncClient', synchronously. Exceptions are caught, sent to the
+-- 'StateViewTracers' and logged.
 runChainSyncClient ::
   (IOLike m, MonadTimer m) =>
   Tracer m String ->
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
   PeerId ->
+  -- ^ The id of the peer to which the client connects.
   ChainSyncServer (Header TestBlock) (Point TestBlock) (Tip TestBlock) m () ->
+  -- ^ The ChainSync server to which the client connects.
   ChainSyncTimeout ->
+  -- ^ Timeouts for this client.
   StateViewTracers m ->
+  -- ^ Tracers used to record information for the future 'StateView'.
   StrictTVar m (Map PeerId (StrictTVar m TestFragH)) ->
+  -- ^ A TVar containing a map of fragments of headers for each peer. This
+  -- function will (via 'bracketChainSyncClient') register and de-register a
+  -- TVar for the fragment of the peer.
   m ()
 runChainSyncClient
   tracer
