@@ -20,12 +20,6 @@ import           Test.Consensus.PeerSimulator.ScheduledServer
 import           Test.Consensus.PeerSimulator.Trace
 import           Test.Util.TestBlock (TestBlock)
 
-data SendBlocks =
-  Block TestBlock
-  |
-  BatchDone
-  deriving (Eq, Show)
-
 data BlockFetch =
   StartBatch [TestBlock]
   |
