@@ -44,14 +44,19 @@ import           Test.Consensus.PointSchedule (PeerId, TestFragH)
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock)
 
-
+-- | A basic ChainSync client. It wraps around 'chainSyncClient', but simplifies
+-- quite a few aspects. In particular, the size of the pipeline cannot exceed 20
+-- messages and the “in future” checks are disabled.
 basicChainSyncClient :: forall m.
   IOLike m =>
   Tracer m String ->
   TopLevelConfig TestBlock ->
   ChainDbView m TestBlock ->
   StrictTVar m TestFragH ->
+  -- ^ A TVar containing the fragment of headers for that peer, kept up to date
+  -- by the ChainSync client.
   (m (), m ()) ->
+  -- ^ Two monadic actions called when reaching and leaving @StIdle@.
   Consensus ChainSyncClientPipelined TestBlock m
 basicChainSyncClient tracer cfg chainDbView varCandidate (startIdling, stopIdling) =
   chainSyncClient
