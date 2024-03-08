@@ -1,6 +1,13 @@
 {-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
+-- | This module contains code that is generic to any “scheduled server” (think
+-- scheduled ChainSync or BlockFetch server). A scheduled server keeps track of
+-- the current state of a point schedule and wakes up when new ticks arise. It
+-- processes as many messages there are via its domain-specific handlers; once
+-- there is nothing new to process, or what needs to process requires a
+-- different state of the point schedule, the scheduled server goes back to
+-- sleep, awaiting another tick.
 module Test.Consensus.PeerSimulator.ScheduledServer (
     ScheduledServer (..)
   , awaitOnlineState
