@@ -126,7 +126,7 @@ class POL pol => TestPOL (pol :: S.Pol) where showPol :: proxy pol -> String
 instance TestPOL S.Inverted             where showPol _pol = "Inverted"
 instance TestPOL S.NotInverted          where showPol _pol = "NotInverted"
 
--- | Check that when @findIthZeroInV i bv@ yields 'JustFound'
+-- | Check that when @findIthEmptyInV pol bv i@ yields 'JustFound'
 --
 -- 1. it yields the index of an inactive slot
 -- 2. there are exactly @i@ inactive slots in the preceding slots
