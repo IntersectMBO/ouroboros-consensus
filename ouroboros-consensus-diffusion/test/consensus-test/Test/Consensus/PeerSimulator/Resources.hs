@@ -23,8 +23,10 @@ import           Data.Foldable (toList)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.Traversable (for)
-import           Ouroboros.Consensus.Block (GetHeader, WithOrigin (Origin))
+import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandle)
@@ -118,16 +120,19 @@ data PeerSimulatorResources m blk =
     -- | The shared candidate fragments used by ChainDB, ChainSync and BlockFetch.
     psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m (AF.AnchoredFragment (Header blk)))),
 
-    -- | The kill action and tip accessor that the Genesis governor uses to interact with ChainSync.
-    psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock))
+    -- | Handlers to interact with the ChainSync client of each peer.
+    -- See 'ChainSyncClientHandle' for more details.
+    psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock)),
+
+    psrIdling :: StrictTVar m (Set PeerId)
   }
 
 -- | Create 'ChainSyncServerHandlers' for our default implementation using 'NodeState'.
 makeChainSyncServerHandlers ::
-  (IOLike m, AF.HasHeader blk, GetHeader blk) =>
-  StrictTVar m (Point blk) ->
-  BlockTree blk ->
-  ChainSyncServerHandlers m (NodeState blk) blk
+  (IOLike m) =>
+  StrictTVar m (Point TestBlock) ->
+  BlockTree TestBlock ->
+  ChainSyncServerHandlers m (NodeState TestBlock) TestBlock
 makeChainSyncServerHandlers currentIntersection blockTree =
   ChainSyncServerHandlers {
     csshFindIntersection = handlerFindIntersection currentIntersection blockTree,
@@ -140,10 +145,10 @@ makeChainSyncServerHandlers currentIntersection blockTree =
 --
 -- TODO move server construction to Run?
 makeChainSyncResources ::
-  (IOLike m, GetHeader blk, AF.HasHeader blk) =>
+  (IOLike m) =>
   STM m () ->
-  SharedResources m blk ->
-  m (ChainSyncResources m blk)
+  SharedResources m TestBlock ->
+  m (ChainSyncResources m TestBlock)
 makeChainSyncResources csrTickStarted SharedResources {srPeerId, srTracer, srBlockTree, srCurrentState} = do
   csrCurrentIntersection <- uncheckedNewTVarM $ AF.Point Origin
   let
@@ -239,4 +244,5 @@ makePeerSimulatorResources tracer blockTree peers = do
     pure (peerId, peerResources)
   psrCandidates <- uncheckedNewTVarM mempty
   psrHandles <- uncheckedNewTVarM mempty
-  pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources, psrHandles}
+  psrIdling <- uncheckedNewTVarM Set.empty
+  pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources, psrHandles, psrIdling}

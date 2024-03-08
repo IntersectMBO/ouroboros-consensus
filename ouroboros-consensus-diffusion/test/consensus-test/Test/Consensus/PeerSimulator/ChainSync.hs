@@ -18,7 +18,7 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
-import qualified Data.Set as Set
+import           Data.Set (Set)
 import           Network.TypedProtocol.Codec (AnyMessage)
 import           Ouroboros.Consensus.Block (Header, Point, SlotNo, WithOrigin)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
@@ -31,8 +31,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), STM, StrictTVar,
-                     uncheckedNewTVarM)
+                     IOLike, MonadCatch (try), STM, StrictTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
@@ -147,6 +146,7 @@ runChainSyncClient ::
   -- function will (via 'bracketChainSyncClient') register and de-register a
   -- TVar for the fragment of the peer.
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
+  StrictTVar m (Set PeerId) ->
   Channel m (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))) ->
   m ()
 runChainSyncClient
@@ -159,10 +159,8 @@ runChainSyncClient
   StateViewTracers {svtPeerSimulatorResultsTracer}
   varCandidates
   varHandles
+  varIdling
   channel = do
-    -- We don't need this shared Set yet. If we need it at some point,
-    -- it ought to be passed to `runChainSyncClient`.
-    varIdling <- uncheckedNewTVarM $ Set.empty
     bracketChainSyncClient
       nullTracer
       chainDbView
