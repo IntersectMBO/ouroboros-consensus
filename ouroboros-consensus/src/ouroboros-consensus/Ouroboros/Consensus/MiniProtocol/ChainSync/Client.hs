@@ -1272,6 +1272,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   atomically $ do
                     writeTVar varCandidate theirFrag'
                     setTheirTip theirTip
+                    case pointSlot rollBackPoint of
+                      Origin         -> pure () -- TODO
+                      NotOrigin slot -> setLatestSlot dynEnv slot
 
                   continueWithState kis' $
                       nextStep mkPipelineDecision n theirTip
