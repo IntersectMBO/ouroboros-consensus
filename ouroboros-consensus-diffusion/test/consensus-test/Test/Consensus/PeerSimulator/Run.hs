@@ -21,8 +21,8 @@ import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import           Ouroboros.Consensus.Genesis.Governor
-                     (reprocessLoEBlocksOnCandidateChange, updateLoEFragGenesis)
+import           Ouroboros.Consensus.Genesis.Governor (runLoEUpdaterOnChange,
+                     updateLoEFragGenesis)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
@@ -260,7 +260,9 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     resources <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
     let getCandidates = traverse readTVar =<< readTVar (psrCandidates resources)
         getHandles = readTVar (psrHandles resources)
-        updateLoEFrag = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) getCandidates getHandles
+        getLatestSlots = traverse CSClient.cschLatestSlot =<< getHandles
+    (updateLoEFrag, runLoEUpdaterBackground) <- runLoEUpdaterOnChange $
+      updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) getCandidates getHandles
     chainDb <- mkChainDb schedulerConfig tracer config registry updateLoEFrag
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = CSClient.defaultChainDbView chainDb
@@ -286,7 +288,8 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
           = pure nullTracer
     stateTracer <- mkStateTracer
     BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates
-    void $ forkLinkedThread registry "ChainSel trigger" (reprocessLoEBlocksOnCandidateChange chainDb getCandidates)
+    void $ forkLinkedThread registry "LoE updater background" $
+      runLoEUpdaterBackground chainDb getLatestSlots
     runScheduler
       (Tracer $ traceWith tracer . TraceSchedulerEvent)
       stateTracer
