@@ -195,10 +195,9 @@ chainSyncTimeouts t f =
               * log (1 - 0.999)
               / log (1 - ascVal f)
 
--- FIXME: Choose sensible values, maybe depending on SlotLength, Asc, etc.
 blockFetchTimeouts :: BlockFetchTimeout
 blockFetchTimeouts =
   BlockFetchTimeout
-    { busyTimeout = Just 10000,
-      streamingTimeout = Just 10000
+    { busyTimeout = Just 60,
+      streamingTimeout = Just 60
     }
