@@ -126,6 +126,11 @@ class POL pol => TestPOL (pol :: S.Pol) where showPol :: proxy pol -> String
 instance TestPOL S.Inverted             where showPol _pol = "Inverted"
 instance TestPOL S.NotInverted          where showPol _pol = "NotInverted"
 
+-- | Check that when @findIthZeroInV i bv@ yields 'JustFound'
+--
+-- 1. it yields the index of an inactive slot
+-- 2. there are exactly @i@ inactive slots in the preceding slots
+--
 prop_findIthZeroInV :: SomeFindTestSetup -> QC.Property
 prop_findIthZeroInV testSetup = case testSetup of
     SomeFindTestSetup FindTestSetup {
@@ -198,6 +203,13 @@ instance QC.Arbitrary FillInWindowSetup where
       ss <- QC.vectorOf szV QC.arbitrary
       pure $ FillInWindowSetup pol k szW qcGen (V.fromList ss)
 
+-- | Check that 'fillInWindow'
+--
+-- 1. does not decrease the count of active slots in the given window
+-- 2. returns exactly the amount of activated slots
+-- 3. never leaves less than the requested amount of slots in the given
+--    window
+--
 prop_fillInWindow :: FillInWindowSetup -> QC.Property
 prop_fillInWindow
         (FillInWindowSetup
