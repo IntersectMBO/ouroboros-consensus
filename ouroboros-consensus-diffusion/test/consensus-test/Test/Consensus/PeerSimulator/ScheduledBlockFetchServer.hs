@@ -33,8 +33,8 @@ data BlockFetch =
 -- | Resources used by a BlockFetch server mock.
 data ScheduledBlockFetchServer m a =
   ScheduledBlockFetchServer {
-    sbfsServer :: ScheduledServer m a,
-    sbfsHandler       :: ChainRange (Point TestBlock) -> a -> STM m (Maybe BlockFetch, [String])
+    sbfsServer  :: ScheduledServer m a,
+    sbfsHandler :: ChainRange (Point TestBlock) -> a -> STM m (Maybe BlockFetch, [String])
   }
 
 scheduledBlockFetchServer ::
