@@ -157,8 +157,14 @@ handlerBlockFetch ::
   forall m .
   IOLike m =>
   BlockTree TestBlock ->
+  -- ^ The tree of blocks in this scenario -- aka. the “universe”.
   ChainRange (Point TestBlock) ->
+  -- ^ A requested range of blocks. If the client behaves correctly, they
+  -- correspond to headers that have been sent before, and if the scheduled
+  -- ChainSync server behaves correctly, then they are all in the block tree.
   AdvertisedPoints ->
+  -- ^ The current advertised points (tip point, header point and block point).
+  -- They are in the block tree.
   STM m (Maybe BlockFetch, [String])
 handlerBlockFetch blockTree (ChainRange from to) AdvertisedPoints {header = HeaderPoint hp, block = BlockPoint bp} =
   runWriterT (serveFromBpFragment (AF.sliceRange bpChain from to))
