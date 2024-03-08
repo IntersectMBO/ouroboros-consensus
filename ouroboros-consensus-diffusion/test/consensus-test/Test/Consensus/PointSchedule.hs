@@ -597,12 +597,21 @@ newLongRangeAttack _ _ =
 -- | Encodes the different scheduling styles for use with quickcheck generators.
 data ScheduleType =
   Frequencies (Peers Int)
+  -- ^ A schedule where each peer serves their own chain. The frequency at which
+  -- they serve blocks is given as a map from peers to integers.
   |
   Banal
+  -- ^ A schedule where each peer serves their own chain, one header at a time.
+  -- This is similar to 'Frequencies' with all peers having frequency 1.
   |
   OnlyHonest
+  -- ^ A schedule with only an honest node serving the trunk of the tree
+  -- immediately in one tick.
   |
   NewLRA
+  -- ^ “New long-range attack”. Similar to @Frequencies (Peers 1 [10])@ but
+  -- relies on the 'SinglePeer' generator, and therefore contains
+  -- randomly-chosen delays between messages.
   deriving (Eq, Show)
 
 newtype GenesisWindow = GenesisWindow { getGenesisWindow :: Word64 }
