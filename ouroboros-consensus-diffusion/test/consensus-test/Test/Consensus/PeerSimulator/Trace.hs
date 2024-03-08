@@ -78,7 +78,6 @@ data TraceScheduledChainSyncServerEvent state blk
 
 data TraceScheduledBlockFetchServerEvent state blk
   = TraceHandlerEventBF (TraceScheduledServerHandlerEvent state blk)
-  | TraceSendingBlocks [blk]
   | TraceNoBlocks
   | TraceStartingBatch (AnchoredFragment blk)
   | TraceWaitingForRange (Point blk) (Point blk)
@@ -222,8 +221,6 @@ traceScheduledBlockFetchServerEventTestBlockWith ::
   m ()
 traceScheduledBlockFetchServerEventTestBlockWith tracer peerId = \case
     TraceHandlerEventBF traceEvent -> traceScheduledServerHandlerEventTestBlockWith tracer unit traceEvent
-    TraceSendingBlocks blocks ->
-      trace $ "  sending blocks: " ++ unwords (terseBlock <$> blocks)
     TraceNoBlocks ->
       trace "  no blocks available"
     TraceStartingBatch fragment ->
