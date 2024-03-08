@@ -29,7 +29,7 @@ import qualified Test.Util.QuickCheck as QC
 
 tests :: [TT.TestTree]
 tests = [
-    TT.testProperty "prop_findIthZeroInV" prop_findIthZeroInV,
+    TT.testProperty "prop_findIthEmptyInV" prop_findIthEmptyInV,
     TT.testProperty "prop_fillInWindow" prop_fillInWindow
   ]
 
@@ -131,8 +131,8 @@ instance TestPOL S.NotInverted          where showPol _pol = "NotInverted"
 -- 1. it yields the index of an inactive slot
 -- 2. there are exactly @i@ inactive slots in the preceding slots
 --
-prop_findIthZeroInV :: SomeFindTestSetup -> QC.Property
-prop_findIthZeroInV testSetup = case testSetup of
+prop_findIthEmptyInV :: SomeFindTestSetup -> QC.Property
+prop_findIthEmptyInV testSetup = case testSetup of
     SomeFindTestSetup FindTestSetup {
         testIndex
       ,
