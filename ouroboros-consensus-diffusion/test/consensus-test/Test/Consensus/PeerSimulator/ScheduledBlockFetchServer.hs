@@ -20,10 +20,14 @@ import           Test.Consensus.PeerSimulator.ScheduledServer
 import           Test.Consensus.PeerSimulator.Trace
 import           Test.Util.TestBlock (TestBlock)
 
+-- | Return values for the 'handlerBlockFetch'.
 data BlockFetch =
   StartBatch [TestBlock]
+  -- ^ As a response to the client request, we should send the blocks in the
+  -- given batch.
   |
   NoBlocks
+  -- ^ Negative response to the client's request for blocks.
   deriving (Eq, Show)
 
 -- | Resources used by a BlockFetch server mock.
