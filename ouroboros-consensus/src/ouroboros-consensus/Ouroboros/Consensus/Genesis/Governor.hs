@@ -14,6 +14,7 @@ module Ouroboros.Consensus.Genesis.Governor (
   , TraceGDDEvent (..)
   , densityDisconnect
   , reprocessLoEBlocksOnCandidateChange
+  , runLoEUpdaterOnChange
   , sharedCandidatePrefix
   , updateLoEFragGenesis
   , updateLoEFragStall
@@ -27,6 +28,7 @@ import           Data.Foldable (for_, toList)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
+import           Data.Void
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
@@ -42,12 +44,11 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandle (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB,
-                     UpdateLoEFrag (UpdateLoEFrag), reprocessLoEAsync)
+                     UpdateLoEFrag (..), reprocessLoEAsync)
+import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util (eitherToMaybe, whenJust)
 import           Ouroboros.Consensus.Util.AnchoredFragment (stripCommonPrefix)
-import           Ouroboros.Consensus.Util.IOLike (IOLike)
-import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
-                     (MonadSTM (STM, atomically))
+import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -126,6 +127,30 @@ reprocessLoEBlocksOnCandidateChange chainDb getCandidates =
       atomically (blockUntilChanged (Map.map AF.headPoint) prev getCandidates) >>= \ (_, newTips) -> do
         reprocessLoEAsync chainDb
         spin newTips
+
+runLoEUpdaterOnChange ::
+  (Monoid a, Eq a, IOLike m, LedgerSupportsProtocol blk) =>
+  UpdateLoEFrag m blk ->
+  m ( UpdateLoEFrag m blk
+    , ChainDB m blk ->
+      STM m a -> -- Re-run the LoE updater whenever this changes
+      m Void
+    )
+runLoEUpdaterOnChange loeUpdater = do
+    varLoEFrag <- newTVarIO $ AF.Empty AF.AnchorGenesis
+    let newUpdateLoEFrag = UpdateLoEFrag $ \_ _ -> readTVarIO varLoEFrag
+    pure (newUpdateLoEFrag, spin varLoEFrag mempty)
+  where
+    spin varLoEFrag oldTrigger chainDb getTrigger = do
+      (newTrigger, curChain, curLedger) <- atomically $ do
+        (_, newTrigger) <- blockUntilChanged id oldTrigger getTrigger
+        curChain <- ChainDB.getCurrentChain chainDb
+        curLedger <- ChainDB.getCurrentLedger chainDb
+        pure (newTrigger, curChain, curLedger)
+      loeFrag <- updateLoEFrag loeUpdater curChain curLedger
+      atomically $ writeTVar varLoEFrag loeFrag
+      reprocessLoEAsync chainDb
+      spin varLoEFrag newTrigger chainDb getTrigger
 
 data DensityBounds blk =
   DensityBounds {
