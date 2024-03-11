@@ -55,6 +55,7 @@ import qualified Cardano.Ledger.Conway.Governance as CG
 import qualified Cardano.Ledger.Conway.Rules as SL
                      (ConwayLedgerPredFailure (..))
 import qualified Cardano.Ledger.Conway.Translation as Conway
+import qualified Cardano.Ledger.Conway.Rules as Conway
 import           Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Crypto (StandardCrypto)
 import           Cardano.Ledger.Keys (DSignable, Hash)
@@ -356,7 +357,7 @@ instance SupportsTwoPhaseValidation (ConwayEra c) where
               ( SL.UtxoFailure
                   ( Babbage.AlonzoInBabbageUtxoPredFailure
                       ( Alonzo.UtxosFailure
-                          ( Alonzo.ValidationTagMismatch
+                          ( Conway.ValidationTagMismatch
                               (Alonzo.IsValid _claimedFlag)
                               _validationErrs
                             )
