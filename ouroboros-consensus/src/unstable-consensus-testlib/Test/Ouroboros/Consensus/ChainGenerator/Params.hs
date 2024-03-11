@@ -99,6 +99,6 @@ genAsc = ascFromBits <$> QC.choose (1 :: Word8, maxBound - 1)
 genKSD :: QC.Gen (Kcp, Scg, Delta)
 genKSD = sized1 $ \sz -> do
     d <- QC.choose (0, div sz 4)
-    k <- QC.choose (1, 2 * sz)
+    k <- (+ 2) <$> QC.choose (0, 2 * sz)
     s <- (+ k) <$> QC.choose (0, 3 * sz)   -- ensures @k / s <= 1@
     pure (Kcp k, Scg s, Delta d)

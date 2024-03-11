@@ -1,16 +1,32 @@
 {-# LANGUAGE LambdaCase         #-}
 {-# LANGUAGE NamedFieldPuns     #-}
 {-# LANGUAGE NumericUnderscores #-}
+{-# LANGUAGE TypeFamilies       #-}
+{-# LANGUAGE TypeOperators      #-}
 
 -- | Helpers for tracing used by the peer simulator.
 module Test.Consensus.PeerSimulator.Trace (
     mkCdbTracer
   , mkChainSyncClientTracer
+  , terseBlock
+  , terseFrag
+  , terseFragH
+  , terseHeader
+  , tersePoint
+  , traceLinesWith
   , traceUnitWith
   ) where
 
+import           Cardano.Slotting.Block (BlockNo (BlockNo))
+import           Cardano.Slotting.Slot (SlotNo (SlotNo))
 import           Control.Tracer (Tracer (Tracer), traceWith)
+import           Data.Foldable (traverse_)
+import           Data.List (intercalate)
+import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.Time.Clock (diffTimeToPicoseconds)
+import           Ouroboros.Consensus.Block (Header,
+                     Point (BlockPoint, GenesisPoint), blockHash, blockNo,
+                     blockSlot, getHeader)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
@@ -19,7 +35,12 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), getMonotonicTime)
-import           Test.Util.TestBlock (TestBlock)
+import           Ouroboros.Network.AnchoredFragment
+                     (Anchor (Anchor, AnchorGenesis), AnchoredSeq (Empty),
+                     anchor, mapAnchoredFragment, toOldestFirst)
+import           Test.Consensus.PointSchedule (TestFrag, TestFragH)
+import           Test.Util.TestBlock (Header (TestHeader), TestBlock,
+                     TestHash (TestHash), unTestHash)
 import           Text.Printf (printf)
 
 mkCdbTracer ::
@@ -70,3 +91,51 @@ traceUnitWith tracer unit msg = do
           seconds = (ps `div` 1_000_000_000_000) `rem` 60
           minutes = (ps `div` 1_000_000_000_000) `quot` 60
        in printf "%02d:%02d.%03d" minutes seconds milliseconds
+
+traceLinesWith ::
+  Applicative m =>
+  Tracer m String ->
+  [String] ->
+  m ()
+traceLinesWith = traverse_ . traceWith
+
+terseSlotBlock :: SlotNo -> BlockNo -> String
+terseSlotBlock (SlotNo slot) (BlockNo block) =
+  show slot ++ "-" ++ show block
+
+terseSlotBlockFork :: SlotNo -> BlockNo -> TestHash -> String
+terseSlotBlockFork sno bno (TestHash hash) =
+  terseSlotBlock sno bno ++ forkNoSuffix hash
+  where
+    forkNoSuffix (forkNo :| _) | forkNo == 0 = ""
+                               | otherwise = "[" ++ show forkNo ++ "]"
+
+terseBlock :: TestBlock -> String
+terseBlock block =
+  terseSlotBlockFork (blockSlot block) (blockNo block) (blockHash block)
+
+terseHeader :: Header TestBlock -> String
+terseHeader (TestHeader block) = terseBlock block
+
+tersePoint :: Point TestBlock -> String
+tersePoint = \case
+  BlockPoint slot hash -> terseSlotBlockFork slot (BlockNo (fromIntegral (length (unTestHash hash)))) hash
+  GenesisPoint -> "G"
+
+terseFragH :: TestFragH -> String
+terseFragH frag =
+  renderAnchor ++ renderBlocks
+  where
+    renderBlocks = case frag of
+      Empty _ -> ""
+      _       -> " ⚓ " ++ intercalate " " (terseHeader <$> toOldestFirst frag)
+    renderAnchor = case anchor frag of
+      AnchorGenesis -> "G"
+      Anchor slot hash block -> terseSlotBlock slot block ++ renderAnchorHash hash
+    renderAnchorHash hash
+      | all (== 0) (unTestHash hash) = ""
+      | otherwise = condense hash
+
+terseFrag :: TestFrag -> String
+terseFrag =
+  terseFragH . mapAnchoredFragment getHeader
