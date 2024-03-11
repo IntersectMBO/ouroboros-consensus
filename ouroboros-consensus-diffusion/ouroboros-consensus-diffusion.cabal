@@ -245,9 +245,12 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.Tests.Timeouts
     Test.Consensus.PeerSimulator.Trace
     Test.Consensus.PointSchedule
+    Test.Consensus.PointSchedule.Peers
+    Test.Consensus.PointSchedule.Shrinking
     Test.Consensus.PointSchedule.SinglePeer
     Test.Consensus.PointSchedule.SinglePeer.Indices
     Test.Consensus.PointSchedule.Tests
+    Test.Util.TersePrinting
 
   build-depends:
     , base

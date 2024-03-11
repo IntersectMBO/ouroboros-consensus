@@ -1,4 +1,3 @@
-{-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE LambdaCase            #-}
@@ -32,10 +31,7 @@ module Test.Consensus.PointSchedule (
   , GenesisWindow (..)
   , HeaderPoint (..)
   , NodeState (..)
-  , Peer (..)
-  , PeerId (..)
   , PeerSchedule
-  , Peers (..)
   , PointSchedule (..)
   , PointScheduleConfig (..)
   , TestFrag
@@ -44,32 +40,31 @@ module Test.Consensus.PointSchedule (
   , TipPoint (..)
   , balanced
   , banalStates
+  , blockPointBlock
   , defaultPointScheduleConfig
   , fromSchedulePoints
   , genesisAdvertisedPoints
+  , headerPointBlock
   , longRangeAttack
-  , mkPeers
-  , peersOnlyHonest
+  , peerSchedulesBlocks
+  , pointScheduleBlocks
   , pointSchedulePeers
   , prettyGenesisTest
   , prettyPointSchedule
   , stToGen
+  , tipPointBlock
   , uniformPoints
   ) where
 
 import           Control.Monad.ST (ST)
 import           Data.Foldable (toList)
-import           Data.Hashable (Hashable)
 import           Data.List (mapAccumL, partition, scanl', transpose)
-import           Data.List.NonEmpty (NonEmpty ((:|)))
+import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NonEmpty
-import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, listToMaybe)
-import           Data.String (IsString (fromString))
+import           Data.Maybe (catMaybes, fromMaybe, listToMaybe)
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
-import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..), getHeader)
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
@@ -77,24 +72,28 @@ import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)))
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip (Tip, TipGenesis), blockNo,
-                     blockSlot, tipFromHeader)
+import           Ouroboros.Network.Block (Tip (..), tipFromHeader)
 import           Ouroboros.Network.Point (WithOrigin (At))
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      prettyBlockTree)
+import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..),
+                     Peers (..), getPeerIds, mkPeers, peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
-                     peerScheduleFromTipPoints)
+                     peerScheduleFromTipPoints, schedulePointToBlock)
 import           Test.Consensus.PointSchedule.SinglePeer.Indices
                      (uniformRMDiffTime)
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
                      Delta (Delta), ascVal)
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
-import           Test.Util.TestBlock (Header (TestHeader), TestBlock)
+import           Test.Util.TersePrinting (terseBlock, terseHeader, terseTip,
+                     terseWithOrigin)
+import           Test.Util.TestBlock (Header, TestBlock, Validity (Valid),
+                     testHeader, unsafeTestBlockWithPayload)
 import           Text.Printf (printf)
 
 ----------------------------------------------------------------------------------------------------
@@ -112,9 +111,13 @@ newtype TipPoint =
   deriving (Eq, Show)
 
 instance Condense TipPoint where
-  condense (TipPoint TipGenesis) = "G"
-  condense (TipPoint (Tip slot _ bno)) =
-      "B:" <> condense bno <> ",S:" <> condense slot
+  condense (TipPoint tip) = terseTip tip
+
+-- | Convert a 'TipPoint' to a 'TestBlock'.
+tipPointBlock :: TipPoint -> Maybe TestBlock
+tipPointBlock (TipPoint TipGenesis) = Nothing
+tipPointBlock (TipPoint (Tip slot hash _)) =
+  Just $ unsafeTestBlockWithPayload hash slot Valid ()
 
 -- | The latest header that should be sent to the client by the ChainSync server
 -- in a tick.
@@ -123,11 +126,12 @@ newtype HeaderPoint =
   deriving (Eq, Show)
 
 instance Condense HeaderPoint where
-  condense = \case
-    HeaderPoint (At (TestHeader b)) ->
-      "B:" <> condense (blockNo b) <> ",S:" <> condense (blockSlot b)
-    HeaderPoint Origin ->
-      "G"
+  condense (HeaderPoint header) = terseWithOrigin terseHeader header
+
+-- | Convert a 'HeaderPoint' to a 'TestBlock'.
+headerPointBlock :: HeaderPoint -> Maybe TestBlock
+headerPointBlock (HeaderPoint Origin)      = Nothing
+headerPointBlock (HeaderPoint (At header)) = Just $ testHeader header
 
 -- | The latest block that should be sent to the client by the BlockFetch server
 -- in a tick.
@@ -136,11 +140,12 @@ newtype BlockPoint =
   deriving (Eq, Show)
 
 instance Condense BlockPoint where
-  condense = \case
-    BlockPoint (At b) ->
-      "B:" <> condense (blockNo b) <> ",S:" <> condense (blockSlot b)
-    BlockPoint Origin ->
-      "G"
+  condense (BlockPoint block) = terseWithOrigin terseBlock block
+
+-- | Convert a 'BlockPoint' to a 'Point'.
+blockPointBlock :: BlockPoint -> Maybe TestBlock
+blockPointBlock (BlockPoint Origin)     = Nothing
+blockPointBlock (BlockPoint (At block)) = Just block
 
 -- | The set of parameters that define the state that a peer should reach when it receives control
 -- by the scheduler in a single tick.
@@ -189,62 +194,6 @@ instance Condense NodeState where
     NodeOnline points -> condense points
     NodeOffline -> "*chrrrk* <signal lost>"
 
--- | Identifier used to index maps and specify which peer is active during a tick.
-data PeerId =
-  HonestPeer
-  |
-  PeerId String
-  deriving (Eq, Generic, Show, Ord)
-
-instance IsString PeerId where
-  fromString "honest" = HonestPeer
-  fromString i        = PeerId i
-
-instance Condense PeerId where
-  condense = \case
-    HonestPeer -> "honest"
-    PeerId name -> name
-
-instance Hashable PeerId
-
--- | General-purpose functor associated with a peer.
-data Peer a =
-  Peer {
-    name  :: PeerId,
-    value :: a
-  }
-  deriving (Eq, Show)
-
-instance Functor Peer where
-  fmap f Peer {name, value} = Peer {name, value = f value}
-
-instance Foldable Peer where
-  foldr step z (Peer _ a) = step a z
-
-instance Traversable Peer where
-  sequenceA (Peer name fa) =
-    Peer name <$> fa
-
-instance Condense a => Condense (Peer a) where
-  condense Peer {name, value} = condense name ++ ": " ++ condense value
-
--- | General-purpose functor for a set of peers.
---
--- REVIEW: There is a duplicate entry for the honest peer, here. We should
--- probably either have only the 'Map' or have the keys of the map be 'String'?
---
--- Alternatively, we could just have 'newtype PeerId = PeerId String' with an
--- alias for 'HonestPeer = PeerId "honest"'?
-data Peers a =
-  Peers {
-    honest :: Peer a,
-    others :: Map PeerId (Peer a)
-  }
-  deriving (Eq, Show)
-
-instance Functor Peers where
-  fmap f Peers {honest, others} = Peers {honest = f <$> honest, others = fmap f <$> others}
-
 -- | A tick is an entry in a 'PointSchedule', containing the peer that is
 -- going to change state.
 data Tick =
@@ -269,14 +218,6 @@ tickDefault PointScheduleConfig {pscTickDuration} number active =
 tickDefaults :: PointScheduleConfig -> [Peer NodeState] -> [Tick]
 tickDefaults psc states =
   uncurry (tickDefault psc) <$> zip [0 ..] states
-
--- | A set of peers with only one honest peer carrying the given value.
-peersOnlyHonest :: a -> Peers a
-peersOnlyHonest value =
-  Peers {
-    honest = Peer {name = HonestPeer, value},
-    others = Map.empty
-    }
 
 -- | A point schedule is a series of states for a set of peers.
 --
@@ -316,10 +257,6 @@ defaultPointScheduleConfig =
 -- Accessors
 ----------------------------------------------------------------------------------------------------
 
--- | Extract all 'PeerId's.
-getPeerIds :: Peers a -> NonEmpty PeerId
-getPeerIds peers = HonestPeer :| Map.keys (others peers)
-
 -- | Get the names of the peers involved in this point schedule.
 -- This is the main motivation for requiring the point schedule to be
 -- nonempty, so we don't have to carry around another value for the
@@ -327,21 +264,16 @@ getPeerIds peers = HonestPeer :| Map.keys (others peers)
 pointSchedulePeers :: PointSchedule -> NonEmpty PeerId
 pointSchedulePeers = peerIds
 
--- | Convert 'Peers' to a list of 'Peer'.
-peersList :: Peers a -> NonEmpty (Peer a)
-peersList Peers {honest, others} =
-  honest :| Map.elems others
-
--- | Construct 'Peers' from values, adding adversary names based on the default schema.
--- A single adversary gets the ID @adversary@, multiple get enumerated as @adversary N@.
-mkPeers :: a -> [a] -> Peers a
-mkPeers h as =
-  Peers (Peer HonestPeer h) (Map.fromList (mkPeer <$> advs as))
-  where
-    mkPeer (pid, a) = (pid, Peer pid a)
-    advs [a] = [("adversary", a)]
-    advs _   = zip enumAdvs as
-    enumAdvs = (\ n -> PeerId ("adversary " ++ show n)) <$> [1 :: Int ..]
+-- | List of all blocks appearing in the schedule as tip point, header point or
+-- block point.
+pointScheduleBlocks :: PointSchedule -> [TestBlock]
+pointScheduleBlocks PointSchedule{ticks} =
+  catMaybes $ concatMap
+    (\Tick{active=Peer{value}} -> case value of
+         NodeOffline -> []
+         NodeOnline (AdvertisedPoints{tip, header, block}) ->
+           [tipPointBlock tip, headerPointBlock header, blockPointBlock block])
+    ticks
 
 ----------------------------------------------------------------------------------------------------
 -- Conversion to 'PointSchedule'
@@ -396,6 +328,14 @@ fromSchedulePoints peers = do
     durations = snd (mapAccumL (\ prev start -> (start, start - prev)) 0 (drop 1 starts)) ++ [0.1]
 
     (starts, states) = unzip $ foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
+
+-- | List of all blocks appearing in the schedule.
+peerScheduleBlocks :: PeerSchedule -> [TestBlock]
+peerScheduleBlocks = map (schedulePointToBlock . snd)
+
+-- | List of all blocks appearing in the schedules.
+peerSchedulesBlocks :: Peers PeerSchedule -> [TestBlock]
+peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList
 
 ----------------------------------------------------------------------------------------------------
 -- Schedule generators

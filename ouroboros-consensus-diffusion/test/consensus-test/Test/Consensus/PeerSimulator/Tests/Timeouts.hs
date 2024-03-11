@@ -1,9 +1,5 @@
-{-# LANGUAGE LambdaCase     #-}
-{-# LANGUAGE NamedFieldPuns #-}
-
 module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
 
-import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Data.Maybe (fromJust)
 import           Ouroboros.Consensus.Block (getHeader)
@@ -21,7 +17,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import qualified Test.QuickCheck as QC
+import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..))
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -31,23 +27,26 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 tests :: TestTree
 tests = adjustQuickCheckTests (`div` 10) $ testProperty "timeouts" prop_timeouts
 
-prop_timeouts :: QC.Gen QC.Property
+prop_timeouts :: Gen Property
 prop_timeouts = do
   genesisTest <- genChains (pure 0)
 
   -- Use higher tick duration to avoid the test taking really long
-  let scSchedule = PointScheduleConfig {pscTickDuration = 1}
+  let scSchedule' = PointScheduleConfig {pscTickDuration = 1}
 
-      schedulerConfig = defaultSchedulerConfig scSchedule (gtHonestAsc genesisTest)
+      schedulerConfig = defaultSchedulerConfig scSchedule' (gtHonestAsc genesisTest)
 
       schedule =
         dullSchedule
-          scSchedule
+          scSchedule'
           (fromJust $ mustReplyTimeout (scChainSyncTimeouts schedulerConfig))
           (btTrunk $ gtBlockTree genesisTest)
 
-  pure $ runSimOrThrow $
-    runTest schedulerConfig genesisTest schedule $ \stateView ->
+  -- NOTE: Because the scheduler configuration depends on the generated
+  -- 'GenesisTest' itself, we cannot rely on helpers such as
+  -- 'forAllGenesisTest'.
+  pure $
+    runGenesisTest' schedulerConfig genesisTest schedule $ \stateView ->
       case svChainSyncExceptions stateView of
         [] ->
           counterexample ("result: " ++ condense (svSelectedChain stateView)) False

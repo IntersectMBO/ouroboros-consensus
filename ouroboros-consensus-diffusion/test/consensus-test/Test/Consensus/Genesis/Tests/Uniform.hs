@@ -2,11 +2,8 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE TypeOperators       #-}
 
 -- | Peer simulator tests based on randomly generated schedules. They share the
 -- same property stating that the immutable tip should be on the trunk of the
@@ -17,7 +14,6 @@ module Test.Consensus.Genesis.Tests.Uniform (tests) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.IOSim (runSimOrThrow)
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -28,13 +24,21 @@ import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockNo, unBlockNo)
-import           Test.Consensus.BlockTree (BlockTree (..))
+import           Ouroboros.Network.Protocol.ChainSync.Codec
+                     (ChainSyncTimeout (..))
+import           Ouroboros.Network.Protocol.Limits (shortWait)
+import           Test.Consensus.BlockTree (BlockTree (..), btbSuffix)
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (scTrace),
-                     noTimeoutsSchedulerConfig, scTraceState)
+import           Test.Consensus.Network.Driver.Limits.Extras
+                     (chainSyncNoTimeouts)
+import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
+                     noTimeoutsSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
+                     value)
+import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (SchedulePoint (ScheduleBlockPoint, ScheduleTipPoint))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
@@ -57,17 +61,18 @@ tests =
     -- See Note [Leashing attacks]
     testProperty "stalling leashing attack" prop_leashingAttackStalling,
     testProperty "time limited leashing attack" prop_leashingAttackTimeLimited,
-  adjustQuickCheckTests (`div` 10) $
-    testProperty "serve adversarial branches" prop_serveAdversarialBranches
+    adjustQuickCheckTests (`div` 10) $
+    testProperty "serve adversarial branches" prop_serveAdversarialBranches,
+    adjustQuickCheckTests (`div` 100) $
+    testProperty "the LoE stalls the chain, but the immutable tip is honest" prop_loeStalling
     ]
 
-makeProperty ::
+theProperty ::
   GenesisTest ->
   Peers PeerSchedule ->
   StateView ->
-  [PeerId] ->
   Property
-makeProperty genesisTest schedule StateView {svSelectedChain} killed =
+theProperty genesisTest schedule stateView@StateView{svSelectedChain} =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
   classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
   label disconnected $
@@ -77,7 +82,7 @@ makeProperty genesisTest schedule StateView {svSelectedChain} killed =
   -- to the governor that the density is too low.
   longerThanGenesisWindow ==>
   conjoin [
-    counterexample "The honest peer was disconnected" (not (HonestPeer `elem` killed)),
+    counterexample "The honest peer was disconnected" (HonestPeer `notElem` killed),
     counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
     property (isHonest immutableTipHash),
     immutableTipIsRecent
@@ -107,6 +112,8 @@ makeProperty genesisTest schedule StateView {svSelectedChain} killed =
     disconnected =
       printf "disconnected %.1f%% of adversaries" disconnectedPercent
 
+    killed = chainSyncKilled stateView
+
     disconnectedPercent :: Double
     disconnectedPercent =
       100 * fromIntegral (length killed) / fromIntegral advCount
@@ -127,20 +134,20 @@ fromBlockPoint _                          = Nothing
 
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.
-prop_serveAdversarialBranches :: QC.Gen QC.Property
-prop_serveAdversarialBranches = QC.expectFailure <$> do
-  genesisTest <- genChains (QC.choose (1, 4))
-  schedulePoints <- genUniformSchedulePoints genesisTest
-  pure $
-    runSimOrThrow $
-    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    exceptionCounterexample $
-    makeProperty genesisTest schedulePoints
+prop_serveAdversarialBranches :: Property
+prop_serveAdversarialBranches =
+  expectFailure $ forAllGenesisTest'
 
-  where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig) {scTraceState = False, scTrace = False}
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- genUniformSchedulePoints gt
+        pure (gt, ps))
 
-    scheduleConfig = defaultPointScheduleConfig
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+       {scTraceState = False, scTrace = False})
+
+    shrinkPeerSchedules
+
+    theProperty
 
 genUniformSchedulePoints :: GenesisTest -> QC.Gen (Peers PeerSchedule)
 genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
@@ -171,22 +178,22 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 --
 -- This test is expected to fail because we don't test a genesis implementation
 -- yet.
-prop_leashingAttackStalling :: QC.Gen QC.Property
-prop_leashingAttackStalling = QC.expectFailure <$> do
-  genesisTest <- genChains (QC.choose (1, 4))
-  schedulePoints <- genLeashingSchedule genesisTest
-  pure $
-    runSimOrThrow $
-    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    exceptionCounterexample $
-    makeProperty genesisTest schedulePoints
+prop_leashingAttackStalling :: Property
+prop_leashingAttackStalling =
+  expectFailure $ forAllGenesisTest'
+
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- genLeashingSchedule gt
+        pure (gt, ps))
+
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+      {scTrace = False})
+
+    shrinkPeerSchedules
+
+    theProperty
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
-      { scTrace = False }
-
-    scheduleConfig = defaultPointScheduleConfig
-
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
@@ -218,22 +225,22 @@ prop_leashingAttackStalling = QC.expectFailure <$> do
 -- yet.
 --
 -- See Note [Leashing attacks]
-prop_leashingAttackTimeLimited :: QC.Gen QC.Property
-prop_leashingAttackTimeLimited = QC.expectFailure <$> do
-  genesisTest <- genChains (QC.choose (1, 4))
-  schedulePoints <- genTimeLimitedSchedule genesisTest
-  pure $
-    runSimOrThrow $
-    runTest schedulerConfig genesisTest (fromSchedulePoints schedulePoints) $
-    exceptionCounterexample $
-    makeProperty genesisTest schedulePoints
+prop_leashingAttackTimeLimited :: Property
+prop_leashingAttackTimeLimited =
+  expectFailure $ forAllGenesisTest'
+
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- genTimeLimitedSchedule gt
+        pure (gt, ps))
+
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+      {scTrace = False})
+
+    shrinkPeerSchedules
+
+    theProperty
 
   where
-    schedulerConfig = (noTimeoutsSchedulerConfig scheduleConfig)
-      { scTrace = False }
-
-    scheduleConfig = defaultPointScheduleConfig
-
     -- | A schedule which doesn't run past the last event of the honest peer
     genTimeLimitedSchedule :: GenesisTest -> QC.Gen (Peers PeerSchedule)
     genTimeLimitedSchedule genesisTest = do
@@ -280,3 +287,45 @@ headCallStack :: HasCallStack => [a] -> a
 headCallStack = \case
   x:_ -> x
   _   -> error "headCallStack: empty list"
+
+-- | Test that enabling the LoE using the updater that sets the LoE fragment to
+-- the shared prefix (as used by the GDDG) causes the selection to remain at
+-- the first fork intersection (keeping the immutable tip honest).
+--
+-- This is pretty slow since it relies on timeouts to terminate the test.
+prop_loeStalling :: Property
+prop_loeStalling =
+  forAllGenesisTest'
+
+    (do gt <- genChains (QC.choose (1, 4))
+        ps <- genUniformSchedulePoints gt
+        pure (gt, ps))
+
+    ((noTimeoutsSchedulerConfig defaultPointScheduleConfig) {
+      scTrace = False,
+      scEnableLoE = True,
+      scChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}
+    })
+
+    (\_ _ _ -> [])
+
+    prop
+  where
+    prop GenesisTest {gtBlockTree = BlockTree {btTrunk, btBranches}} _ StateView{svSelectedChain} =
+      classify (any (== selectionTip) allTips) "The selection is at a branch tip" $
+      classify (any anchorIsImmutableTip suffixes) "The immutable tip is at a fork intersection" $
+      property (isHonest immutableTipHash)
+      where
+        anchorIsImmutableTip branch = simpleHash (AF.anchorToHash (AF.anchor branch)) == immutableTipHash
+
+        isHonest = all (0 ==)
+
+        immutableTipHash = simpleHash (AF.anchorToHash immutableTip)
+
+        immutableTip = AF.anchor svSelectedChain
+
+        selectionTip = simpleHash (AF.headHash svSelectedChain)
+
+        allTips = simpleHash . AF.headHash <$> (btTrunk : suffixes)
+
+        suffixes = btbSuffix <$> btBranches
