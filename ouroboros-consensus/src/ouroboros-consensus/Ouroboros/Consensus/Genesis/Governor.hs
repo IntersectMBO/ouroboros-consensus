@@ -137,6 +137,24 @@ data DensityBounds blk =
     lastSlot        :: Either SlotNo SlotNo
   }
 
+-- | @densityDisconnect cfg immutableLedgerSt candidateSuffixes theirTips loeFrag@
+-- yields the list of peers which are known to lose the density comparison with
+-- any other peer, when looking at the genesis window after @loeFrag@.
+--
+-- The peers are taken from the keys of @candidateSuffixes@.
+--
+-- @candidateSuffixes@ tells for every peer what is the fragment that the peer
+-- proposes to use after @loeFrag@.
+--
+-- @theirTips@ tells for every peer what is the last header that the peer is
+-- claiming to have.
+--
+-- @latestSlots@ tells for every peer which is the slot of the last header that
+-- it sent.
+--
+-- @loeFrag@ is the fragment from the immutable tip to the first intersection
+-- with a candidate fragment.
+--
 densityDisconnect ::
      ( Ord peer
      , LedgerSupportsProtocol blk
