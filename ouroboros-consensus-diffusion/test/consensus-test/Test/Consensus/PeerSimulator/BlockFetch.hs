@@ -99,7 +99,16 @@ startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates = do
         -- Values taken from
         -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
         blockFetchCfg = BlockFetchConfiguration
-          { bfcMaxConcurrencyBulkSync = 1
+          { -- We set a higher value here to allow downloading blocks from all
+            -- peers.
+            --
+            -- If the value is too low, block downloads from a peer may prevent
+            -- blocks from being downloaded from other peers. This can be
+            -- problematic, since the batch download of a simulated BlockFetch
+            -- server can last serveral ticks if the block pointer is not
+            -- advanced to allow completion of the batch.
+            --
+            bfcMaxConcurrencyBulkSync = 50
           , bfcMaxConcurrencyDeadline = 2
           , bfcMaxRequestsInflight = 10
           , bfcDecisionLoopInterval = 0
