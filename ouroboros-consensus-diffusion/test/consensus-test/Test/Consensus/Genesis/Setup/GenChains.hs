@@ -66,7 +66,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
     let H.HonestRecipe kcp scg delta _len = testRecipeH
 
     (seedPrefix :: QCGen) <- QC.arbitrary
-    let arPrefix = genPrefixBlockCount seedPrefix arHonest
+    let arPrefix = genPrefixBlockCount kcp seedPrefix arHonest
 
     let testRecipeA = A.AdversarialRecipe {
       A.arPrefix,
@@ -81,6 +81,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
         A.NoSuchAdversarialBlock -> pure Nothing
         A.NoSuchCompetitor       -> error $ "impossible! " <> show e
         A.NoSuchIntersection     -> error $ "impossible! " <> show e
+        A.KcpIs1                 -> error $ "impossible! " <> show e
 
       Right (A.SomeCheckedAdversarialRecipe _ testRecipeA'') -> do
         let Count prefixCount = arPrefix
@@ -97,8 +98,8 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
 --     trunk: O─────1──2──3──4─────5──6──7
 --                     │           ╰─────6
 --                     ╰─────3──4─────5
-genChains :: Word -> QC.Gen GenesisTest
-genChains numForks = do
+genChains :: QC.Gen Word -> QC.Gen GenesisTest
+genChains genNumForks = do
   (asc, honestRecipe, someHonestChainSchema) <- genHonestChainSchema
 
   H.SomeHonestChainSchema _ _ honestChainSchema <- pure someHonestChainSchema
@@ -107,13 +108,15 @@ genChains numForks = do
       -- blocks for the good chain in reversed order
       goodBlocks = mkTestBlocks [] slotsH 0
       slotsH = Vector.toList (getVector vH)
-      HonestRecipe (Kcp kcp) (Scg scg) _delta _len = honestRecipe
+      HonestRecipe (Kcp kcp) (Scg scg) delta _len = honestRecipe
 
+  numForks <- genNumForks
   alternativeChainSchemas <- replicateM (fromIntegral numForks) (genAlternativeChainSchema (honestRecipe, honestChainSchema))
   pure $ GenesisTest {
     gtHonestAsc = asc,
     gtSecurityParam = SecurityParam (fromIntegral kcp),
     gtGenesisWindow = GenesisWindow (fromIntegral scg),
+    gtDelay = delta,
     gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas
     }
 
