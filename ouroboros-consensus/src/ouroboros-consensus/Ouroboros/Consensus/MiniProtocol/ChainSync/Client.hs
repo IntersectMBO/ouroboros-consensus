@@ -214,10 +214,13 @@ bracketChainSyncClient ::
  -> NodeToNodeVersion
  -> ChainSyncLoPBucketConfig
  -> (     StrictTVar m (AnchoredFragment (Header blk))
+          -- ^ Variable holding the current fragment
        -> (m (), m ())
        -> (m (), m (), m ())
        -> (Their (Tip blk) -> STM m ())
+          -- ^ callback to set the last announced tip
        -> (SlotNo -> STM m ())
+          -- ^ callback to set the slot of the last received header
        -> m a
     )
  -> m a
