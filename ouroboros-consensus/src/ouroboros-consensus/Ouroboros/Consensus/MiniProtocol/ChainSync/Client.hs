@@ -179,8 +179,11 @@ newtype Our a = Our { unOur :: a }
   deriving newtype (Show, NoThunks)
 
 data ChainSyncClientHandle m blk = ChainSyncClientHandle {
+    -- | Disconnects from the peer when the GDD considers it adversarial
     cschGDDKill    :: !(m ())
+    -- | Latest tip announced by the remote peer
   , cschTheirTip   :: !(STM m (Maybe (Tip blk)))
+    -- | Slot of the last received header
   , cschLatestSlot :: !(STM m (WithOrigin SlotNo))
   }
   deriving stock (Generic)
@@ -211,10 +214,13 @@ bracketChainSyncClient ::
  -> NodeToNodeVersion
  -> ChainSyncLoPBucketConfig
  -> (     StrictTVar m (AnchoredFragment (Header blk))
+          -- ^ Variable holding the current fragment
        -> (m (), m ())
        -> (m (), m (), m ())
        -> (Their (Tip blk) -> STM m ())
+          -- ^ callback to set the last announced tip
        -> (WithOrigin SlotNo -> STM m ())
+          -- ^ callback to set the slot of the last received header
        -> m a
     )
  -> m a
@@ -1075,16 +1081,19 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     n
                     candTipBlockNo
                     theirTipBlockNo
+            onMsgAwaitReply =
+              startIdling >>
+              pauseLoPBucket
         in
         case (n, decision) of
           (Zero, (Request, mkPipelineDecision')) ->
               SendMsgRequestNext
-                  (startIdling >> pauseLoPBucket)   -- on MsgAwaitReply
+                  onMsgAwaitReply
                   (handleNext kis mkPipelineDecision' Zero)
 
           (_, (Pipeline, mkPipelineDecision')) ->
               SendMsgRequestNextPipelined
-                (startIdling >> pauseLoPBucket)   -- on MsgAwaitReply
+                onMsgAwaitReply
             $ requestNext
                   kis
                   mkPipelineDecision'
@@ -1097,7 +1106,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   (   Just
                     $ pure
                     $ SendMsgRequestNextPipelined
-                        (startIdling >> pauseLoPBucket)   -- on MsgAwaitReply
+                        onMsgAwaitReply
                     $ requestNext
                           kis
                           mkPipelineDecision'
