@@ -43,7 +43,7 @@ import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           System.FS.API
 
-type BackingStoreInitializer m l =
+type BackingStoreInitialiser m l =
      SomeHasFS m
   -> SomeHasFS m
   -> InitFrom (LedgerTables l ValuesMK)
@@ -90,7 +90,7 @@ newBackingStoreInitialiser ::
      )
   => Tracer m FlavorImplSpecificTrace
   -> Complete BackingStoreArgs m
-  -> BackingStoreInitializer m l
+  -> BackingStoreInitialiser m l
 newBackingStoreInitialiser trcr bss =
   case bss of
     LMDBBackingStoreArgs limits Dict ->

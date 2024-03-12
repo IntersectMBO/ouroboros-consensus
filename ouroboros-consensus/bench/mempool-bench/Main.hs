@@ -61,7 +61,7 @@ main = withStdTerminalHandles $ do
                             (mempool, txs) <- getAcquiredRes
                             void $ act mempool txs
                             -- TODO: consider adding a 'reset' command to the mempool to make sure its state is not tainted.
-                            maybe (pure ()) (removeTxs mempool) $ NE.nonEmpty $ getCmdsTxIds txs
+                            maybe (pure ()) (Mocked.removeTxs mempool) $ NE.nonEmpty $ getCmdsTxIds txs
                       bgroup (show n <> " transactions") [
                           bench "benchmark" $ nfIO $ withAcquiredMempool $ \mempool txs -> do
                             run mempool txs
