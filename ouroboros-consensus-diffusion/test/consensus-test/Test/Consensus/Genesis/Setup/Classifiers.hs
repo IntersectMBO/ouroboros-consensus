@@ -45,7 +45,7 @@ data Classifiers =
     -- intersection. In particular, if @sgen = sfor@, then the trunk will have
     -- at least @k+2@.
     allAdversariesKPlus1InForecast :: Bool,
-    -- | There are at least scg slots after the intesection on both the honest
+    -- | There are at least scg slots after the intersection on both the honest
     -- and the alternative chain
     --
     -- Knowing if there is a Genesis window after the intersection is important because
