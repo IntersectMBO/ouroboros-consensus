@@ -126,6 +126,7 @@ genChains genNumForks = do
     gtDelay = delta,
     gtSlotLength,
     gtChainSyncTimeouts = chainSyncTimeouts gtSlotLength asc,
+    gtBlockFetchTimeouts = blockFetchTimeouts,
     gtLoPBucketParams = LoPBucketParams { lbpCapacity = 10_000, lbpRate = 1_000 }, -- REVIEW: Do we want to generate those randomly?
     gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
     gtSchedule = ()
@@ -190,3 +191,11 @@ chainSyncTimeouts t f =
             realToFrac (getSlotLength t)
               * log (1 - 0.999)
               / log (1 - ascVal f)
+
+-- FIXME: Choose sensible values, maybe depending on SlotLength, Asc, etc.
+blockFetchTimeouts :: BlockFetchTimeout
+blockFetchTimeouts =
+  BlockFetchTimeout
+    { busyTimeout = Just 10000,
+      streamingTimeout = Just 10000
+    }

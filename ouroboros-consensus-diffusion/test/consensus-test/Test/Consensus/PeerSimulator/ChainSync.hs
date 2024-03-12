@@ -175,9 +175,9 @@ runChainSyncClient
           PeerSimulatorResult peerId $ SomeChainSyncClientResult $ Left exn
         case fromException exn of
           Just (ExceededSizeLimit _) ->
-            traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceExceededSizeLimit
+            traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceExceededSizeLimitCS
           Just (ExceededTimeLimit _) ->
-            traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceExceededTimeLimit
+            traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceExceededTimeLimitCS
           Nothing -> pure ()
         case fromException exn of
           Just ThreadKilled ->

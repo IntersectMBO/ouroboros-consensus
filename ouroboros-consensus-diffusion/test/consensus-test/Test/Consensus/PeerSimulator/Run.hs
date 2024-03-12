@@ -57,9 +57,10 @@ import           Test.Consensus.PeerSimulator.StateDiagram
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
-import           Test.Consensus.PointSchedule (GenesisTest (GenesisTest),
-                     GenesisTestFull, LoPBucketParams (..), NodeState,
-                     PeersSchedule, peersStatesRelative)
+import           Test.Consensus.PointSchedule (BlockFetchTimeout,
+                     GenesisTest (GenesisTest), GenesisTestFull,
+                     LoPBucketParams (..), NodeState, PeersSchedule,
+                     peersStatesRelative)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
 import           Test.Util.ChainDB
@@ -71,20 +72,24 @@ data SchedulerConfig =
   SchedulerConfig {
     -- | Whether to enable timeouts for the ChainSync protocol. The value of
     -- timeouts themselves is defined in 'GenesisTest'.
-      scEnableChainSyncTimeouts :: Bool
+      scEnableChainSyncTimeouts  :: Bool
+
+    -- | Whether to enable timeouts for the BlockFetch protocol. The value of
+    -- timeouts themselves is defined in 'GenesisTest'.
+    , scEnableBlockFetchTimeouts :: Bool
 
     -- | If 'True', 'Test.Consensus.Genesis.Setup.runTest' will print traces
     -- to stderr.
     --
     -- Use 'debugScheduler' to toggle it conveniently.
-    , scDebug                   :: Bool
+    , scDebug                    :: Bool
 
     -- | Whether to trace when running the scheduler.
-    , scTrace                   :: Bool
+    , scTrace                    :: Bool
 
     -- | Whether to trace only the current state of the candidates and selection,
     -- which provides a less verbose view of the test progress.
-    , scTraceState              :: Bool
+    , scTraceState               :: Bool
 
     -- | The LoE is degenerate at the moment, so when this is enabled, we use
     -- the stalling version of the fragment updater, which sets it to the shared
@@ -92,11 +97,11 @@ data SchedulerConfig =
     -- which never happens.
     -- Just for the purpose of testing that the selection indeed doesn't
     -- advance.
-    , scEnableLoE               :: Bool
+    , scEnableLoE                :: Bool
 
     -- | Whether to enable to LoP. The parameters of the LoP come from
     -- 'GenesisTest'.
-    , scEnableLoP               :: Bool
+    , scEnableLoP                :: Bool
   }
 
 -- | Default scheduler config
@@ -104,6 +109,7 @@ defaultSchedulerConfig :: SchedulerConfig
 defaultSchedulerConfig =
   SchedulerConfig {
     scEnableChainSyncTimeouts = False,
+    scEnableBlockFetchTimeouts = False,
     scDebug = False,
     scTrace = True,
     scTraceState = False,
@@ -170,6 +176,7 @@ startBlockFetchConnectionThread ::
   ControlMessageSTM m ->
   SharedResources m blk ->
   BlockFetchResources m blk ->
+  BlockFetchTimeout ->
   m (Thread m (), Thread m ())
 startBlockFetchConnectionThread
   registry
@@ -178,11 +185,12 @@ startBlockFetchConnectionThread
   fetchClientRegistry
   controlMsgSTM
   SharedResources {srPeerId}
-  BlockFetchResources {bfrServer} = do
+  BlockFetchResources {bfrServer}
+  blockFetchTimeouts = do
     (clientChannel, serverChannel) <- createConnectedChannels
     clientThread <-
       forkLinkedThread registry ("BlockFetchClient" <> condense srPeerId) $
-        BlockFetch.runBlockFetchClient tracer srPeerId tracers fetchClientRegistry controlMsgSTM clientChannel
+        BlockFetch.runBlockFetchClient tracer srPeerId blockFetchTimeouts tracers fetchClientRegistry controlMsgSTM clientChannel
     serverThread <-
       forkLinkedThread registry ("BlockFetchServer" <> condense srPeerId) $
         BlockFetch.runBlockFetchServer tracer srPeerId tracers bfrServer serverChannel
@@ -251,7 +259,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
         withRegistry $ \peerRegistry -> do
           (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrCandidates resources)
           BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry (srPeerId prShared)
-          (bfClient, bfServer) <- startBlockFetchConnectionThread peerRegistry tracer stateViewTracers fetchClientRegistry (pure Continue) prShared prBlockFetch
+          (bfClient, bfServer) <- startBlockFetchConnectionThread peerRegistry tracer stateViewTracers fetchClientRegistry (pure Continue) prShared prBlockFetch blockFetchTimeouts_
           waitAnyThread [csClient, csServer, bfClient, bfServer]
     -- The block fetch logic needs to be started after the block fetch clients
     -- otherwise, an internal assertion fails because getCandidates yields more
@@ -274,6 +282,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
       , gtBlockTree
       , gtSchedule
       , gtChainSyncTimeouts
+      , gtBlockFetchTimeouts
       , gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
       , gtForecastRange
       } = genesisTest
@@ -292,6 +301,11 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
       if scEnableLoP schedulerConfig
         then ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig { csbcCapacity = lbpCapacity, csbcRate = lbpRate }
         else ChainSyncLoPBucketDisabled
+
+    blockFetchTimeouts_ =
+      if scEnableBlockFetchTimeouts schedulerConfig
+        then gtBlockFetchTimeouts
+        else BlockFetch.blockFetchNoTimeouts
 
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.

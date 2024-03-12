@@ -5,7 +5,8 @@
 
 -- | Helpers for tracing used by the peer simulator.
 module Test.Consensus.PeerSimulator.Trace (
-    TraceChainSyncClientTerminationEvent (..)
+    TraceBlockFetchClientTerminationEvent (..)
+  , TraceChainSyncClientTerminationEvent (..)
   , TraceEvent (..)
   , TraceScheduledBlockFetchServerEvent (..)
   , TraceScheduledChainSyncServerEvent (..)
@@ -80,10 +81,14 @@ data TraceScheduledBlockFetchServerEvent state blk
   | TraceBlockPointIsBehind
 
 data TraceChainSyncClientTerminationEvent
-  = TraceExceededSizeLimit
-  | TraceExceededTimeLimit
+  = TraceExceededSizeLimitCS
+  | TraceExceededTimeLimitCS
   | TraceTerminatedByGDDGovernor
   | TraceTerminatedByLoP
+
+data TraceBlockFetchClientTerminationEvent
+  = TraceExceededSizeLimitBF
+  | TraceExceededTimeLimitBF
 
 data TraceEvent blk
   = TraceSchedulerEvent (TraceSchedulerEvent blk)
@@ -92,6 +97,7 @@ data TraceEvent blk
   | TraceChainDBEvent (ChainDB.TraceEvent blk)
   | TraceChainSyncClientEvent PeerId (TraceChainSyncClientEvent blk)
   | TraceChainSyncClientTerminationEvent PeerId TraceChainSyncClientTerminationEvent
+  | TraceBlockFetchClientTerminationEvent PeerId TraceBlockFetchClientTerminationEvent
 
 -- * 'TestBlock'-specific tracers for the peer simulator
 
@@ -113,6 +119,7 @@ traceEventTestBlockWith tracer = \case
     TraceChainDBEvent traceEvent -> traceChainDBEventTestBlockWith tracer traceEvent
     TraceChainSyncClientEvent peerId traceEvent -> traceChainSyncClientEventTestBlockWith peerId tracer traceEvent
     TraceChainSyncClientTerminationEvent peerId traceEvent -> traceChainSyncClientTerminationEventTestBlockWith peerId tracer traceEvent
+    TraceBlockFetchClientTerminationEvent peerId traceEvent -> traceBlockFetchClientTerminationEventTestBlockWith peerId tracer traceEvent
 
 traceSchedulerEventTestBlockWith ::
   (MonadMonotonicTime m) =>
@@ -289,9 +296,9 @@ traceChainSyncClientTerminationEventTestBlockWith ::
   TraceChainSyncClientTerminationEvent ->
   m ()
 traceChainSyncClientTerminationEventTestBlockWith pid tracer = \case
-    TraceExceededSizeLimit ->
+    TraceExceededSizeLimitCS ->
       trace "Terminated because of size limit exceeded."
-    TraceExceededTimeLimit ->
+    TraceExceededTimeLimitCS ->
       trace "Terminated because of time limit exceeded."
     TraceTerminatedByGDDGovernor ->
       trace "Terminated by the GDD governor."
@@ -299,6 +306,19 @@ traceChainSyncClientTerminationEventTestBlockWith pid tracer = \case
       trace "Terminated by the limit on patience."
   where
     trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
+
+traceBlockFetchClientTerminationEventTestBlockWith ::
+  PeerId ->
+  Tracer m String ->
+  TraceBlockFetchClientTerminationEvent ->
+  m ()
+traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
+    TraceExceededSizeLimitBF ->
+      trace "Terminated because of size limit exceeded."
+    TraceExceededTimeLimitBF ->
+      trace "Terminated because of time limit exceeded."
+  where
+    trace = traceUnitWith tracer ("BlockFetchClient " ++ condense pid)
 
 -- * Other utilities
 
