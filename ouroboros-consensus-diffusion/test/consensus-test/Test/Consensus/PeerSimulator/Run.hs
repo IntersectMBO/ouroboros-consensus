@@ -91,13 +91,9 @@ data SchedulerConfig =
     -- which provides a less verbose view of the test progress.
     , scTraceState               :: Bool
 
-    -- | The LoE is degenerate at the moment, so when this is enabled, we use
-    -- the stalling version of the fragment updater, which sets it to the shared
-    -- prefix of all candidates, in anticipation of the GDDG killing peers,
-    -- which never happens.
-    -- Just for the purpose of testing that the selection indeed doesn't
-    -- advance.
-    , scEnableLoE                :: Bool
+    -- | Enable Limit on Eagerness (LoE) and the Genesis Density Disconnection
+    -- governor (GDD).
+    , scEnableLoE               :: Bool
 
     -- | Whether to enable to LoP. The parameters of the LoP come from
     -- 'GenesisTest'.
