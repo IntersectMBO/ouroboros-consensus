@@ -256,11 +256,16 @@ data TraceGDDEvent peer blk =
     sgen              :: GenesisWindow
   }
 
--- | Run the Genesis disconnection logic once.
+-- | Update the LoE fragment.
 --
---   * Update the LoE and return it.
+-- See 'UpdateLoEFrag' for the definition of LoE fragment.
 --
---   * Disconnect from peers with inferior density.
+-- Additionally, disconnect the peers that lose density comparisons.
+--
+-- @getCandidates@ is the callback to obtain the candidate fragments
+--
+-- @getHandles@ is the callback to get the handles that allow to disconnect
+-- from peers.
 updateLoEFragGenesis ::
      forall m blk peer.
      ( IOLike m

@@ -865,9 +865,14 @@ instance (Typeable blk, StandardHash blk) => Exception (ChainDbError blk) where
 
 -- | The Limit on Eagerness is a mechanism for keeping ChainSel from advancing
 -- the current selection in the case of competing chains.
+--
+-- The Limit on Eagerness prevents the selection of the node from extending
+-- more than k blocks after the youngest block that is present on all candidate
+-- fragments.
+--
 -- It requires a resolution mechanism to prevent indefinite stalling, which
--- will be implemented by the Genesis Density Disconnection principle soon,
--- a condition applied via 'UpdateLoEFrag' that disconnects from peers with forks
+-- is implemented by the Genesis Density Disconnection governor, a component
+-- that implements an 'UpdateLoEFrag' that disconnects from peers with forks
 -- it considers inferior.
 --
 -- This type indicates whether the feature is enabled, and contains an update
@@ -888,11 +893,12 @@ data LoE m blk =
 -- | This callback is a hook into ChainSync that is called right before deciding
 -- whether a block can be added to the current selection.
 --
--- Its purpose is to update the fragment whose tip provides the reference point
--- for the Limit on Eagerness, described in the docs of 'LoELimit'.
+-- Its purpose is to update the LoE fragment, anchored at the immutable tip and
+-- whose tip is the header of the youngest block present in all candidate
+-- fragments.
 --
 -- The callback is applied to the current chain, the current ledger state and
--- an STM action that writes the new LoE fragment to the state.
+-- an STM action that returns the new LoE fragment.
 data UpdateLoEFrag m blk = UpdateLoEFrag {
     updateLoEFrag ::
          AnchoredFragment (Header blk)
