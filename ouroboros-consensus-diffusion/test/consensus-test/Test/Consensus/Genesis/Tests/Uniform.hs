@@ -176,16 +176,13 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 -- the last genesis window of the honest chain.
 
 -- | Test that the leashing attacks do not delay the immutable tip
---
--- This test is expected to fail because we don't test a genesis implementation
--- yet.
 prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
-  expectFailure $ forAllGenesisTest
+  forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
-    (defaultSchedulerConfig {scTrace = False})
+    (defaultSchedulerConfig {scTrace = False, scEnableLoE = True, scEnableLoP = True})
 
     shrinkPeerSchedules
 
