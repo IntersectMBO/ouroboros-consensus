@@ -179,8 +179,11 @@ newtype Our a = Our { unOur :: a }
   deriving newtype (Show, NoThunks)
 
 data ChainSyncClientHandle m blk = ChainSyncClientHandle {
+    -- | Disconnects from the peer
     cschKill       :: !(m ())
+    -- | Latest tip announced by the remote peer
   , cschTheirTip   :: !(STM m (Maybe (Tip blk)))
+    -- | Slot of the last received header
   , cschLatestSlot :: !(STM m SlotNo)
   }
   deriving stock (Generic)
