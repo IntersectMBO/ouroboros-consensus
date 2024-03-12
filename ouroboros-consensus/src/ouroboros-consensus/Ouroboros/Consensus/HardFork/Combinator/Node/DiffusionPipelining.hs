@@ -21,6 +21,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Block
 import           Ouroboros.Consensus.TypeFamilyWrappers
+import           Ouroboros.Consensus.Util
 
 -- | The 'BlockSupportsDiffusionPipelining' instance for the HFC is
 -- compositional:
@@ -30,16 +31,21 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 --    'TentativeHeaderState's. The 'initialTentativeHeaderState' is the one for
 --    the first era.
 --
---  - @'updateTentativeHeaderState' bcfg hdr st@ works like this:
+--  - Similarly, @'TentativeHeaderView' ('HardForkBlock' xs)@ is
+--    'OneEraTentativeHeaderView', the n-ary sum of per-era
+--    'TentativeHeaderView's, and 'tentativeHeaderView' delegates to the
+--    era-specific 'tentativeHeaderView'.
 --
---      - If @hdr@ and @st@ are in the same era, we call the corresponding
---        era-specific 'updateTentativeHeaderState'.
+--  - @'applyTentativeHeaderView' 'Proxy' thv st@ works like this:
 --
---      - If @hdr@ is in a later era than @st@, we replace @st@ with the
---        'initialTentativeHeaderState' for the era of @hdr@, and then proceed
+--      - If @thv@ and @st@ are in the same era, we call the corresponding
+--        era-specific 'applyTentativeHeaderView'.
+--
+--      - If @thv@ is in a later era than @st@, we replace @st@ with the
+--        'initialTentativeHeaderState' for the era of @thv@, and then proceed
 --        like in the previous step.
 --
---      - If @hdr@ is in an earlier era than @st@, we return 'Nothing' to
+--      - If @thv@ is in an earlier era than @st@, we return 'Nothing' to
 --        disallow pipelining.
 --
 -- This behavior guarantees the "Consistent validity under subsequences"
@@ -58,49 +64,58 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 instance CanHardFork xs => BlockSupportsDiffusionPipelining (HardForkBlock xs) where
   type TentativeHeaderState (HardForkBlock xs) = OneEraTentativeHeaderState xs
 
+  type TentativeHeaderView (HardForkBlock xs) = OneEraTentativeHeaderView xs
+
   initialTentativeHeaderState _
     | ProofNonEmpty proxyHead _ <- isNonEmpty (Proxy @xs)
     = OneEraTentativeHeaderState $ Z $ WrapTentativeHeaderState
     $ initialTentativeHeaderState proxyHead
 
-  updateTentativeHeaderState
-    (HardForkBlockConfig (PerEraBlockConfig bcfgs))
-    (HardForkHeader (OneEraHeader hdr))
+  tentativeHeaderView
+    (HardForkBlockConfig (PerEraBlockConfig bcfg))
+    (HardForkHeader (OneEraHeader hdr)) =
+        OneEraTentativeHeaderView
+      . hcliftA2 proxySingle (WrapTentativeHeaderView .: tentativeHeaderView) bcfg
+      $ hdr
+
+  applyTentativeHeaderView
+    Proxy
+    (OneEraTentativeHeaderView thv)
     (OneEraTentativeHeaderState st) =
           fmap OneEraTentativeHeaderState
       .   sequence_NS'
-      .   hcliftA2 proxySingle updateSt bcfgs
-      =<< case Match.matchNS hdr st of
-            Right hdrSt   -> Just hdrSt
+      .   hcmap proxySingle updateSt
+      =<< case Match.matchNS thv st of
+            Right thvSt   -> Just thvSt
             Left mismatch -> fromMismatch mismatch
     where
       updateSt ::
-           BlockSupportsDiffusionPipelining blk
-        => BlockConfig blk
-        -> Product Header WrapTentativeHeaderState blk
+           forall blk. BlockSupportsDiffusionPipelining blk
+        => Product WrapTentativeHeaderView WrapTentativeHeaderState blk
         -> (Maybe :.: WrapTentativeHeaderState) blk
-      updateSt bcfg (Pair hdr' (WrapTentativeHeaderState st')) =
+      updateSt (Pair (WrapTentativeHeaderView thv') (WrapTentativeHeaderState st')) =
             Comp $ fmap WrapTentativeHeaderState
-          $ updateTentativeHeaderState bcfg hdr' st'
+          $ applyTentativeHeaderView (Proxy @blk) thv' st'
 
-      -- If the mismatch indicates that the header is in a later era than the
-      -- 'TentativeHeaderState', pair the header with the
+      -- If the mismatch indicates that the tentative header view is in a later
+      -- era than the 'TentativeHeaderState', pair the view with the
       -- 'initialTentativeHeaderState' of its era.
       fromMismatch ::
-           Match.Mismatch Header WrapTentativeHeaderState xs
-        -> Maybe (NS (Product Header WrapTentativeHeaderState) xs)
+           Match.Mismatch WrapTentativeHeaderView WrapTentativeHeaderState xs
+        -> Maybe (NS (Product WrapTentativeHeaderView WrapTentativeHeaderState) xs)
       fromMismatch mismatch
         | ProofNonEmpty _ _ <- isNonEmpty (Proxy @xs)
         = case Match.mismatchNotFirst mismatch of
-            -- The @hdr@ is in an earlier era compared to the @st@, so it does
+            -- The @thv@ is in an earlier era compared to the @st@, so it does
             -- not satisfy the HFC pipelining criterion.
             Right _   -> Nothing
-            -- The @hdr@ is in a later era compared to the @st@.
-            Left hdr' -> Just $ hcmap proxySingle withInitialSt (S hdr')
+            -- The @thv@ is in a later era compared to the @st@.
+            Left thv' -> Just $ hcmap proxySingle withInitialSt (S thv')
         where
           withInitialSt ::
                forall blk. BlockSupportsDiffusionPipelining blk
-            => Header blk -> Product Header WrapTentativeHeaderState blk
-          withInitialSt h = Pair h (WrapTentativeHeaderState initialSt)
+            => WrapTentativeHeaderView blk
+            -> Product WrapTentativeHeaderView WrapTentativeHeaderState blk
+          withInitialSt v = Pair v (WrapTentativeHeaderState initialSt)
             where
               initialSt = initialTentativeHeaderState (Proxy @blk)

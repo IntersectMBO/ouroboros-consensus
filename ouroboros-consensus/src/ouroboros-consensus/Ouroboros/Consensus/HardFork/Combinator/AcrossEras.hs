@@ -46,6 +46,7 @@ module Ouroboros.Consensus.HardFork.Combinator.AcrossEras (
   , OneEraLedgerWarning (..)
   , OneEraSelectView (..)
   , OneEraTentativeHeaderState (..)
+  , OneEraTentativeHeaderView (..)
   , OneEraTipInfo (..)
   , OneEraValidateView (..)
   , OneEraValidatedGenTx (..)
@@ -133,6 +134,7 @@ newtype OneEraLedgerUpdate          xs = OneEraLedgerUpdate          { getOneEra
 newtype OneEraLedgerWarning         xs = OneEraLedgerWarning         { getOneEraLedgerWarning         :: NS WrapLedgerWarning         xs }
 newtype OneEraSelectView            xs = OneEraSelectView            { getOneEraSelectView            :: NS WrapSelectView            xs }
 newtype OneEraTentativeHeaderState  xs = OneEraTentativeHeaderState  { getOneEraTentativeHeaderState  :: NS WrapTentativeHeaderState  xs }
+newtype OneEraTentativeHeaderView   xs = OneEraTentativeHeaderView   { getOneEraTentativeHeaderView   :: NS WrapTentativeHeaderView   xs }
 newtype OneEraTipInfo               xs = OneEraTipInfo               { getOneEraTipInfo               :: NS WrapTipInfo               xs }
 newtype OneEraValidateView          xs = OneEraValidateView          { getOneEraValidateView          :: NS WrapValidateView          xs }
 newtype OneEraValidatedGenTx        xs = OneEraValidatedGenTx        { getOneEraValidatedGenTx        :: NS WrapValidatedGenTx        xs }
@@ -324,6 +326,7 @@ deriving via LiftNS WrapLedgerErr             xs instance CanHardFork xs => Show
 deriving via LiftNS WrapLedgerUpdate          xs instance CanHardFork xs => Show (OneEraLedgerUpdate          xs)
 deriving via LiftNS WrapLedgerWarning         xs instance CanHardFork xs => Show (OneEraLedgerWarning         xs)
 deriving via LiftNS WrapTentativeHeaderState  xs instance CanHardFork xs => Show (OneEraTentativeHeaderState  xs)
+deriving via LiftNS WrapTentativeHeaderView   xs instance CanHardFork xs => Show (OneEraTentativeHeaderView   xs)
 deriving via LiftNS WrapTipInfo               xs instance CanHardFork xs => Show (OneEraTipInfo               xs)
 deriving via LiftNS WrapValidatedGenTx        xs instance CanHardFork xs => Show (OneEraValidatedGenTx        xs)
 deriving via LiftNS WrapValidationErr         xs instance CanHardFork xs => Show (OneEraValidationErr         xs)

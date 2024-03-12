@@ -3,13 +3,16 @@
 {-# LANGUAGE DeriveTraversable    #-}
 {-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE StandaloneDeriving   #-}
+{-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | See 'BlockSupportsDiffusionPipelining'.
 module Ouroboros.Consensus.Block.SupportsDiffusionPipelining (
     BlockSupportsDiffusionPipelining (..)
+  , updateTentativeHeaderState
     -- * @DerivingVia@ helpers
     -- ** 'DisableDiffusionPipelining'
   , DisableDiffusionPipelining (..)
@@ -22,6 +25,7 @@ module Ouroboros.Consensus.Block.SupportsDiffusionPipelining (
   ) where
 
 import           Control.Monad (guard)
+import           Data.Coerce
 import           Data.Kind
 import           Data.Proxy
 import           GHC.Generics (Generic)
@@ -73,9 +77,9 @@ import           Ouroboros.Consensus.Protocol.Abstract
 -- (one in ChainSel, and one for each (BlockFetch) upstream peer). Suppose that
 -- @hdr@ either might turn out or is already known to be a trap header. Then
 --
--- @'updateTentativeHeaderState' bcfg hdr st@
+-- @'applyTentativeHeaderView' ('Proxy' \@blk) thv st@
 --
--- will return
+-- (where @thv = 'tentativeHeaderView' bcfg hdr@) will return
 --
 --  - 'Nothing' if @hdr@ does not satisfy the pipelining criterion.
 --
@@ -105,24 +109,25 @@ import           Ouroboros.Consensus.Protocol.Abstract
 -- every ChainSync server sends every selected tip), but must still consider our
 -- behavior as valid.
 --
--- Hence, for every subsequence @hdrs'@ of @hdrs@, we need to have
+-- Hence, for every subsequence @thvs'@ of @thvs = 'tentativeHeaderView' bcfg
+-- '<$>' hdrs@, we need to have
 --
 -- @'Data.Maybe.isJust' hdrs'Valid@
 --
--- for all @bcfg@, @st :: 'TentativeHeaderState' blk@ and
+-- for all @st :: 'TentativeHeaderState' blk@ and
 --
 -- @
--- hdrsValid  = 'Data.Foldable.foldlM' ('flip' $ 'updateTentativeHeaderState' bcfg) st hdrs
--- hdrs'Valid = 'Data.Foldable.foldlM' ('flip' $ 'updateTentativeHeaderState' bcfg) st hdrs'
+-- hdrsValid  = 'Data.Foldable.foldlM' ('flip' $ 'applyTentativeHeaderView' p) st thvs
+-- hdrs'Valid = 'Data.Foldable.foldlM' ('flip' $ 'applyTentativeHeaderView' p) st thvs'
 -- @
 --
--- where @'Data.Maybe.isJust' hdrsValid@.
+-- where @'Data.Maybe.isJust' hdrsValid@ and @p :: 'Proxy' blk@.
 --
 -- === Efficiently enforcible
 --
 -- The 'TentativeHeaderState' must have bounded size, and
--- 'updateTentativeHeaderState' must be efficient and /objective/ (different
--- nodes must agree on its result for the same header and state).
+-- 'applyTentativeHeaderView' must be efficient and /objective/ (different nodes
+-- must agree on its result for the same header and state).
 --
 -- As a historical example for establishing objectivity, see the [removal of the
 -- isSelfIssued tiebreaker in the chain
@@ -137,29 +142,52 @@ import           Ouroboros.Consensus.Protocol.Abstract
 class
   ( Show     (TentativeHeaderState blk)
   , NoThunks (TentativeHeaderState blk)
+  , Show     (TentativeHeaderView  blk)
   ) => BlockSupportsDiffusionPipelining blk where
   -- | State that is maintained to judge whether a header can be pipelined. It
   -- can be thought of as a summary of all past trap tentative headers.
   type TentativeHeaderState blk :: Type
 
+  -- | View on a header required for updating the 'TentativeHeaderState'.
+  type TentativeHeaderView blk :: Type
+
   -- | The initial 'TentativeHeaderState'. This is used as the initial value on
   -- node startup, as well as by the HFC instance for new eras.
   initialTentativeHeaderState :: Proxy blk -> TentativeHeaderState blk
 
-  -- | Apply a header to the 'TentativeHeaderState'. This returns @'Just' st@ to
-  -- indicate that the header can be pipelined, and that the
-  -- 'TentativeHeaderState' must be updated to @st@ if the header turns/turned
-  -- out to be a trap header (the corresponding block body is invalid).
-  updateTentativeHeaderState ::
+  -- | See 'TentativeHeaderView'.
+  tentativeHeaderView ::
        BlockConfig blk
     -> Header blk
-       -- ^ A (valid) header whose block body is either not yet known to be
-       -- valid, or definitely invalid.
+    -> TentativeHeaderView blk
+
+  -- | Apply a 'TentativeHeaderView' to the 'TentativeHeaderState'. This returns
+  -- @'Just' st@ to indicate that the underlying header can be pipelined, and
+  -- that the 'TentativeHeaderState' must be updated to @st@ if the header
+  -- turns/turned out to be a trap header (the corresponding block body is
+  -- invalid).
+  --
+  -- Also see 'updateTentativeHeaderState'.
+  applyTentativeHeaderView ::
+       Proxy blk
+    -> TentativeHeaderView blk
+       -- ^ Extracted using 'tentativeHeaderView' from a (valid) header whose
+       -- block body is either not yet known to be valid, or definitely invalid.
     -> TentativeHeaderState blk
        -- ^ The most recent 'TentativeHeaderState' in this particular context.
     -> Maybe (TentativeHeaderState blk)
        -- ^ The new 'TentativeHeaderState' in case the header satisfies the
        -- pipelining criterion and is a trap header.
+
+-- | Composition of 'tentativeHeaderView' and 'applyTentativeHeaderView'.
+updateTentativeHeaderState ::
+     forall blk. BlockSupportsDiffusionPipelining blk
+  => BlockConfig blk
+  -> Header blk
+  -> TentativeHeaderState blk
+  -> Maybe (TentativeHeaderState blk)
+updateTentativeHeaderState bcfg hdr =
+    applyTentativeHeaderView (Proxy @blk) (tentativeHeaderView bcfg hdr)
 
 {-------------------------------------------------------------------------------
   DerivingVia helpers
@@ -181,10 +209,13 @@ newtype instance BlockConfig (DisableDiffusionPipelining blk) =
 instance BlockSupportsDiffusionPipelining (DisableDiffusionPipelining blk) where
   type TentativeHeaderState _ = ()
 
+  type TentativeHeaderView _ = ()
+
   initialTentativeHeaderState _ = ()
 
-  updateTentativeHeaderState _cfg _hdr () =
-      Nothing
+  tentativeHeaderView _ _ = ()
+
+  applyTentativeHeaderView _ () () = Nothing
 
 -- | A @DerivingVia@ helper to implement 'BlockSupportsDiffusionPipelining' for
 -- blocks where a header should be pipelined iff it has a better 'SelectView'
@@ -223,19 +254,20 @@ deriving anyclass instance ConsensusProtocol proto => NoThunks (SelectViewTentat
 
 instance
   ( BlockSupportsProtocol blk
+  , Show (SelectView (BlockProtocol blk))
   ) => BlockSupportsDiffusionPipelining (SelectViewDiffusionPipelining blk) where
   type TentativeHeaderState (SelectViewDiffusionPipelining blk) =
     SelectViewTentativeState (BlockProtocol blk)
 
+  type TentativeHeaderView (SelectViewDiffusionPipelining blk) =
+    SelectView (BlockProtocol blk)
+
   initialTentativeHeaderState _ = NoLastInvalidSelectView
 
-  updateTentativeHeaderState
-    (SelectViewDiffusionPipeliningBlockConfig bcfg)
-    (SelectViewDiffusionPipeliningHeader hdr)
-    st = do
+  tentativeHeaderView = coerce selectView
+
+  applyTentativeHeaderView _ sv' st = do
       case st of
         NoLastInvalidSelectView  -> pure ()
         LastInvalidSelectView sv -> guard $ sv < sv'
       pure $ LastInvalidSelectView sv'
-    where
-      sv' = selectView bcfg hdr
