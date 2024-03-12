@@ -118,7 +118,8 @@ data PeerSimulatorResources m blk =
     -- | The shared candidate fragments used by ChainDB, ChainSync and BlockFetch.
     psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m (AF.AnchoredFragment (Header blk)))),
 
-    -- | The kill action and tip accessor that the Genesis governor uses to interact with ChainSync.
+    -- | Handlers to interact with the ChainSync client of each peer.
+    -- See 'ChainSyncClientHandle' for more details.
     psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock))
   }
 
