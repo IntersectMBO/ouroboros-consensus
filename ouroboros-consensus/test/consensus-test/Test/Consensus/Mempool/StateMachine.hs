@@ -18,7 +18,7 @@
 
 -- | See 'MakeAtomic'.
 module Test.Consensus.Mempool.StateMachine (tests) where
-import           Cardano.Ledger.TreeDiff
+import           Test.Cardano.Ledger.TreeDiff ()
 import           Cardano.Slotting.Slot
 import           Control.Arrow (first)
 import           Control.Concurrent.Class.MonadSTM.Strict.TChan
@@ -32,7 +32,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.TreeDiff (genericToExpr)
+import           Data.TreeDiff
 import qualified Data.TreeDiff.OMap as TD
 import           GHC.Generics
 import           Ouroboros.Consensus.Block
@@ -63,6 +63,7 @@ import qualified Test.StateMachine.Types.Rank2 as Rank2
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.ToExpr ()
+import           Test.Util.ToExpr ()
 
 {-------------------------------------------------------------------------------
   Datatypes

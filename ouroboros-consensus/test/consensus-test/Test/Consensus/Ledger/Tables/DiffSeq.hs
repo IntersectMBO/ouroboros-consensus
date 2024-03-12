@@ -84,7 +84,7 @@ instance (Ord k, Arbitrary k, Arbitrary v)
                           <*> arbitrary <*> arbitrary
 
 instance Arbitrary (InternalMeasure k v) where
-  arbitrary = InternalMeasure <$> arbitrary <*> arbitrary <*> arbitrary
+  arbitrary = InternalMeasure <$> arbitrary <*> arbitrary1 <*> arbitrary1
 
 deriving newtype instance Arbitrary DS.Length
 deriving newtype instance Arbitrary DS.SlotNoUB

@@ -75,6 +75,7 @@ import           Ouroboros.Network.Protocol.BlockFetch.Server
                      BlockFetchServer (..), blockFetchServerPeer)
 import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch,
                      ChainRange (..), Message (MsgBlock))
+import qualified System.FS.Sim.MockFS as MockFS
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -127,11 +128,7 @@ data BlockFetchClientOutcome = BlockFetchClientOutcome {
 
 runBlockFetchTest ::
      forall m.
-<<<<<<< HEAD
-     (IOLike m, MonadTime m, MonadTimer m)
-=======
-     (IOLike m, MonadTime m, MonadBase m m)
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
+     (IOLike m, MonadTime m, MonadTimer m, MonadBase m m)
   => BlockFetchClientTestSetup
   -> m BlockFetchClientOutcome
 runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
@@ -249,12 +246,14 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
     mkChainDbView registry tracer = do
         chainDbArgs <- do
           nodeDBs <- emptyNodeDBs
+          fs <- newTVarIO MockFS.empty
           let args = fromMinimalChainDbArgs $ MinimalChainDbArgs {
                   mcdbTopLevelConfig = topLevelConfig
                 , mcdbChunkInfo = mkTestChunkInfo topLevelConfig
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
+                , mcdbGSMHasFS = fs
                 }
           -- TODO: Test with more interesting behaviour for cdbCheckInFuture
           pure $ args { cdbImmDbArgs = (cdbImmDbArgs args) { immTracer = TraceImmutableDBEvent >$< cdbTracer }

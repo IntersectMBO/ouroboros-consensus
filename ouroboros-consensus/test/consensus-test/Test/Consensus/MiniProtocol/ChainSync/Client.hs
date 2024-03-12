@@ -1,12 +1,8 @@
 {-# LANGUAGE BangPatterns        #-}
-<<<<<<< HEAD
 {-# LANGUAGE DeriveFunctor       #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE DerivingVia         #-}
-=======
-{-# LANGUAGE DataKinds           #-}
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}

@@ -37,14 +37,6 @@ import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.BFT
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-<<<<<<< HEAD
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LgrDB,
-                     LgrDbArgs (..), mkLgrDB)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
-import           Ouroboros.Consensus.Storage.LedgerDB (defaultDiskPolicyArgs)
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LgrDB (ledgerDbPast,
-                     ledgerDbTip, ledgerDbWithAnchor)
-=======
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream hiding
                      (streamAPI)
 import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
@@ -52,8 +44,7 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
-import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.IOLike hiding (newTVarIO)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -62,20 +53,17 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Examples
                      (localStateQueryClient)
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
-<<<<<<< HEAD
                      (AcquireFailure (..), Target (..))
-import           System.FS.API (HasFS, SomeHasFS (..))
-=======
-                     (AcquireFailure (..))
-import           System.FS.API
+import           System.FS.API (SomeHasFS (..))
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
 import           Test.QuickCheck hiding (Result)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock
+
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar
 
 {-------------------------------------------------------------------------------
   Top-level tests
@@ -110,18 +98,12 @@ prop_localStateQueryServer k bt p (Positive (Small n)) = checkOutcome k chain ac
 
     points :: [Target (Point TestBlock)]
     points = permute p $
-<<<<<<< HEAD
          replicate n VolatileTip
       ++ (SpecificPoint . blockPoint <$> treeToBlocks bt)
 
-    actualOutcome :: [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
-    actualOutcome = runSimOrThrow $ do
-=======
-         replicate n Nothing
-      ++ (Just . blockPoint <$> treeToBlocks bt)
 
+    actualOutcome :: [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
     actualOutcome = runSimOrThrow $ withRegistry $ \rr ->do
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
       let client = mkClient points
       server <- mkServer rr k chain
       (\(a, _, _) -> a) <$>
@@ -180,15 +162,12 @@ checkOutcome k chain = conjoin . map (uncurry checkResult)
     checkResult VolatileTip = \case
       Right _result -> tabulate "Acquired" ["Success"] True
       Left  failure -> counterexample ("acquire tip point resulted in " ++ show failure) False
-<<<<<<< HEAD
     checkResult ImmutableTip = \case
       Right _result -> tabulate "Acquired" ["Success"] True
       Left  failure -> counterexample ("acquire tip point resulted in " ++ show failure) False
-=======
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
 
-mkClient
-  :: Monad m
+mkClient ::
+     Monad m
   => [Target (Point TestBlock)]
   -> LocalStateQueryClient
        TestBlock
@@ -198,16 +177,10 @@ mkClient
        [(Target (Point TestBlock), Either AcquireFailure (Point TestBlock))]
 mkClient points = localStateQueryClient [(pt, BlockQuery QueryLedgerTip) | pt <- points]
 
-<<<<<<< HEAD
 mkServer ::
-     IOLike m
-  => SecurityParam
-=======
-mkServer
-  :: (IOLike m, MonadBase m m)
+     (IOLike m, MonadBase m m)
   => ResourceRegistry m
   -> SecurityParam
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
   -> Chain TestBlock
   -> m (LocalStateQueryServer TestBlock (Point TestBlock) (Query TestBlock) m ())
 mkServer rr k chain = do
@@ -219,11 +192,6 @@ mkServer rr k chain = do
   where
     cfg = ExtLedgerCfg $ testCfg k
 
-<<<<<<< HEAD
--- | Initialise a 'LgrDB' with the given chain.
-initLgrDB ::
-     forall m. IOLike m
-=======
 streamAPI :: forall m. IOLike m => StreamAPI m TestBlock TestBlock
 streamAPI = StreamAPI {..}
   where
@@ -237,31 +205,27 @@ streamAPI = StreamAPI {..}
 -- | Initialise a 'LedgerDB' with the given chain.
 initLedgerDB ::
      (IOLike m, MonadBase m m)
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
   => SecurityParam
   -> Chain TestBlock
-<<<<<<< HEAD
-  -> m (LgrDB m TestBlock)
-initLgrDB k chain = do
-    varDB          <- newTVarIO genesisLedgerDB
-    varPrevApplied <- newTVarIO mempty
-    let lgrDB = mkLgrDB varDB varPrevApplied resolve args k
-    LgrDB.validate lgrDB genesisLedgerDB BlockCache.empty 0 noopTrace
-      (map getHeader (Chain.toOldestFirst chain)) >>= \case
-        LgrDB.ValidateExceededRollBack _ ->
-=======
   -> m (LedgerDB' m TestBlock)
 initLedgerDB s c = do
   reg <- unsafeNewRegistry
-  fs <- uncheckedNewTVarM MockFS.empty
-  let args = LedgerDbArgs
-        { lgrSnapshotInterval = DefaultSnapshotInterval
-        , lgrHasFS            = SomeHasFS $ simHasFS fs
-        , lgrGenesis          = return testInitExtLedger
-        , lgrTracer           = nullTracer
-        , lgrFlavorArgs       = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs
-        , lgrConfig           = LedgerDB.configLedgerDb $ testCfg s
-        , lgrRegistry         = reg
+  fs <- newTVarIO MockFS.empty
+  let snapshotPolicyArgs = SnapshotPolicyArgs
+        { spaInterval = DefaultSnapshotInterval
+        , spaNum = DefaultNumOfDiskSnapshots
+        }
+      args = LedgerDbArgs
+        { lgrSnapshotPolicyArgs = snapshotPolicyArgs
+        , lgrHasFS              = SomeHasFS $ simHasFS fs
+        , lgrSSDHasFS           = SomeHasFS $ simHasFS fs
+        , lgrSnapshotTablesSSD  = False
+        , lgrSnapshotStateSSD   = False
+        , lgrGenesis            = return testInitExtLedger
+        , lgrTracer             = nullTracer
+        , lgrFlavorArgs         = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs
+        , lgrConfig             = LedgerDB.configLedgerDb $ testCfg s
+        , lgrRegistry           = reg
         }
   ldb <- fst <$> LedgerDB.openDB
     args
@@ -275,34 +239,11 @@ initLedgerDB s c = do
       atomically $ LedgerDB.forkerCommit forker
       LedgerDB.forkerClose forker
     LedgerDB.ValidateExceededRollBack _ ->
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
-          error "impossible: rollback was 0"
+      error "impossible: rollback was 0"
     LedgerDB.ValidateLedgerError _ ->
-          error "impossible: there were no invalid blocks"
+      error "impossible: there were no invalid blocks"
+
   pure ldb
-
-<<<<<<< HEAD
-    blockMapping :: Map (RealPoint TestBlock) TestBlock
-    blockMapping = Map.fromList
-      [(blockRealPoint b, b) | b <- Chain.toOldestFirst chain]
-
-    cfg = testCfg k
-
-    genesisLedgerDB = LgrDB.ledgerDbWithAnchor testInitExtLedger
-
-    noopTrace :: blk -> m ()
-    noopTrace = const $ pure ()
-
-    args = LgrDbArgs
-      { lgrTopLevelConfig       = cfg
-      , lgrHasFS                = SomeHasFS (error "lgrHasFS" :: HasFS m ())
-      , lgrDiskPolicyArgs       = defaultDiskPolicyArgs
-      , lgrGenesis              = return testInitExtLedger
-      , lgrTracer               = nullTracer
-      , lgrTraceLedger          = nullTracer
-      }
-=======
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
 
 testCfg :: SecurityParam -> TopLevelConfig TestBlock
 testCfg securityParam = TopLevelConfig {
