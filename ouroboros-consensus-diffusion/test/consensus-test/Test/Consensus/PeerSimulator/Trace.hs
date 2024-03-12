@@ -82,7 +82,7 @@ data TraceScheduledBlockFetchServerEvent state blk
   | TraceNoBlocks
   | TraceStartingBatch (AnchoredFragment blk)
   | TraceWaitingForRange (Point blk) (Point blk) [AnchoredFragment blk]
-  | TraceSendingBlock blk
+  | TraceSendingBlock Bool blk
   | TraceBatchIsDone
   | TraceBlockPointIsBehind
 
@@ -230,8 +230,9 @@ traceScheduledBlockFetchServerEventTestBlockWith tracer peerId = \case
     TraceWaitingForRange pointFrom pointTo chains -> do
       trace $ "Waiting for next tick for range: " ++ tersePoint pointFrom ++ " -> " ++ tersePoint pointTo ++ " | chains:"
       for_ chains $ \ c -> trace (terseFragment c)
-    TraceSendingBlock block ->
-      trace $ "Sending " ++ terseBlock block
+    TraceSendingBlock historic block ->
+      trace $ "Sending " ++ terseBlock block ++ " from " ++
+      if historic then " before rollback" else " current chain"
     TraceBatchIsDone ->
       trace "Batch is done"
     TraceBlockPointIsBehind ->

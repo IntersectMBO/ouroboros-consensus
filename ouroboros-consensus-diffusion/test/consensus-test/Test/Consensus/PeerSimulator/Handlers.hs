@@ -286,7 +286,7 @@ handlerSendBlocks ::
   [TestBlock] ->
   NodeState TestBlock ->
   STM m (Maybe (SendBlocks TestBlock), [TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock])
-handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
+handlerSendBlocks blocks NodeState {nsBlock, nsChains} =
   runWriterT (checkDone blocks)
   where
     checkDone = \case
@@ -297,10 +297,10 @@ handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
         blocksLeft next future
 
     blocksLeft next future
-      | isAncestorOf (At next) nsBlock
-      || compensateForScheduleRollback next
+      | let historic = isOnPreviousFork next
+      , isAncestorOf (At next) nsBlock || historic
       = do
-        trace $ TraceSendingBlock next
+        trace $ TraceSendingBlock historic next
         pure (Just (SendBlock next future))
 
       | otherwise
@@ -308,26 +308,12 @@ handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
         trace TraceBlockPointIsBehind
         pure Nothing
 
-    -- Here we encode the conditions for the special situation mentioned above.
-    -- These use aliases for @withinFragmentBounds@ to illustrate what we're testing.
-    -- The names don't precisely match semantically, but it's difficult to understand the
-    -- circumstances otherwise.
-    --
-    -- The involved points are BP, HP, and @next@, which is the block we're deciding whether to
-    -- send or not.
-    --
-    -- Remember that at this point, we already know that we cannot send @next@ regularly, i.e.
-    -- @next@ is not on the chain leading up to BP.
-    -- The conditions in which we send @next@ to compensate for rollbacks are:
-    --
-    -- * @next@ is not on the chain leading up to HP – HP moved to another chain, and
-    --
-    -- * BP is in the same chain as HP and is not an ancestor of @next@ - BP also moved away from the chain of @next@.
-    --
-    -- Precondition: @not (isAncestorOf (At next) bp)@
-    compensateForScheduleRollback next =
-      not (isAncestorOf (At next) nsHeader)
-        && isAncestorOf nsBlock nsHeader
-        && not (isAncestorOf nsBlock (At next))
+    isOnPreviousFork next
+      | current : previous <- nsChains
+      , let point = blockPoint next
+      , not (AF.pointOnFragment point current)
+      = any (AF.pointOnFragment point) previous
+      | otherwise
+      = False
 
     trace = tell . pure

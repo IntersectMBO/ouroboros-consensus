@@ -167,6 +167,9 @@ prettyPeersSchedule peers =
 -- historical chains that are prefixes of the current chain.
 -- In the BlockFetch handler we then use _all_ of these recorded chains as additional ranges that
 -- allow the server to initiate a batch.
+-- Within the batch, each block must then wait until either:
+-- 1. The current BP has advanced to or beyond the block
+-- 2. The block is on a header chain from before the last jump to a different fork
 updateChains ::
   AF.HasHeader blk =>
   AF.AnchoredFragment blk ->
