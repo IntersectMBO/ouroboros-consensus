@@ -204,8 +204,8 @@ handlerBlockFetch ::
   -- ^ The current advertised points (tip point, header point and block point).
   -- They are in the block tree.
   STM m (Maybe (BlockFetch blk), [TraceScheduledBlockFetchServerEvent (NodeState blk) blk])
-handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
-  runWriterT (serveFromBpFragment (AF.sliceRange hpChain from to))
+handlerBlockFetch blockTree (ChainRange from to) _ =
+  runWriterT (serveFromBpFragment (AF.sliceRange chain from to))
   where
     -- Check whether the requested range is contained in the fragment before the header point.
     -- We may only initiate batch serving if the full range is available; if the server has only some of the blocks, it
@@ -218,7 +218,7 @@ handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
         trace $ TraceWaitingForRange from to
         pure Nothing
 
-    hpChain = fragmentUpTo blockTree "header point" (withOrigin GenesisPoint blockPoint nsHeader)
+    chain = fragmentUpTo blockTree "upper range bound" to
 
     trace = tell . pure
 
