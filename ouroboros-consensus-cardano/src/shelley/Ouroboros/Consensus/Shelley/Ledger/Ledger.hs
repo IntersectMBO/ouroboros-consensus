@@ -148,8 +148,13 @@ shelleyEraParamsNeverHardForks genesis = HardFork.EraParams {
       eraEpochSize  = SL.sgEpochLength genesis
     , eraSlotLength = mkSlotLength $ SL.fromNominalDiffTimeMicro $ SL.sgSlotLength genesis
     , eraSafeZone   = HardFork.UnsafeIndefiniteSafeZone
-    , eraGenesisWin = GenesisWindow (2 * SL.sgSecurityParam genesis)
+    , eraGenesisWin = GenesisWindow stabilityWindow
     }
+  where
+    stabilityWindow =
+        SL.computeStabilityWindow
+          (SL.sgSecurityParam genesis)
+          (SL.sgActiveSlotCoeff genesis)
 
 mkShelleyLedgerConfig ::
      SL.ShelleyGenesis (EraCrypto era)
