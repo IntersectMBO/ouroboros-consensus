@@ -25,14 +25,12 @@ import           Control.Monad.Writer.Strict (MonadWriter (tell),
 import           Data.List (isSuffixOf)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Maybe (fromJust, fromMaybe)
-import           Ouroboros.Consensus.Block (GetHeader, HasHeader, HeaderHash,
-                     Point (GenesisPoint), blockHash, getHeader, withOrigin)
+import           Ouroboros.Consensus.Block (GetHeader, getHeader, withOrigin)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip (TipGenesis), blockPoint,
-                     getTipPoint, tipFromHeader)
+import           Ouroboros.Network.Block
 import           Ouroboros.Network.BlockFetch.ClientState
                      (ChainRange (ChainRange))
 import qualified Test.Consensus.BlockTree as BT
@@ -59,20 +57,15 @@ import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 -- TODO: Unify with 'Test.UtilTestBlock.isAncestorOf' which basically does the
 -- same thing except not on 'WithOrigin'.
 isAncestorOf ::
-  HasHeader blk1 =>
-  HasHeader blk2 =>
   HeaderHash blk1 ~ TestHash =>
   HeaderHash blk2 ~ TestHash =>
-  WithOrigin blk1 ->
-  WithOrigin blk2 ->
+  Point blk1 ->
+  Point blk2 ->
   Bool
-isAncestorOf (At ancestor) (At descendant) =
+isAncestorOf (BlockPoint _ (TestHash hashA)) (BlockPoint _ (TestHash hashD)) =
   isSuffixOf (NonEmpty.toList hashA) (NonEmpty.toList hashD)
-  where
-    TestHash hashA = blockHash ancestor
-    TestHash hashD = blockHash descendant
-isAncestorOf (At _) Origin = False
-isAncestorOf Origin _ = True
+isAncestorOf (BlockPoint _ _) GenesisPoint = False
+isAncestorOf GenesisPoint _ = True
 
 -- | Handle a @MsgFindIntersect@ message.
 --
@@ -199,7 +192,7 @@ handlerBlockFetch ::
   NodeState blk ->
   STM m (Maybe (BlockFetch blk), [TraceScheduledBlockFetchServerEvent (NodeState blk) blk])
 handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
-  runWriterT (serveFromBpFragment (AF.sliceRange hpChain from to))
+  runWriterT (serveFromBpFragment (AF.sliceRange chain from to))
   where
     -- Check whether the requested range is contained in the fragment before the header point.
     -- We may only initiate batch serving if the full range is available; if the server has only some of the blocks, it
@@ -211,6 +204,12 @@ handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
       Nothing    -> do
         trace $ TraceWaitingForRange from to
         pure Nothing
+
+    chain
+      | AF.pointOnFragment to hpChain
+      = hpChain
+      | otherwise
+      = fragmentUpTo blockTree "upper range bound" to
 
     hpChain = fragmentUpTo blockTree "header point" (withOrigin GenesisPoint blockPoint nsHeader)
 
@@ -307,8 +306,9 @@ handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
         blocksLeft next future
 
     blocksLeft next future
-      | isAncestorOf (At next) nsBlock
-      || compensateForScheduleRollback next
+      | let np = blockPoint next
+      , isAncestorOf np bp
+      || compensateForScheduleRollback np
       = do
         trace $ TraceSendingBlock next
         pure (Just (SendBlock next future))
@@ -336,8 +336,11 @@ handlerSendBlocks blocks NodeState {nsHeader, nsBlock} =
     --
     -- Precondition: @not (isAncestorOf (At next) bp)@
     compensateForScheduleRollback next =
-      not (isAncestorOf (At next) nsHeader)
-        && isAncestorOf nsBlock nsHeader
-        && not (isAncestorOf nsBlock (At next))
+      not (isAncestorOf next hp)
+        && isAncestorOf bp hp
+        && not (isAncestorOf bp next)
+
+    hp = withOrigin GenesisPoint blockPoint nsHeader
+    bp = withOrigin GenesisPoint blockPoint nsBlock
 
     trace = tell . pure
