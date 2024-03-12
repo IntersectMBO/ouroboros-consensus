@@ -15,6 +15,7 @@
 module Ouroboros.Consensus.Shelley.Node.DiffusionPipelining (
     HotIdentity (..)
   , ShelleyTentativeHeaderState (..)
+  , ShelleyTentativeHeaderView (..)
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
@@ -26,10 +27,11 @@ import           Data.Word
 import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.Shelley.Eras (StandardConway)
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
+import           Ouroboros.Consensus.Util
 
 -- | Hot block issuer identity for the purpose of Shelley block diffusion
 -- pipelining.
@@ -66,6 +68,18 @@ data ShelleyTentativeHeaderState proto =
   deriving stock (Show, Eq, Generic)
   deriving anyclass (NoThunks)
 
+data ShelleyTentativeHeaderView proto =
+    -- | Legacy state, can be removed once mainnet is in Conway.
+    LegacyShelleyTentativeHeaderView (SelectView proto)
+  | ShelleyTentativeHeaderView BlockNo (HotIdentity (ProtoCrypto proto))
+
+deriving stock instance ConsensusProtocol proto => Show (ShelleyTentativeHeaderView proto)
+deriving stock instance ConsensusProtocol proto => Eq   (ShelleyTentativeHeaderView proto)
+
+isConwayOrLater :: forall era. L.Era era => Proxy era -> Bool
+isConwayOrLater _ =
+    L.eraProtVerLow @(L.ConwayEra (L.EraCrypto era)) <= L.eraProtVerLow @era
+
 -- | This is currently a hybrid instance:
 --
 --  - For eras before Conway, this uses the logic from
@@ -85,43 +99,46 @@ instance
   type TentativeHeaderState (ShelleyBlock proto era) =
     ShelleyTentativeHeaderState proto
 
+  type TentativeHeaderView (ShelleyBlock proto era) =
+    ShelleyTentativeHeaderView proto
+
   initialTentativeHeaderState _
-    | L.eraProtVerLow @era < L.eraProtVerLow @StandardConway
-    = LegacyShelleyTentativeHeaderState NoLastInvalidSelectView
-    | otherwise
+    | isConwayOrLater (Proxy @era)
     = ShelleyTentativeHeaderState Origin Set.empty
+    | otherwise
+    = LegacyShelleyTentativeHeaderState NoLastInvalidSelectView
 
-  updateTentativeHeaderState bcfg hdr@(ShelleyHeader sph _) = \case
-      LegacyShelleyTentativeHeaderState st ->
-        LegacyShelleyTentativeHeaderState <$>
-          updateTentativeHeaderState
-            (SelectViewDiffusionPipeliningBlockConfig bcfg)
-            (SelectViewDiffusionPipeliningHeader hdr)
-            st
+  tentativeHeaderView
+    | isConwayOrLater (Proxy @era)
+    = \_bcfg hdr@(ShelleyHeader sph _) ->
+        ShelleyTentativeHeaderView (blockNo hdr) HotIdentity {
+            hiIssuer  = SL.hashKey $ pHeaderIssuer sph
+          , hiIssueNo = pHeaderIssueNo sph
+          }
+    | otherwise
+    = LegacyShelleyTentativeHeaderView .: selectView
 
-      ShelleyTentativeHeaderState lastBlockNo badIdentities ->
-        case compare (NotOrigin (blockNo hdr)) lastBlockNo of
-          LT -> Nothing
-          EQ -> do
-            -- TODO Usually (especially during syncing), @badIdentities@ will be
-            -- empty. However, @hdrIdentity@ will still be forced by
-            -- 'Set.notMember'. According to the comment on 'isSelfIssued' for
-            -- @BlockSupportsMetrics ShelleyBlock@, we could save 850ns for
-            -- hashing the cold key in this case.
-            --
-            -- One could even replace @badIdentities@ by a list of the unhashed
-            -- cold keys when its cardinality is small, for reasons similar to
-            -- the ones in the comment mentioned above.
-            guard $ hdrIdentity `Set.notMember` badIdentities
-            Just $ ShelleyTentativeHeaderState
-              lastBlockNo
-              (Set.insert hdrIdentity badIdentities)
-          GT ->
-            Just $ ShelleyTentativeHeaderState
-              (NotOrigin (blockNo hdr))
-              (Set.singleton hdrIdentity)
-      where
-        hdrIdentity = HotIdentity {
-              hiIssuer  = SL.hashKey $ pHeaderIssuer sph
-            , hiIssueNo = pHeaderIssueNo sph
-            }
+  applyTentativeHeaderView _ thv st
+    | ShelleyTentativeHeaderView bno hdrIdentity <- thv
+    , ShelleyTentativeHeaderState lastBlockNo badIdentities <- st
+    = case compare (NotOrigin bno) lastBlockNo of
+        LT -> Nothing
+        EQ -> do
+          guard $ hdrIdentity `Set.notMember` badIdentities
+          Just $ ShelleyTentativeHeaderState
+            lastBlockNo
+            (Set.insert hdrIdentity badIdentities)
+        GT ->
+          Just $ ShelleyTentativeHeaderState
+            (NotOrigin bno)
+            (Set.singleton hdrIdentity)
+    | LegacyShelleyTentativeHeaderView thv' <- thv
+    , LegacyShelleyTentativeHeaderState st' <- st
+    = LegacyShelleyTentativeHeaderState <$>
+        applyTentativeHeaderView
+          (Proxy @(SelectViewDiffusionPipelining (ShelleyBlock proto era)))
+          thv'
+          st'
+    -- Inconsistent tentative header view vs state. This case can be removed
+    -- once mainnet has transitioned to Conway.
+    | otherwise = error "impossible"
