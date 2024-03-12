@@ -62,11 +62,11 @@ prop_timeouts mustTimeout = do
   where
     dullSchedule :: AF.HasHeader blk => DiffTime -> AF.AnchoredFragment blk -> PeersSchedule blk
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
-    dullSchedule timeout (_ AF.:> tipBlock) =
+    dullSchedule timeout chain@(_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
        in peersOnlyHonest $ [
             (Time 0, scheduleTipPoint tipBlock),
-            (Time 0, scheduleHeaderPoint tipBlock),
+            (Time 0, scheduleHeaderPoint chain),
             (Time 0, scheduleBlockPoint tipBlock),
             -- This last point does not matter, it is only here to leave the
             -- connection open (aka. keep the test running) long enough to

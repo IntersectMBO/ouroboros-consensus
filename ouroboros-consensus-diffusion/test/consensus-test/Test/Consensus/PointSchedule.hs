@@ -95,7 +95,8 @@ data NodeState blk =
   NodeState {
     nsTip    :: WithOrigin blk,
     nsHeader :: WithOrigin blk,
-    nsBlock  :: WithOrigin blk
+    nsBlock  :: WithOrigin blk,
+    nsChains :: [AF.AnchoredFragment blk]
   }
   deriving (Eq, Show)
 
@@ -125,12 +126,13 @@ genesisNodeState =
   NodeState {
     nsTip = Origin,
     nsHeader = Origin,
-    nsBlock = Origin
+    nsBlock = Origin,
+    nsChains = []
   }
 
 prettyPeersSchedule ::
   forall blk.
-  (CondenseList (NodeState blk)) =>
+  (CondenseList (NodeState blk), AF.HasHeader blk) =>
   PeersSchedule blk ->
   [String]
 prettyPeersSchedule peers =
@@ -152,6 +154,29 @@ prettyPeersSchedule peers =
 -- Conversion to 'PointSchedule'
 ----------------------------------------------------------------------------------------------------
 
+-- | This maintains the set of fragments from which BlockFetch may extract the requested block
+-- ranges.
+-- As detailed in 'Test.Consensus.PeerSimulator.Handlers.handlerSendBlocks', the BlockFetch server
+-- needs more information than just HP and BP to decide whether a set of blocks is available.
+-- Because BP can lag behind HP, and the BlockFetch client's decisions depend on circumstances
+-- outside of the point schedule, it is a common occurrence that ranges of blocks are requested
+-- that do not correspond to the fragments headed by the current HP or BP.
+--
+-- We therefore store the previous HP chain in the node state whenever HP switches to another fork.
+-- The head of the list always contains the current HP's chain, and in each update we remove all
+-- historical chains that are prefixes of the current chain.
+-- In the BlockFetch handler we then use _all_ of these recorded chains as additional ranges that
+-- allow the server to initiate a batch.
+updateChains ::
+  AF.HasHeader blk =>
+  AF.AnchoredFragment blk ->
+  [AF.AnchoredFragment blk] ->
+  [AF.AnchoredFragment blk]
+updateChains hpChain chains =
+  hpChain : filter notPrefix chains
+  where
+    notPrefix oldChain = not (AF.pointOnFragment (AF.headPoint oldChain) hpChain)
+
 -- | Convert a @SinglePeer@ schedule to a 'NodeState' schedule.
 --
 -- Accumulates the new points in each tick into the previous state, starting with a set of all
@@ -166,9 +191,9 @@ prettyPeersSchedule peers =
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
-peerStates :: Peer (PeerSchedule blk) -> [(Time, Peer (NodeState blk))]
+peerStates :: AF.HasHeader blk => Peer (PeerSchedule blk) -> [(Time, Peer (NodeState blk))]
 peerStates Peer {name, value = schedulePoints} =
-  drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisNodeState points))
+  drop 1 (zip (Time 0 : map shiftTime times) (Peer name <$> scanl' modPoint genesisNodeState points))
   where
     shiftTime :: Time -> Time
     shiftTime t = addTime (- firstTipOffset) t
@@ -178,7 +203,11 @@ peerStates Peer {name, value = schedulePoints} =
 
     modPoint z = \case
       ScheduleTipPoint nsTip -> z {nsTip}
-      ScheduleHeaderPoint nsHeader -> z {nsHeader}
+      ScheduleHeaderPoint chain ->
+        z {
+          nsHeader = either (const Origin) NotOrigin (AF.head chain),
+          nsChains = updateChains chain (nsChains z)
+        }
       ScheduleBlockPoint nsBlock -> z {nsBlock}
 
     (times, points) = unzip schedulePoints
@@ -186,12 +215,12 @@ peerStates Peer {name, value = schedulePoints} =
 -- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
 --
 -- The resulting schedule contains all the peers. Items are sorted by time.
-peersStates :: PeersSchedule blk -> [(Time, Peer (NodeState blk))]
+peersStates :: AF.HasHeader blk => PeersSchedule blk -> [(Time, Peer (NodeState blk))]
 peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
 
 -- | Same as 'peersStates' but returns the duration of a state instead of the
 -- absolute time at which it starts holding.
-peersStatesRelative :: PeersSchedule blk -> [(DiffTime, Peer (NodeState blk))]
+peersStatesRelative :: AF.HasHeader blk => PeersSchedule blk -> [(DiffTime, Peer (NodeState blk))]
 peersStatesRelative peers =
   let (starts, states) = unzip $ peersStates peers
       durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
@@ -200,13 +229,13 @@ peersStatesRelative peers =
 type PeerSchedule blk = [(Time, SchedulePoint blk)]
 
 -- | List of all blocks appearing in the schedule.
-peerScheduleBlocks :: (PeerSchedule blk) -> [blk]
+peerScheduleBlocks :: AF.HasHeader blk => (PeerSchedule blk) -> [blk]
 peerScheduleBlocks = mapMaybe (withOriginToMaybe . schedulePointToBlock . snd)
 
 type PeersSchedule blk = Peers (PeerSchedule blk)
 
 -- | List of all blocks appearing in the schedules.
-peerSchedulesBlocks :: PeersSchedule blk -> [blk]
+peerSchedulesBlocks :: AF.HasHeader blk => PeersSchedule blk -> [blk]
 peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList
 
 ----------------------------------------------------------------------------------------------------

@@ -28,7 +28,8 @@ import           Test.QuickCheck.Random
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import qualified Test.Util.QuickCheck as QC
-import           Test.Util.TersePrinting (terseBlock, terseWithOrigin)
+import           Test.Util.TersePrinting (terseBlock, tersePoint,
+                     terseWithOrigin)
 import           Test.Util.TestBlock (TestBlock, TestHash (unTestHash),
                      firstBlock, modifyFork, successorBlock, tbSlot)
 import           Test.Util.TestEnv
@@ -257,7 +258,7 @@ prop_peerScheduleFromTipPoints seed (PeerScheduleFromTipPointsInput psp tps trun
   where
     showPoint :: SchedulePoint TestBlock -> String
     showPoint (ScheduleTipPoint b)    = "TP " ++ terseWithOrigin terseBlock b
-    showPoint (ScheduleHeaderPoint b) = "HP " ++ terseWithOrigin terseBlock b
+    showPoint (ScheduleHeaderPoint b) = "HP " ++ tersePoint (AF.headPoint b)
     showPoint (ScheduleBlockPoint b)  = "BP " ++ terseWithOrigin terseBlock b
 
     isTipPoint :: SchedulePoint blk -> Bool

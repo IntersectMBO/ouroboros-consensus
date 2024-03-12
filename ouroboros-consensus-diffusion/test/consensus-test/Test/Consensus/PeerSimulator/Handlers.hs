@@ -22,14 +22,13 @@ import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Control.Monad.Trans (lift)
 import           Control.Monad.Writer.Strict (MonadWriter (tell),
                      WriterT (runWriterT))
-import           Data.List (isSuffixOf)
+import           Data.List (find, isSuffixOf)
 import qualified Data.List.NonEmpty as NonEmpty
-import           Data.Maybe (fromJust, fromMaybe)
+import           Data.Maybe (fromJust)
 import           Ouroboros.Consensus.Block (GetHeader, HasHeader, HeaderHash,
                      Point (GenesisPoint), blockHash, getHeader, withOrigin)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, STM, StrictTVar,
                      readTVar, writeTVar)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip (TipGenesis), blockPoint,
                      getTipPoint, tipFromHeader)
@@ -176,16 +175,6 @@ handlerRequestNext currentIntersection blockTree points =
 
     trace = tell . pure
 
--- REVIEW: We call this a lot, and I assume it creates some significant overhead.
--- We should figure out a cheaper way to achieve what we're doing with the result.
--- Since we're in blk, we can at least check whether a block can extend another block,
--- but then we won't be able to generalize later.
-fragmentUpTo :: HasHeader blk => BlockTree blk -> String -> Point blk -> AnchoredFragment blk
-fragmentUpTo blockTree desc b =
-  fromMaybe fatal (BT.findFragment b blockTree)
-  where
-    fatal = error ("BlockFetch: Could not find " ++ desc ++ " in the block tree")
-
 -- | Handle the BlockFetch message (it actually has only one unnamed entry point).
 --
 -- If the requested range ends not after BP, send them.
@@ -194,12 +183,11 @@ fragmentUpTo blockTree desc b =
 handlerBlockFetch ::
   forall m blk.
   (IOLike m, HasHeader blk) =>
-  BlockTree blk ->
   ChainRange (Point blk) ->
   NodeState blk ->
   STM m (Maybe (BlockFetch blk), [TraceScheduledBlockFetchServerEvent (NodeState blk) blk])
-handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
-  runWriterT (serveFromBpFragment (AF.sliceRange hpChain from to))
+handlerBlockFetch (ChainRange from to) NodeState {nsChains} =
+  runWriterT (serveFromBpFragment range)
   where
     -- Check whether the requested range is contained in the fragment before the header point.
     -- We may only initiate batch serving if the full range is available; if the server has only some of the blocks, it
@@ -209,10 +197,12 @@ handlerBlockFetch blockTree (ChainRange from to) NodeState {nsHeader} =
         trace $ TraceStartingBatch slice
         pure (Just (StartBatch (AF.toOldestFirst slice)))
       Nothing    -> do
-        trace $ TraceWaitingForRange from to
+        trace $ TraceWaitingForRange from to nsChains
         pure Nothing
 
-    hpChain = fragmentUpTo blockTree "header point" (withOrigin GenesisPoint blockPoint nsHeader)
+    range = do
+      hpChain <- find (AF.pointOnFragment to) nsChains
+      AF.sliceRange hpChain from to
 
     trace = tell . pure
 

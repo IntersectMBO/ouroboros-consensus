@@ -83,11 +83,13 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
 
     delaySchedule :: HasHeader blk => BlockTree blk -> Peers (PeerSchedule blk)
     delaySchedule tree =
-      let trunkTip = case btTrunk tree of
+      let trunk = btTrunk tree
+          trunkTip = case trunk of
             (AF.Empty _)       -> error "tree must have at least one block"
             (_ AF.:> tipBlock) -> tipBlock
           branch = getOnlyBranch tree
-          intersectM = case btbPrefix branch of
+          prefix = btbPrefix branch
+          intersectM = case prefix of
             (AF.Empty _)       -> Nothing
             (_ AF.:> tipBlock) -> Just tipBlock
           branchTip = case btbFull branch of
@@ -98,13 +100,13 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
             -- advertised its chain.
             ( (Time 0, scheduleTipPoint trunkTip) : case intersectM of
                 Nothing ->
-                  [ (Time 0.5, scheduleHeaderPoint trunkTip),
+                  [ (Time 0.5, scheduleHeaderPoint trunk),
                     (Time 0.5, scheduleBlockPoint trunkTip)
                   ]
                 Just intersect ->
-                  [ (Time 0.5, scheduleHeaderPoint intersect),
+                  [ (Time 0.5, scheduleHeaderPoint prefix),
                     (Time 0.5, scheduleBlockPoint intersect),
-                    (Time 5, scheduleHeaderPoint trunkTip),
+                    (Time 5, scheduleHeaderPoint trunk),
                     (Time 5, scheduleBlockPoint trunkTip)
                   ]
             )
@@ -115,7 +117,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
                 Nothing -> [(Time 11, scheduleTipPoint branchTip)]
                 -- the alternate branch forks from `intersect`
                 Just intersect ->
-                  [ (Time 0, scheduleHeaderPoint intersect),
+                  [ (Time 0, scheduleHeaderPoint prefix),
                     (Time 0, scheduleBlockPoint intersect),
                     (Time 11, scheduleBlockPoint intersect)
                   ]

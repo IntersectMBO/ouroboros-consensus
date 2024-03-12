@@ -18,6 +18,7 @@ module Test.Consensus.PeerSimulator.Trace (
   ) where
 
 import           Control.Tracer (Tracer (Tracer), contramap, traceWith)
+import           Data.Foldable (for_)
 import           Data.List (intersperse)
 import qualified Data.Map as Map
 import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds)
@@ -80,7 +81,7 @@ data TraceScheduledBlockFetchServerEvent state blk
   = TraceHandlerEventBF (TraceScheduledServerHandlerEvent state blk)
   | TraceNoBlocks
   | TraceStartingBatch (AnchoredFragment blk)
-  | TraceWaitingForRange (Point blk) (Point blk)
+  | TraceWaitingForRange (Point blk) (Point blk) [AnchoredFragment blk]
   | TraceSendingBlock blk
   | TraceBatchIsDone
   | TraceBlockPointIsBehind
@@ -215,6 +216,7 @@ traceScheduledChainSyncServerEventTestBlockWith tracer peerId = \case
     traceLines = traceUnitLinesWith tracer unit
 
 traceScheduledBlockFetchServerEventTestBlockWith ::
+  Monad m =>
   Tracer m String ->
   PeerId ->
   TraceScheduledBlockFetchServerEvent (NodeState TestBlock) TestBlock ->
@@ -225,8 +227,9 @@ traceScheduledBlockFetchServerEventTestBlockWith tracer peerId = \case
       trace "  no blocks available"
     TraceStartingBatch fragment ->
       trace $ "Starting batch for slice " ++ terseFragment fragment
-    TraceWaitingForRange pointFrom pointTo ->
-      trace $ "Waiting for next tick for range: " ++ tersePoint pointFrom ++ " -> " ++ tersePoint pointTo
+    TraceWaitingForRange pointFrom pointTo chains -> do
+      trace $ "Waiting for next tick for range: " ++ tersePoint pointFrom ++ " -> " ++ tersePoint pointTo ++ " | chains:"
+      for_ chains $ \ c -> trace (terseFragment c)
     TraceSendingBlock block ->
       trace $ "Sending " ++ terseBlock block
     TraceBatchIsDone ->

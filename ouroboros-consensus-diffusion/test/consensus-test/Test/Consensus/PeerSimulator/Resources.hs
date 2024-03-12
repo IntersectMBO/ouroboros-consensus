@@ -156,14 +156,14 @@ makeBlockFetchResources ::
   STM m () ->
   SharedResources m TestBlock ->
   BlockFetchResources m TestBlock
-makeBlockFetchResources bfrTickStarted SharedResources {srPeerId, srTracer, srBlockTree, srCurrentState} =
+makeBlockFetchResources bfrTickStarted SharedResources {srPeerId, srTracer, srCurrentState} =
   BlockFetchResources {
     bfrTickStarted,
     bfrServer
   }
   where
     handlers = BlockFetchServerHandlers {
-      bfshBlockFetch = handlerBlockFetch srBlockTree,
+      bfshBlockFetch = handlerBlockFetch,
       bfshSendBlocks = handlerSendBlocks
     }
     bfrServer =

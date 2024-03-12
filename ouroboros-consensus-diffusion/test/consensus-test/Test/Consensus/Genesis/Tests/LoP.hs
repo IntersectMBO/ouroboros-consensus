@@ -78,14 +78,14 @@ prop_wait mustTimeout =
   where
     dullSchedule :: (HasHeader blk) => DiffTime -> AnchoredFragment blk -> Peers (PeerSchedule blk)
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
-    dullSchedule timeout (_ AF.:> tipBlock) =
+    dullSchedule timeout chain@(_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
        in peersOnlyHonest $
             [ (Time 0, scheduleTipPoint tipBlock),
               -- This last point does not matter, it is only here to leave the
               -- connection open (aka. keep the test running) long enough to
               -- pass the timeout by 'offset'.
-              (Time (timeout + offset), scheduleHeaderPoint tipBlock),
+              (Time (timeout + offset), scheduleHeaderPoint chain),
               (Time (timeout + offset), scheduleBlockPoint tipBlock)
             ]
 
@@ -109,10 +109,10 @@ prop_waitBehindForecastHorizon =
   where
     dullSchedule :: (HasHeader blk) => AnchoredFragment blk -> Peers (PeerSchedule blk)
     dullSchedule (AF.Empty _) = error "requires a non-empty block tree"
-    dullSchedule (_ AF.:> tipBlock) =
+    dullSchedule chain@(_ AF.:> tipBlock) =
       peersOnlyHonest $
         [ (Time 0, scheduleTipPoint tipBlock),
-          (Time 0, scheduleHeaderPoint tipBlock),
+          (Time 0, scheduleHeaderPoint chain),
           (Time 11, scheduleBlockPoint tipBlock)
         ]
 
@@ -177,7 +177,7 @@ prop_serve mustTimeout =
       peersOnlyHonest $
         (Time 0, scheduleTipPoint tipBlock)
           : ( flip concatMap (zip [1 ..] (AF.toOldestFirst fragment)) $ \(i, block) ->
-                [ (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleHeaderPoint block),
+                [ (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleHeaderPoint fragment),
                   (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleBlockPoint block)
                 ]
             )
@@ -220,11 +220,13 @@ prop_delayAttack lopEnabled =
 
     delaySchedule :: (HasHeader blk) => BlockTree blk -> Peers (PeerSchedule blk)
     delaySchedule tree =
-      let trunkTip = case btTrunk tree of
+      let trunk = btTrunk tree
+          trunkTip = case trunk of
             (AF.Empty _)       -> error "tree must have at least one block"
             (_ AF.:> tipBlock) -> tipBlock
           branch = getOnlyBranch tree
-          intersectM = case btbPrefix branch of
+          prefix = btbPrefix branch
+          intersectM = case prefix of
             (AF.Empty _)       -> Nothing
             (_ AF.:> tipBlock) -> Just tipBlock
           branchTip = case btbFull branch of
@@ -235,13 +237,13 @@ prop_delayAttack lopEnabled =
             -- advertised its chain.
             ( (Time 0, scheduleTipPoint trunkTip) : case intersectM of
                 Nothing ->
-                  [ (Time 0.5, scheduleHeaderPoint trunkTip),
+                  [ (Time 0.5, scheduleHeaderPoint trunk),
                     (Time 0.5, scheduleBlockPoint trunkTip)
                   ]
                 Just intersect ->
-                  [ (Time 0.5, scheduleHeaderPoint intersect),
+                  [ (Time 0.5, scheduleHeaderPoint prefix),
                     (Time 0.5, scheduleBlockPoint intersect),
-                    (Time 5, scheduleHeaderPoint trunkTip),
+                    (Time 5, scheduleHeaderPoint trunk),
                     (Time 5, scheduleBlockPoint trunkTip)
                   ]
             )
@@ -252,7 +254,7 @@ prop_delayAttack lopEnabled =
                 Nothing -> [(Time 11, scheduleTipPoint branchTip)]
                 -- the alternate branch forks from `intersect`
                 Just intersect ->
-                  [ (Time 0, scheduleHeaderPoint intersect),
+                  [ (Time 0, scheduleHeaderPoint prefix),
                     (Time 0, scheduleBlockPoint intersect),
                     (Time 11, scheduleBlockPoint intersect)
                   ]

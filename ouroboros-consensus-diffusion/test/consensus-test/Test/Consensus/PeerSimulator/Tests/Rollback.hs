@@ -1,5 +1,6 @@
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
@@ -7,10 +8,10 @@
 module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
 
 import           Control.Monad.Class.MonadTime.SI (Time (Time))
+import           Data.List (unfoldr)
 import           Ouroboros.Consensus.Block (ChainHash (..), Header)
 import           Ouroboros.Consensus.Config.SecurityParam
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     toOldestFirst)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Genesis.Setup
@@ -93,10 +94,15 @@ rollbackSchedule n blockTree =
           ]
     in peersOnlyHonest $ zip (map (Time . (/30)) [0..]) schedulePoints
   where
-    banalSchedulePoints :: AnchoredFragment blk -> [SchedulePoint blk]
-    banalSchedulePoints = concatMap banalSchedulePoints' . toOldestFirst
-    banalSchedulePoints' :: blk -> [SchedulePoint blk]
-    banalSchedulePoints' block = [scheduleTipPoint block, scheduleHeaderPoint block, scheduleBlockPoint block]
+    banalSchedulePoints :: AF.HasHeader blk => AnchoredFragment blk -> [SchedulePoint blk]
+    banalSchedulePoints = concat . unfoldr step
+      where
+        step = \case
+          AF.Empty _ -> Nothing
+          frag@(initFrag AF.:> b) -> Just (banalSchedulePoints' frag b, initFrag)
+
+    banalSchedulePoints' :: AnchoredFragment blk -> blk -> [SchedulePoint blk]
+    banalSchedulePoints' frag block = [scheduleTipPoint block, scheduleHeaderPoint frag, scheduleBlockPoint block]
 
 -- | Given a hash, checks whether it is on the trunk of the block tree, that is
 -- if it only contains zeroes.

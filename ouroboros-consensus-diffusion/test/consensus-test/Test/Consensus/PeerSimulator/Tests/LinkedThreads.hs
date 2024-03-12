@@ -73,13 +73,14 @@ prop_chainSyncKillsBlockFetch = do
             _ -> False
     )
   where
-    dullSchedule :: GenesisTest blk () -> DiffTime -> PeersSchedule blk
+    dullSchedule :: AF.HasHeader blk => GenesisTest blk () -> DiffTime -> PeersSchedule blk
     dullSchedule GenesisTest {gtBlockTree} timeout =
-      let (firstBlock, secondBlock) = case AF.toOldestFirst $ btTrunk gtBlockTree of
+      let trunk = btTrunk gtBlockTree
+          (firstBlock, secondBlock) = case AF.toOldestFirst trunk of
             b1 : b2 : _ -> (b1, b2)
             _           -> error "block tree must have two blocks"
        in peersOnlyHonest $
             [ (Time 0, scheduleTipPoint secondBlock),
-              (Time 0, scheduleHeaderPoint firstBlock),
+              (Time 0, scheduleHeaderPoint (AF.takeOldest 1 trunk)),
               (Time (timeout + 1), scheduleBlockPoint firstBlock)
             ]

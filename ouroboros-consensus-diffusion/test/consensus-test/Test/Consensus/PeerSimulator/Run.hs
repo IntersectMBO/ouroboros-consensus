@@ -217,6 +217,7 @@ dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
 -- client.
 runScheduler ::
   IOLike m =>
+  HasHeader blk =>
   Tracer m (TraceSchedulerEvent blk) ->
   Tracer m () ->
   PeersSchedule blk ->
