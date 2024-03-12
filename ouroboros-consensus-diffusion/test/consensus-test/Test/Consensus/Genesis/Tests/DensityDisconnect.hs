@@ -3,10 +3,13 @@
 {-# LANGUAGE NamedFieldPuns        #-}
 module Test.Consensus.Genesis.Tests.DensityDisconnect (tests) where
 
-import           Cardano.Slotting.Slot (unSlotNo)
+import           Cardano.Slotting.Slot (WithOrigin (..), unSlotNo)
+import           Control.Exception (fromException)
+import           Control.Monad.Class.MonadTime.SI (Time (..))
 import           Data.Bifunctor (second)
 import           Data.Foldable (minimumBy, toList)
 import           Data.Function (on)
+import           Data.Functor (($>))
 import           Data.List (intercalate)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -17,14 +20,27 @@ import           Ouroboros.Consensus.Config.SecurityParam
                      (SecurityParam (SecurityParam), maxRollbacks)
 import           Ouroboros.Consensus.Genesis.Governor (densityDisconnect,
                      sharedCandidatePrefix)
-import           Ouroboros.Consensus.Ledger.SupportsProtocol
-                     (GenesisWindow (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientException (DensityTooLow))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip (TipGenesis), tipFromHeader)
+import           Ouroboros.Network.Block (HasHeader, Tip (TipGenesis),
+                     tipFromHeader)
 import           Test.Consensus.BlockTree
 import           Test.Consensus.Genesis.Setup
+import           Test.Consensus.Genesis.Setup.Classifiers (classifiers,
+                     genesisWindowAfterIntersection)
+import           Test.Consensus.PeerSimulator.Run
+                     (SchedulerConfig (scEnableLoE), defaultSchedulerConfig)
+import           Test.Consensus.PeerSimulator.StateView
+                     (PeerSimulatorComponent (..), StateView (..),
+                     exceptionsByComponent)
+import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers
+import           Test.Consensus.PointSchedule.Shrinking
+                     (shrinkByRemovingAdversaries)
+import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..),
+                     scheduleBlockPoint, scheduleHeaderPoint, scheduleTipPoint)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
 import           Test.Tasty
@@ -41,7 +57,8 @@ tests =
   adjustQuickCheckMaxSize (`div` 5) $
   testGroup "gdd" [
     testProperty "basic" prop_densityDisconnectStatic,
-    testProperty "monotonicity" prop_densityDisconnectMonotonic
+    testProperty "monotonicity" prop_densityDisconnectMonotonic,
+    testProperty "re-triggers chain selection on disconnection" prop_densityDisconnectTriggersChainSel
   ]
 
 branchTip :: AnchoredFragment TestBlock -> Tip TestBlock
@@ -102,7 +119,10 @@ prop_densityDisconnectStatic :: Property
 prop_densityDisconnectStatic =
   forAll gen $ \ StaticCandidates {k, sgen, suffixes, loeFrag} -> do
     let (disconnect, _) = densityDisconnect sgen k suffixes mempty mempty loeFrag
-    not (null disconnect) && HonestPeer `notElem` disconnect
+    counterexample "it should disconnect some node" (not (null disconnect))
+      .&&.
+     counterexample "it should not disconnect the honest peer"
+       (HonestPeer `notElem` disconnect)
   where
     gen = do
       gt <- genChains (QC.choose (1, 4))
@@ -278,3 +298,80 @@ prop_densityDisconnectMonotonic =
     gen = do
       gt <- genChains (QC.choose (1, 4))
       evolveBranches (initCandidates gt)
+
+
+-- | Tests that a GDD disconnection re-triggers chain selection, i.e. when the current
+-- selection is blocked by LoE, and the leashing adversary reveals it is not dense enough,
+-- it gets disconnected and then the selection progresses.
+prop_densityDisconnectTriggersChainSel :: Property
+prop_densityDisconnectTriggersChainSel =
+  forAllGenesisTest
+    ( do
+        gt@GenesisTest {gtBlockTree} <- genChains (pure 1)
+        let ps = lowDensitySchedule gtBlockTree
+            cls = classifiers gt
+        if genesisWindowAfterIntersection cls
+          then pure $ gt $> ps
+          else discard
+    )
+
+    (defaultSchedulerConfig {scEnableLoE = True})
+
+    shrinkByRemovingAdversaries
+
+    ( \GenesisTest {gtBlockTree} stateView@StateView {svTipBlock} ->
+        let
+          exnCorrect = case exceptionsByComponent ChainSyncClient stateView of
+            [exn] ->
+              case fromException exn of
+                Just (DensityTooLow) -> True
+                _                    -> False
+            _ -> False
+          tipPointCorrect = Just (getTrunkTip gtBlockTree) == svTipBlock
+        in exnCorrect && tipPointCorrect
+    )
+
+  where
+    getOnlyBranch :: BlockTree blk -> BlockTreeBranch blk
+    getOnlyBranch BlockTree {btBranches} = case btBranches of
+      [branch] -> branch
+      _        -> error "tree must have exactly one alternate branch"
+
+    getTrunkTip :: HasHeader blk => BlockTree blk -> blk
+    getTrunkTip tree = case btTrunk tree of
+      (AF.Empty _)       -> error "tree must have at least one block"
+      (_ AF.:> tipBlock) -> tipBlock
+
+    -- 1. The adversary advertises blocks up to the intersection.
+    -- 2. The honest node advertises all its chain, which is
+    --    long enough to be blocked by the LoE.
+    -- 3. The adversary gives a block after the genesis window,
+    --    which should allow the GDD to realize that the chain
+    --    is not dense enough, and that the whole of the honest
+    --    chain should be selected.
+    lowDensitySchedule :: HasHeader blk => BlockTree blk -> Peers (PeerSchedule blk)
+    lowDensitySchedule tree =
+      let trunkTip = getTrunkTip tree
+          branch = getOnlyBranch tree
+          intersect = case btbPrefix branch of
+            (AF.Empty _)       -> Origin
+            (_ AF.:> tipBlock) -> At tipBlock
+          advTip = case btbFull branch of
+            (AF.Empty _) -> error "alternate branch must have at least one block"
+            (_ AF.:> tipBlock) -> tipBlock
+       in mkPeers
+            -- Eagerly serve the honest tree, but after the adversary has
+            -- advertised its chain up to the intersection.
+            [ (Time 0, scheduleTipPoint trunkTip),
+              (Time 0.5, scheduleHeaderPoint trunkTip),
+              (Time 0.5, scheduleBlockPoint trunkTip)
+            ]
+            -- Advertise the alternate branch early, but wait for the honest
+            -- node to have served its chain before disclosing the alternate
+            -- branch is not dense enough.
+            [[(Time 0, scheduleTipPoint advTip),
+              (Time 0, ScheduleHeaderPoint intersect),
+              (Time 0, ScheduleBlockPoint intersect),
+              (Time 1, scheduleHeaderPoint advTip),
+              (Time 1, scheduleBlockPoint advTip)
+            ]]
