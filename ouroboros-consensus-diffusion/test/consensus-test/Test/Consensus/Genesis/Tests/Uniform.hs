@@ -15,11 +15,12 @@ module Test.Consensus.Genesis.Tests.Uniform (tests) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.Class.MonadTime.SI (Time, addTime)
+import           Control.Monad.Class.MonadTime.SI (DiffTime, Time (Time),
+                     addTime)
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
+import           Data.Maybe (catMaybes, mapMaybe)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
@@ -176,16 +177,17 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 -- the last genesis window of the honest chain.
 
 -- | Test that the leashing attacks do not delay the immutable tip
---
--- This test is expected to fail because we don't test a genesis implementation
--- yet.
 prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
-  expectFailure $ forAllGenesisTest
+  forAllGenesisTest
 
-    (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
+    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
-    (defaultSchedulerConfig {scTrace = False})
+    defaultSchedulerConfig
+      { scTrace = False
+      , scEnableLoE = True
+      , scEnableLoP = True
+      }
 
     shrinkPeerSchedules
 
@@ -195,11 +197,33 @@ prop_leashingAttackStalling =
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
+    -- and by adding sufficient time at the end of a test to allow LoP and
+    -- timeouts to disconnect adversaries.
     genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
+      let peerCount = 1 + length advs0
+          extendedHonest =
+            duplicateLastPoint (endingDelay peerCount genesisTest) <$> honest
       advs <- mapM (mapM dropRandomPoints) advs0
-      pure $ Peers honest advs
+      pure $ Peers extendedHonest advs
+
+    endingDelay peerCount gt =
+     let cst = gtChainSyncTimeouts gt
+         bft = gtBlockFetchTimeouts gt
+      in 1 + fromIntegral peerCount * maximum (0 : catMaybes
+           [ canAwaitTimeout cst
+           , intersectTimeout cst
+           , busyTimeout bft
+           , streamingTimeout bft
+           ])
+
+    disableBoringTimeouts gt =
+      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
+            { mustReplyTimeout = Nothing
+            , idleTimeout = Nothing
+            }
+         }
 
     dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
@@ -214,6 +238,13 @@ prop_leashingAttackStalling =
     dropElemsAt xs (i:is) =
       let (ys, zs) = splitAt i xs
        in ys ++ dropElemsAt (drop 1 zs) is
+
+    duplicateLastPoint
+      :: DiffTime -> [(Time, SchedulePoint TestBlock)] -> [(Time, SchedulePoint TestBlock)]
+    duplicateLastPoint d [] = [(Time d, ScheduleTipPoint Origin)]
+    duplicateLastPoint d xs =
+      let (t, p) = last xs
+       in xs ++ [(addTime d t, p)]
 
 -- | Test that the leashing attacks do not delay the immutable tip after. The
 -- immutable tip needs to be advanced enough when the honest peer has offered
