@@ -23,10 +23,10 @@ module Ouroboros.Consensus.Genesis.Governor (
 import           Control.Monad (guard)
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Containers.ListUtils (nubOrd)
-import           Data.Foldable (for_, toList)
+import           Data.Foldable (for_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isJust)
+import           Data.Maybe (fromMaybe, isJust)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
@@ -51,7 +51,7 @@ import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
 import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip, getTipSlotNo)
+import           Ouroboros.Network.Block (Tip(TipGenesis), getTipSlotNo)
 
 -- | A dummy version of the LoE that sets the LoE fragment to the current
 -- selection.
@@ -171,8 +171,8 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
   where
     densityBounds = Map.fromList $ do
       (peer, fragment) <- Map.toList competingFrags
-      theirTip <- toList (theirTips Map.!? peer)
-      let candidateSuffix = candidateSuffixes Map.! peer
+      let theirTip = theirTips Map.! peer
+          candidateSuffix = candidateSuffixes Map.! peer
           lowerBound = fromIntegral $ AF.length fragment
           unresolvedSlotsLB =
             succWithOrigin $ AF.headSlot fragment
@@ -287,8 +287,8 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles =
         (loeFrag, candidateSuffixes) =
           sharedCandidatePrefix curChain candidates
       theirTips <-
-        fmap (Map.mapMaybe id) $ flip Map.traverseWithKey candidateSuffixes $ \peer _ ->
-          cschTheirTip (handles Map.! peer)
+        flip Map.traverseWithKey candidateSuffixes $ \peer _ ->
+          fromMaybe TipGenesis <$> cschTheirTip (handles Map.! peer)
       latestSlots <-
         flip Map.traverseWithKey candidateSuffixes $ \peer _ ->
           cschLatestSlot (handles Map.! peer)
