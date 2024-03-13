@@ -498,7 +498,7 @@ library unstable-cardano-tools
     , cardano-crypto
     , cardano-crypto-class
     , cardano-crypto-wrapper
-    , cardano-git-rev
+    , cardano-git-rev                <0.2
     , cardano-ledger-allegra
     , cardano-ledger-alonzo
     , cardano-ledger-api
