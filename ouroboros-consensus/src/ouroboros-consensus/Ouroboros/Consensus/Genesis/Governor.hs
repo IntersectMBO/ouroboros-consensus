@@ -171,6 +171,8 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
   where
     densityBounds = Map.fromList $ do
       (peer, fragment) <- Map.toList competingFrags
+      -- Skip peers that haven't advertised their tip yet.
+      -- They should be disconnected by timeouts instead.
       theirTip <- toList (theirTips Map.!? peer)
       let candidateSuffix = candidateSuffixes Map.! peer
           lowerBound = fromIntegral $ AF.length fragment
