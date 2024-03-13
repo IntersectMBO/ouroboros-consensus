@@ -55,7 +55,7 @@ tests =
   testGroup "gdd" [
     testProperty "basic" prop_densityDisconnectStatic,
     testProperty "monotonicity" prop_densityDisconnectMonotonic,
-    testProperty "re-triggers chain selection on disconnection" prop_densityDisconnectChainSel
+    testProperty "re-triggers chain selection on disconnection" prop_densityDisconnectTriggersChainSel
   ]
 
 branchTip :: AnchoredFragment TestBlock -> Tip TestBlock
@@ -293,8 +293,12 @@ prop_densityDisconnectMonotonic =
       gt <- genChains (QC.choose (1, 4))
       evolveBranches (initCandidates gt)
 
-prop_densityDisconnectChainSel :: Property
-prop_densityDisconnectChainSel =
+
+-- | Tests that a GDD disconnection re-triggers chain selection, i.e. when the current
+-- selection is blocked by LoE, and the leashing adversary reveals it is not dense enough,
+-- it gets disconnected and then the selection progresses.
+prop_densityDisconnectTriggersChainSel :: Property
+prop_densityDisconnectTriggersChainSel =
   -- FIXME: Remove noShrinking Once the test passes
   noShrinking $ forAllGenesisTest
     ( do
