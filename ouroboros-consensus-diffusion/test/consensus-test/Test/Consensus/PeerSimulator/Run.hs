@@ -108,8 +108,8 @@ data SchedulerConfig =
 defaultSchedulerConfig :: SchedulerConfig
 defaultSchedulerConfig =
   SchedulerConfig {
-    scEnableChainSyncTimeouts = False,
-    scEnableBlockFetchTimeouts = False,
+    scEnableChainSyncTimeouts = True,
+    scEnableBlockFetchTimeouts = True,
     scDebug = False,
     scTrace = True,
     scTraceState = False,

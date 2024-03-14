@@ -16,8 +16,7 @@ import           Ouroboros.Network.Driver.Limits
 import           Ouroboros.Network.Protocol.ChainSync.Codec (mustReplyTimeout)
 import           Test.Consensus.BlockTree (BlockTree (..))
 import           Test.Consensus.Genesis.Setup
-import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig,
-                     scEnableChainSyncTimeouts)
+import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
@@ -43,7 +42,7 @@ prop_chainSyncKillsBlockFetch = do
         let schedule = dullSchedule gt (fromJust $ mustReplyTimeout gtChainSyncTimeouts)
         pure $ gt $> schedule
     )
-    (defaultSchedulerConfig {scEnableChainSyncTimeouts = True})
+    defaultSchedulerConfig
     (\_ _ -> [])
     ( \_ stateView@StateView {svTipBlock} ->
         svTipBlock == Nothing
