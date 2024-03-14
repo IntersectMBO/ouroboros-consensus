@@ -456,7 +456,7 @@ ledgerState_AtoB =
 ledgerTables_AtoB :: TranslateLedgerTables BlockA BlockB
 ledgerTables_AtoB =  TranslateLedgerTables {
       translateTxInWith  = id
-    , translateTxOutWith = Just . id
+    , translateTxOutWith = id
     }
 
 chainDepState_AtoB ::
