@@ -346,6 +346,9 @@ prettyGenesisTest prettySchedule genesisTest =
   , "    canAwait = " ++ show canAwaitTimeout
   , "    intersect = " ++ show intersectTimeout
   , "    mustReply = " ++ show mustReplyTimeout
+  , "  gtBlockFetchTimeouts: "
+  , "    busy = " ++ show busyTimeout
+  , "    streaming = " ++ show streamingTimeout
   , "  gtLoPBucketParams: "
   , "    lbpCapacity = " ++ show lbpCapacity ++ " tokens"
   , "    lbpRate = " ++ show lbpRate ++ " ≅ " ++ printf "%.2f" (fromRational lbpRate :: Float) ++ " tokens per second"
@@ -362,6 +365,7 @@ prettyGenesisTest prettySchedule genesisTest =
       , gtDelay = Delta delta
       , gtBlockTree
       , gtChainSyncTimeouts = ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout}
+      , gtBlockFetchTimeouts = BlockFetchTimeout{busyTimeout, streamingTimeout}
       , gtLoPBucketParams = LoPBucketParams{lbpCapacity, lbpRate}
       , gtSlotLength
       , gtSchedule
