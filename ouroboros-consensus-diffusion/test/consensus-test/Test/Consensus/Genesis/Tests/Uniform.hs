@@ -19,7 +19,7 @@ import           Control.Monad.Class.MonadTime.SI (DiffTime, Time(Time), addTime
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
+import           Data.Maybe (catMaybes, mapMaybe)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
@@ -183,8 +183,9 @@ prop_leashingAttackStalling =
     (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
     defaultSchedulerConfig
-      { scTrace = False
+      { scTrace = True
       , scEnableChainSyncTimeouts = True
+      , scEnableBlockFetchTimeouts = True
       , scEnableLoE = True
       , scEnableLoP = True
       }
@@ -203,7 +204,19 @@ prop_leashingAttackStalling =
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       advs <- mapM (mapM dropRandomPoints) advs0
-      pure $ Peers (duplicateLastPoint 30 <$> honest) advs
+      pure $ Peers (duplicateLastPoint (endingDelay genesisTest) <$> honest) advs
+
+    endingDelay gt =
+     let cst = gtChainSyncTimeouts gt
+         bft = gtBlockFetchTimeouts gt
+      in 1 + maximum (0 : catMaybes
+           [ canAwaitTimeout cst
+           , intersectTimeout cst
+           , mustReplyTimeout cst
+           , idleTimeout cst
+           , busyTimeout bft
+           , streamingTimeout bft
+           ])
 
     dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
