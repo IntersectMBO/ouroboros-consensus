@@ -370,7 +370,7 @@ instance SupportsTwoPhaseValidation (ConwayEra c) where
       ( Babbage.UtxoFailure
           ( Babbage.AlonzoInBabbageUtxoPredFailure
               ( Alonzo.UtxosFailure
-                  ( Alonzo.ValidationTagMismatch
+                  ( Conway.ValidationTagMismatch
                       (Alonzo.IsValid _claimedFlag)
                       _validationErrs
                   )
