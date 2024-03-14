@@ -182,7 +182,12 @@ prop_leashingAttackStalling =
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
-    (defaultSchedulerConfig {scTrace = False, scEnableLoE = True, scEnableLoP = True})
+    defaultSchedulerConfig
+      { scTrace = False
+      , scEnableChainSyncTimeouts = True
+      , scEnableLoE = True
+      , scEnableLoP = True
+      }
 
     shrinkPeerSchedules
 
@@ -192,13 +197,13 @@ prop_leashingAttackStalling =
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
-    -- and by adding sufficient time at the end of a test to allow LoP to
-    -- disconnect adversaries.
+    -- and by adding sufficient time at the end of a test to allow LoP and
+    -- timeouts to disconnect adversaries.
     genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       advs <- mapM (mapM dropRandomPoints) advs0
-      pure $ Peers (duplicateLastPoint 10 <$> honest) advs
+      pure $ Peers (duplicateLastPoint 30 <$> honest) advs
 
     dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
