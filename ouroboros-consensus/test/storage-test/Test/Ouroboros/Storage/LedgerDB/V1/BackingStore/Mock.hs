@@ -8,7 +8,7 @@
 {-# LANGUAGE Rank2Types                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 
-module Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock (
+module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (
     -- * Types
     Err (..)
   , ID (..)

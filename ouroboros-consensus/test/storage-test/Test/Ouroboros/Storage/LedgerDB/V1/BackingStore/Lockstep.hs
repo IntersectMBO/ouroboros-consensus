@@ -15,7 +15,7 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
 
-module Test.Ouroboros.Storage.LedgerDB.BackingStore.Lockstep (
+module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep (
     -- * Facilitate running the tests in @'IO'@ or @'IOSim'@.
     IOLikeMonad (..)
   , IOLikeMonadC (..)
@@ -47,10 +47,10 @@ import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..),
 import           System.FS.API hiding (Handle)
 import qualified System.FS.API.Types as FS
 import           Test.Cardano.Ledger.Binary.Arbitrary ()
-import qualified Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock as Mock
-import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock (Err (..),
+import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
+import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock (Err (..),
                      Mock (..), ValueHandle (..), runMockState)
-import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Registry
+import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Gen)
 import           Test.QuickCheck.StateModel

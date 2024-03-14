@@ -24,8 +24,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (
     -- * Snapshots
   , loadSnapshot
   , takeSnapshot
+  , snapshotToStatePath
+  , snapshotToTablePath
   ) where
 
+import Data.Maybe
 import           Cardano.Binary as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
@@ -128,6 +131,9 @@ newInMemoryLedgerTablesHandle someFS@(SomeHasFS hasFS) l = do
 snapshotToStatePath :: DiskSnapshot -> FsPath
 snapshotToStatePath = mkFsPath . (\x -> [x, "state"]) . snapshotToDirName
 
+snapshotToTablePath :: DiskSnapshot -> FsPath
+snapshotToTablePath = mkFsPath . (\x -> [x, "tables", "tvar"]) . snapshotToDirName
+
 writeSnapshot ::
      MonadThrow m
   => SomeHasFS m
@@ -148,14 +154,15 @@ takeSnapshot ::
   => CodecConfig blk
   -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
+  -> Maybe DiskSnapshot
   -> StateRef m (ExtLedgerState blk)
   -> m (Maybe (DiskSnapshot, RealPoint blk))
-takeSnapshot ccfg tracer hasFS st = do
+takeSnapshot ccfg tracer hasFS dsOverride st = do
   case pointToWithOriginRealPoint (castPoint (getTip $ state st)) of
     Origin -> return Nothing
     NotOrigin t -> do
       let number   = unSlotNo (realPointSlot t)
-          snapshot = DiskSnapshot number Nothing
+          snapshot = fromMaybe (DiskSnapshot number Nothing) dsOverride
       diskSnapshots <- listSnapshots hasFS
       if List.any ((== number) . dsNumber) diskSnapshots then
         return Nothing

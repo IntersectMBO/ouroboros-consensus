@@ -53,7 +53,7 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState, SecurityParam(..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (ChunkNo (..), ChunkSize (..), RelativeSlot (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout
@@ -397,3 +397,11 @@ instance Arbitrary (SomeBlockQuery (BlockQuery blk))
   arbitrary = do
     SomeBlockQuery someBlockQuery <- arbitrary
     return (SomeSecond (BlockQuery someBlockQuery))
+
+{-------------------------------------------------------------------------------
+  SecurityParam
+-------------------------------------------------------------------------------}
+
+instance Arbitrary SecurityParam where
+  arbitrary = SecurityParam <$> choose (0, 6)
+  shrink (SecurityParam k) = SecurityParam <$> shrink k

@@ -14,7 +14,7 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2024-02-23T10:26:05Z
+  , hackage.haskell.org 2024-03-01T16:12:33Z
   -- Bump this if you need newer packages from CHaP
   , cardano-haskell-packages 2024-02-23T10:34:09Z
 
@@ -46,3 +46,14 @@ source-repository-package
   --sha256: 1amaipl1f516m4yh9x02cqsbv50riszmbdjdmvfpw19vspv1szsx
   subdir:
     latex-svg-image
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/quickcheck-dynamic
+  tag: cf5273faabde55dc8e759e64766e3353439ac1e2
+  subdir: quickcheck-dynamic
+
+source-repository-package
+  type: git
+  location: https://github.com/well-typed/quickcheck-lockstep
+  tag: 5125b458af594cb191c8979a3987f1894a96a196

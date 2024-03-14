@@ -14,7 +14,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Use camelCase" -}
 
-module Test.Ouroboros.Storage.LedgerDB.BackingStore (
+module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore (
     labelledExamples
   , tests
   ) where
@@ -52,9 +52,9 @@ import           System.FS.IO (ioHasFS)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
 import           System.IO.Temp (createTempDirectory)
-import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Lockstep
-import qualified Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock as Mock
-import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Registry
+import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
+import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
+import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Property, Testable)
 import           "quickcheck-dynamic" Test.QuickCheck.Extras
