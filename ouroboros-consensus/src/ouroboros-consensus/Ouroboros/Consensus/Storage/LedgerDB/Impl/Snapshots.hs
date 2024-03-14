@@ -138,9 +138,11 @@ listSnapshots (SomeHasFS HasFS{listDirectory}) =
     aux = List.sortOn (Down . dsNumber) . mapMaybe snapshotFromPath . Set.toList
 
 -- | Delete snapshot from disk
-deleteSnapshot :: HasCallStack => SomeHasFS m -> DiskSnapshot -> m ()
-deleteSnapshot (SomeHasFS HasFS{removeDirectoryRecursive}) =
-  removeDirectoryRecursive . snapshotToDirPath
+deleteSnapshot :: (Monad m, HasCallStack) => SomeHasFS m -> DiskSnapshot -> m ()
+deleteSnapshot (SomeHasFS HasFS{doesDirectoryExist, removeDirectoryRecursive}) ss = do
+  let p = snapshotToDirPath ss
+  exists <- doesDirectoryExist p
+  when exists (removeDirectoryRecursive p)
 
 -- | Read an extended ledger state from disk
 readExtLedgerState ::

@@ -41,7 +41,7 @@ import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.Index (Index (..))
 import qualified Data.SOP.InPairs as InPairs
-import           Data.SOP.Strict (NP (..), NS (..), unComp, (:.:) (..))
+import           Data.SOP.Strict (NP (..), NS (..))
 import qualified Data.SOP.Tails as Tails
 import           Data.Void (Void)
 import           Lens.Micro ((^.))
@@ -139,7 +139,6 @@ type ShelleyBasedHardForkConstraints proto1 era1 proto2 era2 =
 
   , SL.TranslateEra       era2 SL.NewEpochState
   , SL.TranslateEra       era2 WrapTx
-  , CanTranslateTxOut     era2
 
   , SL.TranslationError   era2 SL.NewEpochState ~ Void
 
@@ -189,7 +188,7 @@ instance ShelleyBasedHardForkConstraints proto1 era1 proto2 era2
              (ShelleyBlock proto2 era2)
       translateLedgerTables = HFC.TranslateLedgerTables {
             translateTxInWith  = id
-          , translateTxOutWith = translateTxOut
+          , translateTxOutWith = Core.upgradeTxOut
           }
 
       forecastAcrossShelleyWrapper ::

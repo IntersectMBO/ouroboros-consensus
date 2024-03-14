@@ -123,22 +123,22 @@ instance Inject SomeResult where
 
 instance Inject Examples where
   inject startBounds (idx :: Index xs x) Examples {..} = Examples {
-        exampleBlock            = inj (Proxy @I)                       exampleBlock
-      , exampleSerialisedBlock  = inj (Proxy @Serialised)              exampleSerialisedBlock
-      , exampleHeader           = inj (Proxy @Header)                  exampleHeader
-      , exampleSerialisedHeader = inj (Proxy @SerialisedHeader)        exampleSerialisedHeader
-      , exampleHeaderHash       = inj (Proxy @WrapHeaderHash)          exampleHeaderHash
-      , exampleGenTx            = inj (Proxy @GenTx)                   exampleGenTx
-      , exampleGenTxId          = inj (Proxy @WrapGenTxId)             exampleGenTxId
-      , exampleApplyTxErr       = inj (Proxy @WrapApplyTxErr)          exampleApplyTxErr
-      , exampleQuery            = inj (Proxy @(SomeSecond BlockQuery)) exampleQuery
-      , exampleResult           = inj (Proxy @SomeResult)              exampleResult
-      , exampleAnnTip           = inj (Proxy @AnnTip)                  exampleAnnTip
-      , exampleLedgerState      = inj (Proxy @LedgerState)             exampleLedgerState
-      , exampleChainDepState    = inj (Proxy @WrapChainDepState)       exampleChainDepState
-      , exampleExtLedgerState   = inj (Proxy @ExtLedgerState)          exampleExtLedgerState
-      , exampleSlotNo           =                                      exampleSlotNo
-      , exampleLedgerTables     = inj (Proxy @WrapLedgerTables)        exampleLedgerTables
+        exampleBlock            = inj (Proxy @I)                               exampleBlock
+      , exampleSerialisedBlock  = inj (Proxy @Serialised)                      exampleSerialisedBlock
+      , exampleHeader           = inj (Proxy @Header)                          exampleHeader
+      , exampleSerialisedHeader = inj (Proxy @SerialisedHeader)                exampleSerialisedHeader
+      , exampleHeaderHash       = inj (Proxy @WrapHeaderHash)                  exampleHeaderHash
+      , exampleGenTx            = inj (Proxy @GenTx)                           exampleGenTx
+      , exampleGenTxId          = inj (Proxy @WrapGenTxId)                     exampleGenTxId
+      , exampleApplyTxErr       = inj (Proxy @WrapApplyTxErr)                  exampleApplyTxErr
+      , exampleQuery            = inj (Proxy @(SomeBlockQuery :.: BlockQuery)) exampleQuery
+      , exampleResult           = inj (Proxy @SomeResult)                      exampleResult
+      , exampleAnnTip           = inj (Proxy @AnnTip)                          exampleAnnTip
+      , exampleLedgerState      = inj (Proxy @(Flip LedgerState EmptyMK))      exampleLedgerState
+      , exampleChainDepState    = inj (Proxy @WrapChainDepState)               exampleChainDepState
+      , exampleExtLedgerState   = inj (Proxy @(Flip ExtLedgerState EmptyMK))   exampleExtLedgerState
+      , exampleSlotNo           =                                              exampleSlotNo
+      , exampleLedgerTables     = inj (Proxy @WrapLedgerTables)                exampleLedgerTables
       }
     where
       inj ::
