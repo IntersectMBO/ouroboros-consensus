@@ -180,7 +180,7 @@ prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
   forAllGenesisTest
 
-    (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
+    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
     defaultSchedulerConfig
       { scTrace = True
@@ -212,11 +212,16 @@ prop_leashingAttackStalling =
       in 1 + maximum (0 : catMaybes
            [ canAwaitTimeout cst
            , intersectTimeout cst
-           , mustReplyTimeout cst
-           , idleTimeout cst
            , busyTimeout bft
            , streamingTimeout bft
            ])
+
+    disableBoringTimeouts gt =
+      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
+            { mustReplyTimeout = Nothing
+            , idleTimeout = Nothing
+            }
+         }
 
     dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
