@@ -70,7 +70,6 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (dimap)
 import           Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import           Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
---import           Test.Cardano.Ledger.Conway.Serialisation.Generators ()
 import           Test.Cardano.Ledger.Shelley.Utils (unsafeBoundRational)
 import           Test.Consensus.Byron.Generators (genByronLedgerConfig,
                      genByronLedgerState)
