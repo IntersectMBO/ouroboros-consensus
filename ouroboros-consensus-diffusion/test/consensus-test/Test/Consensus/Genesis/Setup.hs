@@ -20,6 +20,7 @@ import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PeerSimulator.Run
 import           Test.QuickCheck
+import Control.Monad.Base
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Tracer (recordingTracerTVar)
 import Test.Consensus.Genesis.Setup.GenChains
@@ -27,7 +28,7 @@ import Test.Consensus.Genesis.Setup.GenChains
 -- | Runs the given point schedule and evaluates the given property on the final
 -- state view.
 runTest ::
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m, MonadBase m m) =>
   GenesisTest ->
   PointSchedule ->
   (TestFragH -> Property) ->

@@ -123,6 +123,7 @@ import           Ouroboros.Network.Protocol.TxSubmission2.Type
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS (MockFS)
 import           System.Random (mkStdGen)
+import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Test.ThreadNet.TxGen
 import           Test.ThreadNet.Util.NodeJoinPlan
 import           Test.ThreadNet.Util.NodeRestarts
@@ -618,7 +619,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       void $ forkLinkedThread registry "crucialTxs" $ do
         let
             wouldBeValid :: SlotNo
-                         -> (RangeQuery (ExtLedgerState blk) -> m (LedgerTables (ExtLedgerState blk) ValuesMK))
+                         -> (RangeQueryPrevious (ExtLedgerState blk) -> m (LedgerTables (ExtLedgerState blk) ValuesMK))
                          -> Ticked1 (LedgerState blk) DiffMK
                          -> GenTx blk
                          -> m Bool
@@ -628,7 +629,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 -- most 1 to the number of requested keys, hence the
                 -- subtraction. When we revisit the range query implementation
                 -- we should remove this workaround.
-                fullUTxO <- doRangeQuery (RangeQuery Nothing (maxBound-1))
+                fullUTxO <- doRangeQuery NoPreviousQuery
                 pure $! applyDiffs fullUTxO st
               pure $ isRight $ Exc.runExcept $ applyTx lcfg DoNotIntervene slot tx fullLedgerSt
 
@@ -650,13 +651,14 @@ runThreadNetwork systemTime ThreadNetworkArgs
               -- in the next slot.
               let ledger'' = applyChainTick lcfg (succ slot) ledger
               snap2 <- getSnapshotFor mempool (succ slot) ledger'' readTables
-              roforkerClose forker
 
 
               -- Don't attempt to add them if we're sure they'll be invalid.
               -- That just risks blocking on a full mempool unnecessarily.
               b1 <- checkSt slot doRangeQuery snap1
               b2 <- checkSt (succ slot) doRangeQuery snap2
+              roforkerClose forker
+
               when (b1 || b2) $ do
                 _ <- addTxs mempool txs0
                 pure ()
@@ -715,14 +717,14 @@ runThreadNetwork systemTime ThreadNetworkArgs
           emptySt' <- atomically $ roforkerGetLedgerState forker
           let emptySt      = emptySt'
               doRangeQuery = roforkerRangeReadTables forker
-          roforkerClose forker
           fullLedgerSt <- fmap ledgerState $ do
                 -- FIXME: we know that the range query implemetation will add at
                 -- most 1 to the number of requested keys, hence the
                 -- subtraction. When we revisit the range query implementation
                 -- we should remove this workaround.
-                fullUTxO <- doRangeQuery (RangeQuery Nothing (maxBound-1))
+                fullUTxO <- doRangeQuery NoPreviousQuery
                 pure $! withLedgerTables emptySt fullUTxO
+          roforkerClose forker
           -- Combine the node's seed with the current slot number, to make sure
           -- we generate different transactions in each slot.
           let txs = runGen
@@ -744,19 +746,21 @@ runThreadNetwork systemTime ThreadNetworkArgs
               -- ^ ledger updates tracer
            -> Tracer m (ChainDB.TracePipeliningEvent blk)
            -> NodeDBs (StrictTVar m MockFS)
+           -> StrictTVar m MockFS
            -> CoreNodeId
            -> ChainDbArgs Identity m blk
     mkArgs
       clock registry
       cfg initLedger
       invalidTracer addTracer selTracer updatesTracer pipeliningTracer
-      nodeDBs _coreNodeId =
+      nodeDBs gsmFs _coreNodeId =
         let args = fromMinimalChainDbArgs MinimalChainDbArgs {
                 mcdbTopLevelConfig = cfg
               , mcdbChunkInfo      = ImmutableDB.simpleChunkInfo epochSize0
               , mcdbInitLedger     = initLedger
               , mcdbRegistry       = registry
               , mcdbNodeDBs        = nodeDBs
+              , mcdbGSMHasFS       = gsmFs
               }
             tr = instrumentationTracer <> nullDebugTracer
         in args { cdbImmDbArgs = (cdbImmDbArgs args) {
@@ -844,6 +848,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       let NodeInfo
             { nodeInfoEvents
             , nodeInfoDBs
+            , nodeInfoGSMFs
             } = nodeInfo
 
       -- prop_general relies on these tracers
@@ -865,6 +870,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
             updatesTracer
             pipeliningTracer
             nodeInfoDBs
+            nodeInfoGSMFs
             coreNodeId
       chainDB <- snd <$>
         allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
@@ -1099,7 +1105,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -- needs the read-only forker to elaborate a complete UTxO set to generate
       -- transactions.
       let getForker rr = do
-            ChainDB.getReadOnlyForkerAtPoint chainDB rr Nothing >>= \case
+            ChainDB.getReadOnlyForkerAtPoint chainDB rr VolatileTip >>= \case
               Left e  -> error $ show e
               Right l -> pure l
 
@@ -1480,6 +1486,7 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
 data NodeInfo blk db ev = NodeInfo
   { nodeInfoEvents :: NodeEvents blk ev
   , nodeInfoDBs    :: NodeDBs db
+  , nodeInfoGSMFs  :: db
   }
 
 -- | A vector with an @ev@-shaped element for a particular set of
@@ -1536,14 +1543,16 @@ newNodeInfo = do
       (v2, m2) <- mk
       (v3, m3) <- mk
       (v4, m4) <- mk
+      (v5, m5) <- mk
       pure
-          ( NodeDBs     v1     v2     v3     v4
-          , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4
+          ( NodeDBs     v1     v2     v3     v4     v5
+          , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4 <*> m5
           )
 
+  nodeInfoGSMFs <- uncheckedNewTVarM Mock.empty
   pure
-      ( NodeInfo{nodeInfoEvents, nodeInfoDBs}
-      , NodeInfo <$> readEvents <*> atomically readDBs
+      ( NodeInfo{nodeInfoEvents, nodeInfoDBs, nodeInfoGSMFs }
+      , NodeInfo <$> readEvents <*> atomically readDBs <*> readTVarIO nodeInfoGSMFs
       )
 
 {-------------------------------------------------------------------------------
