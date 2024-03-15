@@ -616,7 +616,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
          -- ^ valid transactions the node should immediately propagate
       -> m ()
     forkCrucialTxs clock s0 registry unblockForge lcfg getTipPoint mforker mempool txs0 = do
-      void $ forkLinkedThread registry "crucialTxs" $ do
+      void $ forkLinkedThread registry "crucialTxs" $ withRegistry $ \reg -> do
         let
             wouldBeValid :: SlotNo
                          -> (RangeQueryPrevious (ExtLedgerState blk) -> m (LedgerTables (ExtLedgerState blk) ValuesMK))
@@ -638,7 +638,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 or <$> mapM (wouldBeValid slot doRangeQuery (snapshotState snap)) txs0
 
         let loop (slot, mempFp) = do
-              forker <- mforker registry
+              forker <- mforker reg
               extLedger <- atomically $ roforkerGetLedgerState forker
               let ledger       = ledgerState extLedger
                   doRangeQuery = roforkerRangeReadTables forker
@@ -712,8 +712,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
                    -> Mempool m blk
                    -> m ()
     forkTxProducer coreNodeId registry clock cfg nodeSeed mforker mempool =
-        void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> do
-          forker <- mforker registry
+        void $ OracularClock.forkEachSlot registry clock "txProducer" $ \curSlotNo -> withRegistry $ \reg -> do
+          forker <- mforker reg
           emptySt' <- atomically $ roforkerGetLedgerState forker
           let emptySt      = emptySt'
               doRangeQuery = roforkerRangeReadTables forker

@@ -28,6 +28,8 @@ module Ouroboros.Consensus.Cardano.CanHardFork (
   , ShelleyPartialLedgerConfig (..)
   , forecastAcrossShelley
   , translateChainDepStateAcrossShelley
+    -- * Exposed for testing
+  , getConwayTranslationContext
   ) where
 
 

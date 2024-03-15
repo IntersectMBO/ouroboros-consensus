@@ -25,7 +25,7 @@ import qualified Cardano.Ledger.Block as SL
 import qualified Cardano.Ledger.Core as LC
 import           Cardano.Ledger.Crypto (Crypto)
 import           Cardano.Ledger.Era (getAllTxInputs)
-import           Cardano.Ledger.Shelley.Tx (TxIn)
+import           Cardano.Ledger.TxIn
 import qualified Cardano.Protocol.TPraos.BHeader as SL
 import           Data.Coerce (coerce)
 import           Data.Foldable (toList)

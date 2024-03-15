@@ -1,10 +1,7 @@
 module Main (main) where
 
 import           System.IO (BufferMode (LineBuffering), hSetBuffering, stdout)
-import qualified Test.Consensus.Cardano.ByronCompatibility
-import qualified Test.Consensus.Cardano.Golden
 import qualified Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
-import qualified Test.Consensus.Cardano.Serialisation
 import qualified Test.Consensus.Cardano.SupportedNetworkProtocolVersion
 import qualified Test.Consensus.Cardano.ByronCompatibility (tests)
 import qualified Test.Consensus.Cardano.Golden (tests)

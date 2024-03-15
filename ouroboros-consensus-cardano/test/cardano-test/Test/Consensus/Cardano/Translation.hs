@@ -13,6 +13,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Test.Consensus.Cardano.Translation (tests) where
 
+import Test.Cardano.Ledger.Conway.Arbitrary ()
 import qualified Cardano.Chain.Block as Byron
 import qualified Cardano.Chain.UTxO as Byron
 import           Cardano.Ledger.Alonzo ()
@@ -20,6 +21,10 @@ import           Cardano.Ledger.BaseTypes (Network (Testnet), TxIx (..))
 import           Cardano.Ledger.Binary.Version
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Crypto as Crypto
+import Data.SOP.BasicFunctors
+import Data.SOP.Functors
+import Ouroboros.Consensus.Ledger.Tables.Utils
+import Ouroboros.Consensus.Cardano.CanHardFork
 import           Cardano.Ledger.Shelley.API
                      (NewEpochState (stashedAVVMAddresses), ShelleyGenesis (..),
                      ShelleyGenesisStaking (..), TxIn (..),
@@ -37,7 +42,7 @@ import           Data.Map.Diff.Strict (Diff)
 import qualified Data.Map.Diff.Strict.Internal as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
-import           Data.SOP.InPairs (RequiringBoth, provideBoth)
+import           Data.SOP.InPairs (RequiringBoth(..), provideBoth)
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
                      (slotLengthFromSec)
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock, byronLedgerState)
@@ -46,7 +51,7 @@ import           Ouroboros.Consensus.Cardano.CanHardFork ()
 import           Ouroboros.Consensus.HardFork.Combinator (InPairs (..),
                      hardForkEraTranslation, translateLedgerState)
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
-                     (TranslateLedgerState (translateLedgerStateWith))
+                     (TranslateLedgerState (TranslateLedgerState, translateLedgerStateWith))
 import           Ouroboros.Consensus.Ledger.Basics (LedgerCfg, LedgerConfig,
                      LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables
@@ -65,7 +70,6 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (dimap)
 import           Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import           Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
-import           Test.Cardano.Ledger.Conway.Serialisation.Generators ()
 import           Test.Cardano.Ledger.Shelley.Utils (unsafeBoundRational)
 import           Test.Consensus.Byron.Generators (genByronLedgerConfig,
                      genByronLedgerState)
@@ -151,23 +155,46 @@ alonzoToBabbageLedgerStateTranslation :: RequiringBoth
   TranslateLedgerState
   (ShelleyBlock (TPraos Crypto) (AlonzoEra Crypto))
   (ShelleyBlock (Praos Crypto) (BabbageEra Crypto))
-babbageToConwayLedgerStateTranslation :: RequiringBoth
-  WrapLedgerConfig
-  TranslateLedgerState
-  (ShelleyBlock (Praos Crypto) (BabbageEra Crypto))
-  (ShelleyBlock (Praos Crypto) (ConwayEra Crypto))
 PCons byronToShelleyLedgerStateTranslation
       (PCons shelleyToAllegraLedgerStateTranslation
        (PCons allegraToMaryLedgerStateTranslation
         (PCons maryToAlonzoLedgerStateTranslation
          (PCons alonzoToBabbageLedgerStateTranslation
-          (PCons babbageToConwayLedgerStateTranslation
+          (PCons _
            PNil))))) = tls
   where
     tls :: InPairs
              (RequiringBoth WrapLedgerConfig TranslateLedgerState)
              (CardanoEras Crypto)
     tls = translateLedgerState hardForkEraTranslation
+
+babbageToConwayLedgerStateTranslation :: RequiringBoth
+  WrapLedgerConfig
+  TranslateLedgerState
+  (ShelleyBlock (Praos Crypto) (BabbageEra Crypto))
+  (ShelleyBlock (Praos Crypto) (ConwayEra Crypto))
+babbageToConwayLedgerStateTranslation = translateLedgerStateBabbageToConwayWrapper
+
+-- | Tech debt: The babbage to conway translation performs a tick, and we would
+-- need to create a reasonable ledger state. Instead this is just a copy-paste
+-- of the code without the tick.
+--
+-- This should be fixed once the real translation is fixed.
+translateLedgerStateBabbageToConwayWrapper ::
+   RequiringBoth
+       WrapLedgerConfig
+       TranslateLedgerState
+       (ShelleyBlock (Praos Crypto) (BabbageEra Crypto))
+       (ShelleyBlock (Praos Crypto) (ConwayEra Crypto))
+translateLedgerStateBabbageToConwayWrapper =
+    RequireBoth $ \_ cfgConway ->
+      TranslateLedgerState $ \_ ->
+         noNewTickingDiffs
+            . unFlip
+            . unComp
+            . Core.translateEra' (getConwayTranslationContext cfgConway)
+            . Comp
+            . Flip
 
 -- | Check that the tables are correctly translated from one era to the next.
 testTablesTranslation ::
