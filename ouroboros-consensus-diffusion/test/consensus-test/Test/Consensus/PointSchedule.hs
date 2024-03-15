@@ -362,6 +362,7 @@ prettyGenesisTest prettySchedule genesisTest =
   , "    canAwait = " ++ show canAwaitTimeout
   , "    intersect = " ++ show intersectTimeout
   , "    mustReply = " ++ show mustReplyTimeout
+  , "    idle = " ++ show idleTimeout
   , "  gtBlockFetchTimeouts: "
   , "    busy = " ++ show busyTimeout
   , "    streaming = " ++ show streamingTimeout
@@ -380,7 +381,8 @@ prettyGenesisTest prettySchedule genesisTest =
       , gtForecastRange
       , gtDelay = Delta delta
       , gtBlockTree
-      , gtChainSyncTimeouts = ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout}
+      , gtChainSyncTimeouts =
+          ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout, idleTimeout}
       , gtBlockFetchTimeouts = BlockFetchTimeout{busyTimeout, streamingTimeout}
       , gtLoPBucketParams = LoPBucketParams{lbpCapacity, lbpRate}
       , gtSlotLength
