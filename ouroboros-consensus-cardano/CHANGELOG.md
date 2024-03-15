@@ -2,6 +2,14 @@
 
 # Changelog entries
 
+<a id='changelog-0.14.1.0'></a>
+## 0.14.1.0 — 2024-03-15
+
+### Non-Breaking
+
+- Bump `NodeToNodeVersion` part of `latestReleasedNodeVersion` to
+  `NodeToNodeV_13` from `NodeToNodeV_11`.
+
 <a id='changelog-0.14.0.1'></a>
 ## 0.14.0.1 — 2024-03-06
 

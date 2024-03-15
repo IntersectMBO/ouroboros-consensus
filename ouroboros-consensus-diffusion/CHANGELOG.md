@@ -2,6 +2,15 @@
 
 # Changelog entries
 
+<a id='changelog-0.12.0.0'></a>
+## 0.12.0.0 — 2024-03-15
+
+### Breaking
+
+- Added `PeerSharingAPI` to `NodeKernel`
+- Added `peerSharingRng` to `NodeKernelArgs`
+- Refactored some diffusion functions to remove `computePeers` callback
+
 <a id='changelog-0.11.0.1'></a>
 ## 0.11.0.1 — 2024-03-06
 
