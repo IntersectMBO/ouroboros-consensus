@@ -76,14 +76,14 @@ theProperty ::
 theProperty genesisTest stateView@StateView{svSelectedChain} =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
   classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
-  label disconnected $
+  label disconnectedLabel $
   classify (advCount < length (btBranches gtBlockTree)) "Some adversaries performed rollbacks" $
   counterexample killedPeers $
   -- We require the honest chain to fit a Genesis window, because otherwise its tip may suggest
   -- to the governor that the density is too low.
   longerThanGenesisWindow ==>
   conjoin [
-    counterexample "The honest peer was disconnected" (HonestPeer `notElem` killed),
+    counterexample "The honest peer was disconnected" (HonestPeer `notElem` disconnected),
     counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
     property (isHonest immutableTipHash),
     immutableTipIsRecent
@@ -110,18 +110,18 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
 
     immutableTipSlot = AF.anchorToSlotNo (AF.anchor svSelectedChain)
 
-    disconnected =
+    disconnectedLabel =
       printf "disconnected %.1f%% of adversaries" disconnectedPercent
 
-    killed = chainSyncKilled stateView
+    disconnected = collectDisconnectedPeers stateView
 
     disconnectedPercent :: Double
     disconnectedPercent =
-      100 * fromIntegral (length killed) / fromIntegral advCount
+      100 * fromIntegral (length disconnected) / fromIntegral advCount
 
-    killedPeers = case killed of
-      [] -> "No peers were killed"
-      peers -> "Some peers were killed: " ++ intercalate ", " (condense <$> peers)
+    killedPeers = case disconnected of
+      [] -> "No peers were disconnected"
+      peers -> "Some peers were disconnected: " ++ intercalate ", " (condense <$> peers)
 
     honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest $ gtSchedule genesisTest
 
