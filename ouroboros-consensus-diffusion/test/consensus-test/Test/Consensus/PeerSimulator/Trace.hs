@@ -12,8 +12,8 @@ module Test.Consensus.PeerSimulator.Trace (
   , TraceScheduledChainSyncServerEvent (..)
   , TraceScheduledServerHandlerEvent (..)
   , TraceSchedulerEvent (..)
-  , mkTracerTestBlock
   , traceLinesWith
+  , tracerTestBlock
   ) where
 
 import           Control.Tracer (Tracer (Tracer), traceWith)
@@ -27,7 +27,8 @@ import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceAddBlockEvent (..))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
-                     Time (Time), getMonotonicTime)
+                     Time (Time), atomically, getMonotonicTime, readTVarIO,
+                     uncheckedNewTVarM, writeTVar)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Tip)
 import           Test.Consensus.PointSchedule (NodeState)
@@ -101,19 +102,41 @@ data TraceEvent blk
 
 -- * 'TestBlock'-specific tracers for the peer simulator
 
-mkTracerTestBlock ::
+tracerTestBlock ::
   (IOLike m) =>
   Tracer m String ->
-  Tracer m (TraceEvent TestBlock)
-mkTracerTestBlock = Tracer . traceEventTestBlockWith
+  m (Tracer m (TraceEvent TestBlock))
+tracerTestBlock tracer0 = do
+  -- NOTE: Mostly, we read the traces on a per-tick basis, so it is important
+  -- that ticks are visually separated. Also, giving the time on each line can
+  -- get quite verbose when most of the time is the same as the beginning of the
+  -- tick (in IOSim anyways). So we keep track of the tick time and we prefix
+  -- lines by the time only if they differ. This allows seeing the time-based
+  -- events (timeouts, LoP) better while keeping the interface uncluttered, and
+  -- it behaves well in IO (where it prefixes all lines by the time).
+  tickTimeVar <- uncheckedNewTVarM $ Time (-1)
+  let setTickTime = atomically . writeTVar tickTimeVar
+      tracer = Tracer $ \msg -> do
+        time <- getMonotonicTime
+        tickTime <- readTVarIO tickTimeVar
+        traceWith tracer0 $
+          if time /= tickTime
+            then concat $ intersperse "\n" $ map ((prettyTime time ++ " ") ++) $ lines msg
+            else msg
+  pure $ Tracer $ traceEventTestBlockWith setTickTime tracer0 tracer
 
 traceEventTestBlockWith ::
   (MonadMonotonicTime m) =>
+  (Time -> m ()) ->
   Tracer m String ->
+  -- ^ Underlying, non-time- and tick-aware tracer. To be used only with lines
+  -- that should not be prefixed by time.
+  Tracer m String ->
+  -- ^ Normal, time- and tick-aware tracer. Should be used by default.
   TraceEvent TestBlock ->
   m ()
-traceEventTestBlockWith tracer = \case
-    TraceSchedulerEvent traceEvent -> traceSchedulerEventTestBlockWith tracer traceEvent
+traceEventTestBlockWith setTickTime tracer0 tracer = \case
+    TraceSchedulerEvent traceEvent -> traceSchedulerEventTestBlockWith setTickTime tracer0 tracer traceEvent
     TraceScheduledChainSyncServerEvent peerId traceEvent -> traceScheduledChainSyncServerEventTestBlockWith tracer peerId traceEvent
     TraceScheduledBlockFetchServerEvent peerId traceEvent -> traceScheduledBlockFetchServerEventTestBlockWith tracer peerId traceEvent
     TraceChainDBEvent traceEvent -> traceChainDBEventTestBlockWith tracer traceEvent
@@ -123,30 +146,31 @@ traceEventTestBlockWith tracer = \case
 
 traceSchedulerEventTestBlockWith ::
   (MonadMonotonicTime m) =>
+  (Time -> m ()) ->
+  Tracer m String ->
   Tracer m String ->
   TraceSchedulerEvent TestBlock ->
   m ()
-traceSchedulerEventTestBlockWith tracer = \case
+traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
     TraceBeginningOfTime ->
-      traceWith tracer "Running point schedule ..."
+      traceWith tracer0 "Running point schedule ..."
     TraceEndOfTime ->
-      traceLinesWith tracer
-        [ hline,
+      traceLinesWith tracer0
+        [ "╶──────────────────────────────────────────────────────────────────────────────╴",
           "Finished running point schedule"
         ]
     TraceNewTick number duration (Peer pid state) -> do
-      time <- prettyTime -- TODO: push into a time-specific tracer printing this at new time
-      traceLinesWith tracer
-        [ hline,
-          "Time is " ++ time,
+      time <- getMonotonicTime
+      setTickTime time
+      traceLinesWith tracer0
+        [ "┌──────────────────────────────────────────────────────────────────────────────┐",
+          "└─ " ++ prettyTime time,
           "Tick:",
           "  number: " ++ show number,
           "  duration: " ++ show duration,
           "  peer: " ++ condense pid,
           "  state: " ++ condense state
         ]
-  where
-    hline = "--------------------------------------------------------------------------------"
 
 traceScheduledServerHandlerEventTestBlockWith ::
   Tracer m String ->
@@ -254,7 +278,6 @@ traceChainDBEventTestBlockWith tracer = \case
           trace $ "LoE fragment: " ++ terseHFragment loeFrag0
         AddedReprocessLoEBlocksToQueue ->
           trace $ "Requested ChainSel run"
-
         _ -> pure ()
     _ -> pure ()
   where
@@ -322,14 +345,13 @@ traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
 
 -- * Other utilities
 
-prettyTime :: MonadMonotonicTime m => m String
-prettyTime = do
-  Time time <- getMonotonicTime
+prettyTime :: Time -> String
+prettyTime (Time time) =
   let ps = diffTimeToPicoseconds time
       milliseconds = ps `quot` 1_000_000_000
       seconds = milliseconds `quot` 1_000
       minutes = seconds `quot` 60
-  pure $ printf "%02d:%02d.%03d" minutes (seconds `rem` 60) (milliseconds `rem` 1_000)
+  in printf "%02d:%02d.%03d" minutes (seconds `rem` 60) (milliseconds `rem` 1_000)
 
 traceLinesWith ::
   Tracer m String ->
