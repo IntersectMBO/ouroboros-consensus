@@ -57,6 +57,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredSeq (AnchoredSeq)
 import qualified Ouroboros.Network.AnchoredSeq as AS
+import System.FS.API
 
 mkInitDb ::
   forall m blk.
@@ -68,7 +69,7 @@ mkInitDb ::
   => Complete LedgerDbArgs m blk
   -> Complete V1.LedgerDbFlavorArgs m
   -> Validate.ResolveBlock m blk
-  -> InitDB (DbChangelog' blk, BackingStore' m blk) (Internals' m blk) m blk
+  -> InitDB (DbChangelog' blk, BackingStore' m blk) m blk
 mkInitDb args bss getBlock =
   InitDB {
     initFromGenesis = do
@@ -157,7 +158,7 @@ implMkLedgerDb ::
      , l ~ ExtLedgerState blk
      )
   => LedgerDBHandle m l blk
-  -> (LedgerDB' m blk, Internals' m blk)
+  -> (LedgerDB' m blk, OnDemandActions' m blk)
 implMkLedgerDb h = (LedgerDB {
       getVolatileTip            = getEnvSTM  h implGetVolatileTip
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
@@ -294,16 +295,30 @@ mkInternals ::
      ( IOLike m
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
-     , ApplyBlock l blk
+     , ApplyBlock (ExtLedgerState blk) blk
      , MonadBase m m
 
      )
-  => LedgerDBHandle m l blk
-  -> Internals m l blk
-mkInternals h = Internals {
-      intTakeSnapshot = getEnv1 h implIntTakeSnapshot
-    , intReapplyThenPushBlock = getEnv1 h implIntReapplyThenPushBlock
+  => LedgerDBHandle m (ExtLedgerState blk) blk
+  -> OnDemandActions' m blk
+mkInternals h = OnDemandActions {
+      takeSnapshotNOW = getEnv1 h implIntTakeSnapshot
+    , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPushBlock
+    , destroySnapshot = \ds -> getEnv h $ \env -> do
+        deleteSnapshot (ldbTablesHasFS env) ds
+        deleteSnapshot (ldbStateHasFS env) ds
+    , truncateSnapshot = \ss -> getEnv h $ \env -> do
+        truncateFile (ldbStateHasFS env) (snapshotToStatePath ss)
+        truncateFile (ldbTablesHasFS env) (snapshotToTablesPath ss)
+    , flushNOW = getEnv h $ \env ->
+        withWriteLock
+          (ldbLock env)
+          (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
+    , closeLedgerDB = getEnv h $ \env -> bsClose $ ldbBackingStore env
     }
+
+truncateFile :: MonadThrow m => SomeHasFS m -> FsPath -> m ()
+truncateFile (SomeHasFS fs) p = withFile fs p (AppendMode AllowExisting) $ \h -> hTruncate fs h 0
 
 implIntTakeSnapshot ::
      ( IOLike m
@@ -311,7 +326,7 @@ implIntTakeSnapshot ::
      , LedgerSupportsProtocol blk
      , l ~ ExtLedgerState blk
      )
-  => LedgerDBEnv m l blk -> DiskSnapshot -> m ()
+  => LedgerDBEnv m l blk -> Maybe DiskSnapshot -> m ()
 implIntTakeSnapshot env diskSnapshot = void $ withReadLock (ldbLock env) $
     takeSnapshot
       (ldbChangelog env)
@@ -319,7 +334,7 @@ implIntTakeSnapshot env diskSnapshot = void $ withReadLock (ldbLock env) $
       (LedgerDBSnapshotEvent >$< ldbTracer env)
       (ldbStateHasFS env)
       (ldbBackingStore env)
-      (Just diskSnapshot)
+      diskSnapshot
 
 implIntReapplyThenPushBlock ::
      ( IOLike m

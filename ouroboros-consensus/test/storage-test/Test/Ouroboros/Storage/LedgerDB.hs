@@ -6,18 +6,22 @@
 --
 module Test.Ouroboros.Storage.LedgerDB (tests) where
 
-import qualified Test.Ouroboros.Storage.LedgerDB.BackingStore as BackingStore
-import qualified Test.Ouroboros.Storage.LedgerDB.DbChangelog as DbChangelog
-import qualified Test.Ouroboros.Storage.LedgerDB.DiskPolicy as DiskPolicy
-import qualified Test.Ouroboros.Storage.LedgerDB.InMemory as InMemory
-import qualified Test.Ouroboros.Storage.LedgerDB.OnDisk as OnDisk
+import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore as BackingStore
+import qualified Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.Unit as DbChangelog.Unit
+import qualified Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.QuickCheck as DbChangelog.QuickCheck
+import qualified Test.Ouroboros.Storage.LedgerDB.StateMachine as StateMachine
+import qualified Test.Ouroboros.Storage.LedgerDB.Serialisation as Serialisation
+import qualified Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy as SnapshotPolicy
 import           Test.Tasty (TestTree, testGroup)
 
 tests :: TestTree
 tests = testGroup "LedgerDB" [
-      BackingStore.tests
-    , InMemory.tests
-    , OnDisk.tests
-    , DiskPolicy.tests
-    , DbChangelog.tests
+      testGroup "V1" [
+          BackingStore.tests
+        , DbChangelog.Unit.tests
+        , DbChangelog.QuickCheck.tests
+    ]
+    , SnapshotPolicy.tests
+    , Serialisation.tests
+    , StateMachine.tests
     ]

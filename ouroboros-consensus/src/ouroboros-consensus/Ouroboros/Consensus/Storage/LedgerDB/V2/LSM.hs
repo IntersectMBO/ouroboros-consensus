@@ -46,6 +46,7 @@ takeSnapshot ::
      CodecConfig blk
   -> Tracer m (TraceSnapshotEvent blk)
   -> SomeHasFS m
+  -> Maybe DiskSnapshot
   -> StateRef m (ExtLedgerState blk)
   -> m (Maybe (DiskSnapshot, RealPoint blk))
 takeSnapshot = undefined

@@ -655,15 +655,16 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.Primary
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB
-    Test.Ouroboros.Storage.LedgerDB.BackingStore
-    Test.Ouroboros.Storage.LedgerDB.BackingStore.Lockstep
-    Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock
-    Test.Ouroboros.Storage.LedgerDB.BackingStore.Registry
-    Test.Ouroboros.Storage.LedgerDB.DbChangelog
-    Test.Ouroboros.Storage.LedgerDB.DiskPolicy
-    Test.Ouroboros.Storage.LedgerDB.InMemory
-    Test.Ouroboros.Storage.LedgerDB.OnDisk
-    Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary
+    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore
+    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
+    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
+    Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
+    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.Unit
+    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.QuickCheck
+    Test.Ouroboros.Storage.LedgerDB.StateMachine
+    Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
+    Test.Ouroboros.Storage.LedgerDB.Serialisation
+    Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.TestBlock
     Test.Ouroboros.Storage.VolatileDB
@@ -681,7 +682,10 @@ test-suite storage-test
     , cardano-crypto-class
     , cardano-slotting
     , cborg
+    , cardano-ledger-binary:testlib
+    , cardano-strict-containers
     , constraints
+    , strict-stm
     , containers
     , contra-tracer
     , diff-containers                                >=1.1
@@ -700,8 +704,8 @@ test-suite storage-test
     , ouroboros-network-mock
     , pretty-show
     , QuickCheck
-    , quickcheck-dynamic                             >=3.3.1
-    , quickcheck-lockstep                            >=0.3
+    , quickcheck-dynamic                             >=3.4
+    , quickcheck-lockstep                            >=0.4
     , quickcheck-state-machine:no-vendored-treediff  ^>=0.9
     , random
     , serialise

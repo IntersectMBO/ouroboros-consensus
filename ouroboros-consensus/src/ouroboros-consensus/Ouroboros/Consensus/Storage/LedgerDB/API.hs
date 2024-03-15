@@ -113,6 +113,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.API (
     -- * Main API
     LedgerDB (..)
   , LedgerDB'
+  , OnDemandActions (..)
+  , OnDemandActions'
   , currentPoint
     -- * Exceptions
   , LedgerDbError (..)
@@ -166,6 +168,7 @@ import           Ouroboros.Consensus.HeaderStateHistory
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -258,6 +261,18 @@ currentPoint ::
   => LedgerDB m l blk
   -> STM m (Point blk)
 currentPoint ldb = castPoint . getTip <$> getVolatileTip ldb
+
+data OnDemandActions m l blk = OnDemandActions {
+    destroySnapshot    :: DiskSnapshot -> m ()
+  , truncateSnapshot   :: DiskSnapshot -> m ()
+  , flushNOW           ::                 m ()
+  , takeSnapshotNOW    :: Maybe DiskSnapshot -> m ()
+  , reapplyThenPushNOW :: blk ->          m ()
+  , closeLedgerDB      :: m ()
+  }
+  deriving NoThunks via OnlyCheckWhnfNamed "OnDemandActions" (OnDemandActions m l blk)
+
+type OnDemandActions' m blk = OnDemandActions m (ExtLedgerState blk) blk
 
 {-------------------------------------------------------------------------------
   Exceptions

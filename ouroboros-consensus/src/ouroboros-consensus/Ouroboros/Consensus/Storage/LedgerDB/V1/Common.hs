@@ -36,9 +36,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Common (
   , getForkerEnv
   , getForkerEnv1
   , getForkerEnvSTM
-    -- * Exposed internals for testing purposes
-  , Internals (..)
-  , Internals'
   ) where
 
 import           Control.Arrow
@@ -53,7 +50,6 @@ import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.LedgerDB.API as API
 import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
@@ -262,18 +258,3 @@ getForkerEnvSTM (LDBHandle varState) forkerKey f = readTVar varState >>= \case
     LedgerDBOpen env -> readTVar (ldbForkers env) >>= (Map.lookup forkerKey >>> \case
       Nothing        -> throwSTM $ ClosedForkerError @blk forkerKey prettyCallStack
       Just forkerEnv -> f forkerEnv)
-
-{-------------------------------------------------------------------------------
-  Exposed internals for testing purposes
--------------------------------------------------------------------------------}
-
-type Internals' m blk = Internals m (ExtLedgerState blk) blk
-
--- TODO: fill in as required
-type Internals :: (Type -> Type) -> LedgerStateKind -> Type -> Type
-data Internals m l blk = Internals {
-    intTakeSnapshot         :: (l ~ ExtLedgerState blk) => DiskSnapshot -> m ()
-    -- | Reapplies a block to the tip of the LedgerDB, and adds the result as
-    -- the new tip of the LedgerDB.
-  , intReapplyThenPushBlock :: (l ~ ExtLedgerState blk) => blk -> m ()
-  }

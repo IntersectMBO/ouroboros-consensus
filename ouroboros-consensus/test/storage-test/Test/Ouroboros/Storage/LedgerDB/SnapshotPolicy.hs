@@ -3,29 +3,21 @@
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE TypeApplications   #-}
 
-module Test.Ouroboros.Storage.LedgerDB.DiskPolicy (tests) where
+module Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy (tests) where
 
 import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds,
                      picosecondsToDiffTime, secondsToDiffTime)
 import           Data.Word
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
-<<<<<<< HEAD
-import           Ouroboros.Consensus.Storage.LedgerDB (DiskPolicy (..),
-                     NumOfDiskSnapshots (..), SnapshotInterval (..),
-                     TimeSinceLast (..), mkDiskPolicy)
-import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
-                     (DiskPolicyArgs (DiskPolicyArgs))
-=======
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 
 tests :: TestTree
 tests =
-    testGroup "DiskPolicy" [
-        testGroup "defaultDiskPolicy" [
+    testGroup "SnapshotPolicy" [
+        testGroup "defaultSnapshotPolicy" [
             testProperty "onDiskNumSnapshots"       prop_onDiskNumSnapshots
           , testProperty "onDiskShouldTakeSnapshot" prop_onDiskShouldTakeSnapshot
           ]
@@ -39,32 +31,27 @@ tests =
 data TestSetup = TestSetup {
     -- | argument to 'onDiskShouldTakeSnapshot'
     tsBlocksSince      :: Word64
-    -- | argument to 'defaultDiskPolicy'
+    -- | argument to 'defaultSnapshotPolicy'
   , tsK                :: SecurityParam
-    -- | argument to 'defaultDiskPolicy'
+    -- | argument to 'defaultSnapshotPolicy'
   , tsSnapshotInterval :: SnapshotInterval
     -- | argument to 'onDiskShouldTakeSnapshot'
   , tsTimeSince        :: Maybe DiffTime
   }
   deriving (Show)
 
-<<<<<<< HEAD
--- | The represented default 'DiskPolicy'
-toDiskPolicy :: TestSetup -> DiskPolicy
-toDiskPolicy ts = mkDiskPolicy (tsK ts) diskPolicyArgs
-  where
-    diskPolicyArgs =
-      DiskPolicyArgs (tsSnapshotInterval ts) DefaultNumOfDiskSnapshots
-=======
+
 -- | The represented default 'SnapshotPolicy'
-toDiskPolicy :: TestSetup -> SnapshotPolicy
-toDiskPolicy ts = defaultSnapshotPolicy (tsK ts) (tsSnapshotInterval ts)
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
+toSnapshotPolicy :: TestSetup -> SnapshotPolicy
+toSnapshotPolicy ts = defaultSnapshotPolicy (tsK ts) snapshotPolicyArgs
+  where
+    snapshotPolicyArgs =
+      SnapshotPolicyArgs (tsSnapshotInterval ts) DefaultNumOfDiskSnapshots
 
 -- | The result of the represented call to 'onDiskShouldTakeSnapshot'
 shouldTakeSnapshot :: TestSetup -> Bool
 shouldTakeSnapshot ts = onDiskShouldTakeSnapshot
-    (toDiskPolicy ts)
+    (toSnapshotPolicy ts)
     (tsTimeSince ts)
     (tsBlocksSince ts)
 
@@ -183,12 +170,12 @@ instance Arbitrary TestSetup where
   Properties
 -------------------------------------------------------------------------------}
 
--- | Check 'onDiskNumSnapshots' of 'defaultDiskPolicy'
+-- | Check 'onDiskNumSnapshots' of 'defaultSnapshotPolicy'
 prop_onDiskNumSnapshots :: TestSetup -> Property
 prop_onDiskNumSnapshots ts =
     -- 'TestSetup' has more information than we need for this property
       counterexample "should always be 2"
-    $ onDiskNumSnapshots (toDiskPolicy ts) === 2
+    $ onDiskNumSnapshots (toSnapshotPolicy ts) === 2
 
 minBlocksBeforeSnapshot :: Word64
 minBlocksBeforeSnapshot = 50_000
@@ -196,7 +183,7 @@ minBlocksBeforeSnapshot = 50_000
 minSecondsBeforeSnapshot :: Integer
 minSecondsBeforeSnapshot = 6 * 60
 
--- | Check 'onDiskShouldTakeSnapshot' of 'defaultDiskPolicy'
+-- | Check 'onDiskShouldTakeSnapshot' of 'defaultSnapshotPolicy'
 prop_onDiskShouldTakeSnapshot :: TestSetup -> Property
 prop_onDiskShouldTakeSnapshot ts =
     counterexample ("decided to take snapshot? " ++ show (shouldTakeSnapshot ts)) $

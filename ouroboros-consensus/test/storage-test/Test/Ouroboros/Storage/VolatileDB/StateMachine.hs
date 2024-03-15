@@ -491,13 +491,8 @@ data VolatileDBEnv = VolatileDBEnv
 -- Does not close the current VolatileDB stored in 'varDB'.
 reopenDB :: VolatileDBEnv -> IO ()
 reopenDB VolatileDBEnv { varDB, args } = do
-<<<<<<< HEAD
-    db <- openDB args runWithTempRegistry
-    void $ atomically $ swapTVar varDB db
-=======
     (db, _) <- openDB args runWithTempRegistry
-    void $ swapSVar varDB db
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+    void $ atomically $ swapTVar varDB db
 
 semanticsImpl :: VolatileDBEnv -> At CmdErr Concrete -> IO (At Resp Concrete)
 semanticsImpl env@VolatileDBEnv { varDB, varErrors }  (At (CmdErr cmd mbErrors)) =
@@ -600,11 +595,7 @@ test cmds = do
                  }
 
     (hist, res, trace) <- bracket
-<<<<<<< HEAD
-      (openDB args runWithTempRegistry >>= newTVarIO)
-=======
-      (openDB args runWithTempRegistry >>= newSVar . fst)
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+      (openDB args runWithTempRegistry >>= newTVarIO . fst)
       -- Note: we might be closing a different VolatileDB than the one we
       -- opened, as we can reopen it the VolatileDB, swapping the VolatileDB
       -- in the TVar.

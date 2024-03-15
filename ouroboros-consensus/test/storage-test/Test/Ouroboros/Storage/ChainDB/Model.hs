@@ -349,13 +349,8 @@ getDbChangelog cfg m@Model{..} =
   Construction
 -------------------------------------------------------------------------------}
 
-<<<<<<< HEAD
 empty ::
-     ExtLedgerState blk
-=======
-empty
-  :: ExtLedgerState blk EmptyMK
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+     ExtLedgerState blk EmptyMK
   -> Word64   -- ^ Max clock skew in number of blocks
   -> Model blk
 empty initLedger maxClockSkew = Model {
@@ -379,11 +374,7 @@ advanceCurSlot ::
   -> Model blk -> Model blk
 advanceCurSlot curSlot m = m { currentSlot = curSlot `max` currentSlot m }
 
-<<<<<<< HEAD
-addBlock :: forall blk. LedgerSupportsProtocol blk
-=======
-addBlock :: forall blk. (Eq blk, LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+addBlock :: forall blk. (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
          => TopLevelConfig blk
          -> blk
          -> Model blk -> Model blk
@@ -462,9 +453,6 @@ addBlock cfg blk m = Model {
           (Set.fromList . map blockHash . Chain.toOldestFirst . fst)
           consideredCandidates
 
-<<<<<<< HEAD
-addBlocks :: LedgerSupportsProtocol blk
-=======
 -- = Getting the valid blocks
 --
 -- The chain selection algorithms implemented by the model and by the SUT differ
@@ -562,21 +550,15 @@ addBlocks :: LedgerSupportsProtocol blk
 --    the ones known by the real algorithm. See the note
 --    Ouroboros.Storage.ChainDB.StateMachine.[Invalid blocks].
 
-addBlocks :: (Eq blk, LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+addBlocks :: (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
           => TopLevelConfig blk
           -> [blk]
           -> Model blk -> Model blk
 addBlocks cfg = repeatedly (addBlock cfg)
 
 -- | Wrapper around 'addBlock' that returns an 'AddBlockPromise'.
-<<<<<<< HEAD
 addBlockPromise ::
-     forall m blk. (LedgerSupportsProtocol blk, MonadSTM m)
-=======
-addBlockPromise
-  :: forall m blk. (Eq blk, LedgerSupportsProtocol blk, MonadSTM m, LedgerTablesAreTrivial (ExtLedgerState blk))
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+     forall m blk. (LedgerSupportsProtocol blk, MonadSTM m, LedgerTablesAreTrivial (ExtLedgerState blk))
   => TopLevelConfig blk
   -> blk
   -> Model blk
@@ -1099,13 +1081,8 @@ closeDB m@Model{..} = m {
 reopen :: Model blk -> Model blk
 reopen m = m { isOpen = True }
 
-<<<<<<< HEAD
 wipeVolatileDB ::
-     forall blk. LedgerSupportsProtocol blk
-=======
-wipeVolatileDB
-  :: forall blk. (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+     forall blk. (LedgerSupportsProtocol blk, LedgerTablesAreTrivial (ExtLedgerState blk))
   => TopLevelConfig blk
   -> Model blk
   -> (Point blk, Model blk)

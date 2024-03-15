@@ -56,7 +56,7 @@ mkInitDb :: forall m blk.
          => Complete LedgerDbArgs m blk
          -> Complete V2.LedgerDbFlavorArgs m
          -> Validate.ResolveBlock m blk
-         -> InitDB (LedgerSeq' m blk) () m blk
+         -> InitDB (LedgerSeq' m blk) m blk
 mkInitDb args flavArgs getBlock =
   InitDB {
       initFromGenesis = emptyF =<< lgrGenesis
@@ -129,6 +129,7 @@ implMkLedgerDb ::
      ( IOLike m
      , HasCallStack
      , IsLedger l
+     , l ~ ExtLedgerState blk
      , StandardHash l, HasLedgerTables l
      , HeaderHash l ~ HeaderHash blk
      , LedgerSupportsProtocol blk
@@ -137,7 +138,7 @@ implMkLedgerDb ::
      )
   => LedgerDBHandle m l blk
   -> HandleArgs
-  -> (LedgerDB m l blk, ())
+  -> (LedgerDB m l blk, OnDemandActions m l blk)
 implMkLedgerDb h bss = (LedgerDB {
       getVolatileTip            = getEnvSTM  h implGetVolatileTip
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
@@ -151,7 +152,53 @@ implMkLedgerDb h bss = (LedgerDB {
     , tryTakeSnapshot           = getEnv2    h (implTryTakeSnapshot bss)
     , tryFlush                  = getEnv     h implTryFlush
     , closeDB                   = implCloseDB h
-    }, ())
+    }, mkInternals bss h)
+
+mkInternals ::
+     forall m blk. ( IOLike m
+     , LedgerDbSerialiseConstraints blk
+     , LedgerSupportsProtocol blk
+     , ApplyBlock (ExtLedgerState blk) blk
+     , MonadBase m m
+     )
+  => HandleArgs
+  -> LedgerDBHandle m (ExtLedgerState blk) blk
+  -> OnDemandActions' m blk
+mkInternals bss h = OnDemandActions {
+      takeSnapshotNOW = \ds -> getEnv h $ \env -> do
+          void . takeSnapshot
+                (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
+                (LedgerDBSnapshotEvent >$< ldbTracer env)
+                (ldbHasFS env)
+                ds
+                . anchorHandle
+                =<< readTVarIO (ldbSeq env)
+    , reapplyThenPushNOW = undefined
+    , destroySnapshot = \ds -> getEnv h $ \env -> do
+        deleteSnapshot (ldbHasFS env) ds
+    , truncateSnapshot = \ss -> getEnv h $ \env -> do
+        truncateFile (ldbHasFS env) (statePath ss)
+        truncateFile (ldbHasFS env) (tablesPath ss)
+    , flushNOW = pure ()
+    , closeLedgerDB = pure ()
+    }
+  where
+     takeSnapshot :: CodecConfig blk
+                  -> Tracer m (TraceSnapshotEvent blk)
+                  -> SomeHasFS m
+                  -> Maybe DiskSnapshot
+                  -> StateRef m (ExtLedgerState blk)
+                  -> m (Maybe (DiskSnapshot, RealPoint blk))
+     takeSnapshot = case bss of
+       InMemoryHandleArgs -> InMemory.takeSnapshot
+       LSMHandleArgs      -> LSM.takeSnapshot
+
+     (statePath, tablesPath) = case bss of
+       InMemoryHandleArgs -> (InMemory.snapshotToStatePath, InMemory.snapshotToTablePath)
+       LSMHandleArgs      -> undefined
+
+truncateFile :: MonadThrow m => SomeHasFS m -> FsPath -> m ()
+truncateFile (SomeHasFS fs) p = withFile fs p (AppendMode AllowExisting) $ \h -> hTruncate fs h 0
 
 implGetVolatileTip ::
      (MonadSTM m, GetTip l)
@@ -253,9 +300,9 @@ implTryTakeSnapshot bss env mTime nrBlocks =
                   -> SomeHasFS m
                   -> StateRef m (ExtLedgerState blk)
                   -> m (Maybe (DiskSnapshot, RealPoint blk))
-     takeSnapshot = case bss of
-       InMemoryHandleArgs -> InMemory.takeSnapshot
-       LSMHandleArgs      -> LSM.takeSnapshot
+     takeSnapshot a b c d = case bss of
+       InMemoryHandleArgs -> InMemory.takeSnapshot a b c Nothing d
+       LSMHandleArgs      -> LSM.takeSnapshot a b c Nothing d
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
 -- periodically flush the accumulated differences to the disk. However, in the

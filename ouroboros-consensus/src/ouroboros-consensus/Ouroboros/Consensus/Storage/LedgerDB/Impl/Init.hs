@@ -76,8 +76,8 @@ data InitLog blk =
   deriving (Show, Eq, Generic)
 
 -- | Functions required to initialize a LedgerDB
-type InitDB :: Type -> Type -> (Type -> Type) -> Type -> Type
-data InitDB db int m blk = InitDB {
+type InitDB :: Type -> (Type -> Type) -> Type -> Type
+data InitDB db m blk = InitDB {
     initFromGenesis  :: !(m db)
     -- ^ Create a DB from the genesis state
   , initFromSnapshot :: !(DiskSnapshot -> m (Either (SnapshotFailure blk) (db, RealPoint blk)))
@@ -89,7 +89,7 @@ data InitDB db int m blk = InitDB {
     -- ^ Reapply a block from the immutable DB when initializing the DB.
   , currentTip       :: !(db -> LedgerState blk EmptyMK)
     -- ^ Getting the current tip for tracing the Ledger Events.
-  , mkLedgerDb       :: !(db -> m (LedgerDB m (ExtLedgerState blk) blk, int))
+  , mkLedgerDb       :: !(db -> m (LedgerDB m (ExtLedgerState blk) blk, OnDemandActions m (ExtLedgerState blk) blk))
     -- ^ Create a LedgerDB from the initialized data structures from previous
     -- steps.
   }
@@ -119,7 +119,7 @@ data InitDB db int m blk = InitDB {
 -- obtained in this way will (hopefully) share much of their memory footprint
 -- with their predecessors.
 initialize ::
-     forall m blk db int.
+     forall m blk db.
      ( IOLike m
      , LedgerSupportsProtocol blk
      , InspectLedger blk
@@ -131,7 +131,7 @@ initialize ::
   -> LedgerDbCfg (ExtLedgerState blk)
   -> StreamAPI m blk blk
   -> Point blk
-  -> InitDB db int m blk
+  -> InitDB db m blk
   -> m (InitLog blk, db, Word64)
 initialize replayTracer
            snapTracer
@@ -211,7 +211,7 @@ initialize replayTracer
 --
 -- It will also return the number of blocks that were replayed.
 replayStartingWith ::
-     forall m blk db int. (
+     forall m blk db. (
          IOLike m
        , LedgerSupportsProtocol blk
        , InspectLedger blk
@@ -222,7 +222,7 @@ replayStartingWith ::
   -> StreamAPI m blk blk
   -> db
   -> Point blk
-  -> InitDB db int m blk
+  -> InitDB db m blk
   -> ExceptT (SnapshotFailure blk) m (db, Word64)
 replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, currentTip} = do
     streamAll stream from
@@ -251,13 +251,13 @@ replayStartingWith tracer cfg stream initDb from InitDB{initReapplyBlock, curren
 -------------------------------------------------------------------------------}
 
 openDB ::
-  forall m blk db int. ( IOLike m
+  forall m blk db. ( IOLike m
   , LedgerSupportsProtocol blk
   , InspectLedger blk
   , HasCallStack
   )
   => Complete LedgerDbArgs m blk
-  -> InitDB db int m blk
+  -> InitDB db m blk
   -> StreamAPI m blk blk
   -> Point blk
   -> m (LedgerDB' m blk, Word64)
@@ -273,10 +273,10 @@ openDBInternal ::
   , HasCallStack
   )
   => Complete LedgerDbArgs m blk
-  -> InitDB db int m blk
+  -> InitDB db m blk
   -> StreamAPI m blk blk
   -> Point blk
-  -> m (LedgerDB' m blk, Word64, int)
+  -> m (LedgerDB' m blk, Word64, OnDemandActions' m blk)
 openDBInternal args@(LedgerDbArgs { lgrHasFS = SomeHasFS fs }) initDb stream replayGoal = do
     createDirectoryIfMissing fs True (mkFsPath [])
     (_initLog, db, replayCounter) <-

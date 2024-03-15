@@ -11,7 +11,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Test.Ouroboros.Storage.LedgerDB.DbChangelog (tests) where
+module Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.Unit (tests) where
 
 import           Cardano.Slotting.Slot (WithOrigin (..), withOrigin)
 import           Control.Monad hiding (ap)
@@ -37,7 +37,7 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (HeaderHash, Point (..), SlotNo (..),
                      StandardHash, castPoint, pattern GenesisPoint)
 import qualified Ouroboros.Network.Point as Point
-import           Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary ()
+import           Test.Util.Orphans.Arbitrary ()
 import           Test.QuickCheck
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
@@ -48,7 +48,7 @@ samples :: Int
 samples = 1000
 
 tests :: TestTree
-tests = testGroup "Ledger" [ testGroup "DbChangelog"
+tests = testGroup "DbChangelog"
       [ testProperty "flushing" $ verboseShrinking $ withMaxSuccess samples $ conjoin
         [ counterexample "flushing keeps immutable tip"
           prop_flushingSplitsTheChangelog
@@ -66,7 +66,7 @@ tests = testGroup "Ledger" [ testGroup "DbChangelog"
       , testProperty "pruning leaves at most maxRollback volatile states"
         $ withMaxSuccess samples prop_pruningLeavesAtMostMaxRollbacksVolatileStates
       ]
-  ]
+
 
 
 {-------------------------------------------------------------------------------

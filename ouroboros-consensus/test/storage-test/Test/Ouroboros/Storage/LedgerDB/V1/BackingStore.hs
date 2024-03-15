@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE PackageImports             #-}
 {-# LANGUAGE Rank2Types                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -13,7 +14,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 {- HLINT ignore "Use camelCase" -}
 
-module Test.Ouroboros.Storage.LedgerDB.BackingStore (
+module Test.Ouroboros.Storage.LedgerDB.V1.BackingStore (
     labelledExamples
   , tests
   ) where
@@ -21,6 +22,7 @@ module Test.Ouroboros.Storage.LedgerDB.BackingStore (
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import           Cardano.Slotting.Slot
 import           Control.Concurrent.Class.MonadMVar.Strict
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar
 import           Control.Monad (void)
 import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.IO.Class (MonadIO (..))
@@ -42,20 +44,20 @@ import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.InMemory as InMemory
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB as LMDB
 import           Ouroboros.Consensus.Util.Args
-import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..))
+import           Ouroboros.Consensus.Util.IOLike hiding (MonadMask (..),
+                     newMVar, newTVarIO, readMVar)
 import qualified System.Directory as Dir
 import           System.FS.API hiding (Handle)
-import           System.FS.API.Types hiding (Handle)
 import           System.FS.IO (ioHasFS)
 import qualified System.FS.Sim.MockFS as MockFS
 import           System.FS.Sim.STM
 import           System.IO.Temp (createTempDirectory)
-import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Lockstep
-import qualified Test.Ouroboros.Storage.LedgerDB.BackingStore.Mock as Mock
-import           Test.Ouroboros.Storage.LedgerDB.BackingStore.Registry
+import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
+import qualified Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock as Mock
+import           Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck (Arbitrary (..), Property, Testable)
-import           Test.QuickCheck.Extras
+import           "quickcheck-dynamic" Test.QuickCheck.Extras
 import           Test.QuickCheck.Gen.Unsafe
 import qualified Test.QuickCheck.Monadic as QC
 import           Test.QuickCheck.Monadic (PropertyM)
@@ -175,7 +177,7 @@ setupBSEnv bss mkSfhs cleanup = do
 
   let bsi = BS.newBackingStoreInitialiser mempty bss
 
-  bsVar <- newMVar =<< bsi sfhs (BS.InitFromValues Origin emptyLedgerTables)
+  bsVar <- newMVar =<< bsi sfhs sfhs (BS.InitFromValues Origin emptyLedgerTables)
 
   rr <- initHandleRegistry
 
