@@ -558,7 +558,7 @@ test-suite consensus-test
     , base-deriving-via
     , cardano-binary
     , cardano-crypto-class
-    , cardano-ledger-binary
+    , cardano-ledger-core:testlib
     , cardano-slotting
     , cardano-strict-containers
     , cborg

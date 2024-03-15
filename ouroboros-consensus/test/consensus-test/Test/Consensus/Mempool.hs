@@ -42,12 +42,8 @@ import           Control.Monad.State (State, evalState, get, modify)
 import           Control.Tracer (Tracer (..))
 import           Data.Bifunctor (first, second)
 import           Data.Either (isRight)
-<<<<<<< HEAD
-import           Data.List (foldl', isSuffixOf, nub, partition, sortOn)
-=======
-import           Data.List (foldl', isSuffixOf, partition, sort)
+import           Data.List (foldl', isSuffixOf, partition, sortOn)
 import qualified Data.List.NonEmpty as NE
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
@@ -287,11 +283,7 @@ prop_Mempool_TraceRemovedTxs setup =
     isRemoveTxsEvent (TraceMempoolRemoveTxs txs _) = Just (map (first txForgetValidated) txs)
     isRemoveTxsEvent _                             = Nothing
 
-<<<<<<< HEAD
-    expectedToBeRemoved :: LedgerState TestBlock -> [TestTx] -> [(TestTx, TestTxError)]
-=======
-    expectedToBeRemoved :: LedgerState TestBlock ValuesMK -> [TestTx] -> [TestTx]
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+    expectedToBeRemoved :: LedgerState TestBlock ValuesMK -> [TestTx] -> [(TestTx, TestTxError)]
     expectedToBeRemoved ledgerState txsInMempool =
       [ (tx, err)
       | (tx, Left err) <- fst $ validateTxs ledgerState txsInMempool
@@ -405,33 +397,17 @@ instance Arbitrary TestSetup where
     , isRight $ txsAreValid testLedgerState testInitialTxs'
     ]
 
-
-
-
-
-<<<<<<< HEAD
 txsAreValid ::
-     LedgerState TestBlock
-=======
-txsAreValid
-  :: LedgerState TestBlock ValuesMK
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+     LedgerState TestBlock ValuesMK
   -> [TestTx]
   -> Either TestTxError (LedgerState TestBlock ValuesMK)
 txsAreValid ledgerState txs =
     runExcept $ repeatedlyM (flip applyTxToLedger) txs ledgerState
 
-<<<<<<< HEAD
 validateTxs ::
-     LedgerState TestBlock
+     LedgerState TestBlock ValuesMK
   -> [TestTx]
-  -> ([(TestTx, Either TestTxError ())], LedgerState TestBlock)
-=======
-validateTxs
-  :: LedgerState TestBlock ValuesMK
-  -> [TestTx]
-  -> ([(TestTx, Bool)], LedgerState TestBlock ValuesMK)
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+  -> ([(TestTx, Either TestTxError ())], LedgerState TestBlock ValuesMK)
 validateTxs = go []
   where
     go revalidated ledgerState = \case
@@ -491,11 +467,10 @@ instance Arbitrary TestSetupWithTxs where
                 shrinkList (const []) .
                 map fst $ txs ]
 
-<<<<<<< HEAD
-revalidate :: TestSetup -> [TestTx] -> ([(TestTx, Either TestTxError ())], LedgerState TestBlock)
-=======
-revalidate :: TestSetup -> [TestTx] -> ([(TestTx, Bool)], LedgerState TestBlock ValuesMK)
->>>>>>> 02c6d4f8e (UTxO-HD ONE COMMIT)
+revalidate ::
+     TestSetup
+  -> [TestTx]
+  -> ([(TestTx, Either TestTxError ())], LedgerState TestBlock ValuesMK)
 revalidate TestSetup { testLedgerState, testInitialTxs } =
     validateTxs initLedgerState
   where
