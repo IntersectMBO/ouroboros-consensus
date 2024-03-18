@@ -299,8 +299,7 @@ prop_densityDisconnectMonotonic =
 -- it gets disconnected and then the selection progresses.
 prop_densityDisconnectTriggersChainSel :: Property
 prop_densityDisconnectTriggersChainSel =
-  -- FIXME: Remove noShrinking Once the test passes
-  noShrinking $ forAllGenesisTest
+  forAllGenesisTest
     ( do
         gt@GenesisTest {gtBlockTree} <- genChains (pure 1)
         let ps = lowDensitySchedule gtBlockTree
