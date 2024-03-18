@@ -1,9 +1,13 @@
+{-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DeriveGeneric        #-}
+{-# LANGUAGE DerivingStrategies   #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE GADTs                #-}
 {-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE MultiWayIf           #-}
 {-# LANGUAGE NamedFieldPuns       #-}
 {-# LANGUAGE PatternSynonyms      #-}
+{-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeOperators        #-}
@@ -12,9 +16,9 @@
 module Ouroboros.Consensus.Genesis.Governor (
     DensityBounds (..)
   , TraceGDDEvent (..)
+  , UpdateLoEFrag (..)
   , densityDisconnect
-  , reprocessLoEBlocksOnCandidateChange
-  , runLoEUpdaterOnChange
+  , runGddAsync
   , sharedCandidatePrefix
   , updateLoEFragGenesis
   , updateLoEFragStall
@@ -30,6 +34,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (isJust)
 import           Data.Void
 import           Data.Word (Word64)
+import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
                      configSecurityParam)
@@ -38,13 +43,14 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import           Ouroboros.Consensus.HardFork.History.Qry (qryFromExpr,
                      runQuery, slotToGenesisWindow)
-import           Ouroboros.Consensus.Ledger.Extended (ledgerState)
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
+                     ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandle (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB,
-                     UpdateLoEFrag (..), reprocessLoEAsync)
+                     reprocessLoEAsync)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util (eitherToMaybe, whenJust)
 import           Ouroboros.Consensus.Util.AnchoredFragment (stripCommonPrefix)
@@ -53,6 +59,24 @@ import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (Tip, getTipSlotNo)
+
+-- | This callback is a hook into ChainSync that is called right before deciding
+-- whether a block can be added to the current selection.
+--
+-- Its purpose is to update the LoE fragment, anchored at the immutable tip and
+-- whose tip is the header of the youngest block present in all candidate
+-- fragments.
+--
+-- The callback is applied to the current chain, the current ledger state and
+-- an STM action that returns the new LoE fragment.
+data UpdateLoEFrag m blk = UpdateLoEFrag {
+    updateLoEFrag ::
+         AnchoredFragment (Header blk)
+      -> ExtLedgerState blk
+      -> m (AnchoredFragment (Header blk))
+  }
+  deriving stock (Generic)
+  deriving anyclass (NoThunks)
 
 -- | A dummy version of the LoE that sets the LoE fragment to the current
 -- selection.
@@ -111,46 +135,32 @@ updateLoEFragStall getCandidates =
       candidates <- getCandidates
       pure (fst (sharedCandidatePrefix curChain candidates))
 
--- | Background task that wakes up whenever a candidate fragment changes and
--- triggers ChainSel for any block that has been postponed because of the LoE.
-reprocessLoEBlocksOnCandidateChange ::
-  Ord peer =>
-  MonadSTM m =>
-  GetHeader blk =>
-  ChainDB m blk ->
-  STM m (Map peer (AnchoredFragment (Header blk))) ->
-  m ()
-reprocessLoEBlocksOnCandidateChange chainDb getCandidates =
-  spin mempty
-  where
-    spin prev =
-      atomically (blockUntilChanged (Map.map AF.headPoint) prev getCandidates) >>= \ (_, newTips) -> do
-        reprocessLoEAsync chainDb
-        spin newTips
-
-runLoEUpdaterOnChange ::
+-- | Run the GDD governor in a background thread, writing the LoE fragment
+-- computed by @loEUpdater@ to @varLoEFrag@ whenever the STM action
+-- @getTrigger@ changes.
+--
+-- After writing the fragment, send a message to ChainSel to reprocess all
+-- blocks that had previously been postponed by the LoE.
+runGddAsync ::
   (Monoid a, Eq a, IOLike m, LedgerSupportsProtocol blk) =>
   UpdateLoEFrag m blk ->
-  m ( UpdateLoEFrag m blk
-    , ChainDB m blk ->
-      STM m a -> -- Re-run the LoE updater whenever this changes
-      m Void
-    )
-runLoEUpdaterOnChange loeUpdater = do
-    varLoEFrag <- newTVarIO $ AF.Empty AF.AnchorGenesis
-    let newUpdateLoEFrag = UpdateLoEFrag $ \_ _ -> readTVarIO varLoEFrag
-    pure (newUpdateLoEFrag, spin varLoEFrag mempty)
+  StrictTVar m (AnchoredFragment (Header blk)) ->
+  ChainDB m blk ->
+  STM m a ->
+  m Void
+runGddAsync loEUpdater varLoEFrag chainDb getTrigger =
+  spin mempty
   where
-    spin varLoEFrag oldTrigger chainDb getTrigger = do
+    spin oldTrigger = do
       (newTrigger, curChain, curLedger) <- atomically $ do
         (_, newTrigger) <- blockUntilChanged id oldTrigger getTrigger
         curChain <- ChainDB.getCurrentChain chainDb
         curLedger <- ChainDB.getCurrentLedger chainDb
         pure (newTrigger, curChain, curLedger)
-      loeFrag <- updateLoEFrag loeUpdater curChain curLedger
+      loeFrag <- updateLoEFrag loEUpdater curChain curLedger
       atomically $ writeTVar varLoEFrag loeFrag
       reprocessLoEAsync chainDb
-      spin varLoEFrag newTrigger chainDb getTrigger
+      spin newTrigger
 
 data DensityBounds blk =
   DensityBounds {
