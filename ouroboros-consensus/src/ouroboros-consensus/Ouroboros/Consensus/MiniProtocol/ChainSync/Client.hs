@@ -1081,16 +1081,19 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     n
                     candTipBlockNo
                     theirTipBlockNo
+            onMsgAwaitReply =
+              startIdling >>
+              pauseLoPBucket
         in
         case (n, decision) of
           (Zero, (Request, mkPipelineDecision')) ->
               SendMsgRequestNext
-                  (startIdling >> pauseLoPBucket)   -- on MsgAwaitReply
+                  onMsgAwaitReply
                   (handleNext kis mkPipelineDecision' Zero)
 
           (_, (Pipeline, mkPipelineDecision')) ->
               SendMsgRequestNextPipelined
-                (startIdling >> pauseLoPBucket)   -- on MsgAwaitReply
+                onMsgAwaitReply
             $ requestNext
                   kis
                   mkPipelineDecision'
@@ -1103,7 +1106,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   (   Just
                     $ pure
                     $ SendMsgRequestNextPipelined
-                        (startIdling >> pauseLoPBucket)   -- on MsgAwaitReply
+                        onMsgAwaitReply
                     $ requestNext
                           kis
                           mkPipelineDecision'
