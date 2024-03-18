@@ -28,6 +28,7 @@ import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
                      TraceGDDEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
+import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
                      (TraceAddBlockEvent (..))
@@ -290,9 +291,11 @@ traceChainDBEventTestBlockWith tracer = \case
           trace $ "Did not select block due to LoE: " ++ terseRealPoint point
         IgnoreBlockOlderThanK point ->
           trace $ "Ignored block older than k: " ++ terseRealPoint point
-        ChainSelectionLoEDebug curChain loeFrag0 -> do
+        ChainSelectionLoEDebug curChain (LoEEnabled loeFrag0) -> do
           trace $ "Current chain: " ++ terseHFragment curChain
           trace $ "LoE fragment: " ++ terseHFragment loeFrag0
+        ChainSelectionLoEDebug _ LoEDisabled ->
+          pure ()
         AddedReprocessLoEBlocksToQueue ->
           trace $ "Requested ChainSel run"
         _ -> pure ()

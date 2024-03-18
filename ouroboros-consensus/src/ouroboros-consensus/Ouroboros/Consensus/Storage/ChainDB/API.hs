@@ -64,10 +64,9 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
     -- * Exceptions
   , ChainDbError (..)
     -- * Genesis
+  , GetLoEFragment
   , LoE (..)
   , LoELimit (..)
-  , UpdateLoEFrag (..)
-  , processLoE
   ) where
 
 import           Control.Monad (void)
@@ -875,9 +874,9 @@ instance (Typeable blk, StandardHash blk) => Exception (ChainDbError blk) where
 -- that implements an 'UpdateLoEFrag' that disconnects from peers with forks
 -- it considers inferior.
 --
--- This type indicates whether the feature is enabled, and contains an update
--- callback if it is.
-data LoE m blk =
+-- This type indicates whether the feature is enabled, and contains a value
+-- if it is.
+data LoE a =
   -- | The LoE is disabled, so ChainSel will not keep the selection from
   -- advancing.
   LoEDisabled
@@ -886,38 +885,10 @@ data LoE m blk =
   -- When the selection's tip is @k@ blocks after the earliest intersection of
   -- of all candidate fragments, ChainSel will not add new blocks to the
   -- selection.
-  LoEEnabled (UpdateLoEFrag m blk)
-  deriving stock (Generic)
-  deriving anyclass (NoThunks)
+  LoEEnabled a
+  deriving (Eq, Show, Generic, NoThunks, Functor, Foldable, Traversable)
 
--- | This callback is a hook into ChainSync that is called right before deciding
--- whether a block can be added to the current selection.
---
--- Its purpose is to update the LoE fragment, anchored at the immutable tip and
--- whose tip is the header of the youngest block present in all candidate
--- fragments.
---
--- The callback is applied to the current chain, the current ledger state and
--- an STM action that returns the new LoE fragment.
-data UpdateLoEFrag m blk = UpdateLoEFrag {
-    updateLoEFrag ::
-         AnchoredFragment (Header blk)
-      -> ExtLedgerState blk
-      -> m (AnchoredFragment (Header blk))
-  }
-  deriving stock (Generic)
-  deriving anyclass (NoThunks)
-
-processLoE ::
-     Applicative m
-  => GetHeader blk
-  => AnchoredFragment (Header blk)
-  -> ExtLedgerState blk
-  -> LoE m blk
-  -> m (AnchoredFragment (Header blk))
-processLoE curChain ledger = \case
-  LoEDisabled -> pure (AF.Empty AF.AnchorGenesis)
-  LoEEnabled hook -> updateLoEFrag hook curChain ledger
+type GetLoEFragment m blk = LoE (m (AnchoredFragment (Header blk)))
 
 data LoELimit =
   LoELimit Word64
