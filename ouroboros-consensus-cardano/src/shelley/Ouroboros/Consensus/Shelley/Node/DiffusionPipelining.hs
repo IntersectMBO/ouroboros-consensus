@@ -16,6 +16,8 @@ module Ouroboros.Consensus.Shelley.Node.DiffusionPipelining (
     HotIdentity (..)
   , ShelleyTentativeHeaderState (..)
   , ShelleyTentativeHeaderView (..)
+    -- * Testing
+  , isConwayOrLater
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
