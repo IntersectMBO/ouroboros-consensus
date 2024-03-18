@@ -271,7 +271,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
           | otherwise
           = pure nullTracer
     stateTracer <- mkStateTracer
-    BlockFetch.startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates
+    BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates
     void $ forkLinkedThread registry "ChainSel trigger" (reprocessLoEBlocksOnCandidateChange chainDb getCandidates)
     runScheduler (Tracer $ traceWith tracer . TraceSchedulerEvent) stateTracer gtSchedule (psrPeers resources)
     snapshotStateView stateViewTracers chainDb

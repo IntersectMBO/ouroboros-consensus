@@ -24,7 +24,7 @@ import           Control.Monad (void)
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, nullTracer, traceWith)
-import           Data.Hashable (Hashable)
+import           Data.Functor.Contravariant ((>$<))
 import           Data.Map.Strict (Map)
 import           Network.TypedProtocol.Codec (AnyMessage, PeerHasAgency (..),
                      PeerRole)
@@ -74,14 +74,15 @@ import           Test.Util.TestBlock (BlockConfig (TestBlockConfig), TestBlock)
 import           Test.Util.Time (dawnOfTime)
 
 startBlockFetchLogic ::
-     forall m peer.
-     (Hashable peer, Ord peer, IOLike m)
+     forall m.
+     (IOLike m)
   => ResourceRegistry m
+  -> Tracer m (TraceEvent TestBlock)
   -> ChainDB m TestBlock
-  -> FetchClientRegistry peer (Header TestBlock) TestBlock m
-  -> STM m (Map peer (AnchoredFragment (Header TestBlock)))
+  -> FetchClientRegistry PeerId (Header TestBlock) TestBlock m
+  -> STM m (Map PeerId (AnchoredFragment (Header TestBlock)))
   -> m ()
-startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates = do
+startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates = do
     let slotForgeTime :: BlockFetchClientInterface.SlotForgeTimeOracle m blk
         slotForgeTime _ = pure dawnOfTime
 
@@ -117,11 +118,13 @@ startBlockFetchLogic registry chainDb fetchClientRegistry getCandidates = do
 
     void $ forkLinkedThread registry "BlockFetchLogic" $
       blockFetchLogic
-        nullTracer
+        decisionTracer
         nullTracer
         blockFetchConsensusInterface
         fetchClientRegistry
         blockFetchCfg
+  where
+    decisionTracer = TraceOther . ("BlockFetchLogic | " ++) . show >$< tracer
 
 startKeepAliveThread ::
      forall m peer blk.
