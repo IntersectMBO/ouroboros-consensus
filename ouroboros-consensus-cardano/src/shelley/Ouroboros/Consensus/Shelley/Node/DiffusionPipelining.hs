@@ -16,6 +16,8 @@ module Ouroboros.Consensus.Shelley.Node.DiffusionPipelining (
     HotIdentity (..)
   , ShelleyTentativeHeaderState (..)
   , ShelleyTentativeHeaderView (..)
+    -- * Testing
+  , isBeforeConway
   ) where
 
 import qualified Cardano.Ledger.Api.Era as L
@@ -76,9 +78,9 @@ data ShelleyTentativeHeaderView proto =
 deriving stock instance ConsensusProtocol proto => Show (ShelleyTentativeHeaderView proto)
 deriving stock instance ConsensusProtocol proto => Eq   (ShelleyTentativeHeaderView proto)
 
-isConwayOrLater :: forall era. L.Era era => Proxy era -> Bool
-isConwayOrLater _ =
-    L.eraProtVerLow @(L.ConwayEra (L.EraCrypto era)) <= L.eraProtVerLow @era
+isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
+isBeforeConway _ =
+    L.eraProtVerLow @era < L.eraProtVerLow @(L.ConwayEra (L.EraCrypto era))
 
 -- | This is currently a hybrid instance:
 --
@@ -103,22 +105,29 @@ instance
     ShelleyTentativeHeaderView proto
 
   initialTentativeHeaderState _
-    | isConwayOrLater (Proxy @era)
-    = ShelleyTentativeHeaderState Origin Set.empty
-    | otherwise
+    | isBeforeConway (Proxy @era)
     = LegacyShelleyTentativeHeaderState NoLastInvalidSelectView
+    | otherwise
+    = ShelleyTentativeHeaderState Origin Set.empty
 
   tentativeHeaderView
-    | isConwayOrLater (Proxy @era)
+    | isBeforeConway (Proxy @era)
+    = LegacyShelleyTentativeHeaderView .: selectView
+    | otherwise
     = \_bcfg hdr@(ShelleyHeader sph _) ->
         ShelleyTentativeHeaderView (blockNo hdr) HotIdentity {
             hiIssuer  = SL.hashKey $ pHeaderIssuer sph
           , hiIssueNo = pHeaderIssueNo sph
           }
-    | otherwise
-    = LegacyShelleyTentativeHeaderView .: selectView
 
   applyTentativeHeaderView _ thv st
+    | LegacyShelleyTentativeHeaderView thv' <- thv
+    , LegacyShelleyTentativeHeaderState st' <- st
+    = LegacyShelleyTentativeHeaderState <$>
+        applyTentativeHeaderView
+          (Proxy @(SelectViewDiffusionPipelining (ShelleyBlock proto era)))
+          thv'
+          st'
     | ShelleyTentativeHeaderView bno hdrIdentity <- thv
     , ShelleyTentativeHeaderState lastBlockNo badIdentities <- st
     = case compare (NotOrigin bno) lastBlockNo of
@@ -132,13 +141,6 @@ instance
           Just $ ShelleyTentativeHeaderState
             (NotOrigin bno)
             (Set.singleton hdrIdentity)
-    | LegacyShelleyTentativeHeaderView thv' <- thv
-    , LegacyShelleyTentativeHeaderState st' <- st
-    = LegacyShelleyTentativeHeaderState <$>
-        applyTentativeHeaderView
-          (Proxy @(SelectViewDiffusionPipelining (ShelleyBlock proto era)))
-          thv'
-          st'
     -- Inconsistent tentative header view vs state. This case can be removed
     -- once mainnet has transitioned to Conway.
     | otherwise = error "impossible"
