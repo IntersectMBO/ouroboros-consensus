@@ -106,6 +106,7 @@ data TraceEvent blk
   | TraceChainSyncClientTerminationEvent PeerId TraceChainSyncClientTerminationEvent
   | TraceBlockFetchClientTerminationEvent PeerId TraceBlockFetchClientTerminationEvent
   | TraceGenesisDDEvent (TraceGDDEvent PeerId blk)
+  | TraceOther String
 
 -- * 'TestBlock'-specific tracers for the peer simulator
 
@@ -157,6 +158,7 @@ traceEventTestBlockWith setTickTime tracer0 tracer = \case
     TraceChainSyncClientTerminationEvent peerId traceEvent -> traceChainSyncClientTerminationEventTestBlockWith peerId tracer traceEvent
     TraceBlockFetchClientTerminationEvent peerId traceEvent -> traceBlockFetchClientTerminationEventTestBlockWith peerId tracer traceEvent
     TraceGenesisDDEvent gddEvent -> traceWith tracer (terseGDDEvent gddEvent)
+    TraceOther msg -> traceWith tracer msg
 
 traceSchedulerEventTestBlockWith ::
   (MonadMonotonicTime m) =>
