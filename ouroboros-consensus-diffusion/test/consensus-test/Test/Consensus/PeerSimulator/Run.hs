@@ -198,21 +198,31 @@ startBlockFetchConnectionThread
 -- If the peer has not terminated by protocol rules, this will update its TMVar
 -- with the new state, thereby unblocking the handler that's currently waiting
 -- for new instructions.
-dispatchTick ::
+dispatchTick :: forall m blk.
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
   Tracer m () ->
+  ChainDB m blk ->
+  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
   Map PeerId (PeerResources m blk) ->
   (Int, (DiffTime, Peer (NodeState blk))) ->
   m ()
-dispatchTick tracer stateTracer peers (number, (duration, Peer pid state)) =
+dispatchTick tracer stateTracer chainDb varCandidates peers (number, (duration, Peer pid state)) =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
-      traceWith tracer $ TraceNewTick number duration (Peer pid state)
+      traceNewTick
       atomically (prUpdateState state)
       threadDelay duration
       traceWith stateTracer ()
     Nothing -> error "“The impossible happened,” as GHC would say."
+  where
+    traceNewTick :: m ()
+    traceNewTick = do
+      currentChain <- atomically $ ChainDB.getCurrentChain chainDb
+      candidate <- atomically $ do
+         m <- readTVar varCandidates
+         traverse readTVar (m Map.!? pid)
+      traceWith tracer $ TraceNewTick number duration (Peer pid state) currentChain candidate
 
 -- | Iterate over a 'PointSchedule', sending each tick to the associated peer in turn,
 -- giving each peer a chunk of computation time, sequentially, until it satisfies the
@@ -223,12 +233,16 @@ runScheduler ::
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
   Tracer m () ->
+  ChainDB m blk ->
+  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
   PeersSchedule blk ->
   Map PeerId (PeerResources m blk) ->
   m ()
-runScheduler tracer stateTracer ps peers = do
+runScheduler tracer stateTracer chainDb varCandidates ps peers = do
   traceWith tracer TraceBeginningOfTime
-  mapM_ (dispatchTick tracer stateTracer peers) (zip [0..] (peersStatesRelative ps))
+  mapM_
+    (dispatchTick tracer stateTracer chainDb varCandidates peers)
+    (zip [0..] (peersStatesRelative ps))
   traceWith tracer TraceEndOfTime
 
 -- | Construct STM resources, set up ChainSync and BlockFetch threads, and
@@ -273,7 +287,13 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     stateTracer <- mkStateTracer
     BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates
     void $ forkLinkedThread registry "ChainSel trigger" (reprocessLoEBlocksOnCandidateChange chainDb getCandidates)
-    runScheduler (Tracer $ traceWith tracer . TraceSchedulerEvent) stateTracer gtSchedule (psrPeers resources)
+    runScheduler
+      (Tracer $ traceWith tracer . TraceSchedulerEvent)
+      stateTracer
+      chainDb
+      (psrCandidates resources)
+      gtSchedule
+      (psrPeers resources)
     snapshotStateView stateViewTracers chainDb
   where
     GenesisTest {
