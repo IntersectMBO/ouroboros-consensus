@@ -17,6 +17,7 @@ module Bench.Consensus.Mempool.TestBlock (
     -- * Transactions
   , Token (Token)
   , Tx (Tx)
+  , Ledger.GenTx (..)
   , mkTx
   , txSize
   ) where
@@ -83,13 +84,13 @@ data TestLedgerState = TestLedgerState {
     availableTokens :: Set Token
   }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (NoThunks, ToExpr, Serialise)
+  deriving anyclass (NoThunks, ToExpr, Serialise, NFData)
 
 data TxApplicationError =
     -- | The transaction could not be applied due to the given unavailable tokens.
     TxApplicationError { unavailable :: Set Token }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (NoThunks, ToExpr, Serialise)
+  deriving anyclass (NoThunks, ToExpr, Serialise, NFData)
 
 instance PayloadSemantics Tx where
   type PayloadDependentState Tx = TestLedgerState

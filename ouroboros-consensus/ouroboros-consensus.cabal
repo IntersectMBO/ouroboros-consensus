@@ -660,6 +660,7 @@ benchmark mempool-bench
     , cassava
     , containers
     , contra-tracer
+    , criterion
     , deepseq
     , nothunks
     , ouroboros-consensus
@@ -673,6 +674,8 @@ benchmark mempool-bench
     , unstable-consensus-testlib
     , unstable-mempool-test-utils
     , with-utf8
+
+  ghc-options:    -rtsopts "-with-rtsopts=-T -A32m"
 
 benchmark ChainSync-client-bench
   import:         common-bench
