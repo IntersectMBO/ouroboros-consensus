@@ -55,8 +55,9 @@ data TraceSchedulerEvent blk
   | -- | Right after running the last tick of the schedule.
     TraceEndOfTime
   | -- | When beginning a new tick. Contains the tick number (counting from
-    -- @0@), the duration of the tick and the states.
-    TraceNewTick Int DiffTime (Peer (NodeState blk))
+    -- @0@), the duration of the tick, the states, the current chain and the
+    -- candidate fragment.
+    TraceNewTick Int DiffTime (Peer (NodeState blk)) (AnchoredFragment (Header blk)) (Maybe (AnchoredFragment (Header blk)))
 
 type HandlerName = String
 
@@ -175,7 +176,7 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
         [ "╶──────────────────────────────────────────────────────────────────────────────╴",
           "Finished running point schedule"
         ]
-    TraceNewTick number duration (Peer pid state) -> do
+    TraceNewTick number duration (Peer pid state) currentChain mCandidateFrag -> do
       time <- getMonotonicTime
       setTickTime time
       traceLinesWith tracer0
@@ -185,7 +186,9 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
           "  number: " ++ show number,
           "  duration: " ++ show duration,
           "  peer: " ++ condense pid,
-          "  state: " ++ condense state
+          "  state: " ++ condense state,
+          "  current chain: " ++ terseHFragment currentChain,
+          "  candidate fragment: " ++ maybe "Nothing" terseHFragment mCandidateFrag
         ]
 
 traceScheduledServerHandlerEventTestBlockWith ::
