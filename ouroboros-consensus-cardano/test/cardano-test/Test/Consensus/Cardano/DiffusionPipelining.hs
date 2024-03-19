@@ -13,6 +13,7 @@ module Test.Consensus.Cardano.DiffusionPipelining (tests) where
 import           Cardano.Ledger.Crypto (StandardCrypto)
 import           Control.Monad (replicateM)
 import           Data.Containers.ListUtils (nubOrd)
+import           Data.List (sort)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -69,9 +70,11 @@ instance All GenTentativeHeaderViews xs => GenTentativeHeaderViews (HardForkBloc
         (hpure Proxy)
 
 instance GenTentativeHeaderViews ByronBlock where
-  genTentativeHeaderViews _ = do
-      bnos :: [BlockNo] <- nubOrd <$> orderedList
-      pure [PBftSelectView bno IsNotEBB | bno <- bnos]
+  genTentativeHeaderViews _ =
+      nubOrd . sort <$> listOf do
+        bno   <- arbitrary
+        isEBB <- toIsEBB <$> arbitrary
+        pure $ PBftSelectView bno isEBB
 
 instance ShelleyCompatible proto era => GenTentativeHeaderViews (ShelleyBlock proto era) where
   genTentativeHeaderViews _
