@@ -13,12 +13,14 @@ import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
 import           Control.Arrow (first)
 import           Control.Monad (unless, void)
 import qualified Control.Tracer as Tracer
+import qualified Criterion.Main as Criterion
 import           Data.Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Csv as Csv
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
+import           Debug.Trace
 import qualified Data.Text.Read as Text.Read
 import           Main.Utf8 (withStdTerminalHandles)
 import qualified Ouroboros.Consensus.Mempool.Capacity as Mempool
@@ -31,9 +33,29 @@ import           Test.Tasty.Bench (CsvPath (CsvPath), bench, benchIngredients,
 import           Test.Tasty.HUnit (testCase, (@?=))
 import           Test.Tasty.Options (changeOption)
 import           Test.Tasty.Runners (parseOptions, tryIngredients)
+import qualified Test.Util.TestBlock as PL
 
 main :: IO ()
-main = withStdTerminalHandles $ do
+main = Criterion.defaultMain [
+      Criterion.bgroup "Just adding" $
+        fmap benchAddNTxs [10_000]
+    , Criterion.env (pure (PL.payloadDependentState TestBlock.initialLedgerState, TestBlock.unGenTx $ TestBlock.mkTx [] [TestBlock.Token 0])) $ \ ~(st, tx) ->
+        Criterion.bench "applyPayload" $ Criterion.nf (PL.applyPayload st) tx
+    ]
+  where
+    benchAddNTxs n =
+        Criterion.bgroup (show n <> " transactions") [
+          Criterion.bench "benchmark" $
+            Criterion.perRunEnv
+              (let txs = mkNTryAddTxs n in fmap (, txs) (openMempoolWithCapacityFor txs))
+              (\ ~(mempool, txs) -> do
+                traceMarkerIO "start"
+                run mempool txs
+              )
+        ]
+
+_main :: IO ()
+_main = withStdTerminalHandles $ do
     let csvFilePath = "mempool-benchmarks.csv"
     runBenchmarks csvFilePath
     rawValues <- parseBenchmarkResults csvFilePath
@@ -50,7 +72,7 @@ main = withStdTerminalHandles $ do
       where
         benchmarkJustAddingTransactions =
             bgroup "Just adding" $
-                fmap benchAddNTxs [10_000, 1_000_000]
+                fmap benchAddNTxs [10_000]
           where
             benchAddNTxs n =
                 withResource
@@ -59,7 +81,9 @@ main = withStdTerminalHandles $ do
                   (\getAcquiredRes -> do
                       let withAcquiredMempool act = do
                             (mempool, txs) <- getAcquiredRes
+                            traceMarkerIO "start"
                             void $ act mempool txs
+                            traceMarkerIO "end"
                             -- TODO: consider adding a 'reset' command to the mempool to make sure its state is not tainted.
                             maybe (pure ()) (Mocked.removeTxs mempool) $ NE.nonEmpty $ getCmdsTxIds txs
                       bgroup (show n <> " transactions") [

@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
@@ -18,6 +19,7 @@ module Bench.Consensus.Mempool.TestBlock (
     -- * Transactions
   , Token (Token)
   , Tx (Tx)
+  , Ledger.GenTx (..)
   , mkTx
   , txSize
   ) where
@@ -29,6 +31,7 @@ import           Control.DeepSeq (NFData)
 import           Control.Monad.Trans.Except (except)
 import           Data.Map.Diff.Strict (Diff)
 import qualified Data.Map.Diff.Strict as Diff
+import qualified Data.Map.Diff.Strict.Internal as Diff.Internal
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -104,7 +107,7 @@ newtype TxApplicationError =
     -- | The transaction could not be applied due to the given unavailable tokens.
     TxApplicationError { unavailable :: Set Token }
   deriving stock (Generic, Eq, Show)
-  deriving anyclass (NoThunks, ToExpr, Serialise)
+  deriving anyclass (NoThunks, ToExpr, Serialise, NFData)
 
 instance PayloadSemantics Tx where
   newtype instance PayloadDependentState Tx mk = TestPLDS {
@@ -134,6 +137,13 @@ instance PayloadSemantics Tx where
   getPayloadKeySets tx = LedgerTables $ KeysMK $ consumed <> produced
     where
       Tx {consumed, produced} = tx
+
+deriving newtype instance NFData (mk Token ()) => NFData (PayloadDependentState Tx mk)
+deriving anyclass instance NFData v => NFData (Diff.Internal.Delta v)
+deriving newtype instance NFData v => NFData (Diff.Internal.DeltaHistory v)
+deriving newtype instance (NFData k, NFData v) => NFData (Diff k v)
+deriving anyclass instance (NFData k, NFData v) => NFData (Ledger.TrackingMK k v)
+deriving anyclass instance (NFData k, NFData v) => NFData (Ledger.ValuesMK k v)
 
 deriving stock instance EqMK mk
                         => Eq (PayloadDependentState Tx mk)
