@@ -34,6 +34,7 @@ module Ouroboros.Consensus.Shelley.Node.TPraos (
   ) where
 
 import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.API as SL
@@ -43,6 +44,7 @@ import           Cardano.Slotting.EpochInfo
 import           Cardano.Slotting.Time (mkSlotLength)
 import           Control.Monad.Except (Except)
 import           Data.Bifunctor (first)
+import qualified Data.Text as T
 import qualified Data.Text as Text
 import           Lens.Micro ((^.))
 import           Ouroboros.Consensus.Block
@@ -126,7 +128,7 @@ shelleySharedBlockForging ::
   -> BlockForging m     (ShelleyBlock (TPraos c) era)
 shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides =
     BlockForging {
-        forgeLabel       = label <> "_" <> shelleyBasedEraName (Proxy @era)
+        forgeLabel       = label <> "_" <> T.pack (L.eraName @era)
       , canBeLeader      = canBeLeader
       , updateForgeState = \_ curSlot _ ->
                                forgeStateUpdateInfoFromUpdateInfo <$>

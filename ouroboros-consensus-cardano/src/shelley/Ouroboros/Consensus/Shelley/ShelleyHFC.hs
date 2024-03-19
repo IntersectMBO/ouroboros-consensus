@@ -23,6 +23,7 @@ module Ouroboros.Consensus.Shelley.ShelleyHFC (
   , translateChainDepStateAcrossShelley
   ) where
 
+import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.BaseTypes as SL (mkVersion)
 import qualified Cardano.Ledger.Core as SL
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -192,7 +193,7 @@ instance
               ledgerState
 
   singleEraInfo _ = SingleEraInfo {
-      singleEraName = shelleyBasedEraName (Proxy @era)
+      singleEraName = T.pack (L.eraName @era)
     }
 
 instance PraosCrypto c => HasPartialConsensusConfig (Praos c) where
