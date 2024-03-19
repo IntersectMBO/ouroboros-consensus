@@ -22,9 +22,8 @@ prop_diffusionPipeliningSubsequenceConsistency ::
   -> Property
 prop_diffusionPipeliningSubsequenceConsistency _ thvs =
     assert (isRight $ satisfyPipeliningCriterion thvs) $
-    property $ do
-      thvs' <- sublistOf thvs
-      pure $ case satisfyPipeliningCriterion thvs' of
+    forAllShrink (sublistOf thvs) (shrinkList (const [])) $ \thvs' ->
+      case satisfyPipeliningCriterion thvs' of
         Right () -> property ()
         Left (hdrs'', st) ->
             counterexample ("tentative header view subsequence: " <> show hdrs'')
