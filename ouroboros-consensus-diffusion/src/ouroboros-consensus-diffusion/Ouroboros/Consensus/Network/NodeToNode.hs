@@ -42,7 +42,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.CBOR.Read (DeserialiseFailure)
-import           Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
+import qualified Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer
@@ -571,6 +571,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
             (CsClient.defaultChainDbView (getChainDB kernel))
             (getChainSyncHandles kernel)
+            (getGsmState       kernel)
             them
             version
             lopBucketConfig

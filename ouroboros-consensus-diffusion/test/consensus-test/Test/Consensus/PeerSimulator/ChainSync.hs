@@ -28,6 +28,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      Consensus, bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), StrictTVar)
@@ -141,11 +142,12 @@ runChainSyncClient
   csjConfig
   StateViewTracers {svtPeerSimulatorResultsTracer}
   varHandles
-  channel = do
+  channel =
     bracketChainSyncClient
       nullTracer
       chainDbView
       varHandles
+      (pure Syncing)
       peerId
       (maxBound :: NodeToNodeVersion)
       lopBucketConfig

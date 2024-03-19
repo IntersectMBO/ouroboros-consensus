@@ -629,7 +629,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
               LedgerPeersConsensusInterface {
                   lpGetLatestSlot = getImmTipSlot kernel,
                   lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
-                  lpGetLedgerStateJudgement = getLedgerStateJudgement kernel
+                  lpGetLedgerStateJudgement = GSM.gsmStateToLedgerJudgement <$> getGsmState kernel
                 }
           }
 
