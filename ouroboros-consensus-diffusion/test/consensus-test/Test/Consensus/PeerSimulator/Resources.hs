@@ -23,6 +23,8 @@ import           Data.Foldable (toList)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
@@ -120,7 +122,9 @@ data PeerSimulatorResources m blk =
 
     -- | Handlers to interact with the ChainSync client of each peer.
     -- See 'ChainSyncClientHandle' for more details.
-    psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock))
+    psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock)),
+
+    psrIdling :: StrictTVar m (Set PeerId)
   }
 
 -- | Create 'ChainSyncServerHandlers' for our default implementation using 'NodeState'.
@@ -240,4 +244,5 @@ makePeerSimulatorResources tracer blockTree peers = do
     pure (peerId, peerResources)
   psrCandidates <- uncheckedNewTVarM mempty
   psrHandles <- uncheckedNewTVarM mempty
-  pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources, psrHandles}
+  psrIdling <- uncheckedNewTVarM $ Set.empty
+  pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources, psrHandles, psrIdling}
