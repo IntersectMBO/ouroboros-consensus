@@ -15,6 +15,7 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V1.Init (mkInitDb) where
 
+import Data.Maybe (isJust)
 import           Control.Monad
 import           Control.Monad.Base
 import Control.Tracer (nullTracer)
@@ -158,7 +159,7 @@ implMkLedgerDb ::
      , l ~ ExtLedgerState blk
      )
   => LedgerDBHandle m l blk
-  -> (LedgerDB' m blk, OnDemandActions' m blk)
+  -> (LedgerDB' m blk, TestInternals' m blk)
 implMkLedgerDb h = (LedgerDB {
       getVolatileTip            = getEnvSTM  h implGetVolatileTip
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
@@ -256,8 +257,7 @@ implTryTakeSnapshot env mTime nrBlocks =
                                           Nothing)
       void $ trimSnapshots
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
-                (ldbStateHasFS env)
-                (ldbTablesHasFS env)
+                [ldbStateHasFS env, ldbTablesHasFS env]
                 (ldbSnapshotPolicy env)
       (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
     else
@@ -300,25 +300,43 @@ mkInternals ::
 
      )
   => LedgerDBHandle m (ExtLedgerState blk) blk
-  -> OnDemandActions' m blk
-mkInternals h = OnDemandActions {
+  -> TestInternals' m blk
+mkInternals h = TestInternals {
       takeSnapshotNOW = getEnv1 h implIntTakeSnapshot
     , reapplyThenPushNOW = getEnv1 h implIntReapplyThenPushBlock
-    , destroySnapshot = \ds -> getEnv h $ \env -> do
-        deleteSnapshot (ldbTablesHasFS env) ds
-        deleteSnapshot (ldbStateHasFS env) ds
-    , truncateSnapshot = \ss -> getEnv h $ \env -> do
-        truncateFile (ldbStateHasFS env) (snapshotToStatePath ss)
-        truncateFile (ldbTablesHasFS env) (snapshotToTablesPath ss)
-    , flushNOW = getEnv h $ \env ->
-        withWriteLock
-          (ldbLock env)
-          (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
+    , wipeLedgerDB = getEnv h $ \env ->
+        mapM_ destroySnapshots [ldbTablesHasFS env, ldbStateHasFS env]
     , closeLedgerDB = getEnv h $ \env -> bsClose $ ldbBackingStore env
+    , truncateSnapshots = getEnv h $ \env ->
+        mapM_ implIntTruncateSnapshots [ldbTablesHasFS env, ldbStateHasFS env]
     }
 
-truncateFile :: MonadThrow m => SomeHasFS m -> FsPath -> m ()
-truncateFile (SomeHasFS fs) p = withFile fs p (AppendMode AllowExisting) $ \h -> hTruncate fs h 0
+-- | Testing only! Destroy all snapshots in the DB.
+destroySnapshots :: Monad m => SomeHasFS m -> m ()
+destroySnapshots (SomeHasFS fs) = do
+  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
+  mapM_ ((\d -> do
+            isDir <- doesDirectoryExist fs d
+            if isDir
+              then removeDirectoryRecursive fs d
+              else removeFile fs d
+        ) . mkFsPath . (:[])) dirs
+
+-- | Testing only! Truncate all snapshots in the DB.
+implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()
+implIntTruncateSnapshots (SomeHasFS fs) = do
+  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
+  mapM_ (truncateRecursively . (:[])) dirs
+  where
+    truncateRecursively pre = do
+      dirs <- listDirectory fs (mkFsPath pre)
+      mapM_ (\d -> do
+            let d' = pre ++ [d]
+            isDir <- doesDirectoryExist fs $ mkFsPath d'
+            if isDir
+              then truncateRecursively d'
+              else withFile fs (mkFsPath d') (AppendMode AllowExisting) $ \h -> hTruncate fs h 0
+        ) dirs
 
 implIntTakeSnapshot ::
      ( IOLike m
@@ -327,7 +345,11 @@ implIntTakeSnapshot ::
      , l ~ ExtLedgerState blk
      )
   => LedgerDBEnv m l blk -> Maybe DiskSnapshot -> m ()
-implIntTakeSnapshot env diskSnapshot = void $ withReadLock (ldbLock env) $
+implIntTakeSnapshot env diskSnapshot = do
+  withWriteLock
+          (ldbLock env)
+          (flushLedgerDB (ldbChangelog env) (ldbBackingStore env))
+  void $ withReadLock (ldbLock env) $
     takeSnapshot
       (ldbChangelog env)
       (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)

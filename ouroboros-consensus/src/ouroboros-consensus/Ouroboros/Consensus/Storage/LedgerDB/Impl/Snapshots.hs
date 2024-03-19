@@ -26,6 +26,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots (
   , diskSnapshotIsTemporary
   , snapshotToDirName
   , snapshotToDirPath
+  , snapshotFromPath
     -- * Management
   , deleteSnapshot
   , listSnapshots
@@ -181,18 +182,16 @@ writeExtLedgerState (SomeHasFS hasFS) encLedger path cs = do
 trimSnapshots ::
      Monad m
   => Tracer m (TraceSnapshotEvent r)
-  -> SomeHasFS m
-  -> SomeHasFS m
+  -> [SomeHasFS m]
   -> SnapshotPolicy
   -> m [DiskSnapshot]
-trimSnapshots tracer hasFS ssdhasFS SnapshotPolicy{onDiskNumSnapshots} = do
+trimSnapshots tracer fss SnapshotPolicy{onDiskNumSnapshots} = do
     -- We only trim temporary snapshots
-    diskSnapshots <- filter diskSnapshotIsTemporary <$> listSnapshots hasFS
+    diskSnapshots <- filter diskSnapshotIsTemporary . concat <$> mapM listSnapshots fss
     -- The snapshot are most recent first, so we can simply drop from the
     -- front to get the snapshots that are "too" old.
     forM (drop (fromIntegral onDiskNumSnapshots) diskSnapshots) $ \snapshot -> do
-      deleteSnapshot hasFS snapshot
-      deleteSnapshot ssdhasFS snapshot
+      mapM_ (flip deleteSnapshot snapshot) fss
       traceWith tracer $ DeletedSnapshot snapshot
       return snapshot
 
