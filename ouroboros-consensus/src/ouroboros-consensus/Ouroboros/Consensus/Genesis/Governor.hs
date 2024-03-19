@@ -50,7 +50,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandle (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB,
-                     reprocessLoEAsync)
+                     triggerChainSelectionAsync)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util (eitherToMaybe, whenJust)
 import           Ouroboros.Consensus.Util.AnchoredFragment (stripCommonPrefix)
@@ -159,7 +159,7 @@ runGddAsync loEUpdater varLoEFrag chainDb getTrigger =
         pure (newTrigger, curChain, curLedger)
       loeFrag <- updateLoEFrag loEUpdater curChain curLedger
       atomically $ writeTVar varLoEFrag loeFrag
-      reprocessLoEAsync chainDb
+      triggerChainSelectionAsync chainDb
       spin newTrigger
 
 data DensityBounds blk =
