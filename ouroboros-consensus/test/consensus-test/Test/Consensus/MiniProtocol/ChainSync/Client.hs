@@ -55,6 +55,7 @@ import           Cardano.Slotting.Slot (WithOrigin (..))
 import           Control.Monad (forM_, unless, void, when)
 import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.Class.MonadTime (MonadTime, getCurrentTime)
+import           Control.Monad.Class.MonadTimer (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (contramap, contramapM, nullTracer)
 import           Data.DerivingVia (InstantiatedAt (InstantiatedAt))
@@ -89,6 +90,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      TraceChainSyncClientEvent (..), bracketChainSyncClient,
                      chainSyncClient, chainSyncStateFor, viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -310,7 +312,7 @@ data ChainSyncOutcome = ChainSyncOutcome {
 -- Note that updates that are scheduled before the time at which we start
 -- syncing help generate different chains to start syncing from.
 runChainSync ::
-       forall m. (IOLike m, MonadTime m)
+       forall m. (IOLike m, MonadTime m, MonadTimer m)
     => ClockSkew
     -> SecurityParam
     -> ClientUpdates
@@ -501,6 +503,9 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  chainSyncTracer
                  chainDbView
                  varHandles
+                 -- 'Syncing' only ever impacts the LoP, which is disabled in
+                 -- this test, so any value would do.
+                 (pure Syncing)
                  serverId
                  maxBound
                  lopBucketConfig

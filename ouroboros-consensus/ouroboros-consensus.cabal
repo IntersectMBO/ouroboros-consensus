@@ -175,6 +175,7 @@ library
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxMonitor.Server
     Ouroboros.Consensus.MiniProtocol.LocalTxSubmission.Server
+    Ouroboros.Consensus.Node.GsmState
     Ouroboros.Consensus.Node.InitStorage
     Ouroboros.Consensus.Node.NetworkProtocolVersion
     Ouroboros.Consensus.Node.ProtocolInfo
@@ -588,6 +589,7 @@ test-suite infra-test
   build-depends:
     QuickCheck,
     base,
+    io-classes,
     io-sim,
     mtl,
     ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
