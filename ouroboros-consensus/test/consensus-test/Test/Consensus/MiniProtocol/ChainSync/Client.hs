@@ -87,6 +87,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      Their (..), TraceChainSyncClientEvent (..),
                      bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -348,6 +349,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     -- Set up the client
     varCandidates   <- uncheckedNewTVarM mempty
     varIdlers       <- uncheckedNewTVarM mempty
+    varCallbacks    <- uncheckedNewTVarM mempty
     varClientState  <- uncheckedNewTVarM Genesis
     varClientResult <- uncheckedNewTVarM Nothing
     varKnownInvalid <- uncheckedNewTVarM mempty
@@ -507,6 +509,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  varCandidates
                  varIdlers
                  varHandles
+                 (pure Syncing, varCallbacks)
                  serverId
                  maxBound
                  lopBucketConfig

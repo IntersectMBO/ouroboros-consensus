@@ -29,9 +29,10 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      Their, bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), STM, StrictTVar)
+                     IOLike, MonadCatch (try), STM, StrictTVar, uncheckedNewTVarM)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
@@ -61,6 +62,7 @@ import           Test.Consensus.PeerSimulator.Trace
                      TraceEvent (..))
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
+import qualified Data.Map.Strict as Map
 
 -- | A basic ChainSync client. It wraps around 'chainSyncClient', but simplifies
 -- quite a few aspects. In particular, the size of the pipeline cannot exceed 20
@@ -161,12 +163,16 @@ runChainSyncClient
   varHandles
   varIdling
   channel = do
+    -- We don't need this shared Map yet. If we need it at some point,
+    -- it ought to be passed to `runChainSyncClient`.
+    varGsmCallbacks <- uncheckedNewTVarM $ Map.empty
     bracketChainSyncClient
       nullTracer
       chainDbView
       varCandidates
       varIdling
       varHandles
+      (pure Syncing, varGsmCallbacks)
       peerId
       (maxBound :: NodeToNodeVersion)
       lopBucketConfig

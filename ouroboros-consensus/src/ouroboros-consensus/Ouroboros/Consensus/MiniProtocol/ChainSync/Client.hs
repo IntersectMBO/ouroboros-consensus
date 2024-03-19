@@ -90,6 +90,7 @@ import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.Node.GsmState (GsmState (..))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB,
@@ -190,6 +191,7 @@ data ChainSyncClientHandle m blk = ChainSyncClientHandle {
   deriving (NoThunks) via AllowThunk (ChainSyncClientHandle m blk)
 
 bracketChainSyncClient ::
+  forall m peer blk a.
     ( IOLike m
     , Ord peer
     , LedgerSupportsProtocol blk
@@ -210,6 +212,13 @@ bracketChainSyncClient ::
     -- than it is for the client to be added promptly, because of how this is
     -- used by the GSM to determine that the node is done syncing.
  -> StrictTVar m (Map peer (ChainSyncClientHandle m blk))
+ -> ( STM m GsmState
+    , StrictTVar m (Map peer (GsmState -> m ()))
+    )
+    -- ^ A pair of the initial GSM state and a map of functions that run on each
+    -- change to the GSM state, to which the peer can register its own callback;
+    -- such callbacks are used in particular to update the configuration of the
+    -- LoP bucket.
  -> peer
  -> NodeToNodeVersion
  -> ChainSyncLoPBucketConfig
@@ -230,6 +239,7 @@ bracketChainSyncClient
     varCandidates
     varIdling
     varHandles
+    (getGsmState, varGsmCallbacks)
     peer
     version
     csBucketConfig
@@ -240,17 +250,23 @@ bracketChainSyncClient
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
             (invalidBlockWatcher varCandidate)
-      $ LeakyBucket.execAgainstBucket lopBucketConfig
+      $ LeakyBucket.execAgainstBucket'
       $ \lopBucket ->
-            body
-                varCandidate
-                ( atomically $ modifyTVar varIdling $ Set.insert peer
-                , atomically $ modifyTVar varIdling $ Set.delete peer )
-                ( LeakyBucket.setPaused lopBucket True
-                , LeakyBucket.setPaused lopBucket False
-                , void $ LeakyBucket.fill lopBucket 1 )
-                setTheirTip
-                setLatestSlot
+            do
+                -- NOTE: Updating the bucket configuration and registering the
+                -- callback should be in the same STM transaction.
+                initialGsmState <- atomically getGsmState
+                updateLopBucketConfig lopBucket initialGsmState
+                atomically $ modifyTVar varGsmCallbacks $ Map.insert peer (updateLopBucketConfig lopBucket)
+                body
+                    varCandidate
+                    ( atomically $ modifyTVar varIdling $ Set.insert peer
+                    , atomically $ modifyTVar varIdling $ Set.delete peer )
+                    ( LeakyBucket.setPaused lopBucket True
+                    , LeakyBucket.setPaused lopBucket False
+                    , void $ LeakyBucket.fill lopBucket 1 )
+                    setTheirTip
+                    setLatestSlot
   where
     newCandidateVar = do
         varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
@@ -270,24 +286,37 @@ bracketChainSyncClient
         modifyTVar varCandidates $ Map.delete peer
         modifyTVar varIdling     $ Set.delete peer
         modifyTVar varHandles    $ Map.delete peer
+        modifyTVar varGsmCallbacks $ Map.delete peer
 
     invalidBlockWatcher varCandidate =
         invalidBlockRejector
             tracer version getIsInvalidBlock (readTVar varCandidate)
 
+    -- | Update the configuration of the bucket to match the given GSM state.
+    -- NOTE: The new level is currently the maximal capacity of the bucket;
+    -- maybe we want to change that later.
+    updateLopBucketConfig :: LeakyBucket.Handlers m -> GsmState -> m ()
+    updateLopBucketConfig lopBucket gsmState = do
+      LeakyBucket.updateConfig lopBucket $ \_ ->
+        let config = lopBucketConfig gsmState in
+          (LeakyBucket.capacity config, config)
+
     -- | Wrapper around 'LeakyBucket.execAgainstBucket' that handles the
     -- disabled bucket by running the given action with dummy handlers.
-    lopBucketConfig :: MonadThrow m => LeakyBucket.Config m
-    lopBucketConfig =
-      case csBucketConfig of
-        ChainSyncLoPBucketDisabled -> LeakyBucket.dummyConfig
-        ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig {csbcCapacity, csbcRate} ->
+    lopBucketConfig :: GsmState -> LeakyBucket.Config m
+    lopBucketConfig gsmState =
+      case (gsmState, csBucketConfig) of
+        (Syncing, ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig {csbcCapacity, csbcRate}) ->
             LeakyBucket.Config
               { capacity = fromInteger $ csbcCapacity,
                 rate = csbcRate,
                 onEmpty = throwIO EmptyBucket,
                 fillOnOverflow = True
               }
+        -- NOTE: If we decide to slow the bucket down when “almost caught-up”,
+        -- we should add a state to the GSM and corresponding configuration
+        -- fields and a bucket config here.
+        _ -> LeakyBucket.dummyConfig
 
 -- Our task: after connecting to an upstream node, try to maintain an
 -- up-to-date header-only fragment representing their chain. We maintain
