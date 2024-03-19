@@ -299,7 +299,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
           | otherwise
           = pure nullTracer
 
-        gdd = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) getCandidates getHandles
+        gdd = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) getCandidates getHandles (readTVar (psrIdling resources))
 
     stateTracer <- mkStateTracer
     BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates

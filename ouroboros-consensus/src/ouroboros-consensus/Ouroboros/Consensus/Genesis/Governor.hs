@@ -15,6 +15,7 @@
 
 module Ouroboros.Consensus.Genesis.Governor (
     DensityBounds (..)
+  , LatestSlot (..)
   , TraceGDDEvent (..)
   , UpdateLoEFrag (..)
   , densityDisconnect
@@ -31,7 +32,9 @@ import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_, toList)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isJust)
+import           Data.Maybe (fromMaybe, isJust)
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.Void
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
@@ -162,6 +165,22 @@ runGddAsync loEUpdater varLoEFrag chainDb getTrigger =
       triggerChainSelectionAsync chainDb
       spin newTrigger
 
+-- | Classify the latest known header in relation to the forecast horizon,
+-- and provide its slot number.
+--
+data LatestSlot =
+  -- | The candidate fragment is empty and the TVar containing the latest
+  -- slot ChainSync has seen does not contain an entry for the current peer.
+  NoLatestSlot
+  |
+  -- | The candidate fragment head is the latest known header.
+  LatestSlotCandidate SlotNo
+  |
+  -- | ChainSync has seen a header after the candidate fragment head, most
+  -- likely because it is beyond the forecast horizon.
+  LatestSlotForecast SlotNo
+  deriving (Show)
+
 data DensityBounds blk =
   DensityBounds {
     fragment        :: AnchoredFragment (Header blk),
@@ -169,7 +188,7 @@ data DensityBounds blk =
     lowerBound      :: Word64,
     upperBound      :: Word64,
     hasBlockAfter   :: Bool,
-    lastSlot        :: Either SlotNo SlotNo
+    latestSlot      :: LatestSlot
   }
 
 -- | @densityDisconnect cfg immutableLedgerSt candidateSuffixes theirTips loeFrag@
@@ -197,52 +216,83 @@ densityDisconnect ::
   => GenesisWindow
   -> SecurityParam
   -> Map peer (AnchoredFragment (Header blk))
-  -> Map peer (Tip blk)
+  -> Set peer
   -> Map peer SlotNo
   -> AnchoredFragment (Header blk)
   -> ([peer], Map peer (DensityBounds blk))
-densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes theirTips latestSlots loeFrag =
+densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caughtUpPeers latestSlots loeFrag =
   (losingPeers, densityBounds)
   where
     densityBounds = Map.fromList $ do
       (peer, fragment) <- Map.toList competingFrags
       -- Skip peers that haven't advertised their tip yet.
       -- They should be disconnected by timeouts instead.
-      theirTip <- toList (theirTips Map.!? peer)
+      -- TODO We probably need an alternative approach for this now
+      -- that we don't use the tip anymore
       let candidateSuffix = candidateSuffixes Map.! peer
-          lowerBound = fromIntegral $ AF.length fragment
-          unresolvedSlotsLB =
-            succWithOrigin $ AF.headSlot fragment
-          unresolvedSlotsUB =
-              endOfGenesisWindow `min` claimedTip
-            where
-              claimedTip = succWithOrigin $ getTipSlotNo theirTip
-          lastSlotCandidate = succWithOrigin (AF.headSlot candidateSuffix)
-          maybeForecast = latestSlots Map.!? peer
-          lastSlotForecast = maybe 0 succ maybeForecast
-          candidateHasBlockAfter =
-            -- Note that if
-            -- > NotOrigin s = AF.headSlot candidateSuffix
-            -- this check is equivalent to
-            -- > s >= endOfGenesisWindow
-            lastSlotCandidate > endOfGenesisWindow
-          forecastHasBlockAfter =
-            lastSlotForecast > endOfGenesisWindow
-          hasBlockAfterGenesisWindow =
-            candidateHasBlockAfter || forecastHasBlockAfter
-          upperBound =
-              lowerBound
-            + if hasBlockAfterGenesisWindow
-              then 0
-              else unSlotNo (intervalLength unresolvedSlotsLB unresolvedSlotsUB)
-          offersMoreThanK
-            | candidateHasBlockAfter
-            = AF.length candidateSuffix > fromIntegral k
+
+          caughtUp = Set.member peer caughtUpPeers
+
+          latestSlot = case (AF.headSlot candidateSuffix, latestSlots Map.!? peer) of
+            (Origin, Nothing) -> NoLatestSlot
+            (Origin, Just latest)
+              | latest > 0 -> LatestSlotForecast latest
+              | otherwise -> NoLatestSlot
+            (NotOrigin cand, Nothing) -> LatestSlotCandidate cand
+            (NotOrigin cand, Just latest)
+              | latest > cand -> LatestSlotForecast latest
+              | otherwise -> LatestSlotCandidate cand
+
+          -- If the peer has more headers that it hasn't sent yet, each slot between the latest header we know of and
+          -- the end of the Genesis window could contain a block, so the upper bound for the total number of blocks in
+          -- the window is the sum of the known blocks and that number of remaining slots.
+          -- If the slot of the latest header we know of is _after_ the end of the Genesis window (either because the
+          -- candidate fragment extends beyond it or because we are waiting to validate a header beyond the forecast
+          -- horizon that we already received), there can be no headers in between and 'potentialSlots' is 0.
+          SlotNo potentialSlots
+            | caughtUp
+            = 0
             | otherwise
-            = AF.length candidateSuffix >= fromIntegral k
-          lastSlot | isJust maybeForecast, lastSlotForecast >= lastSlotCandidate = Left lastSlotForecast
-                   | otherwise = Right lastSlotCandidate
-      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter = hasBlockAfterGenesisWindow, lastSlot})
+            = case latestSlot of
+              -- The peer either has not advertised its tip yet or simply has no blocks whatsoever and won't progress
+              -- either.
+              -- In the latter case, it should be killed by the LoP.
+              -- REVIEW: What do we want to do in tests here? Both cases are possible, and we cannot distinguish them
+              -- without the tip (even with the tip we have been relying on the invariant that each peer advertises the
+              -- tip before any of them sends headers).
+              -- NoLatestSlot -> 0
+              NoLatestSlot -> SlotNo sgen
+              -- 'endOfGenesisWindow' is exclusive, so we have to add 1 to the non-exclusive last slot
+              LatestSlotCandidate slot -> intervalLength endOfGenesisWindow (slot + 1)
+              -- If the candidate fragment's last slot is smaller than the slot set after receiving a header, we are
+              -- stuck at the forecast horizon, which implies that there is a header after the Genesis window.
+              LatestSlotForecast _ -> 0
+
+          -- The number of blocks within the Genesis window we know with certainty
+          lowerBound = fromIntegral $ AF.length fragment
+
+          upperBound = lowerBound + potentialSlots
+
+          -- The number of blocks we know of on the candidate chain, not limited to the Genesis window.
+          totalBlockCount = fromIntegral (AF.length candidateSuffix)
+
+          -- Does the peer have more than k known blocks in _total_ after the intersection?
+          -- If not, it is not qualified to compete by density (yet).
+          offersMoreThanK = case latestSlot of
+            NoLatestSlot          -> False
+            LatestSlotCandidate _ -> totalBlockCount > k
+            -- If the last slot is not on the candidate chain, we know that there is at least one more block, so we use
+            -- '>=' here.
+            LatestSlotForecast _  -> totalBlockCount >= k
+
+          -- For tracing: Is there a block after the end of the Genesis window?
+          -- Note that 'endOfGenesisWindow' is exclusive, so we use '>='.
+          hasBlockAfter = case latestSlot of
+            NoLatestSlot             -> False
+            LatestSlotCandidate slot -> slot >= endOfGenesisWindow
+            LatestSlotForecast slot  -> slot >= endOfGenesisWindow
+
+      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot})
 
     losingPeers = nubOrd $ do
       (peer0 , DensityBounds {fragment = frag0, upperBound = ub0}) <- Map.toList densityBounds
@@ -287,6 +337,8 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes their
 data TraceGDDEvent peer blk =
   TraceGDDEvent {
     bounds            :: Map peer (DensityBounds blk),
+    curChain          :: AnchoredFragment (Header blk),
+    candidates        :: Map peer (AnchoredFragment (Header blk)),
     candidateSuffixes :: Map peer (AnchoredFragment (Header blk)),
     losingPeers       :: [peer],
     loeHead           :: AF.Anchor (Header blk),
@@ -314,22 +366,21 @@ updateLoEFragGenesis ::
   -> Tracer m (TraceGDDEvent peer blk)
   -> STM m (Map peer (AnchoredFragment (Header blk)))
   -> STM m (Map peer (ChainSyncClientHandle m blk))
+  -> STM m (Set peer)
   -> UpdateLoEFrag m blk
-updateLoEFragGenesis cfg tracer getCandidates getHandles =
+updateLoEFragGenesis cfg tracer getCandidates getHandles getCaughtUpPeers =
   UpdateLoEFrag $ \ curChain immutableLedgerSt -> do
-    (candidateSuffixes, handles, theirTips, latestSlots, loeFrag) <- atomically $ do
+    (candidates, candidateSuffixes, handles, caughtUpPeers, latestSlots, loeFrag) <- atomically $ do
       candidates <- getCandidates
       handles <- getHandles
+      caughtUpPeers <- getCaughtUpPeers
       let
         (loeFrag, candidateSuffixes) =
           sharedCandidatePrefix curChain candidates
-      theirTips <-
-        fmap (Map.mapMaybe id) $ flip Map.traverseWithKey candidateSuffixes $ \peer _ ->
-          cschTheirTip (handles Map.! peer)
       latestSlots <-
         flip Map.traverseWithKey candidateSuffixes $ \peer _ ->
           cschLatestSlot (handles Map.! peer)
-      pure (candidateSuffixes, handles, theirTips, latestSlots, loeFrag)
+      pure (candidates, candidateSuffixes, handles, caughtUpPeers, latestSlots, loeFrag)
 
     let msgen :: Maybe GenesisWindow
         -- This could also use 'runWithCachedSummary' if deemed desirable.
@@ -357,10 +408,10 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles =
     whenJust msgen $ \sgen -> do
       let
         (losingPeers, bounds) =
-          densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes theirTips latestSlots loeFrag
+          densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes caughtUpPeers latestSlots loeFrag
         loeHead = AF.headAnchor loeFrag
 
-      traceWith tracer TraceGDDEvent {sgen, bounds, candidateSuffixes, losingPeers, loeHead}
+      traceWith tracer TraceGDDEvent {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
 
       for_ losingPeers $ \peer -> cschKill (handles Map.! peer)
 

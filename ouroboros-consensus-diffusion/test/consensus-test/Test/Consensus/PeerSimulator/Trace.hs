@@ -25,7 +25,7 @@ import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds)
 import           Ouroboros.Consensus.Block (GenesisWindow (..), Header, Point,
                      succWithOrigin)
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
-                     TraceGDDEvent (..))
+                     LatestSlot (..), TraceGDDEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
@@ -366,10 +366,15 @@ traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
 -- * Other utilities
 terseGDDEvent :: TraceGDDEvent PeerId TestBlock -> String
 terseGDDEvent = \case
-  TraceGDDEvent {sgen = GenesisWindow sgen, bounds, candidateSuffixes, losingPeers, loeHead} ->
+  TraceGDDEvent {sgen = GenesisWindow sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead} ->
     unlines $ [
       "GDG | Window: " ++ window sgen loeHead,
+      "      Selection: " ++ terseHFragment curChain,
       "      Candidates:"
+      ] ++
+      showPeers (either (const "G") terseHeader . AF.head <$> candidates) ++
+      [
+      "      Candidate suffixes (bounds):"
       ] ++
       showPeers (terseHFragment . fragment <$> bounds) ++
       ["      Density bounds:"] ++
@@ -381,8 +386,9 @@ terseGDDEvent = \case
       "      Setting loeFrag: " ++ terseAnchor (AF.castAnchor loeHead)
       ]
   where
-    showBounds DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, lastSlot} =
-      show lowerBound ++ "/" ++ show upperBound ++ "[" ++ more ++ "], " ++ lastPoint ++ slot lastSlot ++ block
+    showBounds DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot} =
+      show lowerBound ++ "/" ++ show upperBound ++ "[" ++ more ++ "], " ++
+      lastPoint ++ "latest: " ++ showLatestSlot latestSlot ++ block
       where
         more = if offersMoreThanK then "+" else " "
 
@@ -393,9 +399,10 @@ terseGDDEvent = \case
           tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.lastPoint fragment)) ++
           ", "
 
-        slot = \case
-          Right (SlotNo inCandidate) -> "last: " ++ show inCandidate
-          Left (SlotNo forecasted) -> "forecast: " ++ show forecasted
+        showLatestSlot = \case
+          NoLatestSlot -> "unknown"
+          LatestSlotCandidate (SlotNo slot) -> show slot ++ " (candidate)"
+          LatestSlotForecast (SlotNo slot) -> show slot ++ " (forecast)"
 
     window sgen loeHead =
       show winStart ++ " -> " ++ show winEnd
