@@ -20,9 +20,11 @@ module Ouroboros.Consensus.Shelley.Node.Praos (
   , ProtocolParams (..)
   ) where
 
+import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute
 import qualified Cardano.Protocol.TPraos.OCert as SL
+import qualified Data.Text as T
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (configConsensus)
 import qualified Ouroboros.Consensus.Mempool as Mempool
@@ -33,7 +35,7 @@ import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (praosCanBeLeaderOpCert))
 import           Ouroboros.Consensus.Shelley.Eras (BabbageEra, ConwayEra,
-                     EraCrypto, ShelleyBasedEra (shelleyBasedEraName))
+                     EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible, forgeShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
@@ -98,7 +100,7 @@ praosSharedBlockForging
     }
   maxTxCapacityOverrides = do
     BlockForging
-      { forgeLabel = label <> "_" <> shelleyBasedEraName (Proxy @era),
+      { forgeLabel = label <> "_" <> T.pack (L.eraName @era),
         canBeLeader = canBeLeader,
         updateForgeState = \_ curSlot _ ->
           forgeStateUpdateInfoFromUpdateInfo
