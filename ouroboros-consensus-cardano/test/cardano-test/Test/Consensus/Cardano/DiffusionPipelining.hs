@@ -75,7 +75,13 @@ instance GenTentativeHeaderViews ByronBlock where
 
 instance ShelleyCompatible proto era => GenTentativeHeaderViews (ShelleyBlock proto era) where
   genTentativeHeaderViews _
-    | isConwayOrLater (Proxy @era) = do
+    | isBeforeConway (Proxy @era)
+    -- TODO These tests will reveal that the current chain order is
+    -- non-transitive. We could fix that easily, but it seems like a
+    -- distraction, and this case can be removed once we remove support for the
+    -- legacy pipelining scheme.
+    = pure []
+    | otherwise = do
         bnos          <- nubOrd <$> orderedList
         issuerHashes  <- nubOrd <$> replicateM numIssuers arbitrary
         hotIdentities <- concat <$> for issuerHashes \issuerHash -> do
@@ -90,12 +96,6 @@ instance ShelleyCompatible proto era => GenTentativeHeaderViews (ShelleyBlock pr
         concat <$> for bnos \bno -> do
           hotIds <- shuffle =<< sublistOf hotIdentities
           pure $ ShelleyTentativeHeaderView bno <$> hotIds
-    | otherwise
-    -- TODO These tests will reveal that the current chain order is
-    -- non-transitive. We could fix that easily, but it seems like a
-    -- distraction, and this case can be removed once we remove support for the
-    -- legacy pipelining scheme.
-    = pure []
     where
       -- Upper bound on the number of issuer identities
       numIssuers = 5
