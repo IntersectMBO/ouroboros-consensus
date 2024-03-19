@@ -31,6 +31,7 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , addBlock
   , addBlockWaitWrittenToDisk
   , addBlock_
+  , triggerChainSelectionAsync
     -- * Serialised block/header with its point
   , WithPoint (..)
   , getPoint
@@ -140,7 +141,7 @@ data ChainDB m blk = ChainDB {
       addBlockAsync      :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
 
       -- | Trigger reprocessing of blocks postponed by the LoE.
-    , reprocessLoEAsync  :: m ()
+    , chainSelAsync      :: m ()
 
       -- | Get the current chain fragment
       --
@@ -464,6 +465,11 @@ addBlock chainDB punish blk = do
 -- Note: this is a partial function, only to support tests.
 addBlock_ :: IOLike m => ChainDB m blk -> InvalidBlockPunishment m -> blk -> m ()
 addBlock_  = void ..: addBlock
+
+-- | Alias for naming consistency.
+-- The short name was chosen to avoid a larger diff from alignment changes.
+triggerChainSelectionAsync :: ChainDB m blk -> m ()
+triggerChainSelectionAsync = chainSelAsync
 
 {-------------------------------------------------------------------------------
   Serialised block/header with its point

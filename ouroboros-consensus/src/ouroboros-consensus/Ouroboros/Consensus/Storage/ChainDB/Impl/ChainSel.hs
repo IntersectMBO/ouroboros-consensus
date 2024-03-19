@@ -15,7 +15,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
   , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
-  , reprocessLoEAsync
+  , triggerChainSelectionAsync
     -- * Exported for testing purposes
   , olderThanK
   ) where
@@ -261,12 +261,12 @@ addBlockAsync CDB { cdbTracer, cdbChainSelQueue } =
     addBlockToAdd (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
 -- | Schedule reprocessing of blocks postponed by the LoE.
-reprocessLoEAsync ::
+triggerChainSelectionAsync ::
   forall m blk.
   IOLike m =>
   ChainDbEnv m blk ->
   m ()
-reprocessLoEAsync CDB {cdbTracer, cdbChainSelQueue} =
+triggerChainSelectionAsync CDB {cdbTracer, cdbChainSelQueue} =
   addReprocessLoEBlocks (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
 -- | Add a block to the ChainDB, /synchronously/.
