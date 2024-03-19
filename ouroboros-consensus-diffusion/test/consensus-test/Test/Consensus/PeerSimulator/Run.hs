@@ -93,7 +93,7 @@ data SchedulerConfig =
 
     -- | Enable Limit on Eagerness (LoE) and the Genesis Density Disconnection
     -- governor (GDD).
-    , scEnableLoE               :: Bool
+    , scEnableLoE                :: Bool
 
     -- | Whether to enable to LoP. The parameters of the LoP come from
     -- 'GenesisTest'.
