@@ -13,10 +13,19 @@ module Test.Consensus.Genesis.Setup (
   ) where
 
 import           Control.Exception (throw)
+import           Control.Monad.Class.MonadAsync (AsyncCancelled(AsyncCancelled))
 import           Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import           Control.Tracer (debugTracer, traceWith)
+import           Data.Maybe (mapMaybe)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientException (DensityTooLow, EmptyBucket))
 import           Ouroboros.Consensus.Util.Condense
-import           Test.Consensus.Genesis.Setup.Classifiers (classifiers, Classifiers (..))
+import           Ouroboros.Consensus.Util.IOLike (Exception, fromException)
+import           Ouroboros.Network.Driver.Limits
+                     (ProtocolLimitFailure (ExceededTimeLimit))
+import           Test.Consensus.Genesis.Setup.Classifiers
+                   (Classifiers (..), ResultClassifiers (..), ScheduleClassifiers (..),
+                   classifiers, resultClassifiers, scheduleClassifiers)
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
@@ -27,12 +36,8 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.QuickCheck (forAllGenRunShrinkCheck)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
+import           Text.Printf (printf)
 
--- | See 'runGenesisTest'.
-data RunGenesisTestResult = RunGenesisTestResult {
-  rgtrTrace :: String,
-  rgtrStateView :: StateView TestBlock
-  }
 
 -- | Like 'runSimStrictShutdown' but fail when the main thread terminates if
 -- there are other threads still running or blocked. If one is trying to follow
@@ -90,12 +95,37 @@ forAllGenesisTest ::
 forAllGenesisTest generator schedulerConfig shrinker mkProperty =
   forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->
     let cls = classifiers genesisTest
-     in classify (allAdversariesSelectable cls) "All adversaries selectable" $
-        classify (allAdversariesForecastable cls) "All adversaries forecastable" $
+        resCls = resultClassifiers genesisTest result
+        schCls = scheduleClassifiers genesisTest
+        stateView = rgtrStateView result
+     in classify (allAdversariesSelectable cls) "All adversaries have more than k blocks after intersection" $
+        classify (allAdversariesForecastable cls) "All adversaries have at least 1 forecastable block after intersection" $
         classify (allAdversariesKPlus1InForecast cls) "All adversaries have k+1 blocks in forecast window after intersection" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
+        classify (adversaryRollback schCls) "An adversary did a rollback" $
+        classify (honestRollback schCls) "The honest peer did a rollback" $
+        tabulate "Adversaries killed by LoP" [printf "%.1f%%" $ adversariesKilledByLoP resCls] $
+        tabulate "Adversaries killed by GDD" [printf "%.1f%%" $ adversariesKilledByGDD resCls] $
+        tabulate "Adversaries killed by Timeout" [printf "%.1f%%" $ adversariesKilledByTimeout resCls] $
+        tabulate "Surviving adversaries" [printf "%.1f%%" $ adversariesSurvived resCls] $
         counterexample (rgtrTrace result) $
-        mkProperty genesisTest (rgtrStateView result)
+        mkProperty genesisTest stateView .&&. hasOnlyExpectedExceptions stateView
   where
     runner = runGenesisTest schedulerConfig
     shrinker' gt = shrinker gt . rgtrStateView
+    hasOnlyExpectedExceptions StateView{svPeerSimulatorResults} =
+      conjoin $ isExpectedException <$> mapMaybe
+        (pscrToException . pseResult)
+        svPeerSimulatorResults
+    isExpectedException exn
+      | Just EmptyBucket           <- e = true
+      | Just DensityTooLow         <- e = true
+      | Just (ExceededTimeLimit _) <- e = true
+      | Just AsyncCancelled        <- e = true
+      | otherwise = counterexample
+        ("Encountered unexpected exception: " ++ show exn)
+        False
+      where
+        e :: (Exception e) => Maybe e
+        e = fromException exn
+        true = property True
