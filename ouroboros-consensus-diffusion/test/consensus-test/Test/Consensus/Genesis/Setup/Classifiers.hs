@@ -1,29 +1,42 @@
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TupleSections   #-}
 {-# LANGUAGE TypeFamilies    #-}
 {-# LANGUAGE TypeOperators   #-}
 
 module Test.Consensus.Genesis.Setup.Classifiers (
     Classifiers (..)
+  , ResultClassifiers (..)
   , classifiers
+  , resultClassifiers
   , simpleHash
   ) where
 
 import           Cardano.Slotting.Slot (WithOrigin (At))
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Map as Map
+import           Data.Maybe (mapMaybe)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block (ChainHash (BlockHash), HeaderHash,
                      blockSlot, succWithOrigin)
 import           Ouroboros.Consensus.Block.Abstract (SlotNo (SlotNo),
                      withOrigin)
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientException (DensityTooLow, EmptyBucket))
+import           Ouroboros.Consensus.Util.IOLike (SomeException, fromException)
 import           Ouroboros.Network.AnchoredFragment (anchor, anchorToSlotNo,
                      headSlot)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Driver.Limits
+                     (ProtocolLimitFailure (ExceededTimeLimit))
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Network.AnchoredFragment.Extras (slotLength)
+import           Test.Consensus.PeerSimulator.StateView
+                     (PeerSimulatorResult (..), StateView (..), pscrToException)
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestHash (TestHash))
 
@@ -115,6 +128,68 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
     branches = btBranches gtBlockTree
 
     goodChain = btTrunk gtBlockTree
+
+-- | Interesting categories to classify test results
+data ResultClassifiers =
+  ResultClassifiers{
+    -- | Percentage of adversaries that were killed by receiving an EmptyBucket exception from the LoP
+    adversariesKilledByLoP     :: Double,
+    -- | Percentage of adversaries that were disconnected because their fragment was not dense enough
+    adversariesKilledByGDD     :: Double,
+    -- | Percentage of adversaries that were disconnected by network-level timeouts
+    adversariesKilledByTimeout :: Double,
+    -- | Percentage of adversaries that weren't killed
+    adversariesSurvived        :: Double
+  }
+
+-- | Returned when there were no adversaries
+nullResultClassifier :: ResultClassifiers
+nullResultClassifier = ResultClassifiers 0 0 0 0
+
+resultClassifiers :: GenesisTestFull blk -> RunGenesisTestResult -> ResultClassifiers
+resultClassifiers GenesisTest{gtSchedule} RunGenesisTestResult{rgtrStateView} =
+  if adversariesCount > 0
+    then ResultClassifiers {
+        adversariesKilledByLoP     = 100 * adversariesKilledByLoPC     / adversariesCount,
+        adversariesKilledByGDD     = 100 * adversariesKilledByGDDC     / adversariesCount,
+        adversariesKilledByTimeout = 100 * adversariesKilledByTimeoutC / adversariesCount,
+        adversariesSurvived        = 100 * adversariesSurvivedC        / adversariesCount
+      }
+    else nullResultClassifier
+  where
+    StateView{svPeerSimulatorResults} = rgtrStateView
+
+    adversaries :: [PeerId]
+    adversaries = Map.keys $ others gtSchedule
+
+    adversariesCount = fromIntegral $ length adversaries
+
+    adversariesExceptions :: [(PeerId, SomeException)]
+    adversariesExceptions = mapMaybe
+      (\PeerSimulatorResult{psePeerId, pseResult} -> case psePeerId of
+        HonestPeer -> Nothing
+        pid        -> (pid,) <$> pscrToException pseResult
+      )
+      svPeerSimulatorResults
+
+    adversariesSurvivedC = fromIntegral $ length $ filter
+      (\pid -> not $ pid `elem` map fst adversariesExceptions)
+      adversaries
+
+    adversariesKilledByLoPC = fromIntegral $ length $ filter
+      (\(_, exn) -> fromException exn == Just EmptyBucket)
+      adversariesExceptions
+
+    adversariesKilledByGDDC = fromIntegral $ length $ filter
+      (\(_, exn) -> fromException exn == Just DensityTooLow)
+      adversariesExceptions
+
+    adversariesKilledByTimeoutC = fromIntegral $ length $ filter
+      (\(_, exn) -> case fromException exn of
+        Just (ExceededTimeLimit _) -> True
+        _                          -> False
+      )
+      adversariesExceptions
 
 simpleHash ::
   HeaderHash block ~ TestHash =>

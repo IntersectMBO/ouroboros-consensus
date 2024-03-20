@@ -13,6 +13,7 @@ module Test.Consensus.PeerSimulator.StateView (
   , collectDisconnectedPeers
   , defaultStateViewTracers
   , exceptionsByComponent
+  , pscrToException
   , snapshotStateView
   ) where
 
@@ -84,6 +85,13 @@ toComponent (SomeChainSyncClientResult  _) = ChainSyncClient
 toComponent (SomeChainSyncServerResult  _) = ChainSyncServer
 toComponent (SomeBlockFetchClientResult _) = BlockFetchClient
 toComponent (SomeBlockFetchServerResult _) = BlockFetchServer
+
+pscrToException :: PeerSimulatorComponentResult blk -> Maybe SomeException
+pscrToException (SomeChainSyncClientResult  (Left exn)) = Just exn
+pscrToException (SomeChainSyncServerResult  (Left exn)) = Just exn
+pscrToException (SomeBlockFetchClientResult (Left exn)) = Just exn
+pscrToException (SomeBlockFetchServerResult (Left exn)) = Just exn
+pscrToException _                                       = Nothing
 
 instance Eq (PeerSimulatorComponentResult blk) where
   (==) a b = toComponent a == toComponent b
