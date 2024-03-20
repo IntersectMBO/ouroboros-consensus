@@ -6,24 +6,35 @@
 
 module Test.Consensus.Genesis.Setup.Classifiers (
     Classifiers (..)
+  , ResultClassifiers (..)
   , classifiers
+  , resultClassifiers
   , simpleHash
   ) where
 
 import           Cardano.Slotting.Slot (WithOrigin (At))
 import qualified Data.List.NonEmpty as NonEmpty
+import           Data.Maybe (mapMaybe)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block (ChainHash (BlockHash), HeaderHash,
                      blockSlot, succWithOrigin)
 import           Ouroboros.Consensus.Block.Abstract (SlotNo (SlotNo),
                      withOrigin)
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientException (EmptyBucket))
+import           Ouroboros.Consensus.Util.IOLike (SomeException, fromException)
 import           Ouroboros.Network.AnchoredFragment (anchor, anchorToSlotNo,
                      headSlot)
 import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Driver.Limits
+                     (ProtocolLimitFailure (ExceededTimeLimit))
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Network.AnchoredFragment.Extras (slotLength)
+import           Test.Consensus.PeerSimulator.StateView
+                     (PeerSimulatorResult (..), StateView (..), pscrToException)
 import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.Peers (PeerId (..))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestHash (TestHash))
 
@@ -115,6 +126,54 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
     branches = btBranches gtBlockTree
 
     goodChain = btTrunk gtBlockTree
+
+-- | Interesting categories to classify test results
+data ResultClassifiers =
+  ResultClassifiers{
+    -- | Some adversary was killed by receiving an EmptyBucket exception from the LoP
+    someAdversaryKilledByLoP     :: Bool,
+    -- | Some adversary was disconnected because their fragment was not dense enough
+    someAdversaryKilledByGDD     :: Bool,
+    -- | Some adversary was disconnected by network-level timeouts
+    someAdversaryKilledByTimeout :: Bool,
+    -- | No adversaries were killed
+    noAdversariesKilled          :: Bool
+  }
+
+resultClassifiers :: RunGenesisTestResult -> ResultClassifiers
+resultClassifiers RunGenesisTestResult{rgtrStateView} =
+  ResultClassifiers {
+    someAdversaryKilledByLoP,
+    someAdversaryKilledByGDD,
+    someAdversaryKilledByTimeout,
+    noAdversariesKilled
+  }
+  where
+    StateView{svPeerSimulatorResults} = rgtrStateView
+
+    adversariesExceptions :: [SomeException]
+    adversariesExceptions = mapMaybe
+      ( \PeerSimulatorResult{psePeerId, pseResult} -> case psePeerId of
+        HonestPeer -> Nothing
+        PeerId _   -> pscrToException pseResult
+      )
+      svPeerSimulatorResults
+
+    noAdversariesKilled = null adversariesExceptions
+
+    someAdversaryKilledByLoP = any
+      (\exn -> fromException exn == Just EmptyBucket)
+      adversariesExceptions
+
+    -- TODO: complete when GDD Exception is known
+    someAdversaryKilledByGDD = False
+
+    someAdversaryKilledByTimeout = any
+      (\exn -> case fromException exn of
+        Just (ExceededTimeLimit _) -> True
+        _                          -> False
+      )
+      adversariesExceptions
 
 simpleHash ::
   HeaderHash block ~ TestHash =>

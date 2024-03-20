@@ -30,6 +30,7 @@ module Test.Consensus.PointSchedule (
   , NodeState (..)
   , PeerSchedule
   , PeersSchedule
+  , RunGenesisTestResult (..)
   , enrichedWith
   , genesisNodeState
   , longRangeAttack
@@ -69,6 +70,7 @@ import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      allFragments, prettyBlockTree)
+import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
                      mkPeers, peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -342,6 +344,12 @@ data GenesisTest blk schedule = GenesisTest
   }
 
 type GenesisTestFull blk = GenesisTest blk (PeersSchedule blk)
+
+-- | All the data describing the result of a test
+data RunGenesisTestResult = RunGenesisTestResult
+  { rgtrTrace     :: String,
+    rgtrStateView :: StateView TestBlock
+  }
 
 prettyGenesisTest :: (schedule -> [String]) -> GenesisTest TestBlock schedule -> [String]
 prettyGenesisTest prettySchedule genesisTest =

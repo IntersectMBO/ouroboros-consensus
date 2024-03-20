@@ -16,7 +16,7 @@ import           Control.Exception (throw)
 import           Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import           Control.Tracer (debugTracer, traceWith)
 import           Ouroboros.Consensus.Util.Condense
-import           Test.Consensus.Genesis.Setup.Classifiers (classifiers, Classifiers (..))
+import           Test.Consensus.Genesis.Setup.Classifiers (ResultClassifiers (..), resultClassifiers, classifiers, Classifiers (..))
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
@@ -28,11 +28,6 @@ import           Test.Util.QuickCheck (forAllGenRunShrinkCheck)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
 
--- | See 'runGenesisTest'.
-data RunGenesisTestResult = RunGenesisTestResult {
-  rgtrTrace :: String,
-  rgtrStateView :: StateView TestBlock
-  }
 
 -- | Like 'runSimStrictShutdown' but fail when the main thread terminates if
 -- there are other threads still running or blocked. If one is trying to follow
@@ -90,10 +85,15 @@ forAllGenesisTest ::
 forAllGenesisTest generator schedulerConfig shrinker mkProperty =
   forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->
     let cls = classifiers genesisTest
+        resCls = resultClassifiers result
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (allAdversariesForecastable cls) "All adversaries forecastable" $
         classify (allAdversariesKPlus1InForecast cls) "All adversaries have k+1 blocks in forecast window after intersection" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
+        classify (someAdversaryKilledByLoP resCls) "Some adversary was killed by LoP" $
+        classify (someAdversaryKilledByGDD resCls) "Some adversary was killed by GDD" $
+        classify (someAdversaryKilledByTimeout resCls) "Some adversary was killed by a timeout" $
+        classify (noAdversariesKilled resCls) "No adversaries were killed" $
         counterexample (rgtrTrace result) $
         mkProperty genesisTest (rgtrStateView result)
   where
