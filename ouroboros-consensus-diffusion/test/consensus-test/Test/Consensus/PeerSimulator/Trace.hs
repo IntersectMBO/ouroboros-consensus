@@ -119,10 +119,11 @@ tracerTestBlock tracer0 = do
       tracer = Tracer $ \msg -> do
         time <- getMonotonicTime
         tickTime <- readTVarIO tickTimeVar
-        traceWith tracer0 $
-          if time /= tickTime
-            then concat $ intersperse "\n" $ map ((prettyTime time ++ " ") ++) $ lines msg
-            else msg
+        let timeHeader = prettyTime time ++ " "
+            prefix = if time /= tickTime
+              then timeHeader
+              else replicate (length timeHeader) ' '
+        traceWith tracer0 $ concat $ intersperse "\n" $ map (prefix ++) $ lines msg
   pure $ Tracer $ traceEventTestBlockWith setTickTime tracer0 tracer
 
 traceEventTestBlockWith ::
@@ -228,7 +229,7 @@ traceScheduledChainSyncServerEventTestBlockWith tracer peerId = \case
     TraceIntersectionIsStrictDescendentOfHeaderPoint ->
       trace "  intersection is further than our header point"
   where
-    unit = "ScheduledChainSyncServer " ++ condense peerId
+    unit = "ChainSyncServer " ++ condense peerId
     trace = traceUnitWith tracer unit
     traceLines = traceUnitLinesWith tracer unit
 
@@ -254,7 +255,7 @@ traceScheduledBlockFetchServerEventTestBlockWith tracer peerId = \case
     TraceBlockPointIsBehind ->
       trace "BP is behind"
   where
-    unit = "ScheduledBlockFetchServer " ++ condense peerId
+    unit = "BlockFetchServer " ++ condense peerId
     trace = traceUnitWith tracer unit
 
 traceChainDBEventTestBlockWith ::
@@ -359,11 +360,18 @@ traceLinesWith ::
   m ()
 traceLinesWith tracer = traceWith tracer . mconcat . intersperse "\n"
 
+-- Not really the maximum length, just a quick hack for a smoother display
+maxUnitLength :: Int
+maxUnitLength = length "BlockFetchServer adversary 9"
+
+padUnit :: String -> String
+padUnit unit = unit ++ replicate (maxUnitLength - length unit) ' '
+
 -- | Trace using the given tracer, printing the current time (typically the time
 -- of the simulation) and the unit name.
 traceUnitLinesWith :: Tracer m String -> String -> [String] -> m ()
 traceUnitLinesWith tracer unit msgs =
-  traceLinesWith tracer $ map (printf "%s | %s" unit) msgs
+  traceLinesWith tracer $ map (printf "%s | %s" $ padUnit unit) msgs
 
 -- | Trace using the given tracer, printing the current time (typically the time
 -- of the simulation) and the unit name.
