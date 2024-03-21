@@ -244,5 +244,5 @@ makePeerSimulatorResources tracer blockTree peers = do
     pure (peerId, peerResources)
   psrCandidates <- uncheckedNewTVarM mempty
   psrHandles <- uncheckedNewTVarM mempty
-  psrIdling <- uncheckedNewTVarM $ Set.empty
+  psrIdling <- uncheckedNewTVarM Set.empty
   pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources, psrHandles, psrIdling}
