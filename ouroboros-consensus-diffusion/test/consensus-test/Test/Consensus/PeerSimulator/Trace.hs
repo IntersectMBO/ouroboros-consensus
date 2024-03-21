@@ -401,8 +401,7 @@ terseGDDEvent = \case
 
         showLatestSlot = \case
           NoLatestSlot -> "unknown"
-          LatestSlotCandidate (SlotNo slot) -> show slot ++ " (candidate)"
-          LatestSlotForecast (SlotNo slot) -> show slot ++ " (forecast)"
+          LatestSlot (SlotNo slot) -> show slot
 
     window sgen loeHead =
       show winStart ++ " -> " ++ show winEnd
