@@ -161,8 +161,6 @@ runChainSyncClient
   varHandles
   varIdling
   channel = do
-    -- We don't need this shared Set yet. If we need it at some point,
-    -- it ought to be passed to `runChainSyncClient`.
     bracketChainSyncClient
       nullTracer
       chainDbView
