@@ -259,8 +259,7 @@ test-suite byron-test
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-mock
     , QuickCheck
-    , small-steps
-    , small-steps-test
+    , small-steps:{small-steps, testlib}
     , tasty
     , tasty-quickcheck
     , unstable-byron-testlib
