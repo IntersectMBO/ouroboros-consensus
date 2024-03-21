@@ -19,7 +19,7 @@ module Ouroboros.Consensus.Genesis.Governor (
   , TraceGDDEvent (..)
   , UpdateLoEFrag (..)
   , densityDisconnect
-  , runGddAsync
+  , runGdd
   , sharedCandidatePrefix
   , updateLoEFragGenesis
   , updateLoEFragStall
@@ -141,14 +141,14 @@ updateLoEFragStall getCandidates =
 -- computed by @loEUpdater@ to @varLoEFrag@, and then triggering
 -- ChainSel to reprocess all blocks that had previously been
 -- postponed by the LoE.
-runGddAsync ::
+runGdd ::
   (Monoid a, Eq a, IOLike m, LedgerSupportsProtocol blk) =>
   UpdateLoEFrag m blk ->
   StrictTVar m (AnchoredFragment (Header blk)) ->
   ChainDB m blk ->
   STM m a ->
   m Void
-runGddAsync loEUpdater varLoEFrag chainDb getTrigger =
+runGdd loEUpdater varLoEFrag chainDb getTrigger =
   spin mempty
   where
     spin oldTrigger = do
