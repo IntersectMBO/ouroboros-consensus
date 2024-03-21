@@ -14,7 +14,7 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
     -- * Generating
     AdversarialRecipe (AdversarialRecipe, arHonest, arParams, arPrefix)
   , CheckedAdversarialRecipe (UnsafeCheckedAdversarialRecipe, carHonest, carParams, carWin)
-  , NoSuchAdversarialChainSchema (NoSuchAdversarialBlock, NoSuchCompetitor, NoSuchIntersection, KcpIs1)
+  , NoSuchAdversarialChainSchema (NoSuchAdversarialBlock, NoSuchCompetitor, NoSuchIntersection)
   , SomeCheckedAdversarialRecipe (SomeCheckedAdversarialRecipe)
   , checkAdversarialRecipe
   , uniformAdversarialChain
@@ -386,12 +386,6 @@ data NoSuchAdversarialChainSchema =
   |
     -- | @not (0 <= 'arPrefix' <= C)@ where @C@ is the number of active slots in 'arHonest'
     NoSuchIntersection
-  |
-    -- | @k=1@
-    --
-    -- This may technically be viable, but our current specification for
-    -- 'uniformAdversarialChain' requires @k>1@.
-    KcpIs1
   deriving (Eq, Show)
 
 -----
@@ -411,8 +405,6 @@ checkAdversarialRecipe ::
          (SomeCheckedAdversarialRecipe base hon)
 checkAdversarialRecipe recipe = do
     when (0 == k) $ Exn.throwError NoSuchAdversarialBlock
-
-    when (1 == k) $ Exn.throwError KcpIs1
 
     -- validate 'arPrefix'
     firstAdvSlot <- case compare arPrefix 0 of
@@ -789,45 +781,31 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 -- See Note [Minimum schema length] in "Test.Ouroboros.Consensus.ChainGenerator.Honest"
 -- for the rationale of the precondition.
 --
--- PRECONDITION: @schemaSize schedH >= 2*s + d + 1@
+-- PRECONDITION: @schemaSize schedH >= s + d + k + 1@
 genPrefixBlockCount :: R.RandomGen g => HonestRecipe -> g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
 genPrefixBlockCount (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) g schedH
-    | C.lengthV vH < C.Count (2*s + d + 1) =
-        error "size of schema is smaller than 2*s + d + 1"
-    | phase1 == C.Count 0 =
-        error $ "there should be at least k active slots in the first s slots of the honest schema: "
-                ++ show (k, s, vH)
+    | C.lengthV vH < C.Count (s + d + k + 1) =
+        error "size of schema is smaller than s + d + k + 1"
     | otherwise =
         -- @uniformIndex n@ yields a value in @[0..n-1]@, we add 1 to the
         -- argument to account for the possibility of intersecting at the
         -- genesis block
-        C.toVar $ R.runSTGen_ g $ C.uniformIndex (phase2 C.+ 1)
+        C.toVar $ R.runSTGen_ g $ C.uniformIndex (activesInPrefix C.+ 1)
   where
     ChainSchema _winH vH = schedH
 
-    -- Ultimately, the intersection must have more than k active slots in each
-    -- of the honest and the adversarial schemas. For the larger story, please
-    -- see Note [Minimum schema length] in
+    -- activesInPrefix is the amount of active slots in the honest schema with a
+    -- suffix of s+d+k+1 slots.
+    --
+    -- In the honest chain, the suffix is sufficiently long to ensure there are
+    -- k+1 active slots by the Extended Praos Chain Growth Assumption.
+    --
+    -- In the alternative chain, there is enough room to fit k+1 active slots
+    -- as explained the Note [Minimum schema length] in
     -- "Test.Ouroboros.Consensus.ChainGenerator.Honest".
-    --
-    -- Here we proceed as follows.
-    --
-    -- Let phase1 be the amount of honest active slots with at least s+d+k slots
-    -- after them. We know there is going to be at least k active slots in the
-    -- s+k+d suffix of the honest schema.
-    --
-    -- Now let phase2 be the set of honest active slots obtained from phase1
-    -- by removing its yongest slot. Thus we can claim that the honest schema
-    -- should have more than k active slots after the youngest slot of phase2.
-    --
-    -- phase1 is neved empty because the containing prefix has length
-    -- @2*s+d+1 - (s+d+k) = s-(k-1)@ which must always contain at least one
-    -- active slot.
 
-    phase1 =
+    activesInPrefix =
         BV.countActivesInV S.notInverted
       $ C.sliceV
-          (C.UnsafeContains (C.Count 0) $ C.lengthV vH C.- (s + d + k))
+          (C.UnsafeContains (C.Count 0) $ C.lengthV vH C.- (s + d + k + 1))
           vH
-
-    phase2 = phase1 C.- 1
