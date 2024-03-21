@@ -136,12 +136,11 @@ updateLoEFragStall getCandidates =
       candidates <- getCandidates
       pure (fst (sharedCandidatePrefix curChain candidates))
 
--- | Run the GDD governor in a background thread, writing the LoE fragment
--- computed by @loEUpdater@ to @varLoEFrag@ whenever the STM action
--- @getTrigger@ changes.
---
--- After writing the fragment, send a message to ChainSel to reprocess all
--- blocks that had previously been postponed by the LoE.
+-- | A never ending computation that runs the GDD governor whenever
+-- the STM action @getTrigger@ changes, writing the LoE fragment
+-- computed by @loEUpdater@ to @varLoEFrag@, and then triggering
+-- ChainSel to reprocess all blocks that had previously been
+-- postponed by the LoE.
 runGddAsync ::
   (Monoid a, Eq a, IOLike m, LedgerSupportsProtocol blk) =>
   UpdateLoEFrag m blk ->
