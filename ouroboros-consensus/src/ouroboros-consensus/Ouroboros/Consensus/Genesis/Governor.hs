@@ -29,10 +29,9 @@ module Ouroboros.Consensus.Genesis.Governor (
 import           Control.Monad (guard)
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Containers.ListUtils (nubOrd)
-import           Data.Foldable (for_, toList)
+import           Data.Foldable (for_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Void
@@ -61,7 +60,6 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip, getTipSlotNo)
 
 -- | This callback is a hook into ChainSync that is called right before deciding
 -- whether a block can be added to the current selection.
