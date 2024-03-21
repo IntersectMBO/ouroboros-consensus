@@ -308,18 +308,18 @@ would solve the problem with just two toggles.
 -- | A 'ChainSchema' that satisfies 'checkHonestChain'
 --
 -- This generator proceeds in three stages to create a random schema that
--- satisfies the requirement of at least @k@ blocks in every @s@ slots.
+-- satisfies the requirement of at least @k+1@ blocks in every @s@ slots.
 --
 -- * It begins by drawing a sample of length 'Len' from the Bernoulli process
 --   induced by the active slot coefficient 'Asc', just like in Praos. (IE
 --   'Len' many i.i.d. samples from @Uniform(asc)@).
 -- * It then visits the first window in that sampled vector. If it has less
---   than @k@ active slots, the generator randomly toggles empty slots to be
---   active until the window contains exactly @k@ active slots.
+--   than @k+1@ active slots, the generator randomly toggles empty slots to be
+--   active until the window contains exactly @k+1@ active slots.
 -- * It then visits the rest of the windows in oldest-to-youngest order. Each
---   window must contain at least @k-1@ active slots when visited, since it
+--   window must contain at least @k@ active slots when visited, since it
 --   shares all but its youngest slot with the previous window, which was
---   already visited. In particular, when the window contains only @k-1@ active
+--   already visited. In particular, when the window contains only @k@ active
 --   slots, that youngest slot must be empty, and so the generator will toggle
 --   it, thereby re-establishing the required density.
 --
@@ -331,7 +331,7 @@ would solve the problem with just two toggles.
 --
 -- NOTE: When visting windows after the first, only the youngest slot can be
 -- toggled. If we activated any other slot in the sliding window, then older
--- windows, which already have at least @k@ active slots, would unnecessarily
+-- windows, which already have at least @k+1@ active slots, would unnecessarily
 -- end up with even more active slots.
 --
 -- NOTE: The larger 'Asc' is, the more active slots there will be when sampling
@@ -339,18 +339,18 @@ would solve the problem with just two toggles.
 -- will require toggling very few additional slots.
 --
 -- NOTE: When no 'Asc' value is provided, we start with a vector with no active
--- slots, and the second phasesliding window causes the first window to end up with @k@
+-- slots, and the second phasesliding window causes the first window to end up with @k+1@
 -- active slots in a pattern that is then repeated exactly for the rest of the
 -- chain. For instance,
 --
--- > k=3, s=6
+-- > k+1=3, s=6
 -- >
 -- > 000000000000000000000000 -- stage 1
 -- > 1 11                     -- stage 2
 -- >       1 11  1 11  1 11   -- stage 3
 -- > 101100101100101100101100 -- final
 --
--- > k=3, s=6
+-- > k+1=3, s=6
 -- >
 -- > 000000000000000000000000 -- stage 1
 -- >    111                   -- stage 2
@@ -363,7 +363,7 @@ would solve the problem with just two toggles.
 -- slots from the sample, but the patterns in those intervals may vary. For
 -- instance,
 --
--- > k=3, s=6
+-- > k+1=3, s=6
 -- >
 -- > 000000000000010000000000000000001000000000000000000 -- stage 1
 -- > 1 1 1                                               -- stage 2
@@ -386,9 +386,9 @@ uniformTheHonestChain ::
   -> ChainSchema base hon
 {-# INLINABLE uniformTheHonestChain #-}
 uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
-    BV.SomeDensityWindow (C.Count (toEnum -> numerator)) (C.Count (toEnum -> denominator)) <- pure chrScgDensity
-    let _ = numerator   :: C.Var hon ActiveSlotE
-        _ = denominator :: C.Var hon SlotE
+    BV.SomeDensityWindow (C.Count (toEnum -> numerator')) (C.Count (toEnum -> denominator)) <- pure chrScgDensity
+    let numerator = numerator' + 1 :: C.Var hon ActiveSlotE
+        _         = denominator    :: C.Var hon SlotE
 
     g <- R.newSTGenM g0
 
@@ -400,14 +400,14 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- /always/ ensure at least one slot is filled
     void $ BV.fillInWindow S.notInverted (C.Count 1 `BV.SomeDensityWindow` sz) g mv
 
-    -- fill the first window up to @k@
+    -- fill the first window up to @k+1@
     rtot <- do
         -- NB @withWindow@ truncates if it would reach past @slots@
         C.SomeWindow Proxy scg <- pure $ C.withWindow sz (C.Lbl @ScgLbl) (C.Count 0) (C.toSize denominator)
         tot <- C.fromWindowVar scg <$> BV.fillInWindow S.notInverted chrScgDensity g (C.sliceMV scg mv)
 
         firstSlot <- BV.testMV S.notInverted mv (C.Count 0)
-        newSTRef $ (if firstSlot then subtract 1 else id) $ (tot :: C.Var hon ActiveSlotE)
+        newSTRef $ (if firstSlot then id else (+1)) $ (tot :: C.Var hon ActiveSlotE)
 
     C.SomeWindow Proxy remainingFullWindows <- do
         -- "number of windows that fit" is usually "total - windowWidth + 1",
@@ -418,10 +418,10 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
 
     -- visit all subsequent windows that do not reach beyond @slots@
     --
-    -- Visiting a window ensures it has at least k active slots; thus the
-    -- first window beyond @slots@ will have at least k-1 actives in its actual
+    -- Visiting a window ensures it has at least k+1 active slots; thus the
+    -- first window beyond @slots@ will have at least k actives in its actual
     -- slots. We assume slots beyond @slots@ are active; thus the first window
-    -- beyond has at least k active slots. And subsequent windows can only have
+    -- beyond has at least k+1 active slots. And subsequent windows can only have
     -- more active slots than that; thus we don't need to visit windows that
     -- reach beyond @slots@.
     --
