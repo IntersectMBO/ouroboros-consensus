@@ -163,20 +163,11 @@ runGddAsync loEUpdater varLoEFrag chainDb getTrigger =
       triggerChainSelectionAsync chainDb
       spin newTrigger
 
--- | Classify the latest known header in relation to the forecast horizon,
--- and provide its slot number.
---
+-- | Indicates whether there is a latest known header in the candidate fragment
+-- and provides its slot number.
 data LatestSlot =
-  -- | The candidate fragment is empty and the TVar containing the latest
-  -- slot ChainSync has seen does not contain an entry for the current peer.
   NoLatestSlot
-  |
-  -- | The candidate fragment head is the latest known header.
-  LatestSlotCandidate SlotNo
-  |
-  -- | ChainSync has seen a header after the candidate fragment head, most
-  -- likely because it is beyond the forecast horizon.
-  LatestSlotForecast SlotNo
+  | LatestSlot SlotNo
   deriving (Show)
 
 data DensityBounds blk =
@@ -233,13 +224,9 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
 
           latestSlot = case (AF.headSlot candidateSuffix, latestSlots Map.!? peer) of
             (Origin, Nothing) -> NoLatestSlot
-            (Origin, Just latest)
-              | latest > 0 -> LatestSlotForecast latest
-              | otherwise -> NoLatestSlot
-            (NotOrigin cand, Nothing) -> LatestSlotCandidate cand
-            (NotOrigin cand, Just latest)
-              | latest > cand -> LatestSlotForecast latest
-              | otherwise -> LatestSlotCandidate cand
+            (Origin, Just latest) -> LatestSlot latest
+            (NotOrigin cand, Nothing) -> LatestSlot cand
+            (NotOrigin cand, Just latest) -> LatestSlot (max cand latest)
 
           -- If the peer has more headers that it hasn't sent yet, each slot between the latest header we know of and
           -- the end of the Genesis window could contain a block, so the upper bound for the total number of blocks in
@@ -255,15 +242,8 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
               -- The peer either has not advertised its tip yet or simply has no blocks whatsoever and won't progress
               -- either.
               -- In the latter case, it should be killed by the LoP.
-              -- REVIEW: What do we want to do in tests here? Both cases are possible, and we cannot distinguish them
-              -- without the tip (even with the tip we have been relying on the invariant that each peer advertises the
-              -- tip before any of them sends headers).
-              -- NoLatestSlot -> 0
               NoLatestSlot -> SlotNo sgen
-              LatestSlotCandidate slot -> intervalLength (slot + 1) firstSlotAfterGenesisWindow
-              -- If the candidate fragment's last slot is smaller than the slot set after receiving a header, we are
-              -- stuck at the forecast horizon, which implies that there is a header after the Genesis window.
-              LatestSlotForecast _ -> 0
+              LatestSlot slot -> intervalLength (slot + 1) firstSlotAfterGenesisWindow
 
           -- The number of blocks within the Genesis window we know with certainty
           lowerBound = fromIntegral $ AF.length fragment
@@ -276,15 +256,13 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
           -- Does the peer have more than k known blocks in _total_ after the intersection?
           -- If not, it is not qualified to compete by density (yet).
           offersMoreThanK = case latestSlot of
-            NoLatestSlot          -> False
-            LatestSlotCandidate _ -> totalBlockCount > k
-            LatestSlotForecast _  -> totalBlockCount > k
+            NoLatestSlot -> False
+            LatestSlot _ -> totalBlockCount > k
 
           -- For tracing: Is there a block after the end of the Genesis window?
           hasBlockAfter = case latestSlot of
-            NoLatestSlot             -> False
-            LatestSlotCandidate slot -> slot >= firstSlotAfterGenesisWindow
-            LatestSlotForecast slot  -> slot >= firstSlotAfterGenesisWindow
+            NoLatestSlot    -> False
+            LatestSlot slot -> slot >= firstSlotAfterGenesisWindow
 
       pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot})
 
