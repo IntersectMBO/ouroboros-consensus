@@ -261,7 +261,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
               -- NoLatestSlot -> 0
               NoLatestSlot -> SlotNo sgen
               -- 'endOfGenesisWindow' is exclusive, so we have to add 1 to the non-exclusive last slot
-              LatestSlotCandidate slot -> intervalLength endOfGenesisWindow (slot + 1)
+              LatestSlotCandidate slot -> intervalLength (slot + 1) endOfGenesisWindow
               -- If the candidate fragment's last slot is smaller than the slot set after receiving a header, we are
               -- stuck at the forecast horizon, which implies that there is a header after the Genesis window.
               LatestSlotForecast _ -> 0
