@@ -244,8 +244,6 @@ longRangeAttack _ _ =
 --
 -- Include rollbacks in a percentage of adversaries, in which case that peer uses two branchs.
 --
--- Also includes empty schedules, in which the adversary does nothing.
---
 uniformPoints ::
   (StatefulGen g m, AF.HasHeader blk) =>
   BlockTree blk ->
@@ -273,12 +271,8 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
             pure (this : rest)
 
     withoutRollback branch = do
-      a <- Random.uniformDouble01M g
-      if a < emptyScheduleProb
-        then pure []
-        else do
-          tips <- mkTips branch
-          mkSchedule tips [btbSuffix branch]
+      tips <- mkTips branch
+      mkSchedule tips [btbSuffix branch]
 
     withRollback b1 b2 = do
       firstTips <- mkTips b1
@@ -310,7 +304,6 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
 
     rollbackProb = 0.2
 
-    emptyScheduleProb = 0.05
 
 newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)
