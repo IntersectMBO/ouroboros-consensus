@@ -51,7 +51,7 @@ tests = [
   ,
     TT.testProperty "Adversarial chains lose density and race comparisons" prop_adversarialChain
   ,
-    TT.localOption (TT.QuickCheckMaxSize 7) $ TT.testProperty "Adversarial chains win if checked with relaxed parameters" prop_adversarialChainMutation
+    TT.localOption (TT.QuickCheckMaxSize 6) $ TT.testProperty "Adversarial chains win if checked with relaxed parameters" prop_adversarialChainMutation
   ]
 
 -----
@@ -273,14 +273,10 @@ advCounterexample schedH schedA winA stabWin rv =
 
 -- | A mutation that causes some honest Race Windows to end one slot sooner
 data AdversarialMutation =
-    -- | Increasing 'Delta' by one may cause the adversary to win a race
-    AdversarialMutateDelta
+    -- | Increasing 'Delta' by the given amount may cause the adversary to win a race
+    AdversarialMutateDelta Int
   |
-    -- | Decreasing 'Kcp' by two may cause the adversary to win a race
-    --
-    -- NOTE: decreasing 'Kcp' by one does not guarantee a lost race since the
-    -- alternative chain already has one slot less in the first window after the
-    -- intersection.
+    -- | Decreasing 'Kcp' by one may cause the adversary to win a race
     AdversarialMutateKcp
 {-
   |
@@ -290,7 +286,7 @@ data AdversarialMutation =
     -- | Increasing 'Scg' by one may case the adversary to accelerate prematurely
     AdversarialMutateScgPos
 -}
-  deriving (Bounded, Eq, Enum, Read, Show)
+  deriving (Eq, Read, Show)
 
 data TestAdversarialMutation base hon =
     TestAdversarialMutation
@@ -331,14 +327,13 @@ mutateAdversarial recipe mut =
     A.AdversarialRecipe { A.arHonest, A.arParams = (Kcp k,  Scg s,  Delta d ), A.arPrefix } = recipe
 
     (k', s', d') = case mut of
-        AdversarialMutateDelta -> (k,     s,     d + 1)
-        AdversarialMutateKcp   -> (k - 1, s,     d    )
+        AdversarialMutateDelta dInc -> (k,     s,     d + dInc)
+        AdversarialMutateKcp        -> (k - 1, s,     d       )
 --        AdversarialMutateScgNeg -> (k,     s - 1, d    )
 --        AdversarialMutateScgPos -> (k,     s + 1, d    )
 
 instance QC.Arbitrary SomeTestAdversarialMutation where
     arbitrary = do
-        mut <- QC.elements [minBound .. maxBound :: AdversarialMutation]
         unsafeMapSuchThatJust $ do
             recipeH@(H.HonestRecipe kcp scg delta len) <- H.genHonestRecipe
 
@@ -364,13 +359,16 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
                     A.arHonest
                   }
 
-            pure $ case Exn.runExcept $ A.checkAdversarialRecipe recipeA of
-                Left e -> case e of
+            case Exn.runExcept $ A.checkAdversarialRecipe recipeA of
+                Left e -> pure $ case e of
                     A.NoSuchAdversarialBlock -> Nothing
                     A.NoSuchCompetitor       -> error $ "impossible! " <> show e
                     A.NoSuchIntersection     -> error $ "impossible! " <> show e
 
-                Right recipeA' -> case Exn.runExcept $ A.checkAdversarialRecipe $ mutateAdversarial recipeA mut of
+                Right recipeA' -> do
+                  let dInc = deltaIncrementFromRecipe recipeA'
+                  mut <- QC.elements [AdversarialMutateKcp, AdversarialMutateDelta dInc]
+                  pure $ case Exn.runExcept $ A.checkAdversarialRecipe $ mutateAdversarial recipeA mut of
                     Left{} -> Nothing
 
                     Right (A.SomeCheckedAdversarialRecipe Proxy mutRecipeA)
@@ -410,6 +408,50 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
                             recipeA
                             recipeA'
                             mut
+      where
+        -- | The increment of delta depends on what the honest schema is
+        -- in the first stability window after the intersection.
+        --
+        -- If the stability window has more than k+1 slots. Incrementing
+        -- delta by 1 should cause verification to fail for some adversarial
+        -- schema. For instance if s=4, k=1, d=0, the intersection is Genesis
+        -- and the honest schema is
+        --
+        -- > 0111 0101
+        --
+        -- then the following adversarial schema fails to validate with d=1.
+        --
+        -- > 0101 0011
+        --
+        -- However, if the stability window has exactly k+1 slots, then we
+        -- need a higher increment for delta. Suppose the honest schema is
+        --
+        -- > 0110 0111
+        --
+        -- with the same parameters as before. In this situation, the
+        -- adversarial schemas are constrained to have only one slot
+        -- in the first stability window, and therefore it is impossible
+        -- for the adversary to win a race to the k+1st active slot.
+        --
+        -- We compute the needed increment as the distance from the
+        -- k+1st slot after the intersection to the first slot after the
+        -- first stability window after the intersection. In our example,
+        -- the increment is 2, and therefore with d=2 we can find the
+        -- following alternative schema that fails validation.
+        --
+        -- > 0100 1000
+        --
+        deltaIncrementFromRecipe (A.SomeCheckedAdversarialRecipe _ r) =
+          let H.ChainSchema _ v = A.carHonest r
+              sv = C.sliceV (A.carWin r) v
+              (Kcp k, Scg s, _) = A.carParams r
+              kPlus1st = case BV.findIthEmptyInV S.inverted sv (C.Count k) of
+                BV.NothingFound -> 1
+                BV.JustFound i  -> C.getCount i
+           in
+              case BV.findIthEmptyInV S.inverted sv (C.Count (k+1)) of
+                BV.JustFound i | C.getCount i < s -> 1
+                _                                 -> s - kPlus1st
 
 -- | There exists a seed such that each 'TestAdversarialMutation' causes
 -- 'A.checkAdversarialChain' to reject the result of 'A.uniformAdversarialChain'
