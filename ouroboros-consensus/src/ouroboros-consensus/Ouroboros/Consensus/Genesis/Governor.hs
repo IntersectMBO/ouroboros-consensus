@@ -260,8 +260,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
               -- tip before any of them sends headers).
               -- NoLatestSlot -> 0
               NoLatestSlot -> SlotNo sgen
-              -- 'endOfGenesisWindow' is exclusive, so we have to add 1 to the non-exclusive last slot
-              LatestSlotCandidate slot -> intervalLength (slot + 1) endOfGenesisWindow
+              LatestSlotCandidate slot -> intervalLength (slot + 1) firstSlotAfterGenesisWindow
               -- If the candidate fragment's last slot is smaller than the slot set after receiving a header, we are
               -- stuck at the forecast horizon, which implies that there is a header after the Genesis window.
               LatestSlotForecast _ -> 0
@@ -282,11 +281,10 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
             LatestSlotForecast _  -> totalBlockCount > k
 
           -- For tracing: Is there a block after the end of the Genesis window?
-          -- Note that 'endOfGenesisWindow' is exclusive, so we use '>='.
           hasBlockAfter = case latestSlot of
             NoLatestSlot             -> False
-            LatestSlotCandidate slot -> slot >= endOfGenesisWindow
-            LatestSlotForecast slot  -> slot >= endOfGenesisWindow
+            LatestSlotCandidate slot -> slot >= firstSlotAfterGenesisWindow
+            LatestSlotForecast slot  -> slot >= firstSlotAfterGenesisWindow
 
       pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot})
 
@@ -303,12 +301,12 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
       pure peer0
 
     loeIntersectionSlot = AF.headSlot loeFrag
-    -- exclusive last slot in the Genesis window
-    endOfGenesisWindow =
+    -- last slot in the Genesis window
+    firstSlotAfterGenesisWindow =
         succWithOrigin loeIntersectionSlot + SlotNo sgen
 
     dropBeyondGenesisWindow =
-      AF.takeWhileOldest ((< endOfGenesisWindow) . blockSlot)
+      AF.takeWhileOldest ((< firstSlotAfterGenesisWindow) . blockSlot)
 
     competingFrags =
       Map.map dropBeyondGenesisWindow candidateSuffixes
