@@ -21,7 +21,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import           Ouroboros.Consensus.Genesis.Governor (runGddAsync,
+import           Ouroboros.Consensus.Genesis.Governor (runGdd,
                      updateLoEFragGenesis)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -305,7 +305,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates
     for_ loEVar $ \ var ->
         void $ forkLinkedThread registry "LoE updater background" $
-          runGddAsync gdd var chainDb ((,) <$> getLatestSlots <*> readTVar (psrIdling resources))
+          runGdd gdd var chainDb ((,) <$> getLatestSlots <*> readTVar (psrIdling resources))
     runScheduler
       (Tracer $ traceWith tracer . TraceSchedulerEvent)
       stateTracer
