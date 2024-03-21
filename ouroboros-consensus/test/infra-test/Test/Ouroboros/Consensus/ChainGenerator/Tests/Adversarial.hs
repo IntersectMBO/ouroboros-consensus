@@ -51,7 +51,7 @@ tests = [
   ,
     TT.testProperty "Adversarial chains lose density and race comparisons" prop_adversarialChain
   ,
-    TT.localOption (TT.QuickCheckMaxSize 14) $ TT.testProperty "Adversarial chains win if checked with relaxed parameters" prop_adversarialChainMutation
+    TT.localOption (TT.QuickCheckMaxSize 7) $ TT.testProperty "Adversarial chains win if checked with relaxed parameters" prop_adversarialChainMutation
   ]
 
 -----
@@ -133,7 +133,6 @@ instance QC.Arbitrary SomeTestAdversarial where
                 A.NoSuchAdversarialBlock -> pure Nothing
                 A.NoSuchCompetitor       -> error $ "impossible! " <> show e
                 A.NoSuchIntersection     -> error $ "impossible! " <> show e
-                A.KcpIs1                 -> error $ "impossible! " <> show e
 
             Right testRecipeA' -> do
                 pure $ Just $ SomeTestAdversarial Proxy Proxy $ TestAdversarial {
@@ -333,7 +332,7 @@ mutateAdversarial recipe mut =
 
     (k', s', d') = case mut of
         AdversarialMutateDelta -> (k,     s,     d + 1)
-        AdversarialMutateKcp   -> (k - 2, s,     d    )
+        AdversarialMutateKcp   -> (k - 1, s,     d    )
 --        AdversarialMutateScgNeg -> (k,     s - 1, d    )
 --        AdversarialMutateScgPos -> (k,     s + 1, d    )
 
@@ -370,7 +369,6 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
                     A.NoSuchAdversarialBlock -> Nothing
                     A.NoSuchCompetitor       -> error $ "impossible! " <> show e
                     A.NoSuchIntersection     -> error $ "impossible! " <> show e
-                    A.KcpIs1                 -> error $ "impossible! " <> show e
 
                 Right recipeA' -> case Exn.runExcept $ A.checkAdversarialRecipe $ mutateAdversarial recipeA mut of
                     Left{} -> Nothing
