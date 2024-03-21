@@ -279,9 +279,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
           offersMoreThanK = case latestSlot of
             NoLatestSlot          -> False
             LatestSlotCandidate _ -> totalBlockCount > k
-            -- If the last slot is not on the candidate chain, we know that there is at least one more block, so we use
-            -- '>=' here.
-            LatestSlotForecast _  -> totalBlockCount >= k
+            LatestSlotForecast _  -> totalBlockCount > k
 
           -- For tracing: Is there a block after the end of the Genesis window?
           -- Note that 'endOfGenesisWindow' is exclusive, so we use '>='.
