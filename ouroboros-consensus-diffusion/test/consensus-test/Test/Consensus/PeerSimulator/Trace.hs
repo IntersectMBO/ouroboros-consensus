@@ -392,7 +392,7 @@ terseGDDEvent = \case
       where
         more = if offersMoreThanK then "+" else " "
 
-        block = if hasBlockAfter then ", has block" else " "
+        block = if hasBlockAfter then ", has header after sgen" else " "
 
         lastPoint =
           "point: " ++
