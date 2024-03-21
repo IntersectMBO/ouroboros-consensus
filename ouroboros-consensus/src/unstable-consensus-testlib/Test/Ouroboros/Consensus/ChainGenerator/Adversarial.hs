@@ -270,7 +270,7 @@ checkAdversarialChain recipe adv = do
           vHAfterIntersection = C.sliceV carWin vH
           iterH :: RI.Race adv
           iterH =
-              fromMaybe (error "there should be k+1 active slots after the intersection")
+              fromMaybe (error $ "there should be k+1 active slots after the intersection k=" ++ show k)
             $ RI.init (Kcp k) vHAfterIntersection
 
         -- first race window after the intersection
