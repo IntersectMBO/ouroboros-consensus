@@ -265,7 +265,7 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers} =
         ids = toList (getPeerIds ps)
 
     SecurityParam k' = k
-    tips = tip <$> toMap' initialPeers
+    _tips = tip <$> toMap' initialPeers
 
 peerInfo :: EvolvingPeers -> [String]
 peerInfo EvolvingPeers {k = SecurityParam k, sgen = GenesisWindow sgen, peers = Peers {honest, others}, loeFrag} =
