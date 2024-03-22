@@ -132,6 +132,7 @@ initialize ::
   -> StreamAPI m blk blk
   -> Point blk
   -> InitDB db m blk
+  -> Maybe DiskSnapshot
   -> m (InitLog blk, db, Word64)
 initialize replayTracer
            snapTracer
@@ -139,8 +140,11 @@ initialize replayTracer
            cfg
            stream
            replayGoal
-           dbIface  =
-    listSnapshots hasFS >>= tryNewestFirst id
+           dbIface
+           fromSnapshot =
+    case fromSnapshot of
+      Nothing -> listSnapshots hasFS >>= tryNewestFirst id
+      Just snap -> tryNewestFirst id [snap]
   where
     InitDB {initFromGenesis, initFromSnapshot, closeDb} = dbIface
 
@@ -288,6 +292,7 @@ openDBInternal args@(LedgerDbArgs { lgrHasFS = SomeHasFS fs }) initDb stream rep
             stream
             replayGoal
             initDb
+            lgrStartSnapshot
     (ledgerDb, internal) <- mkLedgerDb initDb db
     return (ledgerDb, replayCounter, internal)
 
@@ -296,6 +301,7 @@ openDBInternal args@(LedgerDbArgs { lgrHasFS = SomeHasFS fs }) initDb stream rep
         lgrConfig
       , lgrTracer
       , lgrHasFS
+      , lgrStartSnapshot
       } = args
 
     replayTracer = LedgerReplayEvent     >$< lgrTracer

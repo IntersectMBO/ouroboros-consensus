@@ -23,6 +23,7 @@ module Cardano.Tools.DBAnalyser.Block.Cardano (
   , CardanoBlockArgs
   ) where
 
+import Data.SOP.Functors
 import qualified Cardano.Chain.Genesis as Byron.Genesis
 import qualified Cardano.Chain.Update as Byron.Update
 import           Cardano.Crypto (RequiresNetworkMagic (..))

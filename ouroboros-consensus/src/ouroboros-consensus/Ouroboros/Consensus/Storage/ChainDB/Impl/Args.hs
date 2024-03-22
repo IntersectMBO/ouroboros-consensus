@@ -144,8 +144,8 @@ ensureValidateAll args =
            }
        }
 
-completeChainDbArgs
-  :: forall m blk. (ConsensusProtocol (BlockProtocol blk), IOLike m)
+completeChainDbArgs ::
+     forall m blk. (ConsensusProtocol (BlockProtocol blk), IOLike m)
   => ResourceRegistry m
   -> CheckInFuture m blk
   -> TopLevelConfig blk

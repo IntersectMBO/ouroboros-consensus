@@ -53,6 +53,10 @@ data LedgerDbArgs f m blk = LedgerDbArgs {
     , lgrTracer              :: Tracer m (TraceLedgerDBEvent blk)
     , lgrFlavorArgs          :: LedgerDbFlavorArgs f m
     , lgrRegistry            :: HKD f (ResourceRegistry m)
+      -- | If provided, the ledgerdb will start using said snapshot and fallback
+      -- to genesis. It will ignore any other existing snapshots. Useful for
+      -- db-analyser.
+    , lgrStartSnapshot       :: Maybe DiskSnapshot
     }
 
 -- | Default arguments
@@ -71,6 +75,7 @@ defaultArgs = LedgerDbArgs {
     , lgrTracer             = nullTracer
     , lgrFlavorArgs         = LedgerDbFlavorArgsV1 V1.defaultLedgerDbFlavorArgs
     , lgrRegistry           = NoDefault
+    , lgrStartSnapshot      = Nothing
     }
 
 data LedgerDbFlavorArgs f m =

@@ -540,6 +540,7 @@ library unstable-cardano-tools
     , microlens
     , mtl
     , network
+    , transformers
     , nothunks
     , ouroboros-consensus            ^>=0.16
     , ouroboros-consensus-cardano
@@ -549,7 +550,6 @@ library unstable-cardano-tools
     , ouroboros-network-api
     , ouroboros-network-framework
     , ouroboros-network-protocols
-    , serialise                      ^>=0.2
     , sop-core
     , sop-extras
     , strict-sop-core
@@ -571,6 +571,7 @@ executable db-analyser
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
     , text
     , with-utf8
+    , sop-core
 
   -- NOTE: these options should match the ones in the cardano-node.
   --
@@ -616,6 +617,7 @@ executable db-truncater
     , ouroboros-consensus
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
     , with-utf8
+    , sop-core
 
   other-modules:
     DBAnalyser.Parsers
@@ -642,7 +644,7 @@ test-suite tools-test
   build-depends:
     , base
     , ouroboros-consensus-cardano
-    , ouroboros-consensus:unstable-consensus-testlib
+    , ouroboros-consensus:{ouroboros-consensus,unstable-consensus-testlib}
     , tasty
     , tasty-hunit
     , unstable-cardano-tools

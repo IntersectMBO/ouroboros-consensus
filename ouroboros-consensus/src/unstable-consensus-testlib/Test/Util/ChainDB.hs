@@ -134,6 +134,7 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , lgrFlavorArgs       =
             LedgerDbFlavorArgsV1
               (V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs)
+        , lgrStartSnapshot    = Nothing
         }
     , cdbsArgs = ChainDbSpecificArgs {
           cdbsBlocksToAddSize = 1
