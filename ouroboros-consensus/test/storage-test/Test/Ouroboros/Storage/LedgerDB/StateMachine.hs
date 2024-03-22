@@ -32,20 +32,19 @@
 
 -- | On-disk ledger DB tests.
 --
--- This is a model based test. The commands here are
+-- This is a state-machine based test. The commands here are
 --
--- * Get the current ledger state
--- * Push a block, or switch to a fork
+-- * Get the current volatile and immutable tip
+-- * Switch to a fork (possibly rolling back 0 blocks, so equivalent to a push)
 -- * Write a snapshot to disk
 -- * Restore the ledger DB from the snapshots on disk
--- * Model disk corruption
+-- * Model disk corruption (truncate or delete latest snapshot)
 --
 -- The model here is satisfyingly simple: just a map from blocks to their
--- corresponding ledger state.
---
+-- corresponding ledger state modelling the whole block chain since genesis.
 module Test.Ouroboros.Storage.LedgerDB.StateMachine (tests) where
 
-import           Control.Monad (void)
+import Debug.Trace
 import           Control.Monad.Except
 import           Control.Monad.State hiding (state)
 import           Control.Tracer (nullTracer)
@@ -95,61 +94,82 @@ import           Test.Util.TestBlock hiding (TestBlock, TestBlockCodecConfig,
 tests :: TestTree
 tests = testGroup "StateMachine" [
       testProperty "InMemV1" $
-          prop_sequential 100000 inMemV1TestArguments
+          prop_sequential 100000 inMemV1TestArguments simulatedFS
     , testProperty "InMemV2" $
-          prop_sequential 100000 inMemV2TestArguments
+          prop_sequential 100000 inMemV2TestArguments simulatedFS
     , testProperty "LMDB" $
-          prop_sequential 1000 lmdbTestArguments
+          prop_sequential 1000 lmdbTestArguments realFS
     ]
 
 prop_sequential ::
      Int
-  -> (SecurityParam -> IO (TestArguments IO))
+  -> (SecurityParam -> TestArguments IO)
+  -> IO (SomeHasFS IO, IO ())
   -> Actions Model
   -> QC.Property
-prop_sequential maxSuccess mkTestArguments as = QC.withMaxSuccess maxSuccess $
+prop_sequential maxSuccess mkTestArguments fsOps as = QC.withMaxSuccess maxSuccess $
   QC.monadicIO $ do
-    ref <- lift $ do
-      cdb <- initChainDB
-      pure $ Environment undefined (OnDemandActions undefined undefined undefined undefined undefined (pure ())) cdb mkTestArguments (pure ())
-    (_, Environment _ od _ _ clean) <- runPropertyStateT (runActions as) ref
-    QC.run $ closeLedgerDB od
-    QC.run $ clean
+    ref <- lift $ initialEnvironment fsOps mkTestArguments =<< initChainDB
+    (_, Environment _ testInternals _ _ _ clean) <- runPropertyStateT (runActions as) ref
+    QC.run $ clean >> closeLedgerDB testInternals
     QC.assert True
+
+-- | The initial environment is mostly undefined because it will be initialized
+-- by the @Init@ command. We are forced to provide this dummy implementation
+-- because some parts of it are static (which we can provide now) and also the
+-- empty sequence of commands must still run the cleanup functions, which here
+-- are trivial, but nevertheless they have to exist.
+initialEnvironment ::
+     IO (SomeHasFS IO, IO ())
+  -> (SecurityParam -> TestArguments IO)
+  -> ChainDB IO
+  -> IO Environment
+initialEnvironment fsOps mkTestArguments cdb = do
+  (sfs, cleanupFS) <- fsOps
+  pure $ Environment
+    undefined
+    (TestInternals undefined undefined undefined undefined (pure ()))
+    cdb
+    mkTestArguments
+    sfs
+    cleanupFS
 
 {-------------------------------------------------------------------------------
   Arguments
 -------------------------------------------------------------------------------}
 
 data TestArguments m = TestArguments {
-      argHasFS       :: !(SomeHasFS m)
-    , argFlavorArgs  :: !(Complete Args.LedgerDbFlavorArgs m)
+      argFlavorArgs  :: !(Complete Args.LedgerDbFlavorArgs m)
     , argLedgerDbCfg :: !(LedgerDbCfg (ExtLedgerState TestBlock))
-    , cleanup        :: !(m ())
     }
 
-inMemV1TestArguments :: MonadIO m
-  => SecurityParam
-  -> m (TestArguments IO)
-inMemV1TestArguments secParam = liftIO $ do
-  fs <- unsafeToUncheckedStrictTVar <$> uncheckedNewTVarM MockFS.empty
-  pure TestArguments {
-      argHasFS = SomeHasFS $ simHasFS fs
-    , argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize InMemoryBackingStoreArgs
+simulatedFS :: IO (SomeHasFS IO, IO ())
+simulatedFS = do
+  fs <- simHasFS' MockFS.empty
+  pure (SomeHasFS fs , pure ())
+
+realFS :: IO (SomeHasFS IO, IO ())
+realFS = liftIO $ do
+  systmpdir <- Dir.getTemporaryDirectory
+  tmpdir <- Temp.createTempDirectory systmpdir "init_standalone_db"
+  pure (SomeHasFS $ FSIO.ioHasFS $ MountPoint tmpdir, Dir.removeDirectoryRecursive tmpdir)
+
+inMemV1TestArguments ::
+     SecurityParam
+  -> TestArguments IO
+inMemV1TestArguments secParam =
+  TestArguments {
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize InMemoryBackingStoreArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
-    , cleanup = pure ()
     }
 
-inMemV2TestArguments :: MonadIO m
-  => SecurityParam
-  -> m (TestArguments IO)
-inMemV2TestArguments secParam = liftIO $ do
-  fs <- unsafeToUncheckedStrictTVar <$> uncheckedNewTVarM MockFS.empty
-  pure TestArguments {
-      argHasFS = SomeHasFS $ simHasFS fs
-    , argFlavorArgs = LedgerDbFlavorArgsV2 $ V2Args InMemoryHandleArgs -- DisableFlushing DisableQuerySize InMemoryBackingStoreArgs
+inMemV2TestArguments ::
+     SecurityParam
+  -> TestArguments IO
+inMemV2TestArguments secParam =
+  TestArguments {
+      argFlavorArgs = LedgerDbFlavorArgsV2 $ V2Args InMemoryHandleArgs
     , argLedgerDbCfg = extLedgerDbConfig secParam
-    , cleanup = pure ()
     }
 
 testLMDBLimits :: LMDBLimits
@@ -165,19 +185,13 @@ testLMDBLimits = LMDBLimits
   , lmdbMaxReaders = 16
   }
 
-lmdbTestArguments :: MonadIO m
-  => SecurityParam
-  -> m (TestArguments IO)
-lmdbTestArguments secParam = do
-  (hfs, cu) <- liftIO $ do
-      systmpdir <- Dir.getTemporaryDirectory
-      tmpdir <- Temp.createTempDirectory systmpdir "init_standalone_db"
-      pure (SomeHasFS $ FSIO.ioHasFS $ MountPoint tmpdir, Dir.removeDirectoryRecursive tmpdir)
-  pure TestArguments {
-      argHasFS = hfs
-    , argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs testLMDBLimits Dict
+lmdbTestArguments ::
+     SecurityParam
+  -> TestArguments IO
+lmdbTestArguments secParam =
+  TestArguments {
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs testLMDBLimits Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
-    , cleanup = cu
     }
 
 {-------------------------------------------------------------------------------
@@ -194,7 +208,6 @@ data Model =
     UnInit
   | Model
       TheBlockChain
-      [Var DiskSnapshot]
       SecurityParam
   deriving (Generic, Show)
 
@@ -214,15 +227,15 @@ modelUpdateLedger ::
        (Except (ExtValidationError TestBlock)) a
   -> Model
   -> Model
-modelUpdateLedger f model@(Model chain corrupted secParam) =
+modelUpdateLedger f model@(Model chain secParam) =
     case runExcept (runStateT f chain) of
       Left{}             -> model
-      Right (_, ledger') -> Model ledger' corrupted secParam
+      Right (_, ledger') -> Model ledger' secParam
 modelUpdateLedger _ _ = error "Uninitialized model tried to apply blocks!"
 
 modelRollback :: Word64 -> Model -> Model
-modelRollback n (Model chain corrupted secParam) =
-   Model (AS.dropNewest (fromIntegral n) chain) corrupted secParam
+modelRollback n (Model chain secParam) =
+   Model (AS.dropNewest (fromIntegral n) chain) secParam
 modelRollback _ UnInit = error "Uninitialized model can't rollback!"
 
 {-------------------------------------------------------------------------------
@@ -233,22 +246,20 @@ deriving instance Show (Action Model a)
 deriving instance Eq (Action Model a)
 
 instance HasVariables (Action Model a) where
-  getAllVariables (DoDelete s)   = getAllVariables s
-  getAllVariables (DoTruncate s) = getAllVariables s
-  getAllVariables _              = mempty
+  getAllVariables _ = mempty
 
 instance StateModel Model where
   data Action Model a where
-    DoDelete          :: Var DiskSnapshot -> Action Model ()
-    DoTruncate        :: Var DiskSnapshot -> Action Model ()
+    WipeLedgerDB      :: Action Model ()
+    TruncateSnapshots :: Action Model ()
     DropAndRestore    :: Word64 -> Action Model ()
-    ForceTakeSnapshot :: Action Model (Maybe DiskSnapshot)
+    ForceTakeSnapshot :: Action Model ()
     GetState          :: Action Model (ExtLedgerState TestBlock EmptyMK, ExtLedgerState TestBlock EmptyMK)
     Init              :: SecurityParam -> Action Model ()
     ValidateAndCommit :: Word64 -> [TestBlock] -> Action Model ()
 
-  actionName DoDelete{}          = "DoDelete"
-  actionName DoTruncate{}        = "DoTruncate"
+  actionName WipeLedgerDB{}      = "WipeLedgerDB"
+  actionName TruncateSnapshots{} = "TruncateSnapshots"
   actionName DropAndRestore{}    = "DropAndRestore"
   actionName ForceTakeSnapshot   = "TakeSnapshot"
   actionName GetState{}          = "GetState"
@@ -256,39 +267,35 @@ instance StateModel Model where
   actionName ValidateAndCommit{} = "ValidateAndCommit"
 
   arbitraryAction _ UnInit = Some . Init <$> QC.arbitrary
-  arbitraryAction vctxt model@(Model chain corrupted secParam) =
-    oneof [ pure $ Some GetState
-          , pure $ Some ForceTakeSnapshot
-          , Some . DropAndRestore <$> QC.choose (0, fromIntegral $ AS.length chain)
-          , Some . DoDelete       <$> arbitraryVar vctxt `suchThat` (`notElem` corrupted)
-          , Some . DoTruncate     <$> arbitraryVar vctxt `suchThat` (`notElem` corrupted)
-          , Some <$> do
-              let maxRollback = minimum [
-                      fromIntegral . AS.length $ chain
-                    , maxRollbacks secParam
-                    ]
-              numRollback  <- QC.choose (0, maxRollback)
-              numNewBlocks <- QC.choose (numRollback, numRollback + 2)
-              let
-                chain' = case modelRollback numRollback model of
-                  UnInit       -> error "Impossible"
-                  Model ch _ _ -> ch
-                blocks = genBlocks
-                           numNewBlocks
-                           (lastAppliedPoint . ledgerState . either id snd . AS.head $ chain')
-              return $ ValidateAndCommit numRollback blocks
-          ]
-
---  shrinkAction = defaulted
+  arbitraryAction _ model@(Model chain secParam) =
+    frequency $ [ (2, pure $ Some GetState)
+                , (2, pure $ Some ForceTakeSnapshot)
+                , (1, Some . DropAndRestore <$> QC.choose (0, fromIntegral $ AS.length chain))
+                , (4, Some <$> do
+                      let maxRollback = minimum [
+                            fromIntegral . AS.length $ chain
+                            , maxRollbacks secParam
+                            ]
+                      numRollback  <- QC.choose (0, maxRollback)
+                      numNewBlocks <- QC.choose (numRollback, numRollback + 2)
+                      let
+                        chain' = case modelRollback numRollback model of
+                          UnInit     -> error "Impossible"
+                          Model ch _ -> ch
+                        blocks = genBlocks
+                                 numNewBlocks
+                                 (lastAppliedPoint . ledgerState . either id snd . AS.head $ chain')
+                      return $ ValidateAndCommit numRollback blocks)
+                , (1, pure $ Some WipeLedgerDB)
+                , (1, pure $ Some TruncateSnapshots)
+                ]
 
   initialState = UnInit
 
-  nextState _     (Init secParam)            _var = Model (AS.Empty genesis) [] secParam
+  nextState _     (Init secParam)            _var = Model (AS.Empty genesis) secParam
   nextState state GetState                   _var = state
-  -- Here we can ignore the _var because as all vars will be snapshots this is
-  -- implicitly accounted in the Q-D vars
   nextState state ForceTakeSnapshot          _var = state
-  nextState state@(Model _ _ secParam) (ValidateAndCommit n blks) _var =
+  nextState state@(Model _ secParam) (ValidateAndCommit n blks) _var =
       modelUpdateLedger switch state
     where
       push :: TestBlock -> StateT (AS.AnchoredSeq (WithOrigin SlotNo) (ExtLedgerState TestBlock ValuesMK) (TestBlock, ExtLedgerState TestBlock ValuesMK)) (Except (ExtValidationError TestBlock)) ()
@@ -303,16 +310,14 @@ instance StateModel Model where
           modify $ AS.dropNewest (fromIntegral n)
           mapM_ push blks
 
-  nextState (Model chain corrupted secParam) (DoDelete ss) _var =
-    Model chain (ss : corrupted) secParam
-  nextState (Model chain corrupted secParam) (DoTruncate ss) _var =
-    Model chain (ss : corrupted) secParam
+  nextState state WipeLedgerDB _var = state
+  nextState state TruncateSnapshots _var = state
   nextState state (DropAndRestore n)         _var = modelRollback n state
   nextState UnInit _ _ = error "Uninitialized model created a command different than Init"
 
   precondition UnInit               Init{}                  = True
   precondition UnInit _                                     = False
-  precondition (Model chain _ secParam) (ValidateAndCommit n blks) =
+  precondition (Model chain secParam) (ValidateAndCommit n blks) =
        n <= min (maxRollbacks secParam) (fromIntegral $ AS.length chain)
     && case blks of
         [] -> True
@@ -414,7 +419,7 @@ openLedgerDB ::
   -> ChainDB IO
   -> LedgerDbCfg (ExtLedgerState TestBlock)
   -> SomeHasFS IO
-  -> IO (LedgerDB' IO TestBlock, OnDemandActions' IO TestBlock)
+  -> IO (LedgerDB' IO TestBlock, TestInternals' IO TestBlock)
 openLedgerDB flavArgs env cfg fs = do
   (stream, volBlocks) <- dbStreamAPI (ledgerDbCfgSecParam cfg) env
   let getBlock f = Map.findWithDefault (error blockNotFound) f <$> readTVarIO (dbBlocks env)
@@ -460,40 +465,35 @@ openLedgerDB flavArgs env cfg fs = do
 data Environment =
   Environment
     (LedgerDB' IO TestBlock)
-    (OnDemandActions' IO TestBlock)
+    (TestInternals' IO TestBlock)
     (ChainDB IO)
-    (SecurityParam -> IO (TestArguments IO))
+    (SecurityParam -> TestArguments IO)
+    (SomeHasFS IO)
     (IO ())
 
 instance RunModel Model (StateT Environment IO) where
 
   perform _ (Init secParam) _ = do
-    Environment _ _ chainDb mkArgs _ <- get
-    (ldb, od, clean) <- lift $ do
-      args <- mkArgs secParam
-      (ldb, od) <- openLedgerDB (argFlavorArgs args) chainDb (extLedgerDbConfig secParam) (argHasFS args)
-      pure (ldb, od, cleanup args)
-    put (Environment ldb od chainDb mkArgs (closeLedgerDB od >> clean))
-  perform _ (DoTruncate s) lk = do
-    Environment _ od _ _ _ <- get
-    lift $ truncateSnapshot od (lk s)
-  perform _ (DoDelete s) lk = do
-    Environment _ od _ _ _ <- get
-    lift $ destroySnapshot od (lk s)
+    Environment _ _ chainDb mkArgs fs cleanup <- get
+    (ldb, testInternals) <- lift $ do
+      let args = mkArgs secParam
+      openLedgerDB (argFlavorArgs args) chainDb (argLedgerDbCfg args) fs
+    put (Environment ldb testInternals chainDb mkArgs fs cleanup)
+
+  perform _ WipeLedgerDB _ = do
+    Environment _ testInternals _ _ _ _ <- get
+    lift $ wipeLedgerDB testInternals
+
   perform _ GetState _ = do
-    Environment ldb _ _ _ _ <- get
+    Environment ldb _ _ _ _ _ <- get
     lift $ atomically $ (,) <$> getImmutableTip ldb <*> getVolatileTip ldb
+
   perform _ ForceTakeSnapshot _ = do
-    Environment ldb od _ _ _ <- get
-    lift $ do
-      void $ flushNOW od >> takeSnapshotNOW od Nothing
-      imm <- atomically $ getImmutableTip ldb
-      let pt = pointToWithOriginRealPoint $ castPoint @(ExtLedgerState TestBlock) @TestBlock $ getTip imm
-      pure
-         $ withOrigin Nothing (\p -> Just (DiskSnapshot (unSlotNo $ realPointSlot p) Nothing))
-         $ pt
+    Environment _ testInternals _ _ _ _ <- get
+    lift $ takeSnapshotNOW testInternals Nothing
+
   perform _ (ValidateAndCommit n blks) _ = do
-      Environment ldb _ chainDb _ _ <- get
+      Environment ldb _ chainDb _ _ _ <- get
       lift $ do
         atomically $ modifyTVar (dbBlocks chainDb) $
            repeatedly (uncurry Map.insert) (map (\b -> (blockRealPoint b, b)) blks)
@@ -506,17 +506,28 @@ instance RunModel Model (StateT Environment IO) where
               forkerClose forker
             ValidateExceededRollBack{} -> error "Unexpected Rollback"
             ValidateLedgerError (AnnLedgerError forker _ _) -> forkerClose forker >> error "Unexpected ledger error"
-  perform state@(Model _ _ secParam) (DropAndRestore n) lk = do
-    Environment _ od chainDb _ clean <- get
+
+  perform state@(Model _ secParam) (DropAndRestore n) lk = do
+    Environment _ testInternals chainDb _ _ _ <- get
     lift $ do
       atomically $ modifyTVar (dbChain chainDb) (drop (fromIntegral n))
-      closeLedgerDB od
-      clean
+      closeLedgerDB testInternals
     perform state (Init secParam) lk
+
+  perform _ TruncateSnapshots _ = do
+    Environment _ testInternals _ _ _ _ <- get
+    lift $ truncateSnapshots testInternals
+
   perform UnInit _ _ = error "Uninitialized model created a command different than Init"
 
 
-  postcondition (Model chain _ secParam, _) GetState _ (imm, vol) =
+  -- NOTE
+  --
+  -- In terms of postcondition, we only need to check that the immutable and
+  -- volatile tip are the right ones. By the blocks validating one on top of
+  -- each other it already implies that having the right volatile tip means that
+  -- we have the right whole chain.
+  postcondition (Model chain secParam, _) GetState _ (imm, vol) =
     let volSt = either forgetLedgerTables (forgetLedgerTables . snd) (AS.head chain)
         immSt = either forgetLedgerTables (forgetLedgerTables . snd) (AS.head (AS.dropNewest (fromIntegral $ maxRollbacks secParam) chain))
     in do

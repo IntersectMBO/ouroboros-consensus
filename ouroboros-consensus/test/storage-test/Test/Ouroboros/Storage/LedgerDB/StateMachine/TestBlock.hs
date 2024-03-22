@@ -194,7 +194,7 @@ queryKeys ::
 queryKeys f (LedgerTables (ValuesMK utxovals)) = f utxovals
 
 {-------------------------------------------------------------------------------
-  Instances required for HD storage of ledger state tables
+  Instances required for on-disk storage of ledger state tables
 -------------------------------------------------------------------------------}
 
 type instance Ledger.Key   (LedgerState TestBlock) = Token

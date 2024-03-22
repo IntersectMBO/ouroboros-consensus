@@ -89,7 +89,7 @@ data InitDB db m blk = InitDB {
     -- ^ Reapply a block from the immutable DB when initializing the DB.
   , currentTip       :: !(db -> LedgerState blk EmptyMK)
     -- ^ Getting the current tip for tracing the Ledger Events.
-  , mkLedgerDb       :: !(db -> m (LedgerDB m (ExtLedgerState blk) blk, OnDemandActions m (ExtLedgerState blk) blk))
+  , mkLedgerDb       :: !(db -> m (LedgerDB m (ExtLedgerState blk) blk, TestInternals m (ExtLedgerState blk) blk))
     -- ^ Create a LedgerDB from the initialized data structures from previous
     -- steps.
   }
@@ -276,7 +276,7 @@ openDBInternal ::
   -> InitDB db m blk
   -> StreamAPI m blk blk
   -> Point blk
-  -> m (LedgerDB' m blk, Word64, OnDemandActions' m blk)
+  -> m (LedgerDB' m blk, Word64, TestInternals' m blk)
 openDBInternal args@(LedgerDbArgs { lgrHasFS = SomeHasFS fs }) initDb stream replayGoal = do
     createDirectoryIfMissing fs True (mkFsPath [])
     (_initLog, db, replayCounter) <-

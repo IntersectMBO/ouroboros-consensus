@@ -22,7 +22,8 @@ data LedgerDbFlavorArgs f m = V2Args HandleArgs
 
 data HandleArgs =
     InMemoryHandleArgs
-  | LSMHandleArgs
+    -- TODO
+    --  | LSMHandleArgs
   deriving (Generic, NoThunks)
 
 data FlavorImplSpecificTrace =

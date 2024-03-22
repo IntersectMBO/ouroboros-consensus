@@ -9,6 +9,7 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Init (mkInitDb) where
 
+import Data.Maybe (isJust)
 import           Control.Monad (void)
 import           Control.Monad.Base
 import           Control.Tracer
@@ -37,7 +38,7 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.Common
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.LSM as LSM
+import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.CallStack
@@ -114,7 +115,7 @@ mkInitDb args flavArgs getBlock =
    emptyF st =
      empty' st $ case bss of
                   InMemoryHandleArgs -> InMemory.newInMemoryLedgerTablesHandle lgrHasFS
-                  LSMHandleArgs      -> LSM.newLSMLedgerTablesHandle
+                  --TODO LSMHandleArgs      -> LSM.newLSMLedgerTablesHandle
 
    loadSnapshot :: CodecConfig blk
                 -> SomeHasFS m
@@ -122,7 +123,7 @@ mkInitDb args flavArgs getBlock =
                 -> m (Either (SnapshotFailure blk) (LedgerSeq' m blk, RealPoint blk))
    loadSnapshot = case bss of
      InMemoryHandleArgs -> InMemory.loadSnapshot lgrRegistry
-     LSMHandleArgs      -> LSM.loadSnapshot
+     --TODO LSMHandleArgs      -> LSM.loadSnapshot
 
 implMkLedgerDb ::
      forall m l blk.
@@ -138,7 +139,7 @@ implMkLedgerDb ::
      )
   => LedgerDBHandle m l blk
   -> HandleArgs
-  -> (LedgerDB m l blk, OnDemandActions m l blk)
+  -> (LedgerDB m l blk, TestInternals m l blk)
 implMkLedgerDb h bss = (LedgerDB {
       getVolatileTip            = getEnvSTM  h implGetVolatileTip
     , getImmutableTip           = getEnvSTM  h implGetImmutableTip
@@ -163,8 +164,8 @@ mkInternals ::
      )
   => HandleArgs
   -> LedgerDBHandle m (ExtLedgerState blk) blk
-  -> OnDemandActions' m blk
-mkInternals bss h = OnDemandActions {
+  -> TestInternals' m blk
+mkInternals bss h = TestInternals {
       takeSnapshotNOW = \ds -> getEnv h $ \env -> do
           void . takeSnapshot
                 (configCodec . getExtLedgerCfg . ledgerDbCfg $ ldbCfg env)
@@ -173,14 +174,17 @@ mkInternals bss h = OnDemandActions {
                 ds
                 . anchorHandle
                 =<< readTVarIO (ldbSeq env)
-    , reapplyThenPushNOW = undefined
-    , destroySnapshot = \ds -> getEnv h $ \env -> do
-        deleteSnapshot (ldbHasFS env) ds
-    , truncateSnapshot = \ss -> getEnv h $ \env -> do
-        truncateFile (ldbHasFS env) (statePath ss)
-        truncateFile (ldbHasFS env) (tablesPath ss)
-    , flushNOW = pure ()
-    , closeLedgerDB = pure ()
+    , reapplyThenPushNOW = \blk -> getEnv h $ \env -> withRegistry $ \reg -> do
+          frk <- newForkerAtWellKnownPoint h reg VolatileTip
+          st <- atomically $ forkerGetLedgerState frk
+          tables <- forkerReadTables frk (getBlockKeySets blk)
+          let st' = tickThenReapply (ledgerDbCfg $ ldbCfg env) blk (st `withLedgerTables` tables)
+          forkerPush frk st' >> atomically (forkerCommit frk) >> forkerClose frk
+    , wipeLedgerDB = getEnv h $ destroySnapshots . ldbHasFS
+    , closeLedgerDB =
+       let LDBHandle tvar = h in
+         atomically (modifyTVar tvar (const LedgerDBClosed))
+    , truncateSnapshots = getEnv h $ implIntTruncateSnapshots . ldbHasFS
     }
   where
      takeSnapshot :: CodecConfig blk
@@ -191,14 +195,34 @@ mkInternals bss h = OnDemandActions {
                   -> m (Maybe (DiskSnapshot, RealPoint blk))
      takeSnapshot = case bss of
        InMemoryHandleArgs -> InMemory.takeSnapshot
-       LSMHandleArgs      -> LSM.takeSnapshot
+       --TODO LSMHandleArgs      -> LSM.takeSnapshot
 
-     (statePath, tablesPath) = case bss of
-       InMemoryHandleArgs -> (InMemory.snapshotToStatePath, InMemory.snapshotToTablePath)
-       LSMHandleArgs      -> undefined
+-- | Testing only! Destroy all snapshots in the DB.
+destroySnapshots :: Monad m => SomeHasFS m -> m ()
+destroySnapshots (SomeHasFS fs) = do
+  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
+  mapM_ ((\d -> do
+            isDir <- doesDirectoryExist fs d
+            if isDir
+              then removeDirectoryRecursive fs d
+              else removeFile fs d
+        ) . mkFsPath . (:[])) dirs
 
-truncateFile :: MonadThrow m => SomeHasFS m -> FsPath -> m ()
-truncateFile (SomeHasFS fs) p = withFile fs p (AppendMode AllowExisting) $ \h -> hTruncate fs h 0
+-- | Testing only! Truncate all snapshots in the DB.
+implIntTruncateSnapshots :: MonadThrow m => SomeHasFS m -> m ()
+implIntTruncateSnapshots (SomeHasFS fs) = do
+  dirs <- Set.lookupMax . Set.filter (isJust . snapshotFromPath) <$> listDirectory fs (mkFsPath [])
+  mapM_ (truncateRecursively . (:[])) dirs
+  where
+    truncateRecursively pre = do
+      dirs <- listDirectory fs (mkFsPath pre)
+      mapM_ (\d -> do
+            let d' = pre ++ [d]
+            isDir <- doesDirectoryExist fs $ mkFsPath d'
+            if isDir
+              then truncateRecursively d'
+              else withFile fs (mkFsPath d') (AppendMode AllowExisting) $ \h -> hTruncate fs h 0
+        ) dirs
 
 implGetVolatileTip ::
      (MonadSTM m, GetTip l)
@@ -288,8 +312,7 @@ implTryTakeSnapshot bss env mTime nrBlocks =
                 =<< readTVarIO (ldbSeq env)
       void $ trimSnapshots
                 (LedgerDBSnapshotEvent >$< ldbTracer env)
-                (ldbHasFS env)
-                (ldbHasFS env)
+                [ldbHasFS env]
                 (ldbSnapshotPolicy env)
       (`SnapCounters` 0) . Just <$> maybe getMonotonicTime (pure . snd) mTime
     else
@@ -300,9 +323,9 @@ implTryTakeSnapshot bss env mTime nrBlocks =
                   -> SomeHasFS m
                   -> StateRef m (ExtLedgerState blk)
                   -> m (Maybe (DiskSnapshot, RealPoint blk))
-     takeSnapshot a b c d = case bss of
-       InMemoryHandleArgs -> InMemory.takeSnapshot a b c Nothing d
-       LSMHandleArgs      -> LSM.takeSnapshot a b c Nothing d
+     takeSnapshot config trcr fs ref = case bss of
+       InMemoryHandleArgs -> InMemory.takeSnapshot config trcr fs Nothing ref
+       --TODO LSMHandleArgs      -> LSM.takeSnapshot config trcr fs Nothing ref
 
 -- In the first version of the LedgerDB for UTxO-HD, there is a need to
 -- periodically flush the accumulated differences to the disk. However, in the
