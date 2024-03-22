@@ -6,6 +6,7 @@ import           Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
 import           Ouroboros.Consensus.Cardano.Block
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Test.Tasty
 import           Test.Tasty.HUnit
 import           Test.Util.TestEnv
@@ -50,8 +51,12 @@ testAnalyserConfig :: DBAnalyserConfig
 testAnalyserConfig =
   DBAnalyserConfig {
       dbDir       = chainDB
+    , ssdDir      = chainDB
+    , stateInSSD  = False
+    , tablesInSSD = False
+    , bsArgs      = InMemoryBackingStoreArgs
     , verbose     = False
-    , selectDB    = SelectChainDB
+    , selectDB    = SelectChainDB Nothing
     , validation  = Just ValidateAllBlocks
     , analysis    = CountBlocks
     , confLimit   = Unlimited

@@ -8,36 +8,32 @@ module Cardano.Tools.DBAnalyser.Run (analyse) where
 import           Cardano.Tools.DBAnalyser.Analysis
 import           Cardano.Tools.DBAnalyser.HasAnalysis
 import           Cardano.Tools.DBAnalyser.Types
-import           Control.Monad.Except (ExceptT, runExceptT)
-import           Control.Monad.Trans (MonadTrans (..))
 import           Control.Tracer (Tracer (..), nullTracer)
-import qualified Debug.Trace as Debug
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Basics
+import           Ouroboros.Consensus.Ledger.Extended
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
                      (HasTxs)
-import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Node as Node
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args (fromChainDbArgs)
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-<<<<<<< HEAD
-import           Ouroboros.Consensus.Storage.LedgerDB (readSnapshot)
-import           Ouroboros.Consensus.Storage.Serialisation (DecodeDisk (..))
-=======
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as LedgerDB.V1
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
-import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as LedgerDB.V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Snapshots as LedgerDB.V1
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
+import           System.FilePath
+import           System.FS.API
+import           System.FS.IO
 import           System.IO
-
 
 {-------------------------------------------------------------------------------
   Analyse
@@ -55,7 +51,7 @@ analyse ::
   => DBAnalyserConfig
   -> Args blk
   -> IO (Maybe AnalysisResult)
-analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbose} args =
+analyse DBAnalyserConfig{analysis, confLimit, ssdDir, stateInSSD, tablesInSSD, dbDir, selectDB, validation, verbose, bsArgs} args =
     withRegistry $ \registry -> do
       lock           <- newMVar ()
       chainDBTracer  <- mkTracer lock verbose
@@ -63,77 +59,97 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
       ProtocolInfo { pInfoInitLedger = genesisLedger, pInfoConfig = cfg } <-
         mkProtocolInfo args
       let chunkInfo  = Node.nodeImmutableDbChunkInfo (configStorage cfg)
-<<<<<<< HEAD
+          bss = LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize $ bsArgs
+          flavargs = LedgerDB.LedgerDbFlavorArgsV1 bss
           args' =
-            Node.mkChainDbArgs
-              registry InFuture.dontCheck cfg genesisLedger chunkInfo $
-            ChainDB.defaultArgs (Node.stdMkChainDbHasFS dbDir)
-=======
-          k          = configSecurityParam cfg
-          diskPolicy = LedgerDB.defaultDiskPolicy k LedgerDB.DefaultSnapshotInterval
-          args' =
-            Node.mkChainDbArgs
-              registry InFuture.dontCheck cfg genesisLedger chunkInfo $
-            ChainDB.defaultArgs (Node.stdMkChainDbHasFS dbDir) diskPolicy LedgerDB.V1.InMemoryBackingStore
->>>>>>> d4e689651 (UTxO-HD ONE COMMIT)
-          chainDbArgs = args' {
-              ChainDB.cdbImmutableDbValidation = immValidationPolicy
-            , ChainDB.cdbVolatileDbValidation  = volValidationPolicy
-            , ChainDB.cdbTracer                = chainDBTracer
-            }
-          (immutableDbArgs, _, _, _) = fromChainDbArgs chainDbArgs
-          _ledgerDbFS = ChainDB.cdbHasFSLgrDB chainDbArgs -- TODO
+            ChainDB.completeChainDbArgs
+              registry
+              InFuture.dontCheck
+              cfg
+              genesisLedger
+              chunkInfo
+              (const True)
+              (Node.stdMkChainDbHasFS dbDir)
+              (Node.stdMkChainDbHasFS ssdDir)
+              flavargs $
+            ChainDB.defaultArgs
+          chainDbArgs = maybeValidateAll $ ChainDB.updateTracer chainDBTracer args'
+          immutableDbArgs = ChainDB.cdbImmDbArgs chainDbArgs
+          normalFs = SomeHasFS $ ioHasFS $ MountPoint (dbDir  </> "ledger")
+          ssdFs    = SomeHasFS $ ioHasFS $ MountPoint (ssdDir </> "ledger")
+          ldbArgs = ChainDB.cdbLgrDbArgs args'
 
       case selectDB of
         SelectImmutableDB initializeFrom -> do
           -- TODO we need to check if the snapshot exists. If not, print an
           -- error and ask the user if she wanted to create a snapshot first and
           -- how to do it.
-          eInitLedger <- runExceptT $ case initializeFrom of
-            Nothing       -> do
-              (ledgerDB, intLedgerDB) <- (undefined :: ExceptT Int m (LedgerDB.LedgerDB' m blk, LedgerDB.Internals' m blk)) -- TODO
-              pure (forgetLedgerTables genesisLedger, ledgerDB, intLedgerDB)
-            Just _snapshot -> do
-              (ledgerDB, intLedgerDB) <- undefined -- TODO
-              st <- lift $ atomically $ LedgerDB.getVolatileTip ledgerDB
-              pure (st, ledgerDB, intLedgerDB)
-              -- TODO @readSnapshot@ has type @ExceptT ReadIncrementalErr m
-              -- (ExtLedgerState blk)@ but it also throws exceptions! This makes
-              -- error handling more challenging than it ought to be. Maybe we
-              -- can enrich the error that @readSnapthot@ return, so that it can
-              -- contain the @HasFS@ errors as well.
-          (initLedger, ledgerDB, intLedgerDB) <- either (error . show) pure eInitLedger
-          -- This marker divides the "loading" phase of the program, where the
-          -- system is principally occupied with reading snapshot data from
-          -- disk, from the "processing" phase, where we are streaming blocks
-          -- and running the ledger processing on them.
-          Debug.traceMarkerIO "SNAPSHOT_LOADED"
+          (initHeaderState, newStartFrom, replayPoint) <- either (error . show) id <$> case initializeFrom of
+            Nothing       -> pure $ Right $ (headerState genesisLedger, Nothing, GenesisPoint)
+            Just snapshot -> do
+              res <- LedgerDB.V1.loadSnapshot nullTracer bsArgs (configCodec cfg)
+                (if stateInSSD then ssdFs else normalFs)
+                (if tablesInSSD then ssdFs else normalFs)
+                ssdFs
+                snapshot
+              case res of
+                Left err -> pure $ Left err
+                Right ((dbch, bs), _) -> do
+                  LedgerDB.V1.bsClose bs
+                  let st = LedgerDB.V1.current $ LedgerDB.V1.anchorlessChangelog dbch
+                  pure $ Right $ ( headerState st
+                                 , Just snapshot
+                                 , castPoint $ getTip st
+                                 )
+
           ImmutableDB.withDB (ImmutableDB.openDB immutableDbArgs runWithTempRegistry) $ \immutableDB -> do
+            -- This marker divides the "loading" phase of the program, where the
+            -- system is principally occupied with reading snapshot data from
+            -- disk, from the "processing" phase, where we are streaming blocks
+            -- and running the ledger processing on them.
             result <- runAnalysis analysis $ AnalysisEnv {
                 cfg
-              , initLedger
+              , initHeaderState
               , db = Left immutableDB
               , registry
               , limit = confLimit
               , tracer = analysisTracer
-              , ledgerDB
-              , intLedgerDB
+              , ledgerDbArgs = ldbArgs { LedgerDB.lgrStartSnapshot = newStartFrom }
+              , replayPoint
               }
             tipPoint <- atomically $ ImmutableDB.getTipPoint immutableDB
             putStrLn $ "ImmutableDB tip: " ++ show tipPoint
             pure result
-        SelectChainDB -> do
-          (ledgerDB, intLedgerDB) <- undefined -- TODO
+        SelectChainDB initializeFrom -> do
+
+          (initHeaderState, newStartFrom, replayPoint) <- either (error . show) id <$> case initializeFrom of
+            Nothing       -> pure $ Right $ (headerState genesisLedger, Nothing, GenesisPoint)
+            Just snapshot -> do
+              res <- LedgerDB.V1.loadSnapshot nullTracer bsArgs (configCodec cfg)
+                (if stateInSSD then ssdFs else normalFs)
+                (if tablesInSSD then ssdFs else normalFs)
+                ssdFs
+                snapshot
+              case res of
+                Left err -> pure $ Left err
+                Right ((dbch, bs), _) -> do
+                  LedgerDB.V1.bsClose bs
+                  let st = LedgerDB.V1.current $ LedgerDB.V1.anchorlessChangelog dbch
+                  pure $ Right $ ( headerState st
+                                 , Just snapshot
+                                 , castPoint $ getTip st
+                                 )
+
           ChainDB.withDB chainDbArgs $ \chainDB -> do
             result <- runAnalysis analysis $ AnalysisEnv {
                 cfg
-              , initLedger = forgetLedgerTables genesisLedger
+              , initHeaderState
               , db = Right chainDB
               , registry
               , limit = confLimit
               , tracer = analysisTracer
-              , ledgerDB
-              , intLedgerDB
+              , ledgerDbArgs = ldbArgs { LedgerDB.lgrStartSnapshot = newStartFrom }
+              , replayPoint
               }
             tipPoint <- atomically $ ChainDB.getTipPoint chainDB
             putStrLn $ "ChainDB tip: " ++ show tipPoint
@@ -150,14 +166,9 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
       where
         withLock = bracket_ (takeMVar lock) (putMVar lock ())
 
-    immValidationPolicy = case (analysis, validation) of
-      (_, Just ValidateAllBlocks)      -> ImmutableDB.ValidateAllChunks
-      (_, Just MinimumBlockValidation) -> ImmutableDB.ValidateMostRecentChunk
-      (OnlyValidation, _ )             -> ImmutableDB.ValidateAllChunks
-      _                                -> ImmutableDB.ValidateMostRecentChunk
+    maybeValidateAll = case (analysis, validation) of
+      (_, Just ValidateAllBlocks)      -> ChainDB.ensureValidateAll
+      (_, Just MinimumBlockValidation) -> id
+      (OnlyValidation, _ )             -> ChainDB.ensureValidateAll
+      _                                -> id
 
-    volValidationPolicy = case (analysis, validation) of
-      (_, Just ValidateAllBlocks)      -> VolatileDB.ValidateAll
-      (_, Just MinimumBlockValidation) -> VolatileDB.NoValidation
-      (OnlyValidation, _ )             -> VolatileDB.ValidateAll
-      _                                -> VolatileDB.NoValidation

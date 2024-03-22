@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE CPP                 #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -24,6 +25,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
 import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.ResourceRegistry (runWithTempRegistry,
                      withRegistry)
 import           Prelude hiding (truncate)
@@ -44,14 +46,15 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
     let
       fs = Node.stdMkChainDbHasFS dbDir (RelativeMountPoint "immutable")
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage config)
-      immutableDBArgs :: ImmutableDbArgs Identity IO block
+      immutableDBArgs :: Complete ImmutableDbArgs IO block
       immutableDBArgs =
-        (ImmutableDB.defaultArgs fs)
+        (ImmutableDB.defaultArgs @IO)
           { immTracer = immutableDBTracer
           , immRegistry = registry
           , immCheckIntegrity = nodeCheckIntegrity (configStorage config)
           , immCodecConfig = configCodec config
           , immChunkInfo = chunkInfo
+          , immHasFS = fs
           }
 
     withDB immutableDBArgs $ \(immutableDB, internal) -> do
