@@ -57,6 +57,8 @@ const sidebars = {
       items: [
         'for-developers/utxo-hd/Overview',
         'for-developers/utxo-hd/future-ledger-hd',
+        'for-developers/utxo-hd/for-developers',
+        'for-developers/utxo-hd/for-public',
       ]
     }
   ]
