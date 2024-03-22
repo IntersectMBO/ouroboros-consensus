@@ -225,6 +225,7 @@ initLedgerDB s c = do
         , lgrFlavorArgs         = LedgerDbFlavorArgsV1 $ V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs
         , lgrConfig             = LedgerDB.configLedgerDb $ testCfg s
         , lgrRegistry           = reg
+        , lgrStartSnapshot      = Nothing
         }
   ldb <- fst <$> LedgerDB.openDB
     args
