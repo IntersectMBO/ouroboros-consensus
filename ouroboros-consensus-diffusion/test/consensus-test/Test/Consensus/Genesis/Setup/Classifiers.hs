@@ -24,7 +24,7 @@ import           Ouroboros.Consensus.Block.Abstract (SlotNo (SlotNo),
                      withOrigin)
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientException (EmptyBucket))
+                     (ChainSyncClientException (DensityTooLow, EmptyBucket))
 import           Ouroboros.Consensus.Util.IOLike (SomeException, fromException)
 import           Ouroboros.Network.AnchoredFragment (anchor, anchorToSlotNo,
                      headSlot)
@@ -180,8 +180,9 @@ resultClassifiers GenesisTest{gtSchedule} RunGenesisTestResult{rgtrStateView} =
       (\(_, exn) -> fromException exn == Just EmptyBucket)
       adversariesExceptions
 
-    -- TODO: complete when GDD Exception is known
-    adversariesKilledByGDDC = 0
+    adversariesKilledByGDDC = fromIntegral $ length $ filter
+      (\(_, exn) -> fromException exn == Just DensityTooLow)
+      adversariesExceptions
 
     adversariesKilledByTimeoutC = fromIntegral $ length $ filter
       (\(_, exn) -> case fromException exn of
