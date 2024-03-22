@@ -176,11 +176,12 @@ instance ConfigSupportsNode m => ConfigSupportsNode (DualBlock m a) where
 -- | This is only used for block production
 dualTopLevelConfigMain :: TopLevelConfig (DualBlock m a) -> TopLevelConfig m
 dualTopLevelConfigMain TopLevelConfig{..} = TopLevelConfig{
-      topLevelConfigProtocol = topLevelConfigProtocol
-    , topLevelConfigLedger   = dualLedgerConfigMain  topLevelConfigLedger
-    , topLevelConfigBlock    = dualBlockConfigMain   topLevelConfigBlock
-    , topLevelConfigCodec    = dualCodecConfigMain   topLevelConfigCodec
-    , topLevelConfigStorage  = dualStorageConfigMain topLevelConfigStorage
+      topLevelConfigProtocol    = topLevelConfigProtocol
+    , topLevelConfigLedger      = dualLedgerConfigMain  topLevelConfigLedger
+    , topLevelConfigBlock       = dualBlockConfigMain   topLevelConfigBlock
+    , topLevelConfigCodec       = dualCodecConfigMain   topLevelConfigCodec
+    , topLevelConfigStorage     = dualStorageConfigMain topLevelConfigStorage
+    , topLevelConfigCheckpoints = castCheckpointsMap topLevelConfigCheckpoints
     }
 
 {-------------------------------------------------------------------------------

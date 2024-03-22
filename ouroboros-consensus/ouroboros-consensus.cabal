@@ -494,6 +494,7 @@ test-suite consensus-test
     Test.Consensus.HardFork.History
     Test.Consensus.HardFork.Infra
     Test.Consensus.HardFork.Summary
+    Test.Consensus.HeaderValidation
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Fairness
     Test.Consensus.Mempool.Fairness.TestBlock

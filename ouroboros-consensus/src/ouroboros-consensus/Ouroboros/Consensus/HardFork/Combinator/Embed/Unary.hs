@@ -264,6 +264,7 @@ instance Isomorphic TopLevelConfig where
         (project      $ configBlock     tlc)
         (project      $ configCodec     tlc)
         (project      $ configStorage   tlc)
+        emptyCheckpointsMap
     where
       ei :: EpochInfo (Except PastHorizonException)
       ei = noHardForksEpochInfo $ project tlc
@@ -294,6 +295,7 @@ instance Isomorphic TopLevelConfig where
         (inject       $ configBlock     tlc)
         (inject       $ configCodec     tlc)
         (inject       $ configStorage   tlc)
+        emptyCheckpointsMap
     where
       eraParams = getEraParams tlc
 

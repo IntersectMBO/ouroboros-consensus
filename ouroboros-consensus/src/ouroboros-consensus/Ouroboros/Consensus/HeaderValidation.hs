@@ -60,11 +60,12 @@ import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Codec.Serialise (decode, encode)
-import           Control.Monad (unless)
+import           Control.Monad (unless, when)
 import           Control.Monad.Except (Except, runExcept, throwError,
                      withExcept)
 import           Data.Coerce
 import           Data.Kind (Type)
+import qualified Data.Map.Strict as Map
 import           Data.Proxy
 import           Data.Void (Void)
 import           GHC.Generics (Generic)
@@ -74,6 +75,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Ticked
+import           Ouroboros.Consensus.Util (whenJust)
 import           Ouroboros.Consensus.Util.Assert
 import qualified Ouroboros.Consensus.Util.CBOR as Util.CBOR
 import           Ouroboros.Network.AnchoredSeq (Anchorable (..))
@@ -229,6 +231,13 @@ data HeaderEnvelopeError blk =
     -- We record the current tip as well as the prev hash of the new block.
   | UnexpectedPrevHash !(WithOrigin (HeaderHash blk)) !(ChainHash blk)
 
+    -- | The block at the given block number has a hash which does not match the
+    -- expected checkpoint hash.
+    --
+    -- > CheckpointMismatch blockNo expected actual
+    --
+  | CheckpointMismatch !BlockNo !(HeaderHash blk) !(HeaderHash blk)
+
     -- | Block specific envelope error
   | OtherHeaderEnvelopeError !(OtherHeaderEnvelopeError blk)
   deriving (Generic)
@@ -243,10 +252,11 @@ castHeaderEnvelopeError :: ( HeaderHash blk ~ HeaderHash blk'
                            )
                         => HeaderEnvelopeError blk -> HeaderEnvelopeError blk'
 castHeaderEnvelopeError = \case
-    OtherHeaderEnvelopeError err         -> OtherHeaderEnvelopeError err
-    UnexpectedBlockNo  expected actual   -> UnexpectedBlockNo  expected actual
-    UnexpectedSlotNo   expected actual   -> UnexpectedSlotNo   expected actual
-    UnexpectedPrevHash oldTip   prevHash -> UnexpectedPrevHash oldTip (castHash prevHash)
+    OtherHeaderEnvelopeError err           -> OtherHeaderEnvelopeError err
+    UnexpectedBlockNo  expected actual     -> UnexpectedBlockNo  expected actual
+    UnexpectedSlotNo   expected actual     -> UnexpectedSlotNo   expected actual
+    UnexpectedPrevHash oldTip   prevHash   -> UnexpectedPrevHash oldTip (castHash prevHash)
+    CheckpointMismatch bNo expected actual -> CheckpointMismatch bNo expected actual
 
 -- | Ledger-independent envelope validation (block, slot, hash)
 class ( HasHeader (Header blk)
@@ -310,6 +320,7 @@ validateEnvelope cfg ledgerView oldTip hdr = do
       throwError $ UnexpectedSlotNo expectedSlotNo actualSlotNo
     unless (checkPrevHash' (annTipHash <$> oldTip) actualPrevHash) $
       throwError $ UnexpectedPrevHash (annTipHash <$> oldTip) actualPrevHash
+    validateIfCheckpoint (topLevelConfigCheckpoints cfg) hdr
     withExcept OtherHeaderEnvelopeError $
       additionalEnvelopeChecks cfg ledgerView hdr
   where
@@ -345,6 +356,16 @@ validateEnvelope cfg ledgerView oldTip hdr = do
                                                  (annTipBlockNo tip)
 
     p = Proxy @blk
+
+validateIfCheckpoint ::
+     HasHeader (Header blk)
+  => CheckpointsMap blk
+  -> Header blk
+  -> Except (HeaderEnvelopeError blk) ()
+validateIfCheckpoint checkpointsMap hdr =
+    whenJust (Map.lookup (blockNo hdr) $ unCheckpointsMap checkpointsMap) $
+      \checkpoint -> when (headerHash hdr /= checkpoint) $
+        throwError $ CheckpointMismatch (blockNo hdr) checkpoint (headerHash hdr)
 
 {-------------------------------------------------------------------------------
   Errors

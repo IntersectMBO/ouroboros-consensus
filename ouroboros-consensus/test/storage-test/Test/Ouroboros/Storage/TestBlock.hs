@@ -660,8 +660,9 @@ mkTestConfig k ChunkSize { chunkCanContainEBB, numRegularBlocks } =
             testBlockEBBsAllowed  = chunkCanContainEBB
           , testBlockNumCoreNodes = numCoreNodes
           }
-      , topLevelConfigCodec   = TestBlockCodecConfig
-      , topLevelConfigStorage = TestBlockStorageConfig
+      , topLevelConfigCodec       = TestBlockCodecConfig
+      , topLevelConfigStorage     = TestBlockStorageConfig
+      , topLevelConfigCheckpoints = emptyCheckpointsMap
       }
   where
     slotLength :: SlotLength

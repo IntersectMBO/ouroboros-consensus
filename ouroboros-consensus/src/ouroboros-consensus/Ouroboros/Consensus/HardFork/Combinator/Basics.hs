@@ -208,7 +208,12 @@ distribTopLevelConfig ei tlc =
              (completeLedgerConfig'    ei cfgLedger)
              cfgBlock
              cfgCodec
-             cfgStorage))
+             cfgStorage
+             -- topLevelConfigCheckpoints is only used in validateEnvelope,
+             -- where it comes from the TopLevelConfig of the HardForkBlock.
+             --
+             -- The checkpoints of the underlying blocks are not used.
+             emptyCheckpointsMap))
     `hap`
       (getPerEraConsensusConfig $
          hardForkConsensusConfigPerEra (configConsensus tlc))

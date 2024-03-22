@@ -590,10 +590,11 @@ singleNodeTestConfigWith codecConfig storageConfig k = TopLevelConfig {
         , bftSignKey = SignKeyMockDSIGN 0
         , bftVerKeys = Map.singleton (CoreId (CoreNodeId 0)) (VerKeyMockDSIGN 0)
         }
-    , topLevelConfigLedger  = eraParams
-    , topLevelConfigBlock   = TestBlockConfig numCoreNodes
-    , topLevelConfigCodec   = codecConfig
-    , topLevelConfigStorage = storageConfig
+    , topLevelConfigLedger      = eraParams
+    , topLevelConfigBlock       = TestBlockConfig numCoreNodes
+    , topLevelConfigCodec       = codecConfig
+    , topLevelConfigStorage     = storageConfig
+    , topLevelConfigCheckpoints = emptyCheckpointsMap
     }
   where
     slotLength :: SlotLength

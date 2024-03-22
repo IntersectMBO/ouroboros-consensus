@@ -33,6 +33,7 @@ import           Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import qualified Ouroboros.Consensus.Cardano.CanHardFork as Consensus
 import           Ouroboros.Consensus.Cardano.Condense ()
+import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.HardFork.Combinator.Condense ()
 import qualified Ouroboros.Consensus.Mempool as Mempool
 
@@ -296,6 +297,7 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
                   Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
           }
           transitionLedgerConfig
+          emptyCheckpointsMap
         )
 
 ------------------------------------------------------------------------------

@@ -102,6 +102,7 @@ instance ( ConsensusProtocol (BlockProtocol blk)
          , NoThunks (CodecConfig   blk)
          , NoThunks (LedgerConfig  blk)
          , NoThunks (StorageConfig blk)
+         , NoThunks (HeaderHash    blk)
          ) => NoThunks (ExtLedgerCfg blk)
 
 type instance LedgerCfg (ExtLedgerState blk) = ExtLedgerCfg blk

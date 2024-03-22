@@ -235,10 +235,11 @@ topConfig = TopLevelConfig {
                        , (CoreId (CoreNodeId 1), VerKeyMockDSIGN 1)
                        ]
       }
-  , topLevelConfigLedger  = eraParams
-  , topLevelConfigBlock   = TB.TestBlockConfig numCoreNodes
-  , topLevelConfigCodec   = TB.TestBlockCodecConfig
-  , topLevelConfigStorage = TB.TestBlockStorageConfig
+  , topLevelConfigLedger      = eraParams
+  , topLevelConfigBlock       = TB.TestBlockConfig numCoreNodes
+  , topLevelConfigCodec       = TB.TestBlockCodecConfig
+  , topLevelConfigStorage     = TB.TestBlockStorageConfig
+  , topLevelConfigCheckpoints = emptyCheckpointsMap
   }
   where
     eraParams :: HardFork.EraParams
