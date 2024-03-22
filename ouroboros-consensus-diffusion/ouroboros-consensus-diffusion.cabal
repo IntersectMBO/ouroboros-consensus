@@ -244,8 +244,8 @@ test-suite consensus-test
     , base
     , binary
     , bytestring
-    , cardano-crypto-class
     , cardano-binary
+    , cardano-crypto-class
     , cardano-slotting
     , containers
     , contra-tracer
@@ -277,9 +277,9 @@ test-suite consensus-test
     , tasty
     , tasty-hunit
     , tasty-quickcheck
-    , transformers-base
     , temporary
     , time
+    , transformers-base
     , tree-diff
     , typed-protocols
     , typed-protocols-examples

@@ -137,8 +137,8 @@ library
     , containers                    >=0.5    && <0.7
     , cryptonite                    >=0.25   && <0.31
     , deepseq
-    , formatting                    >=6.3    && <7.3
     , diff-containers               >=1.1
+    , formatting                    >=6.3    && <7.3
     , measures
     , microlens
     , mtl
@@ -427,7 +427,6 @@ test-suite cardano-test
     , cardano-ledger-alonzo
     , cardano-ledger-alonzo-test
     , cardano-ledger-api
-    , cardano-ledger-byron
     , cardano-ledger-babbage-test
     , cardano-ledger-binary
     , cardano-ledger-byron
@@ -441,7 +440,7 @@ test-suite cardano-test
     , constraints
     , containers
     , contra-tracer
-    , diff-containers                                               >=1.1
+    , diff-containers                                                                                     >=1.1
     , filepath
     , microlens
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-testlib}
@@ -540,7 +539,6 @@ library unstable-cardano-tools
     , microlens
     , mtl
     , network
-    , transformers
     , nothunks
     , ouroboros-consensus            ^>=0.16
     , ouroboros-consensus-cardano
@@ -569,9 +567,9 @@ executable db-analyser
     , optparse-applicative
     , ouroboros-consensus
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
+    , sop-core
     , text
     , with-utf8
-    , sop-core
 
   -- NOTE: these options should match the ones in the cardano-node.
   --
@@ -616,8 +614,8 @@ executable db-truncater
     , optparse-applicative
     , ouroboros-consensus
     , ouroboros-consensus-cardano:{ouroboros-consensus-cardano, unstable-cardano-tools}
-    , with-utf8
     , sop-core
+    , with-utf8
 
   other-modules:
     DBAnalyser.Parsers
@@ -644,7 +642,7 @@ test-suite tools-test
   build-depends:
     , base
     , ouroboros-consensus-cardano
-    , ouroboros-consensus:{ouroboros-consensus,unstable-consensus-testlib}
+    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , tasty
     , tasty-hunit
     , unstable-cardano-tools

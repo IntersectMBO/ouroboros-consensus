@@ -655,16 +655,16 @@ test-suite storage-test
     Test.Ouroboros.Storage.ImmutableDB.Primary
     Test.Ouroboros.Storage.ImmutableDB.StateMachine
     Test.Ouroboros.Storage.LedgerDB
+    Test.Ouroboros.Storage.LedgerDB.Serialisation
+    Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy
+    Test.Ouroboros.Storage.LedgerDB.StateMachine
+    Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Lockstep
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Mock
     Test.Ouroboros.Storage.LedgerDB.V1.BackingStore.Registry
-    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.Unit
     Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.QuickCheck
-    Test.Ouroboros.Storage.LedgerDB.StateMachine
-    Test.Ouroboros.Storage.LedgerDB.StateMachine.TestBlock
-    Test.Ouroboros.Storage.LedgerDB.Serialisation
-    Test.Ouroboros.Storage.LedgerDB.SnapshotPolicy
+    Test.Ouroboros.Storage.LedgerDB.V1.DbChangelog.Unit
     Test.Ouroboros.Storage.Orphans
     Test.Ouroboros.Storage.TestBlock
     Test.Ouroboros.Storage.VolatileDB
@@ -680,12 +680,11 @@ test-suite storage-test
     , bytestring
     , cardano-binary
     , cardano-crypto-class
-    , cardano-slotting
-    , cborg
     , cardano-ledger-binary:testlib
+    , cardano-slotting
     , cardano-strict-containers
+    , cborg
     , constraints
-    , strict-stm
     , containers
     , contra-tracer
     , diff-containers                                >=1.1
@@ -711,6 +710,7 @@ test-suite storage-test
     , serialise
     , sop-core
     , strict-mvar
+    , strict-stm
     , tasty
     , tasty-hunit
     , tasty-quickcheck
