@@ -35,9 +35,9 @@ import           Data.Bifunctor
 import           Data.Either (partitionEithers)
 import           Data.Functor.Product
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Constraint
 import           Data.SOP.InPairs (InPairs (..))
 import           Data.SOP.Match
-import           Data.SOP.Constraint
 import           Data.SOP.Strict
 import           Data.SOP.Telescope (Telescope (..))
 import qualified Data.SOP.Telescope as Telescope

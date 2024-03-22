@@ -1,7 +1,7 @@
-{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveAnyClass     #-}
+{-# LANGUAGE FlexibleInstances  #-}
+{-# LANGUAGE NamedFieldPuns     #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE NamedFieldPuns    #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -16,8 +16,8 @@ import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util.MonadSTM.NormalForm
 import           Ouroboros.Consensus.Util.NormalForm.StrictMVar
-import           System.FS.Sim.FsTree
 import           System.FS.API.Types
+import           System.FS.Sim.FsTree
 import           System.FS.Sim.MockFS
 
 instance NoThunks a => NoThunks (StrictSVar (IOSim s) a) where

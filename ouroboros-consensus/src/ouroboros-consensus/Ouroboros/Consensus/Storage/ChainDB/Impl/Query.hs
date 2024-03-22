@@ -55,7 +55,7 @@ import           Ouroboros.Consensus.Util.STM (WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (MaxSlotNo, maxSlotNoFromWithOrigin)
-import Ouroboros.Network.Protocol.LocalStateQuery.Type
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 -- | Return the last @k@ headers.
 --

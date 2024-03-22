@@ -42,7 +42,7 @@ import           Prelude hiding (lookup)
 import           System.FS.API
                      (HasFS (createDirectory, doesDirectoryExist, doesFileExist, mkFsErrorPath),
                      SomeHasFS (SomeHasFS), withFile)
-import System.FS.API.Lazy (hGetAll, hPutAll)
+import           System.FS.API.Lazy (hGetAll, hPutAll)
 import           System.FS.API.Types (AllowExisting (MustBeNew), FsErrorPath,
                      FsPath (fsPathToList), OpenMode (ReadMode, WriteMode),
                      fsPathFromList)

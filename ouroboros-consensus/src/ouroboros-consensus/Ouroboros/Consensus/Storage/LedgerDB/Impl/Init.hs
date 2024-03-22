@@ -143,7 +143,7 @@ initialize replayTracer
            dbIface
            fromSnapshot =
     case fromSnapshot of
-      Nothing -> listSnapshots hasFS >>= tryNewestFirst id
+      Nothing   -> listSnapshots hasFS >>= tryNewestFirst id
       Just snap -> tryNewestFirst id [snap]
   where
     InitDB {initFromGenesis, initFromSnapshot, closeDb} = dbIface

@@ -1,4 +1,3 @@
-{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
@@ -9,6 +8,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE NamedFieldPuns             #-}
+{-# LANGUAGE NumericUnderscores         #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE StandaloneKindSignatures   #-}
@@ -62,9 +62,9 @@ import           Ouroboros.Consensus.Util.CallStack
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import qualified Ouroboros.Network.AnchoredSeq as AS
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Prelude hiding (read)
 import           System.FS.API
-import Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 {-------------------------------------------------------------------------------
   The LedgerDBEnv

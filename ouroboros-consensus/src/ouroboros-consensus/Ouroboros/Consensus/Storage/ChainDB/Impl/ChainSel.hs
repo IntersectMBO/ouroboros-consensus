@@ -87,7 +87,7 @@ import           Ouroboros.Network.AnchoredFragment (Anchor, AnchoredFragment,
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Ouroboros.Network.AnchoredSeq as AS
-import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target(..))
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
 
 -- | Perform the initial chain selection based on the tip of the ImmutableDB
 -- and the contents of the VolatileDB.

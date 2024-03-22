@@ -1,9 +1,9 @@
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE CPP                 #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE ViewPatterns        #-}
 
 module Cardano.Tools.DBTruncater.Run (truncate) where
@@ -24,8 +24,8 @@ import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB, Iterator,
                      IteratorResult (..))
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Impl
-import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Args
+import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (runWithTempRegistry,
                      withRegistry)
 import           Prelude hiding (truncate)

@@ -9,9 +9,9 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
-import           Ouroboros.Consensus.Ticked
 import           Ouroboros.Consensus.Ledger.Tables.Utils (forgetLedgerTables)
 import           Ouroboros.Consensus.Protocol.Abstract
+import           Ouroboros.Consensus.Ticked
 
 -- | Link protocol to ledger
 class ( BlockSupportsProtocol blk

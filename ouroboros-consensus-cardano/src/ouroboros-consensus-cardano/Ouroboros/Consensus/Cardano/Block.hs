@@ -70,9 +70,9 @@ module Ouroboros.Consensus.Cardano.Block (
   , EraMismatch (..)
   ) where
 
+import           Data.Kind
 import           Data.SOP.BasicFunctors
-import Data.SOP.Functors
-import Data.Kind
+import           Data.SOP.Functors
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block (BlockProtocol)
 import           Ouroboros.Consensus.Byron.Ledger.Block (ByronBlock)

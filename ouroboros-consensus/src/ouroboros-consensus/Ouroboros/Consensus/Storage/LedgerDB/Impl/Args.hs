@@ -43,20 +43,20 @@ type LedgerDbArgs ::
   -> Type
   -> Type
 data LedgerDbArgs f m blk = LedgerDbArgs {
-      lgrSnapshotPolicyArgs  :: SnapshotPolicyArgs
-    , lgrGenesis             :: HKD f (m (ExtLedgerState blk ValuesMK))
-    , lgrHasFS               :: HKD f (SomeHasFS m)
-    , lgrSSDHasFS            :: HKD f (SomeHasFS m)
-    , lgrSnapshotTablesSSD   :: Bool
-    , lgrSnapshotStateSSD    :: Bool
-    , lgrConfig              :: HKD f (LedgerDbCfg (ExtLedgerState blk))
-    , lgrTracer              :: Tracer m (TraceLedgerDBEvent blk)
-    , lgrFlavorArgs          :: LedgerDbFlavorArgs f m
-    , lgrRegistry            :: HKD f (ResourceRegistry m)
+      lgrSnapshotPolicyArgs :: SnapshotPolicyArgs
+    , lgrGenesis            :: HKD f (m (ExtLedgerState blk ValuesMK))
+    , lgrHasFS              :: HKD f (SomeHasFS m)
+    , lgrSSDHasFS           :: HKD f (SomeHasFS m)
+    , lgrSnapshotTablesSSD  :: Bool
+    , lgrSnapshotStateSSD   :: Bool
+    , lgrConfig             :: HKD f (LedgerDbCfg (ExtLedgerState blk))
+    , lgrTracer             :: Tracer m (TraceLedgerDBEvent blk)
+    , lgrFlavorArgs         :: LedgerDbFlavorArgs f m
+    , lgrRegistry           :: HKD f (ResourceRegistry m)
       -- | If provided, the ledgerdb will start using said snapshot and fallback
       -- to genesis. It will ignore any other existing snapshots. Useful for
       -- db-analyser.
-    , lgrStartSnapshot       :: Maybe DiskSnapshot
+    , lgrStartSnapshot      :: Maybe DiskSnapshot
     }
 
 -- | Default arguments

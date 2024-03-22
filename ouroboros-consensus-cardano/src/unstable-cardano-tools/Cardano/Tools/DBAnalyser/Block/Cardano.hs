@@ -23,7 +23,6 @@ module Cardano.Tools.DBAnalyser.Block.Cardano (
   , CardanoBlockArgs
   ) where
 
-import Data.SOP.Functors
 import qualified Cardano.Chain.Genesis as Byron.Genesis
 import qualified Cardano.Chain.Update as Byron.Update
 import           Cardano.Crypto (RequiresNetworkMagic (..))
@@ -46,6 +45,7 @@ import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           Data.SOP.BasicFunctors
+import           Data.SOP.Functors
 import           Data.SOP.Strict
 import qualified Data.SOP.Telescope as Telescope
 import           Data.String (IsString (..))

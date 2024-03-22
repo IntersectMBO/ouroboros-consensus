@@ -37,10 +37,10 @@ import           Ouroboros.Consensus.Storage.LedgerDB.API.Config
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog hiding
                      (tip)
 import           Ouroboros.Consensus.Util
-import           Test.Util.Orphans.Arbitrary ()
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
+import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.QuickCheck
 import           Test.Util.TestBlock
 

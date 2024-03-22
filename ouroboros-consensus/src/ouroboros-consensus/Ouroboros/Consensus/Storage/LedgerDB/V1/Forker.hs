@@ -18,12 +18,12 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
   , acquireAtWellKnownPoint
   ) where
 
-import qualified Data.Set as Set
-import qualified Data.Map.Diff.Strict as Diff
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
+import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Semigroup
+import qualified Data.Set as Set
 import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract

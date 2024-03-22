@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeApplications     #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Test.Ouroboros.Storage.LedgerDB.Serialisation (tests) where
 
@@ -7,9 +7,9 @@ import           Codec.CBOR.FlatTerm (FlatTerm, TermToken (..), fromFlatTerm,
 import           Codec.Serialise (decode, encode)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
-import           Test.Util.Orphans.Arbitrary ()
 import           Test.Tasty
 import           Test.Tasty.HUnit
+import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.TestBlock
 
 tests :: TestTree

@@ -18,7 +18,6 @@
 
 -- | See 'MakeAtomic'.
 module Test.Consensus.Mempool.StateMachine (tests) where
-import           Test.Cardano.Ledger.TreeDiff ()
 import           Cardano.Slotting.Slot
 import           Control.Arrow (first)
 import           Control.Concurrent.Class.MonadSTM.Strict.TChan
@@ -51,6 +50,7 @@ import           Ouroboros.Consensus.Mock.Ledger.State
 import           Ouroboros.Consensus.Mock.Ledger.UTxO (Expiry, Tx, TxIn, TxOut)
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike hiding (bracket)
+import           Test.Cardano.Ledger.TreeDiff ()
 import           Test.Consensus.Mempool.Util (TestBlock, applyTxToLedger,
                      genTxs, genValidTxs, testInitLedger, testLedgerConfig)
 import           Test.QuickCheck

@@ -39,8 +39,8 @@ module Ouroboros.Consensus.Shelley.Ledger.Query (
 
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..), encodeListLen,
                      enforceSize)
-import qualified Cardano.Ledger.Api.State.Query as SL
 import           Cardano.Ledger.Address
+import qualified Cardano.Ledger.Api.State.Query as SL
 import           Cardano.Ledger.CertState (lookupDepositDState)
 import qualified Cardano.Ledger.CertState as SL
 import           Cardano.Ledger.Coin (Coin)
@@ -75,8 +75,8 @@ import           Data.SOP.Index
 import           Data.Typeable (Typeable)
 import qualified Data.VMap as VMap
 import           GHC.Generics (Generic)
-import           Lens.Micro.Extras (view)
 import           Lens.Micro
+import           Lens.Micro.Extras (view)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.HardFork.Combinator.Abstract.CanHardFork

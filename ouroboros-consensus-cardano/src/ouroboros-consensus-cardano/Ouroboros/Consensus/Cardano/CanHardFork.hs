@@ -38,32 +38,32 @@ import qualified Cardano.Chain.Genesis as CC.Genesis
 import qualified Cardano.Chain.Update as CC.Update
 import           Cardano.Crypto.DSIGN (Ed25519DSIGN)
 import           Cardano.Crypto.Hash.Blake2b (Blake2b_224, Blake2b_256)
-import qualified Cardano.Ledger.BaseTypes as SL
-import qualified Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Allegra.Translation
                      (shelleyToAllegraAVVMsToDelete)
+import qualified Cardano.Ledger.BaseTypes as SL
+import qualified Cardano.Ledger.Core as Core
 import           Cardano.Ledger.Crypto (ADDRHASH, Crypto, DSIGN, HASH)
 import qualified Cardano.Ledger.Era as SL
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
 import           Cardano.Ledger.Keys (DSignable, Hash)
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.LedgerState as SL
-import Data.Functor.Identity
-import Lens.Micro
-import Lens.Micro.Extras
 import           Cardano.Ledger.Shelley.Translation
                      (toFromByronTranslationContext)
 import qualified Cardano.Protocol.TPraos.API as SL
 import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
 import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
+import           Cardano.Slotting.EpochInfo
 import           Control.Monad
 import           Control.Monad.Except (runExcept, throwError)
+import qualified Control.State.Transition as STS
 import           Data.Coerce (coerce)
-import           Data.SOP.BasicFunctors
+import           Data.Functor.Identity
 import qualified Data.Map.Diff.Strict.Internal as Diff.Internal
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe, mapMaybe)
 import           Data.Proxy
+import           Data.SOP.BasicFunctors
 import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import           Data.SOP.Strict (hpure)
@@ -71,8 +71,9 @@ import           Data.SOP.Tails (Tails (..))
 import qualified Data.SOP.Tails as Tails
 import           Data.Void
 import           Data.Word
-import Cardano.Slotting.EpochInfo
 import           GHC.Generics (Generic)
+import           Lens.Micro
+import           Lens.Micro.Extras
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Byron.Ledger
@@ -106,7 +107,6 @@ import           Ouroboros.Consensus.Shelley.ShelleyHFC
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (eitherToMaybe)
 import           Ouroboros.Consensus.Util.RedundantConstraints
-import qualified Control.State.Transition as STS
 
 {-------------------------------------------------------------------------------
   Figure out the transition point for Byron

@@ -405,8 +405,8 @@ instance ShelleyBasedEra era
 
 instance HasHardForkTxOut '[ShelleyBlock proto era] where
   type instance HardForkTxOut '[ShelleyBlock proto era] = SL.TxOut era
-  injectHardForkTxOut IZ txOut     = txOut
-  injectHardForkTxOut (IS idx') _  = case idx' of {}
+  injectHardForkTxOut IZ txOut    = txOut
+  injectHardForkTxOut (IS idx') _ = case idx' of {}
   distribHardForkTxOut IZ txOut    = txOut
   distribHardForkTxOut (IS idx') _ = case idx' of {}
 

@@ -15,18 +15,18 @@
 -- common to all implementations.
 module Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots (
     -- * Snapshots
-    SnapshotPolicyArgs (..)
-  , DiskSnapshot (..)
+    DiskSnapshot (..)
   , NumOfDiskSnapshots (..)
   , SnapshotFailure (..)
+  , SnapshotPolicyArgs (..)
     -- * Codec
   , readExtLedgerState
   , writeExtLedgerState
     -- * Paths
   , diskSnapshotIsTemporary
+  , snapshotFromPath
   , snapshotToDirName
   , snapshotToDirPath
-  , snapshotFromPath
     -- * Management
   , deleteSnapshot
   , listSnapshots

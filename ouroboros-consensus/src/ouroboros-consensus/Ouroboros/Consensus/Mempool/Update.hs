@@ -9,8 +9,8 @@ module Ouroboros.Consensus.Mempool.Update (
   , implSyncWithLedger
   ) where
 
-import           Control.Concurrent.Class.MonadMVar (withMVar)
 import           Cardano.Slotting.Slot
+import           Control.Concurrent.Class.MonadMVar (withMVar)
 import           Control.Tracer
 import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)

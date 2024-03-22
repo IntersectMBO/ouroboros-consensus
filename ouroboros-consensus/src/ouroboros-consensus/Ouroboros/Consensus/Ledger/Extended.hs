@@ -14,8 +14,8 @@
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
-{-# LANGUAGE TypeOperators #-}
 
 module Ouroboros.Consensus.Ledger.Extended (
     -- * Extended ledger state

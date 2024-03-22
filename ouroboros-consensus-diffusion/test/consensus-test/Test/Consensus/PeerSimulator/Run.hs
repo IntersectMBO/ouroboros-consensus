@@ -10,7 +10,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import qualified System.FS.Sim.MockFS as Mock
+import           Control.Monad.Base
 import           Control.Monad.Class.MonadAsync
                      (AsyncCancelled (AsyncCancelled))
 import           Control.Monad.Class.MonadTime (MonadTime)
@@ -32,9 +32,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
-import Control.Monad.Base
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), MonadDelay (threadDelay),
@@ -56,6 +55,7 @@ import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
                      (pipelineDecisionLowHighMark)
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (chainSyncServerPeer)
+import qualified System.FS.Sim.MockFS as Mock
 import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.Genesis.Setup.GenChains (GenesisTest)
 import           Test.Consensus.Network.Driver.Limits.Extras

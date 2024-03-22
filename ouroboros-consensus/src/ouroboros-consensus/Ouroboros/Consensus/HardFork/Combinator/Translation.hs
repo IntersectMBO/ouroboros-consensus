@@ -9,9 +9,9 @@ module Ouroboros.Consensus.HardFork.Combinator.Translation (
   , trivialEraTranslation
   ) where
 
+import           Data.SOP.Constraint
 import           Data.SOP.InPairs (InPairs (..), RequiringBoth (..))
 import qualified Data.SOP.InPairs as InPairs
-import           Data.SOP.Constraint
 import           NoThunks.Class (NoThunks, OnlyCheckWhnfNamed (..))
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Abstract

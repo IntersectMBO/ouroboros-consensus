@@ -1,12 +1,12 @@
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures             #-}
 {-# LANGUAGE NumericUnderscores         #-}
+{-# LANGUAGE PolyKinds                  #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
@@ -53,7 +53,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState, SecurityParam(..))
+import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
+                     SecurityParam (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (ChunkNo (..), ChunkSize (..), RelativeSlot (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout

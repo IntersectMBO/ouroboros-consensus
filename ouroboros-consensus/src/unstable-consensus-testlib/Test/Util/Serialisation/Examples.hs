@@ -18,7 +18,8 @@ import           Data.Bifunctor (first)
 import           Ouroboros.Consensus.Block (BlockProtocol, Header, HeaderHash,
                      SlotNo)
 import           Ouroboros.Consensus.HeaderValidation (AnnTip)
-import           Ouroboros.Consensus.Ledger.Abstract (LedgerState, EmptyMK, ValuesMK, LedgerTables)
+import           Ouroboros.Consensus.Ledger.Abstract (EmptyMK, LedgerState,
+                     LedgerTables, ValuesMK)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Ledger.Query (BlockQuery, SomeBlockQuery)
 import           Ouroboros.Consensus.Ledger.SupportsMempool (ApplyTxErr, GenTx,

@@ -6,8 +6,15 @@ echo "The custom options for formatting this repo are:"
 stylish-haskell --defaults | diff - ./.stylish-haskell.yaml | grep -E "^>.*[[:alnum:]]" | grep -v "#"
 printf "\nFormatting haskell files...\n"
 
+fdprogram=fd
+if ! command -v fd &> /dev/null
+then
+    fdprogram=fdfind
+fi
+
+
 export LC_ALL=C.UTF-8
-fd --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-core)" \
+$fdprogram --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-core)" \
     --extension hs \
     --exclude Setup.hs \
     --exclude ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \

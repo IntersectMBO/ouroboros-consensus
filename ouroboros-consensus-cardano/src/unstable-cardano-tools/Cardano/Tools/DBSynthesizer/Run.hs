@@ -22,18 +22,17 @@ import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
 import           Ouroboros.Consensus.Config (configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
-import qualified Ouroboros.Consensus.Node as Node (
-                     stdMkChainDbHasFS)
+import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
                      (nodeImmutableDbChunkInfo)
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..),
                      validateGenesis)
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
 import           Ouroboros.Consensus.Util.IOLike (atomically)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block

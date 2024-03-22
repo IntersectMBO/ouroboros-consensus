@@ -9,13 +9,13 @@
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Init (mkInitDb) where
 
-import Data.Maybe (isJust)
 import           Control.Monad (void)
 import           Control.Monad.Base
 import           Control.Tracer
 import           Data.Foldable
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (isJust)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Word
@@ -38,7 +38,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args as V2
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.Common
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory as InMemory
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.LedgerSeq
-import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.CallStack
@@ -46,6 +45,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.AnchoredSeq (AnchoredSeq)
 import qualified Ouroboros.Network.AnchoredSeq as AS
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           System.FS.API
 
 mkInitDb :: forall m blk.

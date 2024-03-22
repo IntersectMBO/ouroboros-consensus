@@ -37,10 +37,10 @@ import qualified Ouroboros.Network.AnchoredSeq as AS
 import           Ouroboros.Network.Block (HeaderHash, Point (..), SlotNo (..),
                      StandardHash, castPoint, pattern GenesisPoint)
 import qualified Ouroboros.Network.Point as Point
-import           Test.Util.Orphans.Arbitrary ()
 import           Test.QuickCheck
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck (testProperty)
+import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.QuickCheck (frequency', oneof')
 import           Text.Show.Pretty (ppShow)
 

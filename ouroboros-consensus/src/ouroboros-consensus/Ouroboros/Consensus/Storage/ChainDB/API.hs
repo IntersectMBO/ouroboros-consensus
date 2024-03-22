@@ -81,8 +81,8 @@ import           Ouroboros.Network.Block (ChainUpdate, MaxSlotNo,
 import qualified Ouroboros.Network.Block as Network
 import           Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           System.FS.API.Types (FsError)
-import Ouroboros.Network.Protocol.LocalStateQuery.Type
 
 -- | The chain database
 --

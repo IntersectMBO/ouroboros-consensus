@@ -23,12 +23,11 @@ module Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory (
     newInMemoryLedgerTablesHandle
     -- * Snapshots
   , loadSnapshot
-  , takeSnapshot
   , snapshotToStatePath
   , snapshotToTablePath
+  , takeSnapshot
   ) where
 
-import Data.Maybe
 import           Cardano.Binary as CBOR
 import qualified Codec.CBOR.Read as CBOR
 import qualified Codec.CBOR.Write as CBOR
@@ -39,6 +38,7 @@ import           Control.Tracer
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
+import           Data.Maybe
 import           Data.String (fromString)
 import           GHC.Generics
 import           NoThunks.Class

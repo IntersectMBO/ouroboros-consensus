@@ -33,7 +33,8 @@ import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory,
 import           Ouroboros.Consensus.HardFork.History (PastHorizonException)
 import           Ouroboros.Consensus.HardFork.History.Qry (runQuery,
                      slotToWallclock)
-import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, LedgerState, EmptyMK)
+import           Ouroboros.Consensus.Ledger.Basics (EmptyMK, LedgerConfig,
+                     LedgerState)
 import           Ouroboros.Consensus.Util.Time (nominalDelay)
 import           Ouroboros.Network.Block (HasHeader)
 

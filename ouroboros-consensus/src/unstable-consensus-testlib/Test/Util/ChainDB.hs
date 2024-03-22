@@ -14,20 +14,18 @@ module Test.Util.ChainDB (
 
 
 import           Control.Tracer (nullTracer)
-import           Ouroboros.Consensus.Config
-                     (TopLevelConfig (topLevelConfigLedger))
 import           Ouroboros.Consensus.Block.Abstract
 import           Ouroboros.Consensus.Config
-                     (configCodec)
+                     (TopLevelConfig (topLevelConfigLedger), configCodec)
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture (..))
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.HardFork.History.EraParams (EraParams,
                      eraEpochSize)
 import           Ouroboros.Consensus.Ledger.Basics (LedgerConfig, ValuesMK)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
-import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import           Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
@@ -52,11 +50,11 @@ import           Test.Util.Orphans.NoThunks ()
 -- The @db@ type parameter is instantiated by this module at types for mock
 -- filesystems; either the 'MockFS' type or reference cells thereof.
 data NodeDBs db = NodeDBs {
-    nodeDBsImm :: db
-  , nodeDBsVol :: db
-  , nodeDBsLgr :: db
+    nodeDBsImm    :: db
+  , nodeDBsVol    :: db
+  , nodeDBsLgr    :: db
   , nodeDBsLgrSSD :: db
-  , nodeDBsGsm :: db
+  , nodeDBsGsm    :: db
   }
   deriving (Functor, Foldable, Traversable)
 

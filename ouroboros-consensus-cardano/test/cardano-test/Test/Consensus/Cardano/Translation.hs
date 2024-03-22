@@ -13,7 +13,6 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 module Test.Consensus.Cardano.Translation (tests) where
 
-import Test.Cardano.Ledger.Conway.Arbitrary ()
 import qualified Cardano.Chain.Block as Byron
 import qualified Cardano.Chain.UTxO as Byron
 import           Cardano.Ledger.Alonzo ()
@@ -21,10 +20,6 @@ import           Cardano.Ledger.BaseTypes (Network (Testnet), TxIx (..))
 import           Cardano.Ledger.Binary.Version
 import qualified Cardano.Ledger.Core as Core
 import qualified Cardano.Ledger.Crypto as Crypto
-import Data.SOP.BasicFunctors
-import Data.SOP.Functors
-import Ouroboros.Consensus.Ledger.Tables.Utils
-import Ouroboros.Consensus.Cardano.CanHardFork
 import           Cardano.Ledger.Shelley.API
                      (NewEpochState (stashedAVVMAddresses), ShelleyGenesis (..),
                      ShelleyGenesisStaking (..), TxIn (..),
@@ -42,11 +37,14 @@ import           Data.Map.Diff.Strict (Diff)
 import qualified Data.Map.Diff.Strict.Internal as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
-import           Data.SOP.InPairs (RequiringBoth(..), provideBoth)
+import           Data.SOP.BasicFunctors
+import           Data.SOP.Functors
+import           Data.SOP.InPairs (RequiringBoth (..), provideBoth)
 import           Ouroboros.Consensus.BlockchainTime.WallClock.Types
                      (slotLengthFromSec)
 import           Ouroboros.Consensus.Byron.Ledger (ByronBlock, byronLedgerState)
 import           Ouroboros.Consensus.Cardano.Block (CardanoEras)
+import           Ouroboros.Consensus.Cardano.CanHardFork
 import           Ouroboros.Consensus.Cardano.CanHardFork ()
 import           Ouroboros.Consensus.HardFork.Combinator (InPairs (..),
                      hardForkEraTranslation, translateLedgerState)
@@ -55,6 +53,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Basics (LedgerCfg, LedgerConfig,
                      LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (MaxMajorProtVer (..))
@@ -70,6 +69,7 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util (dimap)
 import           Test.Cardano.Ledger.Alonzo.Serialisation.Generators ()
 import           Test.Cardano.Ledger.Babbage.Serialisation.Generators ()
+import           Test.Cardano.Ledger.Conway.Arbitrary ()
 import           Test.Cardano.Ledger.Shelley.Utils (unsafeBoundRational)
 import           Test.Consensus.Byron.Generators (genByronLedgerConfig,
                      genByronLedgerState)

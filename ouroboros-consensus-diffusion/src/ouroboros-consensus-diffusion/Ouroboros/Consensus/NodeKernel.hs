@@ -74,11 +74,11 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Init as InitChainDB
-import           Ouroboros.Consensus.Util.AnchoredFragment
-                     (preferAnchoredCandidate)
 import           Ouroboros.Consensus.Storage.LedgerDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Util (whenJust)
+import           Ouroboros.Consensus.Util.AnchoredFragment
+                     (preferAnchoredCandidate)
 import           Ouroboros.Consensus.Util.EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -96,6 +96,7 @@ import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
 import           Ouroboros.Network.PeerSharing (PeerSharingRegistry,
                      newPeerSharingRegistry)
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type (Target (..))
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
@@ -103,7 +104,6 @@ import           Ouroboros.Network.TxSubmission.Mempool.Reader
                      (TxSubmissionMempoolReader)
 import qualified Ouroboros.Network.TxSubmission.Mempool.Reader as MempoolReader
 import           System.Random (StdGen)
-import Ouroboros.Network.Protocol.LocalStateQuery.Type (Target(..))
 
 {-------------------------------------------------------------------------------
   Relay node

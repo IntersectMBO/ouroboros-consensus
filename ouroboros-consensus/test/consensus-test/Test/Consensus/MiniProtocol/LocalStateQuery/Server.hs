@@ -20,6 +20,7 @@
 module Test.Consensus.MiniProtocol.LocalStateQuery.Server (tests) where
 
 import           Cardano.Crypto.DSIGN.Mock
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar
 import           Control.Monad.Base
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer
@@ -62,8 +63,6 @@ import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock
-
-import           Control.Concurrent.Class.MonadSTM.Strict.TVar
 
 {-------------------------------------------------------------------------------
   Top-level tests

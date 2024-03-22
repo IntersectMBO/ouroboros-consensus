@@ -118,12 +118,12 @@ import           Ouroboros.Network.Point (WithOrigin (..))
 import qualified Ouroboros.Network.Protocol.ChainSync.Type as CS
 import           Ouroboros.Network.Protocol.KeepAlive.Type
 import           Ouroboros.Network.Protocol.Limits (waitForever)
+import           Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharing)
 import           Ouroboros.Network.Protocol.TxSubmission2.Type
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS (MockFS)
 import           System.Random (mkStdGen)
-import Ouroboros.Network.Protocol.LocalStateQuery.Type
 import           Test.ThreadNet.TxGen
 import           Test.ThreadNet.Util.NodeJoinPlan
 import           Test.ThreadNet.Util.NodeRestarts

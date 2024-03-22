@@ -44,7 +44,6 @@
 -- corresponding ledger state modelling the whole block chain since genesis.
 module Test.Ouroboros.Storage.LedgerDB.StateMachine (tests) where
 
-import Debug.Trace
 import           Control.Monad.Except
 import           Control.Monad.State hiding (state)
 import           Control.Tracer (nullTracer)
@@ -53,6 +52,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.SOP.Dict
 import           Data.Word
+import           Debug.Trace
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
@@ -68,8 +68,8 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Init as V1
-import           Ouroboros.Consensus.Storage.LedgerDB.V2.Init as V2
 import           Ouroboros.Consensus.Storage.LedgerDB.V2.Args
+import           Ouroboros.Consensus.Storage.LedgerDB.V2.Init as V2
 import           Ouroboros.Consensus.Util hiding (Some)
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
@@ -332,12 +332,12 @@ instance StateModel Model where
 -- | Mocked chain db
 data ChainDB m = ChainDB {
       -- | Block storage
-      dbBlocks  :: StrictTVar m (Map (RealPoint TestBlock) TestBlock)
+      dbBlocks :: StrictTVar m (Map (RealPoint TestBlock) TestBlock)
 
       -- | Current chain and corresponding ledger state
       --
       -- Invariant: all references @r@ here must be present in 'dbBlocks'.
-    , dbChain   :: StrictTVar m [RealPoint TestBlock]
+    , dbChain  :: StrictTVar m [RealPoint TestBlock]
     }
 
 initChainDB ::

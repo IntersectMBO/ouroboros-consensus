@@ -54,10 +54,10 @@ import           Data.Proxy (Proxy (..))
 import           Data.TreeDiff
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block (CodecConfig)
+import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended (encodeExtLedgerState)
 import           Ouroboros.Consensus.Ledger.Query (QueryVersion,
                      nodeToClientVersionToQueryVersion)
-import           Ouroboros.Consensus.Ledger.Abstract (LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables (HasLedgerTables,
                      valuesMKEncoder)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion

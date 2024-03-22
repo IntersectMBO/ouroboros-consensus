@@ -215,5 +215,5 @@ class HasTxs blk where
 -- | A transaction that was previously valid. Used to clarify the types on the
 -- 'reapplyTxs' function.
 data Invalidated blk = Invalidated { getInvalidated :: Validated (GenTx blk)
-                                   , getReason ::  ApplyTxErr blk
+                                   , getReason      ::  ApplyTxErr blk
                                    }
