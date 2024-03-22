@@ -278,7 +278,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
       pure peer0
 
     loeIntersectionSlot = AF.headSlot loeFrag
-    -- last slot in the Genesis window
+
     firstSlotAfterGenesisWindow =
         succWithOrigin loeIntersectionSlot + SlotNo sgen
 
