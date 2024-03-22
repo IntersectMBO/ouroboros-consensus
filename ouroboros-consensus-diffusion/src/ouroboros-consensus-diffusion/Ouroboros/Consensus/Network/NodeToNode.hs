@@ -56,6 +56,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncStateView (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import           Ouroboros.Consensus.Node.ExitPolicy
@@ -569,13 +571,13 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
         CsClient.bracketChainSyncClient
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
             (CsClient.defaultChainDbView (getChainDB kernel))
-            (getNodeCandidates kernel)
-            (getNodeIdlers     kernel)
+            (getNodeStates kernel)
             (getChainSyncHandles kernel)
             them
             version
             lopBucketConfig
-            $ \varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) setTheirTip setLatestSlot -> do
+            $ \csState -> do
+            -- $ \varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) setTheirTip setLatestSlot -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
                 runPipelinedPeerWithLimits
@@ -592,14 +594,11 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                           CsClient.version
                         , CsClient.controlMessageSTM
                         , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
-                        , CsClient.varCandidate
-                        , CsClient.startIdling
-                        , CsClient.stopIdling
-                        , CsClient.pauseLoPBucket
-                        , CsClient.resumeLoPBucket
-                        , CsClient.grantLoPToken
-                        , CsClient.setTheirTip
-                        , CsClient.setLatestSlot
+                        , CsClient.setCandidate = csvSetCandidate csState
+                        , CsClient.idling = csvIdling csState
+                        , CsClient.loPBucket = csvLoPBucket csState
+                        , CsClient.setTheirTip = csvSetTheirTip csState
+                        , CsClient.setLatestSlot = csvSetLatestSlot csState
                         }
               return (ChainSyncInitiatorResult r, trailing)
 

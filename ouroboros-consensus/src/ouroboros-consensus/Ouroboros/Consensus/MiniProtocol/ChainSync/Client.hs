@@ -58,8 +58,11 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
     -- * Trace events
   , ChainSyncLoPBucketConfig (..)
   , ChainSyncLoPBucketEnabledConfig (..)
+  , ChainSyncState (..)
+  , ChainSyncStateView (..)
   , InvalidBlockReason
   , TraceChainSyncClientEvent (..)
+  , viewState
   ) where
 
 import           Control.Monad (join, void)
@@ -69,8 +72,6 @@ import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
-import           Data.Set (Set)
-import qualified Data.Set as Set
 import           Data.Typeable
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
@@ -178,16 +179,67 @@ newtype Our a = Our { unOur :: a }
   deriving stock   (Eq)
   deriving newtype (Show, NoThunks)
 
+data ChainSyncState blk = ChainSyncState {
+    csCandidate  :: !(AnchoredFragment (Header blk))
+  , csTip        :: !(Maybe (Tip blk))
+  , csIdling     :: !Bool
+    -- ^ This ChainSync client should ensure that its peer is in this set while
+    -- and only while both of the following conditions are satisfied: the
+    -- peer's latest message has been fully processed (especially that its
+    -- candidate has been updated; previous argument) and its latest message
+    -- did not claim that it already has headers that extend its candidate.
+    --
+    -- It's more important that the client is removed from the set promptly
+    -- than it is for the client to be added promptly, because of how this is
+    -- used by the GSM to determine that the node is done syncing.
+  , csLatestSlot :: !(Maybe (WithOrigin SlotNo))
+  }
+  deriving (NoThunks) via AllowThunk (ChainSyncState blk)
+
+viewState ::
+  IOLike m =>
+  StrictTVar m (Map peer (StrictTVar m (ChainSyncState blk))) ->
+  (ChainSyncState blk -> a) ->
+  STM m (Map peer a)
+viewState varStates f =
+  Map.map f <$> (traverse readTVar =<< readTVar varStates)
+
 data ChainSyncClientHandle m blk = ChainSyncClientHandle {
     -- | Disconnects from the peer
     cschKill       :: !(m ())
     -- | Latest tip announced by the remote peer
   , cschTheirTip   :: !(STM m (Maybe (Tip blk)))
     -- | Slot of the last received header
-  , cschLatestSlot :: !(STM m SlotNo)
+  , cschLatestSlot :: !(STM m (Maybe (WithOrigin SlotNo)))
   }
   deriving stock (Generic)
   deriving (NoThunks) via AllowThunk (ChainSyncClientHandle m blk)
+
+data Idling m = Idling {
+    idlingStart :: !(m ())
+    -- ^ Insert the peer into the idling set argument of
+    -- 'bracketChainSyncClient'
+  , idlingStop  :: !(m ())
+    -- ^ Remove the peer from the idling set argument of
+    -- 'bracketChainSyncClient'
+  }
+
+data LoPBucket m = LoPBucket {
+    lbPause      :: !(m ())
+  , lbResume     :: !(m ())
+  , lbGrantToken :: !(m ())
+  }
+
+data ChainSyncStateView m blk = ChainSyncStateView {
+    -- | The current candidate fragment
+    csvSetCandidate  :: AnchoredFragment (Header blk) -> STM m ()
+    -- | Update the tip announced by the peer
+  , csvSetTheirTip   :: !(Their (Tip blk) -> STM m ())
+    -- | Update the slot of the latest received header
+  , csvSetLatestSlot :: !(WithOrigin SlotNo -> STM m ())
+  , csvIdling        :: !(Idling m)
+  , csvLoPBucket     :: !(LoPBucket m)
+  }
 
 bracketChainSyncClient ::
     ( IOLike m
@@ -196,84 +248,76 @@ bracketChainSyncClient ::
     )
  => Tracer m (TraceChainSyncClientEvent blk)
  -> ChainDbView m blk
- -> StrictTVar m (Map peer (StrictTVar m (AnchoredFragment (Header blk))))
+ -> StrictTVar m (Map peer (StrictTVar m (ChainSyncState blk)))
     -- ^ The candidate chains, we need the whole map because we
     -- (de)register nodes (@peer@).
- -> StrictTVar m (Set peer)
-    -- ^ This ChainSync client should ensure that its peer is in this set while
-    -- and only while both of the following conditions are satisfied: the
-    -- peer's latest -- message has been fully processed (especially that its
-    -- candidate has been updated; previous argument) and its latest message
-    -- did not claim that it already has headers that extend its candidate.
-    --
-    -- It's more important that the client is removed from the set promptly
-    -- than it is for the client to be added promptly, because of how this is
-    -- used by the GSM to determine that the node is done syncing.
  -> StrictTVar m (Map peer (ChainSyncClientHandle m blk))
  -> peer
  -> NodeToNodeVersion
  -> ChainSyncLoPBucketConfig
- -> (     StrictTVar m (AnchoredFragment (Header blk))
-          -- ^ Variable holding the current fragment
-       -> (m (), m ())
-       -> (m (), m (), m ())
-       -> (Their (Tip blk) -> STM m ())
-          -- ^ callback to set the last announced tip
-       -> (SlotNo -> STM m ())
-          -- ^ callback to set the slot of the last received header
-       -> m a
-    )
+ -> (ChainSyncStateView m blk -> m a)
  -> m a
 bracketChainSyncClient
     tracer
     ChainDbView { getIsInvalidBlock }
-    varCandidates
-    varIdling
+    varStates
     varHandles
     peer
     version
     csBucketConfig
     body
   =
-    bracket newCandidateVar releaseCandidateVar
-  $ \(varCandidate, setTheirTip, setLatestSlot) ->
+    bracket newStateVar releaseCandidateVar
+  $ \(varState, setTheirTip, setLatestSlot) ->
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
-            (invalidBlockWatcher varCandidate)
+            (invalidBlockWatcher varState)
       $ LeakyBucket.execAgainstBucket lopBucketConfig
       $ \lopBucket ->
-            body
-                varCandidate
-                ( atomically $ modifyTVar varIdling $ Set.insert peer
-                , atomically $ modifyTVar varIdling $ Set.delete peer )
-                ( LeakyBucket.setPaused lopBucket True
-                , LeakyBucket.setPaused lopBucket False
-                , void $ LeakyBucket.fill lopBucket 1 )
-                setTheirTip
-                setLatestSlot
+            body ChainSyncStateView {
+              csvSetCandidate = \ c -> modifyTVar varState (\ s -> s {csCandidate = c})
+            , csvSetTheirTip = setTheirTip
+            , csvSetLatestSlot = setLatestSlot
+            , csvIdling = Idling {
+                idlingStart = atomically $ modifyTVar varState $ \ s -> s {csIdling = True}
+              , idlingStop = atomically $ modifyTVar varState $ \ s -> s {csIdling = False}
+              }
+            , csvLoPBucket = LoPBucket {
+                lbPause = LeakyBucket.setPaused lopBucket True
+              , lbResume = LeakyBucket.setPaused lopBucket False
+              , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
+              }
+            }
   where
-    newCandidateVar = do
-        varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
-        varTheirTip <- newTVarIO Nothing
-        varFutureHeader <- newTVarIO (SlotNo 0)
+    newStateVar = do
+        varState <- newTVarIO $ ChainSyncState {
+            csCandidate = AF.Empty AF.AnchorGenesis
+          , csTip = Nothing
+          , csLatestSlot = Nothing
+          , csIdling = False
+          }
         tid <- myThreadId
         atomically $ do
-          modifyTVar varCandidates $ Map.insert peer varCandidate
+          modifyTVar varStates $ Map.insert peer varState
           modifyTVar varHandles $ Map.insert peer ChainSyncClientHandle {
               cschKill     = killThread tid
-            , cschTheirTip = readTVar varTheirTip
-            , cschLatestSlot = readTVar varFutureHeader
+            , cschTheirTip = csTip <$> readTVar varState
+            , cschLatestSlot = csLatestSlot <$> readTVar varState
             }
-        return (varCandidate, writeTVar varTheirTip . Just . unTheir, writeTVar varFutureHeader)
+        return (
+          varState,
+          updateState varState $ \ s (Their t) -> s {csTip = Just t},
+          updateState varState $ \ s ls -> s {csLatestSlot = Just ls}
+          )
 
     releaseCandidateVar _ = atomically $ do
-        modifyTVar varCandidates $ Map.delete peer
-        modifyTVar varIdling     $ Set.delete peer
-        modifyTVar varHandles    $ Map.delete peer
+        modifyTVar varStates $ Map.delete peer
 
-    invalidBlockWatcher varCandidate =
+    updateState var f a = modifyTVar var $ \ s -> (f s a)
+
+    invalidBlockWatcher varState =
         invalidBlockRejector
-            tracer version getIsInvalidBlock (readTVar varCandidate)
+            tracer version getIsInvalidBlock (csCandidate <$> readTVar varState)
 
     -- | Wrapper around 'LeakyBucket.execAgainstBucket' that handles the
     -- disabled bucket by running the given action with dummy handlers.
@@ -599,22 +643,11 @@ data DynamicEnv m blk = DynamicEnv {
     version             :: NodeToNodeVersion
   , controlMessageSTM   :: ControlMessageSTM m
   , headerMetricsTracer :: HeaderMetricsTracer m
-  , varCandidate        :: StrictTVar m (AnchoredFragment (Header blk))
-  , startIdling         :: m ()
-    -- ^ Insert the peer into the idling set argument of
-    -- 'bracketChainSyncClient'
-  , stopIdling          :: m ()
-    -- ^ Remove the peer from the idling set argument of
-    -- 'bracketChainSyncClient'
-  , pauseLoPBucket      :: m ()
-    -- ^ Stop the LoP bucket from leaking. Can be called on an already-paused
-    -- bucket.
-  , resumeLoPBucket     :: m ()
-    -- ^ Ensure that the LoP bucket is leaking. Can be called on an
-    -- already-leaking bucket.
-  , grantLoPToken       :: m ()
+  , setCandidate        :: AnchoredFragment (Header blk) -> STM m ()
+  , idling              :: Idling m
+  , loPBucket           :: LoPBucket m
   , setTheirTip         :: Their (Tip blk) -> STM m ()
-  , setLatestSlot       :: SlotNo -> STM m ()
+  , setLatestSlot       :: WithOrigin SlotNo -> STM m ()
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -708,8 +741,8 @@ chainSyncClient cfgEnv dynEnv =
       } = chainDbView
 
     DynamicEnv {
-        stopIdling,
-        resumeLoPBucket
+        idling,
+        loPBucket
       } = dynEnv
 
     mkIntEnv ::
@@ -755,7 +788,7 @@ chainSyncClient cfgEnv dynEnv =
                   recvMsgRollForward  = \_hdr _tip -> go n' s
                 , recvMsgRollBackward = \_pt  _tip -> go n' s
                 }
-      in Stateful $ \s -> do (stopIdling >> resumeLoPBucket); go n0 s
+      in Stateful $ \s -> do (idlingStop idling >> lbResume loPBucket); go n0 s
 
     terminate ::
         ChainSyncClientResult
@@ -844,7 +877,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
       } = chainDbView
 
     DynamicEnv {
-        varCandidate
+        setCandidate
       , setTheirTip
       } = dynEnv
 
@@ -948,8 +981,9 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                       $ InvalidIntersection
                             intersection (ourTipFromChain ourFrag) theirTip
             atomically $ do
-              writeTVar varCandidate theirFrag
+              setCandidate theirFrag
               setTheirTip theirTip
+              setLatestSlot dynEnv (AF.headSlot theirFrag)
             let kis =
                    assertKnownIntersectionInvariants (configConsensus cfg)
                  $ KnownIntersectionState {
@@ -993,11 +1027,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     DynamicEnv {
         controlMessageSTM
       , headerMetricsTracer
-      , startIdling
-      , stopIdling
-      , pauseLoPBucket
-      , resumeLoPBucket
-      , varCandidate
+      , idling
+      , loPBucket
+      , setCandidate
       , setTheirTip
       } = dynEnv
 
@@ -1044,7 +1076,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                                 theirFrag
                               } = kis'
                         atomically $ do
-                          writeTVar varCandidate theirFrag
+                          setCandidate theirFrag
                           setTheirTip theirTip
                         return $
                             requestNext
@@ -1082,8 +1114,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     candTipBlockNo
                     theirTipBlockNo
             onMsgAwaitReply =
-              startIdling >>
-              pauseLoPBucket
+              idlingStart idling >>
+              lbPause loPBucket
         in
         case (n, decision) of
           (Zero, (Request, mkPipelineDecision')) ->
@@ -1131,7 +1163,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
       -- message.
       ClientStNext {
         recvMsgRollForward = \hdr theirTip -> do
-            (stopIdling >> resumeLoPBucket)
+            (idlingStop idling >> lbResume loPBucket)
             traceWith tracer $ TraceDownloadedHeader hdr
             continueWithState kis $
                 rollForward
@@ -1141,7 +1173,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     (Their theirTip)
       ,
         recvMsgRollBackward = \intersection theirTip -> do
-            (stopIdling >> resumeLoPBucket)
+            (idlingStop idling >> lbResume loPBucket)
             let intersection' :: Point blk
                 intersection' = castPoint intersection
             traceWith tracer $ TraceRolledBack intersection'
@@ -1170,7 +1202,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
-            atomically (setLatestSlot dynEnv slotNo)
+            atomically (setLatestSlot dynEnv (NotOrigin slotNo))
 
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
@@ -1189,7 +1221,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     kis''' <- checkLoP cfgEnv dynEnv hdr kis''
 
                     atomically $ do
-                      writeTVar varCandidate (theirFrag kis''')
+                      setCandidate (theirFrag kis''')
                       setTheirTip theirTip
                     atomically
                       $ traceWith headerMetricsTracer (slotNo, arrivalTime)
@@ -1279,11 +1311,9 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                             , kBestBlockNo
                             }
                   atomically $ do
-                    writeTVar varCandidate theirFrag'
+                    setCandidate theirFrag'
                     setTheirTip theirTip
-                    case pointSlot rollBackPoint of
-                      Origin         -> setLatestSlot dynEnv 0
-                      NotOrigin slot -> setLatestSlot dynEnv slot
+                    setLatestSlot dynEnv (pointSlot rollBackPoint)
 
                   continueWithState kis' $
                       nextStep mkPipelineDecision n theirTip
@@ -1377,9 +1407,9 @@ checkTime cfgEnv dynEnv intEnv =
                   traceWith (tracer cfgEnv)
                 $ TraceWaitingBeyondForecastHorizon slotNo
               -- Pause the bucket if LedgerView-Starved.
-              EarlyExit.lift $ pauseLoPBucket dynEnv
+              EarlyExit.lift $ lbPause (loPBucket dynEnv)
               res <- readLedgerState kis2 (projectLedgerView slotNo)
-              EarlyExit.lift $ resumeLoPBucket dynEnv
+              EarlyExit.lift $ lbResume (loPBucket dynEnv)
               EarlyExit.lift $
                   traceWith (tracer cfgEnv)
                 $ TraceAccessingForecastHorizon slotNo
@@ -1572,9 +1602,9 @@ checkLoP ::
   -> Header blk
   -> KnownIntersectionState blk
   -> m (KnownIntersectionState blk)
-checkLoP ConfigEnv{tracer} DynamicEnv{grantLoPToken} hdr kis@KnownIntersectionState{kBestBlockNo} =
+checkLoP ConfigEnv{tracer} DynamicEnv{loPBucket} hdr kis@KnownIntersectionState{kBestBlockNo} =
   if blockNo hdr > kBestBlockNo
-    then do grantLoPToken
+    then do lbGrantToken loPBucket
             traceWith tracer $ TraceGaveLoPToken True hdr kBestBlockNo
             pure $ kis{kBestBlockNo = blockNo hdr}
     else do traceWith tracer $ TraceGaveLoPToken False hdr kBestBlockNo
