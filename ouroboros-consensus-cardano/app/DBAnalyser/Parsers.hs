@@ -12,6 +12,9 @@ import           Cardano.Tools.DBAnalyser.Block.Byron
 import           Cardano.Tools.DBAnalyser.Block.Cardano
 import           Cardano.Tools.DBAnalyser.Block.Shelley
 import           Cardano.Tools.DBAnalyser.Types
+#if __GLASGOW_HASKELL__ < 900
+import           Data.Foldable (asum)
+#endif
 import           Data.SOP.Dict
 import           Options.Applicative
 import           Ouroboros.Consensus.Block (SlotNo (..))
