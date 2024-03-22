@@ -72,14 +72,14 @@ import           Prelude hiding (read)
 -------------------------------------------------------------------------------}
 
 data LedgerTablesHandle m l = LedgerTablesHandle {
-    close       :: !(m ())
-  , duplicate   :: !(m (LedgerTablesHandle m l))
-  , read        :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
-  , readRange   :: !((Maybe (Key l), Int) -> m (LedgerTables l ValuesMK))
-  , write       :: !(LedgerTables l DiffMK -> m ())
-  , writeToDisk :: !(String -> m ())
-  , tablesSize  :: !(m (Maybe Int))
-  , isOpen      :: !(m Bool)
+    close       :: m ()
+  , duplicate   :: m (LedgerTablesHandle m l)
+  , read        :: LedgerTables l KeysMK -> m (LedgerTables l ValuesMK)
+  , readRange   :: (Maybe (Key l), Int) -> m (LedgerTables l ValuesMK)
+  , write       :: LedgerTables l DiffMK -> m ()
+  , writeToDisk :: String -> m ()
+  , tablesSize  :: m (Maybe Int)
+  , isOpen      :: m Bool
   }
   deriving NoThunks via OnlyCheckWhnfNamed "LedgerTablesHandle" (LedgerTablesHandle m l)
 
@@ -204,7 +204,7 @@ reapplyBlock cfg b _rr db = do
 --
 -- >>> ldb  = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
 -- >>> ldb' = LedgerSeq $ AS.fromOldestFirst     l1 [l2, l3]
--- >>> prune (SecurityParam 2) ldb == ldb'
+-- >>> snd (prune (SecurityParam 2) ldb) == ldb'
 -- True
 prune :: GetTip l
       => SecurityParam
@@ -227,7 +227,7 @@ prune (SecurityParam k) (LedgerSeq ldb) =
 -- | Extending the LedgerDB with a valid ledger state.
 --
 -- >>> ldb            = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
--- >>> LedgerSeq ldb' = extend (ValidLedgerState l4) ldb
+-- >>> LedgerSeq ldb' = extend l4 ldb
 -- >>> AS.toOldestFirst ldb' == [l1, l2, l3, l4]
 -- True
 extend :: GetTip l
@@ -252,7 +252,7 @@ extend newState =
 -- immutable part of the chain, which must never be possible.
 --
 -- >>> ldb  = LedgerSeq $ AS.fromOldestFirst l0 [l1, l2, l3]
--- >>> LedgerSeq ldb' = pruneToImmTipOnly ldb
+-- >>> LedgerSeq ldb' = snd $ pruneToImmTipOnly ldb
 -- >>> AS.anchor ldb' == l3 && AS.toOldestFirst ldb' == []
 -- True
 pruneToImmTipOnly :: GetTip l
@@ -460,9 +460,10 @@ volatileStatesBimap f g =
 -- >>> import Ouroboros.Network.Block
 -- >>> import Ouroboros.Network.Point
 -- >>> import Ouroboros.Consensus.Ledger.Tables
+-- >>> import Ouroboros.Consensus.Ledger.Tables.Utils
 -- >>> import Ouroboros.Consensus.Ledger.Basics
 -- >>> import Ouroboros.Consensus.Config
--- >>> import Ouroboros.Consensus.Storage.LedgerDB.Common
+-- >>> import Ouroboros.Consensus.Storage.LedgerDB.V2.InMemory
 -- >>> import Data.Void
 -- >>> import Cardano.Slotting.Slot
 -- >>> data B
@@ -476,7 +477,8 @@ volatileStatesBimap f g =
 -- >>> instance HasLedgerTables LS
 -- >>> s = [LS (Point Origin), LS (Point (At (Block 0 0))), LS (Point (At (Block 1 1))), LS (Point (At (Block 2 2))), LS (Point (At (Block 3 3)))]
 -- >>> [l0s, l1s, l2s, l3s, l4s] = s
--- >>> [l0, l1, l2, l3, l4] <- mapM newLedgerHandles
+-- >>> emptyHandle = LedgerTablesHandle undefined undefined undefined undefined undefined undefined undefined undefined
+-- >>> [l0, l1, l2, l3, l4] = map (flip StateRef emptyHandle) s
 -- >>> instance GetTip LS where getTip (LS p) = p
 -- >>> instance Eq (LS EmptyMK) where LS p1 == LS p2 = p1 == p2
 -- >>> instance StandardHash B

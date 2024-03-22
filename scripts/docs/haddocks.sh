@@ -30,6 +30,7 @@ then
   xz -d < cabal-docspec.xz > "$HOME"/.local/bin/cabal-docspec
   rm -f cabal-docspec.xz
   chmod a+x "$HOME"/.local/bin/cabal-docspec
+  export PATH=$PATH:"$HOME"/.local/bin/
 fi
 
 # we don't include `--use-index` option, because then quickjump data is not
@@ -61,11 +62,11 @@ echo "Building documentation of the packages"
 grey=$(printf "\\033[38;5;245m")
 white=$(printf "\\033[0m")
 
-cabal build all | sed "s/^/${white}cabal> ${grey}/"
+cabal build all 2>&1 | sed "s/^/${white}cabal> ${grey}/"
 
 OS_ARCH="$(jq -r '.arch + "-" + .os' dist-newstyle/cache/plan.json | head -n 1 | xargs)"
 
-cabal-docspec --extra-package latex-svg-image --extra-package directory | sed "s/^/${white}cabal-docspec> ${grey}/"
+cabal-docspec --extra-package latex-svg-image --extra-package directory 2>&1 | sed "s/^/${white}cabal-docspec> ${grey}/"
 
 cabal haddock "${HADDOCK_OPTS[@]}" all 2>&1 | sed "s/^/${white}haddock> ${grey}/"
 echo -e -n "\\033[0m"
