@@ -167,6 +167,8 @@ prettyPeersSchedule peers =
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
+--
+-- TODO Remove dropping the first state in favor of better GDD logic
 peerStates :: Peer (PeerSchedule blk) -> [(Time, Peer (NodeState blk))]
 peerStates Peer {name, value = schedulePoints} =
   drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisNodeState points))

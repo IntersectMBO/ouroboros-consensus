@@ -78,7 +78,7 @@ data CandidateVersusSelection =
     -- ^ Whether the candidate is better than the selection
   deriving (Eq, Show)
 
-data GsmView m upstreamPeer selection candidate = GsmView {
+data GsmView m upstreamPeer selection state = GsmView {
     antiThunderingHerd        :: Maybe StdGen
     -- ^ An initial seed used to randomly increase 'minCaughtUpDuration' by up
     -- to 15% every transition from OnlyBootstrap to CaughtUp, in order to
@@ -87,7 +87,7 @@ data GsmView m upstreamPeer selection candidate = GsmView {
     -- 'Nothing' should only be used for testing.
   ,
     candidateOverSelection    ::
-        selection -> candidate -> CandidateVersusSelection
+        selection -> state -> CandidateVersusSelection
   ,
     durationUntilTooOld       :: Maybe (selection -> m DurationFromNow)
     -- ^ How long from now until the selection will be so old that the node
@@ -99,8 +99,8 @@ data GsmView m upstreamPeer selection candidate = GsmView {
     -- ^ Whether the two selections are equivalent for the purpose of the
     -- Genesis State Machine
   ,
-    getChainSyncCandidates    ::
-        STM m (Map.Map upstreamPeer (StrictTVar m candidate))
+    getChainSyncStates        ::
+        STM m (Map.Map upstreamPeer (StrictTVar m state))
     -- ^ The latest candidates from the upstream ChainSync peers
   ,
     getChainSyncIdlers        :: STM m (Set.Set upstreamPeer)
@@ -187,7 +187,6 @@ initializationLedgerJudgement
 realGsmEntryPoints :: forall m upstreamPeer selection tracedSelection candidate.
      ( SI.MonadDelay m
      , SI.MonadTimer m
-     , Eq upstreamPeer
      )
   => (selection -> tracedSelection, Tracer m (TraceGsmEvent tracedSelection))
   -> GsmView m upstreamPeer selection candidate
@@ -209,7 +208,7 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
       ,
         equivalent
       ,
-        getChainSyncCandidates
+        getChainSyncStates
       ,
         getChainSyncIdlers
       ,
@@ -315,11 +314,10 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
     blockUntilCaughtUp = atomically $ do
         -- STAGE 1: all ChainSync clients report no subsequent headers
         idlers        <- getChainSyncIdlers
-        varsCandidate <- getChainSyncCandidates
+        varsState     <- getChainSyncStates
         check $
-                           0  < Map.size    varsCandidate
-          && Set.size idlers == Map.size    varsCandidate
-          &&          idlers == Map.keysSet varsCandidate
+                           0  < Map.size    varsState
+          && Set.size idlers == Map.size    varsState
 
         -- STAGE 2: no candidate is better than the node's current
         -- selection
@@ -332,7 +330,7 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
         -- block; general Praos reasoning ensures that won't take particularly
         -- long.
         selection  <- getCurrentSelection
-        candidates <- traverse StrictSTM.readTVar varsCandidate
+        candidates <- traverse StrictSTM.readTVar varsState
         let ok candidate =
                 WhetherCandidateIsBetter False
              == candidateOverSelection selection candidate
