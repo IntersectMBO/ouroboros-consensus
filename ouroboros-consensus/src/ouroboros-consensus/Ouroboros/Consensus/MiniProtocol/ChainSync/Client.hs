@@ -260,6 +260,9 @@ data Idling m = Idling {
     -- | Mark the peer as not being idle.
   , idlingStop  :: !(m ())
   }
+  deriving stock (Generic)
+
+deriving anyclass instance IOLike m => NoThunks (Idling m)
 
 -- | No-op implementation, for tests.
 noIdling :: Applicative m => Idling m
@@ -281,6 +284,9 @@ data LoPBucket m = LoPBucket {
     -- | Notify the bucket that the peer has sent an interesting header.
   , lbGrantToken :: !(m ())
   }
+  deriving stock (Generic)
+
+deriving anyclass instance IOLike m => NoThunks (LoPBucket m)
 
 -- | No-op implementation, for tests.
 noLoPBucket :: Applicative m => LoPBucket m
@@ -306,7 +312,13 @@ data ChainSyncStateView m blk = ChainSyncStateView {
     -- | Control the 'LeakyBucket' for the LoP.
   , csvLoPBucket     :: !(LoPBucket m)
   }
+  deriving stock (Generic)
 
+deriving anyclass instance (
+  IOLike m,
+  HasHeader blk,
+  NoThunks (Header blk)
+  ) => NoThunks (ChainSyncStateView m blk)
 bracketChainSyncClient ::
     ( IOLike m
     , Ord peer
