@@ -83,9 +83,11 @@ import           Ouroboros.Consensus.Ledger.Extended hiding (ledgerState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainDbView (..), ChainSyncClientException,
                      ChainSyncClientResult (..), ChainSyncLoPBucketConfig (..),
+                     ChainSyncState (..), ChainSyncStateView (..),
                      ConfigEnv (..), Consensus, DynamicEnv (..), Our (..),
                      Their (..), TraceChainSyncClientEvent (..),
-                     bracketChainSyncClient, chainSyncClient, ChainSyncState (..), ChainSyncStateView (..), chainSyncStateFor, viewChainSyncState)
+                     bracketChainSyncClient, chainSyncClient, chainSyncStateFor,
+                     viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)

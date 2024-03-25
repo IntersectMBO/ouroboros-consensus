@@ -26,7 +26,8 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
-                     ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..), viewChainSyncState)
+                     ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..),
+                     viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
