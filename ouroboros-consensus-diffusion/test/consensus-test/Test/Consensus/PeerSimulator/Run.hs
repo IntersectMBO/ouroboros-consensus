@@ -299,7 +299,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
           = pure nullTracer
 
         gdd = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) (readTVar handles)
-        gddTrigger = viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
+        gddTrigger = viewChainSyncState handles (\ s -> (csCandidate s, csLatestSlot s, csIdling s))
 
     stateTracer <- mkStateTracer
     BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates

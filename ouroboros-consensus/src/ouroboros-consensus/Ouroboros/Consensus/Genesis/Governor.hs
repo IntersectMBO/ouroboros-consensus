@@ -189,7 +189,8 @@ data DensityBounds blk =
     lowerBound      :: Word64,
     upperBound      :: Word64,
     hasBlockAfter   :: Bool,
-    latestSlot      :: LatestSlot
+    latestSlot      :: LatestSlot,
+    idling          :: Bool
   }
 
 -- | @densityDisconnect cfg immutableLedgerSt candidateSuffixes theirTips loeFrag@
@@ -232,6 +233,8 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       latestSlot' <- maybeToList (csLatestSlot state)
       let candidateSuffix = candidateSuffixes Map.! peer
 
+          idling = csIdling state
+
           -- TODO When is the latest slot set to Origin?
           latestSlot = case (AF.headSlot candidateSuffix, latestSlot') of
             (Origin, Origin)                   -> NoLatestSlot
@@ -246,7 +249,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           -- candidate fragment extends beyond it or because we are waiting to validate a header beyond the forecast
           -- horizon that we already received), there can be no headers in between and 'potentialSlots' is 0.
           SlotNo potentialSlots
-            | not (csIdling state)
+            | idling
             = 0
             | otherwise
             = case latestSlot of
@@ -275,7 +278,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
             NoLatestSlot    -> False
             LatestSlot slot -> slot >= firstSlotAfterGenesisWindow
 
-      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot})
+      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 
     losingPeers = nubOrd $ do
       (peer0 , DensityBounds {fragment = frag0, upperBound = ub0}) <- Map.toList densityBounds
