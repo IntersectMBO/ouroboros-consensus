@@ -237,10 +237,10 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 
           -- TODO When is the latest slot set to Origin?
           latestSlot = case (AF.headSlot candidateSuffix, latestSlot') of
-            (Origin, Origin)                   -> NoLatestSlot
-            (Origin, NotOrigin latest)         -> LatestSlot latest
-            (NotOrigin cand, Origin)           -> LatestSlot cand
-            (NotOrigin cand, NotOrigin latest) -> LatestSlot (max cand latest)
+            (candWO, NotOrigin latest) | latest >= firstSlotAfterGenesisWindow ->
+              LatestSlot (max (fromWithOrigin 0 candWO) latest)
+            (Origin, _) -> NoLatestSlot
+            (NotOrigin cand, _) -> LatestSlot cand
 
           -- If the peer has more headers that it hasn't sent yet, each slot between the latest header we know of and
           -- the end of the Genesis window could contain a block, so the upper bound for the total number of blocks in
