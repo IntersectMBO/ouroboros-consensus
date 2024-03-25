@@ -447,11 +447,11 @@ instance QC.Arbitrary SomeTestAdversarialMutation where
               (Kcp k, Scg s, _) = A.carParams r
               kPlus1st = case BV.findIthEmptyInV S.inverted sv (C.Count k) of
                 BV.NothingFound -> 1
-                BV.JustFound i -> C.getCount i
+                BV.JustFound i  -> C.getCount i
            in
               case BV.findIthEmptyInV S.inverted sv (C.Count (k+1)) of
                 BV.JustFound i | C.getCount i < s -> 1
-                _ -> s - kPlus1st
+                _                                 -> s - kPlus1st
 
 -- | There exists a seed such that each 'TestAdversarialMutation' causes
 -- 'A.checkAdversarialChain' to reject the result of 'A.uniformAdversarialChain'
