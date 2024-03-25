@@ -64,9 +64,9 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , ChainSyncState (..)
   , ChainSyncStateView (..)
   , chainSyncStateFor
-  , viewChainSyncState
   , noIdling
   , noLoPBucket
+  , viewChainSyncState
   ) where
 
 import           Control.Monad (join, void)
