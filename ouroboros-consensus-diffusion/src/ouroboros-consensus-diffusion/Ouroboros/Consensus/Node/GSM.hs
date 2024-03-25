@@ -50,7 +50,6 @@ import           System.FS.API (HasFS, createDirectoryIfMissing, doesFileExist,
 import           System.FS.API.Types (AllowExisting (..), FsPath, OpenMode (..),
                      mkFsPath)
 import           System.Random (StdGen, uniformR)
-import Data.Semigroup (All(..))
 
 {-------------------------------------------------------------------------------
   Interface
@@ -89,8 +88,7 @@ data GsmView m upstreamPeer selection state = GsmView {
     candidateOverSelection    ::
         selection -> state -> CandidateVersusSelection
   ,
-    peerIsIdle                ::
-        upstreamPeer -> state -> STM m Bool
+    peerIsIdle                :: state -> Bool
   ,
     durationUntilTooOld       :: Maybe (selection -> m DurationFromNow)
     -- ^ How long from now until the selection will be so old that the node
@@ -312,12 +310,11 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
     blockUntilCaughtUp :: m (TraceGsmEvent tracedSelection)
     blockUntilCaughtUp = atomically $ do
         -- STAGE 1: all ChainSync clients report no subsequent headers
-        varsState <- getChainSyncStates
-        states    <- traverse StrictSTM.readTVar varsState
-        allIdle   <- foldMap All <$> traverse (uncurry peerIsIdle) (Map.toList states)
+        varsState     <- getChainSyncStates
+        states        <- traverse StrictSTM.readTVar varsState
         check $
              not (Map.null states)
-          && getAll allIdle
+          && all peerIsIdle states
 
         -- STAGE 2: no candidate is better than the node's current
         -- selection

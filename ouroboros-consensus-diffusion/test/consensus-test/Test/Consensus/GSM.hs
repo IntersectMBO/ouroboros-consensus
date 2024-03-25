@@ -70,8 +70,7 @@ semantics ::
 semantics vars cmd = pre $ case cmd of
     Disconnect peer -> do
         atomically $ do
-            modifyTVar varCandidates $ Map.delete peer
-            modifyTVar varIdlers     $ Set.delete peer
+            modifyTVar varStates $ Map.delete peer
         pure Unit
     ExtendSelection sdel -> do
         atomically $ do
@@ -81,25 +80,24 @@ semantics vars cmd = pre $ case cmd of
     ModifyCandidate peer bdel -> do
         atomically $ do
 
-            modifyTVar varIdlers $ Set.delete peer
-
-            v <- (Map.! peer) <$> readTVar varCandidates
-            Candidate b <- readTVar v
-            writeTVar v $! Candidate (b + bdel)
+            v <- (Map.! peer) <$> readTVar varStates
+            Candidate b <- psCandidate <$> readTVar v
+            writeTVar v $! PeerState (Candidate (b + bdel)) (Idling False)
 
         pure Unit
     NewCandidate peer bdel -> do
         atomically $ do
             Selection b _s <- readTVar varSelection
-            v <- newTVar $! Candidate (b + bdel)
-            modifyTVar varCandidates $ Map.insert peer v
+            v <- newTVar $! PeerState (Candidate (b + bdel)) (Idling False)
+            modifyTVar varStates $ Map.insert peer v
         pure Unit
     ReadJudgment -> do
         fmap ReadThisJudgment $ atomically $ readTVar varJudgment
     ReadMarker -> do
         fmap ReadThisMarker $ atomically $ readTVar varMarker
-    StartIdling peer -> do
-        atomically $ modifyTVar varIdlers $ Set.insert peer
+    StartIdling peer -> atomically $ do
+        v <- (Map.! peer) <$> readTVar varStates
+        modifyTVar v $ \ (PeerState c _) -> PeerState c (Idling True)
         pure Unit
     TimePasses dur -> do
         SI.threadDelay (0.1 * fromIntegral dur)
@@ -107,8 +105,7 @@ semantics vars cmd = pre $ case cmd of
   where
     Vars
         varSelection
-        varCandidates
-        varIdlers
+        varStates
         varJudgment
         varMarker
         varEvents
@@ -173,7 +170,6 @@ prop_sequential1 j0 cmds = runSimQC $ do
     -- these variables are part of the 'GSM.GsmView'
     varSelection  <- newTVarIO (mSelection $ initModel j0)
     varStates     <- newTVarIO Map.empty
-    varIdlers     <- newTVarIO Set.empty
     varJudgment   <- newTVarIO j0
     varMarker     <- newTVarIO (toMarker j0)
 
@@ -187,7 +183,6 @@ prop_sequential1 j0 cmds = runSimQC $ do
             Vars
                 varSelection
                 varStates
-                varIdlers
                 varJudgment
                 varMarker
                 varEvents
@@ -202,7 +197,7 @@ prop_sequential1 j0 cmds = runSimQC $ do
           ,
             GSM.candidateOverSelection = candidateOverSelection
           ,
-            GSM.peerIsIdle = \ peer _ -> Set.member peer <$> readTVar varIdlers
+            GSM.peerIsIdle = isIdling
           ,
             GSM.durationUntilTooOld = Just durationUntilTooOld
           ,
@@ -391,8 +386,7 @@ push (EvRecorder var) ev = do
 -- | merely a tidy bundle of arguments
 data Vars m = Vars
     (StrictTVar m Selection)
-    (StrictTVar m (Map.Map UpstreamPeer (StrictTVar m Candidate)))
-    (StrictTVar m (Set.Set UpstreamPeer))
+    (StrictTVar m (Map.Map UpstreamPeer (StrictTVar m PeerState)))
     (StrictTVar m LedgerStateJudgement)
     (StrictTVar m MarkerState)
     (EvRecorder m)
