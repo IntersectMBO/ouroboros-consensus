@@ -45,6 +45,7 @@ import           Control.Monad.Except (runExcept)
 import qualified Data.Binary as B
 import           Data.ByteString as Strict
 import qualified Data.ByteString.Lazy as Lazy
+import qualified Data.ByteString.Short as SBS
 import           Data.Functor.Identity (Identity)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -335,6 +336,9 @@ newtype instance TxId (GenTx BlockA) = TxIdA Int
 
 instance HasTxId (GenTx BlockA) where
   txId = txA_id
+
+instance ConvertRawTxId (GenTx BlockA) where
+  toRawTxIdHash = SBS.toShort . Lazy.toStrict . serialise
 
 instance ShowQuery (BlockQuery BlockA) where
   showResult qry = case qry of {}

@@ -56,7 +56,7 @@ import           Ouroboros.Consensus.Util.Condense
 class ( LedgerSupportsProtocol blk
       , InspectLedger blk
       , LedgerSupportsMempool blk
-      , HasTxId (GenTx blk)
+      , ConvertRawTxId (GenTx blk)
       , QueryLedger blk
       , HasPartialConsensusConfig (BlockProtocol blk)
       , HasPartialLedgerConfig blk

@@ -47,6 +47,7 @@ import qualified Cardano.Chain.Update as Update
 import qualified Cardano.Chain.UTxO as Utxo
 import qualified Cardano.Chain.ValidationMode as CC
 import           Cardano.Crypto (hashDecoded)
+import qualified Cardano.Crypto as CC
 import           Cardano.Ledger.Binary (ByteSpan, DecoderError (..),
                      byronProtVer, fromByronCBOR, serialize, slice, toByronCBOR,
                      unsafeDeserialize)
@@ -161,6 +162,12 @@ instance HasTxId (GenTx ByronBlock) where
   txId (ByronDlg            i _) = ByronDlgId            i
   txId (ByronUpdateProposal i _) = ByronUpdateProposalId i
   txId (ByronUpdateVote     i _) = ByronUpdateVoteId     i
+
+instance ConvertRawTxId (GenTx ByronBlock) where
+  toRawTxIdHash (ByronTxId             i) = CC.abstractHashToShort i
+  toRawTxIdHash (ByronDlgId            i) = CC.abstractHashToShort i
+  toRawTxIdHash (ByronUpdateProposalId i) = CC.abstractHashToShort i
+  toRawTxIdHash (ByronUpdateVoteId     i) = CC.abstractHashToShort i
 
 instance HasTxs ByronBlock where
   extractTxs blk = case byronBlockRaw blk of

@@ -273,6 +273,9 @@ data instance TxId (GenTx BlockB)
 instance HasTxId (GenTx BlockB) where
   txId tx = case tx of {}
 
+instance ConvertRawTxId (GenTx BlockB) where
+  toRawTxIdHash = \case {}
+
 instance ShowQuery (BlockQuery BlockB) where
   showResult qry = case qry of {}
 
