@@ -21,6 +21,7 @@ import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import qualified Ouroboros.Consensus.HeaderValidation as HV
 import qualified Ouroboros.Consensus.Ledger.Extended as Extended
+import           Ouroboros.Consensus.Ledger.Basics
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
@@ -172,7 +173,7 @@ inTheYearOneBillion = SystemTime {
         * 1e9
   }
 
-oracularLedgerDB :: Point B -> Maybe (Extended.ExtLedgerState B)
+oracularLedgerDB :: Point B -> Maybe (Extended.ExtLedgerState B EmptyMK)
 oracularLedgerDB p =
     Just Extended.ExtLedgerState {
         Extended.headerState = HV.HeaderState {
@@ -188,7 +189,7 @@ oracularLedgerDB p =
           }
       , Extended.ledgerState = TB.TestLedger {
             TB.lastAppliedPoint      = p
-          , TB.payloadDependentState = ()
+          , TB.payloadDependentState = TB.EmptyPLDS
           }
     }
 
