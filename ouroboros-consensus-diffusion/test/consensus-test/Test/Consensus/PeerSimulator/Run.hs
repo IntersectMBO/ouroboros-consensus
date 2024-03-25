@@ -19,7 +19,6 @@ import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Set (Set)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Genesis.Governor (runGdd,
                      updateLoEFragGenesis)
@@ -27,7 +26,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
-                     ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..))
+                     ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..), viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -136,7 +135,6 @@ startChainSyncConnectionThread ::
   ChainSyncTimeout ->
   ChainSyncLoPBucketConfig ->
   StateViewTracers blk m ->
-  StrictTVar m (Map PeerId (StrictTVar m (ChainSyncState blk))) ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   m (Thread m (), Thread m ())
 startChainSyncConnectionThread
@@ -150,14 +148,13 @@ startChainSyncConnectionThread
   chainSyncTimeouts_
   chainSyncLoPBucketConfig
   tracers
-  varStates
   varHandles
   = do
     (clientChannel, serverChannel) <- createConnectedChannels
     clientThread <-
       forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
         bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varStates varHandles clientChannel
+          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varHandles clientChannel
     serverThread <-
       forkLinkedThread registry ("ChainSyncServer" <> condense srPeerId) $
         ChainSync.runChainSyncServer tracer srPeerId tracers csrServer serverChannel
@@ -205,11 +202,11 @@ dispatchTick :: forall m blk.
   Tracer m (TraceSchedulerEvent blk) ->
   Tracer m () ->
   ChainDB m blk ->
-  StrictTVar m (Map PeerId (StrictTVar m (ChainSyncState blk))) ->
+  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   Map PeerId (PeerResources m blk) ->
   (Int, (DiffTime, Peer (NodeState blk))) ->
   m ()
-dispatchTick tracer stateTracer chainDb varStates peers (number, (duration, Peer pid state)) =
+dispatchTick tracer stateTracer chainDb varHandles peers (number, (duration, Peer pid state)) =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
       traceNewTick
@@ -222,8 +219,8 @@ dispatchTick tracer stateTracer chainDb varStates peers (number, (duration, Peer
     traceNewTick = do
       currentChain <- atomically $ ChainDB.getCurrentChain chainDb
       csState <- atomically $ do
-         m <- readTVar varStates
-         traverse readTVar (m Map.!? pid)
+         m <- readTVar varHandles
+         traverse (readTVar . CSClient.cschState) (m Map.!? pid)
       traceWith tracer $ TraceNewTick number duration (Peer pid state) currentChain (CSClient.csCandidate <$> csState)
 
 -- | Iterate over a 'PointSchedule', sending each tick to the associated peer in turn,
@@ -236,14 +233,14 @@ runScheduler ::
   Tracer m (TraceSchedulerEvent blk) ->
   Tracer m () ->
   ChainDB m blk ->
-  StrictTVar m (Map PeerId (StrictTVar m (ChainSyncState blk))) ->
+  StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   PeersSchedule blk ->
   Map PeerId (PeerResources m blk) ->
   m ()
-runScheduler tracer stateTracer chainDb varStates ps peers = do
+runScheduler tracer stateTracer chainDb varHandles ps peers = do
   traceWith tracer TraceBeginningOfTime
   mapM_
-    (dispatchTick tracer stateTracer chainDb varStates peers)
+    (dispatchTick tracer stateTracer chainDb varHandles peers)
     (zip [0..] (peersStatesRelative ps))
   traceWith tracer TraceEndOfTime
 
@@ -272,10 +269,9 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
   withRegistry $ \registry -> do
     stateViewTracers <- defaultStateViewTracers
     resources <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
-    let getCandidates = CSClient.viewState (psrStates resources) CSClient.csCandidate
-        getStates = CSClient.viewState (psrStates resources) id
-        getHandles = readTVar (psrHandles resources)
-        getLatestSlots = CSClient.viewState (psrStates resources) csLatestSlot
+    let
+        handles = psrHandles resources
+        getCandidates = viewChainSyncState handles CSClient.csCandidate
     loEVar <- mkLoEVar schedulerConfig
     chainDb <- mkChainDb tracer config registry (readTVarIO <$> loEVar)
     fetchClientRegistry <- newFetchClientRegistry
@@ -286,7 +282,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
         -- the registry is closed and all threads related to the peer are
         -- killed.
         withRegistry $ \peerRegistry -> do
-          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrStates resources) (psrHandles resources)
+          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrHandles resources)
           BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry (srPeerId prShared)
           (bfClient, bfServer) <- startBlockFetchConnectionThread peerRegistry tracer stateViewTracers fetchClientRegistry (pure Continue) prShared prBlockFetch blockFetchTimeouts_
           waitAnyThread [csClient, csServer, bfClient, bfServer]
@@ -301,8 +297,8 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
           | otherwise
           = pure nullTracer
 
-        gdd = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) getStates getHandles
-        gddTrigger = fmap (\ s -> (csLatestSlot s, csIdling s)) <$> getStates
+        gdd = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) (readTVar handles)
+        gddTrigger = viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
 
     stateTracer <- mkStateTracer
     BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates
@@ -313,7 +309,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
       (Tracer $ traceWith tracer . TraceSchedulerEvent)
       stateTracer
       chainDb
-      (psrStates resources)
+      handles
       gtSchedule
       (psrPeers resources)
     snapshotStateView stateViewTracers chainDb

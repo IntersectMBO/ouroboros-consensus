@@ -351,14 +351,13 @@ updateLoEFragGenesis ::
      )
   => TopLevelConfig blk
   -> Tracer m (TraceGDDEvent peer blk)
-  -> STM m (Map peer (ChainSyncState blk))
   -> STM m (Map peer (ChainSyncClientHandle m blk))
   -> UpdateLoEFrag m blk
-updateLoEFragGenesis cfg tracer getStates getHandles =
+updateLoEFragGenesis cfg tracer getHandles =
   UpdateLoEFrag $ \ curChain immutableLedgerSt -> do
     (states, candidates, candidateSuffixes, handles, loeFrag) <- atomically $ do
-      states <- getStates
       handles <- getHandles
+      states <- traverse (readTVar . cschState) handles
       let
         candidates = csCandidate <$> states
         (loeFrag, candidateSuffixes) =
