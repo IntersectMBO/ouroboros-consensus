@@ -13,6 +13,20 @@
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
+-- | Implementation of the GDD governor
+--
+-- The GDD governor is the component responsible for identifying and
+-- disconnecting peers offering sparser chains than the best. This has the
+-- effect of unblocking the Limit on Eagerness, since removing disagreeing
+-- peers allows the current selection to advance.
+--
+-- The GDD governor, invoked with 'runGdd', is supposed to run in a background
+-- thread. It evaluates candidate chains whenever they change, or whenever a
+-- peer claims to have no more headers, or whenever a peer starts sending
+-- headers beyond the forecast horizon.
+--
+-- Whenever GDD disconnects peers, the chain selection is updated.
+--
 module Ouroboros.Consensus.Genesis.Governor (
     DensityBounds (..)
   , LatestSlot (..)
@@ -66,10 +80,10 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 --
 -- Its purpose is to update the LoE fragment, anchored at the immutable tip and
 -- whose tip is the header of the youngest block present in all candidate
--- fragments.
+-- fragments (their latest common intersection).
 --
--- The callback is applied to the current chain, the current ledger state and
--- an STM action that returns the new LoE fragment.
+-- The callback is applied to the current chain and the current ledger state,
+-- and yields the new LoE fragment.
 data UpdateLoEFrag m blk = UpdateLoEFrag {
     updateLoEFrag ::
          AnchoredFragment (Header blk)
@@ -192,7 +206,8 @@ data DensityBounds blk =
 -- claiming to have.
 --
 -- @latestSlots@ tells for every peer which is the slot of the last header that
--- it sent.
+-- it sent. PRECONDITION: The last sent header should never be later than the
+-- the first header after the candidate fragment.
 --
 -- @loeFrag@ is the fragment from the immutable tip to the first intersection
 -- with a candidate fragment.
@@ -321,6 +336,10 @@ data TraceGDDEvent peer blk =
 -- See 'UpdateLoEFrag' for the definition of LoE fragment.
 --
 -- Additionally, disconnect the peers that lose density comparisons.
+--
+-- Disconnecting peers causes chain fragments to be removed, which causes
+-- the LoE fragment to be updated over and over until no more peers are
+-- disconnected.
 --
 -- @getCandidates@ is the callback to obtain the candidate fragments
 --
