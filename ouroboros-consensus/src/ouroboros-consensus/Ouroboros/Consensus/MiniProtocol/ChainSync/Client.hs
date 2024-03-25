@@ -295,7 +295,7 @@ noLoPBucket =
 -- 'bracketChainSyncClient'.
 data ChainSyncStateView m blk = ChainSyncStateView {
     -- | The current candidate fragment
-    csvSetCandidate  :: AnchoredFragment (Header blk) -> STM m ()
+    csvSetCandidate  :: !(AnchoredFragment (Header blk) -> STM m ())
 
     -- | Update the slot of the latest received header
   , csvSetLatestSlot :: !(WithOrigin SlotNo -> STM m ())
@@ -332,15 +332,17 @@ bracketChainSyncClient
     body
   =
     bracket acquireHandle releaseHandle
-  $ \(varState, setLatestSlot) ->
+  $ \varState ->
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
             (invalidBlockWatcher varState)
       $ LeakyBucket.execAgainstBucket lopBucketConfig
       $ \lopBucket ->
             body ChainSyncStateView {
-              csvSetCandidate = \ c -> modifyTVar varState (\ s -> s {csCandidate = c})
-            , csvSetLatestSlot = setLatestSlot
+              csvSetCandidate =
+              modifyTVar varState . \ c s -> s {csCandidate = c}
+            , csvSetLatestSlot =
+              modifyTVar varState . \ ls s -> s {csLatestSlot = Just ls}
             , csvIdling = Idling {
                 idlingStart = atomically $ modifyTVar varState $ \ s -> s {csIdling = True}
               , idlingStop = atomically $ modifyTVar varState $ \ s -> s {csIdling = False}
@@ -361,13 +363,10 @@ bracketChainSyncClient
         tid <- myThreadId
         atomically $ do
           modifyTVar varHandles $ Map.insert peer ChainSyncClientHandle {
-              cschKill     = killThread tid
+              cschKill = killThread tid
             , cschState
             }
-        return (
-          cschState,
-          modifyTVar cschState . \ ls s -> s {csLatestSlot = Just ls}
-          )
+        pure cschState
 
     releaseHandle _ = atomically $ modifyTVar varHandles $ Map.delete peer
 
