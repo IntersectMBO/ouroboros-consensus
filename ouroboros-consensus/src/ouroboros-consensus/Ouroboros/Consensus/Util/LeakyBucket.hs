@@ -50,13 +50,13 @@ import           Prelude hiding (init)
 -- | Configuration of a leaky bucket.
 data Config m = Config
   { -- | Initial and maximal capacity of the bucket, in number of tokens.
-    capacity       :: Rational,
+    capacity       :: !Rational,
     -- | Tokens per second leaking off the bucket.
-    rate           :: Rational,
+    rate           :: !Rational,
     -- | Whether to fill to capacity on overflow or to do nothing.
-    fillOnOverflow :: Bool,
+    fillOnOverflow :: !Bool,
     -- | A monadic action to trigger when the bucket is empty.
-    onEmpty        :: m ()
+    onEmpty        :: !(m ())
   }
 
 -- | A configuration for a bucket that does nothing.
@@ -71,10 +71,10 @@ dummyConfig =
 
 -- | State of a leaky bucket, giving the level and the associated time.
 data State cfg = State
-  { level  :: Rational,
-    time   :: Time,
-    paused :: Bool,
-    config :: cfg
+  { level  :: !Rational,
+    time   :: !Time,
+    paused :: !Bool,
+    config :: !cfg
   }
   deriving (Eq, Show)
 
@@ -90,13 +90,13 @@ data Handlers m = Handlers
   { -- | Refill the bucket by the given amount and returns whether the bucket
     -- overflew. The bucket may silently get filled to full capacity or not get
     -- filled depending on 'fillOnOverflow'.
-    fill         :: Rational -> m Overflew,
+    fill         :: !(Rational -> m Overflew),
     -- | Pause or resume the bucket. Pausing stops the bucket from leaking until
     -- it is resumed. It is still possible to fill it during that time. @setPaused
     -- True@ and @setPaused False@ are idempotent.
-    setPaused    :: Bool -> m (),
+    setPaused    :: !(Bool -> m ()),
     -- | Dynamically update the configuration of the bucket.
-    updateConfig :: (Config m -> Config m) -> m ()
+    updateConfig :: !((Config m -> Config m) -> m ())
   }
 
 -- | Create a bucket with the given configuration, then run the action against
