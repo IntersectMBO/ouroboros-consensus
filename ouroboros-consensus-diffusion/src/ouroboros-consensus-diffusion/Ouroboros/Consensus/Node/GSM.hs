@@ -34,7 +34,6 @@ import qualified Control.Monad.Class.MonadTimer.SI as SI
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import           Data.Time (NominalDiffTime)
 import qualified Ouroboros.Consensus.BlockchainTime.WallClock.Types as Clock
 import qualified Ouroboros.Consensus.HardFork.Abstract as HardFork
@@ -51,6 +50,7 @@ import           System.FS.API (HasFS, createDirectoryIfMissing, doesFileExist,
 import           System.FS.API.Types (AllowExisting (..), FsPath, OpenMode (..),
                      mkFsPath)
 import           System.Random (StdGen, uniformR)
+import Data.Semigroup (All(..))
 
 {-------------------------------------------------------------------------------
   Interface
@@ -89,6 +89,9 @@ data GsmView m upstreamPeer selection state = GsmView {
     candidateOverSelection    ::
         selection -> state -> CandidateVersusSelection
   ,
+    peerIsIdle                ::
+        upstreamPeer -> state -> STM m Bool
+  ,
     durationUntilTooOld       :: Maybe (selection -> m DurationFromNow)
     -- ^ How long from now until the selection will be so old that the node
     -- should exit the @CaughtUp@ state
@@ -102,10 +105,6 @@ data GsmView m upstreamPeer selection state = GsmView {
     getChainSyncStates        ::
         STM m (Map.Map upstreamPeer (StrictTVar m state))
     -- ^ The latest candidates from the upstream ChainSync peers
-  ,
-    getChainSyncIdlers        :: STM m (Set.Set upstreamPeer)
-    -- ^ The ChainSync peers whose latest message claimed that they have no
-    -- subsequent headers
   ,
     getCurrentSelection       :: STM m selection
     -- ^ The node's current selection
@@ -204,13 +203,13 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
       ,
         candidateOverSelection
       ,
+        peerIsIdle
+      ,
         durationUntilTooOld
       ,
         equivalent
       ,
         getChainSyncStates
-      ,
-        getChainSyncIdlers
       ,
         getCurrentSelection
       ,
@@ -313,11 +312,12 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
     blockUntilCaughtUp :: m (TraceGsmEvent tracedSelection)
     blockUntilCaughtUp = atomically $ do
         -- STAGE 1: all ChainSync clients report no subsequent headers
-        idlers        <- getChainSyncIdlers
-        varsState     <- getChainSyncStates
+        varsState <- getChainSyncStates
+        states    <- traverse StrictSTM.readTVar varsState
+        allIdle   <- foldMap All <$> traverse (uncurry peerIsIdle) (Map.toList states)
         check $
-                           0  < Map.size    varsState
-          && Set.size idlers == Map.size    varsState
+             not (Map.null states)
+          && getAll allIdle
 
         -- STAGE 2: no candidate is better than the node's current
         -- selection
@@ -337,7 +337,7 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
         check $ all ok candidates
 
         pure $ GsmEventEnterCaughtUp
-            (Set.size idlers)
+            (Map.size states)
             (cnvSelection selection)
 
         -- STAGE 3: the previous stages weren't so slow that the idler

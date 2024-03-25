@@ -25,7 +25,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncClientHandle, ChainSyncLoPBucketConfig,
-                     ChainSyncState, ChainSyncStateView (..), Consensus,
+                     ChainSyncStateView (..), Consensus,
                      bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -94,7 +94,6 @@ basicChainSyncClient
       , CSClient.setCandidate = csvSetCandidate csState
       , CSClient.idling = csvIdling csState
       , CSClient.loPBucket = csvLoPBucket csState
-      , CSClient.setTheirTip = csvSetTheirTip csState
       , CSClient.setLatestSlot = csvSetLatestSlot csState
       }
   where
@@ -124,11 +123,10 @@ runChainSyncClient ::
   -- ^ Configuration for the LoP bucket.
   StateViewTracers blk m ->
   -- ^ Tracers used to record information for the future 'StateView'.
-  StrictTVar m (Map PeerId (StrictTVar m (ChainSyncState blk))) ->
-  -- ^ A TVar containing a map of fragments of headers for each peer. This
-  -- function will (via 'bracketChainSyncClient') register and de-register a
-  -- TVar for the fragment of the peer.
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
+  -- ^ A TVar containing a map of states for each peer. This
+  -- function will (via 'bracketChainSyncClient') register and de-register a
+  -- TVar for the state of the peer.
   Channel m (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))) ->
   m ()
 runChainSyncClient
@@ -139,13 +137,11 @@ runChainSyncClient
   chainSyncTimeouts
   lopBucketConfig
   StateViewTracers {svtPeerSimulatorResultsTracer}
-  varCandidates
   varHandles
   channel = do
     bracketChainSyncClient
       nullTracer
       chainDbView
-      varCandidates
       varHandles
       peerId
       (maxBound :: NodeToNodeVersion)

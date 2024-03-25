@@ -85,7 +85,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      ChainSyncClientResult (..), ChainSyncLoPBucketConfig (..),
                      ConfigEnv (..), Consensus, DynamicEnv (..), Our (..),
                      Their (..), TraceChainSyncClientEvent (..),
-                     bracketChainSyncClient, chainSyncClient)
+                     bracketChainSyncClient, chainSyncClient, ChainSyncState (..), ChainSyncStateView (..), chainSyncStateFor, viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)
@@ -346,8 +346,6 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               (ServerUpdates serverUpdates)
 
     -- Set up the client
-    varCandidates   <- uncheckedNewTVarM mempty
-    varIdlers       <- uncheckedNewTVarM mempty
     varClientState  <- uncheckedNewTVarM Genesis
     varClientResult <- uncheckedNewTVarM Nothing
     varKnownInvalid <- uncheckedNewTVarM mempty
@@ -405,15 +403,11 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
         lopBucketConfig :: ChainSyncLoPBucketConfig
         lopBucketConfig = ChainSyncLoPBucketDisabled
 
-        client :: StrictTVar m (AnchoredFragment (Header TestBlock))
-               -> (m (), m ())
-               -> (m (), m (), m ())
-               -> (Their (Tip TestBlock) -> STM m ())
-               -> (SlotNo -> STM m ())
+        client :: ChainSyncStateView m TestBlock
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) setTheirTip setLatestSlot =
+        client ChainSyncStateView {csvSetCandidate, csvSetLatestSlot, csvIdling, csvLoPBucket} =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -427,14 +421,10 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                   version             = maxBound :: NodeToNodeVersion
                 , controlMessageSTM   = return Continue
                 , headerMetricsTracer = nullTracer
-                , varCandidate
-                , startIdling
-                , stopIdling
-                , pauseLoPBucket
-                , resumeLoPBucket
-                , grantLoPToken
-                , setTheirTip
-                , setLatestSlot
+                , setCandidate = csvSetCandidate
+                , idling = csvIdling
+                , loPBucket = csvLoPBucket
+                , setLatestSlot = csvSetLatestSlot
                 }
 
     -- Set up the server
@@ -504,18 +494,17 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               bracketChainSyncClient
                  chainSyncTracer
                  chainDbView
-                 varCandidates
-                 varIdlers
                  varHandles
                  serverId
                  maxBound
                  lopBucketConfig
-                 $ \varCandidate idlingSignals lopBucket setTheirTip setLatestSlot -> do
-                   atomically $ modifyTVar varFinalCandidates $
-                     Map.insert serverId varCandidate
+                 $ \csState -> do
+                   atomically $ do
+                     handles <- readTVar varHandles
+                     modifyTVar varFinalCandidates $ Map.insert serverId (handles Map.! serverId)
                    result <-
                      runPipelinedPeer protocolTracer codecChainSyncId clientChannel $
-                       chainSyncClientPeerPipelined $ client varCandidate idlingSignals lopBucket setTheirTip setLatestSlot
+                       chainSyncClientPeerPipelined $ client csState
                    atomically $ writeTVar varClientResult (Just (ClientFinished result))
                    return ()
               `catchAlsoLinked` \ex -> do
@@ -532,8 +521,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     let checkTipTime :: m ()
         checkTipTime = do
             now        <- systemTimeCurrent clientSystemTime
-            candidates <- atomically $
-              readTVar varCandidates >>= traverse readTVar
+            candidates <- atomically $ viewChainSyncState varHandles csCandidate
             forM_ candidates $ \candidate -> do
               let p = castPoint $ AF.headPoint candidate :: Point TestBlock
               case pointSlot p of
@@ -577,7 +565,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     atomically $ do
       finalClientChain  <- readTVar varClientState
       finalServerChain  <- chainState <$> readTVar varChainProducerState
-      candidateFragment <- readTVar varFinalCandidates >>= readTVar . (Map.! serverId)
+      candidateFragment <- csCandidate <$> chainSyncStateFor varFinalCandidates serverId
       mbResult          <- readTVar varClientResult
       return ChainSyncOutcome {
           finalClientChain
