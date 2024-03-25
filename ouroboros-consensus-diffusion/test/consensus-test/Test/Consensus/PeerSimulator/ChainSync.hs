@@ -26,7 +26,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncClientHandle, ChainSyncLoPBucketConfig,
                      ChainSyncStateView (..), Consensus, bracketChainSyncClient,
-                     chainSyncClient)
+                     chainSyncClient, updateStateFull, UpdateState (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Util (ShowProxy)
@@ -71,14 +71,14 @@ basicChainSyncClient ::
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
   ChainDbView m blk ->
-  ChainSyncStateView m blk ->
+  UpdateState m blk ->
   Consensus ChainSyncClientPipelined blk m
 basicChainSyncClient
     peerId
     tracer
     cfg
     chainDbView
-    csState =
+    (UpdateState updateState) =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
@@ -91,10 +91,7 @@ basicChainSyncClient
         CSClient.version             = maxBound
       , CSClient.controlMessageSTM   = return Continue
       , CSClient.headerMetricsTracer = nullTracer
-      , CSClient.setCandidate = csvSetCandidate csState
-      , CSClient.idling = csvIdling csState
-      , CSClient.loPBucket = csvLoPBucket csState
-      , CSClient.setLatestSlot = csvSetLatestSlot csState
+      , CSClient.updateState
       }
   where
     dummyHeaderInFutureCheck ::
@@ -143,10 +140,11 @@ runChainSyncClient
       nullTracer
       chainDbView
       varHandles
+      updateStateFull
       peerId
       (maxBound :: NodeToNodeVersion)
       lopBucketConfig
-      $ \csState -> do
+      $ \updateState -> do
         res <-
           try $
             runPipelinedPeerWithLimits
@@ -161,7 +159,7 @@ runChainSyncClient
                   tracer
                   cfg
                   chainDbView
-                  csState))
+                  updateState))
         case res of
           Right res' -> traceWith svtPeerSimulatorResultsTracer $
             PeerSimulatorResult peerId $ SomeChainSyncClientResult $ Right res'

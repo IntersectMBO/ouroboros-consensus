@@ -57,7 +57,7 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncStateView (..))
+                     (updateStateFull, UpdateState (UpdateState))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import           Ouroboros.Consensus.Node.ExitPolicy
@@ -572,10 +572,11 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
             (CsClient.defaultChainDbView (getChainDB kernel))
             (getChainSyncHandles kernel)
+            updateStateFull
             them
             version
             lopBucketConfig
-            $ \csState -> do
+            $ \(UpdateState updateState) -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
                 runPipelinedPeerWithLimits
@@ -592,10 +593,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                           CsClient.version
                         , CsClient.controlMessageSTM
                         , CsClient.headerMetricsTracer = TraceLabelPeer them `contramap` reportHeader
-                        , CsClient.setCandidate = csvSetCandidate csState
-                        , CsClient.idling = csvIdling csState
-                        , CsClient.loPBucket = csvLoPBucket csState
-                        , CsClient.setLatestSlot = csvSetLatestSlot csState
+                        , CsClient.updateState
                         }
               return (ChainSyncInitiatorResult r, trailing)
 
