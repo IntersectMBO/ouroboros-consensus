@@ -93,15 +93,13 @@ run immDBDir sockAddr cfg = withRegistry \registry ->
         immDB
         networkMagic
   where
-    immDBArgs registry = defaultImmDBArgs {
+    immDBArgs registry = ImmutableDB.defaultArgs {
           immCheckIntegrity = nodeCheckIntegrity storageCfg
         , immChunkInfo      = nodeImmutableDbChunkInfo storageCfg
         , immCodecConfig    = codecCfg
         , immRegistry       = registry
+        , immHasFS          = SomeHasFS $ ioHasFS $ MountPoint immDBDir
         }
-      where
-        defaultImmDBArgs =
-          ImmutableDB.defaultArgs $ SomeHasFS $ ioHasFS $ MountPoint immDBDir
 
     codecCfg     = configCodec cfg
     storageCfg   = configStorage cfg

@@ -1,3 +1,4 @@
+{-# LANGUAGE PolyKinds     #-}
 {-# LANGUAGE TypeOperators #-}
 
 -- | Strict variant of SOP

@@ -23,11 +23,13 @@
 module Test.Consensus.MiniProtocol.BlockFetch.Client (tests) where
 
 import           Control.Monad (replicateM)
+import           Control.Monad.Base
 import           Control.Monad.Class.MonadTime
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Bifunctor (first)
+import           Data.Functor.Contravariant ((>$<))
 import           Data.Hashable (Hashable)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -41,8 +43,13 @@ import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
+                     (TraceEvent (..))
+import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDbArgs (..))
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
+import           Ouroboros.Consensus.Storage.VolatileDB (VolatileDbArgs (..))
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -68,6 +75,7 @@ import           Ouroboros.Network.Protocol.BlockFetch.Server
                      BlockFetchServer (..), blockFetchServerPeer)
 import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch,
                      ChainRange (..), Message (MsgBlock))
+import qualified System.FS.Sim.MockFS as MockFS
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -120,7 +128,7 @@ data BlockFetchClientOutcome = BlockFetchClientOutcome {
 
 runBlockFetchTest ::
      forall m.
-     (IOLike m, MonadTime m, MonadTimer m)
+     (IOLike m, MonadTime m, MonadTimer m, MonadBase m m)
   => BlockFetchClientTestSetup
   -> m BlockFetchClientOutcome
 runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
@@ -238,15 +246,21 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
     mkChainDbView registry tracer = do
         chainDbArgs <- do
           nodeDBs <- emptyNodeDBs
+          fs <- newTVarIO MockFS.empty
           let args = fromMinimalChainDbArgs $ MinimalChainDbArgs {
                   mcdbTopLevelConfig = topLevelConfig
                 , mcdbChunkInfo = mkTestChunkInfo topLevelConfig
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
+                , mcdbGSMHasFS = fs
                 }
           -- TODO: Test with more interesting behaviour for cdbCheckInFuture
-          pure $ args { cdbTracer = cdbTracer }
+          pure $ args { cdbImmDbArgs = (cdbImmDbArgs args) { immTracer = TraceImmutableDBEvent >$< cdbTracer }
+                      , cdbVolDbArgs = (cdbVolDbArgs args) { volTracer = TraceVolatileDBEvent >$<  cdbTracer }
+                      , cdbLgrDbArgs = (cdbLgrDbArgs args) { lgrTracer = TraceLedgerDBEvent >$<  cdbTracer }
+                      , cdbsArgs = (cdbsArgs args) { cdbsTracer = cdbTracer }
+                      }
         (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
           allocate
             registry

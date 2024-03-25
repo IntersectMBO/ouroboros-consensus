@@ -20,6 +20,7 @@
 module Test.Ouroboros.Storage.ChainDB.FollowerPromptness (tests) where
 
 import           Control.Monad (forever)
+import           Control.Monad.Base
 import           Control.Monad.IOSim (runSimOrThrow)
 import           Control.Tracer (Tracer (..), contramapM, traceWith)
 import           Data.Foldable (for_)
@@ -33,13 +34,14 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as Punishment
-import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import qualified Ouroboros.Network.Mock.Chain as Chain
+import qualified System.FS.Sim.MockFS as Mock
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -112,7 +114,7 @@ data FollowerPromptnessOutcome = FollowerPromptnessOutcome {
   }
 
 runFollowerPromptnessTest ::
-     forall m. IOLike m
+     forall m. (IOLike m, MonadBase m m)
   => FollowerPromptnessTestSetup
   -> m FollowerPromptnessOutcome
 runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \registry -> do
@@ -168,13 +170,14 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
       -> m (ChainDB m TestBlock)
     openChainDB registry cdbTracer = do
         chainDbArgs <- do
-          let mcdbTopLevelConfig = singleNodeTestConfigWithK securityParam
-              mcdbChunkInfo      = mkTestChunkInfo mcdbTopLevelConfig
-              mcdbInitLedger     = testInitExtLedger
-              mcdbRegistry       = registry
+          let mcdbTopLevelConfig       = singleNodeTestConfigWithK securityParam
+              mcdbChunkInfo            = mkTestChunkInfo mcdbTopLevelConfig
+              mcdbInitLedger           = testInitExtLedger
+              mcdbRegistry             = registry
           mcdbNodeDBs <- emptyNodeDBs
+          mcdbGSMHasFS <- atomically $ newTVar Mock.empty
           let cdbArgs = fromMinimalChainDbArgs MinimalChainDbArgs{..}
-          pure $ cdbArgs { cdbTracer = cdbTracer }
+          pure $ updateTracer cdbTracer cdbArgs
         (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
           allocate
             registry

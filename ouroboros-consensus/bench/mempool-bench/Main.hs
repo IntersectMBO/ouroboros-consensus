@@ -16,8 +16,8 @@ import qualified Control.Tracer as Tracer
 import           Data.Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Csv as Csv
+import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
-import           Data.Set ()
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
 import           Main.Utf8 (withStdTerminalHandles)
@@ -61,7 +61,7 @@ main = withStdTerminalHandles $ do
                             (mempool, txs) <- getAcquiredRes
                             void $ act mempool txs
                             -- TODO: consider adding a 'reset' command to the mempool to make sure its state is not tainted.
-                            Mocked.removeTxs mempool $ getCmdsTxIds txs
+                            maybe (pure ()) (removeTxs mempool) $ NE.nonEmpty $ getCmdsTxIds txs
                       bgroup (show n <> " transactions") [
                           bench "benchmark" $ nfIO $ withAcquiredMempool $ \mempool txs -> do
                             run mempool txs

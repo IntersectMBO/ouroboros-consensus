@@ -31,6 +31,10 @@
       url = "github:nix-community/flake-compat";
       flake = false;
     };
+
+    # for cabal-docspec
+    cabal-extras = { url = "github:phadej/cabal-extras/cabal-docspec-0.0.0.20230517"; flake = false; };
+    gentle-introduction = { url = "github:phadej/gentle-introduction"; flake = false; };
   };
   outputs = inputs:
     let

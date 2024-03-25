@@ -30,4 +30,45 @@ packages:
 tests: true
 benchmarks: true
 
+optional-packages:
+  latex-svg-image
+
 import: ./asserts.cabal
+
+--
+-- source-repository-packages
+--
+
+source-repository-package
+  type: git
+  location: https://github.com/jasagredo/latex-svg
+  tag: 00e10224a96ce73e2a1da8478efb7790cf9ba2b3
+  --sha256: 0pb5azww7qj0armldn95pr1vxz30gq51mz8ysmm0a1rgsxm9f3i5
+  subdir:
+    latex-svg-image
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/quickcheck-dynamic
+  tag: cf5273faabde55dc8e759e64766e3353439ac1e2
+  --sha256: 1achsw9pzrg9lng7xmcnkc6fz1hrl1g8bm4g33lv0vzhrkcy0cl3
+  subdir: quickcheck-dynamic
+
+source-repository-package
+  type: git
+  location: https://github.com/well-typed/quickcheck-lockstep
+  tag: 5125b458af594cb191c8979a3987f1894a96a196
+  --sha256: 1mv6ylpksppjdqjjm0bf0pcxlsgk2bgz60i4l4jwl1kdp0zv4iay
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/anti-diffs
+  tag: a6b3b7748711c10fc0413cbe6171b42774d08ffa
+  --sha256: 1cqnqq2zwlrz44iq636ai81f3pfwqjaxrm9n9k7rax5yi3n139xr
+  subdir:
+    diff-containers
+    fingertree-rm
+
+if impl(ghc >= 9.8)
+  allow-newer:
+    cardano-lmdb-simple:bytestring

@@ -10,6 +10,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
+import           Control.Monad.Base
 import           Control.Monad.Class.MonadAsync
                      (AsyncCancelled (AsyncCancelled))
 import           Control.Monad.Class.MonadTime (MonadTime)
@@ -31,8 +32,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
-                     (ChainDbArgs (cdbTracer))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), MonadDelay (threadDelay),
@@ -54,6 +55,7 @@ import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
                      (pipelineDecisionLowHighMark)
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (chainSyncServerPeer)
+import qualified System.FS.Sim.MockFS as Mock
 import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.Genesis.Setup.GenChains (GenesisTest)
 import           Test.Consensus.Network.Driver.Limits.Extras
@@ -250,7 +252,7 @@ runScheduler tracer (PointSchedule ps) peers = do
 -- send all ticks in a 'PointSchedule' to all given peers in turn.
 runPointSchedule ::
   forall m.
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m, MonadBase m m) =>
   SchedulerConfig ->
   GenesisTest ->
   PointSchedule ->
@@ -295,7 +297,7 @@ runPointSchedule schedulerConfig GenesisTest {gtSecurityParam = k, gtHonestAsc =
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.
 mkChainDb ::
-  IOLike m =>
+  (IOLike m, MonadBase m m) =>
   Tracer m String ->
   Map PeerId (StrictTVar m TestFragH) ->
   TopLevelConfig TestBlock ->
@@ -304,17 +306,17 @@ mkChainDb ::
 mkChainDb tracer _candidateVars nodeCfg registry = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
-      pure $ (
+      mcdbGSMHasFS <- uncheckedNewTVarM Mock.empty
+      pure $ updateTracer (mkCdbTracer tracer) (
         fromMinimalChainDbArgs MinimalChainDbArgs {
             mcdbTopLevelConfig = nodeCfg
           , mcdbChunkInfo      = mkTestChunkInfo nodeCfg
           , mcdbInitLedger     = testInitExtLedger
           , mcdbRegistry       = registry
           , mcdbNodeDBs
+          , mcdbGSMHasFS
           }
-        ) {
-            cdbTracer = mkCdbTracer tracer
-        }
+        )
     (_, (chainDB, ChainDB.Impl.Internal{intAddBlockRunner})) <-
       allocate
         registry

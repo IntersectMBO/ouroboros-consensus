@@ -81,7 +81,8 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine (
 
 import           Codec.Serialise (Serialise)
 import           Control.Monad (replicateM, void)
-import           Control.Tracer
+import           Control.Monad.Base
+import qualified Control.Tracer as CT
 import           Data.Bifoldable
 import           Data.Bifunctor
 import qualified Data.Bifunctor.TH as TH
@@ -111,18 +112,20 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.BFT
 import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Storage.Common (SizeInBytes)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (unsafeChunkNoToEpochNo)
-import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB)
-import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Common as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog as DbChangelog
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util (split)
 import           Ouroboros.Consensus.Util.CallStack
@@ -183,7 +186,8 @@ data Cmd blk it flr
     -- smaller than the block's slot number (such that the block is from the
     -- future) and larger or equal to the current slot, and add the block.
   | GetCurrentChain
-  | GetLedgerDB
+  -- TODO(js_ldb): reenable
+  --  GetLedgerDB
   | GetTipBlock
   | GetTipHeader
   | GetTipPoint
@@ -264,7 +268,7 @@ deriving instance SOP.HasDatatypeInfo (Cmd blk it flr)
 data Success blk it flr
   = Unit                ()
   | Chain               (AnchoredFragment (Header blk))
-  | LedgerDB            (LedgerDB (ExtLedgerState blk))
+  | LedgerDB            (DbChangelog.DbChangelog' blk)
   | MbBlock             (Maybe blk)
   | MbAllComponents     (Maybe (AllComponents blk))
   | MbGCedAllComponents (MaybeGCedBlock (AllComponents blk))
@@ -314,22 +318,24 @@ type AllComponents blk =
   )
 
 type TestConstraints blk =
-  ( ConsensusProtocol  (BlockProtocol blk)
-  , LedgerSupportsProtocol            blk
-  , InspectLedger                     blk
-  , Eq (ChainDepState  (BlockProtocol blk))
-  , Eq (LedgerState                   blk)
-  , Eq                                blk
-  , Show                              blk
-  , HasHeader                         blk
-  , StandardHash                      blk
-  , Serialise                         blk
-  , ModelSupportsBlock                blk
-  , Eq                       (Header  blk)
-  , Show                     (Header  blk)
-  , ConvertRawHash                    blk
-  , HasHardForkHistory                blk
-  , SerialiseDiskConstraints          blk
+  ( ConsensusProtocol    (BlockProtocol blk)
+  , LedgerSupportsProtocol              blk
+  , InspectLedger                       blk
+  , Eq (ChainDepState    (BlockProtocol blk))
+  , Eq (LedgerState                     blk EmptyMK)
+  , Eq                                  blk
+  , Show                                blk
+  , HasHeader                           blk
+  , StandardHash                        blk
+  , Serialise                           blk
+  , ModelSupportsBlock                  blk
+  , Eq                         (Header  blk)
+  , Show                       (Header  blk)
+  , ConvertRawHash                      blk
+  , HasHardForkHistory                  blk
+  , SerialiseDiskConstraints            blk
+  , Show (LedgerState                   blk EmptyMK)
+  , LedgerTablesAreTrivial (LedgerState blk)
   )
 
 deriving instance (TestConstraints blk, Eq   it, Eq   flr)
@@ -366,7 +372,7 @@ data ChainDBEnv m blk = ChainDBEnv {
   }
 
 open ::
-     (IOLike m, TestConstraints blk)
+     (IOLike m, TestConstraints blk, MonadBase m m)
   => ChainDbArgs Identity m blk -> m (ChainDBState m blk)
 open args = do
     (chainDB, internal) <- openDBInternal args False
@@ -376,7 +382,7 @@ open args = do
 
 -- PRECONDITION: the ChainDB is closed
 reopen ::
-     (IOLike m, TestConstraints blk)
+     (IOLike m, TestConstraints blk, MonadBase m m)
   => ChainDBEnv m blk -> m ()
 reopen ChainDBEnv { varDB, args } = do
     chainDBState <- open args
@@ -388,16 +394,16 @@ close ChainDBState { chainDB, addBlockAsync } = do
     closeDB chainDB
 
 run :: forall m blk.
-       (IOLike m, TestConstraints blk)
+       (IOLike m, TestConstraints blk, MonadBase m m)
     => ChainDBEnv m blk
     ->    Cmd     blk (TestIterator m blk) (TestFollower m blk)
     -> m (Success blk (TestIterator m blk) (TestFollower m blk))
 run env@ChainDBEnv { varDB, .. } cmd =
     readTVarIO varDB >>= \st@ChainDBState { chainDB = ChainDB{..}, internal } -> case cmd of
-      AddBlock blk             -> Point               <$> (advanceAndAdd st (blockSlot blk) blk)
-      AddFutureBlock blk s     -> Point               <$> (advanceAndAdd st s               blk)
+      AddBlock blk             -> Point               <$> advanceAndAdd st (blockSlot blk) blk
+      AddFutureBlock blk s     -> Point               <$> advanceAndAdd st s               blk
       GetCurrentChain          -> Chain               <$> atomically getCurrentChain
-      GetLedgerDB              -> LedgerDB            <$> atomically getLedgerDB
+      -- GetLedgerDB              -> LedgerDB . flush    <$> atomically getDbChangelog -- TODO(jdral_ldb)
       GetTipBlock              -> MbBlock             <$> getTipBlock
       GetTipHeader             -> MbHeader            <$> getTipHeader
       GetTipPoint              -> Point               <$> atomically getTipPoint
@@ -417,7 +423,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       Reopen                   -> Unit                <$> reopen env
       PersistBlks              -> ignore              <$> persistBlks DoNotGarbageCollect internal
       PersistBlksThenGC        -> ignore              <$> persistBlks GarbageCollect internal
-      UpdateLedgerSnapshots    -> ignore              <$> intUpdateLedgerSnapshots internal
+      UpdateLedgerSnapshots    -> ignore              <$> intTryTakeSnapshot internal
       WipeVolatileDB           -> Point               <$> wipeVolatileDB st
   where
     mbGCedAllComponents = MbGCedAllComponents . MaybeGCedBlock True
@@ -447,6 +453,33 @@ run env@ChainDBEnv { varDB, .. } cmd =
     giveWithEq :: a -> m (WithEq a)
     giveWithEq a =
       fmap (`WithEq` a) $ atomically $ stateTVar varNextId $ \i -> (i, succ i)
+
+-- | When the model is asked for the ledger DB, it reconstructs it by applying
+-- the blocks in the current chain, starting from the initial ledger state.
+-- Before the introduction of UTxO HD, this approach resulted in a ledger DB
+-- equivalent to the one maintained by the SUT. However, after UTxO HD, this is
+-- no longer the case since the ledger DB can be altered as the result of taking
+-- snapshots or opening the ledger DB (for instance when we process the
+-- 'WipeVolatileDB' command). Taking snapshots or opening the ledger DB cause
+-- the ledger DB to be flushed, which modifies its sequence of volatile and
+-- immutable states.
+--
+-- The model does not have information about when the flushes occur and it
+-- cannot infer that information in a reliable way since this depends on the low
+-- level details of operations such as opening the ledger DB. Therefore, we
+-- assume that the 'GetLedgerDB' command should return a flushed ledger DB, and
+-- we use this function to implement such command both in the SUT and in the
+-- model.
+--
+-- When we compare the SUT and model's ledger DBs, by flushing we are not
+-- comparing the immutable parts of the SUT and model's ledger DBs. However,
+-- this was already the case in before the introduction of UTxO HD: if the
+-- current chain contained more than K blocks, then the ledger states before the
+-- immutable tip were not compared by the 'GetLedgerDB' command.
+-- flush ::
+--      (LedgerSupportsProtocol blk)
+--   => DbChangelog.DbChangelog' blk -> DbChangelog.DbChangelog' blk
+-- flush = snd . DbChangelog.splitForFlushing
 
 persistBlks :: IOLike m => ShouldGarbageCollect -> ChainDB.Internal m blk -> m ()
 persistBlks collectGarbage ChainDB.Internal{..} = do
@@ -632,7 +665,7 @@ runPure cfg = \case
     AddBlock blk             -> ok  Point               $ update  (advanceAndAdd (blockSlot blk) blk)
     AddFutureBlock blk s     -> ok  Point               $ update  (advanceAndAdd s               blk)
     GetCurrentChain          -> ok  Chain               $ query   (Model.volatileChain k getHeader)
-    GetLedgerDB              -> ok  LedgerDB            $ query   (Model.getLedgerDB cfg)
+--    GetLedgerDB              -> ok  LedgerDB            $ query   (flush . Model.getDbChangelog cfg)
     GetTipBlock              -> ok  MbBlock             $ query    Model.tipBlock
     GetTipHeader             -> ok  MbHeader            $ query   (fmap getHeader . Model.tipBlock)
     GetTipPoint              -> ok  Point               $ query    Model.tipPoint
@@ -759,7 +792,7 @@ deriving instance (TestConstraints blk, Show1 r) => Show (Model blk m r)
 
 -- | Initial model
 initModel :: TopLevelConfig blk
-          -> ExtLedgerState blk
+          -> ExtLedgerState blk EmptyMK
           -> MaxClockSkew
           -> Model blk m r
 initModel cfg initLedger (MaxClockSkew maxClockSkew) = Model
@@ -887,7 +920,7 @@ generator ::
 generator genBlock m@Model {..} = At <$> frequency
     [ (30, genAddBlock)
     , (if empty then 1 else 10, return GetCurrentChain)
-    , (if empty then 1 else 10, return GetLedgerDB)
+--    , (if empty then 1 else 10, return GetLedgerDB)
     , (if empty then 1 else 10, return GetTipBlock)
       -- To check that we're on the right chain
     , (if empty then 1 else 10, return GetTipPoint)
@@ -1180,7 +1213,7 @@ semantics :: forall blk. TestConstraints blk
           -> At Cmd blk IO Concrete
           -> IO (At Resp blk IO Concrete)
 semantics env (At cmd) =
-    At . (bimap (QSM.reference . QSM.Opaque) (QSM.reference . QSM.Opaque)) <$>
+    At . bimap (QSM.reference . QSM.Opaque) (QSM.reference . QSM.Opaque) <$>
     runIO env (bimap QSM.opaque QSM.opaque cmd)
 
 -- | The state machine proper
@@ -1188,7 +1221,7 @@ sm :: TestConstraints blk
    => ChainDBEnv IO blk
    -> BlockGen                  blk IO
    -> TopLevelConfig            blk
-   -> ExtLedgerState            blk
+   -> ExtLedgerState            blk     EmptyMK
    -> MaxClockSkew
    -> StateMachine (Model       blk IO)
                    (At Cmd      blk IO)
@@ -1243,7 +1276,7 @@ deriving instance ( ToExpr blk
                   , ToExpr (HeaderHash blk)
                   , ToExpr (ChainDepState (BlockProtocol blk))
                   , ToExpr (TipInfo blk)
-                  , ToExpr (LedgerState blk)
+                  , ToExpr (LedgerState blk EmptyMK) -- TODO why not mk?
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (DBModel blk)
@@ -1251,7 +1284,7 @@ deriving instance ( ToExpr blk
                   , ToExpr (HeaderHash  blk)
                   , ToExpr (ChainDepState (BlockProtocol blk))
                   , ToExpr (TipInfo blk)
-                  , ToExpr (LedgerState blk)
+                  , ToExpr (LedgerState blk EmptyMK) -- TODO why not mk?
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (Model blk IO Concrete)
@@ -1269,7 +1302,7 @@ deriving instance ToExpr TestBody
 deriving instance ToExpr TestBlockError
 deriving instance ToExpr Blk
 deriving instance ToExpr (TipInfoIsEBB Blk)
-deriving instance ToExpr (LedgerState Blk)
+deriving instance ToExpr (LedgerState Blk EmptyMK)
 deriving instance ToExpr (HeaderError Blk)
 deriving instance ToExpr TestBlockOtherHeaderEnvelopeError
 deriving instance ToExpr (HeaderEnvelopeError Blk)
@@ -1298,10 +1331,8 @@ deriving instance SOP.Generic         (TraceGCEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceGCEvent blk)
 deriving instance SOP.Generic         (TraceIteratorEvent blk)
 deriving instance SOP.HasDatatypeInfo (TraceIteratorEvent blk)
-deriving instance SOP.Generic         (LedgerDB.TraceSnapshotEvent blk)
-deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceSnapshotEvent blk)
-deriving instance SOP.Generic         (LedgerDB.TraceReplayEvent blk)
-deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceReplayEvent blk)
+deriving instance SOP.Generic         (LedgerDB.TraceLedgerDBEvent blk)
+deriving instance SOP.HasDatatypeInfo (LedgerDB.TraceLedgerDBEvent blk)
 deriving instance SOP.Generic         (ImmutableDB.TraceEvent blk)
 deriving instance SOP.HasDatatypeInfo (ImmutableDB.TraceEvent blk)
 deriving instance SOP.Generic         (VolatileDB.TraceEvent blk)
@@ -1506,7 +1537,7 @@ smUnused maxClockSkew chunkInfo =
       maxClockSkew
 
 prop_sequential :: MaxClockSkew -> SmallChunkInfo -> Property
-prop_sequential maxClockSkew smallChunkInfo@(SmallChunkInfo chunkInfo)  =
+prop_sequential maxClockSkew smallChunkInfo@(SmallChunkInfo chunkInfo) =
     forAllCommands (smUnused maxClockSkew chunkInfo) Nothing $
       runCmdsLockstep maxClockSkew smallChunkInfo
 
@@ -1545,8 +1576,17 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       varCurSlot         <- uncheckedNewTVarM 0
       varNextId          <- uncheckedNewTVarM 0
       nodeDBs            <- emptyNodeDBs
-      let args = mkArgs testCfg chunkInfo testInitExtLedger threadRegistry nodeDBs tracer
-                   maxClockSkew varCurSlot
+      gsmhasfs           <- atomically $ newTVar Mock.empty
+      let args = mkArgs
+                   testCfg
+                   chunkInfo
+                   (testInitExtLedger `withLedgerTables` emptyLedgerTables)
+                   threadRegistry
+                   nodeDBs
+                   gsmhasfs
+                   tracer
+                   maxClockSkew
+                   varCurSlot
 
       (hist, model, res, trace) <- bracket
         (open args >>= newTVarIO)
@@ -1676,33 +1716,42 @@ traceEventName = \case
     TraceOpenEvent              ev    -> "Open."              <> constrName ev
     TraceGCEvent                ev    -> "GC."                <> constrName ev
     TraceIteratorEvent          ev    -> "Iterator."          <> constrName ev
-    TraceSnapshotEvent          ev    -> "Ledger."            <> constrName ev
-    TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
+    TraceLedgerDBEvent          ev    -> "Ledger."            <> constrName ev
+--    TraceLedgerReplayEvent      ev    -> "LedgerReplay."      <> constrName ev
     TraceImmutableDBEvent       ev    -> "ImmutableDB."       <> constrName ev
     TraceVolatileDBEvent        ev    -> "VolatileDB."        <> constrName ev
 
 mkArgs :: IOLike m
        => TopLevelConfig Blk
        -> ImmutableDB.ChunkInfo
-       -> ExtLedgerState Blk
+       -> ExtLedgerState Blk ValuesMK
        -> ResourceRegistry m
        -> NodeDBs (StrictTVar m MockFS)
-       -> Tracer m (TraceEvent Blk)
+       -> StrictTVar m MockFS
+       -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
        -> ChainDbArgs Identity m Blk
-mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot =
+mkArgs cfg chunkInfo initLedger registry nodeDBs gsmhasfs tracer (MaxClockSkew maxClockSkew) varCurSlot =
   let args = fromMinimalChainDbArgs MinimalChainDbArgs {
             mcdbTopLevelConfig = cfg
           , mcdbChunkInfo = chunkInfo
           , mcdbInitLedger = initLedger
           , mcdbRegistry = registry
           , mcdbNodeDBs = nodeDBs
+          , mcdbGSMHasFS = gsmhasfs
           }
-  in args { cdbCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
-          , cdbCheckIntegrity = testBlockIsValid
-          , cdbBlocksToAddSize = 2
-          , cdbTracer = tracer
+  in ChainDB.updateTracer tracer $
+      args { cdbsArgs = (cdbsArgs args) {
+               ChainDB.cdbsCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
+             , ChainDB.cdbsBlocksToAddSize = 2
+             }
+           , cdbImmDbArgs = (cdbImmDbArgs args) {
+               ImmutableDB.immCheckIntegrity = testBlockIsValid
+               }
+           , cdbVolDbArgs = (cdbVolDbArgs args) {
+               VolatileDB.volCheckIntegrity = testBlockIsValid
+               }
           }
 
 tests :: TestTree
