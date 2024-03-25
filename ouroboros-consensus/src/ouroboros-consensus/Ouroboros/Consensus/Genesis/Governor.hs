@@ -247,14 +247,15 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           -- the window is the sum of the known blocks and that number of remaining slots.
           potentialSlots =
             if idling || hasBlockAfter then 0
-            else sgen - fromIntegral (AF.length candidateSuffix)
+            else sgen - totalBlockCount
 
           -- The number of blocks within the Genesis window we know with certainty
           lowerBound = fromIntegral $ AF.length fragment
 
           upperBound = lowerBound + potentialSlots
 
-          -- The number of blocks we know of on the candidate chain, not limited to the Genesis window.
+          -- The number of blocks we know to be on the candidate chain after
+          -- the intersection, not limited to the Genesis window.
           totalBlockCount = fromIntegral (AF.length candidateSuffix)
 
           -- Does the peer have more than k known blocks in _total_ after the intersection?
