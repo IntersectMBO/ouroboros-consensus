@@ -117,10 +117,7 @@ data PeerSimulatorResources m blk =
     -- | Resources for individual peers.
     psrPeers   :: Map PeerId (PeerResources m blk),
 
-    -- | The shared state used by ChainDB, ChainSync and BlockFetch.
-    psrStates  :: StrictTVar m (Map PeerId (StrictTVar m (ChainSyncState blk))),
-
-    -- | Handlers to interact with the ChainSync client of each peer.
+    -- | Handles to interact with the ChainSync client of each peer.
     -- See 'ChainSyncClientHandle' for more details.
     psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock))
   }
@@ -240,6 +237,5 @@ makePeerSimulatorResources tracer blockTree peers = do
   resources <- for peers $ \ peerId -> do
     peerResources <- makePeerResources tracer blockTree peerId
     pure (peerId, peerResources)
-  psrStates <- uncheckedNewTVarM mempty
   psrHandles <- uncheckedNewTVarM mempty
-  pure PeerSimulatorResources {psrStates, psrPeers = Map.fromList $ toList resources, psrHandles}
+  pure PeerSimulatorResources {psrPeers = Map.fromList $ toList resources, psrHandles}

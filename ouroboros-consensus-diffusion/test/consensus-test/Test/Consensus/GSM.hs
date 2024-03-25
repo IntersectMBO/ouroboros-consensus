@@ -172,7 +172,7 @@ prop_sequential1 ::
 prop_sequential1 j0 cmds = runSimQC $ do
     -- these variables are part of the 'GSM.GsmView'
     varSelection  <- newTVarIO (mSelection $ initModel j0)
-    varCandidates <- newTVarIO Map.empty
+    varStates     <- newTVarIO Map.empty
     varIdlers     <- newTVarIO Set.empty
     varJudgment   <- newTVarIO j0
     varMarker     <- newTVarIO (toMarker j0)
@@ -186,7 +186,7 @@ prop_sequential1 j0 cmds = runSimQC $ do
     let vars =
             Vars
                 varSelection
-                varCandidates
+                varStates
                 varIdlers
                 varJudgment
                 varMarker
@@ -202,13 +202,13 @@ prop_sequential1 j0 cmds = runSimQC $ do
           ,
             GSM.candidateOverSelection = candidateOverSelection
           ,
+            GSM.peerIsIdle = \ peer _ -> Set.member peer <$> readTVar varIdlers
+          ,
             GSM.durationUntilTooOld = Just durationUntilTooOld
           ,
             GSM.equivalent = (==)   -- unsound, but harmless in this test
           ,
-            GSM.getChainSyncCandidates = readTVar varCandidates
-          ,
-            GSM.getChainSyncIdlers = readTVar varIdlers
+            GSM.getChainSyncStates = readTVar varStates
           ,
             GSM.getCurrentSelection = readTVar varSelection
           ,

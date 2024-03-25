@@ -125,8 +125,7 @@ prop_densityDisconnectStatic =
       ChainSyncState {
         csCandidate = frag,
         csLatestSlot = Just (AF.headSlot frag),
-        csIdling = False,
-        csTip = Nothing
+        csIdling = False
       }
     gen = do
       gt <- genChains (QC.choose (1, 4))
@@ -269,8 +268,7 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers} =
               ChainSyncState {
                 csCandidate,
                 csIdling = False,
-                csLatestSlot = Just (AF.headSlot csCandidate),
-                csTip = Nothing
+                csLatestSlot = Just (AF.headSlot csCandidate)
               }
           (loeFrag, suffixes) = sharedCandidatePrefix curChain candidates
           disconnect = fst (densityDisconnect sgen k states suffixes loeFrag)

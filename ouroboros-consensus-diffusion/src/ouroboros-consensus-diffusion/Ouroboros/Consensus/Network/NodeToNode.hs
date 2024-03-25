@@ -571,13 +571,11 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
         CsClient.bracketChainSyncClient
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
             (CsClient.defaultChainDbView (getChainDB kernel))
-            (getNodeStates kernel)
             (getChainSyncHandles kernel)
             them
             version
             lopBucketConfig
             $ \csState -> do
-            -- $ \varCandidate (startIdling, stopIdling) (pauseLoPBucket, resumeLoPBucket, grantLoPToken) setTheirTip setLatestSlot -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
                 runPipelinedPeerWithLimits
@@ -597,7 +595,6 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                         , CsClient.setCandidate = csvSetCandidate csState
                         , CsClient.idling = csvIdling csState
                         , CsClient.loPBucket = csvLoPBucket csState
-                        , CsClient.setTheirTip = csvSetTheirTip csState
                         , CsClient.setLatestSlot = csvSetLatestSlot csState
                         }
               return (ChainSyncInitiatorResult r, trailing)
