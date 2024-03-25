@@ -65,6 +65,8 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , ChainSyncStateView (..)
   , chainSyncStateFor
   , viewChainSyncState
+  , noIdling
+  , noLoPBucket
   ) where
 
 import           Control.Monad (join, void)
@@ -259,6 +261,14 @@ data Idling m = Idling {
   , idlingStop  :: !(m ())
   }
 
+-- | No-op implementation, for tests.
+noIdling :: Applicative m => Idling m
+noIdling =
+  Idling {
+      idlingStart = pure ()
+    , idlingStop  = pure ()
+    }
+
 -- | Interface to the LoP implementation for the ChainSync client.
 data LoPBucket m = LoPBucket {
     -- | Pause the bucket, because the peer is alert and we're waiting for some
@@ -271,6 +281,15 @@ data LoPBucket m = LoPBucket {
     -- | Notify the bucket that the peer has sent an interesting header.
   , lbGrantToken :: !(m ())
   }
+
+-- | No-op implementation, for tests.
+noLoPBucket :: Applicative m => LoPBucket m
+noLoPBucket =
+  LoPBucket {
+      lbPause      = pure ()
+    , lbResume     = pure ()
+    , lbGrantToken = pure ()
+    }
 
 -- | Interface for the ChainSync client to its state allocated by
 -- 'bracketChainSyncClient'.
