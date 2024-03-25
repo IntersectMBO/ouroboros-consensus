@@ -5,6 +5,10 @@
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
+-- | This module contains various tests for the leaky bucket. Some, prefixed by
+-- “play”, are simple, manual tests; two concern (non-)propagation of exceptions
+-- between the bucket thread and the action's thread; the last one compares a
+-- run of the actual bucket implementation against a model.
 module Test.Ouroboros.Consensus.Util.LeakyBucket.Tests (tests) where
 
 import           Control.Monad (foldM, void)
@@ -30,10 +34,10 @@ tests = testGroup "Ouroboros.Consensus.Util.LeakyBucket" [
   testProperty "play a bit" prop_playABit,
   testProperty "play too long" prop_playTooLong,
   testProperty "play too long harmless" prop_playTooLongHarmless,
+  testProperty "play with pause" prop_playWithPause,
+  testProperty "play with pause too long" prop_playWithPauseTooLong,
   testProperty "wait almost too long" (prop_noRefill (-1)),
   testProperty "wait just too long" (prop_noRefill 1),
-  testProperty "pause for a time" prop_playWithPause,
-  testProperty "resume too quickly" prop_playWithPauseTooLong,
   testProperty "propagates exceptions" prop_propagateExceptions,
   testProperty "propagates exceptions (IO)" prop_propagateExceptionsIO,
   testProperty "catch exception" prop_catchException,

@@ -202,9 +202,15 @@ prop_delayAttack lopEnabled =
       )
       shrinkPeerSchedules
       ( \GenesisTest {gtBlockTree} StateView {svSelectedChain, svChainSyncExceptions} ->
-          let treeTipPoint = AF.headPoint $ btTrunk gtBlockTree
+          let -- The tip of the blocktree trunk.
+              treeTipPoint = AF.headPoint $ btTrunk gtBlockTree
+              -- The tip of the selection.
               selectedTipPoint = AF.castPoint $ AF.headPoint svSelectedChain
+              -- If LoP is enabled, then the adversary should have been killed
+              -- and the selection should be the whole trunk.
               selectedCorrect = lopEnabled == (treeTipPoint == selectedTipPoint)
+              -- If LoP is enabled, then we expect exactly one `EmptyBucket`
+              -- exception in the adversary's ChainSync.
               exceptionsCorrect = case svChainSyncExceptions of
                 [] -> not lopEnabled
                 [ChainSyncException (PeerId _) exn] ->

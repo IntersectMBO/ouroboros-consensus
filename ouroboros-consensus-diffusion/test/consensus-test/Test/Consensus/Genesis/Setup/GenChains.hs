@@ -122,7 +122,10 @@ genChains genNumForks = do
     gtDelay = delta,
     gtSlotLength,
     gtChainSyncTimeouts = chainSyncTimeouts gtSlotLength asc,
-    gtLoPBucketParams = LoPBucketParams { lbpCapacity = 10_000, lbpRate = 1_000 }, -- REVIEW: Do we want to generate those randomly?
+    gtLoPBucketParams = LoPBucketParams { lbpCapacity = 10_000, lbpRate = 1_000 },
+    -- ^ REVIEW: Do we want to generate those randomly? For now, the chosen
+    -- values carry no special meaning. Someone needs to think about what values
+    -- would make for interesting tests.
     gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
     gtSchedule = ()
     }

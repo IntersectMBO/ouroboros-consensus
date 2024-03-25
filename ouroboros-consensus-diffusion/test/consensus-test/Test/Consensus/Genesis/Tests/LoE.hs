@@ -27,7 +27,6 @@ import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TersePrinting (tersePoint)
 import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
@@ -62,11 +61,15 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
       )
       shrinkPeerSchedules
       ( \GenesisTest {gtBlockTree} StateView {svSelectedChain, svChainSyncExceptions} ->
-        tabulate "binary log buckets of the length of the honest chain" [show (round @_ @Int (2 ** (realToFrac @_ @Double (round @_ @Int (logBase 2 (realToFrac @_ @Double (1 + AF.length (btTrunk gtBlockTree))))))))] $
-        counterexample ("Selection is not the honest tip: " ++ tersePoint (AF.headPoint (btTrunk gtBlockTree)) ++ " / " ++ tersePoint (AF.castPoint (AF.headPoint svSelectedChain))) $
-          let treeTipPoint = AF.headPoint $ btTrunk gtBlockTree
+          let -- The tip of the blocktree trunk.
+              treeTipPoint = AF.headPoint $ btTrunk gtBlockTree
+              -- The tip of the selection.
               selectedTipPoint = AF.castPoint $ AF.headPoint svSelectedChain
+              -- If timeouts are enabled, then the adversary should have been
+              -- killed and the selection should be the whole trunk.
               selectedCorrect = timeoutsEnabled == (treeTipPoint == selectedTipPoint)
+              -- If timeouts are enabled, then we expect exactly one
+              -- `ExceededTimeLimit` exception in the adversary's ChainSync.
               exceptionsCorrect = case svChainSyncExceptions of
                 [] -> not timeoutsEnabled
                 [ChainSyncException (PeerId _) exn] ->

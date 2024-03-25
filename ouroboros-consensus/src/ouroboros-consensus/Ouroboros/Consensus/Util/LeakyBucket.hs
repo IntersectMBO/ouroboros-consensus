@@ -82,7 +82,7 @@ data State cfg = State
 type Bucket m = StrictTVar m (State (Config m))
 
 -- | Whether filling the bucket overflew.
-newtype Overflew = Overflew Bool
+data FillResult = Overflew | DidNotOverflow
 
 -- | The handlers to a bucket: contains the API to interact with a running
 -- bucket.
@@ -90,7 +90,7 @@ data Handlers m = Handlers
   { -- | Refill the bucket by the given amount and returns whether the bucket
     -- overflew. The bucket may silently get filled to full capacity or not get
     -- filled depending on 'fillOnOverflow'.
-    fill         :: !(Rational -> m Overflew),
+    fill         :: !(Rational -> m FillResult),
     -- | Pause or resume the bucket. Pausing stops the bucket from leaking until
     -- it is resumed. It is still possible to fill it during that time. @setPaused
     -- True@ and @setPaused False@ are idempotent.
@@ -146,7 +146,11 @@ runAgainstBucket config action = do
     )
     (stopThread thread)
   where
-    startThread :: StrictTVar m (Maybe (Async m ())) -> Bucket m -> ThreadId m -> m ()
+    startThread ::
+      StrictTVar m (Maybe (Async m ())) ->
+      Bucket m ->
+      ThreadId m ->
+      m ()
     startThread thread bucket tid =
       readTVarIO thread >>= \case
         Just _ -> error "LeakyBucket: startThread called when a thread is already running"
@@ -163,9 +167,13 @@ runAgainstBucket config action = do
       newState <- snapshot bucket
       atomically $ writeTVar bucket newState {paused}
 
-    updateConfig :: StrictTVar m (Maybe (Async m ())) -> Bucket m -> ThreadId m -> (Config m -> Config m) -> m ()
+    updateConfig ::
+      StrictTVar m (Maybe (Async m ())) ->
+      Bucket m ->
+      ThreadId m ->
+      (Config m -> Config m) ->
+      m ()
     updateConfig thread bucket tid = \f -> do
-      -- FIXME: All of that should be in one STM transaction.
       State {level, time, paused, config = oldConfig} <- snapshot bucket
       let newConfig@Config {capacity = newCapacity, rate = newRate} = f oldConfig
           newLevel = min newCapacity level
@@ -177,7 +185,10 @@ runAgainstBucket config action = do
 
 -- | Initialise a bucket given a configuration. The bucket starts full at the
 -- time where one calls 'init'.
-init :: (MonadMonotonicTime m, MonadSTM m) => Config m -> m (Bucket m)
+init ::
+  (MonadMonotonicTime m, MonadSTM m) =>
+  Config m ->
+  m (Bucket m)
 init config@Config {capacity} = do
   time <- getMonotonicTime
   uncheckedNewTVarM $ State {time, level = capacity, paused = False, config}
@@ -185,7 +196,11 @@ init config@Config {capacity} = do
 -- | Monadic action that calls 'threadDelay' until the bucket is empty, then
 -- returns @()@. It receives the 'ThreadId' argument of the action's thread,
 -- which it uses to throw exceptions at it.
-leak :: (MonadDelay m, MonadCatch m, MonadFork m, MonadAsync m) => Bucket m -> ThreadId m -> m (Maybe (Async m ()))
+leak ::
+  (MonadDelay m, MonadCatch m, MonadFork m, MonadAsync m) =>
+  Bucket m ->
+  ThreadId m ->
+  m (Maybe (Async m ()))
 leak bucket actionThreadId = do
   State {config = Config {rate}} <- snapshot bucket
   if rate <= 0
@@ -204,7 +219,10 @@ leak bucket actionThreadId = do
 
 -- | Take a snapshot of the bucket, that is compute its state at the current
 -- time.
-snapshot :: (MonadSTM m, MonadMonotonicTime m) => Bucket m -> m (State (Config m))
+snapshot ::
+  (MonadSTM m, MonadMonotonicTime m) =>
+  Bucket m ->
+  m (State (Config m))
 snapshot bucket = fst <$> snapshotFill bucket 0
 
 -- | Same as 'snapshot' but also adds the given quantity to the resulting
@@ -220,7 +238,11 @@ snapshot bucket = fst <$> snapshotFill bucket 0
 -- something else. It cannot easily be an STM transaction, though, because we
 -- need to measure the time, and @io-classes@'s STM does not allow running IO in
 -- an STM.
-snapshotFill :: (MonadSTM m, MonadMonotonicTime m) => Bucket m -> Rational -> m (State (Config m), Overflew)
+snapshotFill ::
+  (MonadSTM m, MonadMonotonicTime m) =>
+  Bucket m ->
+  Rational ->
+  m (State (Config m), FillResult)
 snapshotFill bucket toAdd = do
   newTime <- getMonotonicTime
   atomically $ do
@@ -234,7 +256,7 @@ snapshotFill bucket toAdd = do
         newLevel = if not overflew || fillOnOverflow then levelFilled else levelLeaked
         newState = State {time = newTime, level = newLevel, paused, config}
     writeTVar bucket newState
-    pure (newState, Overflew overflew)
+    pure (newState, if overflew then Overflew else DidNotOverflow)
 
 -- | Convert a 'DiffTime' to a 'Rational' number of seconds. This is similar to
 -- 'diffTimeToSeconds' but with picoseconds precision.
