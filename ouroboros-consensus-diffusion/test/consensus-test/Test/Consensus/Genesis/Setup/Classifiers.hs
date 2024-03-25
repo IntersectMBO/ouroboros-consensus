@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE NamedFieldPuns  #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TupleSections   #-}
 {-# LANGUAGE TypeFamilies    #-}
 {-# LANGUAGE TypeOperators   #-}
 
@@ -14,6 +15,7 @@ module Test.Consensus.Genesis.Setup.Classifiers (
 
 import           Cardano.Slotting.Slot (WithOrigin (At))
 import qualified Data.List.NonEmpty as NonEmpty
+import qualified Data.Map as Map
 import           Data.Maybe (mapMaybe)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block (ChainHash (BlockHash), HeaderHash,
@@ -34,7 +36,7 @@ import           Test.Consensus.Network.AnchoredFragment.Extras (slotLength)
 import           Test.Consensus.PeerSimulator.StateView
                      (PeerSimulatorResult (..), StateView (..), pscrToException)
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (PeerId (..))
+import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..))
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestHash (TestHash))
 
@@ -130,46 +132,59 @@ classifiers GenesisTest {gtBlockTree, gtSecurityParam = SecurityParam k, gtGenes
 -- | Interesting categories to classify test results
 data ResultClassifiers =
   ResultClassifiers{
-    -- | Some adversary was killed by receiving an EmptyBucket exception from the LoP
-    someAdversaryKilledByLoP     :: Bool,
-    -- | Some adversary was disconnected because their fragment was not dense enough
-    someAdversaryKilledByGDD     :: Bool,
-    -- | Some adversary was disconnected by network-level timeouts
-    someAdversaryKilledByTimeout :: Bool,
-    -- | No adversaries were killed
-    noAdversariesKilled          :: Bool
+    -- | Percentage of adversaries that were killed by receiving an EmptyBucket exception from the LoP
+    adversariesKilledByLoP     :: Double,
+    -- | Percentage of adversaries that were disconnected because their fragment was not dense enough
+    adversariesKilledByGDD     :: Double,
+    -- | Percentage of adversaries that were disconnected by network-level timeouts
+    adversariesKilledByTimeout :: Double,
+    -- | Percentage of adversaries that weren't killed
+    adversariesSurvived        :: Double
   }
 
-resultClassifiers :: RunGenesisTestResult -> ResultClassifiers
-resultClassifiers RunGenesisTestResult{rgtrStateView} =
-  ResultClassifiers {
-    someAdversaryKilledByLoP,
-    someAdversaryKilledByGDD,
-    someAdversaryKilledByTimeout,
-    noAdversariesKilled
-  }
+-- | Returned when there were no adversaries
+nullResultClassifier :: ResultClassifiers
+nullResultClassifier = ResultClassifiers 0 0 0 0
+
+resultClassifiers :: GenesisTestFull blk -> RunGenesisTestResult -> ResultClassifiers
+resultClassifiers GenesisTest{gtSchedule} RunGenesisTestResult{rgtrStateView} =
+  if adversariesCount > 0
+    then ResultClassifiers {
+        adversariesKilledByLoP     = 100 * adversariesKilledByLoPC     / adversariesCount,
+        adversariesKilledByGDD     = 100 * adversariesKilledByGDDC     / adversariesCount,
+        adversariesKilledByTimeout = 100 * adversariesKilledByTimeoutC / adversariesCount,
+        adversariesSurvived        = 100 * adversariesSurvivedC        / adversariesCount
+      }
+    else nullResultClassifier
   where
     StateView{svPeerSimulatorResults} = rgtrStateView
 
-    adversariesExceptions :: [SomeException]
+    adversaries :: [PeerId]
+    adversaries = Map.keys $ others gtSchedule
+
+    adversariesCount = fromIntegral $ length adversaries
+
+    adversariesExceptions :: [(PeerId, SomeException)]
     adversariesExceptions = mapMaybe
-      ( \PeerSimulatorResult{psePeerId, pseResult} -> case psePeerId of
+      (\PeerSimulatorResult{psePeerId, pseResult} -> case psePeerId of
         HonestPeer -> Nothing
-        PeerId _   -> pscrToException pseResult
+        pid        -> (pid,) <$> pscrToException pseResult
       )
       svPeerSimulatorResults
 
-    noAdversariesKilled = null adversariesExceptions
+    adversariesSurvivedC = fromIntegral $ length $ filter
+      (\pid -> not $ pid `elem` map fst adversariesExceptions)
+      adversaries
 
-    someAdversaryKilledByLoP = any
-      (\exn -> fromException exn == Just EmptyBucket)
+    adversariesKilledByLoPC = fromIntegral $ length $ filter
+      (\(_, exn) -> fromException exn == Just EmptyBucket)
       adversariesExceptions
 
     -- TODO: complete when GDD Exception is known
-    someAdversaryKilledByGDD = False
+    adversariesKilledByGDDC = 0
 
-    someAdversaryKilledByTimeout = any
-      (\exn -> case fromException exn of
+    adversariesKilledByTimeoutC = fromIntegral $ length $ filter
+      (\(_, exn) -> case fromException exn of
         Just (ExceededTimeLimit _) -> True
         _                          -> False
       )

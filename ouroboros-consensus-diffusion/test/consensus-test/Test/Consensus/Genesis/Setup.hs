@@ -27,6 +27,7 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.QuickCheck (forAllGenRunShrinkCheck)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.Tracer (recordingTracerTVar)
+import           Text.Printf (printf)
 
 
 -- | Like 'runSimStrictShutdown' but fail when the main thread terminates if
@@ -85,15 +86,15 @@ forAllGenesisTest ::
 forAllGenesisTest generator schedulerConfig shrinker mkProperty =
   forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->
     let cls = classifiers genesisTest
-        resCls = resultClassifiers result
+        resCls = resultClassifiers genesisTest result
      in classify (allAdversariesSelectable cls) "All adversaries selectable" $
         classify (allAdversariesForecastable cls) "All adversaries forecastable" $
         classify (allAdversariesKPlus1InForecast cls) "All adversaries have k+1 blocks in forecast window after intersection" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
-        classify (someAdversaryKilledByLoP resCls) "Some adversary was killed by LoP" $
-        classify (someAdversaryKilledByGDD resCls) "Some adversary was killed by GDD" $
-        classify (someAdversaryKilledByTimeout resCls) "Some adversary was killed by a timeout" $
-        classify (noAdversariesKilled resCls) "No adversaries were killed" $
+        tabulate "Adversaries killed by LoP" [printf "%.1f%%" $ adversariesKilledByLoP resCls] $
+        tabulate "Adversaries killed by GDD" [printf "%.1f%%" $ adversariesKilledByGDD resCls] $
+        tabulate "Adversaries killed by Timeout" [printf "%.1f%%" $ adversariesKilledByTimeout resCls] $
+        tabulate "Surviving adversaries" [printf "%.1f%%" $ adversariesSurvived resCls] $
         counterexample (rgtrTrace result) $
         mkProperty genesisTest (rgtrStateView result)
   where
