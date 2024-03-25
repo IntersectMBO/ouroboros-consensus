@@ -704,7 +704,7 @@ test-suite storage-test
     , pretty-show
     , QuickCheck
     , quickcheck-dynamic                             >=3.4
-    , quickcheck-lockstep                            >=0.4
+    , quickcheck-lockstep                            >=0.5
     , quickcheck-state-machine:no-vendored-treediff  ^>=0.9
     , random
     , serialise

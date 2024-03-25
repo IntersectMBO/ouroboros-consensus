@@ -14,9 +14,9 @@ repository cardano-haskell-packages
 -- update either of these.
 index-state:
   -- Bump this if you need newer packages from Hackage
-  , hackage.haskell.org 2024-02-23T10:26:05Z
+  , hackage.haskell.org 2024-03-25T10:39:21Z
   -- Bump this if you need newer packages from CHaP
-  , cardano-haskell-packages 2024-03-15T17:07:52Z
+  , cardano-haskell-packages 2024-03-22T16:27:41Z
 
 packages:
   ouroboros-consensus
@@ -42,33 +42,11 @@ import: ./asserts.cabal
 source-repository-package
   type: git
   location: https://github.com/jasagredo/latex-svg
-  tag: 00e10224a96ce73e2a1da8478efb7790cf9ba2b3
-  --sha256: 0pb5azww7qj0armldn95pr1vxz30gq51mz8ysmm0a1rgsxm9f3i5
+  tag: c52c9905cb043ddb430c93b41ce431a7506a300d
+  --sha256: 0h9yrlvmyi32zlr0cj2nx8ik0y2cg5ckcxq4lgq5vvjyl6lhzrbk
   subdir:
     latex-svg-image
 
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/quickcheck-dynamic
-  tag: cf5273faabde55dc8e759e64766e3353439ac1e2
-  --sha256: 1achsw9pzrg9lng7xmcnkc6fz1hrl1g8bm4g33lv0vzhrkcy0cl3
-  subdir: quickcheck-dynamic
-
-source-repository-package
-  type: git
-  location: https://github.com/well-typed/quickcheck-lockstep
-  tag: 5125b458af594cb191c8979a3987f1894a96a196
-  --sha256: 1mv6ylpksppjdqjjm0bf0pcxlsgk2bgz60i4l4jwl1kdp0zv4iay
-
-source-repository-package
-  type: git
-  location: https://github.com/input-output-hk/anti-diffs
-  tag: a6b3b7748711c10fc0413cbe6171b42774d08ffa
-  --sha256: 1cqnqq2zwlrz44iq636ai81f3pfwqjaxrm9n9k7rax5yi3n139xr
-  subdir:
-    diff-containers
-    fingertree-rm
-
-if impl(ghc >= 9.8)
+if impl(ghc >= 9.6)
   allow-newer:
     cardano-lmdb-simple:bytestring
