@@ -57,7 +57,7 @@ import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (updateStateFull, UpdateState (UpdateState))
+                     (updateStateFull)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CsClient
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Server
 import           Ouroboros.Consensus.Node.ExitPolicy
@@ -576,7 +576,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
             them
             version
             lopBucketConfig
-            $ \(UpdateState updateState) -> do
+            $ \updateState -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
                 runPipelinedPeerWithLimits

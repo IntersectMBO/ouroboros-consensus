@@ -25,7 +25,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncClientHandle, ChainSyncLoPBucketConfig,
-                     ChainSyncStateView (..), Consensus, bracketChainSyncClient,
+                     Consensus, bracketChainSyncClient,
                      chainSyncClient, updateStateFull, UpdateState (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
@@ -78,7 +78,7 @@ basicChainSyncClient
     tracer
     cfg
     chainDbView
-    (UpdateState updateState) =
+    updateState =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20

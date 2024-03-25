@@ -69,8 +69,8 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , noLoPBucket
   , viewChainSyncState
   , updateStateFull
-  , UpdateState(..)
-  , CreateUpdateState(..)
+  , UpdateState (..)
+  , CreateUpdateState (..)
   ) where
 
 import           Control.Monad (join, void, when)
@@ -318,51 +318,15 @@ deriving anyclass instance (
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncStateView m blk)
 
-data StateUpdate blk a where
-  NewActivity :: StateUpdate blk ()
-  PeerExhausted :: StateUpdate blk ()
-  ProgressBlocked :: StateUpdate blk ()
-  NewIntersection :: !(AnchoredFragment (Header blk)) -> StateUpdate blk ()
-  NewHeader :: !(Header blk) -> StateUpdate blk ()
-  RolledBack ::
-    !(AnchoredFragment (Header blk)) ->
-    !(Point blk) ->
-    StateUpdate blk ()
-  RolledForward ::
-    !(AnchoredFragment (Header blk)) ->
-    !Bool ->
-    StateUpdate blk ()
-
-applyStateUpdate ::
-  MonadSTM m =>
-  GetHeader blk =>
-  StrictTVar m (ChainSyncState blk) ->
-  Idling m ->
-  LoPBucket m ->
-  StateUpdate blk a ->
-  m a
-applyStateUpdate varState idling loPBucket = \case
-  NewActivity -> idlingStop idling >> lbResume loPBucket
-  PeerExhausted -> idlingStart idling >> lbPause loPBucket
-  ProgressBlocked -> lbPause loPBucket
-  NewIntersection frag ->
-    atomically $ do
-      modifyTVar varState $ \ s ->
-        s {csCandidate = frag, csLatestSlot = Just (AF.headSlot frag)}
-  NewHeader hdr ->
-    atomically $ do
-      modifyTVar varState $ \ s ->
-        s {csLatestSlot = Just (NotOrigin (blockSlot hdr))}
-  RolledBack frag rollBackPoint ->
-    atomically $ do
-      modifyTVar varState $ \ s ->
-        s {csCandidate = frag, csLatestSlot = Just (pointSlot rollBackPoint)}
-  RolledForward frag newBestHeader -> do
-    when newBestHeader (lbGrantToken loPBucket)
-    atomically $ modifyTVar varState $ \ s -> s {csCandidate = frag}
-
-newtype UpdateState m blk =
-  UpdateState (forall a . StateUpdate blk a -> m a)
+data UpdateState m blk = UpdateState {
+    newActivity :: m ()
+  , peerExhausted :: m ()
+  , progressBlocked :: m ()
+  , newIntersection :: AnchoredFragment (Header blk) -> m ()
+  , newHeader :: Header blk -> m ()
+  , rolledBack :: AnchoredFragment (Header blk) -> Point blk -> m ()
+  , rolledForward :: AnchoredFragment (Header blk) -> Bool -> m ()
+  }
 
 newtype CreateUpdateState m blk =
   CreateUpdateState (
@@ -378,7 +342,26 @@ updateStateFull ::
   CreateUpdateState m blk
 updateStateFull =
   CreateUpdateState $ \ varState idling loPBucket ->
-    UpdateState (applyStateUpdate varState idling loPBucket)
+    UpdateState {
+      newActivity = idlingStop idling >> lbResume loPBucket
+    , peerExhausted = idlingStart idling >> lbPause loPBucket
+    , progressBlocked = lbPause loPBucket
+    , newIntersection = \ frag ->
+      atomically $ do
+        modifyTVar varState $ \ s ->
+          s {csCandidate = frag, csLatestSlot = Just (AF.headSlot frag)}
+    , newHeader = \ hdr ->
+      atomically $ do
+        modifyTVar varState $ \ s ->
+          s {csLatestSlot = Just (NotOrigin (blockSlot hdr))}
+    , rolledBack = \ frag rollBackPoint ->
+      atomically $ do
+        modifyTVar varState $ \ s ->
+          s {csCandidate = frag, csLatestSlot = Just (pointSlot rollBackPoint)}
+    , rolledForward = \ frag newBestHeader -> do
+      when newBestHeader (lbGrantToken loPBucket)
+      atomically $ modifyTVar varState $ \ s -> s {csCandidate = frag}
+    }
 
 bracketChainSyncClient ::
     ( IOLike m
@@ -769,7 +752,7 @@ data DynamicEnv m blk = DynamicEnv {
     version             :: NodeToNodeVersion
   , controlMessageSTM   :: ControlMessageSTM m
   , headerMetricsTracer :: HeaderMetricsTracer m
-  , updateState         :: forall a . StateUpdate blk a -> m a
+  , updateState            :: UpdateState m blk
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -909,7 +892,7 @@ chainSyncClient cfgEnv dynEnv =
                   recvMsgRollForward  = \_hdr _tip -> go n' s
                 , recvMsgRollBackward = \_pt  _tip -> go n' s
                 }
-      in Stateful $ \s -> do updateState NewActivity; go n0 s
+      in Stateful $ \s -> do newActivity updateState; go n0 s
 
     terminate ::
         ChainSyncClientResult
@@ -1100,7 +1083,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                         disconnect
                       $ InvalidIntersection
                             intersection (ourTipFromChain ourFrag) theirTip
-            updateState (NewIntersection theirFrag)
+            newIntersection updateState theirFrag
             let kis =
                    assertKnownIntersectionInvariants (configConsensus cfg)
                  $ KnownIntersectionState {
@@ -1189,8 +1172,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         let KnownIntersectionState {
                                 theirFrag
                               } = kis'
-                        -- TODO is this redundant?
-                        updateState (RolledForward theirFrag False)
+                        rolledForward updateState theirFrag False
                         return $
                             requestNext
                                 kis'
@@ -1226,7 +1208,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     n
                     candTipBlockNo
                     theirTipBlockNo
-            onMsgAwaitReply = updateState PeerExhausted
+            onMsgAwaitReply = peerExhausted updateState
         in
         case (n, decision) of
           (Zero, (Request, mkPipelineDecision')) ->
@@ -1274,7 +1256,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
       -- message.
       ClientStNext {
         recvMsgRollForward = \hdr theirTip -> do
-            updateState NewActivity
+            newActivity updateState
             traceWith tracer $ TraceDownloadedHeader hdr
             continueWithState kis $
                 rollForward
@@ -1284,7 +1266,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     (Their theirTip)
       ,
         recvMsgRollBackward = \intersection theirTip -> do
-            updateState NewActivity
+            newActivity updateState
             let intersection' :: Point blk
                 intersection' = castPoint intersection
             traceWith tracer $ TraceRolledBack intersection'
@@ -1313,7 +1295,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
-            updateState (NewHeader hdr)
+            newHeader updateState hdr
 
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
@@ -1331,7 +1313,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                         checkValid cfgEnv intEnv hdr theirTip kis' ledgerView
                     (kis''', newBestHeader) <- checkLoP cfgEnv hdr kis''
 
-                    updateState (RolledForward (theirFrag kis''') newBestHeader)
+                    rolledForward updateState (theirFrag kis''') newBestHeader
                     atomically
                       $ traceWith headerMetricsTracer (slotNo, arrivalTime)
 
@@ -1419,7 +1401,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                             , theirHeaderStateHistory = theirHeaderStateHistory'
                             , kBestBlockNo
                             }
-                  updateState (RolledBack theirFrag' rollBackPoint)
+                  rolledBack updateState theirFrag' rollBackPoint
 
                   continueWithState kis' $
                       nextStep mkPipelineDecision n theirTip
@@ -1513,9 +1495,9 @@ checkTime cfgEnv DynamicEnv {updateState} intEnv =
                   traceWith (tracer cfgEnv)
                 $ TraceWaitingBeyondForecastHorizon slotNo
               -- Pause the bucket if LedgerView-Starved.
-              EarlyExit.lift $ updateState ProgressBlocked
+              EarlyExit.lift $ progressBlocked updateState
               res <- readLedgerState kis2 (projectLedgerView slotNo)
-              EarlyExit.lift $ updateState NewActivity
+              EarlyExit.lift $ newActivity updateState
               EarlyExit.lift $
                   traceWith (tracer cfgEnv)
                 $ TraceAccessingForecastHorizon slotNo
