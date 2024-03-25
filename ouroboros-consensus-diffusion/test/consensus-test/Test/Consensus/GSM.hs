@@ -154,14 +154,14 @@ prop_sequential ::
   -> LedgerStateJudgement
   -> QC.Fun (Set.Set UpstreamPeer) Bool
   -> QC.Property
-prop_sequential ub j0 (QC.Fn isHaaSatisfied) =
+prop_sequential ub initialJudgement (QC.Fn isHaaSatisfied) =
     QSM.forAllCommands
         commandArbitrarySM
         mbMinimumCommandLen
         (prop_sequential1 ctx)
   where
     ctx = Context {
-        cInitialJudgement = j0
+        cInitialJudgement = initialJudgement
       ,
         cIsHaaSatisfied = isHaaSatisfied
       }
@@ -177,7 +177,7 @@ prop_sequential1 ::
   -> QSM.Commands Command Response
   -> QC.Property
 prop_sequential1 ctx cmds = runSimQC $ do
-    let s0 = case j0 of
+    let initialGsmState = case initialJudgement of
           TooOld      -> GSM.PreSyncing
           YoungEnough -> GSM.CaughtUp
 
@@ -185,8 +185,8 @@ prop_sequential1 ctx cmds = runSimQC $ do
     varSelection  <- newTVarIO (mSelection $ initModel ctx)
     varCandidates <- newTVarIO Map.empty
     varIdlers     <- newTVarIO Set.empty
-    varGsmState   <- newTVarIO s0
-    varMarker     <- newTVarIO (toMarker s0)
+    varGsmState   <- newTVarIO initialGsmState
+    varMarker     <- newTVarIO (toMarker initialGsmState)
 
     -- this variable is for better 'QC.counterexample' messages
     varEvents <- newRecorder
@@ -233,7 +233,7 @@ prop_sequential1 ctx cmds = runSimQC $ do
             GSM.isHaaSatisfied =
                 isHaaSatisfied . Map.keysSet <$> readTVar varCandidates
           }
-        gsmEntryPoint = case j0 of
+        gsmEntryPoint = case initialJudgement of
             TooOld      -> GSM.enterPreSyncing gsm
             YoungEnough -> GSM.enterCaughtUp   gsm
 
@@ -292,7 +292,7 @@ prop_sequential1 ctx cmds = runSimQC $ do
       $ noExn QC..&&. lastCheck QC..&&. res QC.=== QSM.Ok
   where
     Context {
-        cInitialJudgement = j0
+        cInitialJudgement = initialJudgement
       ,
         cIsHaaSatisfied = isHaaSatisfied
       } = ctx
