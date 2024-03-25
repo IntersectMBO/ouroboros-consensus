@@ -229,13 +229,16 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , GSM.setCaughtUpPersistentMark = \upd ->
                   (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
                     gsmMarkerFileView
-              , GSM.writeLedgerStateJudgement   = \x -> atomically $ do
-                  writeTVar varLedgerJudgement x
+              , GSM.writeGsmState = \x -> atomically $ do
+                  writeTVar varLedgerJudgement $ GSM.gsmStateToLedgerJudgement x
+              , -- In the context of bootstrap peers, it is fine to always
+                -- return 'True' as all peers are trusted during syncing.
+                GSM.isHaaSatisfied            = pure True
               }
         judgment <- readTVarIO varLedgerJudgement
         void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
-          TooOld      -> GSM.enterOnlyBootstrap gsm
-          YoungEnough -> GSM.enterCaughtUp      gsm
+          TooOld      -> GSM.enterPreSyncing gsm
+          YoungEnough -> GSM.enterCaughtUp   gsm
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
                             blockForgingController st (LazySTM.takeTMVar blockForgingVar)

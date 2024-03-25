@@ -12,11 +12,13 @@ module Ouroboros.Consensus.Node.GSM (
   , DurationFromNow (..)
   , GsmEntryPoints (..)
   , GsmNodeKernelArgs (..)
+  , GsmState (..)
   , GsmView (..)
   , MarkerFileView (..)
   , WrapDurationUntilTooOld (..)
     -- * Auxiliaries
   , TraceGsmEvent (..)
+  , gsmStateToLedgerJudgement
   , initializationLedgerJudgement
     -- * Constructors
   , realDurationUntilTooOld
@@ -27,7 +29,8 @@ module Ouroboros.Consensus.Node.GSM (
 import qualified Cardano.Slotting.Slot as Slot
 import qualified Control.Concurrent.Class.MonadSTM.TVar as LazySTM
 import           Control.Monad (forever, join, unless)
-import           Control.Monad.Class.MonadSTM (MonadSTM, STM, atomically, check)
+import           Control.Monad.Class.MonadSTM (MonadSTM, STM, atomically, check,
+                     orElse)
 import           Control.Monad.Class.MonadThrow (MonadThrow)
 import           Control.Monad.Class.MonadTimer (threadDelay)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
@@ -78,11 +81,24 @@ data CandidateVersusSelection =
     -- ^ Whether the candidate is better than the selection
   deriving (Eq, Show)
 
+-- | Current state of the Genesis State Machine
+data GsmState =
+    PreSyncing
+    -- ^ We are syncing, and the Honest Availability Assumption is not
+    -- satisfied.
+  |
+    Syncing
+    -- ^ We are syncing, and the Honest Availability Assumption is satisfied.
+  |
+    CaughtUp
+    -- ^ We are caught-up.
+  deriving (Eq, Show, Read)
+
 data GsmView m upstreamPeer selection candidate = GsmView {
     antiThunderingHerd        :: Maybe StdGen
     -- ^ An initial seed used to randomly increase 'minCaughtUpDuration' by up
-    -- to 15% every transition from OnlyBootstrap to CaughtUp, in order to
-    -- avoid a thundering herd phenemenon.
+    -- to 15% every transition from Syncing to CaughtUp, in order to avoid a
+    -- thundering herd phenomenon.
     --
     -- 'Nothing' should only be used for testing.
   ,
@@ -112,33 +128,39 @@ data GsmView m upstreamPeer selection candidate = GsmView {
   ,
     minCaughtUpDuration       :: NominalDiffTime
     -- ^ How long the node must stay in CaughtUp after transitioning to it from
-    -- OnlyBootstrap, regardless of the selection's age. This prevents the
-    -- whole network from thrashing between CaughtUp and OnlyBootstrap if
-    -- there's an outage in block production.
+    -- Syncing, regardless of the selection's age. This prevents the whole
+    -- network from thrashing between CaughtUp and (Pre)Syncing if there's an
+    -- outage in block production.
     --
     -- See also 'antiThunderingHerd'.
   ,
     setCaughtUpPersistentMark :: Bool -> m ()
     -- ^ EG touch/delete the marker file on disk
   ,
-    writeLedgerStateJudgement :: LedgerStateJudgement -> m ()
-    -- ^ EG update the TVar that the Diffusion Layer monitors
+    writeGsmState             :: GsmState -> m ()
+    -- ^ EG update the TVar that the Diffusion Layer monitors, or en-/disable
+    -- certain components of Genesis
+  ,
+    isHaaSatisfied            :: STM m Bool
+    -- ^ Whether the Honest Availability Assumption is currently satisfied. This
+    -- is used as the trigger for transitioning from 'PreSyncing' to 'Syncing'
+    -- and vice versa.
   }
 
--- | The two proper GSM states for boot strap peers
+-- | The two proper GSM entrypoints.
 --
--- See the @BootstrapPeersIER.md@ document for their specification.
+-- See the @BootstrapPeersIER.md@ document for documentation.
 --
 -- See 'initializationLedgerJudgement' for the @Initializing@ pseudo-state.
 data GsmEntryPoints m = GsmEntryPoints {
-    enterCaughtUp      :: forall neverTerminates. m neverTerminates
+    enterCaughtUp   :: forall neverTerminates. m neverTerminates
     -- ^ ASSUMPTION the marker file is present on disk, a la
     -- @'setCaughtUpPersistentMark' True@
     --
     -- Thus this can be invoked at node start up after determining the marker
     -- file is present (and the tip is still not stale)
   ,
-    enterOnlyBootstrap :: forall neverTerminates. m neverTerminates
+    enterPreSyncing :: forall neverTerminates. m neverTerminates
     -- ^ ASSUMPTION the marker file is absent on disk, a la
     -- @'setCaughtUpPersistentMark' False@
     --
@@ -177,13 +199,28 @@ initializationLedgerJudgement
                         removeMarkerFile markerFileView
                         return TooOld
 
+-- | For 'LedgerStateJudgement' as used in the Diffusion layer, there is no
+-- difference between 'PreSyncing' and 'Syncing'.
+gsmStateToLedgerJudgement :: GsmState -> LedgerStateJudgement
+gsmStateToLedgerJudgement = \case
+    PreSyncing -> TooOld
+    Syncing    -> TooOld
+    CaughtUp   -> YoungEnough
+
 {-------------------------------------------------------------------------------
   A real implementation
 -------------------------------------------------------------------------------}
 
 -- | The actual GSM logic for boot strap peers
 --
--- See the @BootstrapPeersIER.md@ document for the specification of this logic.
+-- See the @BootstrapPeersIER.md@ document for the specification of most of this
+-- logic, except the transition rules between PreSyncing and Syncing, the two
+-- states OnlyBootstrap is split into:
+--
+--  - PreSyncing ⟶ Syncing: The Honest Availability Assumption is satisfied.
+--
+--- - Syncing ⟶ PreSyncing: The Honest Availability Assumption is no longer
+---   satisfied.
 realGsmEntryPoints :: forall m upstreamPeer selection tracedSelection candidate.
      ( SI.MonadDelay m
      , SI.MonadTimer m
@@ -195,7 +232,7 @@ realGsmEntryPoints :: forall m upstreamPeer selection tracedSelection candidate.
 realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
     enterCaughtUp
   ,
-    enterOnlyBootstrap
+    enterPreSyncing
   }
   where
     (cnvSelection, tracer) = tracerArgs
@@ -219,39 +256,62 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
       ,
         setCaughtUpPersistentMark
       ,
-        writeLedgerStateJudgement
+        writeGsmState
+      ,
+        isHaaSatisfied
       } = gsmView
 
     enterCaughtUp :: forall neverTerminates. m neverTerminates
     enterCaughtUp  = enterCaughtUp' antiThunderingHerd
 
-    enterOnlyBootstrap :: forall neverTerminates. m neverTerminates
-    enterOnlyBootstrap  = enterOnlyBootstrap' antiThunderingHerd
+    enterPreSyncing :: forall neverTerminates. m neverTerminates
+    enterPreSyncing = enterPreSyncing' antiThunderingHerd
 
     enterCaughtUp' :: forall neverTerminates. Maybe StdGen -> m neverTerminates
     enterCaughtUp' g = do
         (g', ev) <- blockWhileCaughtUp g
 
         setCaughtUpPersistentMark False
-        writeLedgerStateJudgement TooOld
+        writeGsmState PreSyncing
         traceWith tracer ev
 
-        enterOnlyBootstrap' g'
+        enterPreSyncing' g'
 
-    enterOnlyBootstrap' :: Maybe StdGen -> forall neverTerminates. m neverTerminates
-    enterOnlyBootstrap' g = do
-        ev <- blockUntilCaughtUp
+    enterPreSyncing' :: Maybe StdGen -> forall neverTerminates. m neverTerminates
+    enterPreSyncing' g = do
+        blockUntilHonestAvailabilityAssumption
 
-        writeLedgerStateJudgement YoungEnough
-        setCaughtUpPersistentMark True
-        traceWith tracer ev
+        writeGsmState Syncing
+        traceWith tracer GsmEventPreSyncingToSyncing
 
-        -- When transitioning from OnlyBootstrap to CaughtUp, the node will
-        -- remain in CaughtUp for at least 'minCaughtUpDuration', regardless of
-        -- the selection's age.
-        SI.threadDelay $ realToFrac minCaughtUpDuration
+        enterSyncing' g
 
-        enterCaughtUp' g
+    enterSyncing' :: Maybe StdGen -> forall neverTerminates. m neverTerminates
+    enterSyncing' g = do
+        -- Wait until either the Honest Availability Assumption is no longer
+        -- satisfied, or we are caught up.
+        mev <- atomically $
+          (Nothing <$ blockWhileHonestAvailabilityAssumption)
+            `orElse`
+          (Just    <$> blockUntilCaughtUp)
+
+        case mev of
+          Nothing  -> do
+            writeGsmState PreSyncing
+            traceWith tracer GsmEventSyncingToPreSyncing
+
+            enterPreSyncing' g
+          Just ev -> do
+            writeGsmState CaughtUp
+            setCaughtUpPersistentMark True
+            traceWith tracer ev
+
+            -- When transitioning from Syncing to CaughtUp, the node will remain
+            -- in CaughtUp for at least 'minCaughtUpDuration', regardless of the
+            -- selection's age.
+            SI.threadDelay $ realToFrac minCaughtUpDuration
+
+            enterCaughtUp' g
 
     blockWhileCaughtUp ::
          Maybe StdGen
@@ -267,8 +327,8 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
         -- load out.
         --
         -- TODO should the Diffusion Layer do this? IE the node /promptly/
-        -- switches to OnlyBootstrap, but then the Diffusion Layer introces a
-        -- delay before reaching out to the bootstrap peers?
+        -- switches to PreSyncing, but then the Diffusion Layer introces a delay
+        -- before reaching out to the bootstrap peers?
         let (bonus, g') = case g of
                 Nothing -> (0, Nothing)   -- it's disabled in some tests
                 Just x  ->
@@ -311,8 +371,8 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
                         check $ not $ equivalent selection selection'
                         pure $ blockWhileCaughtUpHelper bonus selection'
 
-    blockUntilCaughtUp :: m (TraceGsmEvent tracedSelection)
-    blockUntilCaughtUp = atomically $ do
+    blockUntilCaughtUp :: STM m (TraceGsmEvent tracedSelection)
+    blockUntilCaughtUp = do
         -- STAGE 1: all ChainSync clients report no subsequent headers
         idlers        <- getChainSyncIdlers
         varsCandidate <- getChainSyncCandidates
@@ -364,12 +424,26 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
         -- anticipating. And then the STM validation at the end touches them
         -- all one last time. Summary: seems likely to be fast enough.)
 
+    blockUntilHonestAvailabilityAssumption :: m ()
+    blockUntilHonestAvailabilityAssumption =
+        atomically $ check =<< isHaaSatisfied
+
+    blockWhileHonestAvailabilityAssumption :: STM m ()
+    blockWhileHonestAvailabilityAssumption =
+        check . not =<< isHaaSatisfied
+
 data TraceGsmEvent selection =
     GsmEventEnterCaughtUp !Int !selection
     -- ^ how many peers and the current selection
   |
     GsmEventLeaveCaughtUp !selection !DurationFromNow
     -- ^ the current selection and its age
+  |
+    GsmEventPreSyncingToSyncing
+    -- ^ the Honest Availability Assumption is now satisfied
+  |
+    GsmEventSyncingToPreSyncing
+    -- ^ the Honest Availability Assumption is no longer satisfied
   deriving (Eq, Show)
 
 {-------------------------------------------------------------------------------
