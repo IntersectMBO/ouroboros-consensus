@@ -210,7 +210,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                 (configBlock cfg)
                                 headers
                                 (csCandidate state)
-              , GSM.peerIsIdle                = \ _ state -> pure (csIdling state)
+              , GSM.peerIsIdle                = csIdling
               , GSM.durationUntilTooOld       =
                       gsmDurationUntilTooOld
                   <&> \wd (_headers, lst) ->
