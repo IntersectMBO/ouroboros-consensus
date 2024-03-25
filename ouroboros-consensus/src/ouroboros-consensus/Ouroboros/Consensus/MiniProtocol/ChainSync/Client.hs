@@ -63,8 +63,8 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , ChainSyncClientHandle (..)
   , ChainSyncState (..)
   , ChainSyncStateView (..)
-  , viewChainSyncState
   , chainSyncStateFor
+  , viewChainSyncState
   ) where
 
 import           Control.Monad (join, void)
@@ -215,7 +215,7 @@ deriving anyclass instance (
 -- the GDD governor.
 data ChainSyncClientHandle m blk = ChainSyncClientHandle {
     -- | Disconnects from the peer
-    cschKill   :: !(m ())
+    cschKill  :: !(m ())
 
     -- | Data shared between the client and external components like GDD.
   , cschState :: !(StrictTVar m (ChainSyncState blk))
