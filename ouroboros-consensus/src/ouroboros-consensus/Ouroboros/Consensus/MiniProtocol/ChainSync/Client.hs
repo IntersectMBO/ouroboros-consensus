@@ -354,7 +354,7 @@ bracketChainSyncClient
               csvSetCandidate =
               modifyTVar varState . \ c s -> s {csCandidate = c}
             , csvSetLatestSlot =
-              modifyTVar varState . \ ls s -> s {csLatestSlot = Just ls}
+              modifyTVar varState . \ ls s -> s {csLatestSlot = Just $! ls}
             , csvIdling = Idling {
                 idlingStart = atomically $ modifyTVar varState $ \ s -> s {csIdling = True}
               , idlingStop = atomically $ modifyTVar varState $ \ s -> s {csIdling = False}
