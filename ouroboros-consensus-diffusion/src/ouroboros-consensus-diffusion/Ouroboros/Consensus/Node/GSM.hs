@@ -77,7 +77,7 @@ data CandidateVersusSelection =
     -- ^ Whether the candidate is better than the selection
   deriving (Eq, Show)
 
-data GsmView m upstreamPeer selection state = GsmView {
+data GsmView m upstreamPeer selection chainSyncState = GsmView {
     antiThunderingHerd        :: Maybe StdGen
     -- ^ An initial seed used to randomly increase 'minCaughtUpDuration' by up
     -- to 15% every transition from OnlyBootstrap to CaughtUp, in order to
@@ -86,9 +86,9 @@ data GsmView m upstreamPeer selection state = GsmView {
     -- 'Nothing' should only be used for testing.
   ,
     candidateOverSelection    ::
-        selection -> state -> CandidateVersusSelection
+        selection -> chainSyncState -> CandidateVersusSelection
   ,
-    peerIsIdle                :: state -> Bool
+    peerIsIdle                :: chainSyncState -> Bool
   ,
     durationUntilTooOld       :: Maybe (selection -> m DurationFromNow)
     -- ^ How long from now until the selection will be so old that the node
@@ -101,8 +101,9 @@ data GsmView m upstreamPeer selection state = GsmView {
     -- Genesis State Machine
   ,
     getChainSyncStates        ::
-        STM m (Map.Map upstreamPeer (StrictTVar m state))
-    -- ^ The latest candidates from the upstream ChainSync peers
+        STM m (Map.Map upstreamPeer (StrictTVar m chainSyncState))
+    -- ^ The current ChainSync state with the latest candidates from the
+    -- upstream peers
   ,
     getCurrentSelection       :: STM m selection
     -- ^ The node's current selection
