@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
@@ -132,7 +133,9 @@ implMkLedgerDb ::
      , IsLedger l
      , l ~ ExtLedgerState blk
      , StandardHash l, HasLedgerTables l
+#if __GLASGOW_HASKELL__ < 908
      , HeaderHash l ~ HeaderHash blk
+#endif
      , LedgerSupportsProtocol blk
      , LedgerDbSerialiseConstraints blk
      , MonadBase m m
@@ -160,7 +163,9 @@ mkInternals ::
      , LedgerDbSerialiseConstraints blk
      , LedgerSupportsProtocol blk
      , ApplyBlock (ExtLedgerState blk) blk
+#if __GLASGOW_HASKELL__ > 810
      , MonadBase m m
+#endif
      )
   => HandleArgs
   -> LedgerDBHandle m (ExtLedgerState blk) blk

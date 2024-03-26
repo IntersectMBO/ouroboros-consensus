@@ -22,7 +22,6 @@ module Bench.Consensus.Mempool.TestBlock (
   , txSize
   ) where
 
-import           Bench.Consensus.MempoolWithMockedLedgerItf
 import           Cardano.Binary (FromCBOR (..), ToCBOR (..))
 import qualified Cardano.Slotting.Time as Time
 import           Codec.Serialise (Serialise (..))

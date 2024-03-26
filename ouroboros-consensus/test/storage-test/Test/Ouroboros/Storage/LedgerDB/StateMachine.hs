@@ -110,7 +110,7 @@ prop_sequential maxSuccess mkTestArguments fsOps as = QC.withMaxSuccess maxSucce
   QC.monadicIO $ do
     ref <- lift $ initialEnvironment fsOps mkTestArguments =<< initChainDB
     (_, Environment _ testInternals _ _ _ clean) <- runPropertyStateT (runActions as) ref
-    QC.run $ clean >> closeLedgerDB testInternals
+    QC.run $ closeLedgerDB testInternals >> clean
     QC.assert True
 
 -- | The initial environment is mostly undefined because it will be initialized

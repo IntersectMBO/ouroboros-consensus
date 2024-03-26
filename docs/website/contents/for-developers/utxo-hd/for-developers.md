@@ -27,9 +27,8 @@ state and dumping it into the disk. This effectively lowers the memory by 5GB
 However this comes at a cost, both in speed performance and in complexity of the
 code.
 
-This design is based on the technical report ["Storing the Cardano ledger state
-on disk: analysis and design options"](../utxo-db/utxo-db.tex) by Duncan Coutts
-and Douglas Wilson.
+This design is based on the technical report "Storing the Cardano ledger state
+on disk: analysis and design options" by Duncan Coutts and Douglas Wilson.
 
 ## Implementation
 
@@ -186,10 +185,9 @@ As you might have noticed in the diagram above, we only keep track of
 differences in the `DbChangelog`, but at some point these differences must have
 a base value/anchor on top of which we can apply them. This anchor is an
 instance of the whole UTxO set (in particular the UTxO set at the last flushed
-state) that we keep in what we named the [_backing
-store_](../../../ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/BackingStore.hs).
-In order to manipulate the Backing Store, we produce a
-`BackingStoreValueHandle`, see the previous link for more details.
+state) that we keep in what we named the _backing store_. In order to manipulate
+the Backing Store, we produce a `BackingStoreValueHandle`, see the previous link
+for more details.
 
 On top of the values that exist in the backing store, the sequence of
 differences in the LedgerDB can be applied to create a UTxO set at a specific
@@ -198,10 +196,8 @@ slot younger than the one in the backing store.
 Functionally it is just a key-value store (plus the `SlotNo` of the last
 flushed state), and we provide two implementations:
 
-- [InMemory](../../../ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/BackingStore/InMemory.hs):
-  is a `Data.Map` that lives in a `TVar`.
-- [LMDB](../../../ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/BackingStore/LMDB.hs)
-  uses [LMDB](http://www.lmdb.tech/doc/) bindings to keep a database in a file in the disk.
+- InMemory: is a `Data.Map` that lives in a `TVar`.
+- LMDB uses [LMDB](http://www.lmdb.tech/doc/) bindings to keep a database in a file in the disk.
 
 To be precise, only the LMDB implementation will decrease the memory usage by
 moving this instance of the UTxO set to disk, but it comes at a cost as I/O has
@@ -218,12 +214,10 @@ In particular operations, like answering queries or in the forging loop, we need
 to make sure that we are able to complete the operation even if the data on the
 backing store mutates, and for that we need that our view of the values in the
 backing store remains unaltered for the duration of the process. For this goal,
-we use a
-[`LedgerDBView`](../../../ouroboros-consensus/src/ouroboros-consensus/Ouroboros/Consensus/Storage/LedgerDB/BackingStore.hs)
-which is an immutable view on the backing store values plus a `DbChangelog` that
-can be used to perform forwarding operations. We take advantage of the fact that
-the backing store implementations can provide a consistent view of the stored
-values while accepting updates in other threads.
+we use a `LedgerDBView` which is an immutable view on the backing store values
+plus a `DbChangelog` that can be used to perform forwarding operations. We take
+advantage of the fact that the backing store implementations can provide a
+consistent view of the stored values while accepting updates in other threads.
 
 ### Applying blocks
 
@@ -353,13 +347,11 @@ boundary:
   any ledger tables, and there would only be ledger tables starting in Shelley.
   This means that when crossing the boundary to Shelley, the whole UTxO set
   (which at this point was much smaller than the set at the tip of the chain)
-  will be returned as deltas (see `translateLedgerStateByronToShelleyWrapper`
-  [here](../../../ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/CanHardFork.hs)).
+  will be returned as deltas (see `translateLedgerStateByronToShelleyWrapper`).
 
 - In the Shelley to Allegra transition, a bunch of UTxOs (owned by the AVVM
   addresses) were consumed into the treasury. This transition will return said
-  UTxOs as deletions (see `translateLedgerStateShelleyToAllegraWrapper`
-  [here](../../../ouroboros-consensus-cardano/src/ouroboros-consensus-cardano/Ouroboros/Consensus/Cardano/CanHardFork.hs)).
+  UTxOs as deletions (see `translateLedgerStateShelleyToAllegraWrapper`).
 
 The general scheme for **ticking a block is: a `LedgerState` without a
 UTxO set (`EmptyMK`) goes in and a `LedgerState` with some deltas (`DiffMK`)

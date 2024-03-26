@@ -17,8 +17,7 @@ import           Ouroboros.Consensus.Ledger.Tables (DiffMK (..), KeysMK (..),
                      LedgerTables (..), ValuesMK)
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
-import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore
-                     (newBackingStoreInitialiser)
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB
                      (LMDBLimits (..))
 import           Ouroboros.Consensus.Util.Args (Complete)
@@ -205,6 +204,8 @@ data Env m ks vs d = Env {
     -- | A method for initialising a backing store.
     eBackingStoreInitialiser :: !(BackingStoreInitialiser m ks vs d)
     -- | Creates a fresh directory, and provides an API to interact with it.
+    -- Note: we may want to provide a second value of this type to benchmark
+    -- with a different directory for snapshot storage.
   , eMakeNewSomeHasFS        :: !(m (SomeHasFS m))
     -- | How to clean up the 'Env'.
   , eCleanup                 :: !(m ())
@@ -222,7 +223,15 @@ setup :: Complete BackingStoreArgs IO -> IO (Env IO K V D)
 setup bss = do
   sysTmpDir <- getCanonicalTemporaryDirectory
   benchTmpDir <- createTempDirectory sysTmpDir "bench_backingstore"
-  let bsi = newBackingStoreInitialiser mempty bss
+  -- Note that we are initialising the Backing Store with the same directory
+  -- for storing tables and snapshots. We may want to expand on this later.
+  let bsi = \hasFS i ->
+              BS.newBackingStoreInitialiser
+                mempty
+                bss
+                hasFS
+                hasFS
+                i
 
   let mkSomeHasFS = do
         tmpDir <- createTempDirectory benchTmpDir "run"
