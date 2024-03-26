@@ -47,9 +47,9 @@ module Test.Util.TestBlock (
   , firstBlock
   , successorBlock
     -- ** Payload semantics
+  , PayloadDependentState (..)
   , PayloadSemantics (..)
   , applyDirectlyToPayloadDependentState
-  , PayloadDependentState(..)
     -- * LedgerState
   , LedgerState (TestLedger, payloadDependentState, lastAppliedPoint)
   , Ticked1 (TickedTestLedger)
