@@ -99,9 +99,11 @@ data Response r =
 
 type Model :: (Type -> Type) -> Type
 data Model r = Model {
-    mCandidates :: Map.Map UpstreamPeer PeerState
+    mCandidates :: Map.Map UpstreamPeer Candidate
   ,
     mClock      :: SI.Time
+  ,
+    mIdlers     :: Set.Set UpstreamPeer
   ,
     mNotables   :: Set.Set Notable
   ,
@@ -124,6 +126,8 @@ initModel j = Model {
     mCandidates = Map.empty
   ,
     mClock = SI.Time 0
+  ,
+    mIdlers = Set.empty
   ,
     mNotables = Set.empty
   ,
@@ -168,7 +172,7 @@ precondition model = pre $ \case
     StartIdling peer ->
         "idle after disconnect" `atom` (peer `Map.member` cands)
      QSM..&&
-        "double idle" `atom` (Idling False == maybe (Idling False) psIdling (cands Map.!? peer))
+        "double idle" `atom` (peer `Set.notMember` idlers)
     TimePasses dur ->
         "non-positive duration" `atom` (0 < dur)
      QSM..&&
@@ -176,6 +180,8 @@ precondition model = pre $ \case
   where
     Model {
         mCandidates = cands
+      ,
+        mIdlers = idlers
       } = model
 
     pre f cmd = f cmd QSM..// show cmd
@@ -185,21 +191,25 @@ transition model cmd resp = fixupModelState cmd $ case (cmd, resp) of
     (Disconnect peer, Unit) ->
         model' {
             mCandidates = Map.delete peer cands
+          ,
+            mIdlers = Set.delete peer idlers
           }
     (ExtendSelection sdel, Unit) ->
         model' { mSelection = Selection (b + 1) (s + sdel) }
     (ModifyCandidate peer bdel, Unit) ->
         model' {
-            mCandidates = Map.alter (plusC bdel) peer cands
+            mCandidates = Map.insertWith plusC peer (Candidate bdel) cands
+          ,
+            mIdlers = Set.delete peer idlers
           }
     (NewCandidate peer bdel, Unit) ->
-        model' { mCandidates = Map.insert peer (PeerState (Candidate (b + bdel)) (Idling False)) cands }
+        model' { mCandidates = Map.insert peer (Candidate (b + bdel)) cands }
     (ReadJudgment, ReadThisJudgment{}) ->
         model'
     (ReadMarker, ReadThisMarker{}) ->
         model'
     (StartIdling peer, Unit) ->
-        model' { mCandidates = Map.adjust (\ (PeerState c _) -> PeerState c (Idling True)) peer cands }
+        model' { mIdlers = Set.insert peer idlers }
     (TimePasses dur, Unit) ->
         addNotableWhen BigDurN (dur > 300)
       $ model {
@@ -214,13 +224,14 @@ transition model cmd resp = fixupModelState cmd $ case (cmd, resp) of
       ,
         mClock = clk
       ,
+        mIdlers = idlers
+      ,
         mSelection = Selection b s
       } = model
 
     model' = model { mPrev = WhetherPrevTimePasses False }
 
-    plusC x (Just (PeerState (Candidate y) _)) = Just (PeerState (Candidate (x + y)) (Idling False))
-    plusC x Nothing = Just (PeerState (Candidate x) (Idling False))
+    plusC (Candidate x) (Candidate y) = Candidate (x + y)
 
 -- | Update the 'mState', assuming that's the only stale field in the given
 -- 'Model'
@@ -258,6 +269,8 @@ fixupModelState cmd model =
       ,
         mClock = clk
       ,
+        mIdlers = idlers
+      ,
         mSelection = sel
       ,
         mState = st
@@ -270,10 +283,10 @@ fixupModelState cmd model =
 
     some = 0 < Map.size cands
 
-    allIdling = all isIdling cands
+    allIdling = idlers == Map.keysSet cands
 
-    ok peer =
-        GSM.WhetherCandidateIsBetter False == candidateOverSelection sel peer
+    ok cand =
+        GSM.WhetherCandidateIsBetter False == candidateOverSelection sel cand
 
     -- the first time the node would transition to OnlyBootstrap
     expiry          timestamp = expiryAge `max` expiryThrashing timestamp
@@ -355,7 +368,7 @@ generator ub model = Just $ QC.frequency $
  <>
     [ (,) 20 $ pure ReadMarker ]
  <>
-    [ (,) 50 $ StartIdling <$> elements (Map.keys oldNotIdling) | not (Map.null oldNotIdling) ]
+    [ (,) 50 $ StartIdling <$> elements oldNotIdling | notNull oldNotIdling ]
  <>
     [ (,) 100 $ TimePasses <$> genTimePassesDur | prev == WhetherPrevTimePasses False ]
   where
@@ -363,6 +376,8 @@ generator ub model = Just $ QC.frequency $
         mCandidates = cands
       ,
         mClock = clk
+      ,
+        mIdlers = idlers
       ,
         mPrev = prev
       ,
@@ -378,7 +393,7 @@ generator ub model = Just $ QC.frequency $
         Nothing   -> []
         Just peer -> [ minBound .. peer ] \\ old
 
-    oldNotIdling = psCandidate <$> Map.filter (not . isIdling) cands
+    oldNotIdling = old \\ Set.toList idlers
 
     genTimePassesDur = QC.frequency $
         [ (,) 10 $ choose (1, 70) ]
@@ -405,7 +420,7 @@ generator ub model = Just $ QC.frequency $
           [ (,)
               peer
               (filter (/= 0) [ b + offset - c | offset <- [-lim .. lim] ])
-          | (peer, PeerState (Candidate c) _) <- Map.assocs cands
+          | (peer, Candidate c) <- Map.assocs cands
           ]
 
 
@@ -482,14 +497,6 @@ newtype Candidate = Candidate B
   deriving stock    (Eq, Ord, Generic, Show)
   deriving anyclass (TD.ToExpr)
 
-newtype Idling = Idling Bool
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
-data PeerState = PeerState { psCandidate :: !Candidate, psIdling :: !Idling }
-  deriving stock    (Eq, Ord, Generic, Show)
-  deriving anyclass (TD.ToExpr)
-
 data MarkerState = Present | Absent
   deriving stock    (Eq, Ord, Generic, Read, Show)
   deriving anyclass (TD.ToExpr)
@@ -559,9 +566,9 @@ instance QC.Arbitrary MarkerState where
 
 candidateOverSelection ::
      Selection
-  -> PeerState
+  -> Candidate
   -> GSM.CandidateVersusSelection
-candidateOverSelection (Selection b _s) (PeerState (Candidate b') _) =
+candidateOverSelection (Selection b _s) (Candidate b') =
     -- TODO this ignores CandidateDoesNotIntersect, which seems harmless, but
     -- I'm not quite sure
     GSM.WhetherCandidateIsBetter (b < b')
@@ -594,7 +601,7 @@ thrashLimit = 8   -- seconds
 
 selectionIsBehind :: Model r -> Bool
 selectionIsBehind model =
-    any (\(PeerState (Candidate b') _) -> b' > b) cands
+    any (\(Candidate b') -> b' > b) cands
   where
     Model {
         mCandidates = cands
@@ -651,6 +658,3 @@ boringDur model dur =
             "boringDur state" `atom` (gap < 0 || 0 /= n)
 
     secondsToPicoseconds x = x * 10 ^ (12 :: Int)
-
-isIdling :: PeerState -> Bool
-isIdling (PeerState {psIdling = Idling i}) = i

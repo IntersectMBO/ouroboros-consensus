@@ -195,7 +195,7 @@ prop_sequential1 j0 cmds = runSimQC $ do
     let gsm = GSM.realGsmEntryPoints (id, tracer) GSM.GsmView {
             GSM.antiThunderingHerd = Nothing
           ,
-            GSM.candidateOverSelection = candidateOverSelection
+            GSM.candidateOverSelection = \ s (PeerState c _) -> candidateOverSelection s c
           ,
             GSM.peerIsIdle = isIdling
           ,
@@ -381,6 +381,9 @@ push (EvRecorder var) ev = do
     now <- SI.getMonotonicTime
     atomically $ modifyTVar var $ (:) (now, ev)
 
+isIdling :: PeerState -> Bool
+isIdling (PeerState {psIdling = Idling i}) = i
+
 -----
 
 -- | merely a tidy bundle of arguments
@@ -390,6 +393,12 @@ data Vars m = Vars
     (StrictTVar m LedgerStateJudgement)
     (StrictTVar m MarkerState)
     (EvRecorder m)
+
+newtype Idling = Idling Bool
+  deriving (Eq, Ord, Show)
+
+data PeerState = PeerState { psCandidate :: !Candidate, psIdling :: !Idling }
+  deriving (Eq, Ord, Show)
 
 -----
 
