@@ -1,5 +1,6 @@
 {-# LANGUAGE BangPatterns        #-}
 {-# LANGUAGE BlockArguments      #-}
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
@@ -381,7 +382,9 @@ storeLedgerStateAt ::
      ( LedgerSupportsProtocol blk
      , InspectLedger blk
      , LedgerDB.LedgerDbSerialiseConstraints blk
+#if __GLASGOW_HASKELL__ > 810
      , HasAnalysis blk
+#endif
      )
   => SlotNo -> Analysis blk
 storeLedgerStateAt slotNo aenv = do
@@ -449,7 +452,9 @@ checkNoThunksEvery ::
      ( LedgerSupportsProtocol blk
      , InspectLedger blk
      , LedgerDB.LedgerDbSerialiseConstraints blk
+#if __GLASGOW_HASKELL__ > 810
      , HasAnalysis blk
+#endif
      , CanStowLedgerTables (LedgerState blk)
      )
   => Word64

@@ -7,6 +7,9 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE TypeOperators            #-}
+#if __GLASGOW_HASKELL__ >= 980
+{-# OPTIONS_GHC -Wno-orphans #-}
+#endif
 
 -- | Definition is 'IsLedger'
 --
@@ -55,8 +58,6 @@ class GetTip l where
   --
   -- Should be 'GenesisPoint' when no blocks have been applied yet
   getTip :: forall mk. l mk -> Point l
-
-type instance HeaderHash (Ticked1 l) = HeaderHash l
 
 getTipHash :: GetTip l => l mk -> ChainHash l
 getTipHash = pointHash . getTip

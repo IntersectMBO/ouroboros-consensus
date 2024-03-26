@@ -136,7 +136,7 @@ instance Arbitrary DbChangelogTestSetup where
 
   -- TODO: Shrinking might not be optimal. Shrinking finds the shortest prefix of the list of
   -- operations that result in a failed property, by simply testing prefixes in increasing order.
-  shrink setup = reverse $ takeWhileJust $ tail (iterate reduce (Just setup))
+  shrink setup = reverse $ takeWhileJust $ drop 1 (iterate reduce (Just setup))
     where
       reduce (Just (DbChangelogTestSetup (_:ops) dblog)) = Just $ DbChangelogTestSetup ops dblog
       reduce _ = Nothing
