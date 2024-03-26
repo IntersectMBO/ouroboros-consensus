@@ -29,7 +29,6 @@
 --
 module Ouroboros.Consensus.Genesis.Governor (
     DensityBounds (..)
-  , LatestSlot (..)
   , TraceGDDEvent (..)
   , UpdateLoEFrag (..)
   , densityDisconnect
@@ -46,6 +45,7 @@ import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Void
@@ -176,13 +176,6 @@ runGdd loEUpdater varLoEFrag chainDb getTrigger =
       triggerChainSelectionAsync chainDb
       spin newTrigger
 
--- | Indicates whether there is a latest known header in the candidate fragment
--- and provides its slot number.
-data LatestSlot =
-  NoLatestSlot
-  | LatestSlot SlotNo
-  deriving (Show)
-
 data DensityBounds blk =
   DensityBounds {
     fragment        :: AnchoredFragment (Header blk),
@@ -190,7 +183,7 @@ data DensityBounds blk =
     lowerBound      :: Word64,
     upperBound      :: Word64,
     hasBlockAfter   :: Bool,
-    latestSlot      :: LatestSlot
+    latestSlot      :: WithOrigin SlotNo
   }
 
 -- | @densityDisconnect cfg immutableLedgerSt candidateSuffixes theirTips loeFrag@
@@ -236,49 +229,37 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
 
           caughtUp = Set.member peer caughtUpPeers
 
-          latestSlot = case (AF.headSlot candidateSuffix, latestSlots Map.! peer) of
-            (Origin, Origin) -> NoLatestSlot
-            (Origin, NotOrigin latest)
-              | latest >= firstSlotAfterGenesisWindow -> LatestSlot latest
-              | otherwise -> NoLatestSlot
-            (NotOrigin cand, Origin) -> LatestSlot cand
-            (NotOrigin cand, NotOrigin latest)
-              | latest >= firstSlotAfterGenesisWindow -> LatestSlot (max cand latest)
-              | otherwise -> LatestSlot cand
+          latestSlot = fromMaybe Origin (latestSlots Map.!? peer)
 
-          -- If the peer has more headers that it hasn't sent yet, each slot between the latest header we know of and
-          -- the end of the Genesis window could contain a block, so the upper bound for the total number of blocks in
-          -- the window is the sum of the known blocks and that number of remaining slots.
+          -- Is there a block after the end of the Genesis window?
+          hasBlockAfter = case max (AF.headSlot candidateSuffix) latestSlot of
+            NotOrigin slot -> slot >= firstSlotAfterGenesisWindow
+            Origin         -> False
+
+          -- If the peer is idling, we assume it has no more headers to send.
+          --
           -- If the slot of the latest header we know of is _after_ the end of the Genesis window (either because the
           -- candidate fragment extends beyond it or because we are waiting to validate a header beyond the forecast
           -- horizon that we already received), there can be no headers in between and 'potentialSlots' is 0.
-          SlotNo potentialSlots
-            | caughtUp
-            = 0
-            | otherwise
-            = case latestSlot of
-              -- The peer either has not advertised its tip yet or simply has no blocks whatsoever and won't progress
-              -- either.
-              -- In the latter case, it should be killed by the LoP.
-              NoLatestSlot -> SlotNo sgen
-              LatestSlot slot -> intervalLength (slot + 1) firstSlotAfterGenesisWindow
+          --
+          -- If the peer has more headers that it hasn't sent yet, each slot between the latest header we know of and
+          -- the end of the Genesis window could contain a block, so the upper bound for the total number of blocks in
+          potentialSlots =
+            if caughtUp || hasBlockAfter then 0
+            else sgen - totalBlockCount
 
           -- The number of blocks within the Genesis window we know with certainty
           lowerBound = fromIntegral $ AF.length fragment
 
           upperBound = lowerBound + potentialSlots
 
-          -- The number of blocks we know of on the candidate chain, not limited to the Genesis window.
+          -- The number of blocks we know to be on the candidate chain after
+          -- the intersection, not limited to the Genesis window.
           totalBlockCount = fromIntegral (AF.length candidateSuffix)
 
           -- Does the peer have more than k known blocks in _total_ after the intersection?
           -- If not, it is not qualified to compete by density (yet).
           offersMoreThanK = totalBlockCount > k
-
-          -- For tracing: Is there a block after the end of the Genesis window?
-          hasBlockAfter = case latestSlot of
-            NoLatestSlot    -> False
-            LatestSlot slot -> slot >= firstSlotAfterGenesisWindow
 
       pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot})
 
@@ -304,12 +285,6 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
 
     competingFrags =
       Map.map dropBeyondGenesisWindow candidateSuffixes
-
-    -- Length of an interval with inclusive lower bound @a@ and exclusive upper
-    -- bound @b@.
-    intervalLength a b
-      | a <= b    = b - a
-      | otherwise = 0
 
 {- TODO: convert this scribble into a useful explanatory diagram, illustrating the
         density calculation below

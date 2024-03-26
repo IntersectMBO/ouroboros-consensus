@@ -23,9 +23,9 @@ import           Data.List (intersperse)
 import qualified Data.Map as Map
 import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds)
 import           Ouroboros.Consensus.Block (GenesisWindow (..), Header, Point,
-                     succWithOrigin)
+                     WithOrigin (NotOrigin, Origin), succWithOrigin)
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
-                     LatestSlot (..), TraceGDDEvent (..))
+                     TraceGDDEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
@@ -400,8 +400,8 @@ terseGDDEvent = \case
           ", "
 
         showLatestSlot = \case
-          NoLatestSlot -> "unknown"
-          LatestSlot (SlotNo slot) -> show slot
+          Origin -> "unknown"
+          NotOrigin (SlotNo slot) -> show slot
 
     window sgen loeHead =
       show winStart ++ " -> " ++ show winEnd
