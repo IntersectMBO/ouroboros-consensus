@@ -238,9 +238,13 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
 
           latestSlot = case (AF.headSlot candidateSuffix, latestSlots Map.! peer) of
             (Origin, Origin) -> NoLatestSlot
-            (Origin, NotOrigin latest) -> LatestSlot latest
+            (Origin, NotOrigin latest)
+              | latest >= firstSlotAfterGenesisWindow -> LatestSlot latest
+              | otherwise -> NoLatestSlot
             (NotOrigin cand, Origin) -> LatestSlot cand
-            (NotOrigin cand, NotOrigin latest) -> LatestSlot (max cand latest)
+            (NotOrigin cand, NotOrigin latest)
+              | latest >= firstSlotAfterGenesisWindow -> LatestSlot (max cand latest)
+              | otherwise -> LatestSlot cand
 
           -- If the peer has more headers that it hasn't sent yet, each slot between the latest header we know of and
           -- the end of the Genesis window could contain a block, so the upper bound for the total number of blocks in
