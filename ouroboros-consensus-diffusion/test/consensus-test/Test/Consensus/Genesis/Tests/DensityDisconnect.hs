@@ -116,7 +116,10 @@ prop_densityDisconnectStatic :: Property
 prop_densityDisconnectStatic =
   forAll gen $ \ StaticCandidates {k, sgen, suffixes, loeFrag} -> do
     let (disconnect, _) = densityDisconnect sgen k suffixes mempty mempty loeFrag
-    not (null disconnect) && HonestPeer `notElem` disconnect
+    counterexample "it should disconnect some node" (not (null disconnect))
+      .&&.
+     counterexample "it should not disconnect the honest peer"
+       (HonestPeer `notElem` disconnect)
   where
     gen = do
       gt <- genChains (QC.choose (1, 4))
