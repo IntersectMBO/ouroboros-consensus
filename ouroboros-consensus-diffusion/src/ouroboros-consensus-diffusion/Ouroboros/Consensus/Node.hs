@@ -9,6 +9,7 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving  #-}
+{-# LANGUAGE TemplateHaskell     #-}
 {-# LANGUAGE TypeApplications    #-}
 -- | Run the whole Node
 --
@@ -132,6 +133,7 @@ import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
 import           Ouroboros.Network.Protocol.Limits (shortWait)
 import           Ouroboros.Network.Protocol.PeerSharing.Type (PeerSharingAmount)
 import           Ouroboros.Network.RethrowPolicy
+import qualified SafeWildCards
 import           System.Exit (ExitCode (..))
 import           System.FilePath ((</>))
 import           System.FS.API (SomeHasFS (..))
@@ -274,6 +276,39 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
     , llrnMaxClockSkew :: ClockSkew
     }
 
+-- | Higher-level arguments that can determine the 'LowLevelRunNodeArgs' under
+-- some usual assumptions for realistic use cases such as in @cardano-node@.
+--
+-- See 'stdLowLevelRunNodeArgsIO'.
+data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
+  { srnBfcMaxConcurrencyBulkSync    :: Maybe Word
+  , srnBfcMaxConcurrencyDeadline    :: Maybe Word
+  , srnChainDbValidateOverride      :: Bool
+    -- ^ If @True@, validate the ChainDB on init no matter what
+  , srnDiskPolicyArgs               :: DiskPolicyArgs
+  , srnDatabasePath                 :: FilePath
+    -- ^ Location of the DBs
+  , srnDiffusionArguments           :: Diffusion.Arguments
+                                         Socket      RemoteAddress
+                                         LocalSocket LocalAddress
+  , srnDiffusionArgumentsExtra      :: Diffusion.ExtraArguments p2p m
+  , srnDiffusionTracers             :: Diffusion.Tracers
+                                         RemoteAddress  NodeToNodeVersion
+                                         LocalAddress   NodeToClientVersion
+                                         IO
+  , srnDiffusionTracersExtra        :: Diffusion.ExtraTracers p2p
+  , srnEnableInDevelopmentVersions  :: Bool
+    -- ^ If @False@, then the node will limit the negotiated NTN and NTC
+    -- versions to the latest " official " release (as chosen by Network and
+    -- Consensus Team, with input from Node Team)
+  , srnTraceChainDB                 :: Tracer m (ChainDB.TraceEvent blk)
+  , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
+    -- ^ Determine whether to use the system default mempool capacity or explicitly set
+    -- capacity of the mempool.
+  , srnChainSyncTimeout             :: Maybe (m NTN.ChainSyncTimeout)
+    -- ^ A custom timeout for ChainSync.
+  }
+
 {-------------------------------------------------------------------------------
   Entrypoints to the Consensus Layer node functionality
 -------------------------------------------------------------------------------}
@@ -287,6 +322,7 @@ data NetworkP2PMode (p2p :: Diffusion.P2P) where
 deriving instance Eq   (NetworkP2PMode p2p)
 deriving instance Show (NetworkP2PMode p2p)
 
+pure []
 
 -- | Combination of 'runWith' and 'stdLowLevelRunArgsIO'
 run :: forall blk p2p.
@@ -854,39 +890,6 @@ stdRunDataDiffusion ::
   -> IO ()
 stdRunDataDiffusion = Diffusion.run
 
--- | Higher-level arguments that can determine the 'LowLevelRunNodeArgs' under
--- some usual assumptions for realistic use cases such as in @cardano-node@.
---
--- See 'stdLowLevelRunNodeArgsIO'.
-data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
-  { srnBfcMaxConcurrencyBulkSync    :: Maybe Word
-  , srnBfcMaxConcurrencyDeadline    :: Maybe Word
-  , srnChainDbValidateOverride      :: Bool
-    -- ^ If @True@, validate the ChainDB on init no matter what
-  , srnDiskPolicyArgs               :: DiskPolicyArgs
-  , srnDatabasePath                 :: FilePath
-    -- ^ Location of the DBs
-  , srnDiffusionArguments           :: Diffusion.Arguments
-                                         Socket      RemoteAddress
-                                         LocalSocket LocalAddress
-  , srnDiffusionArgumentsExtra      :: Diffusion.ExtraArguments p2p m
-  , srnDiffusionTracers             :: Diffusion.Tracers
-                                         RemoteAddress  NodeToNodeVersion
-                                         LocalAddress   NodeToClientVersion
-                                         IO
-  , srnDiffusionTracersExtra        :: Diffusion.ExtraTracers p2p
-  , srnEnableInDevelopmentVersions  :: Bool
-    -- ^ If @False@, then the node will limit the negotiated NTN and NTC
-    -- versions to the latest " official " release (as chosen by Network and
-    -- Consensus Team, with input from Node Team)
-  , srnTraceChainDB                 :: Tracer m (ChainDB.TraceEvent blk)
-  , srnMaybeMempoolCapacityOverride :: Maybe MempoolCapacityBytesOverride
-    -- ^ Determine whether to use the system default mempool capacity or explicitly set
-    -- capacity of the mempool.
-  , srnChainSyncTimeout             :: Maybe (m NTN.ChainSyncTimeout)
-    -- ^ A custom timeout for ChainSync.
-  }
-
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
 -- non-testing invocation.
 stdLowLevelRunNodeArgsIO ::
@@ -905,7 +908,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
                                     , rnEnableP2P
                                     , rnPeerSharing
                                     }
-                         StdRunNodeArgs{..} = do
+                         $(SafeWildCards.fields 'StdRunNodeArgs) = do
     llrnBfcSalt               <- stdBfcSaltIO
     llrnGsmAntiThunderingHerd <- stdGsmAntiThunderingHerdIO
     llrnKeepAliveRng          <- stdKeepAliveRngIO
