@@ -409,7 +409,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                -> (m (), m ())
                -> (m (), m (), m ())
                -> (Their (Tip TestBlock) -> STM m ())
-               -> (SlotNo -> STM m ())
+               -> (WithOrigin SlotNo -> STM m ())
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m

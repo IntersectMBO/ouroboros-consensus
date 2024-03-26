@@ -184,7 +184,7 @@ data ChainSyncClientHandle m blk = ChainSyncClientHandle {
     -- | Latest tip announced by the remote peer
   , cschTheirTip   :: !(STM m (Maybe (Tip blk)))
     -- | Slot of the last received header
-  , cschLatestSlot :: !(STM m SlotNo)
+  , cschLatestSlot :: !(STM m (WithOrigin SlotNo))
   }
   deriving stock (Generic)
   deriving (NoThunks) via AllowThunk (ChainSyncClientHandle m blk)
@@ -219,7 +219,7 @@ bracketChainSyncClient ::
        -> (m (), m (), m ())
        -> (Their (Tip blk) -> STM m ())
           -- ^ callback to set the last announced tip
-       -> (SlotNo -> STM m ())
+       -> (WithOrigin SlotNo -> STM m ())
           -- ^ callback to set the slot of the last received header
        -> m a
     )
@@ -255,7 +255,7 @@ bracketChainSyncClient
     newCandidateVar = do
         varCandidate <- newTVarIO $ AF.Empty AF.AnchorGenesis
         varTheirTip <- newTVarIO Nothing
-        varFutureHeader <- newTVarIO (SlotNo 0)
+        varFutureHeader <- newTVarIO Origin
         tid <- myThreadId
         atomically $ do
           modifyTVar varCandidates $ Map.insert peer varCandidate
@@ -614,7 +614,7 @@ data DynamicEnv m blk = DynamicEnv {
     -- already-leaking bucket.
   , grantLoPToken       :: m ()
   , setTheirTip         :: Their (Tip blk) -> STM m ()
-  , setLatestSlot       :: SlotNo -> STM m ()
+  , setLatestSlot       :: WithOrigin SlotNo -> STM m ()
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -1170,7 +1170,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
-            atomically (setLatestSlot dynEnv slotNo)
+            atomically (setLatestSlot dynEnv (NotOrigin slotNo))
 
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
                 NoLongerIntersects ->
@@ -1282,8 +1282,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     writeTVar varCandidate theirFrag'
                     setTheirTip theirTip
                     case pointSlot rollBackPoint of
-                      Origin         -> setLatestSlot dynEnv 0
-                      NotOrigin slot -> setLatestSlot dynEnv slot
+                      Origin         -> setLatestSlot dynEnv Origin
+                      NotOrigin slot -> setLatestSlot dynEnv (NotOrigin slot)
 
                   continueWithState kis' $
                       nextStep mkPipelineDecision n theirTip

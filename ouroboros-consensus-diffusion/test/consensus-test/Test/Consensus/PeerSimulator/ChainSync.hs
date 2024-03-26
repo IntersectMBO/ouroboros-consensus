@@ -20,7 +20,7 @@ import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)
 import           Network.TypedProtocol.Codec (AnyMessage)
-import           Ouroboros.Consensus.Block (Header, Point, SlotNo)
+import           Ouroboros.Consensus.Block (Header, Point, SlotNo, WithOrigin)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -81,7 +81,7 @@ basicChainSyncClient ::
   -- ^ Three monadic actions called to pause and resume the LoP bucket and to
   -- add a token to the LoP bucket.
   (Their (Tip blk) -> STM m ()) ->
-  (SlotNo -> STM m ()) ->
+  (WithOrigin SlotNo -> STM m ()) ->
   Consensus ChainSyncClientPipelined blk m
 basicChainSyncClient
     peerId

@@ -220,7 +220,7 @@ densityDisconnect ::
   -> SecurityParam
   -> Map peer (AnchoredFragment (Header blk))
   -> Set peer
-  -> Map peer SlotNo
+  -> Map peer (WithOrigin SlotNo)
   -> AnchoredFragment (Header blk)
   -> ([peer], Map peer (DensityBounds blk))
 densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caughtUpPeers latestSlots loeFrag =
@@ -236,11 +236,11 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
 
           caughtUp = Set.member peer caughtUpPeers
 
-          latestSlot = case (AF.headSlot candidateSuffix, latestSlots Map.!? peer) of
-            (Origin, Nothing) -> NoLatestSlot
-            (Origin, Just latest) -> LatestSlot latest
-            (NotOrigin cand, Nothing) -> LatestSlot cand
-            (NotOrigin cand, Just latest) -> LatestSlot (max cand latest)
+          latestSlot = case (AF.headSlot candidateSuffix, latestSlots Map.! peer) of
+            (Origin, Origin) -> NoLatestSlot
+            (Origin, NotOrigin latest) -> LatestSlot latest
+            (NotOrigin cand, Origin) -> LatestSlot cand
+            (NotOrigin cand, NotOrigin latest) -> LatestSlot (max cand latest)
 
           -- If the peer has more headers that it hasn't sent yet, each slot between the latest header we know of and
           -- the end of the Genesis window could contain a block, so the upper bound for the total number of blocks in
