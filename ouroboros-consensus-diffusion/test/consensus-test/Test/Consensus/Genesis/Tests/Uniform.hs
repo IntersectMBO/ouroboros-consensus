@@ -204,13 +204,16 @@ prop_leashingAttackStalling =
     genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
+      let peerCount = 1 + length advs0
+          extendedHonest =
+            duplicateLastPoint (endingDelay peerCount genesisTest) <$> honest
       advs <- mapM (mapM dropRandomPoints) advs0
-      pure $ Peers (duplicateLastPoint (endingDelay genesisTest) <$> honest) advs
+      pure $ Peers extendedHonest advs
 
-    endingDelay gt =
+    endingDelay peerCount gt =
      let cst = gtChainSyncTimeouts gt
          bft = gtBlockFetchTimeouts gt
-      in 1 + maximum (0 : catMaybes
+      in 1 + fromIntegral peerCount * maximum (0 : catMaybes
            [ canAwaitTimeout cst
            , intersectTimeout cst
            , busyTimeout bft
