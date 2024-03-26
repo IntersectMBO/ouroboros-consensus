@@ -19,7 +19,7 @@ import           Data.Ratio ((%))
 import           Data.Time.Clock (DiffTime, picosecondsToDiffTime)
 import           Ouroboros.Consensus.Util.IOLike (Exception (displayException),
                      MonadAsync, MonadCatch (try), MonadDelay, MonadFork,
-                     MonadMask, MonadThrow (throwIO), SomeException,
+                     MonadMask, MonadThrow (throwIO), NoThunks, SomeException,
                      Time (Time), addTime, fromException, threadDelay)
 import           Ouroboros.Consensus.Util.LeakyBucket
 import           Test.QuickCheck (Arbitrary (arbitrary), Gen, Property,
@@ -134,7 +134,7 @@ stripConfig state = state{config=()}
 
 -- | 'evalAgainstBucket' followed by 'stripConfig'.
 stripEvalAgainstBucket ::
-  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m) =>
+  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m, NoThunks (m ())) =>
   Config m ->
   (Handlers m -> m a) ->
   m (State ())

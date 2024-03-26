@@ -1,9 +1,13 @@
-{-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE MultiWayIf          #-}
-{-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE NumericUnderscores  #-}
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveAnyClass       #-}
+{-# LANGUAGE DeriveGeneric        #-}
+{-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE LambdaCase           #-}
+{-# LANGUAGE MultiWayIf           #-}
+{-# LANGUAGE NamedFieldPuns       #-}
+{-# LANGUAGE NumericUnderscores   #-}
+{-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE StandaloneDeriving   #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | This module implements a “leaky bucket”. One defines a bucket with a
 -- capacity and a leaking rate; a race (in the sense of Async) starts against
@@ -35,16 +39,9 @@ module Ouroboros.Consensus.Util.LeakyBucket (
   ) where
 
 import           Data.Ratio ((%))
-import           Data.Time (DiffTime)
 import           Data.Time.Clock (diffTimeToPicoseconds)
+import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Util.IOLike
-                     (MonadAsync (Async, async, uninterruptibleCancel),
-                     MonadCatch (handle), MonadDelay (threadDelay),
-                     MonadFork (throwTo), MonadMask, MonadMonotonicTime,
-                     MonadSTM, MonadThread (ThreadId, myThreadId),
-                     MonadThrow (finally), SomeException, StrictTVar, Time,
-                     atomically, diffTime, getMonotonicTime, readTVar,
-                     readTVarIO, uncheckedNewTVarM, writeTVar)
 import           Prelude hiding (init)
 
 -- | Configuration of a leaky bucket.
@@ -58,6 +55,9 @@ data Config m = Config
     -- | A monadic action to trigger when the bucket is empty.
     onEmpty        :: !(m ())
   }
+  deriving (Generic)
+
+deriving instance NoThunks (m ()) => NoThunks (Config m)
 
 -- | A configuration for a bucket that does nothing.
 dummyConfig :: (Applicative m) => Config m
@@ -76,7 +76,7 @@ data State cfg = State
     paused :: !Bool,
     config :: !cfg
   }
-  deriving (Eq, Show)
+  deriving (Eq, Show, Generic, NoThunks)
 
 -- | A bucket is simply a TVar of a state.
 type Bucket m = StrictTVar m (State (Config m))
@@ -104,7 +104,7 @@ data Handlers m = Handlers
 -- first case, return the value returned by the action. In the second case,
 -- return @Nothing@.
 execAgainstBucket ::
-  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m) =>
+  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m, NoThunks (m ())) =>
   Config m ->
   (Handlers m -> m a) ->
   m a
@@ -113,7 +113,7 @@ execAgainstBucket config action = snd <$> runAgainstBucket config action
 -- | Same as 'execAgainstBucket' but returns the 'State' of the bucket when the
 -- action terminates. Exposed for testing purposes.
 evalAgainstBucket ::
-  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m) =>
+  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m, NoThunks (m ())) =>
   Config m ->
   (Handlers m -> m a) ->
   m (State (Config m))
@@ -123,43 +123,43 @@ evalAgainstBucket config action = fst <$> runAgainstBucket config action
 -- the action terminates. Exposed for testing purposes.
 runAgainstBucket ::
   forall m a.
-  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m) =>
+  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m, NoThunks (m ())) =>
   Config m ->
   (Handlers m -> m a) ->
   m (State (Config m), a)
 runAgainstBucket config action = do
   bucket <- init config
   tid <- myThreadId
-  thread <- uncheckedNewTVarM Nothing
-  startThread thread bucket tid
+  killThreadVar <- newTVarIO Nothing
   finally
     ( do
+        startThread killThreadVar bucket tid
         result <-
           action $
             Handlers
               { fill = (snd <$>) . snapshotFill bucket,
                 setPaused = setPaused bucket,
-                updateConfig = updateConfig thread bucket tid
+                updateConfig = updateConfig killThreadVar bucket tid
               }
         state <- snapshot bucket
         pure (state, result)
     )
-    (stopThread thread)
+    (stopThread killThreadVar)
   where
     startThread ::
-      StrictTVar m (Maybe (Async m ())) ->
+      StrictTVar m (Maybe (m ())) ->
       Bucket m ->
       ThreadId m ->
       m ()
-    startThread thread bucket tid =
-      readTVarIO thread >>= \case
+    startThread killThreadVar bucket tid =
+      readTVarIO killThreadVar >>= \case
         Just _ -> error "LeakyBucket: startThread called when a thread is already running"
-        Nothing -> (atomically . writeTVar thread) =<< leak bucket tid
+        Nothing -> (atomically . writeTVar killThreadVar) =<< leak bucket tid
 
-    stopThread :: StrictTVar m (Maybe (Async m ())) -> m ()
-    stopThread thread =
-      readTVarIO thread >>= \case
-        Just thread' -> uninterruptibleCancel thread'
+    stopThread :: StrictTVar m (Maybe (m ())) -> m ()
+    stopThread killThreadVar =
+      readTVarIO killThreadVar >>= \case
+        Just killThread' -> killThread'
         Nothing -> pure ()
 
     setPaused :: Bucket m -> Bool -> m ()
@@ -168,44 +168,47 @@ runAgainstBucket config action = do
       atomically $ writeTVar bucket newState {paused}
 
     updateConfig ::
-      StrictTVar m (Maybe (Async m ())) ->
+      StrictTVar m (Maybe (m ())) ->
       Bucket m ->
       ThreadId m ->
       (Config m -> Config m) ->
       m ()
-    updateConfig thread bucket tid = \f -> do
+    updateConfig killThreadVar bucket tid = \f -> do
       State {level, time, paused, config = oldConfig} <- snapshot bucket
       let newConfig@Config {capacity = newCapacity, rate = newRate} = f oldConfig
           newLevel = min newCapacity level
       if
-        | newRate <= 0 -> stopThread thread
-        | newRate > rate oldConfig -> stopThread thread >> startThread thread bucket tid
+        | newRate <= 0 -> stopThread killThreadVar
+        | newRate > rate oldConfig -> stopThread killThreadVar >> startThread killThreadVar bucket tid
         | otherwise -> pure ()
       atomically $ writeTVar bucket State {level = newLevel, time, paused, config = newConfig}
 
 -- | Initialise a bucket given a configuration. The bucket starts full at the
 -- time where one calls 'init'.
 init ::
-  (MonadMonotonicTime m, MonadSTM m) =>
+  (MonadMonotonicTime m, MonadSTM m, NoThunks (m ())) =>
   Config m ->
   m (Bucket m)
 init config@Config {capacity} = do
   time <- getMonotonicTime
-  uncheckedNewTVarM $ State {time, level = capacity, paused = False, config}
+  newTVarIO $ State {time, level = capacity, paused = False, config}
 
 -- | Monadic action that calls 'threadDelay' until the bucket is empty, then
 -- returns @()@. It receives the 'ThreadId' argument of the action's thread,
--- which it uses to throw exceptions at it.
+-- which it uses to throw exceptions at it; it returns a monadic action that can
+-- be used to interrupt the thread from the outside.
 leak ::
   (MonadDelay m, MonadCatch m, MonadFork m, MonadAsync m) =>
   Bucket m ->
   ThreadId m ->
-  m (Maybe (Async m ()))
+  m (Maybe (m ()))
 leak bucket actionThreadId = do
   State {config = Config {rate}} <- snapshot bucket
   if rate <= 0
     then pure Nothing
-    else Just <$> async go
+    else do
+      a <- async go
+      pure $ Just $! uninterruptibleCancel a
   where
     go = do
       State {level, config = Config {rate, onEmpty}} <- snapshot bucket
