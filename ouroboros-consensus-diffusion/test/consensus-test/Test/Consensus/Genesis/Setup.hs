@@ -23,7 +23,9 @@ import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike (Exception, fromException)
 import           Ouroboros.Network.Driver.Limits
                      (ProtocolLimitFailure (ExceededTimeLimit))
-import           Test.Consensus.Genesis.Setup.Classifiers (ResultClassifiers (..), resultClassifiers, classifiers, Classifiers (..))
+import           Test.Consensus.Genesis.Setup.Classifiers
+                   (Classifiers (..), ResultClassifiers (..), ScheduleClassifiers (..),
+                   classifiers, resultClassifiers, scheduleClassifiers)
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
@@ -94,11 +96,14 @@ forAllGenesisTest generator schedulerConfig shrinker mkProperty =
   forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->
     let cls = classifiers genesisTest
         resCls = resultClassifiers genesisTest result
+        schCls = scheduleClassifiers genesisTest
         stateView = rgtrStateView result
      in classify (allAdversariesSelectable cls) "All adversaries have more than k blocks after intersection" $
         classify (allAdversariesForecastable cls) "All adversaries have at least 1 forecastable block after intersection" $
         classify (allAdversariesKPlus1InForecast cls) "All adversaries have k+1 blocks in forecast window after intersection" $
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
+        classify (adversaryRollback schCls) "An adversary did a rollback" $
+        classify (honestRollback schCls) "The honest peer did a rollback" $
         tabulate "Adversaries killed by LoP" [printf "%.1f%%" $ adversariesKilledByLoP resCls] $
         tabulate "Adversaries killed by GDD" [printf "%.1f%%" $ adversariesKilledByGDD resCls] $
         tabulate "Adversaries killed by Timeout" [printf "%.1f%%" $ adversariesKilledByTimeout resCls] $

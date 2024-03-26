@@ -8,12 +8,15 @@
 module Test.Consensus.Genesis.Setup.Classifiers (
     Classifiers (..)
   , ResultClassifiers (..)
+  , ScheduleClassifiers (..)
   , classifiers
   , resultClassifiers
+  , scheduleClassifiers
   , simpleHash
   ) where
 
-import           Cardano.Slotting.Slot (WithOrigin (At))
+import           Cardano.Slotting.Slot (WithOrigin (..))
+import           Data.List (sortOn, tails)
 import qualified Data.List.NonEmpty as NonEmpty
 import qualified Data.Map as Map
 import           Data.Maybe (mapMaybe)
@@ -36,9 +39,12 @@ import           Test.Consensus.Network.AnchoredFragment.Extras (slotLength)
 import           Test.Consensus.PeerSimulator.StateView
                      (PeerSimulatorResult (..), StateView (..), pscrToException)
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..))
+import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId (..),
+                     Peers (..))
+import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestBlock (TestHash (TestHash))
+import           Test.Util.TestBlock (TestBlock, TestHash (TestHash),
+                     isAncestorOf)
 
 -- | Interesting categories to classify test inputs
 data Classifiers =
@@ -190,6 +196,57 @@ resultClassifiers GenesisTest{gtSchedule} RunGenesisTestResult{rgtrStateView} =
         _                          -> False
       )
       adversariesExceptions
+
+data ScheduleClassifiers =
+  ScheduleClassifiers{
+    -- | There is an adversary that did a rollback
+    adversaryRollback :: Bool,
+    -- | The honest peer did a rollback
+    honestRollback    :: Bool
+  }
+
+scheduleClassifiers :: GenesisTestFull TestBlock -> ScheduleClassifiers
+scheduleClassifiers GenesisTest{gtSchedule = schedule} =
+  ScheduleClassifiers
+    { adversaryRollback
+    , honestRollback
+    }
+  where
+    hasRollback :: PeerSchedule TestBlock -> Bool
+    hasRollback peerSch' =
+        any (not . isSorted) [tips, headers, blocks]
+      where
+        peerSch = sortOn fst peerSch'
+        isSorted l = and [x `ancestor` y | (x:y:_) <- tails l]
+        ancestor Origin  Origin  = True
+        ancestor Origin  (At _)  = True
+        ancestor (At _)  Origin  = False
+        ancestor (At p1) (At p2) = p1 `isAncestorOf` p2
+        tips = mapMaybe
+          (\(_, point) -> case point of
+            ScheduleTipPoint blk -> Just blk
+            _                    -> Nothing
+          )
+          peerSch
+        headers = mapMaybe
+          (\(_, point) -> case point of
+            ScheduleHeaderPoint blk -> Just blk
+            _                       -> Nothing
+          )
+          peerSch
+        blocks = mapMaybe
+          (\(_, point) -> case point of
+            ScheduleBlockPoint blk -> Just blk
+            _                      -> Nothing
+          )
+          peerSch
+
+    rollbacks :: Peers Bool
+    rollbacks = hasRollback <$> schedule
+
+    adversaryRollback = any value $ others rollbacks
+
+    honestRollback = value $ honest rollbacks
 
 simpleHash ::
   HeaderHash block ~ TestHash =>
