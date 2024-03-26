@@ -221,10 +221,6 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
   where
     densityBounds = Map.fromList $ do
       (peer, fragment) <- Map.toList competingFrags
-      -- Skip peers that haven't advertised their tip yet.
-      -- They should be disconnected by timeouts instead.
-      -- TODO We probably need an alternative approach for this now
-      -- that we don't use the tip anymore
       let candidateSuffix = candidateSuffixes Map.! peer
 
           caughtUp = Set.member peer caughtUpPeers
@@ -285,17 +281,6 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
 
     competingFrags =
       Map.map dropBeyondGenesisWindow candidateSuffixes
-
-{- TODO: convert this scribble into a useful explanatory diagram, illustrating the
-        density calculation below
-
-            |--------|
-
-    frag1: A - B - C - D - ...            <- exact
-            \
-    frag2:     E           claimed tip: E <- exact
-
--}
 
 data TraceGDDEvent peer blk =
   TraceGDDEvent {
