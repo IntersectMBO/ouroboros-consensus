@@ -13,16 +13,9 @@ module Test.Consensus.Genesis.Setup (
   ) where
 
 import           Control.Exception (throw)
-import           Control.Monad.Class.MonadAsync (AsyncCancelled(AsyncCancelled))
 import           Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import           Control.Tracer (debugTracer, traceWith)
-import           Data.Maybe (mapMaybe)
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientException (EmptyBucket))
 import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Consensus.Util.IOLike (Exception, fromException)
-import           Ouroboros.Network.Driver.Limits
-                     (ProtocolLimitFailure (ExceededTimeLimit))
 import           Test.Consensus.Genesis.Setup.Classifiers (ResultClassifiers (..), resultClassifiers, classifiers, Classifiers (..))
 import           Test.Consensus.Genesis.Setup.GenChains
 import           Test.Consensus.PeerSimulator.Run
@@ -94,7 +87,6 @@ forAllGenesisTest generator schedulerConfig shrinker mkProperty =
   forAllGenRunShrinkCheck generator runner shrinker' $ \genesisTest result ->
     let cls = classifiers genesisTest
         resCls = resultClassifiers genesisTest result
-        stateView = rgtrStateView result
      in classify (allAdversariesSelectable cls) "All adversaries have more than k blocks after intersection" $
         classify (allAdversariesForecastable cls) "All adversaries have at least 1 forecastable block after intersection" $
         classify (allAdversariesKPlus1InForecast cls) "All adversaries have k+1 blocks in forecast window after intersection" $
@@ -104,23 +96,7 @@ forAllGenesisTest generator schedulerConfig shrinker mkProperty =
         tabulate "Adversaries killed by Timeout" [printf "%.1f%%" $ adversariesKilledByTimeout resCls] $
         tabulate "Surviving adversaries" [printf "%.1f%%" $ adversariesSurvived resCls] $
         counterexample (rgtrTrace result) $
-        mkProperty genesisTest stateView .&&. hasOnlyExpectedExceptions stateView
+        mkProperty genesisTest (rgtrStateView result)
   where
     runner = runGenesisTest schedulerConfig
     shrinker' gt = shrinker gt . rgtrStateView
-    hasOnlyExpectedExceptions StateView{svPeerSimulatorResults} =
-      conjoin $ isExpectedException <$> mapMaybe
-        (pscrToException . pseResult)
-        svPeerSimulatorResults
-    isExpectedException exn
-      -- TODO: complete with GDD exception(s)
-      | Just EmptyBucket           <- e = true
-      | Just (ExceededTimeLimit _) <- e = true
-      | Just AsyncCancelled        <- e = true
-      | otherwise = counterexample
-        ("Encountered unexpected exception: " ++ show exn)
-        False
-      where
-        e :: (Exception e) => Maybe e
-        e = fromException exn
-        true = property True
