@@ -273,9 +273,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
 
           -- Does the peer have more than k known blocks in _total_ after the intersection?
           -- If not, it is not qualified to compete by density (yet).
-          offersMoreThanK = case latestSlot of
-            NoLatestSlot -> False
-            LatestSlot _ -> totalBlockCount > k
+          offersMoreThanK = totalBlockCount > k
 
           -- For tracing: Is there a block after the end of the Genesis window?
           hasBlockAfter = case latestSlot of
