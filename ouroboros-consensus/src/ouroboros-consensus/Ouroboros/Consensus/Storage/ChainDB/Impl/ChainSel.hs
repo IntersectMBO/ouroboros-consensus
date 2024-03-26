@@ -764,16 +764,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     -- | How many extra blocks to select at most after the tip of @newBlockFrag@
     -- according to the LoE.
     --
-    -- There are two cases to consider:
+    -- In no case the selection is allowed to be extended by more than k blocks.
+    -- We don't control from what chain those blocks would be selected at this
+    -- point. If we allowed more than k blocks, the immutable tip could enter an
+    -- adversarial branch.
     --
-    -- 1. If @newBlockFrag@ and @loeFrag@ are on the same chain, then we cannot
-    --    select more than @loeLimit@ blocks after @loeFrag@.
-    --
-    -- 2. If @newBlockFrag@ and @loeFrag@ are on different chains, then we
-    --   cannot select more than @loeLimit@ blocks after their intersection.
-    --
-    -- In any case, 'Nothing' is returned if @newBlockFrag@ extends beyond
-    -- what LoE allows.
     computeLoEMaxExtra ::
          (HasHeader x, HeaderHash x ~ HeaderHash blk)
       => LoE (AnchoredFragment (Header blk))
@@ -783,20 +778,13 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ The fragment with the new block @b@ as its tip, with the same
          -- anchor as @curChain@.
       -> Maybe LoELimit
-    computeLoEMaxExtra (LoEEnabled loeFrag) newBlockFrag =
-        -- Both fragments are on the same chain
-        if loeSuffixLength == 0 || rollback == 0 then
-          if rollback > k + loeSuffixLength
-            then Nothing
-            else Just $ LoELimit $ k + loeSuffixLength - rollback
-        else
-          if rollback > k
-            then Nothing
-            else Just $ LoELimit $ k - rollback
-      where
-        d = Diff.diff newBlockFrag loeFrag
-        rollback = Diff.getRollback d
-        loeSuffixLength = fromIntegral $ AF.length (Diff.getSuffix d)
+    computeLoEMaxExtra (LoEEnabled loeFrag) newBlockFrag
+        | rollback > k  = Nothing
+        | otherwise = Just $ LoELimit $ k - rollback
+       where
+         d = Diff.diff newBlockFrag loeFrag
+         rollback = Diff.getRollback d
+
     computeLoEMaxExtra LoEDisabled _ =
       Just LoEUnlimited
 
