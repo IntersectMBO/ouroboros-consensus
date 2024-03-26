@@ -184,9 +184,7 @@ prop_leashingAttackStalling =
     (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
     defaultSchedulerConfig
-      { scTrace = True
-      , scEnableChainSyncTimeouts = True
-      , scEnableBlockFetchTimeouts = True
+      { scTrace = False
       , scEnableLoE = True
       , scEnableLoP = True
       }
