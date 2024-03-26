@@ -219,7 +219,7 @@ transition model cmd resp = fixupModelState cmd $ case (cmd, resp) of
 
     model' = model { mPrev = WhetherPrevTimePasses False }
 
-    plusC x (Just (PeerState (Candidate y) i)) = Just (PeerState (Candidate (x + y)) i)
+    plusC x (Just (PeerState (Candidate y) _)) = Just (PeerState (Candidate (x + y)) (Idling False))
     plusC x Nothing = Just (PeerState (Candidate x) (Idling False))
 
 -- | Update the 'mState', assuming that's the only stale field in the given
