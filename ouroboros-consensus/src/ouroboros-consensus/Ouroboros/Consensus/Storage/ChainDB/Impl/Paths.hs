@@ -62,25 +62,33 @@ type LookupBlockInfo blk = HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)
 --
 -- NOTE: it is possible that no candidates are found, but don't forget that
 -- the chain (fragment) ending with @B@ is also a potential candidate.
+--
+-- If ChainSel is using the LoE, the value passed in @lenLimit@ will be used
+-- to truncate the candidates so that no more than @k@ blocks can be selected
+-- beyond the LoE fragment.
 maximalCandidates ::
      forall blk.
      (ChainHash blk -> Set (HeaderHash blk))
      -- ^ @filterByPredecessor@
-  -> Word64 -- ^ Max length of any candidate
+  -> LoELimit -- ^ Max length of any candidate
   -> Point blk -- ^ @B@
   -> [NonEmpty (HeaderHash blk)]
      -- ^ Each element in the list is a list of hashes from which we can
      -- construct a fragment anchored at the point @B@.
-maximalCandidates succsOf = \lenLimit b -> mapMaybe NE.nonEmpty $ go lenLimit (pointHash b)
+maximalCandidates succsOf loeLimit b = mapMaybe (NE.nonEmpty . applyLoE) $ go (pointHash b)
   where
-    go :: Word64 -> ChainHash blk -> [[HeaderHash blk]]
-    go 0        _      = [[]]
-    go lenLimit mbHash = case Set.toList $ succsOf mbHash of
+    go :: ChainHash blk -> [[HeaderHash blk]]
+    go mbHash = case Set.toList $ succsOf mbHash of
       []    -> [[]]
       succs -> [ next : candidate
                | next <- succs
-               , candidate <- go (lenLimit - 1) (BlockHash next)
+               , candidate <- go (BlockHash next)
                ]
+    applyLoE
+      | LoELimit limit <- loeLimit
+      = take (fromIntegral limit)
+      | otherwise
+      = id
 
 -- | Extend the 'ChainDiff' with the successors found by 'maximalCandidates'.
 --
@@ -96,17 +104,17 @@ extendWithSuccessors ::
      forall blk. HasHeader blk
   => (ChainHash blk -> Set (HeaderHash blk))
   -> LookupBlockInfo blk
-  -> Word64 -- ^ Max extra length for any suffix
+  -> LoELimit -- ^ Max extra length for any suffix
   -> ChainDiff (HeaderFields blk)
   -> NonEmpty (ChainDiff (HeaderFields blk))
-extendWithSuccessors succsOf lookupBlockInfo lenLimit diff =
+extendWithSuccessors succsOf lookupBlockInfo loeLimit diff =
     case NE.nonEmpty extensions of
       Nothing          -> diff NE.:| []
       Just extensions' -> extensions'
   where
     extensions =
         [ foldl' Diff.append diff (lookupHeaderFields <$> candHashes)
-        | candHashes <- maximalCandidates succsOf lenLimit (castPoint (Diff.getTip diff))
+        | candHashes <- maximalCandidates succsOf loeLimit (castPoint (Diff.getTip diff))
         ]
 
     lookupHeaderFields :: HeaderHash blk -> HeaderFields blk
@@ -293,8 +301,8 @@ data ReversePath blk =
 
 -- | Lazily compute the 'ReversePath' that starts (i.e., ends) with the given
 -- 'HeaderHash'.
-computeReversePath ::
-     forall blk.
+computeReversePath
+  :: forall blk.
      LookupBlockInfo blk
   -> HeaderHash blk
      -- ^ End hash
@@ -372,8 +380,8 @@ computeReversePath lookupBlockInfo endHash =
 --
 -- When the suffix of the 'ChainDiff' is non-empty, @P@ will be the last point
 -- in the suffix.
-isReachable ::
-     forall blk. (HasHeader blk, GetHeader blk)
+isReachable
+  :: forall blk. (HasHeader blk, GetHeader blk)
   => LookupBlockInfo blk
   -> AnchoredFragment (Header blk) -- ^ Chain fragment to connect the point to
   -> RealPoint blk

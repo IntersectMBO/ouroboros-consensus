@@ -2,18 +2,27 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections       #-}
 
 module Test.Consensus.PeerSimulator.Tests.Rollback (tests) where
 
+import           Control.Monad.Class.MonadTime.SI (Time (Time))
 import           Ouroboros.Consensus.Block (ChainHash (..), Header)
 import           Ouroboros.Consensus.Config.SecurityParam
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
+                     toOldestFirst)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..))
 import           Test.Consensus.Genesis.Setup
-import           Test.Consensus.PeerSimulator.Run (noTimeoutsSchedulerConfig)
+import           Test.Consensus.Genesis.Setup.Classifiers
+                     (Classifiers (allAdversariesKPlus1InForecast),
+                     allAdversariesForecastable, classifiers)
+import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
+import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..),
+                     scheduleBlockPoint, scheduleHeaderPoint, scheduleTipPoint)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -23,11 +32,10 @@ import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
 tests = testGroup "rollback" [
-  adjustQuickCheckTests (`div` 10) $
-  localOption (QuickCheckMaxRatio 100) $
+  adjustQuickCheckTests (`div` 2) $
   testProperty "can rollback" prop_rollback
   ,
-  adjustQuickCheckTests (`div` 10) $
+  adjustQuickCheckTests (`div` 2) $
   testProperty "cannot rollback" prop_cannotRollback
   ]
 
@@ -42,15 +50,17 @@ prop_rollback = do
         -- Create a block tree with @1@ alternative chain, such that we can rollback
         -- from the trunk to that chain.
         gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
-        if alternativeChainIsLongEnough gtSecurityParam gtBlockTree
-          then pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree)
+        -- TODO: Trim block tree, the rollback schedule does not use all of it
+        let cls = classifiers gt
+        if allAdversariesForecastable cls && allAdversariesKPlus1InForecast cls
+          then pure gt {gtSchedule = rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam)) gtBlockTree}
           else discard)
 
-    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    defaultSchedulerConfig
 
-    (\_ _ _ -> [])
+    (\_ _ -> [])
 
-    (\_ _ -> not . hashOnTrunk . AF.headHash . svSelectedChain)
+    (\_ -> not . hashOnTrunk . AF.headHash . svSelectedChain)
 
 -- @prop_cannotRollback@ tests that the selection of the node under test *does
 -- not* change branches when sent a rollback to a block strictly older than 'k'
@@ -60,49 +70,36 @@ prop_cannotRollback =
   forAllGenesisTest
 
     (do gt@GenesisTest{gtSecurityParam, gtBlockTree} <- genChains (pure 1)
-        if alternativeChainIsLongEnough gtSecurityParam gtBlockTree
-          then pure (gt, rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree)
-          else discard)
+        pure gt {gtSchedule = rollbackSchedule (fromIntegral (maxRollbacks gtSecurityParam + 1)) gtBlockTree})
 
-    (noTimeoutsSchedulerConfig defaultPointScheduleConfig)
+    defaultSchedulerConfig
 
-    (\_ _ _ -> [])
+    (\_ _ -> [])
 
-    (\_ _ -> hashOnTrunk . AF.headHash . svSelectedChain)
+    (\_ -> hashOnTrunk . AF.headHash . svSelectedChain)
 
 -- | A schedule that advertises all the points of the trunk up until the nth
 -- block after the intersection, then switches to the first alternative
 -- chain of the given block tree.
 --
 -- PRECONDITION: Block tree with at least one alternative chain.
-rollbackSchedule :: Int -> BlockTree TestBlock -> PointSchedule
+rollbackSchedule :: AF.HasHeader blk => Int -> BlockTree blk -> PeersSchedule blk
 rollbackSchedule n blockTree =
-  let branch = case btBranches blockTree of
-        [b] -> b
-        _   -> error "The block tree must have exactly one alternative branch"
-      trunkSuffix = AF.takeOldest n (btbTrunkSuffix branch)
-      states = concat
-        [ banalStates (btbPrefix branch)
-        , banalStates trunkSuffix
-        , banalStates (btbSuffix branch)
-        ]
-      peers = peersOnlyHonest states
-      pointSchedule = balanced defaultPointScheduleConfig peers
-   in pointSchedule
-
--- | Whether the alternative chain has more than 'k' blocks after the
--- intersection with the honest chain.
---
--- PRECONDITION: Block tree with exactly one alternative chain, otherwise
--- this property does not make sense. With no alternative chain, this will
--- even crash.
-alternativeChainIsLongEnough :: SecurityParam -> BlockTree TestBlock -> Bool
-alternativeChainIsLongEnough (SecurityParam k) blockTree =
-  let BlockTreeBranch{btbSuffix} = case btBranches blockTree of
-        [b] -> b
-        _   -> error "The block tree must have exactly one alternative branch"
-      lengthSuffix = AF.length btbSuffix
-   in lengthSuffix > fromIntegral k
+    let branch = case btBranches blockTree of
+          [b] -> b
+          _   -> error "The block tree must have exactly one alternative branch"
+        trunkSuffix = AF.takeOldest n (btbTrunkSuffix branch)
+        schedulePoints = concat
+          [ banalSchedulePoints (btbPrefix branch)
+          , banalSchedulePoints trunkSuffix
+          , banalSchedulePoints (btbSuffix branch)
+          ]
+    in peersOnlyHonest $ zip (map (Time . (/30)) [0..]) schedulePoints
+  where
+    banalSchedulePoints :: AnchoredFragment blk -> [SchedulePoint blk]
+    banalSchedulePoints = concatMap banalSchedulePoints' . toOldestFirst
+    banalSchedulePoints' :: blk -> [SchedulePoint blk]
+    banalSchedulePoints' block = [scheduleTipPoint block, scheduleHeaderPoint block, scheduleBlockPoint block]
 
 -- | Given a hash, checks whether it is on the trunk of the block tree, that is
 -- if it only contains zeroes.

@@ -28,17 +28,17 @@ module Test.Ouroboros.Consensus.ChainGenerator.Adversarial (
   ) where
 
 import           Control.Applicative ((<|>))
-import           Control.Monad (foldM, void, when)
+import           Control.Monad (foldM, forM_, void, when)
 import qualified Control.Monad.Except as Exn
 import           Control.Monad.ST (ST)
-import           Data.Maybe (fromJust)
+import           Data.Maybe (fromJust, fromMaybe)
 import           Data.Proxy (Proxy (Proxy))
 import qualified Data.Vector.Unboxed as Vector
 import qualified System.Random.Stateful as R
 import qualified Test.Ouroboros.Consensus.ChainGenerator.BitVector as BV
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Counting as C
 import           Test.Ouroboros.Consensus.ChainGenerator.Honest
-                     (ChainSchema (ChainSchema))
+                     (ChainSchema (ChainSchema), HonestRecipe (HonestRecipe))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Asc,
                      Delta (Delta), Kcp (Kcp), Scg (Scg))
 import qualified Test.Ouroboros.Consensus.ChainGenerator.RaceIterator as RI
@@ -270,7 +270,7 @@ checkAdversarialChain recipe adv = do
           vHAfterIntersection = C.sliceV carWin vH
           iterH :: RI.Race adv
           iterH =
-              maybe (RI.initConservative vHAfterIntersection) id
+              fromMaybe (error "there should be k+1 active slots after the intersection")
             $ RI.init (Kcp k) vHAfterIntersection
 
         -- first race window after the intersection
@@ -490,11 +490,23 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
         Just asc -> S.genS asc `R.applySTGen` g
 
     -- ensure the adversarial leader schedule is not empty
-    do  void $ BV.fillInWindow
+    do -- Since the first active slot in the adversarial chain might determine
+       -- the position of the acceleration bound, we ensure it is early enough
+       -- so we can always fit k+1 blocks in the alternative schema.
+       --
+       -- There will be at least k unstable slots at the end, plus one more
+       -- active slot a stability window earlier.
+       -- See Note [Minimum schema length] in "Test.Ouroboros.Consensus.ChainGenerator.Honest"
+       -- for the rationale.
+       let trailingSlots = s + k
+           szFirstActive = sz C.- trailingSlots
+       when (szFirstActive <= C.Count 0) $
+         error "the adversarial schema length should be greater than s+k"
+       void $ BV.fillInWindow
             S.notInverted
-            (BV.SomeDensityWindow (C.Count 1) (C.windowSize carWin))
+            (BV.SomeDensityWindow (C.Count 1) szFirstActive)
             g
-            mv
+            (C.sliceMV (C.UnsafeContains (C.Count 0) szFirstActive) mv)
 
     -- find the slot of the k+1 honest block
     let kPlus1st :: C.Index adv SlotE
@@ -512,15 +524,27 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- you can't have >k in the interval [0, C.frWindow adv n] either?
     let iterH :: RI.Race adv
         iterH =
-            maybe (RI.initConservative vHAfterIntersection) id
+            fromMaybe (error "there should be k+1 active slots after the intersection")
           $ RI.init kcp vHAfterIntersection
 
-    ensureLowerDensityInWindows iterH g mv
+    -- We don't want to change the first active slot in the adversarial chain
+    -- Otherwise, we can't predict the position of the acceleration bound.
+    firstActive <- BV.findIthEmptyInMV S.inverted mv (C.Count 0) >>= \case
+      BV.NothingFound -> error "the adversarial schema is empty"
+      BV.JustFound x  -> pure x
+
+    ensureLowerDensityInWindows firstActive iterH g mv
 
     -- While densities are lower in the adversarial schema, the adversarial
     -- schema could still win races to the k+1st block by less than 1+delta
     -- slots. Therefore, we call @unfillRaces@ to deactivate further slots.
-    unfillRaces kPlus1st (C.Count 0) UnknownYS iterH g mv
+    unfillRaces kPlus1st (firstActive C.+ 1) UnknownYS iterH g mv
+
+    -- Fill active slots after the stability window to ensure the alternative
+    -- schema has more than k active slots
+    let trailingSlots = C.getCount sz - k
+    forM_ [trailingSlots .. C.getCount sz - 1] $ \i ->
+      BV.setMV S.notInverted mv (C.Count i)
 
     pure mv
   where
@@ -633,7 +657,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
                                   max
                                     (kPlus1st C.+ d C.+ 1)
                                     (C.fromWindow settledSlots x C.+ s C.+ 1)
-                unfillRaces kPlus1st (C.windowLast win C.+ 1) mbYS' iter' g mv
+                unfillRaces kPlus1st (max scope (C.windowLast win C.+ 1)) mbYS' iter' g mv
 
     -- | Ensure the density of the adversarial schema is less than the density
     -- of the honest schema in the first stability window after the intersection
@@ -656,8 +680,13 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- the chains.
     --
     ensureLowerDensityInWindows
-      :: R.StatefulGen sg (ST s) => RI.Race adv -> sg -> C.MVector adv SlotE s S.S -> ST s ()
-    ensureLowerDensityInWindows (RI.Race (C.SomeWindow _ w0)) g mv = do
+      :: R.StatefulGen sg (ST s)
+      => C.Index adv SlotE
+      -> RI.Race adv
+      -> sg
+      -> C.MVector adv SlotE s S.S
+      -> ST s ()
+    ensureLowerDensityInWindows firstActiveSlot (RI.Race (C.SomeWindow _ w0)) g mv = do
         let
           -- A window after the intersection as short as the shortest of the
           -- stability window or the first race to the k+1st block.
@@ -665,7 +694,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
           hCount = C.toVar $
             BV.countActivesInV S.notInverted (C.sliceV w0' vHAfterIntersection)
 
-        aCount <- ensureLowerDensityInWindow w0' g mv hCount
+        aCount <- ensureLowerDensityInWindow firstActiveSlot w0' g mv hCount
 
         void $ foldM
           updateDensityOfMv
@@ -702,7 +731,7 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
 
           ac'' <-
               if ac' >= hc' then
-                ensureLowerDensityInWindow w g mv hc'
+                ensureLowerDensityInWindow firstActiveSlot w g mv hc'
               else
                 pure ac'
 
@@ -713,17 +742,33 @@ uniformAdversarialChain mbAsc recipe g0 = wrap $ C.createV $ do
     --
     -- @hCount@ is the number of active slots in the honest schema in the
     -- given window.
-    ensureLowerDensityInWindow w g mv hCount = do
+    ensureLowerDensityInWindow firstActiveSlot w g mv hCount = do
         let emptyCountTarget = C.toVar $ S.complementActive S.notInverted (C.windowSize w) hCount C.+ 1
 
-        emptyCount <- BV.fillInWindow
-            S.inverted
-            (BV.SomeDensityWindow emptyCountTarget (C.windowSize w))
-            g
-            (C.sliceMV w mv)
+        emptyCount <- fillInWindowSkippingFirstActiveSlot
+          firstActiveSlot
+          emptyCountTarget
+          w
+          g
+          mv
 
         pure $ C.toVar $ S.complementActive S.inverted (C.windowSize w) emptyCount
 
+    fillInWindowSkippingFirstActiveSlot firstActiveSlot emptyCountTarget w g mv
+      | C.getCount (C.windowSize w) <= C.getCount firstActiveSlot = pure (C.Count 0)
+      | otherwise = do
+        let
+          slot = C.getCount firstActiveSlot
+          emptyCountTarget' = emptyCountTarget C.- slot
+          w' = C.UnsafeContains
+                 (firstActiveSlot C.+ 1)
+                 (C.windowSize w C.- (slot + 1))
+
+        BV.fillInWindow
+          S.inverted
+          (BV.SomeDensityWindow emptyCountTarget' (C.windowSize w'))
+          g
+          (C.sliceMV w' mv)
 
 -- | The youngest stable slot
 --
@@ -739,20 +784,50 @@ withinYS (Delta d) !mbYS !(RI.Race (C.SomeWindow Proxy win)) = case mbYS of
 
 -- | Draw a random active slot count for the prefix of a fork.
 --
--- The count will be strictly smaller than the number of active slots in the given 'ChainSchema'.
---
 -- The result is guaranteed to leave more than k active slots after the
--- intersection.
-genPrefixBlockCount :: R.RandomGen g => Kcp -> g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
-genPrefixBlockCount (Kcp k) g schedH
-    | C.getCount numChoices <= 0 = error "there should be at least k+1 blocks in the honest schema"
+-- intersection in the honest and the adversarial chains.
+-- See Note [Minimum schema length] in "Test.Ouroboros.Consensus.ChainGenerator.Honest"
+-- for the rationale of the precondition.
+--
+-- PRECONDITION: @schemaSize schedH >= 2*s + d + 1@
+genPrefixBlockCount :: R.RandomGen g => HonestRecipe -> g -> ChainSchema base hon -> C.Var hon 'ActiveSlotE
+genPrefixBlockCount (HonestRecipe (Kcp k) (Scg s) (Delta d) _len) g schedH
+    | C.lengthV vH < C.Count (2*s + d + 1) =
+        error "size of schema is smaller than 2*s + d + 1"
+    | phase1 == C.Count 0 =
+        error $ "there should be at least k active slots in the first s slots of the honest schema: "
+                ++ show (k, s, vH)
     | otherwise =
-        -- uniformIndex is going to pick a number between 0 and numChoices-1
-        C.toVar $ R.runSTGen_ g $ C.uniformIndex numChoices
+        -- @uniformIndex n@ yields a value in @[0..n-1]@, we add 1 to the
+        -- argument to account for the possibility of intersecting at the
+        -- genesis block
+        C.toVar $ R.runSTGen_ g $ C.uniformIndex (phase2 C.+ 1)
   where
-    ChainSchema _slots v = schedH
+    ChainSchema _winH vH = schedH
 
-    numChoices = actives C.- k
+    -- Ultimately, the intersection must have more than k active slots in each
+    -- of the honest and the adversarial schemas. For the larger story, please
+    -- see Note [Minimum schema length] in
+    -- "Test.Ouroboros.Consensus.ChainGenerator.Honest".
+    --
+    -- Here we proceed as follows.
+    --
+    -- Let phase1 be the amount of honest active slots with at least s+d+k slots
+    -- after them. We know there is going to be at least k active slots in the
+    -- s+k+d suffix of the honest schema.
+    --
+    -- Now let phase2 be the set of honest active slots obtained from phase1
+    -- by removing its yongest slot. Thus we can claim that the honest schema
+    -- should have more than k active slots after the youngest slot of phase2.
+    --
+    -- phase1 is neved empty because the containing prefix has length
+    -- @2*s+d+1 - (s+d+k) = s-(k-1)@ which must always contain at least one
+    -- active slot.
 
-    -- 'H.uniformTheHonestChain' ensures k < active
-    actives = BV.countActivesInV S.notInverted v
+    phase1 =
+        BV.countActivesInV S.notInverted
+      $ C.sliceV
+          (C.UnsafeContains (C.Count 0) $ C.lengthV vH C.- (s + d + k))
+          vH
+
+    phase2 = phase1 C.- 1

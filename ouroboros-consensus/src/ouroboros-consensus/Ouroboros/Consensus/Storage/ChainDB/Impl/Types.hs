@@ -42,11 +42,13 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , FutureBlocks
     -- * Blocks to add
   , BlockToAdd (..)
-  , BlocksToAdd
+  , ChainSelMessage (..)
+  , ChainSelQueue
   , addBlockToAdd
-  , closeBlocksToAdd
-  , getBlockToAdd
-  , newBlocksToAdd
+  , addReprocessLoEBlocks
+  , closeChainSelQueue
+  , getChainSelMessage
+  , newChainSelQueue
     -- * Trace types
   , SelectionChangedInfo (..)
   , TraceAddBlockEvent (..)
@@ -64,6 +66,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
+import           Data.Maybe (mapMaybe)
 import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Set (Set)
 import           Data.Typeable
@@ -248,7 +251,7 @@ data ChainDbEnv m blk = CDB
   , cdbChunkInfo       :: !ImmutableDB.ChunkInfo
   , cdbCheckIntegrity  :: !(blk -> Bool)
   , cdbCheckInFuture   :: !(CheckInFuture m blk)
-  , cdbBlocksToAdd     :: !(BlocksToAdd m blk)
+  , cdbChainSelQueue   :: !(ChainSelQueue m blk)
     -- ^ Queue of blocks that still have to be added.
   , cdbFutureBlocks    :: !(StrictTVar m (FutureBlocks m blk))
     -- ^ Blocks from the future
@@ -268,14 +271,13 @@ data ChainDbEnv m blk = CDB
     -- The number of blocks from the future is bounded by the number of
     -- upstream peers multiplied by the max clock skew divided by the slot
     -- length.
-  , cdbLoEFrag         :: !(StrictTVar m (AnchoredFragment (Header blk)))
-    -- ^ Fragment whose tip indicates the Limit on Eagerness, i.e. we are not
-    -- allowed to select a chain from which we could not switch back to a chain
-    -- containing it. The fragment is usually anchored at a recent immutable
-    -- tip; if it does not, it will conservatively be treated as the empty
-    -- fragment anchored in the current immutable tip.
   , cdbLoE             :: LoE m blk
-    -- ^ See 'Args.cdbLoELimit'.
+    -- ^ Configure the Limit on Eagerness. If this is 'LoEEnabled', it contains
+    -- a hook that returns the LoE fragment, which indicates the latest rollback
+    -- point, i.e. we are not allowed to select a chain from which we could not
+    -- switch back to a chain containing it. The fragment is usually anchored at
+    -- a recent immutable tip; if it does not, it will conservatively be treated
+    -- as the empty fragment anchored in the current immutable tip.
   } deriving (Generic)
 
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
@@ -443,10 +445,10 @@ type FutureBlocks m blk = Map (HeaderHash blk) (Header blk, InvalidBlockPunishme
 -- | FIFO queue used to add blocks asynchronously to the ChainDB. Blocks are
 -- read from this queue by a background thread, which processes the blocks
 -- synchronously.
-newtype BlocksToAdd m blk = BlocksToAdd (TBQueue m (BlockToAdd m blk))
-  deriving NoThunks via OnlyCheckWhnfNamed "BlocksToAdd" (BlocksToAdd m blk)
+newtype ChainSelQueue m blk = ChainSelQueue (TBQueue m (ChainSelMessage m blk))
+  deriving NoThunks via OnlyCheckWhnfNamed "ChainSelQueue" (ChainSelQueue m blk)
 
--- | Entry in the 'BlocksToAdd' queue: a block together with the 'TMVar's used
+-- | Entry in the 'ChainSelQueue' queue: a block together with the 'TMVar's used
 -- to implement 'AddBlockPromise'.
 data BlockToAdd m blk = BlockToAdd
   { blockPunish           :: !(InvalidBlockPunishment m)
@@ -459,20 +461,27 @@ data BlockToAdd m blk = BlockToAdd
     -- ^ Used for the 'blockProcessed' field of 'AddBlockPromise'.
   }
 
--- | Create a new 'BlocksToAdd' with the given size.
-newBlocksToAdd :: IOLike m => Word -> m (BlocksToAdd m blk)
-newBlocksToAdd queueSize = BlocksToAdd <$>
+-- | Different async tasks for triggering ChainSel
+data ChainSelMessage m blk
+  -- | Add a new block
+  = ChainSelAddBlock !(BlockToAdd m blk)
+  -- | Reprocess blocks that have been postponed by the LoE
+  | ChainSelReprocessLoEBlocks
+
+-- | Create a new 'ChainSelQueue' with the given size.
+newChainSelQueue :: IOLike m => Word -> m (ChainSelQueue m blk)
+newChainSelQueue queueSize = ChainSelQueue <$>
     atomically (newTBQueue (fromIntegral queueSize))
 
--- | Add a block to the 'BlocksToAdd' queue. Can block when the queue is full.
+-- | Add a block to the 'ChainSelQueue' queue. Can block when the queue is full.
 addBlockToAdd ::
      (IOLike m, HasHeader blk)
   => Tracer m (TraceAddBlockEvent blk)
-  -> BlocksToAdd m blk
+  -> ChainSelQueue m blk
   -> InvalidBlockPunishment m
   -> blk
   -> m (AddBlockPromise m blk)
-addBlockToAdd tracer (BlocksToAdd queue) punish blk = do
+addBlockToAdd tracer (ChainSelQueue queue) punish blk = do
     varBlockWrittenToDisk <- newEmptyTMVarIO
     varBlockProcessed     <- newEmptyTMVarIO
     let !toAdd = BlockToAdd
@@ -483,7 +492,7 @@ addBlockToAdd tracer (BlocksToAdd queue) punish blk = do
           }
     traceWith tracer $ AddedBlockToQueue (blockRealPoint blk) RisingEdge
     queueSize <- atomically $ do
-      writeTBQueue  queue toAdd
+      writeTBQueue  queue (ChainSelAddBlock toAdd)
       lengthTBQueue queue
     traceWith tracer $
       AddedBlockToQueue (blockRealPoint blk) (FallingEdgeWith (fromIntegral queueSize))
@@ -492,19 +501,34 @@ addBlockToAdd tracer (BlocksToAdd queue) punish blk = do
       , blockProcessed          = readTMVar varBlockProcessed
       }
 
--- | Get the oldest block from the 'BlocksToAdd' queue. Can block when the
--- queue is empty.
-getBlockToAdd :: IOLike m => BlocksToAdd m blk -> m (BlockToAdd m blk)
-getBlockToAdd (BlocksToAdd queue) = atomically $ readTBQueue queue
+-- | Try to add blocks again that were postponed due to the LoE.
+addReprocessLoEBlocks
+  :: IOLike m
+  => Tracer m (TraceAddBlockEvent blk)
+  -> ChainSelQueue m blk
+  -> m ()
+addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
+  traceWith tracer $ AddedReprocessLoEBlocksToQueue
+  atomically $ writeTBQueue queue ChainSelReprocessLoEBlocks
 
--- | Flush the 'BlocksToAdd' queue and notify the waiting threads.
+-- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
+-- queue is empty.
+getChainSelMessage :: IOLike m => ChainSelQueue m blk -> m (ChainSelMessage m blk)
+getChainSelMessage (ChainSelQueue queue) = atomically $ readTBQueue queue
+
+-- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
-closeBlocksToAdd :: IOLike m => BlocksToAdd m blk -> STM m ()
-closeBlocksToAdd (BlocksToAdd queue) = do
-  as <- flushTBQueue queue
+closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
+closeChainSelQueue (ChainSelQueue queue) = do
+  as <- mapMaybe blockAdd <$> flushTBQueue queue
   traverse_ (\a -> tryPutTMVar (varBlockProcessed a)
                               (FailedToAddBlock "Queue flushed"))
             as
+  where
+    blockAdd = \case
+      ChainSelAddBlock ab -> Just ab
+      ChainSelReprocessLoEBlocks -> Nothing
+
 
 {-------------------------------------------------------------------------------
   Trace types
@@ -630,6 +654,13 @@ data TraceAddBlockEvent blk =
     -- ChainDB.
   | PoppedBlockFromQueue (Enclosing' (RealPoint blk))
 
+    -- | A message was added to the queue that requests that ChainSel reprocess
+    -- blocks that were postponed by the LoE.
+  | AddedReprocessLoEBlocksToQueue
+
+    -- | ChainSel will reprocess blocks that were postponed by the LoE.
+  | PoppedReprocessLoEBlocksFromQueue
+
     -- | The block is from the future, i.e., its slot number is greater than
     -- the current slot (the second argument).
   | BlockInTheFuture (RealPoint blk) SlotNo
@@ -648,6 +679,9 @@ data TraceAddBlockEvent blk =
     -- | The block doesn't fit onto any other block, so we store it and ignore
     -- it.
   | StoreButDontChange (RealPoint blk)
+
+    -- | Debugging information about chain selection and LoE
+  | ChainSelectionLoEDebug (AnchoredFragment (Header blk)) (AnchoredFragment (Header blk))
 
     -- | The new block fits onto the current chain (first
     -- fragment) and we have successfully used it to extend our (new) current
@@ -748,7 +782,7 @@ data TraceInitChainSelEvent blk =
     StartedInitChainSelection
     -- ^ An event traced when inital chain selection has started during the
     -- initialization of ChainDB
-  | InitalChainSelected
+  | InitialChainSelected
     -- ^ An event traced when inital chain has been selected
   | InitChainSelValidation (TraceValidationEvent blk)
     -- ^ An event traced during validation performed while performing initial

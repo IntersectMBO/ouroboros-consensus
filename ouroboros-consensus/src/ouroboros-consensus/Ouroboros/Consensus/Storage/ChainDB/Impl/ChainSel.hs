@@ -12,9 +12,10 @@
 -- adding a block.
 module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
     addBlockAsync
-  , addBlockSync
+  , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
+  , reprocessLoEAsync
     -- * Exported for testing purposes
   , olderThanK
   ) where
@@ -25,6 +26,7 @@ import           Control.Monad.Except ()
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.State.Strict
 import           Control.Tracer (Tracer, nullTracer, traceWith)
+import           Data.Foldable (for_)
 import           Data.Function (on)
 import           Data.Functor.Contravariant ((>$<))
 import           Data.List (partition, sortBy)
@@ -37,7 +39,6 @@ import           Data.Maybe.Strict (StrictMaybe (..), isSNothing,
                      strictMaybeToMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -58,9 +59,10 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..), ChainType (..),
-                     InvalidBlockReason (..), LoE (..), processLoE)
+                     InvalidBlockReason (..), LoE (..), LoELimit (..),
+                     processLoE)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
-                     (InvalidBlockPunishment)
+                     (InvalidBlockPunishment, noPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
                      (BlockCache)
@@ -107,7 +109,7 @@ initialChainSelection ::
   -> LoE m blk
   -> m (ChainAndLedger blk)
 initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
-                      varFutureBlocks futureCheck loELimit = do
+                      varFutureBlocks futureCheck loE = do
     -- We follow the steps from section "## Initialization" in ChainDB.md
 
     (i :: Anchor blk, succsOf, ledger) <- atomically $ do
@@ -171,9 +173,9 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
         suffixesAfterI :: [NonEmpty (HeaderHash blk)]
         suffixesAfterI = Paths.maximalCandidates succsOf limit (AF.anchorToPoint i)
           where
-            limit = case loELimit of
-              LoEEnabled _ -> k
-              LoEDisabled  -> maxBound
+            limit = case loE of
+              LoEEnabled _ -> LoELimit k
+              LoEDisabled  -> LoEUnlimited
 
         constructChain ::
              NonEmpty (HeaderHash blk)
@@ -231,8 +233,8 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
 -- | Add a block to the ChainDB, /asynchronously/.
 --
 -- This adds a 'BlockToAdd' corresponding to the given block to the
--- 'cdbBlocksToAdd' queue. The entries in that queue are processed using
--- 'addBlockSync', see that function for more information.
+-- 'cdbChainSelQueue' queue. The entries in that queue are processed using
+-- 'chainSelSync', see that function for more information.
 --
 -- When the queue is full, this function will still block.
 --
@@ -256,8 +258,17 @@ addBlockAsync ::
   -> InvalidBlockPunishment m
   -> blk
   -> m (AddBlockPromise m blk)
-addBlockAsync CDB { cdbTracer, cdbBlocksToAdd } =
-    addBlockToAdd (TraceAddBlockEvent >$< cdbTracer) cdbBlocksToAdd
+addBlockAsync CDB { cdbTracer, cdbChainSelQueue } =
+    addBlockToAdd (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
+
+-- | Schedule reprocessing of blocks postponed by the LoE.
+reprocessLoEAsync ::
+  forall m blk.
+  IOLike m =>
+  ChainDbEnv m blk ->
+  m ()
+reprocessLoEAsync CDB {cdbTracer, cdbChainSelQueue} =
+  addReprocessLoEBlocks (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
 -- | Add a block to the ChainDB, /synchronously/.
 --
@@ -267,7 +278,7 @@ addBlockAsync CDB { cdbTracer, cdbBlocksToAdd } =
 --
 -- When the slot of the block is > the current slot, a chain selection will be
 -- scheduled in the slot of the block.
-addBlockSync ::
+chainSelSync ::
      forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
@@ -276,9 +287,40 @@ addBlockSync ::
      , HasCallStack
      )
   => ChainDbEnv m blk
-  -> BlockToAdd m blk
+  -> ChainSelMessage m blk
   -> Electric m ()
-addBlockSync cdb@CDB {..} BlockToAdd { blockToAdd = b, .. } = do
+
+-- Reprocess headers that were postponed by the LoE.
+-- When we try to extend the current chain with a new block beyond the LoE
+-- limit, the block will be added to the DB without modifying the chain.
+-- When the LoE fragment advances later, these blocks have to be scheduled
+-- for ChainSel again, but this does not happen automatically.
+-- So we fetch all direct successors of each of the chain's blocks and run
+-- ChainSel for them.
+-- We run a background thread that polls the candidate fragments and sends
+-- 'ChainSelReprocessLoEBlocks' whenever we receive a new header or lose a
+-- peer.
+-- If 'cdbLoE' is 'LoEDisabled', this task is skipped.
+chainSelSync cdb@CDB{..} ChainSelReprocessLoEBlocks
+  | LoEDisabled <- cdbLoE = pure ()
+
+  | otherwise = do
+    (succsOf, chain) <- lift $ atomically $ do
+      invalid <- forgetFingerprint <$> readTVar cdbInvalid
+      (,)
+        <$> (ignoreInvalidSuc cdbVolatileDB invalid <$>
+          VolatileDB.filterByPredecessor cdbVolatileDB)
+        <*> Query.getCurrentChain cdb
+    let
+        succsOf' = Set.toList . succsOf . pointHash . castPoint
+        chainPoints = AF.anchorPoint chain : (blockPoint <$> AF.toOldestFirst chain)
+        loeHashes = succsOf' =<< chainPoints
+    loeHeaders <- lift (mapM (VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader) loeHashes)
+    for_ loeHeaders $ \hdr ->
+      unless (AF.withinFragmentBounds (blockPoint hdr) chain) $ do
+        void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
+
+chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) = do
     (isMember, invalid, curChain) <- lift $ atomically $ (,,)
       <$> VolatileDB.getIsMember          cdbVolatileDB
       <*> (forgetFingerprint <$> readTVar cdbInvalid)
@@ -465,31 +507,22 @@ chainSelectionForBlock ::
   -> InvalidBlockPunishment m
   -> Electric m (Point blk)
 chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
-    (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeFrag)
+    (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB)
       <- atomically $ do
-          (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB, loeFrag) <-
-                (,,,,,,)
+          (invalid, succsOf, lookupBlockInfo, curChain, tipPoint, ledgerDB) <-
+                (,,,,,)
             <$> (forgetFingerprint <$> readTVar cdbInvalid)
             <*> VolatileDB.filterByPredecessor  cdbVolatileDB
             <*> VolatileDB.getBlockInfo         cdbVolatileDB
             <*> Query.getCurrentChain           cdb
             <*> Query.getTipPoint               cdb
             <*> LgrDB.getCurrent                cdbLgrDB
-            <*> readTVar                        cdbLoEFrag
 
           -- Let these two functions ignore invalid blocks
           let lookupBlockInfo' = ignoreInvalid    cdb invalid lookupBlockInfo
               succsOf'         = ignoreInvalidSuc cdb invalid succsOf
 
-              loeFrag' = case cross curChain loeFrag of
-                Just (_, frag) -> frag
-                -- We don't crash if the LoE fragment doesn't intersect with the selection
-                -- because we update the selection _after_ updating the LoE fragment, which
-                -- means it could move to another fork or beyond the end of the LF, depending
-                -- on the implementation of @updateLoEFrag@.
-                Nothing        -> AF.Empty (AF.anchor curChain)
-
-          pure (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB, loeFrag')
+          pure (invalid, succsOf', lookupBlockInfo, lookupBlockInfo', curChain, tipPoint, ledgerDB)
 
     let curChainAndLedger :: ChainAndLedger blk
         curChainAndLedger =
@@ -505,7 +538,17 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     -- The preconditions
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
 
-    processLoE curChain (LgrDB.ledgerDbCurrent ledgerDB) (writeTVar cdbLoEFrag) cdbLoE
+    loeFrag0 <- processLoE curChain (LgrDB.ledgerDbCurrent ledgerDB) cdbLoE
+
+    let loeFrag = case cross curChain loeFrag0 of
+          Just (_, frag) -> frag
+          -- We don't crash if the LoE fragment doesn't intersect with the selection
+          -- because we update the selection _after_ updating the LoE fragment, which
+          -- means it could move to another fork or beyond the end of the LF, depending
+          -- on the implementation of @processLoE@.
+          Nothing        -> AF.Empty (AF.anchor curChain)
+
+    traceWith addBlockTracer (ChainSelectionLoEDebug curChain loeFrag0)
 
     if
       -- The chain might have grown since we added the block such that the
@@ -530,21 +573,24 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       | pointHash tipPoint == headerPrevHash hdr
         -- TODO could be optimized if necessary/easy enough
       , let newBlockFrag = curChain AF.:> hdr
-      , Just maxExtra <- computeLoEMaxExtra loELimit loeFrag newBlockFrag -> do
+      , Just maxExtra <- computeLoEMaxExtra cdbLoE loeFrag newBlockFrag -> do
         -- ### Add to current chain
         traceWith addBlockTracer (TryAddToCurrentChain p)
         addToCurrentChain succsOf' curChainAndLedger maxExtra
 
+      -- The block is reachable from the current selection
+      -- and it doesn't fit after the current selection
       | Just diff <- Paths.isReachable lookupBlockInfo' curChain p
         -- TODO could be optimized if necessary/easy enough
       , let curChain' =
               AF.mapAnchoredFragment (castHeaderFields . getHeaderFields) curChain
       , Just newBlockFrag <- Diff.apply curChain' diff
-      , Just maxExtra <- computeLoEMaxExtra loELimit loeFrag newBlockFrag -> do
+      , Just maxExtra <- computeLoEMaxExtra cdbLoE loeFrag newBlockFrag -> do
         -- ### Switch to a fork
         traceWith addBlockTracer (TrySwitchToAFork p diff)
         switchToAFork succsOf' lookupBlockInfo' curChainAndLedger maxExtra diff
 
+      -- We cannot reach the block from the current selection
       | otherwise -> do
         -- ### Store but don't change the current chain
         traceWith addBlockTracer (StoreButDontChange p)
@@ -555,10 +601,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     -- will first copy the blocks/headers to trim (from the end of the
     -- fragment) from the VolatileDB to the ImmutableDB.
   where
-    loELimit = case cdbLoE of
-      LoEEnabled _ -> k
-      LoEDisabled  -> maxBound
-
     SecurityParam k = configSecurityParam cdbTopLevelConfig
 
     p :: RealPoint blk
@@ -598,7 +640,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
-      -> Word64
+      -> LoELimit
          -- ^ How many extra blocks to select after @b@ at most.
       -> m (Point blk)
     addToCurrentChain succsOf curChainAndLedger maxExtra = do
@@ -668,7 +710,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -> LookupBlockInfo blk
       -> ChainAndLedger blk
          -- ^ The current chain (anchored at @i@) and ledger
-      -> Word64
+      -> LoELimit
          -- ^ How many extra blocks to select after @b@ at most.
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
@@ -718,12 +760,22 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         curChain    = VF.validatedFragment curChainAndLedger
         curTip      = castPoint $ AF.headPoint curChain
 
-    -- | How many extra blocks to select at most after the block @b@ that is
-    -- currently being processed, according to the LoE. If not even @b@ is
-    -- allowed to be selected, return 'Nothing'.
+    -- | How many extra blocks to select at most after the tip of @newBlockFrag@
+    -- according to the LoE.
+    --
+    -- There are two cases to consider:
+    --
+    -- 1. If @newBlockFrag@ and @loeFrag@ are on the same chain, then we cannot
+    --    select more than @loeLimit@ blocks after @loeFrag@.
+    --
+    -- 2. If @newBlockFrag@ and @loeFrag@ are on different chains, then we
+    --   cannot select more than @loeLimit@ blocks after their intersection.
+    --
+    -- In any case, 'Nothing' is returned if @newBlockFrag@ extends beyond
+    -- what LoE allows.
     computeLoEMaxExtra ::
          (HasHeader x, HeaderHash x ~ HeaderHash blk)
-      => Word64
+      => LoE m blk
          -- ^ How many blocks can be selected beyond the LoE.
       -> AnchoredFragment (Header blk)
          -- ^ The fragment with the LoE as its tip, with the same anchor as
@@ -731,13 +783,23 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -> AnchoredFragment x
          -- ^ The fragment with the new block @b@ as its tip, with the same
          -- anchor as @curChain@.
-      -> Maybe Word64
-    computeLoEMaxExtra loeLimit loeFrag newBlockFrag
-      | budgetAlreadyUsed > loeLimit = Nothing
-      | otherwise                    = Just $ loeLimit - budgetAlreadyUsed
+      -> Maybe LoELimit
+    computeLoEMaxExtra (LoEEnabled _) loeFrag newBlockFrag =
+        -- Both fragments are on the same chain
+        if loeSuffixLength == 0 || rollback == 0 then
+          if rollback > k + loeSuffixLength
+            then Nothing
+            else Just $ LoELimit $ k + loeSuffixLength - rollback
+        else
+          if rollback > k
+            then Nothing
+            else Just $ LoELimit $ k - rollback
       where
-        -- How many blocks did we already select beyond the LoE, including @b@.
-        budgetAlreadyUsed = Diff.getRollback $ Diff.diff newBlockFrag loeFrag
+        d = Diff.diff newBlockFrag loeFrag
+        rollback = Diff.getRollback d
+        loeSuffixLength = fromIntegral $ AF.length (Diff.getSuffix d)
+    computeLoEMaxExtra LoEDisabled _ _ =
+      Just LoEUnlimited
 
     mkSelectionChangedInfo ::
          AnchoredFragment (Header blk) -- ^ old chain

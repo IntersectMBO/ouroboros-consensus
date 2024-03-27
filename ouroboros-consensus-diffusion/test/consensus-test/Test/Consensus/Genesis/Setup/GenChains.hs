@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies        #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NamedFieldPuns            #-}
+{-# LANGUAGE NumericUnderscores        #-}
 {-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 
@@ -10,6 +11,7 @@ module Test.Consensus.Genesis.Setup.GenChains (
   , genChains
   ) where
 
+import           Cardano.Slotting.Time (slotLengthFromSec)
 import           Control.Monad (replicateM)
 import qualified Control.Monad.Except as Exn
 import           Data.List (foldl')
@@ -22,6 +24,7 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import qualified Test.Consensus.BlockTree as BT
+import           Test.Consensus.Network.Driver.Limits.Extras (chainSyncTimeouts)
 import           Test.Consensus.PointSchedule
 import qualified Test.Ouroboros.Consensus.ChainGenerator.Adversarial as A
 import           Test.Ouroboros.Consensus.ChainGenerator.Adversarial
@@ -66,7 +69,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
     let H.HonestRecipe kcp scg delta _len = testRecipeH
 
     (seedPrefix :: QCGen) <- QC.arbitrary
-    let arPrefix = genPrefixBlockCount kcp seedPrefix arHonest
+    let arPrefix = genPrefixBlockCount testRecipeH seedPrefix arHonest
 
     let testRecipeA = A.AdversarialRecipe {
       A.arPrefix,
@@ -98,7 +101,7 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
 --     trunk: O─────1──2──3──4─────5──6──7
 --                     │           ╰─────6
 --                     ╰─────3──4─────5
-genChains :: QC.Gen Word -> QC.Gen GenesisTest
+genChains :: QC.Gen Word -> QC.Gen (GenesisTest TestBlock ())
 genChains genNumForks = do
   (asc, honestRecipe, someHonestChainSchema) <- genHonestChainSchema
 
@@ -113,15 +116,24 @@ genChains genNumForks = do
   numForks <- genNumForks
   alternativeChainSchemas <- replicateM (fromIntegral numForks) (genAlternativeChainSchema (honestRecipe, honestChainSchema))
   pure $ GenesisTest {
-    gtHonestAsc = asc,
     gtSecurityParam = SecurityParam (fromIntegral kcp),
     gtGenesisWindow = GenesisWindow (fromIntegral scg),
+    gtForecastRange = ForecastRange (fromIntegral scg), -- REVIEW: Do we want to generate those randomly?
     gtDelay = delta,
-    gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas
+    gtSlotLength,
+    gtChainSyncTimeouts = chainSyncTimeouts gtSlotLength asc,
+    gtLoPBucketParams = LoPBucketParams { lbpCapacity = 10_000, lbpRate = 1_000 },
+    -- ^ REVIEW: Do we want to generate those randomly? For now, the chosen
+    -- values carry no special meaning. Someone needs to think about what values
+    -- would make for interesting tests.
+    gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
+    gtSchedule = ()
     }
 
   where
-    genAdversarialFragment :: [TestBlock] -> Int -> (Int, [S]) -> TestFrag
+    gtSlotLength = slotLengthFromSec 20
+
+    genAdversarialFragment :: [TestBlock] -> Int -> (Int, [S]) -> AnchoredFragment TestBlock
     genAdversarialFragment goodBlocks forkNo (prefixCount, slotsA)
       = mkTestFragment (mkTestBlocks prefix slotsA forkNo)
       where

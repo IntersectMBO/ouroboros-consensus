@@ -219,7 +219,9 @@ test-suite consensus-test
     Test.Consensus.Genesis.Setup.Classifiers
     Test.Consensus.Genesis.Setup.GenChains
     Test.Consensus.Genesis.Tests
+    Test.Consensus.Genesis.Tests.LoE
     Test.Consensus.Genesis.Tests.LongRangeAttack
+    Test.Consensus.Genesis.Tests.LoP
     Test.Consensus.Genesis.Tests.Uniform
     Test.Consensus.GSM
     Test.Consensus.GSM.Model

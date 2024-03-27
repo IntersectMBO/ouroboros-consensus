@@ -65,12 +65,14 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
   , ChainDbError (..)
     -- * Genesis
   , LoE (..)
+  , LoELimit (..)
   , UpdateLoEFrag (..)
   , processLoE
   ) where
 
 import           Control.Monad (void)
 import           Data.Typeable (Typeable)
+import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderStateHistory
@@ -137,6 +139,9 @@ data ChainDB m blk = ChainDB {
       --
       -- NOTE: back pressure can be applied when overloaded.
       addBlockAsync      :: InvalidBlockPunishment m -> blk -> m (AddBlockPromise m blk)
+
+      -- | Trigger reprocessing of blocks postponed by the LoE.
+    , reprocessLoEAsync  :: m ()
 
       -- | Get the current chain fragment
       --
@@ -335,14 +340,6 @@ data ChainDB m blk = ChainDB {
       -- invalid block is detected. These blocks are likely to be valid.
     , getIsInvalidBlock :: STM m (WithFingerprint (HeaderHash blk -> Maybe (InvalidBlockReason blk)))
 
-    , setLoEFrag :: AnchoredFragment (Header blk) -> STM m ()
-      -- ^ Update the LoE fragment, which is anchored in a recent immutable tip.
-
-      -- | Close the ChainDB
-      --
-      -- Idempotent.
-      --
-      -- Should only be called on shutdown.
     , closeDB            :: m ()
 
       -- | Return 'True' when the database is open.
@@ -900,19 +897,23 @@ data UpdateLoEFrag m blk = UpdateLoEFrag {
     updateLoEFrag ::
          AnchoredFragment (Header blk)
       -> ExtLedgerState blk
-      -> (AnchoredFragment (Header blk) -> STM m ())
-      -> m ()
+      -> m (AnchoredFragment (Header blk))
   }
   deriving stock (Generic)
   deriving anyclass (NoThunks)
 
 processLoE ::
      Applicative m
+  => GetHeader blk
   => AnchoredFragment (Header blk)
   -> ExtLedgerState blk
-  -> (AnchoredFragment (Header blk) -> STM m ())
   -> LoE m blk
-  -> m ()
-processLoE curChain ledger setLoEFrag = \case
-  LoEDisabled -> pure ()
-  LoEEnabled hook -> updateLoEFrag hook curChain ledger setLoEFrag
+  -> m (AnchoredFragment (Header blk))
+processLoE curChain ledger = \case
+  LoEDisabled -> pure (AF.Empty AF.AnchorGenesis)
+  LoEEnabled hook -> updateLoEFrag hook curChain ledger
+
+data LoELimit =
+  LoELimit Word64
+  |
+  LoEUnlimited

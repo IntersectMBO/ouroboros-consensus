@@ -1,6 +1,9 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules) where
+module Test.Consensus.PointSchedule.Shrinking (
+    shrinkPeerSchedules
+  , trimBlockTree'
+  ) where
 
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Functor ((<&>))
@@ -11,8 +14,9 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
-import           Test.Consensus.PointSchedule (GenesisTest (gtBlockTree),
-                     PeerSchedule, peerSchedulesBlocks)
+import           Test.Consensus.PointSchedule
+                     (GenesisTest (gtBlockTree, gtSchedule), GenesisTestFull,
+                     PeerSchedule, PeersSchedule, peerSchedulesBlocks)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock, isAncestorOf,
@@ -23,18 +27,17 @@ import           Test.Util.TestBlock (TestBlock, isAncestorOf,
 -- block tree is trimmed to keep only parts that are necessary for the shrunk
 -- schedule.
 shrinkPeerSchedules ::
-  GenesisTest ->
-  Peers PeerSchedule ->
-  StateView ->
-  [(GenesisTest, Peers PeerSchedule)]
-shrinkPeerSchedules genesisTest schedule _stateView =
-  shrinkOtherPeers shrinkPeerSchedule schedule <&> \shrunkSchedule ->
+  GenesisTestFull TestBlock ->
+  StateView TestBlock ->
+  [GenesisTestFull TestBlock]
+shrinkPeerSchedules genesisTest _stateView =
+  shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&> \shrunkSchedule ->
     let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
-     in (genesisTest{gtBlockTree = trimmedBlockTree}, shrunkSchedule)
+     in genesisTest{gtSchedule = shrunkSchedule, gtBlockTree = trimmedBlockTree}
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
 -- unchanged.
-shrinkPeerSchedule :: PeerSchedule -> [PeerSchedule]
+shrinkPeerSchedule :: (PeerSchedule blk) -> [PeerSchedule blk]
 shrinkPeerSchedule = shrinkList (const [])
 
 -- | Shrink the 'others' field of a 'Peers' structure by attempting to remove
@@ -47,7 +50,7 @@ shrinkOtherPeers shrink Peers{honest, others} =
 -- | Remove blocks from the given block tree that are not necessary for the
 -- given peer schedules. If entire branches are unused, they are removed. If the
 -- trunk is unused, then it remains as an empty anchored fragment.
-trimBlockTree' :: Peers PeerSchedule -> BlockTree TestBlock -> BlockTree TestBlock
+trimBlockTree' :: PeersSchedule TestBlock -> BlockTree TestBlock -> BlockTree TestBlock
 trimBlockTree' = keepOnlyAncestorsOf . peerSchedulesBlocks
 
 -- | Given some blocks and a block tree, keep only the prefix of the block tree

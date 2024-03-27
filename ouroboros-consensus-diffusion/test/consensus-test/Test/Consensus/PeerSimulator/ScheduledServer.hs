@@ -15,25 +15,28 @@ module Test.Consensus.PeerSimulator.ScheduledServer (
   , runHandler
   , runHandlerWithTrace
   ) where
-import           Control.Tracer (Tracer (Tracer), traceWith)
+
+import           Control.Tracer (Tracer, traceWith)
 import           Data.Foldable (traverse_)
-import           Ouroboros.Consensus.Util.Condense (Condense (condense))
 import           Ouroboros.Consensus.Util.IOLike (IOLike,
                      MonadSTM (STM, atomically))
+import           Test.Consensus.PeerSimulator.Trace
+                     (TraceScheduledServerHandlerEvent (..))
+import           Test.Consensus.PointSchedule.Peers (PeerId)
 
-data ScheduledServer m a =
+data ScheduledServer m state blk =
   ScheduledServer {
-    ssPeerId       :: String,
-    ssCurrentState :: STM m (Maybe a),
+    ssPeerId       :: PeerId,
+    ssCurrentState :: STM m (Maybe state),
     ssTickStarted  :: STM m (),
-    ssTracer       :: Tracer m String
+    ssCommonTracer :: Tracer m (TraceScheduledServerHandlerEvent state blk)
   }
 
-nextTickState :: IOLike m => ScheduledServer m a -> m (Maybe a)
+nextTickState :: IOLike m => ScheduledServer m state blk -> m (Maybe state)
 nextTickState ScheduledServer {ssCurrentState, ssTickStarted} =
   atomically (ssTickStarted >> ssCurrentState)
 
-retryOffline :: IOLike m => ScheduledServer m a -> Maybe a -> m a
+retryOffline :: IOLike m => ScheduledServer m state blk -> Maybe state -> m state
 retryOffline server = maybe (awaitOnlineState server) pure
 
 -- | Block until the peer simulator has updated the concurrency primitive that
@@ -41,7 +44,7 @@ retryOffline server = maybe (awaitOnlineState server) pure
 -- If the new state is 'Nothing', the point schedule has declared this peer as
 -- offline for the current tick, so it will not resume operation and wait for
 -- the next update.
-awaitOnlineState :: IOLike m => ScheduledServer m a -> m a
+awaitOnlineState :: IOLike m => ScheduledServer m state blk -> m state
 awaitOnlineState server =
   retryOffline server =<< nextTickState server
 
@@ -51,7 +54,7 @@ awaitOnlineState server =
 -- Since processing of a tick always ends when the handler finishes
 -- after serving the last point, this function is only relevant for the
 -- initial state update.
-ensureCurrentState :: IOLike m => ScheduledServer m a -> m a
+ensureCurrentState :: IOLike m => ScheduledServer m state blk -> m state
 ensureCurrentState server =
   retryOffline server =<< atomically (ssCurrentState server)
 
@@ -62,9 +65,9 @@ ensureCurrentState server =
 -- protocol result and emit them here.
 runHandlerWithTrace ::
   IOLike m =>
-  Tracer m String ->
-  STM m (a, [String]) ->
-  m a
+  Tracer m traceMsg ->
+  STM m (state, [traceMsg]) ->
+  m state
 runHandlerWithTrace tracer handler = do
   (result, handlerMessages) <- atomically handler
   traverse_ (traceWith tracer) handlerMessages
@@ -82,24 +85,24 @@ runHandlerWithTrace tracer handler = do
 -- message with the server's continuation in it.
 runHandler ::
   IOLike m =>
-  Condense a =>
-  ScheduledServer m a ->
+  ScheduledServer m state blk ->
   String ->
-  (a -> STM m (Maybe msg, [String])) ->
+  (state -> STM m (Maybe msg, [traceMsg])) ->
+  Tracer m traceMsg ->
   (msg -> m h) ->
   m h
-runHandler server@ScheduledServer{ssTracer} handlerName handler dispatchMessage =
+runHandler server@ScheduledServer{ssCommonTracer} handlerName handler handlerTracer dispatchMessage =
   run
   where
     run = do
       currentState <- ensureCurrentState server
-      trace ("handling " ++ handlerName)
-      trace ("  state is " ++ condense currentState)
-      maybe restart dispatchMessage =<< runHandlerWithTrace handlerTracer (handler currentState)
+      traceWith ssCommonTracer $ TraceHandling handlerName currentState
+      maybe restart done =<< runHandlerWithTrace handlerTracer (handler currentState)
 
     restart = do
-      trace "  cannot serve at this point; waiting for node state and starting again"
+      traceWith ssCommonTracer $ TraceRestarting handlerName
       awaitOnlineState server *> run
 
-    trace = traceWith ssTracer
-    handlerTracer = Tracer $ \ msg -> traceWith ssTracer (handlerName ++ " | " ++ msg)
+    done msg = do
+      traceWith ssCommonTracer $ TraceDoneHandling handlerName
+      dispatchMessage msg
