@@ -12,8 +12,7 @@ module Test.Consensus.PeerSimulator.ChainSync (
   , runChainSyncServer
   ) where
 
-import           Control.Exception (AsyncException (ThreadKilled),
-                     SomeException)
+import           Control.Exception (SomeException)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Map.Strict (Map)
@@ -177,10 +176,8 @@ runChainSyncClient
             traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceExceededTimeLimitCS
           Nothing -> pure ()
         case fromException exn of
-          Just ThreadKilled ->
+          Just CSClient.DensityTooLow ->
             traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceTerminatedByGDDGovernor
-          _ -> pure ()
-        case fromException exn of
           Just CSClient.EmptyBucket ->
             traceWith tracer $ TraceChainSyncClientTerminationEvent peerId TraceTerminatedByLoP
           _ -> pure ()
