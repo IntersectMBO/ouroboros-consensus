@@ -18,7 +18,7 @@ import           Control.Monad.IOSim (IOSim, runSimStrictShutdown)
 import           Control.Tracer (debugTracer, traceWith)
 import           Data.Maybe (mapMaybe)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientException (EmptyBucket))
+                     (ChainSyncClientException (DensityTooLow, EmptyBucket))
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.IOLike (Exception, fromException)
 import           Ouroboros.Network.Driver.Limits
@@ -113,8 +113,8 @@ forAllGenesisTest generator schedulerConfig shrinker mkProperty =
         (pscrToException . pseResult)
         svPeerSimulatorResults
     isExpectedException exn
-      -- TODO: complete with GDD exception(s)
       | Just EmptyBucket           <- e = true
+      | Just DensityTooLow         <- e = true
       | Just (ExceededTimeLimit _) <- e = true
       | Just AsyncCancelled        <- e = true
       | otherwise = counterexample

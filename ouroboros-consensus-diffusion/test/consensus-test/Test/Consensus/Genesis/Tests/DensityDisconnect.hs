@@ -4,7 +4,7 @@
 module Test.Consensus.Genesis.Tests.DensityDisconnect (tests) where
 
 import           Cardano.Slotting.Slot (WithOrigin (..), unSlotNo)
-import           Control.Exception (SomeException (..), fromException)
+import           Control.Exception (fromException)
 import           Control.Monad.Class.MonadTime.SI (Time (..))
 import           Data.Bifunctor (second)
 import           Data.Foldable (minimumBy, toList)
@@ -20,6 +20,8 @@ import           Ouroboros.Consensus.Config.SecurityParam
                      (SecurityParam (SecurityParam), maxRollbacks)
 import           Ouroboros.Consensus.Genesis.Governor (densityDisconnect,
                      sharedCandidatePrefix)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientException (DensityTooLow))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HasHeader, Tip (TipGenesis),
@@ -320,12 +322,11 @@ prop_densityDisconnectTriggersChainSel =
     ( \GenesisTest {gtBlockTree} stateView@StateView {svTipBlock} ->
         let
           exnCorrect = case exceptionsByComponent ChainSyncClient stateView of
-            -- FIXME: what exceptions do we see when the GDD disconnects the adversary?
             [exn] ->
               case fromException exn of
-                Just (SomeException _) -> True
-                _                      -> True
-            _ -> True
+                Just (DensityTooLow) -> True
+                _                    -> False
+            _ -> False
           tipPointCorrect = Just (getTrunkTip gtBlockTree) == svTipBlock
         in exnCorrect && tipPointCorrect
     )
