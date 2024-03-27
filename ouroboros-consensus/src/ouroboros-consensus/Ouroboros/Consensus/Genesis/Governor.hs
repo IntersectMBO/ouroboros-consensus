@@ -228,9 +228,9 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           idling = csIdling state
 
           -- Is there a block after the end of the Genesis window?
-          hasBlockAfter = case max (AF.headSlot candidateSuffix) latestSlot of
-            NotOrigin slot -> slot >= firstSlotAfterGenesisWindow
-            Origin         -> False
+          hasBlockAfter =
+               max (AF.headSlot candidateSuffix) latestSlot
+            >= NotOrigin firstSlotAfterGenesisWindow
 
           -- If the peer is idling, we assume it has no more headers to send.
           --
