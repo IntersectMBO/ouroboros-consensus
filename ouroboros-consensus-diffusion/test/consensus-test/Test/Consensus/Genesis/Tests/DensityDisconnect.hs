@@ -35,7 +35,7 @@ import           Test.Consensus.PeerSimulator.StateView
                      exceptionsByComponent)
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers
-import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
+import           Test.Consensus.PointSchedule.Shrinking (shrinkByRemovingAdversaries)
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..),
                      scheduleBlockPoint, scheduleHeaderPoint, scheduleTipPoint)
 import qualified Test.QuickCheck as QC
@@ -314,7 +314,7 @@ prop_densityDisconnectTriggersChainSel =
 
     (defaultSchedulerConfig {scEnableLoE = True})
 
-    shrinkPeerSchedules
+    shrinkByRemovingAdversaries
 
     ( \GenesisTest {gtBlockTree} stateView@StateView {svTipBlock} ->
         let
