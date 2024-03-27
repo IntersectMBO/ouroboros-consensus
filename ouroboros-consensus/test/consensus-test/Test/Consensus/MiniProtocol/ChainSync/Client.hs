@@ -89,6 +89,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      bracketChainSyncClient, chainSyncClient, chainSyncStateFor,
                      viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.JumpingGovernor as JumpingGovernor
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -356,6 +357,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     -- separate map too, one that isn't emptied. We can use this map to look
     -- at the final state of each candidate.
     varFinalCandidates <- uncheckedNewTVarM Map.empty
+    jumpingGovernor <- JumpingGovernor.dummyHandle
     varHandles     <- uncheckedNewTVarM Map.empty
 
     (tracer, getTrace) <- do
@@ -409,7 +411,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client ChainSyncStateView {csvSetCandidate, csvSetLatestSlot, csvIdling, csvLoPBucket} =
+        client ChainSyncStateView {csvSetCandidate, csvSetLatestSlot, csvIdling, csvLoPBucket, csvJumpingGovernor} =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -427,6 +429,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , idling = csvIdling
                 , loPBucket = csvLoPBucket
                 , setLatestSlot = csvSetLatestSlot
+                , jumpingGovernor = csvJumpingGovernor
                 }
 
     -- Set up the server
@@ -496,6 +499,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               bracketChainSyncClient
                  chainSyncTracer
                  chainDbView
+                 jumpingGovernor
                  varHandles
                  serverId
                  maxBound

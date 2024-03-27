@@ -571,6 +571,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
         CsClient.bracketChainSyncClient
             (contramap (TraceLabelPeer them) (Node.chainSyncClientTracer (getTracers kernel)))
             (CsClient.defaultChainDbView (getChainDB kernel))
+            (getJumpingGovernor kernel)
             (getChainSyncHandles kernel)
             them
             version
@@ -596,6 +597,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                         , CsClient.idling = csvIdling csState
                         , CsClient.loPBucket = csvLoPBucket csState
                         , CsClient.setLatestSlot = csvSetLatestSlot csState
+                        , CsClient.jumpingGovernor = csvJumpingGovernor csState
                         }
               return (ChainSyncInitiatorResult r, trailing)
 

@@ -65,6 +65,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , ChainSyncStateView (..)
   , chainSyncStateFor
   , noIdling
+  , noJumpingGovernor
   , noLoPBucket
   , viewChainSyncState
   ) where
@@ -95,6 +96,7 @@ import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.JumpingGovernor as JumpingGovernor
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -251,20 +253,44 @@ noLoPBucket =
     , lbGrantToken = pure ()
     }
 
+data JumpingGovernor m blk = JumpingGovernor {
+    jgNextInstruction   :: !(m (JumpingGovernor.Instruction blk))
+  , jgProcessJumpResult :: !(JumpingGovernor.JumpResult blk -> m ())
+  }
+  deriving stock (Generic)
+
+deriving anyclass instance
+  ( IOLike m,
+    HasHeader blk,
+    NoThunks (Header blk)
+  ) =>
+  NoThunks (JumpingGovernor m blk)
+
+-- | No-op implementation, for tests.
+noJumpingGovernor :: (Applicative m) => JumpingGovernor m blk
+noJumpingGovernor =
+  JumpingGovernor
+    { jgNextInstruction = pure JumpingGovernor.RunNormally
+    , jgProcessJumpResult = const $ pure ()
+    }
+
 -- | Interface for the ChainSync client to its state allocated by
 -- 'bracketChainSyncClient'.
 data ChainSyncStateView m blk = ChainSyncStateView {
     -- | The current candidate fragment
-    csvSetCandidate  :: !(AnchoredFragment (Header blk) -> STM m ())
+    csvSetCandidate    :: !(AnchoredFragment (Header blk) -> STM m ())
 
     -- | Update the slot of the latest received header
-  , csvSetLatestSlot :: !(WithOrigin SlotNo -> STM m ())
+  , csvSetLatestSlot   :: !(WithOrigin SlotNo -> STM m ())
 
     -- | (Un)mark the peer as idling.
-  , csvIdling        :: !(Idling m)
+  , csvIdling          :: !(Idling m)
 
     -- | Control the 'LeakyBucket' for the LoP.
-  , csvLoPBucket     :: !(LoPBucket m)
+  , csvLoPBucket       :: !(LoPBucket m)
+
+    -- | The 'JumpingGovernor' for the peer.
+  , csvJumpingGovernor :: !(JumpingGovernor m blk)
   }
   deriving stock (Generic)
 
@@ -273,6 +299,7 @@ deriving anyclass instance (
   HasHeader blk,
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncStateView m blk)
+
 bracketChainSyncClient ::
     ( IOLike m
     , Ord peer
@@ -280,6 +307,7 @@ bracketChainSyncClient ::
     )
  => Tracer m (TraceChainSyncClientEvent blk)
  -> ChainDbView m blk
+ -> JumpingGovernor.Handle m peer blk
  -> StrictTVar m (Map peer (ChainSyncClientHandle m blk))
     -- ^ The kill handle and states for each peer, we need the whole map because we
     -- (de)register nodes (@peer@).
@@ -291,6 +319,7 @@ bracketChainSyncClient ::
 bracketChainSyncClient
     tracer
     ChainDbView { getIsInvalidBlock }
+    jumpingGovernor
     varHandles
     peer
     version
@@ -318,6 +347,10 @@ bracketChainSyncClient
               , lbResume = LeakyBucket.setPaused lopBucket False
               , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
               }
+            , csvJumpingGovernor = JumpingGovernor {
+                jgNextInstruction = atomically $ JumpingGovernor.nextInstruction jumpingGovernor peer
+              , jgProcessJumpResult = atomically . JumpingGovernor.processJumpResult jumpingGovernor peer
+              }
             }
   where
     acquireHandle = do
@@ -332,9 +365,13 @@ bracketChainSyncClient
               cschGDDKill = throwTo tid DensityTooLow
             , cschState
             }
+          JumpingGovernor.registerClient jumpingGovernor peer
         pure cschState
 
-    releaseHandle _ = atomically $ modifyTVar varHandles $ Map.delete peer
+    releaseHandle _ =
+      atomically $ do
+        modifyTVar varHandles $ Map.delete peer
+        JumpingGovernor.unregisterClient jumpingGovernor peer
 
     invalidBlockWatcher varState =
         invalidBlockRejector
@@ -668,6 +705,7 @@ data DynamicEnv m blk = DynamicEnv {
   , setLatestSlot       :: WithOrigin SlotNo -> STM m ()
   , idling              :: Idling m
   , loPBucket           :: LoPBucket m
+  , jumpingGovernor     :: JumpingGovernor m blk
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -1048,6 +1086,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
       , idling
       , loPBucket
       , setCandidate
+      , jumpingGovernor
       } = dynEnv
 
     InternalEnv {
@@ -1071,7 +1110,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     -- intersection before calling 'getLedgerView'.
     --
     -- This is also the place where we checked whether we're asked to terminate
-    -- by the mux layer.
+    -- by the mux layer or to wait and perform a CSJ jump.
     nextStep ::
         MkPipelineDecision
      -> Nat n
@@ -1079,11 +1118,34 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
      -> Stateful m blk
             (KnownIntersectionState blk)
             (ClientPipelinedStIdle n)
-    nextStep mkPipelineDecision n theirTip = Stateful $ \kis -> do
+    nextStep mkPipelineDecision n theirTip = Stateful $ \kis ->
         atomically controlMessageSTM >>= \case
             -- We have been asked to terminate the client
             Terminate -> terminateAfterDrain n $ AskedToTerminate
             _continue -> do
+                -- Wait until next jumping instruction, which can be either to
+                -- jump or to run normal ChainSync.
+                traceWith tracer TraceJumpingGovernorWaitingForNextInstruction
+                instruction <- jgNextInstruction jumpingGovernor
+                traceWith tracer $ TraceJumpingGovernorInstructionIs instruction
+                case instruction of
+                    JumpingGovernor.JumpTo point ->
+                          continueWithState kis
+                        $ drainThePipe n
+                        $ offerJump mkPipelineDecision point
+                    JumpingGovernor.RunNormally ->
+                          continueWithState kis
+                        $ nextStep' mkPipelineDecision n theirTip
+
+    nextStep' ::
+        MkPipelineDecision
+     -> Nat n
+     -> Their (Tip blk)
+     -> Stateful m blk
+            (KnownIntersectionState blk)
+            (ClientPipelinedStIdle n)
+    nextStep' mkPipelineDecision n theirTip =
+        Stateful $ \kis ->
                 atomically (intersectsWithCurrentChain kis) >>= \case
                     -- Our chain (tip) didn't change or if it did, it still
                     -- intersects with the candidate fragment, so we can
@@ -1113,6 +1175,32 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                           intEnv
                           (kBestBlockNo kis)
                           NoMoreIntersection
+
+    offerJump ::
+        MkPipelineDecision
+     -> Point blk
+     -> Stateful m blk
+            (KnownIntersectionState blk)
+            (ClientPipelinedStIdle Z)
+    offerJump mkPipelineDecision dynamoTipPt = Stateful $ \kis -> do
+        traceWith tracer $ TraceJump $ Left dynamoTipPt
+        -- TODO offer more points?
+        return $
+            SendMsgFindIntersect [dynamoTipPt] $
+            ClientPipelinedStIntersect {
+              recvMsgIntersectFound = \pt theirTip ->
+                  if
+                    | pt == dynamoTipPt -> do
+                        jgProcessJumpResult jumpingGovernor $ JumpingGovernor.AcceptedJump dynamoTipPt
+                        traceWith tracer $ TraceJump $ Right $ JumpingGovernor.AcceptedJump dynamoTipPt
+                        continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
+                    | otherwise         -> throwIO InvalidJumpResponse
+            ,
+              recvMsgIntersectNotFound = \theirTip -> do
+                  jgProcessJumpResult jumpingGovernor $ JumpingGovernor.RejectedJump dynamoTipPt
+                  traceWith tracer $ TraceJump $ Right $ JumpingGovernor.RejectedJump dynamoTipPt
+                  continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
+            }
 
     requestNext ::
         KnownIntersectionState blk
@@ -1909,6 +1997,9 @@ data ChainSyncClientException =
   |
     EmptyBucket
     -- ^ The peer lost its race against the bucket.
+  |
+    InvalidJumpResponse
+    -- ^ When the peer responded incorrectly to a jump request.
   | DensityTooLow
     -- ^ The peer has been deemed unworthy by the GDD
 
@@ -1941,6 +2032,9 @@ instance Eq ChainSyncClientException where
         EmptyBucket EmptyBucket
       = True
     (==)
+        InvalidJumpResponse InvalidJumpResponse
+      = True
+    (==)
         DensityTooLow DensityTooLow
       = True
 
@@ -1949,6 +2043,7 @@ instance Eq ChainSyncClientException where
     InvalidBlock{}                   == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
     EmptyBucket                      == _ = False
+    InvalidJumpResponse              == _ = False
     DensityTooLow                    == _ = False
 
 instance Exception ChainSyncClientException
@@ -1991,6 +2086,12 @@ data TraceChainSyncClientEvent blk =
     -- ^ Whether we added a token to the LoP bucket of the peer. Also carries
     -- the considered header and the best block number known prior to this
     -- header.
+  |
+    TraceJump (Either (Point blk) (JumpingGovernor.JumpResult blk))
+    -- ^ ChainSync Jumping to a point. Either an offering of a point, or a
+    -- reply.
+  | TraceJumpingGovernorWaitingForNextInstruction
+  | TraceJumpingGovernorInstructionIs (JumpingGovernor.Instruction blk)
 
 deriving instance
   ( BlockSupportsProtocol blk
