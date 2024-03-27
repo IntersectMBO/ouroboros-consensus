@@ -2,6 +2,7 @@
 {-# LANGUAGE TypeFamilies     #-}
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
+  , ConvertRawTxId (..)
   , GenTx
   , GenTxId
   , HasTxId (..)
@@ -13,6 +14,7 @@ module Ouroboros.Consensus.Ledger.SupportsMempool (
   ) where
 
 import           Control.Monad.Except
+import           Data.ByteString.Short (ShortByteString)
 import           Data.Kind (Type)
 import           Data.Word (Word32)
 import           GHC.Stack (HasCallStack)
@@ -145,6 +147,13 @@ class ( Show     (TxId tx)
   --
   -- Should be cheap as this will be called often.
   txId :: tx -> TxId tx
+
+-- | Extract the raw hash bytes from a 'TxId'.
+class HasTxId tx => ConvertRawTxId tx where
+
+  -- | NOTE: The composition @'toRawTxIdHash' . 'txId'@ must satisfy the same
+  -- properties as defined in the docs of 'txId'.
+  toRawTxIdHash :: TxId tx -> ShortByteString
 
 -- | Shorthand: ID of a generalized transaction
 type GenTxId blk = TxId (GenTx blk)

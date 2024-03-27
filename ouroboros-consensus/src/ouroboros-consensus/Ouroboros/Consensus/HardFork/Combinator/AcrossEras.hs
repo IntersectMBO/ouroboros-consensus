@@ -66,6 +66,7 @@ import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BSC
 import           Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
+import           Data.Function (on)
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -157,6 +158,23 @@ instance Condense (OneEraHash xs) where
   condense = show
 
 {-------------------------------------------------------------------------------
+  OneEraGenTxId
+-------------------------------------------------------------------------------}
+
+-- | This instance compares the underlying raw hash ('toRawTxIdHash') of the
+-- 'TxId'.
+--
+-- Note that this means that transactions in different eras can have equal
+-- 'TxId's. This should only be the case when the transaction format is
+-- backwards compatible from one era to the next.
+instance CanHardFork xs => Eq (OneEraGenTxId xs) where
+  (==) = (==) `on` oneEraGenTxIdRawHash
+
+-- | See the corresponding 'Eq' instance.
+instance CanHardFork xs => Ord (OneEraGenTxId xs) where
+  compare = compare `on` oneEraGenTxIdRawHash
+
+{-------------------------------------------------------------------------------
   Value for two /different/ eras
 -------------------------------------------------------------------------------}
 
@@ -245,6 +263,12 @@ getSameValue values =
         | otherwise
         = throwError "differing values across hard fork"
 
+oneEraGenTxIdRawHash :: CanHardFork xs => OneEraGenTxId xs -> ShortByteString
+oneEraGenTxIdRawHash =
+      hcollapse
+    . hcmap proxySingle (K . toRawTxIdHash . unwrapGenTxId)
+    . getOneEraGenTxId
+
 {-------------------------------------------------------------------------------
   NoThunks instances
 -------------------------------------------------------------------------------}
@@ -301,7 +325,6 @@ deriving via LiftNamedMismatch "MismatchEraInfo" SingleEraInfo LedgerEraInfo xs
 deriving via LiftNS WrapApplyTxErr     xs instance CanHardFork xs => Eq (OneEraApplyTxErr     xs)
 deriving via LiftNS WrapEnvelopeErr    xs instance CanHardFork xs => Eq (OneEraEnvelopeErr    xs)
 deriving via LiftNS GenTx              xs instance CanHardFork xs => Eq (OneEraGenTx          xs)
-deriving via LiftNS WrapGenTxId        xs instance CanHardFork xs => Eq (OneEraGenTxId        xs)
 deriving via LiftNS WrapLedgerErr      xs instance CanHardFork xs => Eq (OneEraLedgerError    xs)
 deriving via LiftNS WrapLedgerUpdate   xs instance CanHardFork xs => Eq (OneEraLedgerUpdate   xs)
 deriving via LiftNS WrapLedgerWarning  xs instance CanHardFork xs => Eq (OneEraLedgerWarning  xs)
@@ -309,8 +332,6 @@ deriving via LiftNS WrapSelectView     xs instance CanHardFork xs => Eq (OneEraS
 deriving via LiftNS WrapTipInfo        xs instance CanHardFork xs => Eq (OneEraTipInfo        xs)
 deriving via LiftNS WrapValidatedGenTx xs instance CanHardFork xs => Eq (OneEraValidatedGenTx xs)
 deriving via LiftNS WrapValidationErr  xs instance CanHardFork xs => Eq (OneEraValidationErr  xs)
-
-deriving via LiftNS WrapGenTxId xs instance CanHardFork xs => Ord (OneEraGenTxId xs)
 
 deriving via LiftNS WrapEnvelopeErr           xs instance CanHardFork xs => Show (OneEraEnvelopeErr           xs)
 deriving via LiftNS WrapForgeStateInfo        xs instance CanHardFork xs => Show (OneEraForgeStateInfo        xs)

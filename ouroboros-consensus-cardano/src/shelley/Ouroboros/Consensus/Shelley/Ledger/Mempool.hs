@@ -34,6 +34,7 @@ module Ouroboros.Consensus.Shelley.Ledger.Mempool (
   , fromExUnits
   ) where
 
+import qualified Cardano.Crypto.Hash as Hash
 import           Cardano.Ledger.Alonzo.Core (Tx, TxSeq, bodyTxL, eraProtVerLow,
                      fromTxSeq, ppMaxBBSizeL, ppMaxBlockExUnitsL, sizeTxF)
 import           Cardano.Ledger.Alonzo.Scripts (ExUnits, ExUnits',
@@ -44,6 +45,7 @@ import           Cardano.Ledger.Binary (Annotator (..), DecCBOR (..),
                      ToCBOR (..), toPlainDecoder)
 import qualified Cardano.Ledger.Core as SL (txIdTxBody)
 import           Cardano.Ledger.Crypto (Crypto)
+import qualified Cardano.Ledger.SafeHash as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad.Except (Except)
 import           Control.Monad.Identity (Identity (..))
@@ -170,6 +172,10 @@ instance (Typeable era, Typeable proto)
 
 instance ShelleyBasedEra era => HasTxId (GenTx (ShelleyBlock proto era)) where
   txId (ShelleyTx i _) = ShelleyTxId i
+
+instance ShelleyBasedEra era => ConvertRawTxId (GenTx (ShelleyBlock proto era)) where
+  toRawTxIdHash (ShelleyTxId i) =
+      Hash.hashToBytesShort . SL.extractHash . SL.unTxId $ i
 
 instance ShelleyBasedEra era => HasTxs (ShelleyBlock proto era) where
   extractTxs =
