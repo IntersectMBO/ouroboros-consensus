@@ -54,15 +54,19 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , Consensus
   , Our (..)
   , Their (..)
-    -- * Trace events
+    -- * Genesis configuration
+  , CSJConfig (..)
+  , CSJEnabledConfig (..)
   , ChainSyncLoPBucketConfig (..)
   , ChainSyncLoPBucketEnabledConfig (..)
+    -- * Trace events
   , InvalidBlockReason
   , TraceChainSyncClientEvent (..)
     -- * State shared with other components
   , ChainSyncClientHandle (..)
   , ChainSyncState (..)
   , ChainSyncStateView (..)
+  , Jumping.noJumping
   , chainSyncStateFor
   , noIdling
   , noLoPBucket
@@ -75,6 +79,7 @@ import           Control.Tracer
 import           Data.Kind (Type)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe)
 import           Data.Proxy
 import           Data.Typeable
 import           Data.Word (Word64)
@@ -95,6 +100,7 @@ import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -106,7 +112,7 @@ import           Ouroboros.Consensus.Util.AnchoredFragment (cross)
 import           Ouroboros.Consensus.Util.Assert (assertWithMsg)
 import           Ouroboros.Consensus.Util.EarlyExit (WithEarlyExit, exitEarly)
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
-import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Consensus.Util.LeakyBucket as LeakyBucket
 import           Ouroboros.Consensus.Util.STM (Fingerprint, Watcher (..),
                      WithFingerprint (..), withWatcher)
@@ -163,6 +169,36 @@ data ChainSyncLoPBucketConfig
   |
     -- | Enable the leaky bucket.
     ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig
+
+-- | Configuration of ChainSync Jumping
+data CSJConfig
+  =
+    -- Disable ChainSync Jumping. All clients will fully synchronize with
+    -- the chain of its peer.
+    CSJDisabled
+  |
+    -- | Enable ChainSync Jumping
+    CSJEnabled CSJEnabledConfig
+
+data CSJEnabledConfig = CSJEnabledConfig {
+  -- | The _ideal_ size for ChainSync jumps. Note that the algorithm
+  -- is best-effort: there might not be exactly `csjcJumpSize` slots between two
+  -- jumps, depending on the chain.
+  --
+  -- There can be a few less slots between jumps if there is not a block exactly
+  -- at the boundary. Jumps are often made when a block is announced after the
+  -- jump boundary.
+  --
+  -- There can be even less slots if a dynamo is elected and it requires an
+  -- initial jump regardless of how far we are from the next jump boundary.
+  --
+  -- csjcJumpSize must be greater than 0 and smaller or equal to the genesis
+  -- window size. The larger the jump size, the less jumps are made and peers
+  -- are less involved in the syncing. A jump size as large as the genesis
+  -- window has a higher change that dishonest peers can delay syncing by a
+  -- small margin (around 2 minutes per dishonest peer with mainnet parameters).
+  csjcJumpSize       :: SlotNo
+}
 
 defaultChainDbView ::
      (IOLike m, LedgerSupportsProtocol blk)
@@ -265,6 +301,9 @@ data ChainSyncStateView m blk = ChainSyncStateView {
 
     -- | Control the 'LeakyBucket' for the LoP.
   , csvLoPBucket     :: !(LoPBucket m)
+
+    -- | Jumping-related API.
+  , csvJumping       :: !(Jumping.Jumping m blk)
   }
   deriving stock (Generic)
 
@@ -273,7 +312,8 @@ deriving anyclass instance (
   HasHeader blk,
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncStateView m blk)
-bracketChainSyncClient ::
+
+bracketChainSyncClient :: forall m peer blk a.
     ( IOLike m
     , Ord peer
     , LedgerSupportsProtocol blk
@@ -286,6 +326,7 @@ bracketChainSyncClient ::
  -> peer
  -> NodeToNodeVersion
  -> ChainSyncLoPBucketConfig
+ -> CSJConfig
  -> (ChainSyncStateView m blk -> m a)
  -> m a
 bracketChainSyncClient
@@ -295,46 +336,74 @@ bracketChainSyncClient
     peer
     version
     csBucketConfig
+    csjConfig
     body
-  =
-    bracket acquireHandle releaseHandle
-  $ \varState ->
+  = mkChainSyncClientHandleState >>= \csHandleState ->
+    withCSJCallbacks csHandleState csjConfig $ \csjCallbacks ->
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
-            (invalidBlockWatcher varState)
+            (invalidBlockWatcher csHandleState)
       $ LeakyBucket.execAgainstBucket lopBucketConfig
       $ \lopBucket ->
             body ChainSyncStateView {
               csvSetCandidate =
-              modifyTVar varState . \ c s -> s {csCandidate = c}
+              modifyTVar csHandleState . \ c s -> s {csCandidate = c}
             , csvSetLatestSlot =
-              modifyTVar varState . \ ls s -> s {csLatestSlot = Just $! ls}
+              modifyTVar csHandleState . \ ls s -> s {csLatestSlot = Just $! ls}
             , csvIdling = Idling {
-                idlingStart = atomically $ modifyTVar varState $ \ s -> s {csIdling = True}
-              , idlingStop = atomically $ modifyTVar varState $ \ s -> s {csIdling = False}
+                idlingStart = atomically $ modifyTVar csHandleState $ \ s -> s {csIdling = True}
+              , idlingStop = atomically $ modifyTVar csHandleState $ \ s -> s {csIdling = False}
               }
             , csvLoPBucket = LoPBucket {
                 lbPause = LeakyBucket.setPaused lopBucket True
               , lbResume = LeakyBucket.setPaused lopBucket False
               , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
               }
+            , csvJumping = csjCallbacks
             }
   where
-    acquireHandle = do
-        cschState <- newTVarIO $ ChainSyncState {
-            csCandidate = AF.Empty AF.AnchorGenesis
-          , csLatestSlot = Nothing
-          , csIdling = False
-          }
-        tid <- myThreadId
-        atomically $ do
-          modifyTVar varHandles $ Map.insert peer ChainSyncClientHandle {
+    mkChainSyncClientHandleState =
+      newTVarIO ChainSyncState {
+          csCandidate = AF.Empty AF.AnchorGenesis
+        , csLatestSlot = Nothing
+        , csIdling = False
+        }
+
+    withCSJCallbacks ::
+      StrictTVar m (ChainSyncState blk) ->
+      CSJConfig ->
+      (Jumping.Jumping m blk -> m a) ->
+      m a
+    withCSJCallbacks cschState CSJDisabled f = do
+      tid <- myThreadId
+      cschJumpInfo <- newTVarIO Nothing
+      cschJumping <- newTVarIO Disengaged
+      let handle = ChainSyncClientHandle {
               cschGDDKill = throwTo tid DensityTooLow
             , cschState
+            , cschJumping
+            , cschJumpInfo
             }
-        pure cschState
+          insertHandle = atomically $ modifyTVar varHandles $ Map.insert peer handle
+          deleteHandle = atomically $ modifyTVar varHandles $ Map.delete peer
+      bracket_ insertHandle deleteHandle $ f Jumping.noJumping
 
-    releaseHandle _ = atomically $ modifyTVar varHandles $ Map.delete peer
+    withCSJCallbacks csHandleState (CSJEnabled csjEnabledConfig) f =
+      bracket (acquireContext csHandleState csjEnabledConfig) releaseContext $ \peerContext ->
+        f $ Jumping.mkJumping peerContext
+    acquireContext cschState (CSJEnabledConfig jumpSize) = do
+        tid <- myThreadId
+        atomically $ do
+          cschJumpInfo <- newTVar Nothing
+          context <- Jumping.makeContext varHandles jumpSize
+          Jumping.registerClient context peer cschState $ \cschJumping -> ChainSyncClientHandle
+            { cschGDDKill = throwTo tid DensityTooLow
+            , cschState
+            , cschJumping
+            , cschJumpInfo
+            }
+
+    releaseContext = atomically . Jumping.unregisterClient
 
     invalidBlockWatcher varState =
         invalidBlockRejector
@@ -342,7 +411,7 @@ bracketChainSyncClient
 
     -- | Wrapper around 'LeakyBucket.execAgainstBucket' that handles the
     -- disabled bucket by running the given action with dummy handlers.
-    lopBucketConfig :: MonadThrow m => LeakyBucket.Config m
+    lopBucketConfig :: LeakyBucket.Config m
     lopBucketConfig =
       case csBucketConfig of
         ChainSyncLoPBucketDisabled -> LeakyBucket.dummyConfig
@@ -668,6 +737,7 @@ data DynamicEnv m blk = DynamicEnv {
   , setLatestSlot       :: WithOrigin SlotNo -> STM m ()
   , idling              :: Idling m
   , loPBucket           :: LoPBucket m
+  , jumping             :: Jumping.Jumping m blk
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -761,8 +831,7 @@ chainSyncClient cfgEnv dynEnv =
       } = chainDbView
 
     DynamicEnv {
-        idling,
-        loPBucket
+        idling
       } = dynEnv
 
     mkIntEnv ::
@@ -808,7 +877,7 @@ chainSyncClient cfgEnv dynEnv =
                   recvMsgRollForward  = \_hdr _tip -> go n' s
                 , recvMsgRollBackward = \_pt  _tip -> go n' s
                 }
-      in Stateful $ \s -> do (idlingStop idling >> lbResume loPBucket); go n0 s
+      in Stateful $ \s -> idlingStop idling >> go n0 s
 
     terminate ::
         ChainSyncClientResult
@@ -898,6 +967,7 @@ findIntersectionTop cfgEnv dynEnv intEnv =
 
     DynamicEnv {
         setCandidate
+      , jumping
       } = dynEnv
 
     InternalEnv {
@@ -999,9 +1069,6 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                         disconnect
                       $ InvalidIntersection
                             intersection (ourTipFromChain ourFrag) theirTip
-            atomically $ do
-              setCandidate theirFrag
-              setLatestSlot dynEnv (AF.headSlot theirFrag)
             let kis =
                    assertKnownIntersectionInvariants (configConsensus cfg)
                  $ KnownIntersectionState {
@@ -1011,6 +1078,10 @@ findIntersectionTop cfgEnv dynEnv intEnv =
                      , theirHeaderStateHistory
                      , kBestBlockNo            = uBestBlockNo
                      }
+            atomically $ do
+              updateJumpInfoSTM jumping kis
+              setCandidate theirFrag
+              setLatestSlot dynEnv (AF.headSlot theirFrag)
             continueWithState kis $
                 knownIntersectionStateTop cfgEnv dynEnv intEnv theirTip
 
@@ -1048,6 +1119,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
       , idling
       , loPBucket
       , setCandidate
+      , jumping
       } = dynEnv
 
     InternalEnv {
@@ -1071,7 +1143,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     -- intersection before calling 'getLedgerView'.
     --
     -- This is also the place where we checked whether we're asked to terminate
-    -- by the mux layer.
+    -- by the mux layer or to wait and perform a CSJ jump.
     nextStep ::
         MkPipelineDecision
      -> Nat n
@@ -1079,11 +1151,37 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
      -> Stateful m blk
             (KnownIntersectionState blk)
             (ClientPipelinedStIdle n)
-    nextStep mkPipelineDecision n theirTip = Stateful $ \kis -> do
+    nextStep mkPipelineDecision n theirTip = Stateful $ \kis ->
         atomically controlMessageSTM >>= \case
             -- We have been asked to terminate the client
             Terminate -> terminateAfterDrain n $ AskedToTerminate
             _continue -> do
+                -- Wait until next jumping instruction, which can be either to
+                -- jump or to run normal ChainSync.
+                -- Pause LoP while waiting, we'll resume it if we get `RunNormally`
+                traceWith tracer TraceJumpingWaitingForNextInstruction
+                lbPause loPBucket
+                instruction <- Jumping.jgNextInstruction jumping
+                traceWith tracer $ TraceJumpingInstructionIs instruction
+                case instruction of
+                    Jumping.JumpTo jumpInfo ->
+                      continueWithState kis
+                        $ drainThePipe n
+                        $ offerJump mkPipelineDecision jumpInfo
+                    Jumping.RunNormally -> do
+                      lbResume loPBucket
+                      continueWithState kis
+                        $ nextStep' mkPipelineDecision n theirTip
+
+    nextStep' ::
+        MkPipelineDecision
+     -> Nat n
+     -> Their (Tip blk)
+     -> Stateful m blk
+            (KnownIntersectionState blk)
+            (ClientPipelinedStIdle n)
+    nextStep' mkPipelineDecision n theirTip =
+        Stateful $ \kis ->
                 atomically (intersectsWithCurrentChain kis) >>= \case
                     -- Our chain (tip) didn't change or if it did, it still
                     -- intersects with the candidate fragment, so we can
@@ -1093,6 +1191,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                                 theirFrag
                               } = kis'
                         atomically $ do
+                          updateJumpInfoSTM jumping kis'
                           setCandidate theirFrag
                           setLatestSlot dynEnv (AF.headSlot theirFrag)
                         return $
@@ -1115,6 +1214,72 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                           (kBestBlockNo kis)
                           NoMoreIntersection
 
+    offerJump ::
+        MkPipelineDecision
+     -> JumpInfo blk
+     -> Stateful m blk
+            (KnownIntersectionState blk)
+            (ClientPipelinedStIdle Z)
+    offerJump mkPipelineDecision jumpInfo = Stateful $ \kis -> do
+        let dynamoTipPt = castPoint $ AF.headPoint $ jTheirFragment jumpInfo
+        traceWith tracer $ TraceOfferJump dynamoTipPt
+        return $
+            SendMsgFindIntersect [dynamoTipPt] $
+            ClientPipelinedStIntersect {
+              recvMsgIntersectFound = \pt theirTip ->
+                  if
+                    | pt == dynamoTipPt -> do
+                        Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jumpInfo
+                        traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jumpInfo
+                        let kis' = combineJumpInfo kis jumpInfo
+                        continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
+                    | otherwise         -> throwIO InvalidJumpResponse
+            ,
+              recvMsgIntersectNotFound = \theirTip -> do
+                  Jumping.jgProcessJumpResult jumping $ Jumping.RejectedJump jumpInfo
+                  traceWith tracer $ TraceJumpResult $ Jumping.RejectedJump jumpInfo
+                  continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
+            }
+        where
+          combineJumpInfo ::
+               KnownIntersectionState blk
+            -> JumpInfo blk
+            -> KnownIntersectionState blk
+          combineJumpInfo kis ji =
+            let mRewoundHistory =
+                  HeaderStateHistory.rewind
+                    (AF.castPoint $ AF.headPoint $ jTheirFragment ji)
+                    (jTheirHeaderStateHistory ji)
+                -- We assume the history is always possible to rewind. The case
+                -- where this wouldn't be true is if the original candidate
+                -- fragment provided by the dynamo contained headers that have
+                -- no corresponding header state.
+                rewoundHistory =
+                  fromMaybe (error "offerJump: cannot rewind history") mRewoundHistory
+                -- If the tip of jTheirFragment does not match the tip of
+                -- jTheirHeaderStateHistory, then the history needs rewinding.
+                historyNeedsRewinding =
+                     (/= AF.headPoint (jTheirFragment ji)) $
+                     castPoint $
+                     either headerStatePoint headerStatePoint $
+                     AF.head $
+                     HeaderStateHistory.unHeaderStateHistory $
+                     jTheirHeaderStateHistory ji
+                -- Recompute the intersection only if a suffix of the candidate
+                -- fragment was trimmed.
+                intersection
+                  | historyNeedsRewinding = case AF.intersect (jOurFragment ji) (jTheirFragment ji) of
+                      Just (po, _, _, _) -> castPoint $ AF.headPoint po
+                      Nothing -> error "offerJump: the jumpInfo should have a valid intersection"
+                  | otherwise = jMostRecentIntersection ji
+             in KnownIntersectionState
+                  { mostRecentIntersection = intersection
+                  , ourFrag = jOurFragment ji
+                  , theirFrag = jTheirFragment ji
+                  , theirHeaderStateHistory = rewoundHistory
+                  , kBestBlockNo = max (fromWithOrigin 0 $ AF.headBlockNo $ jTheirFragment ji) (kBestBlockNo kis)
+                  }
+
     requestNext ::
         KnownIntersectionState blk
      -> MkPipelineDecision
@@ -1132,7 +1297,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     theirTipBlockNo
             onMsgAwaitReply =
               idlingStart idling >>
-              lbPause loPBucket
+              lbPause loPBucket >>
+              Jumping.jgOnAwaitReply jumping
         in
         case (n, decision) of
           (Zero, (Request, mkPipelineDecision')) ->
@@ -1219,6 +1385,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
+            Jumping.jgOnRollForward jumping (blockPoint hdr)
             atomically (setLatestSlot dynEnv (NotOrigin slotNo))
 
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
@@ -1238,6 +1405,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     kis''' <- checkLoP cfgEnv dynEnv hdr kis''
 
                     atomically $ do
+                      updateJumpInfoSTM jumping kis'''
                       setCandidate (theirFrag kis''')
                     atomically
                       $ traceWith headerMetricsTracer (slotNo, arrivalTime)
@@ -1327,11 +1495,27 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                             , kBestBlockNo
                             }
                   atomically $ do
+                    updateJumpInfoSTM jumping kis'
                     setCandidate theirFrag'
                     setLatestSlot dynEnv (pointSlot rollBackPoint)
 
+                  Jumping.jgOnRollBackward jumping (pointSlot rollBackPoint)
+
                   continueWithState kis' $
                       nextStep mkPipelineDecision n theirTip
+
+-- | Let ChainSync jumping know about an update to the 'KnownIntersectionState'.
+updateJumpInfoSTM ::
+     Jumping.Jumping m blk
+  -> KnownIntersectionState blk
+  -> STM m ()
+updateJumpInfoSTM jumping kis@KnownIntersectionState{ourFrag} =
+    Jumping.jgUpdateJumpInfo jumping JumpInfo
+      { jMostRecentIntersection = mostRecentIntersection kis
+      , jOurFragment = ourFrag
+      , jTheirFragment = theirFrag kis
+      , jTheirHeaderStateHistory = theirHeaderStateHistory kis
+      }
 
 {-------------------------------------------------------------------------------
   Header checks
@@ -1918,6 +2102,9 @@ data ChainSyncClientException =
   |
     EmptyBucket
     -- ^ The peer lost its race against the bucket.
+  |
+    InvalidJumpResponse
+    -- ^ When the peer responded incorrectly to a jump request.
   | DensityTooLow
     -- ^ The peer has been deemed unworthy by the GDD
 
@@ -1950,6 +2137,9 @@ instance Eq ChainSyncClientException where
         EmptyBucket EmptyBucket
       = True
     (==)
+        InvalidJumpResponse InvalidJumpResponse
+      = True
+    (==)
         DensityTooLow DensityTooLow
       = True
 
@@ -1958,6 +2148,7 @@ instance Eq ChainSyncClientException where
     InvalidBlock{}                   == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
     EmptyBucket                      == _ = False
+    InvalidJumpResponse              == _ = False
     DensityTooLow                    == _ = False
 
 instance Exception ChainSyncClientException
@@ -2000,6 +2191,19 @@ data TraceChainSyncClientEvent blk =
     -- ^ Whether we added a token to the LoP bucket of the peer. Also carries
     -- the considered header and the best block number known prior to this
     -- header.
+  |
+    TraceOfferJump (Point blk)
+    -- ^ ChainSync Jumping offering a point to jump to.
+  |
+    TraceJumpResult (Jumping.JumpResult blk)
+    -- ^ ChainSync Jumping -- reply.
+  |
+    TraceJumpingWaitingForNextInstruction
+    -- ^ ChainSync Jumping -- the ChainSync client is requesting the next
+    -- instruction.
+  |
+    TraceJumpingInstructionIs (Jumping.Instruction blk)
+    -- ^ ChainSync Jumping -- the ChainSync client got its next instruction.
 
 deriving instance
   ( BlockSupportsProtocol blk
