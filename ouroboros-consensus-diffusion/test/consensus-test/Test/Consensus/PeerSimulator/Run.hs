@@ -302,15 +302,14 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
         gdd = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) getCandidates getHandles (readTVar (psrIdling resources))
         -- We make GDD rerun every time the anchor or the blocks of the
         -- selection change.
-        getCurrentChainWithAnchor = do
-          c <- getCurrentChain
-          return $ AF.anchorPoint c : map AF.blockPoint (AF.toOldestFirst c)
+        getCurrentChainAnchorHash =
+          (:[]) . AF.anchorToHash . AF.headAnchor <$> getCurrentChain
 
     stateTracer <- mkStateTracer
     BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates
     for_ loEVar $ \ var ->
         void $ forkLinkedThread registry "LoE updater background" $
-          runGdd gdd var chainDb ((,,) <$> getLatestSlots <*> readTVar (psrIdling resources) <*> getCurrentChainWithAnchor)
+          runGdd gdd var chainDb ((,,) <$> getLatestSlots <*> readTVar (psrIdling resources) <*> getCurrentChainAnchorHash)
     runScheduler
       (Tracer $ traceWith tracer . TraceSchedulerEvent)
       stateTracer
