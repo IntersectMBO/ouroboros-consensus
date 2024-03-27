@@ -1,0 +1,44 @@
+\section{Common Interface}
+\label{sec:common-interface}
+
+This section defines the interface used by this specification, i.e.
+the transition systems that are assumed to exist.
+
+\subsection{Chain Tick Transition}
+\label{sec:tick-trans}
+
+The Chain Tick Transition performs some chain level upkeep.
+\begin{figure}[htb]
+  \emph{Chain Tick Transitions}
+  \begin{equation*}
+    \vdash \var{\_} \trans{tick}{\_} \var{\_} \subseteq
+    \powerset (\NewEpochState \times \Slot \times \NewEpochState)
+  \end{equation*}
+  \caption{Tick transition-system types}
+  \label{fig:ts-types:tick}
+  %
+\end{figure}
+
+The type of the $\mathsf{TICK}$ transition is shown in Figure~\ref{fig:ts-types:tick}.
+
+\subsection{Ledger Sequence Transition}
+\label{sec:ledgers-trans}
+
+The Ledger Sequence Transition processes a list of transactions.
+\begin{figure}[htb]
+  \emph{Ledger Sequence transitions}
+  \begin{equation*}
+    \_ \vdash
+    \var{\_} \trans{ledgers}{\_} \var{\_}
+    \subseteq \powerset ((\Slot\times\PParams\times\Coin) \times \LState \times \seqof{\Tx} \times \LState)
+  \end{equation*}
+  \caption{Ledger Sequence transition-system types}
+  \label{fig:ts-types:ledgers}
+\end{figure}
+
+The type of the $\mathsf{LEDGERS}$ transition system is shown in Figure~\ref{fig:ts-types:ledgers}.
+
+%%% Local Variables:
+%%% mode: latex
+%%% TeX-master: "ledger-spec"
+%%% End:
