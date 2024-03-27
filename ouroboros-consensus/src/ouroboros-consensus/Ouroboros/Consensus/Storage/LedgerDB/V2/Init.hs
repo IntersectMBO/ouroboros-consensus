@@ -8,6 +8,10 @@
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
+#if __GLASGOW_HASKELL__ <= 906
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
+#endif
+
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Init (mkInitDb) where
 
 import           Control.Monad (void)
