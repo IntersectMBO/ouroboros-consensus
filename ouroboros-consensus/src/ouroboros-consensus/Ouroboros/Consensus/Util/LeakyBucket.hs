@@ -131,9 +131,9 @@ runAgainstBucket config action = do
   bucket <- init config
   tid <- myThreadId
   killThreadVar <- newTVarIO Nothing
-  startThread killThreadVar bucket tid
   finally
     ( do
+        startThread killThreadVar bucket tid
         result <-
           action $
             Handlers
