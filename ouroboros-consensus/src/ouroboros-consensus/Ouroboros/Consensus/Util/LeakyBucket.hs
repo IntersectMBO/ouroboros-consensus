@@ -39,18 +39,9 @@ module Ouroboros.Consensus.Util.LeakyBucket (
   ) where
 
 import           Data.Ratio ((%))
-import           Data.Time (DiffTime)
 import           Data.Time.Clock (diffTimeToPicoseconds)
 import           GHC.Generics (Generic)
-import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Util.IOLike
-                     (MonadAsync (async, uninterruptibleCancel),
-                     MonadCatch (handle), MonadDelay (threadDelay),
-                     MonadFork (throwTo), MonadMask, MonadMonotonicTime,
-                     MonadSTM, MonadThread (ThreadId, myThreadId),
-                     MonadThrow (finally), SomeException, StrictTVar, Time,
-                     atomically, diffTime, getMonotonicTime, newTVarIO,
-                     readTVar, readTVarIO, writeTVar)
 import           Prelude hiding (init)
 
 -- | Configuration of a leaky bucket.
