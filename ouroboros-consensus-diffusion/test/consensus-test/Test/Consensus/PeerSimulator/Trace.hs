@@ -386,9 +386,9 @@ terseGDDEvent = \case
       "      Setting loeFrag: " ++ terseAnchor (AF.castAnchor loeHead)
       ]
   where
-    showBounds DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot} =
+    showBounds DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling} =
       show lowerBound ++ "/" ++ show upperBound ++ "[" ++ more ++ "], " ++
-      lastPoint ++ "latest: " ++ showLatestSlot latestSlot ++ block
+      lastPoint ++ "latest: " ++ showLatestSlot latestSlot ++ block ++ showIdling
       where
         more = if offersMoreThanK then "+" else " "
 
@@ -396,12 +396,15 @@ terseGDDEvent = \case
 
         lastPoint =
           "point: " ++
-          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.lastPoint fragment)) ++
+          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.headPoint fragment)) ++
           ", "
 
         showLatestSlot = \case
           Origin -> "unknown"
           NotOrigin (SlotNo slot) -> show slot
+
+        showIdling | idling = ", idling"
+                   | otherwise = ""
 
     window sgen loeHead =
       show winStart ++ " -> " ++ show winEnd
