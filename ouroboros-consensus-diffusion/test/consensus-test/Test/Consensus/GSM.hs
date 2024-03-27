@@ -70,8 +70,7 @@ semantics ::
 semantics vars cmd = pre $ case cmd of
     Disconnect peer -> do
         atomically $ do
-            modifyTVar varCandidates $ Map.delete peer
-            modifyTVar varIdlers     $ Set.delete peer
+            modifyTVar varStates $ Map.delete peer
         pure Unit
     ExtendSelection sdel -> do
         atomically $ do
@@ -81,25 +80,24 @@ semantics vars cmd = pre $ case cmd of
     ModifyCandidate peer bdel -> do
         atomically $ do
 
-            modifyTVar varIdlers $ Set.delete peer
-
-            v <- (Map.! peer) <$> readTVar varCandidates
-            Candidate b <- readTVar v
-            writeTVar v $! Candidate (b + bdel)
+            v <- (Map.! peer) <$> readTVar varStates
+            Candidate b <- psCandidate <$> readTVar v
+            writeTVar v $! PeerState (Candidate (b + bdel)) (Idling False)
 
         pure Unit
     NewCandidate peer bdel -> do
         atomically $ do
             Selection b _s <- readTVar varSelection
-            v <- newTVar $! Candidate (b + bdel)
-            modifyTVar varCandidates $ Map.insert peer v
+            v <- newTVar $! PeerState (Candidate (b + bdel)) (Idling False)
+            modifyTVar varStates $ Map.insert peer v
         pure Unit
     ReadJudgment -> do
         fmap ReadThisJudgment $ atomically $ readTVar varJudgment
     ReadMarker -> do
         fmap ReadThisMarker $ atomically $ readTVar varMarker
-    StartIdling peer -> do
-        atomically $ modifyTVar varIdlers $ Set.insert peer
+    StartIdling peer -> atomically $ do
+        v <- (Map.! peer) <$> readTVar varStates
+        modifyTVar v $ \ (PeerState c _) -> PeerState c (Idling True)
         pure Unit
     TimePasses dur -> do
         SI.threadDelay (0.1 * fromIntegral dur)
@@ -107,8 +105,7 @@ semantics vars cmd = pre $ case cmd of
   where
     Vars
         varSelection
-        varCandidates
-        varIdlers
+        varStates
         varJudgment
         varMarker
         varEvents
@@ -172,8 +169,7 @@ prop_sequential1 ::
 prop_sequential1 j0 cmds = runSimQC $ do
     -- these variables are part of the 'GSM.GsmView'
     varSelection  <- newTVarIO (mSelection $ initModel j0)
-    varCandidates <- newTVarIO Map.empty
-    varIdlers     <- newTVarIO Set.empty
+    varStates     <- newTVarIO Map.empty
     varJudgment   <- newTVarIO j0
     varMarker     <- newTVarIO (toMarker j0)
 
@@ -186,8 +182,7 @@ prop_sequential1 j0 cmds = runSimQC $ do
     let vars =
             Vars
                 varSelection
-                varCandidates
-                varIdlers
+                varStates
                 varJudgment
                 varMarker
                 varEvents
@@ -200,15 +195,15 @@ prop_sequential1 j0 cmds = runSimQC $ do
     let gsm = GSM.realGsmEntryPoints (id, tracer) GSM.GsmView {
             GSM.antiThunderingHerd = Nothing
           ,
-            GSM.candidateOverSelection = candidateOverSelection
+            GSM.candidateOverSelection = \ s (PeerState c _) -> candidateOverSelection s c
+          ,
+            GSM.peerIsIdle = isIdling
           ,
             GSM.durationUntilTooOld = Just durationUntilTooOld
           ,
             GSM.equivalent = (==)   -- unsound, but harmless in this test
           ,
-            GSM.getChainSyncCandidates = readTVar varCandidates
-          ,
-            GSM.getChainSyncIdlers = readTVar varIdlers
+            GSM.getChainSyncStates = readTVar varStates
           ,
             GSM.getCurrentSelection = readTVar varSelection
           ,
@@ -386,16 +381,24 @@ push (EvRecorder var) ev = do
     now <- SI.getMonotonicTime
     atomically $ modifyTVar var $ (:) (now, ev)
 
+isIdling :: PeerState -> Bool
+isIdling (PeerState {psIdling = Idling i}) = i
+
 -----
 
 -- | merely a tidy bundle of arguments
 data Vars m = Vars
     (StrictTVar m Selection)
-    (StrictTVar m (Map.Map UpstreamPeer (StrictTVar m Candidate)))
-    (StrictTVar m (Set.Set UpstreamPeer))
+    (StrictTVar m (Map.Map UpstreamPeer (StrictTVar m PeerState)))
     (StrictTVar m LedgerStateJudgement)
     (StrictTVar m MarkerState)
     (EvRecorder m)
+
+newtype Idling = Idling Bool
+  deriving (Eq, Ord, Show)
+
+data PeerState = PeerState { psCandidate :: !Candidate, psIdling :: !Idling }
+  deriving (Eq, Ord, Show)
 
 -----
 

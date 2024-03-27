@@ -23,8 +23,6 @@ import           Data.Foldable (toList)
 import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Set (Set)
-import qualified Data.Set as Set
 import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
@@ -115,16 +113,11 @@ data PeerResources m blk =
 data PeerSimulatorResources m blk =
   PeerSimulatorResources {
     -- | Resources for individual peers.
-    psrPeers      :: Map PeerId (PeerResources m blk),
+    psrPeers   :: Map PeerId (PeerResources m blk),
 
-    -- | The shared candidate fragments used by ChainDB, ChainSync and BlockFetch.
-    psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m (AF.AnchoredFragment (Header blk)))),
-
-    -- | Handlers to interact with the ChainSync client of each peer.
+    -- | Handles to interact with the ChainSync client of each peer.
     -- See 'ChainSyncClientHandle' for more details.
-    psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock)),
-
-    psrIdling :: StrictTVar m (Set PeerId)
+    psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock))
   }
 
 -- | Create 'ChainSyncServerHandlers' for our default implementation using 'NodeState'.
@@ -242,7 +235,5 @@ makePeerSimulatorResources tracer blockTree peers = do
   resources <- for peers $ \ peerId -> do
     peerResources <- makePeerResources tracer blockTree peerId
     pure (peerId, peerResources)
-  psrCandidates <- uncheckedNewTVarM mempty
   psrHandles <- uncheckedNewTVarM mempty
-  psrIdling <- uncheckedNewTVarM Set.empty
-  pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources, psrHandles, psrIdling}
+  pure PeerSimulatorResources {psrPeers = Map.fromList $ toList resources, psrHandles}

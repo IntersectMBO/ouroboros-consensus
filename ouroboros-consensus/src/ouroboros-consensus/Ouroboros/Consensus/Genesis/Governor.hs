@@ -45,9 +45,7 @@ import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
-import           Data.Set (Set)
-import qualified Data.Set as Set
+import           Data.Maybe (maybeToList)
 import           Data.Void
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
@@ -64,7 +62,7 @@ import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientHandle (..))
+                     (ChainSyncClientHandle (..), ChainSyncState (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB,
                      triggerChainSelectionAsync)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -183,7 +181,8 @@ data DensityBounds blk =
     lowerBound      :: Word64,
     upperBound      :: Word64,
     hasBlockAfter   :: Bool,
-    latestSlot      :: WithOrigin SlotNo
+    latestSlot      :: WithOrigin SlotNo,
+    idling          :: Bool
   }
 
 -- | @densityDisconnect cfg immutableLedgerSt candidateSuffixes theirTips loeFrag@
@@ -211,21 +210,22 @@ densityDisconnect ::
      )
   => GenesisWindow
   -> SecurityParam
+  -> Map peer (ChainSyncState blk)
   -> Map peer (AnchoredFragment (Header blk))
-  -> Set peer
-  -> Map peer (WithOrigin SlotNo)
   -> AnchoredFragment (Header blk)
   -> ([peer], Map peer (DensityBounds blk))
-densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caughtUpPeers latestSlots loeFrag =
+densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixes loeFrag =
   (losingPeers, densityBounds)
   where
     densityBounds = Map.fromList $ do
       (peer, fragment) <- Map.toList competingFrags
+      state <- maybeToList (states Map.!? peer)
+      -- Skip peers that haven't sent any headers yet.
+      -- They should be disconnected by timeouts instead.
+      latestSlot <- maybeToList (csLatestSlot state)
       let candidateSuffix = candidateSuffixes Map.! peer
 
-          caughtUp = Set.member peer caughtUpPeers
-
-          latestSlot = fromMaybe Origin (latestSlots Map.!? peer)
+          idling = csIdling state
 
           -- Is there a block after the end of the Genesis window?
           hasBlockAfter = case max (AF.headSlot candidateSuffix) latestSlot of
@@ -240,8 +240,9 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
           --
           -- If the peer has more headers that it hasn't sent yet, each slot between the latest header we know of and
           -- the end of the Genesis window could contain a block, so the upper bound for the total number of blocks in
+          -- the window is the sum of the known blocks and that number of remaining slots.
           potentialSlots =
-            if caughtUp || hasBlockAfter then 0
+            if idling || hasBlockAfter then 0
             else sgen - totalBlockCount
 
           -- The number of blocks within the Genesis window we know with certainty
@@ -257,7 +258,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) candidateSuffixes caugh
           -- If not, it is not qualified to compete by density (yet).
           offersMoreThanK = totalBlockCount > k
 
-      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot})
+      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 
     losingPeers = nubOrd $ do
       (peer0 , DensityBounds {fragment = frag0, upperBound = ub0}) <- Map.toList densityBounds
@@ -316,23 +317,18 @@ updateLoEFragGenesis ::
      )
   => TopLevelConfig blk
   -> Tracer m (TraceGDDEvent peer blk)
-  -> STM m (Map peer (AnchoredFragment (Header blk)))
   -> STM m (Map peer (ChainSyncClientHandle m blk))
-  -> STM m (Set peer)
   -> UpdateLoEFrag m blk
-updateLoEFragGenesis cfg tracer getCandidates getHandles getCaughtUpPeers =
+updateLoEFragGenesis cfg tracer getHandles =
   UpdateLoEFrag $ \ curChain immutableLedgerSt -> do
-    (candidates, candidateSuffixes, handles, caughtUpPeers, latestSlots, loeFrag) <- atomically $ do
-      candidates <- getCandidates
+    (states, candidates, candidateSuffixes, handles, loeFrag) <- atomically $ do
       handles <- getHandles
-      caughtUpPeers <- getCaughtUpPeers
+      states <- traverse (readTVar . cschState) handles
       let
+        candidates = csCandidate <$> states
         (loeFrag, candidateSuffixes) =
           sharedCandidatePrefix curChain candidates
-      latestSlots <-
-        flip Map.traverseWithKey candidateSuffixes $ \peer _ ->
-          cschLatestSlot (handles Map.! peer)
-      pure (candidates, candidateSuffixes, handles, caughtUpPeers, latestSlots, loeFrag)
+      pure (states, candidates, candidateSuffixes, handles, loeFrag)
 
     let msgen :: Maybe GenesisWindow
         -- This could also use 'runWithCachedSummary' if deemed desirable.
@@ -360,7 +356,7 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles getCaughtUpPeers =
     whenJust msgen $ \sgen -> do
       let
         (losingPeers, bounds) =
-          densityDisconnect sgen (configSecurityParam cfg) candidateSuffixes caughtUpPeers latestSlots loeFrag
+          densityDisconnect sgen (configSecurityParam cfg) states candidateSuffixes loeFrag
         loeHead = AF.headAnchor loeFrag
 
       traceWith tracer TraceGDDEvent {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}

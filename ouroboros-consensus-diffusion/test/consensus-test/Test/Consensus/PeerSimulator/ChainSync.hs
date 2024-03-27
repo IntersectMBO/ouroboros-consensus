@@ -18,21 +18,20 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Map.Strict (Map)
 import           Data.Proxy (Proxy (..))
-import           Data.Set (Set)
 import           Network.TypedProtocol.Codec (AnyMessage)
-import           Ouroboros.Consensus.Block (Header, Point, SlotNo, WithOrigin)
+import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     ChainSyncClientHandle, ChainSyncLoPBucketConfig, Consensus,
-                     Their, bracketChainSyncClient, chainSyncClient)
+                     ChainSyncClientHandle, ChainSyncLoPBucketConfig,
+                     ChainSyncStateView (..), Consensus, bracketChainSyncClient,
+                     chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), STM, StrictTVar)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+                     IOLike, MonadCatch (try), StrictTVar)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
@@ -72,27 +71,14 @@ basicChainSyncClient ::
   Tracer m (TraceEvent blk) ->
   TopLevelConfig blk ->
   ChainDbView m blk ->
-  StrictTVar m (AnchoredFragment (Header blk)) ->
-  -- ^ A TVar containing the fragment of headers for that peer, kept up to date
-  -- by the ChainSync client.
-  (m (), m ()) ->
-  -- ^ Two monadic actions called when reaching and leaving @StIdle@.
-  (m (), m (), m ()) ->
-  -- ^ Three monadic actions called to pause and resume the LoP bucket and to
-  -- add a token to the LoP bucket.
-  (Their (Tip blk) -> STM m ()) ->
-  (WithOrigin SlotNo -> STM m ()) ->
+  ChainSyncStateView m blk ->
   Consensus ChainSyncClientPipelined blk m
 basicChainSyncClient
     peerId
     tracer
     cfg
     chainDbView
-    varCandidate
-    (startIdling, stopIdling)
-    (pauseLoPBucket, resumeLoPBucket, grantLoPToken)
-    setTheirTip
-    setLatestSlot =
+    csState =
   chainSyncClient
     CSClient.ConfigEnv {
         CSClient.mkPipelineDecision0     = pipelineDecisionLowHighMark 10 20
@@ -105,14 +91,10 @@ basicChainSyncClient
         CSClient.version             = maxBound
       , CSClient.controlMessageSTM   = return Continue
       , CSClient.headerMetricsTracer = nullTracer
-      , CSClient.varCandidate
-      , CSClient.startIdling
-      , CSClient.stopIdling
-      , CSClient.pauseLoPBucket
-      , CSClient.resumeLoPBucket
-      , CSClient.grantLoPToken
-      , CSClient.setTheirTip
-      , CSClient.setLatestSlot
+      , CSClient.setCandidate = csvSetCandidate csState
+      , CSClient.idling = csvIdling csState
+      , CSClient.loPBucket = csvLoPBucket csState
+      , CSClient.setLatestSlot = csvSetLatestSlot csState
       }
   where
     dummyHeaderInFutureCheck ::
@@ -141,12 +123,10 @@ runChainSyncClient ::
   -- ^ Configuration for the LoP bucket.
   StateViewTracers blk m ->
   -- ^ Tracers used to record information for the future 'StateView'.
-  StrictTVar m (Map PeerId (StrictTVar m (AnchoredFragment (Header blk)))) ->
-  -- ^ A TVar containing a map of fragments of headers for each peer. This
-  -- function will (via 'bracketChainSyncClient') register and de-register a
-  -- TVar for the fragment of the peer.
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
-  StrictTVar m (Set PeerId) ->
+  -- ^ A TVar containing a map of states for each peer. This
+  -- function will (via 'bracketChainSyncClient') register and de-register a
+  -- TVar for the state of the peer.
   Channel m (AnyMessage (ChainSync (Header blk) (Point blk) (Tip blk))) ->
   m ()
 runChainSyncClient
@@ -157,20 +137,16 @@ runChainSyncClient
   chainSyncTimeouts
   lopBucketConfig
   StateViewTracers {svtPeerSimulatorResultsTracer}
-  varCandidates
   varHandles
-  varIdling
   channel = do
     bracketChainSyncClient
       nullTracer
       chainDbView
-      varCandidates
-      varIdling
       varHandles
       peerId
       (maxBound :: NodeToNodeVersion)
       lopBucketConfig
-      $ \varCandidate idleManagers lopBucket setTip setLatestSlot -> do
+      $ \csState -> do
         res <-
           try $
             runPipelinedPeerWithLimits
@@ -185,11 +161,7 @@ runChainSyncClient
                   tracer
                   cfg
                   chainDbView
-                  varCandidate
-                  idleManagers
-                  lopBucket
-                  setTip
-                  setLatestSlot))
+                  csState))
         case res of
           Right res' -> traceWith svtPeerSimulatorResultsTracer $
             PeerSimulatorResult peerId $ SomeChainSyncClientResult $ Right res'

@@ -134,14 +134,10 @@ oneBenchRun
                 CSClient.version             = maxBound :: NodeToNodeVersion
               , CSClient.controlMessageSTM   = return Continue
               , CSClient.headerMetricsTracer = nullTracer
-              , CSClient.varCandidate
-              , CSClient.startIdling = pure ()
-              , CSClient.stopIdling  = pure ()
-              , CSClient.pauseLoPBucket = pure ()
-              , CSClient.resumeLoPBucket = pure ()
-              , CSClient.grantLoPToken = pure ()
-              , CSClient.setTheirTip         = \_ -> pure ()
+              , CSClient.setCandidate        = writeTVar varCandidate
               , CSClient.setLatestSlot       = \_ -> pure ()
+              , CSClient.idling              = CSClient.noIdling
+              , CSClient.loPBucket           = CSClient.noLoPBucket
               }
 
     server :: ChainSyncServer H (Point B) (Tip B) IO ()

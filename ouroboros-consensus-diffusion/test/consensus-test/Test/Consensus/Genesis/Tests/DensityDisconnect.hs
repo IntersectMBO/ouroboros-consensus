@@ -9,7 +9,7 @@ import           Control.Monad.Class.MonadTime.SI (Time (..))
 import           Data.Bifunctor (second)
 import           Data.Foldable (minimumBy, toList)
 import           Data.Function (on)
-import           Data.Functor (($>))
+import           Data.Functor (($>), (<&>))
 import           Data.List (intercalate)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -21,7 +21,8 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Genesis.Governor (densityDisconnect,
                      sharedCandidatePrefix)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientException (DensityTooLow))
+                     (ChainSyncClientException (DensityTooLow),
+                     ChainSyncState (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HasHeader, Tip (TipGenesis),
@@ -118,12 +119,19 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
 prop_densityDisconnectStatic :: Property
 prop_densityDisconnectStatic =
   forAll gen $ \ StaticCandidates {k, sgen, suffixes, loeFrag} -> do
-    let (disconnect, _) = densityDisconnect sgen k suffixes mempty mempty loeFrag
+    let (disconnect, _) = densityDisconnect sgen k (mkState <$> suffixes) suffixes loeFrag
     counterexample "it should disconnect some node" (not (null disconnect))
       .&&.
      counterexample "it should not disconnect the honest peer"
        (HonestPeer `notElem` disconnect)
   where
+    mkState :: AnchoredFragment (Header TestBlock) -> ChainSyncState TestBlock
+    mkState frag =
+      ChainSyncState {
+        csCandidate = frag,
+        csLatestSlot = Just (AF.headSlot frag),
+        csIdling = False
+      }
     gen = do
       gt <- genChains (QC.choose (1, 4))
       elements (staticCandidates gt)
@@ -259,8 +267,16 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers} =
       let
           curChain = selection (value (firstBranch ps))
           next = updatePeer movePeer target ps
-          (loeFrag, suffixes) = sharedCandidatePrefix curChain (candidate . value <$> toMap next)
-          disconnect = fst (densityDisconnect sgen k suffixes mempty mempty loeFrag)
+          candidates = candidate . value <$> toMap next
+          states =
+            candidates <&> \ csCandidate ->
+              ChainSyncState {
+                csCandidate,
+                csIdling = False,
+                csLatestSlot = Just (AF.headSlot csCandidate)
+              }
+          (loeFrag, suffixes) = sharedCandidatePrefix curChain candidates
+          disconnect = fst (densityDisconnect sgen k states suffixes loeFrag)
       either (pure . second (result loeFrag)) step (updatePeers sgen target disconnect next)
       where
         result f final = EvolvingPeers {k, sgen, peers = final, loeFrag = f}
@@ -324,8 +340,8 @@ prop_densityDisconnectTriggersChainSel =
           exnCorrect = case exceptionsByComponent ChainSyncClient stateView of
             [exn] ->
               case fromException exn of
-                Just (DensityTooLow) -> True
-                _                    -> False
+                Just DensityTooLow -> True
+                _                  -> False
             _ -> False
           tipPointCorrect = Just (getTrunkTip gtBlockTree) == svTipBlock
         in exnCorrect && tipPointCorrect
