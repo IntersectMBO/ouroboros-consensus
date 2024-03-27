@@ -14,7 +14,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Args (
   , defaultArgs
   , ensureValidateAll
   , putInSSD
-  , updateSnapshotInterval
+  , updateSnapshotPolicyArgs
   , updateTracer
   ) where
 
@@ -212,13 +212,12 @@ updateTracer trcr args =
     , cdbsArgs     = (cdbsArgs args)     { cdbsTracer            =                           trcr }
   }
 
-updateSnapshotInterval ::
-  SnapshotInterval
+updateSnapshotPolicyArgs ::
+  SnapshotPolicyArgs
   -> ChainDbArgs f m blk
   -> ChainDbArgs f m blk
-updateSnapshotInterval si args =
-  let spa = LedgerDB.lgrSnapshotPolicyArgs $ cdbLgrDbArgs args
-  in args { cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrSnapshotPolicyArgs = spa { spaInterval = si } } }
+updateSnapshotPolicyArgs spa args =
+  args { cdbLgrDbArgs = (cdbLgrDbArgs args) { LedgerDB.lgrSnapshotPolicyArgs = spa } }
 
 putInSSD ::
      (Bool, Bool)

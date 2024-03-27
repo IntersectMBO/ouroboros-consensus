@@ -47,6 +47,7 @@ module Ouroboros.Consensus.Node (
   , ProtocolInfo (..)
   , RunNode
   , RunNodeArgs (..)
+  , SnapshotPolicyArgs (..)
   , Tracers
   , Tracers' (..)
     -- * Internal helpers
@@ -877,10 +878,10 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
     -- ^ A custom timeout for ChainSync.
 
     -- Ad hoc values to replace default ChainDB configurations
-  , srnSnapshotInterval :: SnapshotInterval
-  , srnLdbFlavorArgs    :: Complete LedgerDbFlavorArgs m
-  , srnPutInSSD         :: (Bool, Bool)
-  , srnSSDPath          :: FilePath
+  , srnSnapshotPolicyArgs :: SnapshotPolicyArgs
+  , srnLdbFlavorArgs      :: Complete LedgerDbFlavorArgs m
+  , srnPutInSSD           :: (Bool, Bool)
+  , srnSSDPath            :: FilePath
   }
 
 -- | Conveniently packaged 'LowLevelRunNodeArgs' arguments from a standard
@@ -964,7 +965,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
          Incomplete ChainDbArgs IO blk
       -> Incomplete ChainDbArgs IO blk
     updateChainDbDefaults =
-          ChainDB.updateSnapshotInterval srnSnapshotInterval
+          ChainDB.updateSnapshotPolicyArgs srnSnapshotPolicyArgs
         . ChainDB.updateTracer srnTraceChainDB
         . (if   not srnChainDbValidateOverride
            then id

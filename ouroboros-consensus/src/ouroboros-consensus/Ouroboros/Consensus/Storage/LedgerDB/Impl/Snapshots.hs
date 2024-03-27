@@ -186,14 +186,23 @@ trimSnapshots ::
   -> SnapshotPolicy
   -> m [DiskSnapshot]
 trimSnapshots tracer fss SnapshotPolicy{onDiskNumSnapshots} = do
-    -- We only trim temporary snapshots
-    diskSnapshots <- filter diskSnapshotIsTemporary . concat <$> mapM listSnapshots fss
-    -- The snapshot are most recent first, so we can simply drop from the
-    -- front to get the snapshots that are "too" old.
-    forM (drop (fromIntegral onDiskNumSnapshots) diskSnapshots) $ \snapshot -> do
-      mapM_ (flip deleteSnapshot snapshot) fss
-      traceWith tracer $ DeletedSnapshot snapshot
-      return snapshot
+    let getdiskSnapshotsPerFS fs = do
+          -- We only trim temporary snapshots
+          ss <- filter diskSnapshotIsTemporary <$> listSnapshots fs
+          -- The snapshot are most recent first, so we can simply drop from the
+          -- front to get the snapshots that are "too" old.
+          let ssTooOld = drop (fromIntegral onDiskNumSnapshots) ss
+          pure (fs, ssTooOld)
+    diskSnapshotsPerFS <-  mapM getdiskSnapshotsPerFS fss
+    deletedSnapshots <- forM diskSnapshotsPerFS $ \(fs, ss) -> do
+      mapM
+        (\s -> do
+          deleteSnapshot fs s
+          traceWith tracer $ DeletedSnapshot s
+          pure s
+        )
+        ss
+    pure $ concat deletedSnapshots
 
 snapshotToDirName :: DiskSnapshot -> String
 snapshotToDirName DiskSnapshot { dsNumber, dsSuffix } =
