@@ -155,6 +155,7 @@ library
     Ouroboros.Consensus.MiniProtocol.BlockFetch.Server
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
+    Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
     Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
     Ouroboros.Consensus.MiniProtocol.ChainSync.Server
     Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server

@@ -65,6 +65,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , ChainSyncStateView (..)
   , chainSyncStateFor
   , noIdling
+  , noJumping
   , noLoPBucket
   , viewChainSyncState
   ) where
@@ -109,7 +110,7 @@ import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
 import           Ouroboros.Consensus.Util.IOLike
 import qualified Ouroboros.Consensus.Util.LeakyBucket as LeakyBucket
 import           Ouroboros.Consensus.Util.STM (Fingerprint, Watcher (..),
-                     WithFingerprint (..), withWatcher)
+                     WithFingerprint (..), blockUntilJust, withWatcher)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (..))
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -251,6 +252,31 @@ noLoPBucket =
     , lbGrantToken = pure ()
     }
 
+-- | Hooks for ChainSync jumping.
+data Jumping m blk = Jumping
+  { -- | Get the next instruction to execute, which can be either to run normal
+    -- ChainSync or to jump to a given point. This is a blocking operation.
+    jgNextInstruction :: !(m (Instruction blk)),
+    -- | Hook that runs on the result of a jump.
+    jgOnJumpResult    :: !(JumpResult blk -> m ())
+  }
+  deriving stock (Generic)
+
+deriving anyclass instance
+  ( IOLike m,
+    HasHeader blk,
+    NoThunks (Header blk)
+  ) =>
+  NoThunks (Jumping m blk)
+
+-- | No-op implementation, for tests.
+noJumping :: (Applicative m) => Jumping m blk
+noJumping =
+  Jumping
+    { jgNextInstruction = pure RunNormally
+    , jgOnJumpResult = const $ pure ()
+    }
+
 -- | Interface for the ChainSync client to its state allocated by
 -- 'bracketChainSyncClient'.
 data ChainSyncStateView m blk = ChainSyncStateView {
@@ -265,6 +291,9 @@ data ChainSyncStateView m blk = ChainSyncStateView {
 
     -- | Control the 'LeakyBucket' for the LoP.
   , csvLoPBucket     :: !(LoPBucket m)
+
+    -- | The 'Jumping' for the peer.
+  , csvJumping       :: !(Jumping m blk)
   }
   deriving stock (Generic)
 
@@ -273,6 +302,7 @@ deriving anyclass instance (
   HasHeader blk,
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncStateView m blk)
+
 bracketChainSyncClient ::
     ( IOLike m
     , Ord peer
@@ -318,6 +348,10 @@ bracketChainSyncClient
               , lbResume = LeakyBucket.setPaused lopBucket False
               , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
               }
+            , csvJumping = Jumping {
+                jgNextInstruction = atomically $ blockUntilJust $ csNextInstruction <$> readTVar varState
+              , jgOnJumpResult = atomically . modifyTVar varState . \ jr s -> s {csJumpResult = Just $! jr}
+              }
             }
   where
     acquireHandle = do
@@ -325,6 +359,8 @@ bracketChainSyncClient
             csCandidate = AF.Empty AF.AnchorGenesis
           , csLatestSlot = Nothing
           , csIdling = False
+          , csNextInstruction = Nothing
+          , csJumpResult = Nothing
           }
         tid <- myThreadId
         atomically $ do
@@ -668,6 +704,7 @@ data DynamicEnv m blk = DynamicEnv {
   , setLatestSlot       :: WithOrigin SlotNo -> STM m ()
   , idling              :: Idling m
   , loPBucket           :: LoPBucket m
+  , jumping             :: Jumping m blk
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -1048,6 +1085,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
       , idling
       , loPBucket
       , setCandidate
+      , jumping
       } = dynEnv
 
     InternalEnv {
@@ -1071,7 +1109,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     -- intersection before calling 'getLedgerView'.
     --
     -- This is also the place where we checked whether we're asked to terminate
-    -- by the mux layer.
+    -- by the mux layer or to wait and perform a CSJ jump.
     nextStep ::
         MkPipelineDecision
      -> Nat n
@@ -1079,11 +1117,34 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
      -> Stateful m blk
             (KnownIntersectionState blk)
             (ClientPipelinedStIdle n)
-    nextStep mkPipelineDecision n theirTip = Stateful $ \kis -> do
+    nextStep mkPipelineDecision n theirTip = Stateful $ \kis ->
         atomically controlMessageSTM >>= \case
             -- We have been asked to terminate the client
             Terminate -> terminateAfterDrain n $ AskedToTerminate
             _continue -> do
+                -- Wait until next jumping instruction, which can be either to
+                -- jump or to run normal ChainSync.
+                traceWith tracer TraceJumpingWaitingForNextInstruction
+                instruction <- jgNextInstruction jumping
+                traceWith tracer $ TraceJumpingInstructionIs instruction
+                case instruction of
+                    JumpTo point ->
+                          continueWithState kis
+                        $ drainThePipe n
+                        $ offerJump mkPipelineDecision point
+                    RunNormally ->
+                          continueWithState kis
+                        $ nextStep' mkPipelineDecision n theirTip
+
+    nextStep' ::
+        MkPipelineDecision
+     -> Nat n
+     -> Their (Tip blk)
+     -> Stateful m blk
+            (KnownIntersectionState blk)
+            (ClientPipelinedStIdle n)
+    nextStep' mkPipelineDecision n theirTip =
+        Stateful $ \kis ->
                 atomically (intersectsWithCurrentChain kis) >>= \case
                     -- Our chain (tip) didn't change or if it did, it still
                     -- intersects with the candidate fragment, so we can
@@ -1113,6 +1174,32 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                           intEnv
                           (kBestBlockNo kis)
                           NoMoreIntersection
+
+    offerJump ::
+        MkPipelineDecision
+     -> Point blk
+     -> Stateful m blk
+            (KnownIntersectionState blk)
+            (ClientPipelinedStIdle Z)
+    offerJump mkPipelineDecision dynamoTipPt = Stateful $ \kis -> do
+        traceWith tracer $ TraceJump $ Left dynamoTipPt
+        -- TODO offer more points?
+        return $
+            SendMsgFindIntersect [dynamoTipPt] $
+            ClientPipelinedStIntersect {
+              recvMsgIntersectFound = \pt theirTip ->
+                  if
+                    | pt == dynamoTipPt -> do
+                        jgOnJumpResult jumping $ AcceptedJump dynamoTipPt
+                        traceWith tracer $ TraceJump $ Right $ AcceptedJump dynamoTipPt
+                        continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
+                    | otherwise         -> throwIO InvalidJumpResponse
+            ,
+              recvMsgIntersectNotFound = \theirTip -> do
+                  jgOnJumpResult jumping $ RejectedJump dynamoTipPt
+                  traceWith tracer $ TraceJump $ Right $ RejectedJump dynamoTipPt
+                  continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
+            }
 
     requestNext ::
         KnownIntersectionState blk
@@ -1909,6 +1996,9 @@ data ChainSyncClientException =
   |
     EmptyBucket
     -- ^ The peer lost its race against the bucket.
+  |
+    InvalidJumpResponse
+    -- ^ When the peer responded incorrectly to a jump request.
   | DensityTooLow
     -- ^ The peer has been deemed unworthy by the GDD
 
@@ -1941,6 +2031,9 @@ instance Eq ChainSyncClientException where
         EmptyBucket EmptyBucket
       = True
     (==)
+        InvalidJumpResponse InvalidJumpResponse
+      = True
+    (==)
         DensityTooLow DensityTooLow
       = True
 
@@ -1949,6 +2042,7 @@ instance Eq ChainSyncClientException where
     InvalidBlock{}                   == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
     EmptyBucket                      == _ = False
+    InvalidJumpResponse              == _ = False
     DensityTooLow                    == _ = False
 
 instance Exception ChainSyncClientException
@@ -1991,6 +2085,12 @@ data TraceChainSyncClientEvent blk =
     -- ^ Whether we added a token to the LoP bucket of the peer. Also carries
     -- the considered header and the best block number known prior to this
     -- header.
+  |
+    TraceJump (Either (Point blk) (JumpResult blk))
+    -- ^ ChainSync Jumping to a point. Either an offering of a point, or a
+    -- reply.
+  | TraceJumpingWaitingForNextInstruction
+  | TraceJumpingInstructionIs (Instruction blk)
 
 deriving instance
   ( BlockSupportsProtocol blk

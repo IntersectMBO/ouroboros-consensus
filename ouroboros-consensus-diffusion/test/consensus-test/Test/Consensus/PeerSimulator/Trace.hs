@@ -28,6 +28,8 @@ import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
                      TraceGDDEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
+                     (JumpResult (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -330,6 +332,16 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
       trace $ "Threw an exception: " ++ show exception
     TraceTermination result ->
       trace $ "Terminated with result: " ++ show result
+    TraceJump (Left point) ->
+      trace $ "Requesting jump to " ++ tersePoint point
+    TraceJump (Right (AcceptedJump point)) ->
+      trace $ "Accepted jump to " ++ tersePoint point
+    TraceJump (Right (RejectedJump point)) ->
+      trace $ "Rejected jump to " ++ tersePoint point
+    TraceJumpingWaitingForNextInstruction ->
+      trace "Waiting for next instruction from the jumping governor"
+    TraceJumpingInstructionIs instr ->
+      trace $ "Received instruction: " ++ show instr
   where
     trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
 

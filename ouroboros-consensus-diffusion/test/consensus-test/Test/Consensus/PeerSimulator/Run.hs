@@ -29,6 +29,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..),
                      viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
@@ -305,7 +306,8 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
           s <- viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
           c <- getCurrentChain
           return (s, [AF.anchorToHash $ AF.headAnchor c])
-
+    void $ forkLinkedThread registry "Jumping governor" $
+      Jumping.runGovernor (psrHandles resources)
     stateTracer <- mkStateTracer
     BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates
     for_ loEVar $ \ var ->

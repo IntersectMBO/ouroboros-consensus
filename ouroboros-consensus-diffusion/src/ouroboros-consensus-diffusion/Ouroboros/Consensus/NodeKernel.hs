@@ -64,6 +64,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      viewChainSyncState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.Run
@@ -236,6 +237,9 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
           TooOld      -> GSM.enterPreSyncing gsm
           YoungEnough -> GSM.enterCaughtUp   gsm
+
+    void $ forkLinkedThread registry "NodeKernel.jumpingGovernor" $
+      Jumping.runGovernor varChainSyncHandles
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
                             blockForgingController st (LazySTM.takeTMVar blockForgingVar)

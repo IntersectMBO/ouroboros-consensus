@@ -409,7 +409,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client ChainSyncStateView {csvSetCandidate, csvSetLatestSlot, csvIdling, csvLoPBucket} =
+        client ChainSyncStateView {csvSetCandidate, csvSetLatestSlot, csvIdling, csvLoPBucket, csvJumping} =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -427,6 +427,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , idling = csvIdling
                 , loPBucket = csvLoPBucket
                 , setLatestSlot = csvSetLatestSlot
+                , jumping = csvJumping
                 }
 
     -- Set up the server
