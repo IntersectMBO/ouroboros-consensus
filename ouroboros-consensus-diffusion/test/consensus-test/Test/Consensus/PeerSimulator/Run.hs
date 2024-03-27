@@ -12,7 +12,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import           Control.Monad (foldM)
+import           Control.Monad (foldM, forM)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
@@ -26,7 +26,8 @@ import           Ouroboros.Consensus.Genesis.Governor (runGdd,
                      updateLoEFragGenesis)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (CSJConfig (..), CSJEnabledConfig (..), ChainDbView,
                      ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
                      ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..),
                      viewChainSyncState)
@@ -56,7 +57,7 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (BlockFetchTimeout,
-                     GenesisTest (GenesisTest), GenesisTestFull,
+                     CSJParams (..), GenesisTest (GenesisTest), GenesisTestFull,
                      LoPBucketParams (..), NodeState, PeersSchedule,
                      peersStatesRelative)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
@@ -93,13 +94,17 @@ data SchedulerConfig =
     -- governor (GDD).
     , scEnableLoE                :: Bool
 
-    -- | Whether to enable to LoP. The parameters of the LoP come from
+    -- | Whether to enable the LoP. The parameters of the LoP come from
     -- 'GenesisTest'.
     , scEnableLoP                :: Bool
 
     -- | Enable node downtime if this is 'Just', using the value as minimum tick
     -- duration to trigger it.
     , scDowntime                 :: Maybe DiffTime
+
+    -- | Whether to enable ChainSync Jumping. The parameters come from
+    -- 'GenesisTest'.
+    , scEnableCSJ                :: Bool
   }
 
 -- | Default scheduler config
@@ -113,7 +118,8 @@ defaultSchedulerConfig =
     scTraceState = False,
     scEnableLoE = False,
     scEnableLoP = False,
-    scDowntime = Nothing
+    scDowntime = Nothing,
+    scEnableCSJ = False
   }
 
 -- | Enable debug tracing during a scheduler test.
@@ -139,6 +145,7 @@ startChainSyncConnectionThread ::
   ChainSyncResources m blk ->
   ChainSyncTimeout ->
   ChainSyncLoPBucketConfig ->
+  CSJConfig ->
   StateViewTracers blk m ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   m (Thread m (), Thread m ())
@@ -152,6 +159,7 @@ startChainSyncConnectionThread
   ChainSyncResources {csrServer}
   chainSyncTimeouts_
   chainSyncLoPBucketConfig
+  csjConfig
   tracers
   varHandles
   = do
@@ -159,7 +167,7 @@ startChainSyncConnectionThread
     clientThread <-
       forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
         bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varHandles clientChannel
+          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig csjConfig tracers varHandles clientChannel
     serverThread <-
       forkLinkedThread registry ("ChainSyncServer" <> condense srPeerId) $
         ChainSync.runChainSyncServer tracer srPeerId tracers csrServer serverChannel
@@ -238,10 +246,20 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
     traceNewTick :: m ()
     traceNewTick = do
       currentChain <- atomically $ ChainDB.getCurrentChain (lnChainDb node)
-      csState <- atomically $ do
+      (csState, jumpingStates) <- atomically $ do
          m <- readTVar varHandles
-         traverse (readTVar . CSClient.cschState) (m Map.!? pid)
-      traceWith tracer $ TraceNewTick number duration (Peer pid state) currentChain (CSClient.csCandidate <$> csState)
+         csState <- traverse (readTVar . CSClient.cschState) (m Map.!? pid)
+         jumpingStates <- forM (Map.toList m) $ \(peer, h) -> do
+           st <- readTVar (CSClient.cschJumping h)
+           pure (peer, st)
+         pure (csState, jumpingStates)
+      traceWith tracer $ TraceNewTick
+        number
+        duration
+        (Peer pid state)
+        currentChain
+        (CSClient.csCandidate <$> csState)
+        jumpingStates
 
 -- | Iterate over a 'PointSchedule', sending each tick to the associated peer in turn,
 -- giving each peer a chunk of computation time, sequentially, until it satisfies the
@@ -329,6 +347,7 @@ startNode schedulerConfig genesisTest interval = do
           prChainSync
           chainSyncTimeouts_
           chainSyncLoPBucketConfig
+          csjConfig
           lnStateViewTracers
           handles
         BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry pid
@@ -373,6 +392,7 @@ startNode schedulerConfig genesisTest interval = do
         gtChainSyncTimeouts
       , gtBlockFetchTimeouts
       , gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
+      , gtCSJParams = CSJParams { csjpJumpSize }
       } = genesisTest
 
     chainSyncTimeouts_ =
@@ -384,6 +404,11 @@ startNode schedulerConfig genesisTest interval = do
       if scEnableLoP schedulerConfig
         then ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig { csbcCapacity = lbpCapacity, csbcRate = lbpRate }
         else ChainSyncLoPBucketDisabled
+
+    csjConfig =
+      if scEnableCSJ schedulerConfig
+        then CSJEnabled CSJEnabledConfig { csjcJumpSize = csjpJumpSize }
+        else CSJDisabled
 
     blockFetchTimeouts_ =
       if scEnableBlockFetchTimeouts schedulerConfig

@@ -22,10 +22,10 @@ import           Ouroboros.Consensus.Block (Header, Point)
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
-                     ChainSyncClientHandle, ChainSyncLoPBucketConfig,
-                     ChainSyncStateView (..), Consensus, bracketChainSyncClient,
-                     chainSyncClient)
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (CSJConfig (..), ChainDbView, ChainSyncClientHandle,
+                     ChainSyncLoPBucketConfig, ChainSyncStateView (..),
+                     Consensus, bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Util (ShowProxy)
@@ -94,6 +94,7 @@ basicChainSyncClient
       , CSClient.idling = csvIdling csState
       , CSClient.loPBucket = csvLoPBucket csState
       , CSClient.setLatestSlot = csvSetLatestSlot csState
+      , CSClient.jumping = csvJumping csState
       }
   where
     dummyHeaderInFutureCheck ::
@@ -120,6 +121,8 @@ runChainSyncClient ::
   -- ^ Timeouts for this client.
   ChainSyncLoPBucketConfig ->
   -- ^ Configuration for the LoP bucket.
+  CSJConfig ->
+  -- ^ Configuration for ChainSync Jumping
   StateViewTracers blk m ->
   -- ^ Tracers used to record information for the future 'StateView'.
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
@@ -135,6 +138,7 @@ runChainSyncClient
   peerId
   chainSyncTimeouts
   lopBucketConfig
+  csjConfig
   StateViewTracers {svtPeerSimulatorResultsTracer}
   varHandles
   channel = do
@@ -145,6 +149,7 @@ runChainSyncClient
       peerId
       (maxBound :: NodeToNodeVersion)
       lopBucketConfig
+      csjConfig
       $ \csState -> do
         res <-
           try $

@@ -150,7 +150,11 @@ prop_serveAdversarialBranches = forAllGenesisTest
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
     (defaultSchedulerConfig
-       {scTraceState = False, scTrace = False, scEnableLoE = True})
+       { scTraceState = False
+       , scTrace = False
+       , scEnableLoE = True
+       , scEnableCSJ = True
+       })
 
     -- We cannot shrink by removing points from the adversarial schedules.
     -- Otherwise, the immutable tip could get stuck because a peer doesn't
@@ -195,6 +199,7 @@ prop_leashingAttackStalling =
       { scTrace = False
       , scEnableLoE = True
       , scEnableLoP = True
+      , scEnableCSJ = True
       }
 
     shrinkPeerSchedules
@@ -253,6 +258,7 @@ prop_leashingAttackTimeLimited =
       , scEnableLoE = True
       , scEnableLoP = True
       , scEnableBlockFetchTimeouts = False
+      , scEnableCSJ = True
       }
 
     shrinkPeerSchedules

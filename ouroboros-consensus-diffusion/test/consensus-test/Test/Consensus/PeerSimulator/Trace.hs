@@ -1,8 +1,9 @@
-{-# LANGUAGE LambdaCase         #-}
-{-# LANGUAGE NamedFieldPuns     #-}
-{-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE TypeApplications   #-}
-{-# LANGUAGE TypeFamilies       #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE LambdaCase                #-}
+{-# LANGUAGE NamedFieldPuns            #-}
+{-# LANGUAGE NumericUnderscores        #-}
+{-# LANGUAGE TypeApplications          #-}
+{-# LANGUAGE TypeFamilies              #-}
 
 -- | Helpers for tracing used by the peer simulator.
 module Test.Consensus.PeerSimulator.Trace (
@@ -28,6 +29,11 @@ import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
                      TraceGDDEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
+                     (Instruction (..), JumpResult (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
+                     (ChainSyncJumpingJumperState (..),
+                     ChainSyncJumpingState (..), JumpInfo (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -36,14 +42,15 @@ import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadMonotonicTime,
                      Time (Time), atomically, getMonotonicTime, readTVarIO,
                      uncheckedNewTVarM, writeTVar)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
+                     headPoint)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (SlotNo (SlotNo), Tip, castPoint)
 import           Test.Consensus.PointSchedule (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (Peer), PeerId)
 import           Test.Util.TersePrinting (terseAnchor, terseBlock,
                      terseFragment, terseHFragment, terseHeader, tersePoint,
-                     terseRealPoint, terseTip)
+                     terseRealPoint, terseTip, terseWithOrigin)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
@@ -56,9 +63,15 @@ data TraceSchedulerEvent blk
   | -- | Right after running the last tick of the schedule.
     TraceEndOfTime
   | -- | When beginning a new tick. Contains the tick number (counting from
-    -- @0@), the duration of the tick, the states, the current chain and the
-    -- candidate fragment.
-    TraceNewTick Int DiffTime (Peer (NodeState blk)) (AnchoredFragment (Header blk)) (Maybe (AnchoredFragment (Header blk)))
+    -- @0@), the duration of the tick, the states, the current chain, the
+    -- candidate fragment, and the jumping states.
+    forall m. TraceNewTick
+      Int
+      DiffTime
+      (Peer (NodeState blk))
+      (AnchoredFragment (Header blk))
+      (Maybe (AnchoredFragment (Header blk)))
+      [(PeerId, ChainSyncJumpingState m blk)]
   | TraceNodeShutdownStart (WithOrigin SlotNo)
   | TraceNodeShutdownComplete
   | TraceNodeStartupStart
@@ -181,7 +194,7 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
         [ "╶──────────────────────────────────────────────────────────────────────────────╴",
           "Finished running point schedule"
         ]
-    TraceNewTick number duration (Peer pid state) currentChain mCandidateFrag -> do
+    TraceNewTick number duration (Peer pid state) currentChain mCandidateFrag jumpingStates -> do
       time <- getMonotonicTime
       setTickTime time
       traceLinesWith tracer0
@@ -193,9 +206,9 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
           "  peer: " ++ condense pid,
           "  state: " ++ condense state,
           "  current chain: " ++ terseHFragment currentChain,
-          "  candidate fragment: " ++ maybe "Nothing" terseHFragment mCandidateFrag
+          "  candidate fragment: " ++ maybe "Nothing" terseHFragment mCandidateFrag,
+          "  jumping states:\n" ++ traceJumpingStates jumpingStates
         ]
-
     TraceNodeShutdownStart immTip ->
       traceWith tracer0 ("  Initiating node shutdown with immutable tip at slot " ++ condense immTip)
     TraceNodeShutdownComplete ->
@@ -204,6 +217,27 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
       traceWith tracer0 "  Initiating node startup"
     TraceNodeStartupComplete selection ->
       traceWith tracer0 ("  Node startup complete with selection " ++ terseHFragment selection)
+
+  where
+    traceJumpingStates :: [(PeerId, ChainSyncJumpingState m TestBlock)] -> String
+    traceJumpingStates = unlines . map (\(pid, state) -> "    " ++ condense pid ++ ": " ++ traceJumpingState state)
+
+    traceJumpingState :: ChainSyncJumpingState m TestBlock -> String
+    traceJumpingState = \case
+      Dynamo lastJump -> "Dynamo " ++ terseWithOrigin show lastJump
+      Objector badPoint ->
+        "Objector " ++ tersePoint (castPoint badPoint)
+      Disengaged -> "Disengaged"
+      Jumper _ goodPoint st ->
+        "Jumper _ " ++ tersePoint (castPoint goodPoint) ++ " " ++ traceJumperState st
+
+    traceJumperState :: ChainSyncJumpingJumperState TestBlock -> String
+    traceJumperState = \case
+      Happy -> "Happy"
+      FoundIntersection point ->
+        "(FoundIntersection " ++ (tersePoint $ castPoint point) ++ ")"
+      LookingForIntersection ji ->
+        "(LookingForIntersection " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji) ++ ")"
 
 traceScheduledServerHandlerEventTestBlockWith ::
   Tracer m String ->
@@ -343,8 +377,23 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
       trace $ "Threw an exception: " ++ show exception
     TraceTermination result ->
       trace $ "Terminated with result: " ++ show result
+    TraceOfferJump point ->
+      trace $ "Offering jump to " ++ tersePoint point
+    TraceJumpResult (AcceptedJump ji) ->
+      trace $ "Accepted jump to " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
+    TraceJumpResult (RejectedJump ji) ->
+      trace $ "Rejected jump to " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
+    TraceJumpingWaitingForNextInstruction ->
+      trace "Waiting for next instruction from the jumping governor"
+    TraceJumpingInstructionIs instr ->
+      trace $ "Received instruction: " ++ showInstr instr
   where
     trace = traceUnitWith tracer ("ChainSyncClient " ++ condense pid)
+
+    showInstr :: Instruction TestBlock -> String
+    showInstr = \case
+      JumpTo ji -> "JumpTo " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
+      RunNormally -> "RunNormally"
 
 traceChainSyncClientTerminationEventTestBlockWith ::
   PeerId ->
