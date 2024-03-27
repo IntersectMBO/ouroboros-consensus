@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts      #-}
@@ -38,6 +39,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String (IsString (fromString))
 import           GHC.Generics (Generic)
+import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Util.Condense (Condense (..),
                      CondenseList (..), PaddingDirection (..),
                      condenseListWithPadding)
@@ -47,7 +49,7 @@ data PeerId =
   HonestPeer
   |
   PeerId String
-  deriving (Eq, Generic, Show, Ord)
+  deriving (Eq, Generic, Show, Ord, NoThunks)
 
 instance IsString PeerId where
   fromString "honest" = HonestPeer

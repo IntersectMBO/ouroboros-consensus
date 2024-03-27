@@ -81,7 +81,7 @@ import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncLoPBucketConfig (..))
+                     (CSJConfig (..), ChainSyncLoPBucketConfig (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -251,6 +251,9 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
 
       -- | See 'CsClient.ChainSyncLoPBucketConfig'
     , llrnChainSyncLoPBucketConfig :: ChainSyncLoPBucketConfig
+
+      -- | See 'CsClient.CSJConfig'
+    , llrnCSJConfig :: CSJConfig
 
       -- | How to run the data diffusion applications
       --
@@ -519,6 +522,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           NTN.byteLimits
           llrnChainSyncTimeout
           llrnChainSyncLoPBucketConfig
+          llrnCSJConfig
           (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
           (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
@@ -857,6 +861,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       { llrnBfcSalt
       , llrnChainSyncTimeout = fromMaybe Diffusion.defaultChainSyncTimeout srnChainSyncTimeout
       , llrnChainSyncLoPBucketConfig = ChainSyncLoPBucketDisabled
+      , llrnCSJConfig = CSJDisabled
       , llrnCustomiseHardForkBlockchainTimeArgs = id
       , llrnGsmAntiThunderingHerd
       , llrnKeepAliveRng

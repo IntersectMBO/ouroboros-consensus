@@ -22,6 +22,7 @@
 -- who then activates the next tick's peer.
 module Test.Consensus.PointSchedule (
     BlockFetchTimeout (..)
+  , CSJParams (..)
   , ForecastRange (..)
   , GenesisTest (..)
   , GenesisTestFull
@@ -444,6 +445,11 @@ data LoPBucketParams = LoPBucketParams {
   lbpRate     :: Rational
   }
 
+data CSJParams = CSJParams {
+    csjpJumpSize :: SlotNo
+  }
+  deriving Show
+
 -- | Similar to 'ChainSyncTimeout' for BlockFetch. Only the states in which the
 -- server has agency are specified. REVIEW: Should it be upstreamed to
 -- ouroboros-network-protocols?
@@ -462,6 +468,7 @@ data GenesisTest blk schedule = GenesisTest
     gtChainSyncTimeouts  :: ChainSyncTimeout,
     gtBlockFetchTimeouts :: BlockFetchTimeout,
     gtLoPBucketParams    :: LoPBucketParams,
+    gtCSJParams          :: CSJParams,
     gtSlotLength         :: SlotLength,
     gtSchedule           :: schedule
   }
@@ -482,6 +489,7 @@ prettyGenesisTest prettySchedule genesisTest =
   , "  gtForecastRange: " ++ show (unForecastRange gtForecastRange)
   , "  gtDelay: " ++ show delta
   , "  gtSlotLength: " ++ show gtSlotLength
+  , "  gtCSJParams: " ++ show gtCSJParams
   , "  gtChainSyncTimeouts: "
   , "    canAwait = " ++ show canAwaitTimeout
   , "    intersect = " ++ show intersectTimeout
@@ -510,6 +518,7 @@ prettyGenesisTest prettySchedule genesisTest =
       , gtBlockFetchTimeouts = BlockFetchTimeout{busyTimeout, streamingTimeout}
       , gtLoPBucketParams = LoPBucketParams{lbpCapacity, lbpRate}
       , gtSlotLength
+      , gtCSJParams
       , gtSchedule
       } = genesisTest
 
