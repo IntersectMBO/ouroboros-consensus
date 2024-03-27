@@ -365,6 +365,6 @@ updateLoEFragGenesis cfg tracer getCandidates getHandles getCaughtUpPeers =
 
       traceWith tracer TraceGDDEvent {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
 
-      for_ losingPeers $ \peer -> cschKill (handles Map.! peer)
+      for_ losingPeers $ \peer -> cschGDDKill (handles Map.! peer)
 
     pure loeFrag

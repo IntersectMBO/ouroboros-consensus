@@ -179,8 +179,8 @@ newtype Our a = Our { unOur :: a }
   deriving newtype (Show, NoThunks)
 
 data ChainSyncClientHandle m blk = ChainSyncClientHandle {
-    -- | Disconnects from the peer
-    cschKill       :: !(m ())
+    -- | Disconnects from the peer when the GDD considers it adversarial
+    cschGDDKill    :: !(m ())
     -- | Latest tip announced by the remote peer
   , cschTheirTip   :: !(STM m (Maybe (Tip blk)))
     -- | Slot of the last received header
@@ -260,7 +260,7 @@ bracketChainSyncClient
         atomically $ do
           modifyTVar varCandidates $ Map.insert peer varCandidate
           modifyTVar varHandles $ Map.insert peer ChainSyncClientHandle {
-              cschKill     = killThread tid
+              cschGDDKill = throwTo tid DensityTooLow
             , cschTheirTip = readTVar varTheirTip
             , cschLatestSlot = readTVar varFutureHeader
             }
@@ -1865,6 +1865,8 @@ data ChainSyncClientException =
   |
     EmptyBucket
     -- ^ The peer lost its race against the bucket.
+  | DensityTooLow
+    -- ^ The peer has been deemed unworthy by the GDD
 
 deriving instance Show ChainSyncClientException
 
@@ -1894,12 +1896,16 @@ instance Eq ChainSyncClientException where
     (==)
         EmptyBucket EmptyBucket
       = True
+    (==)
+        DensityTooLow DensityTooLow
+      = True
 
     HeaderError{}                    == _ = False
     InvalidIntersection{}            == _ = False
     InvalidBlock{}                   == _ = False
     InFutureHeaderExceedsClockSkew{} == _ = False
     EmptyBucket                      == _ = False
+    DensityTooLow                    == _ = False
 
 instance Exception ChainSyncClientException
 
