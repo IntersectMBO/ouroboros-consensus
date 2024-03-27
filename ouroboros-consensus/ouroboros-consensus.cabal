@@ -396,7 +396,6 @@ library unstable-consensus-testlib
     , strict-checked-vars
     , strict-sop-core
     , tasty
-    , tasty-expected-failure
     , tasty-golden
     , tasty-hunit
     , tasty-quickcheck
