@@ -7,8 +7,6 @@ module Cardano.Tools.DBSynthesizer.Run (
   ) where
 
 import           Cardano.Api.Any (displayError)
-import           Cardano.Api.Protocol.Types (protocolInfo, ProtocolInfoArgs(ProtocolInfoArgsCardano), BlockType(CardanoBlockType))
-import           Cardano.Node.Protocol
 import           Cardano.Node.Protocol.Cardano (mkConsensusProtocolCardano)
 import           Cardano.Node.Types
 import           Cardano.Tools.DBSynthesizer.Forging
@@ -48,14 +46,14 @@ initialize ::
        NodeFilePaths
     -> NodeCredentials
     -> DBSynthesizerOptions
-    -> IO (Either String (DBSynthesizerConfig, SomeConsensusProtocol))
+    -> IO (Either String (DBSynthesizerConfig, CardanoProtocolParams StandardCrypto))
 initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
     relativeToConfig :: (FilePath -> FilePath) <-
         (</>) . takeDirectory <$> makeAbsolute nfpConfig
     runExceptT $ do
         conf    <- initConf relativeToConfig
         proto   <- initProtocol relativeToConfig conf
-        pure    (conf, SomeConsensusProtocol CardanoBlockType $ ProtocolInfoArgsCardano proto)
+        pure    (conf, proto)
   where
     initConf :: (FilePath -> FilePath) -> ExceptT String IO DBSynthesizerConfig
     initConf relativeToConfig = do
@@ -113,8 +111,8 @@ eitherParseJson v = case fromJSON v of
     Error err -> Left err
     Success a -> Right a
 
-synthesize :: DBSynthesizerConfig -> SomeConsensusProtocol -> IO ForgeResult
-synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (SomeConsensusProtocol _ runP) =
+synthesize :: DBSynthesizerConfig -> (CardanoProtocolParams StandardCrypto) -> IO ForgeResult
+synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
     withRegistry $ \registry -> do
         let
             epochSize   = sgEpochLength confShelleyGenesis
@@ -153,7 +151,7 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
         , pInfoInitLedger
         }
       , blockForging
-      ) = protocolInfo runP
+      ) = protocolInfoCardano runP
 
 preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()
 preOpenChainDB mode db =
