@@ -2,6 +2,7 @@
 
 The following artifacts influence and/or describe the Consensus implementation.
 
+<!-- xrefcheck: ignore link -->
 * [Technical reports](../for-developers/TechnicalReports)
 * From the IOG researchers:
     * [Ouroboros BFT][ouroboros-bft]
