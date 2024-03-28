@@ -55,6 +55,7 @@ import           Data.Bifunctor
 import           Data.Foldable (toList)
 import           Data.Kind (Type)
 import           Data.Proxy
+import           Data.Reflection (Given)
 import           Data.SOP.Counting
 import           Data.SOP.NonEmpty
 import           Data.SOP.Sing (SListI, lengthSList)
@@ -475,7 +476,7 @@ instance Serialise EraEnd where
         return EraUnbounded
       _ -> EraEnd <$> decode
 
-instance Serialise EraSummary where
+instance Given EraParamsFormat => Serialise EraSummary where
   encode EraSummary{..} = mconcat [
         encodeListLen 3
       , encode eraStart
@@ -490,7 +491,7 @@ instance Serialise EraSummary where
       eraParams <- decode
       return EraSummary{..}
 
-instance SListI xs => Serialise (Summary xs) where
+instance (SListI xs, Given EraParamsFormat) => Serialise (Summary xs) where
   encode (Summary eraSummaries) = encode (toList eraSummaries)
 
   -- @xs@ is the list of eras that is statically known to us; the server has a

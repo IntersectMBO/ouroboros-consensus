@@ -625,9 +625,7 @@ instance c ~ MockCryptoCompatByron
       , (1, WithVersion
               <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
               <*> genQueryAnytimeResultConway)
-      , (1, WithVersion
-              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
-              <*> genQueryHardForkResult)
+      , (1, genQueryHardForkResult)
       ]
     where
       injByron   (SomeResult q r) = SomeResult (QueryIfCurrentByron   q) (QueryResultSuccess r)
@@ -696,8 +694,15 @@ instance c ~ MockCryptoCompatByron
       genQueryAnytimeResultConway =
           SomeResult (QueryAnytimeConway GetEraStart) <$> arbitrary
 
-      genQueryHardForkResult :: Gen (SomeResult (CardanoBlock c))
+      genQueryHardForkResult ::
+           Gen (WithVersion (HardForkNodeToClientVersion (CardanoEras c))
+                            (SomeResult (CardanoBlock c)))
       genQueryHardForkResult = oneof
-          [ SomeResult (QueryHardFork GetInterpreter) <$> arbitrary
-          , SomeResult (QueryHardFork GetCurrentEra)  <$> arbitrary
+          [ WithVersion
+              <$> genWithHardForkSpecificNodeToClientVersion
+                    (>= HardForkSpecificNodeToClientVersion3)
+              <*> (SomeResult (QueryHardFork GetInterpreter) <$> arbitrary)
+          , WithVersion
+              <$> (getHardForkEnabledNodeToClientVersion <$> arbitrary)
+              <*> (SomeResult (QueryHardFork GetCurrentEra) <$> arbitrary)
           ]
