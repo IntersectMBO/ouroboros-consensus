@@ -19,6 +19,8 @@ module Ouroboros.Consensus.TypeFamilyWrappers (
   , WrapLedgerEvent (..)
   , WrapLedgerUpdate (..)
   , WrapLedgerWarning (..)
+  , WrapTentativeHeaderState (..)
+  , WrapTentativeHeaderView (..)
   , WrapTipInfo (..)
     -- * Protocol based
   , WrapCanBeLeader (..)
@@ -63,6 +65,8 @@ newtype WrapLedgerEvent           blk = WrapLedgerEvent           { unwrapLedger
 newtype WrapLedgerErr             blk = WrapLedgerErr             { unwrapLedgerErr             :: LedgerError                 blk  }
 newtype WrapLedgerUpdate          blk = WrapLedgerUpdate          { unwrapLedgerUpdate          :: LedgerUpdate                blk  }
 newtype WrapLedgerWarning         blk = WrapLedgerWarning         { unwrapLedgerWarning         :: LedgerWarning               blk  }
+newtype WrapTentativeHeaderState  blk = WrapTentativeHeaderState  { unwrapTentativeHeaderState  :: TentativeHeaderState        blk  }
+newtype WrapTentativeHeaderView   blk = WrapTentativeHeaderView   { unwrapTentativeHeaderView   :: TentativeHeaderView         blk  }
 newtype WrapTipInfo               blk = WrapTipInfo               { unwrapTipInfo               :: TipInfo                     blk  }
 
 -- | A data family wrapper for @'Validated' . 'GenTx'@
@@ -100,16 +104,19 @@ newtype WrapNodeToClientVersion blk = WrapNodeToClientVersion { unwrapNodeToClie
   Instances
 -------------------------------------------------------------------------------}
 
-deriving instance Eq (ApplyTxErr               blk ) => Eq (WrapApplyTxErr     blk)
-deriving instance Eq (GenTxId                  blk ) => Eq (WrapGenTxId        blk)
-deriving instance Eq (LedgerError              blk ) => Eq (WrapLedgerErr      blk)
-deriving instance Eq (LedgerUpdate             blk ) => Eq (WrapLedgerUpdate   blk)
-deriving instance Eq (LedgerWarning            blk ) => Eq (WrapLedgerWarning  blk)
-deriving instance Eq (OtherHeaderEnvelopeError blk ) => Eq (WrapEnvelopeErr    blk)
-deriving instance Eq (TipInfo                  blk ) => Eq (WrapTipInfo        blk)
-deriving instance Eq (Validated (GenTx         blk)) => Eq (WrapValidatedGenTx blk)
+deriving instance Eq (ApplyTxErr               blk ) => Eq (WrapApplyTxErr           blk)
+deriving instance Eq (GenTxId                  blk ) => Eq (WrapGenTxId              blk)
+deriving instance Eq (LedgerError              blk ) => Eq (WrapLedgerErr            blk)
+deriving instance Eq (LedgerUpdate             blk ) => Eq (WrapLedgerUpdate         blk)
+deriving instance Eq (LedgerWarning            blk ) => Eq (WrapLedgerWarning        blk)
+deriving instance Eq (OtherHeaderEnvelopeError blk ) => Eq (WrapEnvelopeErr          blk)
+deriving instance Eq (TentativeHeaderState     blk ) => Eq (WrapTentativeHeaderState blk)
+deriving instance Eq (TentativeHeaderView      blk ) => Eq (WrapTentativeHeaderView  blk)
+deriving instance Eq (TipInfo                  blk ) => Eq (WrapTipInfo              blk)
+deriving instance Eq (Validated (GenTx         blk)) => Eq (WrapValidatedGenTx       blk)
 
-deriving instance Ord (GenTxId blk) => Ord (WrapGenTxId blk)
+deriving instance Ord (GenTxId blk)              => Ord (WrapGenTxId              blk)
+deriving instance Ord (TentativeHeaderState blk) => Ord (WrapTentativeHeaderState blk)
 
 deriving instance Show (ApplyTxErr               blk ) => Show (WrapApplyTxErr            blk)
 deriving instance Show (CannotForge              blk ) => Show (WrapCannotForge           blk)
@@ -120,14 +127,17 @@ deriving instance Show (LedgerError              blk ) => Show (WrapLedgerErr   
 deriving instance Show (LedgerUpdate             blk ) => Show (WrapLedgerUpdate          blk)
 deriving instance Show (LedgerWarning            blk ) => Show (WrapLedgerWarning         blk)
 deriving instance Show (OtherHeaderEnvelopeError blk ) => Show (WrapEnvelopeErr           blk)
+deriving instance Show (TentativeHeaderState     blk ) => Show (WrapTentativeHeaderState  blk)
+deriving instance Show (TentativeHeaderView      blk ) => Show (WrapTentativeHeaderView   blk)
 deriving instance Show (TipInfo                  blk ) => Show (WrapTipInfo               blk)
-deriving instance Show (Validated (GenTx         blk)) => Show (WrapValidatedGenTx blk)
+deriving instance Show (Validated (GenTx         blk)) => Show (WrapValidatedGenTx        blk)
 
-deriving instance NoThunks (GenTxId                  blk ) => NoThunks (WrapGenTxId         blk)
-deriving instance NoThunks (LedgerError              blk ) => NoThunks (WrapLedgerErr       blk)
-deriving instance NoThunks (OtherHeaderEnvelopeError blk ) => NoThunks (WrapEnvelopeErr     blk)
-deriving instance NoThunks (TipInfo                  blk ) => NoThunks (WrapTipInfo         blk)
-deriving instance NoThunks (Validated (GenTx         blk)) => NoThunks (WrapValidatedGenTx  blk)
+deriving instance NoThunks (GenTxId                  blk ) => NoThunks (WrapGenTxId              blk)
+deriving instance NoThunks (LedgerError              blk ) => NoThunks (WrapLedgerErr            blk)
+deriving instance NoThunks (OtherHeaderEnvelopeError blk ) => NoThunks (WrapEnvelopeErr          blk)
+deriving instance NoThunks (TentativeHeaderState     blk ) => NoThunks (WrapTentativeHeaderState blk)
+deriving instance NoThunks (TipInfo                  blk ) => NoThunks (WrapTipInfo              blk)
+deriving instance NoThunks (Validated (GenTx         blk)) => NoThunks (WrapValidatedGenTx       blk)
 
 {-------------------------------------------------------------------------------
   .. consensus based

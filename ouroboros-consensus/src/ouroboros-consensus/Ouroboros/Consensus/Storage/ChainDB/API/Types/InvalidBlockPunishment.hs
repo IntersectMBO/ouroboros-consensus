@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 
 -- | How to punish the sender of a invalid block
 module Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (
@@ -12,19 +13,16 @@ module Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment (
     -- * combinators
   , Invalidity (..)
   , branch
+  , mkForDiffusionPipelining
   , mkPunishThisThread
-  , mkUnlessImproved
   , noPunishment
   ) where
 
 import qualified Control.Exception as Exn
-import           Control.Monad (join, unless)
-import           Data.Functor ((<&>))
+import           Control.Monad (join)
 import           NoThunks.Class
-import           Ouroboros.Consensus.Block.Abstract (BlockProtocol)
-import           Ouroboros.Consensus.Protocol.Abstract (SelectView)
+import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.TentativeState
 
 -- | Is the added block itself invalid, or is its prefix invalid?
 data Invalidity =
@@ -63,27 +61,27 @@ data PeerSentAnInvalidBlockException = PeerSentAnInvalidBlockException
 
 instance Exn.Exception PeerSentAnInvalidBlockException
 
--- | Allocate a stateful punishment that performs the given punishment unless
--- the given header is better than the previous invocation
-mkUnlessImproved :: forall proxy m blk.
+-- | Allocate a stateful punishment that performs the given punishment if the
+-- given header does not satisfy the diffusion pipelining criterion.
+mkForDiffusionPipelining :: forall m blk.
      ( IOLike m
-     , NoThunks (SelectView (BlockProtocol blk))
-     , Ord      (SelectView (BlockProtocol blk))
+     , BlockSupportsDiffusionPipelining blk
      )
-  => proxy blk
-  -> STM m (   SelectView (BlockProtocol blk)
+  => STM m (   BlockConfig blk
+            -> Header blk
             -> InvalidBlockPunishment m
             -> InvalidBlockPunishment m
            )
-mkUnlessImproved _prx = do
-    var <- newTVar (NoLastInvalidTentative :: TentativeState blk)
-    pure $ \new punish -> InvalidBlockPunishment $ \invalidity -> join $ atomically $ do
-      io <- readTVar var <&> \case
-        NoLastInvalidTentative   -> pure ()
-        LastInvalidTentative old -> unless (new > old) $ do
-          enact punish invalidity
-      writeTVar var $ LastInvalidTentative new
-      pure io
+mkForDiffusionPipelining = do
+    var <- newTVar (initialTentativeHeaderState (Proxy @blk))
+    pure $ \cfg new punish -> InvalidBlockPunishment $ \invalidity -> join $ atomically $ do
+      mbSt' <- updateTentativeHeaderState cfg new <$> readTVar var
+      case mbSt' of
+        Just st' -> do
+          writeTVar var st'
+          pure $ pure ()
+        Nothing  ->
+          pure $ enact punish invalidity
 
 -- | Punish according to the 'Invalidity'
 branch :: (Invalidity -> InvalidBlockPunishment m) -> InvalidBlockPunishment m

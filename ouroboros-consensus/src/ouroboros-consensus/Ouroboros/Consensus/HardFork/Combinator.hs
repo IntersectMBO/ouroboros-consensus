@@ -32,6 +32,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection as
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query as X
 import           Ouroboros.Consensus.HardFork.Combinator.Mempool as X
 import           Ouroboros.Consensus.HardFork.Combinator.Node as X ()
+import           Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining as X ()
 import           Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage as X ()
 import           Ouroboros.Consensus.HardFork.Combinator.Node.Metrics as X ()
 import           Ouroboros.Consensus.HardFork.Combinator.PartialConfig as X

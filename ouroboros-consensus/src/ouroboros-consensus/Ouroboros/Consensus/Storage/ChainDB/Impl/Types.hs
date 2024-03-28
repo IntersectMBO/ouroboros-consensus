@@ -105,7 +105,6 @@ import           Ouroboros.Consensus.Util.Enclose (Enclosing, Enclosing' (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.STM (WithFingerprint)
-import           Ouroboros.Consensus.Util.TentativeState (TentativeState (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 
 -- | All the serialisation related constraints needed by the ChainDB.
@@ -203,7 +202,7 @@ data ChainDbEnv m blk = CDB
     --
     -- Note that the \"immutable\" block will /never/ be /more/ than @k@
     -- blocks back, as opposed to the anchor point of 'cdbChain'.
-  , cdbTentativeState  :: !(StrictTVar m (TentativeState blk))
+  , cdbTentativeState  :: !(StrictTVar m (TentativeHeaderState blk))
   , cdbTentativeHeader :: !(StrictTVar m (StrictMaybe (Header blk)))
     -- ^ The tentative header, for diffusion pipelining.
     --
@@ -283,7 +282,7 @@ data ChainDbEnv m blk = CDB
 -- | We include @blk@ in 'showTypeOf' because it helps resolving type families
 -- (but avoid including @m@ because we cannot impose @Typeable m@ as a
 -- constraint and still have it work with the simulator)
-instance (IOLike m, LedgerSupportsProtocol blk)
+instance (IOLike m, LedgerSupportsProtocol blk, BlockSupportsDiffusionPipelining blk)
       => NoThunks (ChainDbEnv m blk) where
     showTypeOf _ = "ChainDbEnv m " ++ show (typeRep (Proxy @blk))
 

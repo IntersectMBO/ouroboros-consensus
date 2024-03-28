@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingVia          #-}
 {-# LANGUAGE EmptyCase            #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
@@ -5,6 +6,7 @@
 {-# LANGUAGE NamedFieldPuns       #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE TypeOperators        #-}
@@ -54,6 +56,11 @@ instance NodeInitStorage (SimpleBlock SimpleMockCrypto ext) where
 
 instance BlockSupportsMetrics (SimpleBlock c ext) where
   isSelfIssued = isSelfIssuedConstUnknown
+
+deriving via SelectViewDiffusionPipelining (SimpleBlock c ext) instance
+  ( BlockSupportsProtocol (SimpleBlock c ext)
+  , Show (SelectView (BlockProtocol (SimpleBlock c ext)))
+  ) => BlockSupportsDiffusionPipelining (SimpleBlock c ext)
 
 instance ( LedgerSupportsProtocol      (SimpleBlock SimpleMockCrypto ext)
          , Show (CannotForge           (SimpleBlock SimpleMockCrypto ext))

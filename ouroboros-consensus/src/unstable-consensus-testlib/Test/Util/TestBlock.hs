@@ -895,6 +895,12 @@ instance (Serialise ptype, PayloadSemantics ptype) => SerialiseDiskConstraints (
 
 -----
 
+deriving via SelectViewDiffusionPipelining (TestBlockWith ptype)
+  instance BlockSupportsProtocol (TestBlockWith ptype)
+  => BlockSupportsDiffusionPipelining (TestBlockWith ptype)
+
+-----
+
 -- | Given a point to a chain of length L, generates a 'SwitchFork' that
 -- switches to the "next" block of length L, where "next" is determined by
 -- interpreting the "forks" in the 'TestHash' as binary digits (except the

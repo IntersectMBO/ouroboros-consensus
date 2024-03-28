@@ -18,6 +18,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Basics
 import           Ouroboros.Consensus.HardFork.Combinator.Forging ()
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.CommonProtocolParams ()
 import           Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection ()
+import           Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining ()
 import           Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage ()
 import           Ouroboros.Consensus.HardFork.Combinator.Node.Metrics ()
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation
