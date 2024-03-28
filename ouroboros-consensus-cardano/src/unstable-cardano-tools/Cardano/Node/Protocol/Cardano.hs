@@ -33,8 +33,10 @@ import           Ouroboros.Consensus.Cardano
 import qualified Ouroboros.Consensus.Cardano as Consensus
 import qualified Ouroboros.Consensus.Cardano.CanHardFork as Consensus
 import           Ouroboros.Consensus.Cardano.Condense ()
+import           Ouroboros.Consensus.Cardano.Node (CardanoProtocolParams)
 import           Ouroboros.Consensus.Config (emptyCheckpointsMap)
 import           Ouroboros.Consensus.HardFork.Combinator.Condense ()
+import           Ouroboros.Consensus.Shelley.Crypto (StandardCrypto)
 import qualified Ouroboros.Consensus.Mempool as Mempool
 
 
@@ -62,7 +64,20 @@ mkSomeConsensusProtocolCardano ::
   -> NodeHardForkProtocolConfiguration
   -> Maybe ProtocolFilepaths
   -> ExceptT CardanoProtocolInstantiationError IO SomeConsensusProtocol
-mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
+mkSomeConsensusProtocolCardano nbpc nspc napc ncpc nhpc files = do
+    params <- mkConsensusProtocolCardano nbpc nspc napc ncpc nhpc files
+    return $!
+      SomeConsensusProtocol CardanoBlockType $ ProtocolInfoArgsCardano params
+
+mkConsensusProtocolCardano ::
+     NodeByronProtocolConfiguration
+  -> NodeShelleyProtocolConfiguration
+  -> NodeAlonzoProtocolConfiguration
+  -> NodeConwayProtocolConfiguration
+  -> NodeHardForkProtocolConfiguration
+  -> Maybe ProtocolFilepaths
+  -> ExceptT CardanoProtocolInstantiationError IO (CardanoProtocolParams StandardCrypto)
+mkConsensusProtocolCardano NodeByronProtocolConfiguration {
                              npcByronGenesisFile,
                              npcByronGenesisFileHash,
                              npcByronReqNetworkMagic,
@@ -141,164 +156,162 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
     --TODO: all these protocol versions below are confusing and unnecessary.
     -- It could and should all be automated and these config entries eliminated.
     return $!
-      SomeConsensusProtocol CardanoBlockType $ ProtocolInfoArgsCardano
-        (CardanoProtocolParams
-          Consensus.ProtocolParamsByron {
-            byronGenesis = byronGenesis,
-            byronPbftSignatureThreshold =
-              PBftSignatureThreshold <$> npcByronPbftSignatureThresh,
+      CardanoProtocolParams
+        Consensus.ProtocolParamsByron {
+          byronGenesis = byronGenesis,
+          byronPbftSignatureThreshold =
+            PBftSignatureThreshold <$> npcByronPbftSignatureThresh,
 
-            -- This is /not/ the Byron protocol version. It is the protocol
-            -- version that this node will use in blocks it creates. It is used
-            -- in the Byron update mechanism to signal that this block-producing
-            -- node is ready to move to the new protocol. For example, when the
-            -- protocol version (according to the ledger state) is 0, this setting
-            -- should be 1 when we are ready to move. Similarly when the current
-            -- protocol version is 1, this should be 2 to indicate we are ready
-            -- to move into the Shelley era.
-            byronProtocolVersion =
-              Byron.ProtocolVersion
-                npcByronSupportedProtocolVersionMajor
-                npcByronSupportedProtocolVersionMinor
-                npcByronSupportedProtocolVersionAlt,
-            byronSoftwareVersion =
-              Byron.SoftwareVersion
-                npcByronApplicationName
-                npcByronApplicationVersion,
-            byronLeaderCredentials =
-              byronLeaderCredentials,
-            byronMaxTxCapacityOverrides =
-              Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-          Consensus.ProtocolParamsShelleyBased {
-            shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
-                                              shelleyGenesisHash,
-            shelleyBasedLeaderCredentials = shelleyLeaderCredentials
-          }
-          Consensus.ProtocolParamsShelley {
-            -- This is /not/ the Shelley protocol version. It is the protocol
-            -- version that this node will declare that it understands, when it
-            -- is in the Shelley era. That is, it is the version of protocol
-            -- /after/ Shelley, i.e. Allegra.
-            shelleyProtVer =
-              ProtVer (natVersion @3) 0,
-            shelleyMaxTxCapacityOverrides =
-              Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-          Consensus.ProtocolParamsAllegra {
-            -- This is /not/ the Allegra protocol version. It is the protocol
-            -- version that this node will declare that it understands, when it
-            -- is in the Allegra era. That is, it is the version of protocol
-            -- /after/ Allegra, i.e. Mary.
-            allegraProtVer =
-              ProtVer (natVersion @4) 0,
-            allegraMaxTxCapacityOverrides =
-              Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-          Consensus.ProtocolParamsMary {
-            -- This is /not/ the Mary protocol version. It is the protocol
-            -- version that this node will declare that it understands, when it
-            -- is in the Mary era. That is, it is the version of protocol
-            -- /after/ Mary, i.e. Alonzo.
-            maryProtVer = ProtVer (natVersion @5) 0,
-            maryMaxTxCapacityOverrides =
-              Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-          Consensus.ProtocolParamsAlonzo {
-            -- This is /not/ the Alonzo protocol version. It is the protocol
-            -- version that this node will declare that it understands, when it
-            -- is in the Alonzo era. That is, it is the version of protocol
-            -- /after/ Alonzo, i.e. Babbage.
-            alonzoProtVer = ProtVer (natVersion @6) 0,
-            alonzoMaxTxCapacityOverrides =
-              Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-          Consensus.ProtocolParamsBabbage {
-            -- This is /not/ the Babbage protocol version. It is the protocol
-            -- version that this node will declare that it understands, when it
-            -- is in the Babbage era.
-            Consensus.babbageProtVer = ProtVer (natVersion @7) 0,
-            Consensus.babbageMaxTxCapacityOverrides =
-              Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-          Consensus.ProtocolParamsConway {
-            -- This is /not/ the Conway protocol version. It is the protocol
-            -- version that this node will declare that it understands, when it
-            -- is in the Conway era.
-            Consensus.conwayProtVer =
-              if npcTestEnableDevelopmentHardForkEras
-              then ProtVer (natVersion @9) 0  -- Advertise we can support Conway
-              else ProtVer (natVersion @8) 0, -- Otherwise we only advertise we know about Babbage
-            Consensus.conwayMaxTxCapacityOverrides =
-              Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-          -- The 'CardanoHardForkTriggers' specify the parameters needed to
-          -- transition between two eras. The comments below also apply for all
-          -- subsequent hard forks.
-          --
-          -- Byron to Shelley hard fork parameters
-          Consensus.CardanoHardForkTriggers' {
-            triggerHardForkShelley =
-              -- What will trigger the Byron -> Shelley hard fork?
-              case npcTestShelleyHardForkAtEpoch of
+          -- This is /not/ the Byron protocol version. It is the protocol
+          -- version that this node will use in blocks it creates. It is used
+          -- in the Byron update mechanism to signal that this block-producing
+          -- node is ready to move to the new protocol. For example, when the
+          -- protocol version (according to the ledger state) is 0, this setting
+          -- should be 1 when we are ready to move. Similarly when the current
+          -- protocol version is 1, this should be 2 to indicate we are ready
+          -- to move into the Shelley era.
+          byronProtocolVersion =
+            Byron.ProtocolVersion
+              npcByronSupportedProtocolVersionMajor
+              npcByronSupportedProtocolVersionMinor
+              npcByronSupportedProtocolVersionAlt,
+          byronSoftwareVersion =
+            Byron.SoftwareVersion
+              npcByronApplicationName
+              npcByronApplicationVersion,
+          byronLeaderCredentials =
+            byronLeaderCredentials,
+          byronMaxTxCapacityOverrides =
+            Mempool.mkOverrides Mempool.noOverridesMeasure
+        }
+        Consensus.ProtocolParamsShelleyBased {
+          shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
+                                            shelleyGenesisHash,
+          shelleyBasedLeaderCredentials = shelleyLeaderCredentials
+        }
+        Consensus.ProtocolParamsShelley {
+          -- This is /not/ the Shelley protocol version. It is the protocol
+          -- version that this node will declare that it understands, when it
+          -- is in the Shelley era. That is, it is the version of protocol
+          -- /after/ Shelley, i.e. Allegra.
+          shelleyProtVer =
+            ProtVer (natVersion @3) 0,
+          shelleyMaxTxCapacityOverrides =
+            Mempool.mkOverrides Mempool.noOverridesMeasure
+        }
+        Consensus.ProtocolParamsAllegra {
+          -- This is /not/ the Allegra protocol version. It is the protocol
+          -- version that this node will declare that it understands, when it
+          -- is in the Allegra era. That is, it is the version of protocol
+          -- /after/ Allegra, i.e. Mary.
+          allegraProtVer =
+            ProtVer (natVersion @4) 0,
+          allegraMaxTxCapacityOverrides =
+            Mempool.mkOverrides Mempool.noOverridesMeasure
+        }
+        Consensus.ProtocolParamsMary {
+          -- This is /not/ the Mary protocol version. It is the protocol
+          -- version that this node will declare that it understands, when it
+          -- is in the Mary era. That is, it is the version of protocol
+          -- /after/ Mary, i.e. Alonzo.
+          maryProtVer = ProtVer (natVersion @5) 0,
+          maryMaxTxCapacityOverrides =
+            Mempool.mkOverrides Mempool.noOverridesMeasure
+        }
+        Consensus.ProtocolParamsAlonzo {
+          -- This is /not/ the Alonzo protocol version. It is the protocol
+          -- version that this node will declare that it understands, when it
+          -- is in the Alonzo era. That is, it is the version of protocol
+          -- /after/ Alonzo, i.e. Babbage.
+          alonzoProtVer = ProtVer (natVersion @6) 0,
+          alonzoMaxTxCapacityOverrides =
+            Mempool.mkOverrides Mempool.noOverridesMeasure
+        }
+        Consensus.ProtocolParamsBabbage {
+          -- This is /not/ the Babbage protocol version. It is the protocol
+          -- version that this node will declare that it understands, when it
+          -- is in the Babbage era.
+          Consensus.babbageProtVer = ProtVer (natVersion @7) 0,
+          Consensus.babbageMaxTxCapacityOverrides =
+            Mempool.mkOverrides Mempool.noOverridesMeasure
+        }
+        Consensus.ProtocolParamsConway {
+          -- This is /not/ the Conway protocol version. It is the protocol
+          -- version that this node will declare that it understands, when it
+          -- is in the Conway era.
+          Consensus.conwayProtVer =
+            if npcTestEnableDevelopmentHardForkEras
+            then ProtVer (natVersion @9) 0  -- Advertise we can support Conway
+            else ProtVer (natVersion @8) 0, -- Otherwise we only advertise we know about Babbage
+          Consensus.conwayMaxTxCapacityOverrides =
+            Mempool.mkOverrides Mempool.noOverridesMeasure
+        }
+        -- The 'CardanoHardForkTriggers' specify the parameters needed to
+        -- transition between two eras. The comments below also apply for all
+        -- subsequent hard forks.
+        --
+        -- Byron to Shelley hard fork parameters
+        Consensus.CardanoHardForkTriggers' {
+          triggerHardForkShelley =
+            -- What will trigger the Byron -> Shelley hard fork?
+            case npcTestShelleyHardForkAtEpoch of
 
-                -- This specifies the major protocol version number update that will
-                -- trigger us moving to the Shelley protocol.
-                --
-                -- Version 0 is Byron with Ouroboros classic
-                -- Version 1 is Byron with Ouroboros Permissive BFT
-                -- Version 2 is Shelley
-                -- Version 3 is Allegra
-                -- Version 4 is Mary
-                -- Version 5 is Alonzo
-                -- Version 6 is Alonzo (intra era hardfork)
-                -- Version 7 is Babbage
-                -- Version 8 is Babbage (intra era hardfork)
-                -- Version 9 is Conway
-                --
-                -- But we also provide an override to allow for simpler test setups
-                -- such as triggering at the 0 -> 1 transition .
-                --
-                Nothing -> Consensus.TriggerHardForkAtVersion
-                              (maybe 2 fromIntegral npcTestShelleyHardForkAtVersion)
+              -- This specifies the major protocol version number update that will
+              -- trigger us moving to the Shelley protocol.
+              --
+              -- Version 0 is Byron with Ouroboros classic
+              -- Version 1 is Byron with Ouroboros Permissive BFT
+              -- Version 2 is Shelley
+              -- Version 3 is Allegra
+              -- Version 4 is Mary
+              -- Version 5 is Alonzo
+              -- Version 6 is Alonzo (intra era hardfork)
+              -- Version 7 is Babbage
+              -- Version 8 is Babbage (intra era hardfork)
+              -- Version 9 is Conway
+              --
+              -- But we also provide an override to allow for simpler test setups
+              -- such as triggering at the 0 -> 1 transition .
+              --
+              Nothing -> Consensus.TriggerHardForkAtVersion
+                            (maybe 2 fromIntegral npcTestShelleyHardForkAtVersion)
 
-                -- Alternatively, for testing we can transition at a specific epoch.
-                --
-                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-            -- Shelley to Allegra hard fork parameters
-          , triggerHardForkAllegra =
-              case npcTestAllegraHardForkAtEpoch of
+              -- Alternatively, for testing we can transition at a specific epoch.
+              --
+              Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+          -- Shelley to Allegra hard fork parameters
+        , triggerHardForkAllegra =
+            case npcTestAllegraHardForkAtEpoch of
+              Nothing -> Consensus.TriggerHardForkAtVersion
+                            (maybe 3 fromIntegral npcTestAllegraHardForkAtVersion)
+              Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+          -- Allegra to Mary hard fork parameters
+        , triggerHardForkMary =
+            case npcTestMaryHardForkAtEpoch of
+              Nothing -> Consensus.TriggerHardForkAtVersion
+                            (maybe 4 fromIntegral npcTestMaryHardForkAtVersion)
+              Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+          -- Mary to Alonzo hard fork parameters
+        , triggerHardForkAlonzo =
+            case npcTestAlonzoHardForkAtEpoch of
+              Nothing -> Consensus.TriggerHardForkAtVersion
+                            (maybe 5 fromIntegral npcTestAlonzoHardForkAtVersion)
+              Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
+          -- Alonzo to Babbage hard fork parameters
+        , triggerHardForkBabbage =
+            case npcTestBabbageHardForkAtEpoch of
                 Nothing -> Consensus.TriggerHardForkAtVersion
-                              (maybe 3 fromIntegral npcTestAllegraHardForkAtVersion)
+                            (maybe 7 fromIntegral npcTestBabbageHardForkAtVersion)
                 Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-            -- Allegra to Mary hard fork parameters
-          , triggerHardForkMary =
-              case npcTestMaryHardForkAtEpoch of
+          -- Babbage to Conway hard fork parameters
+        , triggerHardForkConway =
+            case npcTestConwayHardForkAtEpoch of
                 Nothing -> Consensus.TriggerHardForkAtVersion
-                              (maybe 4 fromIntegral npcTestMaryHardForkAtVersion)
+                            (maybe 9 fromIntegral npcTestConwayHardForkAtVersion)
                 Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-            -- Mary to Alonzo hard fork parameters
-          , triggerHardForkAlonzo =
-              case npcTestAlonzoHardForkAtEpoch of
-                Nothing -> Consensus.TriggerHardForkAtVersion
-                              (maybe 5 fromIntegral npcTestAlonzoHardForkAtVersion)
-                Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-            -- Alonzo to Babbage hard fork parameters
-          , triggerHardForkBabbage =
-              case npcTestBabbageHardForkAtEpoch of
-                  Nothing -> Consensus.TriggerHardForkAtVersion
-                              (maybe 7 fromIntegral npcTestBabbageHardForkAtVersion)
-                  Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-            -- Babbage to Conway hard fork parameters
-          , triggerHardForkConway =
-              case npcTestConwayHardForkAtEpoch of
-                  Nothing -> Consensus.TriggerHardForkAtVersion
-                              (maybe 9 fromIntegral npcTestConwayHardForkAtVersion)
-                  Just epochNo -> Consensus.TriggerHardForkAtEpoch epochNo
-          }
-          transitionLedgerConfig
-          emptyCheckpointsMap
-        )
+        }
+        transitionLedgerConfig
+        emptyCheckpointsMap
 
 ------------------------------------------------------------------------------
 -- Errors
