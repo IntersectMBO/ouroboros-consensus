@@ -25,8 +25,10 @@ import           Ouroboros.Consensus.Config (TopLevelConfig, configConsensus,
 import           Ouroboros.Consensus.Forecast (forecastFor)
 import           Ouroboros.Consensus.HeaderValidation
                      (BasicEnvelopeValidation (..), HeaderState (..))
+import           Ouroboros.Consensus.Ledger.Abstract (Validated)
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
                      tickChainDepState)
@@ -63,8 +65,9 @@ runForge ::
     -> ChainDB IO blk
     -> [BlockForging IO blk]
     -> TopLevelConfig blk
+    -> (SlotNo -> IO [Validated (GenTx blk)])
     -> IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
+runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     putStrLn $ "--> epoch size: " ++ show epochSize_
     putStrLn $ "--> will process until: " ++ show opts
     endState <- go initialForgeState {currentSlot = nextSlot}
@@ -155,8 +158,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
                 currentSlot
                 (ledgerState unticked)
 
-        -- Block won't contain any transactions
-        let txs = []
+        -- Let the caller generate transactions
+        txs <- lift $ genTxs currentSlot
 
         -- Actually produce the block
         newBlock <- lift $

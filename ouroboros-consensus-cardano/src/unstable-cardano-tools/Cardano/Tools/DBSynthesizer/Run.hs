@@ -137,7 +137,7 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP 
                             At s   -> succ s
 
                     putStrLn $ "--> starting at: " ++ show slotNo
-                    runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig
+                    runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig (const $ pure [])
             else do
                 putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
                 pure $ ForgeResult 0
