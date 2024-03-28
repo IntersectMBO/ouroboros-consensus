@@ -1,0 +1,188 @@
+[1 of 1] Compiling MicroReadTVarIO  ( MicroReadTVarIO.hs, MicroReadTVarIO.o )
+
+==================== Tidy Core ====================
+Result size of Tidy Core
+  = {terms: 276, types: 298, coercions: 29, joins: 4/5}
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+lvl_r32z = "Negative exponent"#
+
+-- RHS size: {terms: 3, types: 2, coercions: 0, joins: 0/0}
+$s^1 = errorWithoutStackTrace (unpackCString# lvl_r32z)
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+$seven1 = 2
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+lvl1_r32A = 1
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+$s^2 = 0
+
+Rec {
+-- RHS size: {terms: 38, types: 5, coercions: 0, joins: 0/0}
+$wg1_r32B
+  = \ ww_s2YI w_s2YE ww1_s2YM ->
+      case eqInteger# (remInteger w_s2YE $seven1) $s^2 of {
+        __DEFAULT ->
+          case eqInteger# w_s2YE lvl1_r32A of {
+            __DEFAULT ->
+              $wg1_r32B
+                (*# ww_s2YI ww_s2YI)
+                (quotInteger w_s2YE $seven1)
+                (*# ww_s2YI ww1_s2YM);
+            1# -> *# ww_s2YI ww1_s2YM
+          };
+        1# ->
+          $wg1_r32B
+            (*# ww_s2YI ww_s2YI) (quotInteger w_s2YE $seven1) ww1_s2YM
+      }
+end Rec }
+
+Rec {
+-- RHS size: {terms: 32, types: 4, coercions: 0, joins: 0/0}
+$wf
+  = \ ww_s2YW w_s2YT ->
+      case eqInteger# (remInteger w_s2YT $seven1) $s^2 of {
+        __DEFAULT ->
+          case eqInteger# w_s2YT lvl1_r32A of {
+            __DEFAULT ->
+              $wg1_r32B
+                (*# ww_s2YW ww_s2YW) (quotInteger w_s2YT $seven1) ww_s2YW;
+            1# -> ww_s2YW
+          };
+        1# -> $wf (*# ww_s2YW ww_s2YW) (quotInteger w_s2YT $seven1)
+      }
+end Rec }
+
+-- RHS size: {terms: 23, types: 7, coercions: 0, joins: 0/0}
+$w$s^
+  = \ w_s2Z2 w1_s2Z3 ->
+      case ltInteger# w1_s2Z3 $s^2 of {
+        __DEFAULT ->
+          case eqInteger# w1_s2Z3 $s^2 of {
+            __DEFAULT ->
+              case w_s2Z2 of { I# ww1_s2YW -> $wf ww1_s2YW w1_s2Z3 };
+            1# -> 1#
+          };
+        1# -> case $s^1 of wild1_00 { }
+      }
+
+-- RHS size: {terms: 2, types: 0, coercions: 0, joins: 0/0}
+lvl2_r32C = I# 10#
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+lvl3_r32D = 8
+
+-- RHS size: {terms: 7, types: 1, coercions: 0, joins: 0/0}
+numRepetitions_rkb
+  = case $w$s^ lvl2_r32C lvl3_r32D of ww_s2Z6 { __DEFAULT ->
+    I# ww_s2Z6
+    }
+
+-- RHS size: {terms: 43, types: 83, coercions: 0, joins: 2/3}
+unoptimized1_r32E
+  = \ s_a2qh ->
+      case newTVar# Dummy s_a2qh of { (# ipv_a2qq, ipv1_a2qr #) ->
+      let { lvl4_s2Uy = \ eta_a2rv -> readTVar# ipv1_a2qr eta_a2rv } in
+      joinrec {
+        $wgo_s2Ze ww_s2Zc w_s2Z9
+          = case ww_s2Zc of wild_XP {
+              __DEFAULT ->
+                case atomically# lvl4_s2Uy w_s2Z9 of
+                { (# ipv2_X2qL, ipv3_X2qN #) ->
+                jump $wgo_s2Ze (-# wild_XP 1#) ipv2_X2qL
+                };
+              0# -> (# w_s2Z9, () #)
+            }; } in
+      join {
+        go_s2SI w_s2Z8 w1_s2Z9
+          = case w_s2Z8 of { I# ww1_s2Zc ->
+            jump $wgo_s2Ze ww1_s2Zc w1_s2Z9
+            } } in
+      jump go_s2SI numRepetitions_rkb ipv_a2qq
+      }
+
+-- RHS size: {terms: 1, types: 0, coercions: 3, joins: 0/0}
+unoptimized = unoptimized1_r32E `cast` <Co:3>
+
+-- RHS size: {terms: 38, types: 70, coercions: 0, joins: 2/2}
+optimized1_r32F
+  = \ s_X2qz ->
+      case newTVar# Dummy s_X2qz of { (# ipv_a2qq, ipv1_a2qr #) ->
+      joinrec {
+        $wgo_s2Zm ww_s2Zk w_s2Zh
+          = case ww_s2Zk of wild_XP {
+              __DEFAULT ->
+                case readTVarIO# ipv1_a2qr w_s2Zh of
+                { (# ipv2_X2qL, ipv3_X2qN #) ->
+                jump $wgo_s2Zm (-# wild_XP 1#) ipv2_X2qL
+                };
+              0# -> (# w_s2Zh, () #)
+            }; } in
+      join {
+        go_s2SG w_s2Zg w1_s2Zh
+          = case w_s2Zg of { I# ww1_s2Zk ->
+            jump $wgo_s2Zm ww1_s2Zk w1_s2Zh
+            } } in
+      jump go_s2SG numRepetitions_rkb ipv_a2qq
+      }
+
+-- RHS size: {terms: 1, types: 0, coercions: 3, joins: 0/0}
+optimized = optimized1_r32F `cast` <Co:3>
+
+-- RHS size: {terms: 1, types: 0, coercions: 0, joins: 0/0}
+main4 = "$1 must be O or U"#
+
+-- RHS size: {terms: 2, types: 0, coercions: 0, joins: 0/0}
+main3 = unpackCString# main4
+
+-- RHS size: {terms: 3, types: 3, coercions: 0, joins: 0/0}
+main2 = noinline mkUserError main3
+
+-- RHS size: {terms: 51, types: 52, coercions: 14, joins: 0/0}
+main1
+  = \ s_X2qC ->
+      case ((allocaBytesAligned
+               $fStorableBool7 $fStorableBool7 (getArgs1 `cast` <Co:7>))
+            `cast` <Co:3>)
+             s_X2qC
+      of
+      { (# ipv_a2qj, ipv1_a2qk #) ->
+      case ipv1_a2qk of {
+        [] -> raiseIO# main2 ipv_a2qj;
+        : ds_d2pc ds2_d2pd ->
+          case ds_d2pc of {
+            [] -> raiseIO# main2 ipv_a2qj;
+            : c_aCi ds3_d2pe ->
+              case ds3_d2pe of {
+                [] ->
+                  case ds2_d2pd of {
+                    [] ->
+                      case c_aCi of { C# ds4_d2oC ->
+                      case ds4_d2oC of {
+                        __DEFAULT -> raiseIO# main2 ipv_a2qj;
+                        'O'# -> (optimized `cast` <Co:2>) ipv_a2qj;
+                        'U'# -> (unoptimized `cast` <Co:2>) ipv_a2qj
+                      }
+                      };
+                    : ipv2_s2DF ipv3_s2DJ -> raiseIO# main2 ipv_a2qj
+                  };
+                : ipv2_s2DD ipv3_s2DL -> raiseIO# main2 ipv_a2qj
+              }
+          }
+      }
+      }
+
+-- RHS size: {terms: 1, types: 0, coercions: 3, joins: 0/0}
+main = main1 `cast` <Co:3>
+
+-- RHS size: {terms: 2, types: 1, coercions: 3, joins: 0/0}
+main5 = runMainIO1 (main1 `cast` <Co:3>)
+
+-- RHS size: {terms: 1, types: 0, coercions: 3, joins: 0/0}
+main = main5 `cast` <Co:3>
+
+
+
+Linking MicroReadTVarIO ...
