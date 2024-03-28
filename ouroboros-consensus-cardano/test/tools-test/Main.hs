@@ -75,12 +75,12 @@ blockCountTest logStep = do
           testNodeFilePaths
           testNodeCredentials
           testSynthOptionsCreate
-    resultCreate <- DBSynthesizer.synthesize options protocol
+    resultCreate <- DBSynthesizer.synthesize genTxs options protocol
     let blockCountCreate = resultForged resultCreate
     blockCountCreate > 0 @? "no blocks have been forged during create step"
 
     logStep "running synthesis - append"
-    resultAppend <- DBSynthesizer.synthesize options {confOptions = testSynthOptionsAppend} protocol
+    resultAppend <- DBSynthesizer.synthesize genTxs options {confOptions = testSynthOptionsAppend} protocol
     let blockCountAppend = resultForged resultAppend
     blockCountAppend > 0 @? "no blocks have been forged during append step"
 
@@ -91,6 +91,8 @@ blockCountTest logStep = do
     resultAnalysis == Just (ResultCountBlock blockCount) @?
         "wrong number of blocks encountered during analysis \
         \ (counted: " ++ show resultAnalysis ++ "; expected: " ++ show blockCount ++ ")"
+  where
+    genTxs _ = pure []
 
 tests :: TestTree
 tests =

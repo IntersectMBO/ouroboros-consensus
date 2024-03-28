@@ -34,5 +34,5 @@ main :: IO ()
 main = withStdTerminalHandles $ do
     cryptoInit
     (paths, creds, forgeOpts) <- parseCommandLine
-    result <- initialize paths creds forgeOpts >>= either die (uncurry synthesize)
+    result <- initialize paths creds forgeOpts >>= either die (uncurry (synthesize $ const (pure [])))
     putStrLn $ "--> done; result: " ++ show result
