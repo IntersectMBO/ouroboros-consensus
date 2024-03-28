@@ -31,3 +31,15 @@ tests: true
 benchmarks: true
 
 import: ./asserts.cabal
+
+-- https://github.com/IntersectMBO/ouroboros-network/pull/4836
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: 928ce8bfce11fe1bc218655ab5367bf7f524334a
+  --sha256: sha256-Gs7JDUWQtpgyIrGpIIwv+GnIrByV6eMs3/HqfERdtJE=
+  subdir:
+    ouroboros-network
+    ouroboros-network-api
+    ouroboros-network-framework
+    ouroboros-network-protocols

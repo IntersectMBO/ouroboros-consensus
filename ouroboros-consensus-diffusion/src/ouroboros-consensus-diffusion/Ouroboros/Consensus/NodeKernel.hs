@@ -87,11 +87,14 @@ import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
-import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
+import           Ouroboros.Network.PeerSelection.Bootstrap
+                     (OnlyLocalOutboundConnections (..), UseBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
-import           Ouroboros.Network.PeerSharing (PeerSharingRegistry,
-                     newPeerSharingRegistry)
+import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
+                     PeerSharingRegistry, newPeerSharingAPI,
+                     newPeerSharingRegistry, ps_POLICY_PEER_SHARE_MAX_PEERS,
+                     ps_POLICY_PEER_SHARE_STICKY_TIME)
 import           Ouroboros.Network.TxSubmission.Inbound
                      (TxSubmissionMempoolWriter)
 import qualified Ouroboros.Network.TxSubmission.Inbound as Inbound
@@ -144,7 +147,13 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       --
       -- When set with the empty list '[]' block forging will be disabled.
       --
-    , setBlockForging         :: [BlockForging m blk] -> m ()
+    , setBlockForging        :: [BlockForging m blk] -> m ()
+
+    , getPeerSharingAPI      :: PeerSharingAPI addrNTN StdGen m
+
+      -- | Whether we are or will ever be connected to remote/external
+      -- (bootstrap) peers.
+    , getPeerConnectivity    :: StrictTVar m OnlyLocalOutboundConnections
     }
 
 -- | Arguments required when initializing a node
@@ -163,6 +172,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , keepAliveRng            :: StdGen
     , gsmArgs                 :: GsmNodeKernelArgs m blk
     , getUseBootstrapPeers    :: STM m UseBootstrapPeers
+    , peerSharingRng          :: StdGen
     }
 
 initNodeKernel ::
@@ -180,6 +190,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , chainDB, initChainDB
                                    , blockFetchConfiguration
                                    , gsmArgs
+                                   , peerSharingRng
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -195,6 +206,9 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           , varIdlers
           , varLedgerJudgement
           } = st
+
+    -- TODO NoThunks, initial value ok?
+    varPeerConnectivity <- uncheckedNewTVarM ConnectedToOnlyLocalOutboundPeers
 
     do  let GsmNodeKernelArgs {..} = gsmArgs
             gsmTracerArgs          =
@@ -231,14 +245,25 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                     gsmMarkerFileView
               , GSM.writeGsmState = \x -> atomically $ do
                   writeTVar varLedgerJudgement $ GSM.gsmStateToLedgerJudgement x
-              , -- In the context of bootstrap peers, it is fine to always
-                -- return 'True' as all peers are trusted during syncing.
-                GSM.isHaaSatisfied            = pure True
+              , -- In the context of bootstrap peers, we consider the "honest
+                -- availability assumption" to be satisfied when we are either
+                -- connected to at least one remote bootstrap peer, or the node
+                -- is configured to never connect to such peers (e.g. a block
+                -- producer that only talks to its relays).
+                GSM.isHaaSatisfied            = do
+                  -- TODO upstream will add a third constructor
+                  readTVar varPeerConnectivity <&> \case
+                    ConnectedToExternalOutboundPeers  -> True
+                    ConnectedToOnlyLocalOutboundPeers -> False
               }
         judgment <- readTVarIO varLedgerJudgement
         void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
           TooOld      -> GSM.enterPreSyncing gsm
           YoungEnough -> GSM.enterCaughtUp   gsm
+
+    peerSharingAPI <- newPeerSharingAPI peerSharingRng
+                                        ps_POLICY_PEER_SHARE_STICKY_TIME
+                                        ps_POLICY_PEER_SHARE_MAX_PEERS
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
                             blockForgingController st (LazySTM.takeTMVar blockForgingVar)
@@ -265,6 +290,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getPeerSharingRegistry  = peerSharingRegistry
       , getTracers              = tracers
       , setBlockForging         = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
+      , getPeerSharingAPI       = peerSharingAPI
+      , getPeerConnectivity     = varPeerConnectivity
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
