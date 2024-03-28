@@ -4,6 +4,7 @@
 {-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 module Test.Consensus.Genesis.Tests.LoE (tests) where
 
@@ -71,10 +72,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
               -- `ExceededTimeLimit` exception in the adversary's ChainSync.
               exceptionsCorrect = case exceptionsByComponent ChainSyncClient stateView of
                 [] -> not timeoutsEnabled
-                [exn] ->
-                  case fromException exn of
-                    Just (ExceededTimeLimit _) -> timeoutsEnabled
-                    _                          -> False
+                [fromException -> Just (ExceededTimeLimit _)] -> timeoutsEnabled
                 _ -> False
            in selectedCorrect && exceptionsCorrect
       )
