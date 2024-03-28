@@ -40,6 +40,7 @@ import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.NodeId
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.PBFT
 import qualified Ouroboros.Consensus.Protocol.PBFT.State as S
 import           Ouroboros.Consensus.Storage.ChainDB.Init (InitChainDB (..))
@@ -250,5 +251,8 @@ instance NodeInitStorage DualByronBlock where
 
 instance BlockSupportsMetrics DualByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
+
+instance BlockSupportsSanityCheck DualByronBlock where
+  configAllSecurityParams = pure . protocolSecurityParam . topLevelConfigProtocol
 
 instance RunNode DualByronBlock

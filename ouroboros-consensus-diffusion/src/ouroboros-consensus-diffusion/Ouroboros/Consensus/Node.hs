@@ -59,6 +59,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
 import           Control.DeepSeq (NFData)
+import           Control.Monad (forM_)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, contramap, traceWith)
@@ -429,6 +430,10 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 initLedger
                 llrnChainDbArgsDefaults
                 customiseChainDbArgs'
+
+        forM_ (sanityCheckConfig cfg) $ \issue ->
+          traceWith (consensusSanityCheckTracer rnTraceConsensus) issue
+
         chainDB <- ChainDB.openDB finalChainDbArgs
 
         continueWithCleanChainDB chainDB $ do

@@ -63,6 +63,7 @@ data Tracers' remotePeer localPeer blk f = Tracers
   , blockchainTimeTracer          :: f (TraceBlockchainTimeEvent UTCTime)
   , forgeStateInfoTracer          :: f (TraceLabelCreds (ForgeStateInfo blk))
   , keepAliveClientTracer         :: f (TraceKeepAliveClient remotePeer)
+  , consensusSanityCheckTracer    :: f SanityCheckIssue
   , consensusErrorTracer          :: f SomeException
   , gsmTracer                     :: f (TraceGsmEvent (Tip blk))
   }
@@ -84,6 +85,7 @@ instance (forall a. Semigroup (f a))
       , blockchainTimeTracer          = f blockchainTimeTracer
       , forgeStateInfoTracer          = f forgeStateInfoTracer
       , keepAliveClientTracer         = f keepAliveClientTracer
+      , consensusSanityCheckTracer    = f consensusSanityCheckTracer
       , consensusErrorTracer          = f consensusErrorTracer
       , gsmTracer                     = f gsmTracer
       }
@@ -113,6 +115,7 @@ nullTracers = Tracers
     , blockchainTimeTracer          = nullTracer
     , forgeStateInfoTracer          = nullTracer
     , keepAliveClientTracer         = nullTracer
+    , consensusSanityCheckTracer    = nullTracer
     , consensusErrorTracer          = nullTracer
     , gsmTracer                     = nullTracer
     }
@@ -145,6 +148,7 @@ showTracers tr = Tracers
     , blockchainTimeTracer          = showTracing tr
     , forgeStateInfoTracer          = showTracing tr
     , keepAliveClientTracer         = showTracing tr
+    , consensusSanityCheckTracer    = showTracing tr
     , consensusErrorTracer          = showTracing tr
     , gsmTracer                     = showTracing tr
     }

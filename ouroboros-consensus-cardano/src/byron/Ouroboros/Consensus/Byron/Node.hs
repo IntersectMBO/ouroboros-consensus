@@ -290,4 +290,8 @@ instance NodeInitStorage ByronBlock where
 instance BlockSupportsMetrics ByronBlock where
   isSelfIssued = isSelfIssuedConstUnknown
 
+instance BlockSupportsSanityCheck ByronBlock where
+  configAllSecurityParams =
+    pure . pbftSecurityParam . pbftParams . topLevelConfigProtocol
+
 instance RunNode ByronBlock
