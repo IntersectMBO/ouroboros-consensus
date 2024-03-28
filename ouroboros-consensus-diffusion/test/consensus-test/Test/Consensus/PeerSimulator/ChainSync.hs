@@ -17,6 +17,7 @@ import           Control.Exception (AsyncException (ThreadKilled),
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import           Network.TypedProtocol.Codec (AnyMessage)
 import           Ouroboros.Consensus.Block (Header, Point)
@@ -29,9 +30,10 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), StrictTVar)
+                     IOLike, MonadCatch (try), StrictTVar, uncheckedNewTVarM)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
 import           Ouroboros.Network.ControlMessage (ControlMessage (..))
@@ -139,10 +141,14 @@ runChainSyncClient
   StateViewTracers {svtPeerSimulatorResultsTracer}
   varHandles
   channel = do
+    -- We don't need this shared Map yet. If we need it at some point,
+    -- it ought to be passed to `runChainSyncClient`.
+    varGsmCallbacks <- uncheckedNewTVarM $ Map.empty
     bracketChainSyncClient
       nullTracer
       chainDbView
       varHandles
+      (pure Syncing, varGsmCallbacks)
       peerId
       (maxBound :: NodeToNodeVersion)
       lopBucketConfig

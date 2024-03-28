@@ -89,6 +89,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      bracketChainSyncClient, chainSyncClient, chainSyncStateFor,
                      viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -497,6 +498,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  chainSyncTracer
                  chainDbView
                  varHandles
+                 (pure Syncing, varCallbacks)
                  serverId
                  maxBound
                  lopBucketConfig

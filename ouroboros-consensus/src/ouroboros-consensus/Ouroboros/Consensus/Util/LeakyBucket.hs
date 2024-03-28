@@ -34,10 +34,12 @@ module Ouroboros.Consensus.Util.LeakyBucket (
   , dummyConfig
   , evalAgainstBucket
   , execAgainstBucket
+  , execAgainstBucket'
   , runAgainstBucket
   , secondsRationalToDiffTime
   ) where
 
+import           Control.Monad (when)
 import           Data.Ratio ((%))
 import           Data.Time.Clock (diffTimeToPicoseconds)
 import           GHC.Generics (Generic)
@@ -95,8 +97,9 @@ data Handlers m = Handlers
     -- it is resumed. It is still possible to fill it during that time. @setPaused
     -- True@ and @setPaused False@ are idempotent.
     setPaused    :: !(Bool -> m ()),
-    -- | Dynamically update the configuration of the bucket.
-    updateConfig :: !((Config m -> Config m) -> m ())
+    -- | Dynamically update the level and configuration of the bucket. Updating
+    -- the level matters if the capacity changes, in particular.
+    updateConfig :: !(((Rational, Config m) -> (Rational, Config m)) -> m ())
   }
 
 -- | Create a bucket with the given configuration, then run the action against
@@ -109,6 +112,15 @@ execAgainstBucket ::
   (Handlers m -> m a) ->
   m a
 execAgainstBucket config action = snd <$> runAgainstBucket config action
+
+-- | Variant of 'execAgainstBucket' that uses a dummy configuration. This only
+-- makes sense for actions that use 'updateConfig'.
+execAgainstBucket' ::
+  (MonadDelay m, MonadAsync m, MonadFork m, MonadMask m, NoThunks (m ())) =>
+  (Handlers m -> m a) ->
+  m a
+execAgainstBucket' action =
+  execAgainstBucket dummyConfig action
 
 -- | Same as 'execAgainstBucket' but returns the 'State' of the bucket when the
 -- action terminates. Exposed for testing purposes.
@@ -171,17 +183,18 @@ runAgainstBucket config action = do
       StrictTVar m (Maybe (m ())) ->
       Bucket m ->
       ThreadId m ->
-      (Config m -> Config m) ->
+      ((Rational, Config m) -> (Rational, Config m)) ->
       m ()
     updateConfig killThreadVar bucket tid = \f -> do
-      State {level, time, paused, config = oldConfig} <- snapshot bucket
-      let newConfig@Config {capacity = newCapacity, rate = newRate} = f oldConfig
-          newLevel = min newCapacity level
-      if
-        | newRate <= 0 -> stopThread killThreadVar
-        | newRate > rate oldConfig -> stopThread killThreadVar >> startThread killThreadVar bucket tid
-        | otherwise -> pure ()
-      atomically $ writeTVar bucket State {level = newLevel, time, paused, config = newConfig}
+      State {level = oldLevel, time, paused, config = oldConfig} <- snapshot bucket
+      let (newLevel, newConfig) = f (oldLevel, oldConfig)
+          Config{rate = oldRate} = oldConfig
+          Config{rate = newRate, capacity = newCapacity} = newConfig
+          -- Ensure that 0 <= newLevel <= newCapacity
+          newLevel' = max 0 (min newLevel newCapacity)
+      when (newRate <= 0 || newRate > oldRate) $ stopThread killThreadVar
+      atomically $ writeTVar bucket State {level = newLevel', time, paused, config = newConfig}
+      when (newRate > oldRate) $ startThread killThreadVar bucket tid
 
 -- | Initialise a bucket given a configuration. The bucket starts full at the
 -- time where one calls 'init'.

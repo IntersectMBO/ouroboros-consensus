@@ -19,11 +19,13 @@ module Ouroboros.Consensus.Node.GSM (
     -- * Auxiliaries
   , TraceGsmEvent (..)
   , gsmStateToLedgerJudgement
-  , initializationLedgerJudgement
+  , initializationGsmState
     -- * Constructors
   , realDurationUntilTooOld
   , realGsmEntryPoints
   , realMarkerFileView
+    -- * Re-exported
+  , module Ouroboros.Consensus.Node.GsmState
   ) where
 
 import qualified Cardano.Slotting.Slot as Slot
@@ -43,6 +45,7 @@ import qualified Ouroboros.Consensus.HardFork.Abstract as HardFork
 import qualified Ouroboros.Consensus.HardFork.History as HardFork
 import qualified Ouroboros.Consensus.HardFork.History.Qry as Qry
 import qualified Ouroboros.Consensus.Ledger.Basics as L
+import           Ouroboros.Consensus.Node.GsmState
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import           Ouroboros.Consensus.Util.NormalForm.StrictTVar (StrictTVar)
 import qualified Ouroboros.Consensus.Util.NormalForm.StrictTVar as StrictSTM
@@ -79,19 +82,6 @@ data CandidateVersusSelection =
     WhetherCandidateIsBetter !Bool
     -- ^ Whether the candidate is better than the selection
   deriving (Eq, Show)
-
--- | Current state of the Genesis State Machine
-data GsmState =
-    PreSyncing
-    -- ^ We are syncing, and the Honest Availability Assumption is not
-    -- satisfied.
-  |
-    Syncing
-    -- ^ We are syncing, and the Honest Availability Assumption is satisfied.
-  |
-    CaughtUp
-    -- ^ We are caught-up.
-  deriving (Eq, Show, Read)
 
 data GsmView m upstreamPeer selection chainSyncState = GsmView {
     antiThunderingHerd        :: Maybe StdGen
@@ -168,10 +158,10 @@ data GsmEntryPoints m = GsmEntryPoints {
 
 -----
 
--- | Determine the initial 'LedgerStateJudgment'
+-- | Determine the initial 'GsmState'
 --
 -- Also initializes the persistent marker file.
-initializationLedgerJudgement ::
+initializationGsmState ::
      ( L.GetTip (L.LedgerState blk)
      , Monad m
      )
@@ -179,23 +169,23 @@ initializationLedgerJudgement ::
   -> Maybe (WrapDurationUntilTooOld m blk)
      -- ^ 'Nothing' if @blk@ has no age limit
   -> MarkerFileView m
-  -> m LedgerStateJudgement
-initializationLedgerJudgement
+  -> m GsmState
+initializationGsmState
     getCurrentLedger
     mbDurationUntilTooOld
     markerFileView
   = do
     wasCaughtUp <- hasMarkerFile markerFileView
-    if not wasCaughtUp then pure TooOld else do
+    if not wasCaughtUp then pure PreSyncing else do
         case mbDurationUntilTooOld of
-            Nothing -> return YoungEnough
+            Nothing -> return CaughtUp
             Just wd -> do
                 sno <- L.getTipSlot <$> getCurrentLedger
                 getDurationUntilTooOld wd sno >>= \case
-                    After{}     -> return YoungEnough
+                    After{}     -> return CaughtUp
                     Already     -> do
                         removeMarkerFile markerFileView
-                        return TooOld
+                        return PreSyncing
 
 -- | For 'LedgerStateJudgement' as used in the Diffusion layer, there is no
 -- difference between 'PreSyncing' and 'Syncing'.
