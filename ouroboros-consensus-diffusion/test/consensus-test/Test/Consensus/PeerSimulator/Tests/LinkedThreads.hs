@@ -1,4 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ViewPatterns   #-}
 
 -- | The scheduled ChainSync and BlockFetch servers are supposed to be linked,
 -- such that if one gets disconnected, then so does the other. This module
@@ -47,29 +48,17 @@ prop_chainSyncKillsBlockFetch = do
     ( \_ stateView@StateView {svTipBlock} ->
         svTipBlock == Nothing
           && case exceptionsByComponent ChainSyncClient stateView of
-            [exn] ->
-              case fromException exn of
-                Just (ExceededTimeLimit _) -> True
-                _                          -> False
-            _ -> False
+            [fromException -> Just (ExceededTimeLimit _)] -> True
+            _                                             -> False
           && case exceptionsByComponent BlockFetchClient stateView of
-            [exn] ->
-              case fromException exn of
-                Just (AsyncCancelled) -> True
-                _                     -> False
-            _ -> False
+            [fromException -> Just AsyncCancelled] -> True
+            _                                      -> False
           && case exceptionsByComponent ChainSyncServer stateView of
-            [exn] ->
-              case fromException exn of
-                Just (AsyncCancelled) -> True
-                _                     -> False
-            _ -> False
+            [fromException -> Just AsyncCancelled] -> True
+            _                                      -> False
           && case exceptionsByComponent BlockFetchServer stateView of
-            [exn] ->
-              case fromException exn of
-                Just (AsyncCancelled) -> True
-                _                     -> False
-            _ -> False
+            [fromException -> Just AsyncCancelled] -> True
+            _                                      -> False
     )
   where
     dullSchedule :: GenesisTest blk () -> DiffTime -> PeersSchedule blk
