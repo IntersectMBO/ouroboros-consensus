@@ -12,6 +12,7 @@
 
 module Cardano.Node.Protocol.Cardano (
     mkSomeConsensusProtocolCardano
+  , mkConsensusProtocolCardano
     -- * Errors
   , CardanoProtocolInstantiationError (..)
   ) where

@@ -7,8 +7,9 @@ module Cardano.Tools.DBSynthesizer.Run (
   ) where
 
 import           Cardano.Api.Any (displayError)
-import           Cardano.Api.Protocol.Types (protocolInfo)
+import           Cardano.Api.Protocol.Types (protocolInfo, ProtocolInfoArgs(ProtocolInfoArgsCardano), BlockType(CardanoBlockType))
 import           Cardano.Node.Protocol
+import           Cardano.Node.Protocol.Cardano (mkConsensusProtocolCardano)
 import           Cardano.Node.Types
 import           Cardano.Tools.DBSynthesizer.Forging
 import           Cardano.Tools.DBSynthesizer.Orphans ()
@@ -21,6 +22,7 @@ import           Data.Aeson as Aeson (FromJSON, Result (..), Value,
                      eitherDecodeFileStrict', eitherDecodeStrict', fromJSON)
 import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
+import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.Config (configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
 import qualified Ouroboros.Consensus.Node as Node (mkChainDbArgs,
@@ -28,6 +30,7 @@ import qualified Ouroboros.Consensus.Node as Node (mkChainDbArgs,
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
                      (nodeImmutableDbChunkInfo)
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
+import           Ouroboros.Consensus.Shelley.Crypto
 import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..),
                      validateGenesis)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -52,7 +55,7 @@ initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
     runExceptT $ do
         conf    <- initConf relativeToConfig
         proto   <- initProtocol relativeToConfig conf
-        pure    (conf, proto)
+        pure    (conf, SomeConsensusProtocol CardanoBlockType $ ProtocolInfoArgsCardano proto)
   where
     initConf :: (FilePath -> FilePath) -> ExceptT String IO DBSynthesizerConfig
     initConf relativeToConfig = do
@@ -77,18 +80,20 @@ initialize NodeFilePaths{nfpConfig, nfpChainDB} creds synthOptions = do
             , confDbDir                 = nfpChainDB
             }
 
-    initProtocol :: (FilePath -> FilePath) -> DBSynthesizerConfig -> ExceptT String IO SomeConsensusProtocol
+    initProtocol :: (FilePath -> FilePath) -> DBSynthesizerConfig -> ExceptT String IO (CardanoProtocolParams StandardCrypto)
     initProtocol relativeToConfig DBSynthesizerConfig{confConfigStub, confProtocolCredentials} = do
         hfConfig :: NodeHardForkProtocolConfiguration <-
             hoistEither hfConfig_
         byronConfig :: NodeByronProtocolConfiguration <-
             adjustFilePaths relativeToConfig <$> hoistEither byConfig_
 
-        let
-            cardanoConfig = NodeProtocolConfigurationCardano byronConfig shelleyConfig alonzoConfig conwayConfig hfConfig
         firstExceptT displayError $
-            mkConsensusProtocol
-                cardanoConfig
+            mkConsensusProtocolCardano
+                byronConfig
+                shelleyConfig
+                alonzoConfig
+                conwayConfig
+                hfConfig
                 (Just confProtocolCredentials)
       where
         shelleyConfig   = NodeShelleyProtocolConfiguration (GenesisFile $ ncsShelleyGenesisFile confConfigStub) Nothing
