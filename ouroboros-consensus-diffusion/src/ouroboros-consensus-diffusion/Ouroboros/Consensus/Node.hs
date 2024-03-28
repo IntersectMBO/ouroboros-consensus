@@ -59,6 +59,7 @@ import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
 import           Control.DeepSeq (NFData)
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, contramap, traceWith)
@@ -626,7 +627,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   lpGetLatestSlot = getImmTipSlot kernel,
                   lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
                   lpGetLedgerStateJudgement = getLedgerStateJudgement kernel
-                }
+                },
+            daUpdateOnlyLocalConnections =
+              let varPc = getPeerConnectivity kernel in \pc -> do
+                oldPc <- readTVar varPc
+                when (pc /= oldPc) $ writeTVar varPc pc
           }
 
         localRethrowPolicy :: RethrowPolicy

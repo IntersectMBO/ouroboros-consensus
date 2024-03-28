@@ -87,7 +87,8 @@ import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
-import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
+import           Ouroboros.Network.PeerSelection.Bootstrap
+                     (OnlyLocalOutboundConnections (..), UseBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
 import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
@@ -149,6 +150,10 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
     , setBlockForging        :: [BlockForging m blk] -> m ()
 
     , getPeerSharingAPI      :: PeerSharingAPI addrNTN StdGen m
+
+      -- | Whether we are or will ever be connected to remote/external
+      -- (bootstrap) peers.
+    , getPeerConnectivity    :: StrictTVar m OnlyLocalOutboundConnections
     }
 
 -- | Arguments required when initializing a node
@@ -202,6 +207,9 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           , varLedgerJudgement
           } = st
 
+    -- TODO NoThunks, initial value ok?
+    varPeerConnectivity <- uncheckedNewTVarM ConnectedToOnlyLocalOutboundPeers
+
     do  let GsmNodeKernelArgs {..} = gsmArgs
             gsmTracerArgs          =
               ( castTip . either AF.anchorToTip tipFromHeader . AF.head . fst
@@ -237,9 +245,16 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                     gsmMarkerFileView
               , GSM.writeGsmState = \x -> atomically $ do
                   writeTVar varLedgerJudgement $ GSM.gsmStateToLedgerJudgement x
-              , -- In the context of bootstrap peers, it is fine to always
-                -- return 'True' as all peers are trusted during syncing.
-                GSM.isHaaSatisfied            = pure True
+              , -- In the context of bootstrap peers, we consider the "honest
+                -- availability assumption" to be satisfied when we are either
+                -- connected to at least one remote bootstrap peer, or the node
+                -- is configured to never connect to such peers (e.g. a block
+                -- producer that only talks to its relays).
+                GSM.isHaaSatisfied            = do
+                  -- TODO upstream will add a third constructor
+                  readTVar varPeerConnectivity <&> \case
+                    ConnectedToExternalOutboundPeers  -> True
+                    ConnectedToOnlyLocalOutboundPeers -> False
               }
         judgment <- readTVarIO varLedgerJudgement
         void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
@@ -276,6 +291,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getTracers              = tracers
       , setBlockForging         = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
       , getPeerSharingAPI       = peerSharingAPI
+      , getPeerConnectivity     = varPeerConnectivity
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
