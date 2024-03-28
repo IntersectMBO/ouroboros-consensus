@@ -124,9 +124,13 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       --
     , getFetchMode            :: STM m FetchMode
 
-      -- | The ledger judgement, used by diffusion.
+      -- | The GSM state, used by diffusion. A ledger judgement can be derived
+      -- from it with 'GSM.gsmStateToLedgerJudgement'.
       --
-    , getLedgerStateJudgement :: STM m LedgerStateJudgement
+    , getGsmState             :: STM m GSM.GsmState
+
+      -- | Read the map of callbacks for the GSM.
+    , getGsmCallbacks         :: StrictTVar m (Map (ConnectionId addrNTN) (GSM.GsmState -> m ()))
 
       -- | Read the current candidates
     , getNodeCandidates       :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
@@ -197,7 +201,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           , peerSharingRegistry
           , varCandidates
           , varIdlers
-          , varLedgerJudgement
+          , varGsmState
+          , varGsmCallbacks
           } = st
 
     do  let GsmNodeKernelArgs {..} = gsmArgs
@@ -233,13 +238,14 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , GSM.setCaughtUpPersistentMark = \upd ->
                   (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
                     gsmMarkerFileView
-              , GSM.writeGsmState = \x -> atomically $ do
-                  writeTVar varLedgerJudgement $ GSM.gsmStateToLedgerJudgement x
+              , GSM.writeGsmState = \x -> do
+                  callbacks <- atomically $ writeTVar varGsmState x >> readTVar varGsmCallbacks
+                  traverse_ ($ x) callbacks
               , -- In the context of bootstrap peers, it is fine to always
                 -- return 'True' as all peers are trusted during syncing.
                 GSM.isHaaSatisfied            = pure True
               }
-        judgment <- readTVarIO varLedgerJudgement
+        judgment <- GSM.gsmStateToLedgerJudgement <$> readTVarIO varGsmState
         void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
           TooOld      -> GSM.enterPreSyncing gsm
           YoungEnough -> GSM.enterCaughtUp   gsm
@@ -265,7 +271,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getTopLevelConfig       = cfg
       , getFetchClientRegistry  = fetchClientRegistry
       , getFetchMode            = readFetchMode blockFetchInterface
-      , getLedgerStateJudgement = readTVar varLedgerJudgement
+      , getGsmState             = readTVar varGsmState
+      , getGsmCallbacks         = varGsmCallbacks
       , getNodeCandidates       = varCandidates
       , getChainSyncHandles     = varChainSyncHandles
       , getNodeIdlers           = varIdlers
@@ -300,9 +307,10 @@ data InternalState m addrNTN addrNTC blk = IS {
     , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
     , varCandidates       :: StrictTVar m (Map (ConnectionId addrNTN) (StrictTVar m (AnchoredFragment (Header blk))))
     , varIdlers           :: StrictTVar m (Set (ConnectionId addrNTN))
+    , varGsmState         :: StrictTVar m GSM.GsmState
+    , varGsmCallbacks     :: StrictTVar m (Map (ConnectionId addrNTN) (GSM.GsmState -> m ()))
     , mempool             :: Mempool m blk
     , peerSharingRegistry :: PeerSharingRegistry addrNTN m
-    , varLedgerJudgement  :: StrictTVar m LedgerStateJudgement
     }
 
 initInternalState ::
@@ -319,13 +327,14 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  , mempoolCapacityOverride
                                  , gsmArgs, getUseBootstrapPeers
                                  } = do
-    varLedgerJudgement <- do
+    varGsmState <- do
       let GsmNodeKernelArgs {..} = gsmArgs
-      j <- GSM.initializationLedgerJudgement
+      j <- GSM.initializationGsmState
         (atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB)
         gsmDurationUntilTooOld
         gsmMarkerFileView
       newTVarIO j
+    varGsmCallbacks <- newTVarIO mempty
 
     varCandidates <- newTVarIO mempty
     varIdlers     <- newTVarIO mempty
@@ -346,7 +355,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
           btime
           (ChainDB.getCurrentChain chainDB)
           getUseBootstrapPeers
-          (readTVar varLedgerJudgement)
+          (GSM.gsmStateToLedgerJudgement <$> readTVar varGsmState)
         blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
         blockFetchInterface = BlockFetchClientInterface.mkBlockFetchConsensusInterface
           (configBlock cfg)

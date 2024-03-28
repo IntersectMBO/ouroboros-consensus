@@ -17,6 +17,7 @@ import           Control.Exception (AsyncException (ThreadKilled),
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)
 import           Network.TypedProtocol.Codec (AnyMessage)
@@ -29,9 +30,11 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      Their, bracketChainSyncClient, chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
+import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), STM, StrictTVar)
+                     IOLike, MonadCatch (try), STM, StrictTVar,
+                     uncheckedNewTVarM)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
@@ -161,12 +164,16 @@ runChainSyncClient
   varHandles
   varIdling
   channel = do
+    -- We don't need this shared Map yet. If we need it at some point,
+    -- it ought to be passed to `runChainSyncClient`.
+    varGsmCallbacks <- uncheckedNewTVarM $ Map.empty
     bracketChainSyncClient
       nullTracer
       chainDbView
       varCandidates
       varIdling
       varHandles
+      (pure Syncing, varGsmCallbacks)
       peerId
       (maxBound :: NodeToNodeVersion)
       lopBucketConfig
