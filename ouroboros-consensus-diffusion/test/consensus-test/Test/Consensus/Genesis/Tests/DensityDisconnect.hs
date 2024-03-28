@@ -1,6 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE ViewPatterns          #-}
 
 module Test.Consensus.Genesis.Tests.DensityDisconnect (tests) where
 
@@ -338,11 +339,8 @@ prop_densityDisconnectTriggersChainSel =
     ( \GenesisTest {gtBlockTree} stateView@StateView {svTipBlock} ->
         let
           exnCorrect = case exceptionsByComponent ChainSyncClient stateView of
-            [exn] ->
-              case fromException exn of
-                Just DensityTooLow -> True
-                _                  -> False
-            _ -> False
+            [fromException -> Just DensityTooLow] -> True
+            _                                     -> False
           tipPointCorrect = Just (getTrunkTip gtBlockTree) == svTipBlock
         in exnCorrect && tipPointCorrect
     )
