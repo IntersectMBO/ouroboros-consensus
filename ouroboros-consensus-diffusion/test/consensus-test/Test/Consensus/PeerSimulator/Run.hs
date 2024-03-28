@@ -304,7 +304,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
         gddTrigger = do
           s <- viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
           c <- getCurrentChain
-          return $ (s, AF.anchorToHash . AF.headAnchor <$> getCurrentChain)
+          return (s, (:[]) . AF.anchorToHash . AF.headAnchor $ c)
 
     stateTracer <- mkStateTracer
     BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates
