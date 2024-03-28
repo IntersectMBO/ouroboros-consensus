@@ -55,6 +55,7 @@ import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import qualified Ouroboros.Consensus.HardFork.History as HF
 import           Ouroboros.Consensus.Util (nTimes)
+import           Test.Cardano.Slotting.Numeric ()
 import           Test.Consensus.HardFork.Infra
 import           Test.QuickCheck
 import           Test.Tasty

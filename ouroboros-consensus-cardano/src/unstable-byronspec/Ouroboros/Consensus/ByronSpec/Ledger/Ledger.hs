@@ -21,6 +21,7 @@ import qualified Byron.Spec.Ledger.Update as Spec
 import           Codec.Serialise
 import           Control.Monad.Except
 import qualified Control.State.Transition as Spec
+import           GHC.Base (NonEmpty)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (AllowThunk (..), NoThunks)
 import           Ouroboros.Consensus.Block
@@ -53,7 +54,7 @@ data instance LedgerState ByronSpecBlock = ByronSpecLedgerState {
   deriving NoThunks via AllowThunk (LedgerState ByronSpecBlock)
 
 newtype ByronSpecLedgerError = ByronSpecLedgerError {
-      unByronSpecLedgerError :: [Spec.PredicateFailure Spec.CHAIN]
+      unByronSpecLedgerError :: (NonEmpty (Spec.PredicateFailure Spec.CHAIN))
     }
   deriving (Show, Eq)
   deriving NoThunks via AllowThunk ByronSpecLedgerError

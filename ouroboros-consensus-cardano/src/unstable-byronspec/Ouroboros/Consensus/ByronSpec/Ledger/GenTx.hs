@@ -22,6 +22,7 @@ import qualified Byron.Spec.Ledger.UTxO as Spec
 import           Codec.Serialise
 import           Control.Monad.Trans.Except
 import qualified Control.State.Transition as Spec
+import           GHC.Base (NonEmpty)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.ByronSpec.Ledger.Genesis
                      (ByronSpecGenesis (..))
@@ -47,7 +48,7 @@ data ByronSpecGenTx =
 --
 -- We don't distinguish these from any other kind of CHAIN failure.
 newtype ByronSpecGenTxErr = ByronSpecGenTxErr {
-      unByronSpecGenTxErr :: [Spec.PredicateFailure Spec.CHAIN]
+      unByronSpecGenTxErr :: (NonEmpty (Spec.PredicateFailure Spec.CHAIN))
     }
   deriving (Show, Generic, Serialise)
 

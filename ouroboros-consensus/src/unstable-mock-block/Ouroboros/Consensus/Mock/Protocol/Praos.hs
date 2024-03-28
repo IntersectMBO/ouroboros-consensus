@@ -77,6 +77,7 @@ import           Ouroboros.Consensus.NodeId (CoreNodeId (..))
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Signed
 import           Ouroboros.Consensus.Util.Condense
+import           Test.Cardano.Slotting.Numeric ()
 
 -- The Praos paper can be located at https://ia.cr/2017/573
 --

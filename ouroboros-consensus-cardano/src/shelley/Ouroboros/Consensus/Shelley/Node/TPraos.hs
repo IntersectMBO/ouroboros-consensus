@@ -345,8 +345,8 @@ protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
     initLedgerState = ShelleyLedgerState {
         shelleyLedgerTip        = Origin
       , shelleyLedgerState      =
-            L.registerInitialStaking transitionCfg
-          $ L.createInitialState     transitionCfg
+            L.injectIntoTestState transitionCfg
+          $ L.createInitialState  transitionCfg
       , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
       }
 

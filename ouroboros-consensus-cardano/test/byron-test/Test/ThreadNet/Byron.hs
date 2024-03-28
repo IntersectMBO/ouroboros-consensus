@@ -57,6 +57,7 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
+import           Test.Cardano.Slotting.Numeric ()
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck

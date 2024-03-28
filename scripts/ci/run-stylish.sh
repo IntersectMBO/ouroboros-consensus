@@ -7,12 +7,16 @@ stylish-haskell --defaults | diff - ./.stylish-haskell.yaml | grep -E "^>.*[[:al
 printf "\nFormatting haskell files...\n"
 
 export LC_ALL=C.UTF-8
-fd --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-core)" \
-    --extension hs \
-    --exclude Setup.hs \
-    --exclude ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \
-    --exec-batch stylish-haskell -c .stylish-haskell.yaml -i
-
+fdcmd=fd
+if ! command -v fd1 &> /dev/null
+then
+    fdcmd=fdfind # In Ubuntu systems the fd command has this name.
+fi
+$fdcmd --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-core)" \
+       --extension hs \
+       --exclude Setup.hs \
+       --exclude ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \
+       --exec-batch stylish-haskell -c .stylish-haskell.yaml -i
 
 # We don't want these deprecation warnings to be removed accidentally
 grep "#if __GLASGOW_HASKELL__ < 900
