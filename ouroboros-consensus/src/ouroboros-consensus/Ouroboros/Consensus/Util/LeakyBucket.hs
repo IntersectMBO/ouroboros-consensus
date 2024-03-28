@@ -34,17 +34,17 @@ module Ouroboros.Consensus.Util.LeakyBucket (
   , dummyConfig
   , evalAgainstBucket
   , execAgainstBucket
+  , execAgainstBucket'
   , runAgainstBucket
   , secondsRationalToDiffTime
-  , execAgainstBucket'
   ) where
 
+import           Control.Monad (when)
 import           Data.Ratio ((%))
 import           Data.Time.Clock (diffTimeToPicoseconds)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Util.IOLike
 import           Prelude hiding (init)
-import Control.Monad (when)
 
 -- | Configuration of a leaky bucket.
 data Config m = Config

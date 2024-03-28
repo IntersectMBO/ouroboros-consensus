@@ -17,6 +17,7 @@ import           Control.Exception (AsyncException (ThreadKilled),
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (Tracer), nullTracer, traceWith)
 import           Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import           Data.Proxy (Proxy (..))
 import           Data.Set (Set)
 import           Network.TypedProtocol.Codec (AnyMessage)
@@ -32,7 +33,8 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
 import           Ouroboros.Consensus.Node.GsmState (GsmState (Syncing))
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
-                     IOLike, MonadCatch (try), STM, StrictTVar, uncheckedNewTVarM)
+                     IOLike, MonadCatch (try), STM, StrictTVar,
+                     uncheckedNewTVarM)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (Tip)
 import           Ouroboros.Network.Channel (Channel)
@@ -62,7 +64,6 @@ import           Test.Consensus.PeerSimulator.Trace
                      TraceEvent (..))
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.Orphans.IOLike ()
-import qualified Data.Map.Strict as Map
 
 -- | A basic ChainSync client. It wraps around 'chainSyncClient', but simplifies
 -- quite a few aspects. In particular, the size of the pipeline cannot exceed 20

@@ -42,7 +42,8 @@ import qualified Codec.CBOR.Decoding as CBOR
 import           Codec.CBOR.Encoding (Encoding)
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.CBOR.Read (DeserialiseFailure)
-import           Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked hiding (modifyTVar)
+import           Control.Concurrent.Class.MonadSTM.Strict.TVar as TVar.Unchecked hiding
+                     (modifyTVar)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer
