@@ -4,7 +4,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
-module Cardano.Tools.DBSynthesizer.Forging (runForge) where
+module Cardano.Tools.DBSynthesizer.Forging (
+    GenTxs
+  , runForge
+  ) where
 
 import           Cardano.Tools.DBSynthesizer.Types (ForgeLimit (..),
                      ForgeResult (..))
@@ -25,8 +28,10 @@ import           Ouroboros.Consensus.Config (TopLevelConfig, configConsensus,
 import           Ouroboros.Consensus.Forecast (forecastFor)
 import           Ouroboros.Consensus.HeaderValidation
                      (BasicEnvelopeValidation (..), HeaderState (..))
+import           Ouroboros.Consensus.Ledger.Abstract (Validated)
 import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTx)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
                      tickChainDepState)
@@ -51,6 +56,9 @@ data ForgeState =
 initialForgeState :: ForgeState
 initialForgeState = ForgeState 0 0 0 0
 
+-- | An action to generate transactions for a given block
+type GenTxs blk = SlotNo -> TickedLedgerState blk -> IO [Validated (GenTx blk)]
+
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
 -- For an extensive commentary of the forging loop, see there.
 
@@ -63,8 +71,9 @@ runForge ::
     -> ChainDB IO blk
     -> [BlockForging IO blk]
     -> TopLevelConfig blk
+    -> GenTxs blk
     -> IO ForgeResult
-runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
+runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     putStrLn $ "--> epoch size: " ++ show epochSize_
     putStrLn $ "--> will process until: " ++ show opts
     endState <- go initialForgeState {currentSlot = nextSlot}
@@ -155,8 +164,8 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg = do
                 currentSlot
                 (ledgerState unticked)
 
-        -- Block won't contain any transactions
-        let txs = []
+        -- Let the caller generate transactions
+        txs <- lift $ genTxs currentSlot tickedLedgerState
 
         -- Actually produce the block
         newBlock <- lift $

@@ -20,14 +20,14 @@ import           Data.Aeson as Aeson (FromJSON, Result (..), Value,
                      eitherDecodeFileStrict', eitherDecodeStrict', fromJSON)
 import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
+import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node
-import           Ouroboros.Consensus.Config (configStorage)
+import           Ouroboros.Consensus.Config (TopLevelConfig, configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
 import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
                      (nodeImmutableDbChunkInfo)
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
-import           Ouroboros.Consensus.Shelley.Crypto
 import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..),
                      validateGenesis)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
@@ -110,8 +110,14 @@ eitherParseJson v = case fromJSON v of
     Error err -> Left err
     Success a -> Right a
 
-synthesize :: DBSynthesizerConfig -> (CardanoProtocolParams StandardCrypto) -> IO ForgeResult
-synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
+synthesize ::
+    (   TopLevelConfig (CardanoBlock StandardCrypto)
+     -> GenTxs (CardanoBlock StandardCrypto)
+    )
+  -> DBSynthesizerConfig
+  -> (CardanoProtocolParams StandardCrypto)
+  -> IO ForgeResult
+synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
     withRegistry $ \registry -> do
         let
             epochSize   = sgEpochLength confShelleyGenesis
@@ -143,7 +149,7 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP 
                             At s   -> succ s
 
                     putStrLn $ "--> starting at: " ++ show slotNo
-                    runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig
+                    runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig $ genTxs pInfoConfig
             else do
                 putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
                 pure $ ForgeResult 0
