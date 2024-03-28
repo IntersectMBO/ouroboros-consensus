@@ -19,8 +19,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers,
-                     mkPeers)
+import           Test.Consensus.PointSchedule.Peers (Peers, mkPeers)
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
@@ -60,7 +59,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
           }
       )
       shrinkPeerSchedules
-      ( \GenesisTest {gtBlockTree} StateView {svSelectedChain, svChainSyncExceptions} ->
+      ( \GenesisTest {gtBlockTree} stateView@StateView {svSelectedChain} ->
           let -- The tip of the blocktree trunk.
               treeTipPoint = AF.headPoint $ btTrunk gtBlockTree
               -- The tip of the selection.
@@ -70,9 +69,9 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
               selectedCorrect = timeoutsEnabled == (treeTipPoint == selectedTipPoint)
               -- If timeouts are enabled, then we expect exactly one
               -- `ExceededTimeLimit` exception in the adversary's ChainSync.
-              exceptionsCorrect = case svChainSyncExceptions of
+              exceptionsCorrect = case exceptionsByComponent ChainSyncClient stateView of
                 [] -> not timeoutsEnabled
-                [ChainSyncException (PeerId _) exn] ->
+                [exn] ->
                   case fromException exn of
                     Just (ExceededTimeLimit _) -> timeoutsEnabled
                     _                          -> False

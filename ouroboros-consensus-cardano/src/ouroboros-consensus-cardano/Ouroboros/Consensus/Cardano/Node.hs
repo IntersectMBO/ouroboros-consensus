@@ -447,7 +447,7 @@ pattern CardanoNodeToClientVersion11 =
 pattern CardanoNodeToClientVersion12 :: BlockNodeToClientVersion (CardanoBlock c)
 pattern CardanoNodeToClientVersion12 =
     HardForkNodeToClientEnabled
-      HardForkSpecificNodeToClientVersion2
+      HardForkSpecificNodeToClientVersion3
       (  EraNodeToClientEnabled ByronNodeToClientVersion1
       :* EraNodeToClientEnabled ShelleyNodeToClientVersion8
       :* EraNodeToClientEnabled ShelleyNodeToClientVersion8

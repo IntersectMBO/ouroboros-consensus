@@ -15,7 +15,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (
   , chainSelSync
   , chainSelectionForBlock
   , initialChainSelection
-  , reprocessLoEAsync
+  , triggerChainSelectionAsync
     -- * Exported for testing purposes
   , olderThanK
   ) where
@@ -59,8 +59,7 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..), ChainType (..),
-                     InvalidBlockReason (..), LoE (..), LoELimit (..),
-                     processLoE)
+                     InvalidBlockReason (..), LoE (..), LoELimit (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment, noPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -106,7 +105,7 @@ initialChainSelection ::
   -> StrictTVar m (WithFingerprint (InvalidBlocks blk))
   -> StrictTVar m (FutureBlocks m blk)
   -> CheckInFuture m blk
-  -> LoE m blk
+  -> LoE (m (AnchoredFragment (Header blk)))
   -> m (ChainAndLedger blk)
 initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
                       varFutureBlocks futureCheck loE = do
@@ -262,12 +261,12 @@ addBlockAsync CDB { cdbTracer, cdbChainSelQueue } =
     addBlockToAdd (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
 -- | Schedule reprocessing of blocks postponed by the LoE.
-reprocessLoEAsync ::
+triggerChainSelectionAsync ::
   forall m blk.
   IOLike m =>
   ChainDbEnv m blk ->
   m ()
-reprocessLoEAsync CDB {cdbTracer, cdbChainSelQueue} =
+triggerChainSelectionAsync CDB {cdbTracer, cdbChainSelQueue} =
   addReprocessLoEBlocks (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
 -- | Add a block to the ChainDB, /synchronously/.
@@ -538,17 +537,19 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     -- The preconditions
     assert (isJust $ lookupBlockInfo (headerHash hdr)) $ return ()
 
-    loeFrag0 <- processLoE curChain (LgrDB.ledgerDbCurrent ledgerDB) cdbLoE
+    let
+      sanitizeLoEFrag loeFrag0 =
+        case cross curChain loeFrag0 of
+            Just (_, frag) -> frag
+            -- We don't crash if the LoE fragment doesn't intersect with the selection
+            -- because we update the selection _after_ updating the LoE fragment, which
+            -- means it could move to another fork or beyond the end of the LF, depending
+            -- on the implementation of @processLoE@.
+            Nothing        -> AF.Empty (AF.anchor curChain)
 
-    let loeFrag = case cross curChain loeFrag0 of
-          Just (_, frag) -> frag
-          -- We don't crash if the LoE fragment doesn't intersect with the selection
-          -- because we update the selection _after_ updating the LoE fragment, which
-          -- means it could move to another fork or beyond the end of the LF, depending
-          -- on the implementation of @processLoE@.
-          Nothing        -> AF.Empty (AF.anchor curChain)
+    loeFrag <- traverse (fmap sanitizeLoEFrag) cdbLoE
 
-    traceWith addBlockTracer (ChainSelectionLoEDebug curChain loeFrag0)
+    traceWith addBlockTracer (ChainSelectionLoEDebug curChain loeFrag)
 
     if
       -- The chain might have grown since we added the block such that the
@@ -557,7 +558,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         traceWith addBlockTracer $ IgnoreBlockOlderThanK p
         return tipPoint
 
-      -- We might have validated the block in the meantime
+      -- The block is invalid
       | Just (InvalidBlockInfo reason _) <- Map.lookup (headerHash hdr) invalid -> do
         traceWith addBlockTracer $ IgnoreInvalidBlock p reason
 
@@ -569,11 +570,11 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         return tipPoint
 
-      -- The block @b@ fits onto the end of our current chain
+      -- The block fits onto the end of our current chain
       | pointHash tipPoint == headerPrevHash hdr
         -- TODO could be optimized if necessary/easy enough
       , let newBlockFrag = curChain AF.:> hdr
-      , Just maxExtra <- computeLoEMaxExtra cdbLoE loeFrag newBlockFrag -> do
+      , Just maxExtra <- computeLoEMaxExtra loeFrag newBlockFrag -> do
         -- ### Add to current chain
         traceWith addBlockTracer (TryAddToCurrentChain p)
         addToCurrentChain succsOf' curChainAndLedger maxExtra
@@ -585,7 +586,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       , let curChain' =
               AF.mapAnchoredFragment (castHeaderFields . getHeaderFields) curChain
       , Just newBlockFrag <- Diff.apply curChain' diff
-      , Just maxExtra <- computeLoEMaxExtra cdbLoE loeFrag newBlockFrag -> do
+      , Just maxExtra <- computeLoEMaxExtra loeFrag newBlockFrag -> do
         -- ### Switch to a fork
         traceWith addBlockTracer (TrySwitchToAFork p diff)
         switchToAFork succsOf' lookupBlockInfo' curChainAndLedger maxExtra diff
@@ -763,42 +764,28 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     -- | How many extra blocks to select at most after the tip of @newBlockFrag@
     -- according to the LoE.
     --
-    -- There are two cases to consider:
+    -- In no case the selection is allowed to be extended by more than k blocks.
+    -- We don't control from what chain those blocks would be selected at this
+    -- point. If we allowed more than k blocks, the immutable tip could enter an
+    -- adversarial branch.
     --
-    -- 1. If @newBlockFrag@ and @loeFrag@ are on the same chain, then we cannot
-    --    select more than @loeLimit@ blocks after @loeFrag@.
-    --
-    -- 2. If @newBlockFrag@ and @loeFrag@ are on different chains, then we
-    --   cannot select more than @loeLimit@ blocks after their intersection.
-    --
-    -- In any case, 'Nothing' is returned if @newBlockFrag@ extends beyond
-    -- what LoE allows.
     computeLoEMaxExtra ::
          (HasHeader x, HeaderHash x ~ HeaderHash blk)
-      => LoE m blk
-         -- ^ How many blocks can be selected beyond the LoE.
-      -> AnchoredFragment (Header blk)
+      => LoE (AnchoredFragment (Header blk))
          -- ^ The fragment with the LoE as its tip, with the same anchor as
          -- @curChain@.
       -> AnchoredFragment x
          -- ^ The fragment with the new block @b@ as its tip, with the same
          -- anchor as @curChain@.
       -> Maybe LoELimit
-    computeLoEMaxExtra (LoEEnabled _) loeFrag newBlockFrag =
-        -- Both fragments are on the same chain
-        if loeSuffixLength == 0 || rollback == 0 then
-          if rollback > k + loeSuffixLength
-            then Nothing
-            else Just $ LoELimit $ k + loeSuffixLength - rollback
-        else
-          if rollback > k
-            then Nothing
-            else Just $ LoELimit $ k - rollback
-      where
-        d = Diff.diff newBlockFrag loeFrag
-        rollback = Diff.getRollback d
-        loeSuffixLength = fromIntegral $ AF.length (Diff.getSuffix d)
-    computeLoEMaxExtra LoEDisabled _ _ =
+    computeLoEMaxExtra (LoEEnabled loeFrag) newBlockFrag
+        | rollback > k  = Nothing
+        | otherwise = Just $ LoELimit $ k - rollback
+       where
+         d = Diff.diff newBlockFrag loeFrag
+         rollback = Diff.getRollback d
+
+    computeLoEMaxExtra LoEDisabled _ =
       Just LoEUnlimited
 
     mkSelectionChangedInfo ::

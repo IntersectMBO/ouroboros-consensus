@@ -282,6 +282,7 @@ library
     , primitive
     , psqueues                     ^>=0.2.3
     , quiet                        ^>=0.2
+    , reflection
     , semialign                    >=1.1
     , serialise                    ^>=0.2
     , si-timers                    ^>=1.4

@@ -95,9 +95,9 @@ instance Read SomeCheckedHonestRecipe where
             <*> Some.readArg
 
 data NoSuchHonestChainSchema =
-    -- | must have @2 <= 'Kcp' <= 'Scg'@
+    -- | must have @1 <= 'Kcp' < 'Scg'@
     --
-    -- Chosing @Kcp > 2@ allows adversarial schemas to have at least 1 active
+    -- Chosing @Kcp > 0@ allows adversarial schemas to have at least 1 active
     -- slot and still lose density comparisons and races.
     BadKcp
   |
@@ -118,35 +118,36 @@ data NoSuchHonestChainSchema =
 --
 -- We divide the length of the schemas in the following three segments:
 --
--- 2s - (k - 1) | d | k
+-- s + 1 | d | k
 --
 -- To ensure the honest schema has at least k+1 active slots, we need at least
--- the length of the first segment: 2s - (k - 1). We know that because 2s slots
--- have at a minimum 2k blocks by the chain growth assumption. But that would be
--- ensuring k-1 more blocks than we want. Thus we subtract the redundant k-1
--- slots.
+-- the s slots, by the Extended Praos Chain Growth assumption. We draw these
+-- slots from the first segment.
 --
 -- To ensure the alternative schema can have k+1 active slots, we reserve
 -- k unstable slots at the end of the schema (this is the last of our segments),
 -- and we make sure to activate one more earlier slot.
 --
 -- To reserve k unstable slots, we need to meet two conditions. One condition is
--- that there needs to be a gap of d slots between the first unstable slot and
--- the k+1st active slot in the honest schema. This is the middle segment in the
--- schema. Therefore, to obtain the total length, we need to extend the length
--- of the first segment by d+k, to obtain 2s - (k - 1) + d + k = 2s + d + 1.
+-- that there needs to be a gap of at lest d slots between the first unstable
+-- slot and the k+1st active slot in the honest schema. This is the middle
+-- segment in the schema.
 --
 -- The second condition for unstable slots requires that the first alternative
 -- active slot after the intersection is s slots before the first unstable slot.
--- To ensure that we can activate a slot at this point or earlier, we chose k>1,
+-- To ensure that we can activate a slot at this point or earlier, we chose k>0,
 -- which we already needed to ensure that the alternative schema can have at
--- least one active slot, yet lose density and race comparisons.
+-- least one active slot, yet lose density and race comparisons; and we also
+-- draw one more slot from the first segment to ensure there is an actual slot
+-- to activate when d=0.
+--
+-- Therefore, to the total length is s + d + k + 1.
 
 genHonestRecipe :: QC.Gen HonestRecipe
 genHonestRecipe = sized1 $ \sz -> do
     (Kcp k, Scg s, Delta d) <- genKSD
     -- See Note [Minimum schema length].
-    l <- (+ (2*s + d + 1)) <$> QC.choose (0, 5 * sz)
+    l <- (+ (s + d + k + 1)) <$> QC.choose (0, 5 * sz)
     pure $ HonestRecipe (Kcp k) (Scg s) (Delta d) (Len l)
 
 -- | Checks whether the given 'HonestRecipe' determines a valid input to
@@ -155,13 +156,13 @@ checkHonestRecipe :: HonestRecipe -> Exn.Except NoSuchHonestChainSchema SomeChec
 checkHonestRecipe recipe = do
     when (l <= 0) $ Exn.throwError BadLen
 
-    when (k < 2 || s < k) $ Exn.throwError BadKcp
+    when (k < 1 || s < k) $ Exn.throwError BadKcp
 
     C.withTopWindow (C.Lbl @HonestLbl) l $ \base topWindow -> do
         C.SomeWindow Proxy slots <- pure topWindow
 
         pure $ SomeCheckedHonestRecipe base Proxy UnsafeCheckedHonestRecipe {
-            chrScgDensity = BV.SomeDensityWindow (C.Count k) (C.Count s)
+            chrScgDensity = BV.SomeDensityWindow (C.Count (k + 1)) (C.Count s)
           ,
             chrWin        = slots
           }
@@ -245,7 +246,7 @@ data RemainingHcgWindowsLbl
 
 Our original intent was for 'uniformTheHonestChain' to generate a chain
 according to the given 'Asc' and then toggle /as few as possible/ empty slots
-to active such that the Chain Growth Assumption is satisfied.
+to active such that the Extended Chain Growth Assumption is satisfied.
 
 However, the minimality of that is very difficult to ensure, in general. It's
 an integer linear programming (ILP) problem, where:
@@ -308,18 +309,18 @@ would solve the problem with just two toggles.
 -- | A 'ChainSchema' that satisfies 'checkHonestChain'
 --
 -- This generator proceeds in three stages to create a random schema that
--- satisfies the requirement of at least @k@ blocks in every @s@ slots.
+-- satisfies the requirement of at least @k+1@ blocks in every @s@ slots.
 --
 -- * It begins by drawing a sample of length 'Len' from the Bernoulli process
 --   induced by the active slot coefficient 'Asc', just like in Praos. (IE
 --   'Len' many i.i.d. samples from @Uniform(asc)@).
 -- * It then visits the first window in that sampled vector. If it has less
---   than @k@ active slots, the generator randomly toggles empty slots to be
---   active until the window contains exactly @k@ active slots.
+--   than @k+1@ active slots, the generator randomly toggles empty slots to be
+--   active until the window contains exactly @k+1@ active slots.
 -- * It then visits the rest of the windows in oldest-to-youngest order. Each
---   window must contain at least @k-1@ active slots when visited, since it
+--   window must contain at least @k@ active slots when visited, since it
 --   shares all but its youngest slot with the previous window, which was
---   already visited. In particular, when the window contains only @k-1@ active
+--   already visited. In particular, when the window contains only @k@ active
 --   slots, that youngest slot must be empty, and so the generator will toggle
 --   it, thereby re-establishing the required density.
 --
@@ -331,26 +332,26 @@ would solve the problem with just two toggles.
 --
 -- NOTE: When visting windows after the first, only the youngest slot can be
 -- toggled. If we activated any other slot in the sliding window, then older
--- windows, which already have at least @k@ active slots, would unnecessarily
+-- windows, which already have at least @k+1@ active slots, would unnecessarily
 -- end up with even more active slots.
 --
 -- NOTE: The larger 'Asc' is, the more active slots there will be when sampling
--- from the Bernoulli process. When 'Asc' is much larger than @k/s@ the sample
--- will require toggling very few additional slots.
+-- from the Bernoulli process. When 'Asc' is much larger than @(k+1)/s@ the
+-- sample will require toggling very few additional slots.
 --
 -- NOTE: When no 'Asc' value is provided, we start with a vector with no active
--- slots, and the second phasesliding window causes the first window to end up with @k@
+-- slots, and the second phase causes the first window to end up with @k+1@
 -- active slots in a pattern that is then repeated exactly for the rest of the
 -- chain. For instance,
 --
--- > k=3, s=6
+-- > k=2, s=6
 -- >
 -- > 000000000000000000000000 -- stage 1
 -- > 1 11                     -- stage 2
 -- >       1 11  1 11  1 11   -- stage 3
 -- > 101100101100101100101100 -- final
 --
--- > k=3, s=6
+-- > k=2, s=6
 -- >
 -- > 000000000000000000000000 -- stage 1
 -- >    111                   -- stage 2
@@ -363,7 +364,7 @@ would solve the problem with just two toggles.
 -- slots from the sample, but the patterns in those intervals may vary. For
 -- instance,
 --
--- > k=3, s=6
+-- > k=2, s=6
 -- >
 -- > 000000000000010000000000000000001000000000000000000 -- stage 1
 -- > 1 1 1                                               -- stage 2
@@ -400,7 +401,7 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
     -- /always/ ensure at least one slot is filled
     void $ BV.fillInWindow S.notInverted (C.Count 1 `BV.SomeDensityWindow` sz) g mv
 
-    -- fill the first window up to @k@
+    -- fill the first window up to @k+1@
     rtot <- do
         -- NB @withWindow@ truncates if it would reach past @slots@
         C.SomeWindow Proxy scg <- pure $ C.withWindow sz (C.Lbl @ScgLbl) (C.Count 0) (C.toSize denominator)
@@ -418,10 +419,10 @@ uniformTheHonestChain mbAsc recipe g0 = wrap $ C.createV $ do
 
     -- visit all subsequent windows that do not reach beyond @slots@
     --
-    -- Visiting a window ensures it has at least k active slots; thus the
-    -- first window beyond @slots@ will have at least k-1 actives in its actual
+    -- Visiting a window ensures it has at least k+1 active slots; thus the
+    -- first window beyond @slots@ will have at least k actives in its actual
     -- slots. We assume slots beyond @slots@ are active; thus the first window
-    -- beyond has at least k active slots. And subsequent windows can only have
+    -- beyond has at least k+1 active slots. And subsequent windows can only have
     -- more active slots than that; thus we don't need to visit windows that
     -- reach beyond @slots@.
     --
@@ -513,7 +514,7 @@ data HonestChainViolation hon =
     BadCount
   |
     -- | The schema has some window of 'Scg' slots that contains less than
-    -- 'Kcp' active slots, even despite optimistically assuming that all slots
+    -- 'Kcp+1' active slots, even despite optimistically assuming that all slots
     -- beyond 'Len' are active
     BadScgWindow !(ScgViolation hon)
   |
@@ -524,14 +525,14 @@ data HonestChainViolation hon =
 -- | A stability window
 data ScgLbl
 
--- | Check the Praos Chain Growth assumption
+-- | Check the Extended Praos Chain Growth assumption
 --
 -- Definition of /window/ and /anchored window/. A window is a contiguous
 -- sequence of slots. A window anchored at a block starts with the slot
 -- immediately after that block.
 --
--- Definition of /Praos Chain Growth Assumption/. We assume the honest chain
--- contains at least @k@ blocks in every window that contains @s@ slots.
+-- Definition of /Extended Praos Chain Growth Assumption/. We assume the honest chain
+-- contains at least @k+1@ blocks in every window that contains @s@ slots.
 --
 -- Definition of /Stability Window/. The @s@ parameter from the Praos Chain
 -- Growth property. (At the time of writing, this is @2k@ during Byron and
@@ -558,7 +559,7 @@ checkHonestChain recipe sched = do
         let benefitOfTheDoubt = s - C.getCount (C.windowSize scg)
 
         -- check the density in the stability window
-        when (C.getCount pc + benefitOfTheDoubt < k) $ do
+        when (C.getCount pc + benefitOfTheDoubt < k + 1) $ do
             Exn.throwError $ BadScgWindow $ ScgViolation {
                 scgvPopCount = pc
               ,

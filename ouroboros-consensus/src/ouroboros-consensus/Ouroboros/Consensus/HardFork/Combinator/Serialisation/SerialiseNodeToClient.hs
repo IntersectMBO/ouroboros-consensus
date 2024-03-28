@@ -37,6 +37,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Ledger.Query
 import           Ouroboros.Consensus.HardFork.Combinator.Mempool
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.SerialiseDisk ()
+import           Ouroboros.Consensus.HardFork.History (EraParamsFormat (..))
 import           Ouroboros.Consensus.Ledger.SupportsMempool (GenTxId)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.Run
@@ -295,8 +296,10 @@ instance SerialiseHFC xs
     where
       ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
 
-  encodeResult _ _ (QueryAnytime qry _) = encodeQueryAnytimeResult qry
-  encodeResult _ _ (QueryHardFork qry)  = encodeQueryHardForkResult qry
+  encodeResult _ _       (QueryAnytime qry _) = encodeQueryAnytimeResult      qry
+  encodeResult _ version (QueryHardFork qry)  = encodeQueryHardForkResult epf qry
+    where
+      epf = eraParamsFormatFromVersion version
 
   decodeResult ccfg version (QueryIfCurrent qry) =
       case isNonEmpty (Proxy @xs) of
@@ -312,8 +315,17 @@ instance SerialiseHFC xs
     where
       ccfgs = getPerEraCodecConfig $ hardForkCodecConfigPerEra ccfg
 
-  decodeResult _ _ (QueryAnytime qry _) = decodeQueryAnytimeResult qry
-  decodeResult _ _ (QueryHardFork qry)  = decodeQueryHardForkResult qry
+  decodeResult _ _       (QueryAnytime qry _) = decodeQueryAnytimeResult      qry
+  decodeResult _ version (QueryHardFork qry)  = decodeQueryHardForkResult epf qry
+    where
+      epf = eraParamsFormatFromVersion version
+
+eraParamsFormatFromVersion :: HardForkNodeToClientVersion xs -> EraParamsFormat
+eraParamsFormatFromVersion = \case
+    HardForkNodeToClientDisabled _ -> throw HardForkEncoderQueryHfcDisabled
+    HardForkNodeToClientEnabled v _
+      | v >= HardForkSpecificNodeToClientVersion3 -> EraParamsWithGenesisWindow
+      | otherwise                                 -> EraParamsWithoutGenesisWindow
 
 encodeQueryIfCurrentResult ::
      All SerialiseConstraintsHFC xs

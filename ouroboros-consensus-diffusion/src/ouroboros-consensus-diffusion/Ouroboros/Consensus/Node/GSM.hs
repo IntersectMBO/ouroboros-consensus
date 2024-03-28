@@ -37,7 +37,6 @@ import qualified Control.Monad.Class.MonadTimer.SI as SI
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import           Data.Time (NominalDiffTime)
 import qualified Ouroboros.Consensus.BlockchainTime.WallClock.Types as Clock
 import qualified Ouroboros.Consensus.HardFork.Abstract as HardFork
@@ -94,7 +93,7 @@ data GsmState =
     -- ^ We are caught-up.
   deriving (Eq, Show, Read)
 
-data GsmView m upstreamPeer selection candidate = GsmView {
+data GsmView m upstreamPeer selection chainSyncState = GsmView {
     antiThunderingHerd        :: Maybe StdGen
     -- ^ An initial seed used to randomly increase 'minCaughtUpDuration' by up
     -- to 15% every transition from Syncing to CaughtUp, in order to avoid a
@@ -103,7 +102,9 @@ data GsmView m upstreamPeer selection candidate = GsmView {
     -- 'Nothing' should only be used for testing.
   ,
     candidateOverSelection    ::
-        selection -> candidate -> CandidateVersusSelection
+        selection -> chainSyncState -> CandidateVersusSelection
+  ,
+    peerIsIdle                :: chainSyncState -> Bool
   ,
     durationUntilTooOld       :: Maybe (selection -> m DurationFromNow)
     -- ^ How long from now until the selection will be so old that the node
@@ -115,13 +116,10 @@ data GsmView m upstreamPeer selection candidate = GsmView {
     -- ^ Whether the two selections are equivalent for the purpose of the
     -- Genesis State Machine
   ,
-    getChainSyncCandidates    ::
-        STM m (Map.Map upstreamPeer (StrictTVar m candidate))
-    -- ^ The latest candidates from the upstream ChainSync peers
-  ,
-    getChainSyncIdlers        :: STM m (Set.Set upstreamPeer)
-    -- ^ The ChainSync peers whose latest message claimed that they have no
-    -- subsequent headers
+    getChainSyncStates        ::
+        STM m (Map.Map upstreamPeer (StrictTVar m chainSyncState))
+    -- ^ The current ChainSync state with the latest candidates from the
+    -- upstream peers
   ,
     getCurrentSelection       :: STM m selection
     -- ^ The node's current selection
@@ -224,7 +222,6 @@ gsmStateToLedgerJudgement = \case
 realGsmEntryPoints :: forall m upstreamPeer selection tracedSelection candidate.
      ( SI.MonadDelay m
      , SI.MonadTimer m
-     , Eq upstreamPeer
      )
   => (selection -> tracedSelection, Tracer m (TraceGsmEvent tracedSelection))
   -> GsmView m upstreamPeer selection candidate
@@ -242,13 +239,13 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
       ,
         candidateOverSelection
       ,
+        peerIsIdle
+      ,
         durationUntilTooOld
       ,
         equivalent
       ,
-        getChainSyncCandidates
-      ,
-        getChainSyncIdlers
+        getChainSyncStates
       ,
         getCurrentSelection
       ,
@@ -374,12 +371,11 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
     blockUntilCaughtUp :: STM m (TraceGsmEvent tracedSelection)
     blockUntilCaughtUp = do
         -- STAGE 1: all ChainSync clients report no subsequent headers
-        idlers        <- getChainSyncIdlers
-        varsCandidate <- getChainSyncCandidates
+        varsState     <- getChainSyncStates
+        states        <- traverse StrictSTM.readTVar varsState
         check $
-                           0  < Map.size    varsCandidate
-          && Set.size idlers == Map.size    varsCandidate
-          &&          idlers == Map.keysSet varsCandidate
+             not (Map.null states)
+          && all peerIsIdle states
 
         -- STAGE 2: no candidate is better than the node's current
         -- selection
@@ -392,14 +388,14 @@ realGsmEntryPoints tracerArgs gsmView = GsmEntryPoints {
         -- block; general Praos reasoning ensures that won't take particularly
         -- long.
         selection  <- getCurrentSelection
-        candidates <- traverse StrictSTM.readTVar varsCandidate
+        candidates <- traverse StrictSTM.readTVar varsState
         let ok candidate =
                 WhetherCandidateIsBetter False
              == candidateOverSelection selection candidate
         check $ all ok candidates
 
         pure $ GsmEventEnterCaughtUp
-            (Set.size idlers)
+            (Map.size states)
             (cnvSelection selection)
 
         -- STAGE 3: the previous stages weren't so slow that the idler

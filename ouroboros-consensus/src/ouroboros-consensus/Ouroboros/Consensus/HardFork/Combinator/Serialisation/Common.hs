@@ -147,6 +147,9 @@ data HardForkSpecificNodeToClientVersion =
 
     -- | Enable the 'GetCurrentEra' query in 'QueryHardFork'.
   | HardForkSpecificNodeToClientVersion2
+
+    -- | Include the Genesis window in 'EraParams'.
+  | HardForkSpecificNodeToClientVersion3
   deriving (Eq, Ord, Show, Enum, Bounded)
 
 data HardForkNodeToNodeVersion xs where

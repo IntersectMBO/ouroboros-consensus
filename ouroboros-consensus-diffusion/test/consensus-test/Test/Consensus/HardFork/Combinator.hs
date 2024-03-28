@@ -150,6 +150,7 @@ prop_simple_hfc_convergence testSetup@TestSetup{..} =
         <*> testSetupSlotLength
         <*> AB (History.StandardSafeZone (safeFromTipA k))
                (safeZoneB k)
+        <*> pure (GenesisWindow ((maxRollbacks k) * 2))
 
     shape :: History.Shape '[BlockA, BlockB]
     shape = History.Shape $ exactlyTwo eraParamsA eraParamsB

@@ -21,7 +21,8 @@
 -- and once it fulfills the state's criteria, it yields control back to the scheduler,
 -- who then activates the next tick's peer.
 module Test.Consensus.PointSchedule (
-    ForecastRange (..)
+    BlockFetchTimeout (..)
+  , ForecastRange (..)
   , GenesisTest (..)
   , GenesisTestFull
   , GenesisWindow (..)
@@ -29,6 +30,7 @@ module Test.Consensus.PointSchedule (
   , NodeState (..)
   , PeerSchedule
   , PeersSchedule
+  , RunGenesisTestResult (..)
   , enrichedWith
   , genesisNodeState
   , longRangeAttack
@@ -55,6 +57,8 @@ import           Data.Time (DiffTime)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..),
                      withOriginToMaybe)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (GenesisWindow (..))
 import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
                      maxRollbacks)
@@ -68,6 +72,7 @@ import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      allFragments, prettyBlockTree)
+import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
                      mkPeers, peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -164,6 +169,8 @@ prettyPeersSchedule peers =
 -- Finally, drops the first state, since all points being 'Origin' (in particular the tip) has no
 -- useful effects in the simulator, but it could set the tip in the GDD governor to 'Origin', which
 -- causes slow nodes to be disconnected right away.
+--
+-- TODO Remove dropping the first state in favor of better GDD logic
 peerStates :: Peer (PeerSchedule blk) -> [(Time, Peer (NodeState blk))]
 peerStates Peer {name, value = schedulePoints} =
   drop 1 (zip (Time 0 : (map shiftTime times)) (Peer name <$> scanl' modPoint genesisNodeState points))
@@ -299,8 +306,6 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
 
     rollbackProb = 0.2
 
-newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
-  deriving (Show)
 
 newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)
@@ -310,20 +315,35 @@ data LoPBucketParams = LoPBucketParams {
   lbpRate     :: Rational
   }
 
+-- | Similar to 'ChainSyncTimeout' for BlockFetch. Only the states in which the
+-- server has agency are specified. REVIEW: Should it be upstreamed to
+-- ouroboros-network-protocols?
+data BlockFetchTimeout = BlockFetchTimeout
+  { busyTimeout      :: Maybe DiffTime,
+    streamingTimeout :: Maybe DiffTime
+  }
+
 -- | All the data used by point schedule tests.
-data GenesisTest blk schedule = GenesisTest {
-  gtSecurityParam     :: SecurityParam,
-  gtGenesisWindow     :: GenesisWindow,
-  gtForecastRange     :: ForecastRange, -- REVIEW: Do we want to allow infinite forecast ranges?
-  gtDelay             :: Delta,
-  gtBlockTree         :: BlockTree blk,
-  gtChainSyncTimeouts :: ChainSyncTimeout,
-  gtLoPBucketParams   :: LoPBucketParams,
-  gtSlotLength        :: SlotLength,
-  gtSchedule          :: schedule
+data GenesisTest blk schedule = GenesisTest
+  { gtSecurityParam      :: SecurityParam,
+    gtGenesisWindow      :: GenesisWindow,
+    gtForecastRange      :: ForecastRange, -- REVIEW: Do we want to allow infinite forecast ranges?
+    gtDelay              :: Delta,
+    gtBlockTree          :: BlockTree blk,
+    gtChainSyncTimeouts  :: ChainSyncTimeout,
+    gtBlockFetchTimeouts :: BlockFetchTimeout,
+    gtLoPBucketParams    :: LoPBucketParams,
+    gtSlotLength         :: SlotLength,
+    gtSchedule           :: schedule
   }
 
 type GenesisTestFull blk = GenesisTest blk (PeersSchedule blk)
+
+-- | All the data describing the result of a test
+data RunGenesisTestResult = RunGenesisTestResult
+  { rgtrTrace     :: String,
+    rgtrStateView :: StateView TestBlock
+  }
 
 prettyGenesisTest :: (schedule -> [String]) -> GenesisTest TestBlock schedule -> [String]
 prettyGenesisTest prettySchedule genesisTest =
@@ -337,6 +357,10 @@ prettyGenesisTest prettySchedule genesisTest =
   , "    canAwait = " ++ show canAwaitTimeout
   , "    intersect = " ++ show intersectTimeout
   , "    mustReply = " ++ show mustReplyTimeout
+  , "    idle = " ++ show idleTimeout
+  , "  gtBlockFetchTimeouts: "
+  , "    busy = " ++ show busyTimeout
+  , "    streaming = " ++ show streamingTimeout
   , "  gtLoPBucketParams: "
   , "    lbpCapacity = " ++ show lbpCapacity ++ " tokens"
   , "    lbpRate = " ++ show lbpRate ++ " ≅ " ++ printf "%.2f" (fromRational lbpRate :: Float) ++ " tokens per second"
@@ -352,7 +376,9 @@ prettyGenesisTest prettySchedule genesisTest =
       , gtForecastRange
       , gtDelay = Delta delta
       , gtBlockTree
-      , gtChainSyncTimeouts = ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout}
+      , gtChainSyncTimeouts =
+          ChainSyncTimeout{canAwaitTimeout, intersectTimeout, mustReplyTimeout, idleTimeout}
+      , gtBlockFetchTimeouts = BlockFetchTimeout{busyTimeout, streamingTimeout}
       , gtLoPBucketParams = LoPBucketParams{lbpCapacity, lbpRate}
       , gtSlotLength
       , gtSchedule

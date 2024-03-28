@@ -1,9 +1,11 @@
-{-# LANGUAGE FlexibleContexts   #-}
-{-# LANGUAGE GADTs              #-}
-{-# LANGUAGE PatternSynonyms    #-}
-{-# LANGUAGE RankNTypes         #-}
-{-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeFamilies       #-}
+{-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GADTs                      #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE PatternSynonyms            #-}
+{-# LANGUAGE RankNTypes                 #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 module Ouroboros.Consensus.Block.Abstract (
     -- * Protocol
@@ -30,6 +32,8 @@ module Ouroboros.Consensus.Block.Abstract (
   , encodeRawHash
     -- * Utilities for working with WithOrigin
   , succWithOrigin
+    -- * Ouroboros Genesis window
+  , GenesisWindow (..)
     -- * Re-export basic definitions from @ouroboros-network@
   , ChainHash (..)
   , HasHeader (..)
@@ -71,7 +75,8 @@ import           Data.ByteString.Short (ShortByteString)
 import qualified Data.ByteString.Short as Short
 import           Data.Kind (Type)
 import           Data.Maybe (isJust)
-import           Data.Word (Word32)
+import           Data.Word (Word32, Word64)
+import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block.EBB
 import           Ouroboros.Network.Block (ChainHash (..), HasHeader (..),
                      HeaderFields (..), HeaderHash, Point, StandardHash,
@@ -241,3 +246,12 @@ pattern NotOrigin t = Cardano.At t
 -- 'SlotNo' and 'BlockNo'.
 succWithOrigin :: (Bounded t, Enum t) => WithOrigin t -> t
 succWithOrigin = withOrigin minBound succ
+
+{-------------------------------------------------------------------------------
+  Ouroboros Genesis window
+-------------------------------------------------------------------------------}
+
+-- TODO docs/better place?
+newtype GenesisWindow = GenesisWindow { unGenesisWindow :: Word64 }
+  deriving stock (Show, Eq, Ord)
+  deriving newtype (NoThunks, Num)

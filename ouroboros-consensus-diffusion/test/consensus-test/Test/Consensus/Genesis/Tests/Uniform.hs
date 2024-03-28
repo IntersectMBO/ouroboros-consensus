@@ -15,14 +15,15 @@ module Test.Consensus.Genesis.Tests.Uniform (tests) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.Class.MonadTime.SI (Time, addTime)
+import           Control.Monad.Class.MonadTime.SI (DiffTime, Time (Time),
+                     addTime)
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
+import           Data.Maybe (catMaybes, mapMaybe)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
-import           Ouroboros.Consensus.Block (WithOrigin (NotOrigin))
+import           Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
 import           Ouroboros.Consensus.Util.Condense (condense)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (blockNo, blockSlot, unBlockNo)
@@ -32,15 +33,15 @@ import           Ouroboros.Network.Protocol.Limits (shortWait)
 import           Test.Consensus.BlockTree (BlockTree (..), btbSuffix)
 import           Test.Consensus.Genesis.Setup
 import           Test.Consensus.Genesis.Setup.Classifiers
-import           Test.Consensus.Network.Driver.Limits.Extras
-                     (chainSyncNoTimeouts)
+import           Test.Consensus.PeerSimulator.ChainSync (chainSyncNoTimeouts)
 import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
                      value)
-import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
+import           Test.Consensus.PointSchedule.Shrinking
+                     (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (SchedulePoint (ScheduleBlockPoint, ScheduleTipPoint))
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
@@ -76,14 +77,14 @@ theProperty ::
 theProperty genesisTest stateView@StateView{svSelectedChain} =
   classify genesisWindowAfterIntersection "Full genesis window after intersection" $
   classify (isOrigin immutableTipHash) "Immutable tip is Origin" $
-  label disconnected $
+  label disconnectedLabel $
   classify (advCount < length (btBranches gtBlockTree)) "Some adversaries performed rollbacks" $
   counterexample killedPeers $
   -- We require the honest chain to fit a Genesis window, because otherwise its tip may suggest
   -- to the governor that the density is too low.
   longerThanGenesisWindow ==>
   conjoin [
-    counterexample "The honest peer was disconnected" (HonestPeer `notElem` killed),
+    counterexample "The honest peer was disconnected" (HonestPeer `notElem` disconnected),
     counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
     property (isHonest immutableTipHash),
     immutableTipIsRecent
@@ -110,18 +111,18 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
 
     immutableTipSlot = AF.anchorToSlotNo (AF.anchor svSelectedChain)
 
-    disconnected =
+    disconnectedLabel =
       printf "disconnected %.1f%% of adversaries" disconnectedPercent
 
-    killed = chainSyncKilled stateView
+    disconnected = collectDisconnectedPeers stateView
 
     disconnectedPercent :: Double
     disconnectedPercent =
-      100 * fromIntegral (length killed) / fromIntegral advCount
+      100 * fromIntegral (length disconnected) / fromIntegral advCount
 
-    killedPeers = case killed of
-      [] -> "No peers were killed"
-      peers -> "Some peers were killed: " ++ intercalate ", " (condense <$> peers)
+    killedPeers = case disconnected of
+      [] -> "No peers were disconnected"
+      peers -> "Some peers were disconnected: " ++ intercalate ", " (condense <$> peers)
 
     honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest $ gtSchedule genesisTest
 
@@ -136,14 +137,17 @@ fromBlockPoint _                                      = Nothing
 -- | Tests that the immutable tip is not delayed and stays honest with the
 -- adversarial peers serving adversarial branches.
 prop_serveAdversarialBranches :: Property
-prop_serveAdversarialBranches =
-  expectFailure $ forAllGenesisTest
+prop_serveAdversarialBranches = forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
-    (defaultSchedulerConfig {scTraceState = False, scTrace = False})
+    (defaultSchedulerConfig
+       {scTraceState = False, scTrace = False, scEnableLoE = True})
 
-    shrinkPeerSchedules
+    -- We cannot shrink by removing points from the adversarial schedules.
+    -- Otherwise, the immutable tip could get stuck because a peer doesn't
+    -- send any blocks or headers.
+    shrinkByRemovingAdversaries
 
     theProperty
 
@@ -173,16 +177,17 @@ genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
 -- the last genesis window of the honest chain.
 
 -- | Test that the leashing attacks do not delay the immutable tip
---
--- This test is expected to fail because we don't test a genesis implementation
--- yet.
 prop_leashingAttackStalling :: Property
 prop_leashingAttackStalling =
-  expectFailure $ forAllGenesisTest
+  forAllGenesisTest
 
-    (genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
+    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genLeashingSchedule)
 
-    (defaultSchedulerConfig {scTrace = False})
+    defaultSchedulerConfig
+      { scTrace = False
+      , scEnableLoE = True
+      , scEnableLoP = True
+      }
 
     shrinkPeerSchedules
 
@@ -192,11 +197,33 @@ prop_leashingAttackStalling =
     -- | Produces schedules that might cause the node under test to stall.
     --
     -- This is achieved by dropping random points from the schedule of each peer
+    -- and by adding sufficient time at the end of a test to allow LoP and
+    -- timeouts to disconnect adversaries.
     genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
+      let peerCount = 1 + length advs0
+          extendedHonest =
+            duplicateLastPoint (endingDelay peerCount genesisTest) <$> honest
       advs <- mapM (mapM dropRandomPoints) advs0
-      pure $ Peers honest advs
+      pure $ Peers extendedHonest advs
+
+    endingDelay peerCount gt =
+     let cst = gtChainSyncTimeouts gt
+         bft = gtBlockFetchTimeouts gt
+      in 1 + fromIntegral peerCount * maximum (0 : catMaybes
+           [ canAwaitTimeout cst
+           , intersectTimeout cst
+           , busyTimeout bft
+           , streamingTimeout bft
+           ])
+
+    disableBoringTimeouts gt =
+      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
+            { mustReplyTimeout = Nothing
+            , idleTimeout = Nothing
+            }
+         }
 
     dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
     dropRandomPoints ps = do
@@ -211,6 +238,13 @@ prop_leashingAttackStalling =
     dropElemsAt xs (i:is) =
       let (ys, zs) = splitAt i xs
        in ys ++ dropElemsAt (drop 1 zs) is
+
+    duplicateLastPoint
+      :: DiffTime -> [(Time, SchedulePoint TestBlock)] -> [(Time, SchedulePoint TestBlock)]
+    duplicateLastPoint d [] = [(Time d, ScheduleTipPoint Origin)]
+    duplicateLastPoint d xs =
+      let (t, p) = last xs
+       in xs ++ [(addTime d t, p)]
 
 -- | Test that the leashing attacks do not delay the immutable tip after. The
 -- immutable tip needs to be advanced enough when the honest peer has offered
@@ -294,7 +328,10 @@ prop_loeStalling =
         pure gt {gtChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}}
     )
 
-    (defaultSchedulerConfig {scTrace = False, scEnableLoE = True})
+    (defaultSchedulerConfig {
+      scEnableLoE = True,
+      scEnableChainSyncTimeouts = True
+    })
 
     shrinkPeerSchedules
 

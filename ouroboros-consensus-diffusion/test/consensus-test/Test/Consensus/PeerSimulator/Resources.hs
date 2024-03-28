@@ -24,8 +24,10 @@ import           Data.List.NonEmpty (NonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Traversable (for)
-import           Ouroboros.Consensus.Block (GetHeader, WithOrigin (Origin))
+import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientHandle)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
                      StrictTVar, readTVar, uncheckedNewTVarM, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -111,18 +113,19 @@ data PeerResources m blk =
 data PeerSimulatorResources m blk =
   PeerSimulatorResources {
     -- | Resources for individual peers.
-    psrPeers      :: Map PeerId (PeerResources m blk),
+    psrPeers   :: Map PeerId (PeerResources m blk),
 
-    -- | The shared candidate fragments used by ChainDB, ChainSync and BlockFetch.
-    psrCandidates :: StrictTVar m (Map PeerId (StrictTVar m (AF.AnchoredFragment (Header blk))))
+    -- | Handles to interact with the ChainSync client of each peer.
+    -- See 'ChainSyncClientHandle' for more details.
+    psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock))
   }
 
 -- | Create 'ChainSyncServerHandlers' for our default implementation using 'NodeState'.
 makeChainSyncServerHandlers ::
-  (IOLike m, AF.HasHeader blk, GetHeader blk) =>
-  StrictTVar m (Point blk) ->
-  BlockTree blk ->
-  ChainSyncServerHandlers m (NodeState blk) blk
+  (IOLike m) =>
+  StrictTVar m (Point TestBlock) ->
+  BlockTree TestBlock ->
+  ChainSyncServerHandlers m (NodeState TestBlock) TestBlock
 makeChainSyncServerHandlers currentIntersection blockTree =
   ChainSyncServerHandlers {
     csshFindIntersection = handlerFindIntersection currentIntersection blockTree,
@@ -135,10 +138,10 @@ makeChainSyncServerHandlers currentIntersection blockTree =
 --
 -- TODO move server construction to Run?
 makeChainSyncResources ::
-  (IOLike m, GetHeader blk, AF.HasHeader blk) =>
+  (IOLike m) =>
   STM m () ->
-  SharedResources m blk ->
-  m (ChainSyncResources m blk)
+  SharedResources m TestBlock ->
+  m (ChainSyncResources m TestBlock)
 makeChainSyncResources csrTickStarted SharedResources {srPeerId, srTracer, srBlockTree, srCurrentState} = do
   csrCurrentIntersection <- uncheckedNewTVarM $ AF.Point Origin
   let
@@ -232,5 +235,5 @@ makePeerSimulatorResources tracer blockTree peers = do
   resources <- for peers $ \ peerId -> do
     peerResources <- makePeerResources tracer blockTree peerId
     pure (peerId, peerResources)
-  psrCandidates <- uncheckedNewTVarM mempty
-  pure PeerSimulatorResources {psrCandidates, psrPeers = Map.fromList $ toList resources}
+  psrHandles <- uncheckedNewTVarM mempty
+  pure PeerSimulatorResources {psrPeers = Map.fromList $ toList resources, psrHandles}
