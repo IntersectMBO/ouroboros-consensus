@@ -35,11 +35,14 @@ data ShelleyNodeToClientVersion =
     -- | New queries introduced: GetStakeDelegDeposits
   | ShelleyNodeToClientVersion7
 
-    -- | New queries introduced: GetConstitutionHash, GetFilteredVoteDelegatees
+    -- | New queries introduced: GetConstitutionHash, GetFilteredVoteDelegatees,
   | ShelleyNodeToClientVersion8
 
     -- | New queries introduced: GetProposals, GetRatifyState
   | ShelleyNodeToClientVersion9
+
+    -- | New queries introduced: GetBigLedgerPeerSnapshot
+  | ShelleyNodeToClientVersion10
   deriving (Show, Eq, Ord, Enum, Bounded)
 
 instance HasNetworkProtocolVersion (ShelleyBlock proto era) where
