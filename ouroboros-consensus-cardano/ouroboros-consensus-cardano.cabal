@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            ouroboros-consensus-cardano
-version:         0.14.0.0
+version:         0.15.0.0
 synopsis:
   The instantation of the Ouroboros consensus layer used by Cardano
 
@@ -128,7 +128,7 @@ library
     , cardano-ledger-mary           ^>=1.5
     , cardano-ledger-shelley        ^>=1.10
     , cardano-prelude
-    , cardano-protocol-tpraos       ^>=1.1
+    , cardano-protocol-tpraos       ^>=1.2
     , cardano-slotting
     , cardano-strict-containers
     , cborg                         ^>=0.2.2
@@ -140,8 +140,8 @@ library
     , microlens
     , mtl
     , nothunks
-    , ouroboros-consensus           ^>=0.16
-    , ouroboros-consensus-protocol  ^>=0.7
+    , ouroboros-consensus           ^>=0.17
+    , ouroboros-consensus-protocol  ^>=0.8
     , ouroboros-network-api         ^>=0.7
     , serialise                     ^>=0.2
     , small-steps
@@ -183,7 +183,7 @@ library unstable-byronspec
     , containers                 >=0.5   && <0.7
     , mtl
     , nothunks
-    , ouroboros-consensus        ^>=0.16
+    , ouroboros-consensus        ^>=0.17
     , serialise                  ^>=0.2
     , small-steps
     , transformers
@@ -511,7 +511,7 @@ library unstable-cardano-tools
     , cardano-ledger-mary
     , cardano-ledger-shelley
     , cardano-prelude
-    , cardano-protocol-tpraos        ^>=1.1
+    , cardano-protocol-tpraos        ^>=1.2
     , cardano-slotting
     , cardano-strict-containers
     , cborg                          ^>=0.2.2
@@ -526,10 +526,10 @@ library unstable-cardano-tools
     , mtl
     , network
     , nothunks
-    , ouroboros-consensus            ^>=0.16
+    , ouroboros-consensus            ^>=0.17
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-diffusion  ^>=0.11
-    , ouroboros-consensus-protocol   ^>=0.7
+    , ouroboros-consensus-diffusion  ^>=0.13
+    , ouroboros-consensus-protocol   ^>=0.8
     , ouroboros-network
     , ouroboros-network-api
     , ouroboros-network-framework
