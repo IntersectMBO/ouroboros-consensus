@@ -271,21 +271,23 @@ prop_leashingAttackTimeLimited =
     genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genTimeLimitedSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
-      let timeLimit = estimateTimeBound (value honest) (map value $ Map.elems advs0)
+      let timeLimit = estimateTimeBound
+            (gtLoPBucketParams genesisTest)
+            (value honest)
+            (map value $ Map.elems advs0)
           advs = fmap (fmap (takePointsUntil timeLimit)) advs0
       pure $ Peers honest advs
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 
-    estimateTimeBound :: AF.HasHeader blk => PeerSchedule blk -> [PeerSchedule blk] -> Time
-    estimateTimeBound honest advs =
+    estimateTimeBound :: AF.HasHeader blk => LoPBucketParams -> PeerSchedule blk -> [PeerSchedule blk] -> Time
+    estimateTimeBound LoPBucketParams{lbpCapacity, lbpRate} honest advs =
       let firstTipPointBlock = headCallStack (mapMaybe fromTipPoint honest)
           lastBlockPoint = last (mapMaybe fromBlockPoint honest)
-          peerCount = length advs + 1
-          maxBlockNo = maximum $ 0 : blockPointNos honest ++ concatMap blockPointNos advs
-          -- 0.020s is the amount of time LoP grants per interesting header
-          -- 5s is the initial fill of the LoP bucket
-          --
+          peerCount = fromIntegral $ length advs + 1
+          maxBlockNo = fromIntegral $ maximum $ 0 : blockPointNos honest ++ concatMap blockPointNos advs
+          timeCapacity = fromRational $ (fromIntegral lbpCapacity) / lbpRate
+          timePerToken = fromRational $ 1 / lbpRate
           -- Since the moment the honest peer offers the first tip, LoP should
           -- start ticking. Syncing all the blocks might take longer than it
           -- takes to dispatch all ticks to the honest peer. In this case
@@ -296,9 +298,9 @@ prop_leashingAttackTimeLimited =
           -- Adversarial peers might cause more ticks to be sent as well. We
           -- bound it all by considering the highest block number that is ever
           -- sent.
-      in max
+      in addTime 1 $ max
           (fst lastBlockPoint)
-          (addTime (0.020 * fromIntegral maxBlockNo + 5 * fromIntegral peerCount) (fst firstTipPointBlock))
+          (addTime (timePerToken * maxBlockNo + timeCapacity * peerCount) (fst firstTipPointBlock))
 
     blockPointNos :: AF.HasHeader blk => [(Time, SchedulePoint blk)] -> [Word64]
     blockPointNos =
