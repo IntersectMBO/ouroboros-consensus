@@ -20,7 +20,7 @@ import           Control.Monad.Class.MonadTime.SI (DiffTime, Time (Time),
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, mapMaybe)
+import           Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
@@ -256,11 +256,16 @@ prop_leashingAttackStalling =
 -- See Note [Leashing attacks]
 prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
-  expectFailure $ forAllGenesisTest
+  forAllGenesisTest
 
-    (genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
+    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
 
-    (defaultSchedulerConfig {scTrace = False})
+    defaultSchedulerConfig
+      { scTrace = False
+      , scEnableLoE = True
+      , scEnableLoP = True
+      , scEnableBlockFetchTimeouts = False
+      }
 
     shrinkPeerSchedules
 
@@ -272,35 +277,63 @@ prop_leashingAttackTimeLimited =
     genTimeLimitedSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
       let timeLimit = estimateTimeBound
+            (gtChainSyncTimeouts genesisTest)
             (gtLoPBucketParams genesisTest)
             (value honest)
             (map value $ Map.elems advs0)
           advs = fmap (fmap (takePointsUntil timeLimit)) advs0
-      pure $ Peers honest advs
+          extendedHonest = extendScheduleUntil timeLimit <$> honest
+      pure $ Peers extendedHonest advs
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 
-    estimateTimeBound :: AF.HasHeader blk => LoPBucketParams -> PeerSchedule blk -> [PeerSchedule blk] -> Time
-    estimateTimeBound LoPBucketParams{lbpCapacity, lbpRate} honest advs =
-      let firstTipPointBlock = headCallStack (mapMaybe fromTipPoint honest)
+    extendScheduleUntil
+      :: Time -> [(Time, SchedulePoint TestBlock)] -> [(Time, SchedulePoint TestBlock)]
+    extendScheduleUntil t [] = [(t, ScheduleTipPoint Origin)]
+    extendScheduleUntil t xs =
+        let (t', p) = last xs
+         in if t < t' then xs
+            else xs ++ [(t, p)]
+
+    disableBoringTimeouts gt =
+      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
+            { canAwaitTimeout = Nothing
+            , mustReplyTimeout = Nothing
+            , idleTimeout = Nothing
+            }
+         }
+
+    estimateTimeBound
+      :: AF.HasHeader blk
+      => ChainSyncTimeout
+      -> LoPBucketParams
+      -> PeerSchedule blk
+      -> [PeerSchedule blk]
+      -> Time
+    estimateTimeBound cst LoPBucketParams{lbpCapacity, lbpRate} honest advs =
+      let firstTipPointTime = fst $ headCallStack (mapMaybe fromTipPoint honest)
           lastBlockPoint = last (mapMaybe fromBlockPoint honest)
           peerCount = fromIntegral $ length advs + 1
           maxBlockNo = fromIntegral $ maximum $ 0 : blockPointNos honest ++ concatMap blockPointNos advs
           timeCapacity = fromRational $ (fromIntegral lbpCapacity) / lbpRate
           timePerToken = fromRational $ 1 / lbpRate
-          -- Since the moment the honest peer offers the first tip, LoP should
-          -- start ticking. Syncing all the blocks might take longer than it
-          -- takes to dispatch all ticks to the honest peer. In this case
-          -- the syncing time is the time bound for the test. If dispatching
-          -- all the ticks takes longer, then the dispatching time becomes
-          -- the time bound.
+          intersectDiffTime = fromMaybe (error "no intersect timeout") (intersectTimeout cst)
+          -- Since the moment a peer offers the first tip, LoP should
+          -- start ticking for it. This can be no later than what the intersect
+          -- timeout allows for all peers.
+          --
+          -- Additionally, the actual delay might be greater if the honest peer
+          -- has its last tick dispatched later.
           --
           -- Adversarial peers might cause more ticks to be sent as well. We
           -- bound it all by considering the highest block number that is ever
           -- sent.
       in addTime 1 $ max
           (fst lastBlockPoint)
-          (addTime (timePerToken * maxBlockNo + timeCapacity * peerCount) (fst firstTipPointBlock))
+          (addTime
+            (intersectDiffTime + timePerToken * maxBlockNo + timeCapacity * peerCount)
+            firstTipPointTime
+          )
 
     blockPointNos :: AF.HasHeader blk => [(Time, SchedulePoint blk)] -> [Word64]
     blockPointNos =
