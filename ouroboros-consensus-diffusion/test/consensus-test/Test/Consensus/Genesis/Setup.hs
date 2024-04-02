@@ -104,6 +104,8 @@ forAllGenesisTest generator schedulerConfig shrinker mkProperty =
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
         classify (adversaryRollback schCls) "An adversary did a rollback" $
         classify (honestRollback schCls) "The honest peer did a rollback" $
+        classify (allAdversariesEmpty schCls) "All adversaries have empty schedules" $
+        classify (allAdversariesTrivial schCls) "All adversaries have trivial schedules" $
         tabulate "Adversaries killed by LoP" [printf "%.1f%%" $ adversariesKilledByLoP resCls] $
         tabulate "Adversaries killed by GDD" [printf "%.1f%%" $ adversariesKilledByGDD resCls] $
         tabulate "Adversaries killed by Timeout" [printf "%.1f%%" $ adversariesKilledByTimeout resCls] $
