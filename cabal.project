@@ -47,6 +47,12 @@ source-repository-package
   subdir:
     latex-svg-image
 
+source-repository-package
+  type: git
+  location: https://github.com/stevana/quickcheck-state-machine
+  tag: bce278e90a3af5a31dccc25e2062fb6b56175575
+  --sha256: 1ljh3j48jmppcaa0f52hgahx65dvp38a0zdilqdv15nifvmb5sii
+
 if impl(ghc >= 9.6)
   allow-newer:
     cardano-lmdb-simple:bytestring

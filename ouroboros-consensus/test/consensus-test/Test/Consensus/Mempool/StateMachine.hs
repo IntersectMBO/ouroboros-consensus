@@ -662,8 +662,7 @@ shrinker _ _ = []
 -------------------------------------------------------------------------------}
 
 sm ::
-  ( HasTxId (GenTx blk)
-  , LedgerSupportsMempool blk
+  ( LedgerSupportsMempool blk
   , Eq (GenTx blk)
   , Arbitrary (LedgerState blk ValuesMK)
   , ToExpr (LedgerState blk ValuesMK)
@@ -672,18 +671,17 @@ sm ::
   , LedgerSupportsProtocol blk
   , UnTick blk
   , IOLike m
-  , NoThunks (Mempool m blk)
   )
   => LedgerConfig blk
   -> LedgerState blk ValuesMK
   -> MakeAtomic
   -> (GenTx blk -> TxSizeInBytes)
   -> (Int -> LedgerState blk ValuesMK -> Gen [GenTx blk])
-  -> m (StateMachine (Model blk) (Command blk) m (Response blk))
-sm cfg initialState ma tSize gTxs = do
-  (sut, trcr) <- mkSUT cfg initialState
-  ior <- newTVarIO sut
-  pure $ StateMachine {
+  -> CT.Tracer m String
+  -> StrictTVar m (SUT m blk)
+  -> StateMachine (Model blk) (Command blk) m (Response blk)
+sm cfg initialState ma tSize gTxs trcr ior =
+  StateMachine {
       QC.initModel     = initModel cfg initialState
     , QC.transition    = transition cfg tSize
     , QC.precondition  = precondition tSize
@@ -760,7 +758,10 @@ prop_mempoolSequential ::
 prop_mempoolSequential cfg initialState tSize gTxs = forAllCommands smUnused' Nothing $
   \cmds -> monadicIO
     (do
-        (hist, model, res) <- runCommandsWithSetup sm' cmds
+        (sut, trcr) <- run $ mkSUT cfg initialState
+        ior <- run $ newTVarIO sut
+        let sm' = sm cfg initialState DontCare tSize gTxs trcr ior
+        (hist, model, res) <- runCommands sm' cmds
         prettyCommands smUnused' hist
           $ checkCommandNames cmds
           $ tabulate "Command sequence length"
@@ -777,7 +778,6 @@ prop_mempoolSequential cfg initialState tSize gTxs = forAllCommands smUnused' No
     )
   where
     smUnused' = smUnused cfg initialState DontCare tSize gTxs
-    sm'       = sm       cfg initialState DontCare tSize gTxs
 
     bucketiseBy v n =
       let
@@ -804,16 +804,18 @@ prop_mempoolParallel ::
   -> (GenTx blk -> TxSizeInBytes)
   -> (Int -> LedgerState blk ValuesMK -> Gen [GenTx blk])
   -> Property
-prop_mempoolParallel cfg initialState ma tSize gTxs = forAllParallelCommands smUnused' Nothing $
+prop_mempoolParallel cfg initialState ma tSize gTxs = forAllParallelCommandsNTimes smUnused' Nothing 100 $
   \cmds -> monadicIO $ do
-        res <- runParallelCommandsNTimesWithSetup 100 sm' cmds
+        (sut, trcr) <- run $ mkSUT cfg initialState
+        ior <- run $ newTVarIO sut
+        let sm' = sm cfg initialState ma tSize gTxs trcr ior
+        res <- runParallelCommands sm' cmds
         prettyParallelCommandsWithOpts
           cmds
           (Just (GraphOptions "./mempoolParallel.png" Png))
           res
  where
    smUnused' = smUnused cfg initialState ma tSize gTxs
-   sm'       = sm       cfg initialState ma tSize gTxs
 
 -- | See 'MakeAtomic' on the reasoning behind having these tests.
 tests :: TestTree
