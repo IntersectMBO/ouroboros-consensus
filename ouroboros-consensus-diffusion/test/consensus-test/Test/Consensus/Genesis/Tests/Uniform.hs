@@ -11,7 +11,10 @@
 -- block tree with the right age (roughly @k@ blocks from the tip). Contrary to
 -- other tests cases (eg. long range attack), the schedules are not particularly
 -- biased towards a specific situation.
-module Test.Consensus.Genesis.Tests.Uniform (tests) where
+module Test.Consensus.Genesis.Tests.Uniform (
+    genUniformSchedulePoints
+  , tests
+  ) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
