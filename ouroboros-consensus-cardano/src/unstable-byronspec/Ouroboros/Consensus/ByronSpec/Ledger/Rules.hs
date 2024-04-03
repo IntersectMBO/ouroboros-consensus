@@ -47,9 +47,9 @@ import           Control.Monad
 import           Control.Monad.Trans.Except
 import qualified Control.State.Transition as Spec
 import           Data.Functor.Identity
+import           Data.List.NonEmpty (NonEmpty)
 import           Data.Proxy
 import qualified Data.Set as Set
-import           GHC.Base (NonEmpty)
 import           Ouroboros.Consensus.ByronSpec.Ledger.Accessors
 import           Ouroboros.Consensus.ByronSpec.Ledger.Genesis
                      (ByronSpecGenesis (..))

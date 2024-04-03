@@ -22,7 +22,7 @@ import qualified Byron.Spec.Ledger.UTxO as Spec
 import           Codec.Serialise
 import           Control.Monad.Trans.Except
 import qualified Control.State.Transition as Spec
-import           GHC.Base (NonEmpty)
+import           Data.List.NonEmpty (NonEmpty)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.ByronSpec.Ledger.Genesis
                      (ByronSpecGenesis (..))

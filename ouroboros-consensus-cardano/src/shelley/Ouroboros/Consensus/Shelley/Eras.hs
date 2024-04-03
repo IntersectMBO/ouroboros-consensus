@@ -71,7 +71,7 @@ import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.Monad.Except
 import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
-import           GHC.Base (NonEmpty ((:|)))
+import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
