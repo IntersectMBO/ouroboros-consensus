@@ -108,6 +108,9 @@ data Peers a =
 instance Functor Peers where
   fmap f Peers {honest, others} = Peers {honest = f <$> honest, others = fmap f <$> others}
 
+instance Foldable Peers where
+  foldMap f Peers {honest, others} = (f . value) honest <> foldMap (f . value) others
+
 -- | A set of peers with only one honest peer carrying the given value.
 peersOnlyHonest :: a -> Peers a
 peersOnlyHonest value =
