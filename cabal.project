@@ -31,3 +31,8 @@ tests: true
 benchmarks: true
 
 import: ./asserts.cabal
+
+-- We need to disable bitvec's SIMD for now, as it breaks during cross compilation.
+if(os(windows))
+  constraints:
+    bitvec -simd
