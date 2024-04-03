@@ -95,7 +95,7 @@ startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates =
             -- do not serialize the blocks.
             (\_hdr -> 1000)
             slotForgeTime
-            (pure FetchModeBulkSync)
+            (pure FetchModeDeadline)
 
         -- Values taken from
         -- ouroboros-consensus-diffusion/src/unstable-diffusion-testlib/Test/ThreadNet/Network.hs
