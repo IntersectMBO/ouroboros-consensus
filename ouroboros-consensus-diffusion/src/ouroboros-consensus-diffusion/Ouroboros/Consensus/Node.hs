@@ -58,6 +58,7 @@ module Ouroboros.Consensus.Node (
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
+import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (NFData)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
@@ -198,6 +199,7 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
     , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
     }
 
+
 -- | Arguments that usually only tests /directly/ specify.
 --
 -- A non-testing invocation probably wouldn't explicitly provide these values to
@@ -278,6 +280,8 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
 
       -- | Maximum clock skew
     , llrnMaxClockSkew :: ClockSkew
+
+    , llrnPublicPeerSelectionStateVar :: StrictSTM.StrictTVar m (Diffusion.PublicPeerSelectionState addrNTN)
     }
 
 -- | Higher-level arguments that can determine the 'LowLevelRunNodeArgs' under
@@ -293,6 +297,7 @@ data StdRunNodeArgs m blk (p2p :: Diffusion.P2P) = StdRunNodeArgs
   , srnDatabasePath                 :: FilePath
     -- ^ Location of the DBs
   , srnDiffusionArguments           :: Diffusion.Arguments
+                                         IO
                                          Socket      RemoteAddress
                                          LocalSocket LocalAddress
   , srnDiffusionArgumentsExtra      :: Diffusion.ExtraArguments p2p m
@@ -471,6 +476,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     (Just durationUntilTooOld)
                     gsmMarkerFileView
                     rnGetUseBootstrapPeers
+                    llrnPublicPeerSelectionStateVar
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
 
@@ -736,6 +742,7 @@ mkNodeKernelArgs ::
   -> Maybe (GSM.WrapDurationUntilTooOld m blk)
   -> GSM.MarkerFileView m
   -> STM m UseBootstrapPeers
+  -> StrictSTM.StrictTVar m (Diffusion.PublicPeerSelectionState addrNTN)
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -751,6 +758,7 @@ mkNodeKernelArgs
   gsmDurationUntilTooOld
   gsmMarkerFileView
   getUseBootstrapPeers
+  publicPeerSelectionStateVar
   = do
     let (kaRng, psRng) = split rng
     return NodeKernelArgs
@@ -774,6 +782,7 @@ mkNodeKernelArgs
       , getUseBootstrapPeers
       , keepAliveRng = kaRng
       , peerSharingRng = psRng
+      , publicPeerSelectionStateVar
       }
   where
     defaultBlockFetchConfiguration :: BlockFetchConfiguration
@@ -882,6 +891,7 @@ stdRunDataDiffusion ::
        IO
   -> Diffusion.ExtraTracers p2p
   -> Diffusion.Arguments
+       IO
        Socket      RemoteAddress
        LocalSocket LocalAddress
   -> Diffusion.ExtraArguments p2p IO
@@ -960,6 +970,8 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnMaxCaughtUpAge = secondsToNominalDiffTime $ 20 * 60   -- 20 min
       , llrnMaxClockSkew =
           InFuture.defaultClockSkew
+      , llrnPublicPeerSelectionStateVar =
+          Diffusion.daPublicPeerSelectionVar srnDiffusionArguments
       }
   where
     mkHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS IO
