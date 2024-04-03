@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE TypeOperators            #-}
+{-# LANGUAGE UndecidableSuperClasses  #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- Disable completeness checks on GHC versions pre-9.6, where this can be
@@ -34,7 +35,7 @@ module Ouroboros.Consensus.Cardano.Node (
   , CardanoHardForkTriggers (.., CardanoHardForkTriggers', triggerHardForkShelley, triggerHardForkAllegra, triggerHardForkMary, triggerHardForkAlonzo, triggerHardForkBabbage, triggerHardForkConway)
   , CardanoProtocolParams
   , MaxMajorProtVer (..)
-  , ProtocolParams (.., CardanoProtocolParams, paramsByron, paramsShelleyBased, paramsShelley, paramsAllegra, paramsMary, paramsAlonzo, paramsBabbage, paramsConway, hardForkTriggers, ledgerTransitionConfig)
+  , ProtocolParams (.., CardanoProtocolParams, paramsByron, paramsShelleyBased, paramsShelley, paramsAllegra, paramsMary, paramsAlonzo, paramsBabbage, paramsConway, hardForkTriggers, ledgerTransitionConfig, checkpoints)
   , TriggerHardFork (..)
   , protocolClientInfoCardano
   , protocolInfoCardano
@@ -60,7 +61,6 @@ import           Cardano.Chain.Slotting (EpochSlots)
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
-import           Cardano.Ledger.Conway.Transition (ConwayEraTransition)
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Prelude (cborError)
 import qualified Cardano.Protocol.TPraos.OCert as Absolute (KESPeriod (..),
@@ -976,47 +976,22 @@ protocolInfoCardano paramsCardano
 
         registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
         registerAny =
-             register transitionConfigShelley
-          :* register transitionConfigAllegra
-          :* register transitionConfigMary
-          :* register transitionConfigAlonzo
-          :* register transitionConfigBabbage
-          :* registerConway transitionConfigConway
-          :* Nil
+            hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
+                WrapTransitionConfig transitionConfigShelley
+             :* WrapTransitionConfig transitionConfigAllegra
+             :* WrapTransitionConfig transitionConfigMary
+             :* WrapTransitionConfig transitionConfigAlonzo
+             :* WrapTransitionConfig transitionConfigBabbage
+             :* WrapTransitionConfig transitionConfigConway
+             :* Nil
 
-        register ::
+        injectIntoTestState ::
              L.EraTransition era
-          => L.TransitionConfig era
+          => WrapTransitionConfig (ShelleyBlock proto era)
           -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
-        register cfg = fn $ registerInitialFundsThenStaking cfg
-
-        registerInitialFundsThenStaking ::
-             L.EraTransition era
-          => L.TransitionConfig era
-          -> LedgerState (ShelleyBlock proto era)
-          -> LedgerState (ShelleyBlock proto era)
-        registerInitialFundsThenStaking cfg st = st {
-            Shelley.shelleyLedgerState =
-              -- We must first register the initial funds, because the stake
-              -- information depends on it.
-                L.registerInitialStaking cfg
-              . L.registerInitialFunds   cfg
-              $ Shelley.shelleyLedgerState st
+        injectIntoTestState (WrapTransitionConfig cfg) = fn $ \st -> st {
+            Shelley.shelleyLedgerState = L.injectIntoTestState cfg (Shelley.shelleyLedgerState st)
           }
-
-        registerConway ::
-             ConwayEraTransition era
-          => L.TransitionConfig era
-          -> (LedgerState -.-> LedgerState) (ShelleyBlock proto era)
-        registerConway cfg = fn $ registerDRepsThenDelegs         cfg
-                                . registerInitialFundsThenStaking cfg
-          where
-            registerDRepsThenDelegs cfg st = st {
-              Shelley.shelleyLedgerState =
-                   L.registerDelegs cfg -- NOTE: The order of registration does not matter.
-                 . L.registerInitialDReps cfg
-                 $ Shelley.shelleyLedgerState st
-              }
 
     -- | For each element in the list, a block forging thread will be started.
     --
@@ -1143,3 +1118,16 @@ mkPartialLedgerConfigShelley transitionConfig maxMajorProtVer shelleyTriggerHard
               maxMajorProtVer
         , shelleyTriggerHardFork = shelleyTriggerHardFork
         }
+
+class
+  ( ShelleyBasedEra (ShelleyBlockLedgerEra blk)
+  , blk ~ ShelleyBlock (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
+  ) => IsShelleyBlock blk
+instance ShelleyBasedEra era => IsShelleyBlock (ShelleyBlock proto era)
+
+type family ShelleyBlockLedgerEra blk where
+  ShelleyBlockLedgerEra (ShelleyBlock proto era) = era
+
+-- | We need this wrapper to partially apply a 'TransitionConfig' in an NP.
+newtype WrapTransitionConfig blk =
+    WrapTransitionConfig (L.TransitionConfig (ShelleyBlockLedgerEra blk))

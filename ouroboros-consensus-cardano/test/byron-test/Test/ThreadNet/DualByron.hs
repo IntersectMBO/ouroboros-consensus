@@ -17,7 +17,6 @@ import qualified Cardano.Chain.ProtocolConstants as Impl
 import qualified Cardano.Chain.UTxO as Impl
 import           Control.Monad.Except
 import qualified Control.State.Transition.Extended as Spec
-import qualified Control.State.Transition.Generator as Spec.QC
 import           Data.ByteString (ByteString)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
@@ -40,6 +39,7 @@ import           Ouroboros.Consensus.NodeId
 import           Ouroboros.Consensus.Protocol.PBFT
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import qualified Test.Cardano.Chain.Elaboration.UTxO as Spec.Test
+import qualified Test.Control.State.Transition.Generator as Spec.QC
 import           Test.QuickCheck
 import           Test.QuickCheck.Hedgehog (hedgehog)
 import           Test.Tasty

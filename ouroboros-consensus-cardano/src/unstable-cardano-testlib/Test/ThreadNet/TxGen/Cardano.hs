@@ -237,16 +237,16 @@ migrateUTxO migrationInfo curSlot lcfg lst
     -- A simplistic individual pool
     poolParams :: SL.Coin -> SL.PoolParams c
     poolParams pledge = SL.PoolParams
-        { SL.ppCost       = SL.Coin 1
-        , SL.ppMetadata   = SL.SNothing
-        , SL.ppMargin     = minBound
-        , SL.ppOwners     = Set.singleton $ Shelley.mkKeyHash poolSK
-        , SL.ppPledge     = pledge
-        , SL.ppId         = Shelley.mkKeyHash poolSK
-        , SL.ppRewardAcnt =
-            SL.RewardAcnt Shelley.networkId $ Shelley.mkCredential poolSK
-        , SL.ppRelays     = StrictSeq.empty
-        , SL.ppVrf        = Shelley.mkKeyHashVrf vrfSK
+        { SL.ppCost          = SL.Coin 1
+        , SL.ppMetadata      = SL.SNothing
+        , SL.ppMargin        = minBound
+        , SL.ppOwners        = Set.singleton $ Shelley.mkKeyHash poolSK
+        , SL.ppPledge        = pledge
+        , SL.ppId            = Shelley.mkKeyHash poolSK
+        , SL.ppRewardAccount =
+            SL.RewardAccount Shelley.networkId $ Shelley.mkCredential poolSK
+        , SL.ppRelays        = StrictSeq.empty
+        , SL.ppVrf           = Shelley.mkKeyHashVrf vrfSK
         }
 
 -----

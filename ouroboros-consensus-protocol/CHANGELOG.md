@@ -2,6 +2,17 @@
 
 # Changelog entries
 
+<a id='changelog-0.8.0.0'></a>
+## 0.8.0.0 — 2024-04-03
+
+### Breaking
+
+- Remove unused `translateConsensusConfig` from `TranslateProto`.
+
+- Add `praosRandomnessStabilisationWindow` to `PraosParams`, allowing to
+  configure in which slot the epoch nonce is snapshotted (which can now vary
+  between different eras).
+
 <a id='changelog-0.7.0.0'></a>
 ## 0.7.0.0 — 2024-01-29
 

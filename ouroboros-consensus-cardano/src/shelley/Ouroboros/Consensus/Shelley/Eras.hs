@@ -52,6 +52,7 @@ import           Cardano.Ledger.BaseTypes
 import           Cardano.Ledger.Binary (DecCBOR, EncCBOR)
 import           Cardano.Ledger.Conway (ConwayEra)
 import qualified Cardano.Ledger.Conway.Governance as CG
+import qualified Cardano.Ledger.Conway.Rules as Conway
 import qualified Cardano.Ledger.Conway.Rules as SL
                      (ConwayLedgerPredFailure (..))
 import qualified Cardano.Ledger.Conway.Translation as Conway
@@ -70,6 +71,7 @@ import qualified Cardano.Protocol.TPraos.API as SL
 import           Control.Monad.Except
 import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
+import           Data.List.NonEmpty (NonEmpty ((:|)))
 import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
@@ -277,7 +279,7 @@ applyAlonzoBasedTx globals ledgerEnv mempoolState wti tx = do
         Intervene      -> tx
 
       handler e = case (wti, e) of
-        (DoNotIntervene, SL.ApplyTxError [err])
+        (DoNotIntervene, SL.ApplyTxError (err :| []))
           | isIncorrectClaimedFlag (Proxy @era) err
           ->
             -- rectify the flag and include the transaction
@@ -356,7 +358,7 @@ instance SupportsTwoPhaseValidation (ConwayEra c) where
               ( SL.UtxoFailure
                   ( Babbage.AlonzoInBabbageUtxoPredFailure
                       ( Alonzo.UtxosFailure
-                          ( Alonzo.ValidationTagMismatch
+                          ( Conway.ValidationTagMismatch
                               (Alonzo.IsValid _claimedFlag)
                               _validationErrs
                             )
@@ -369,7 +371,7 @@ instance SupportsTwoPhaseValidation (ConwayEra c) where
       ( Babbage.UtxoFailure
           ( Babbage.AlonzoInBabbageUtxoPredFailure
               ( Alonzo.UtxosFailure
-                  ( Alonzo.ValidationTagMismatch
+                  ( Conway.ValidationTagMismatch
                       (Alonzo.IsValid _claimedFlag)
                       _validationErrs
                   )

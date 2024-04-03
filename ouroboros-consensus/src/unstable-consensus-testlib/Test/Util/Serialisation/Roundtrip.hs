@@ -77,7 +77,6 @@ import           Ouroboros.Network.Block (Serialised (..), fromSerialised,
                      mkSerialised)
 import           Quiet (Quiet (..))
 import           Test.Tasty
-import           Test.Tasty.ExpectedFailure (expectFailBecause)
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Serialisation.Examples (Examples (..), Labelled)
@@ -753,18 +752,9 @@ examplesRoundtrip codecConfig examples =
           ]
       where
         mkTest exampleName example =
-          let
-            runTest =
-                testProperty (fromMaybe "" exampleName)
+          testProperty (fromMaybe "" exampleName)
               $ once
               $ roundtrip' enc dec example
-            _3740 = "https://github.com/IntersectMBO/cardano-ledger/issues/3740"
-          in
-          case (testLabel, exampleName) of
-            -- We case on Cardano specific test names here to avoid introducing parameters to 'examplesRoundtrip' that will be removed once #3740 is fixed. This is a temporary workaround.
-            ("Ledger state"         , Just "Conway") -> expectFailBecause _3740 $ runTest
-            ("Extended ledger state", Just "Conway") -> expectFailBecause _3740 $ runTest
-            _                                        ->                           runTest
 
     encodeExt =
       encodeExtLedgerState

@@ -1,6 +1,6 @@
 cabal-version:   3.0
 name:            ouroboros-consensus
-version:         0.16.0.0
+version:         0.17.0.0
 synopsis:        Consensus layer for the Ouroboros blockchain protocol
 description:     Consensus layer for the Ouroboros blockchain protocol.
 license:         Apache-2.0
@@ -396,7 +396,6 @@ library unstable-consensus-testlib
     , strict-checked-vars
     , strict-sop-core
     , tasty
-    , tasty-expected-failure
     , tasty-golden
     , tasty-hunit
     , tasty-quickcheck
@@ -440,7 +439,7 @@ library unstable-mock-block
     , bytestring
     , cardano-binary
     , cardano-crypto-class
-    , cardano-slotting
+    , cardano-slotting:{cardano-slotting, testlib}
     , cborg
     , containers
     , deepseq
@@ -513,7 +512,7 @@ test-suite consensus-test
     , base-deriving-via
     , cardano-binary
     , cardano-crypto-class
-    , cardano-slotting
+    , cardano-slotting:{cardano-slotting, testlib}
     , cborg
     , containers
     , contra-tracer
@@ -619,7 +618,7 @@ test-suite storage-test
     , binary
     , bytestring
     , cardano-crypto-class
-    , cardano-slotting
+    , cardano-slotting:{cardano-slotting, testlib}
     , cborg
     , containers
     , contra-tracer
