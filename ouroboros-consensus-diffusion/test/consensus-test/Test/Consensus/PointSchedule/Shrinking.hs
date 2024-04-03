@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Consensus.PointSchedule.Shrinking (
@@ -6,19 +7,22 @@ module Test.Consensus.PointSchedule.Shrinking (
   , trimBlockTree'
   ) where
 
+import           Control.Monad.Class.MonadTime.SI (DiffTime, Time, addTime,
+                     diffTime)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
+import           Data.Maybe (mapMaybe, maybeToList)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty), takeWhileOldest)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
-import           Test.Consensus.PointSchedule
-                     (GenesisTest (gtBlockTree, gtSchedule), GenesisTestFull,
-                     PeerSchedule, PeersSchedule, peerSchedulesBlocks)
-import           Test.Consensus.PointSchedule.Peers (Peers (..))
+import           Test.Consensus.PointSchedule (GenesisTest (..),
+                     GenesisTestFull, PeerSchedule, PeersSchedule,
+                     peerSchedulesBlocks)
+import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..))
+import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock, isAncestorOf,
                      isStrictAncestorOf)
@@ -32,9 +36,17 @@ shrinkPeerSchedules ::
   StateView TestBlock ->
   [GenesisTestFull TestBlock]
 shrinkPeerSchedules genesisTest _stateView =
-  shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&> \shrunkSchedule ->
-    let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
-     in genesisTest{gtSchedule = shrunkSchedule, gtBlockTree = trimmedBlockTree}
+  let trimmedBlockTree sch = trimBlockTree' sch (gtBlockTree genesisTest)
+      shrunkOthers = shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&>
+        \shrunkSchedule -> genesisTest
+          { gtSchedule = shrunkSchedule
+          , gtBlockTree = trimmedBlockTree shrunkSchedule
+          }
+      shrunkHonest = shrinkHonestPeer
+        (gtSchedule genesisTest)
+        -- No need to update the tree here, shrinking the honest peer never discards blocks
+        <&> \shrunkSchedule -> genesisTest {gtSchedule = shrunkSchedule}
+  in shrunkOthers ++ shrunkHonest
 
 -- | Shrink a 'Peers PeerSchedule' by removing adversaries. This does not affect
 -- the honest peer; and it does not remove ticks from the schedules of the
@@ -59,6 +71,64 @@ shrinkOtherPeers :: (a -> [a]) -> Peers a -> [Peers a]
 shrinkOtherPeers shrink Peers{honest, others} =
   map (Peers honest . Map.fromList) $
     shrinkList (traverse (traverse shrink)) $ Map.toList others
+
+-- | Shrinks an honest peer by removing ticks.
+-- Because we are manipulating `PeerSchedule` at that point, there is no proper
+-- notion of a tick. Instead, we remove points of the honest `PeerSchedule`,
+-- and move all other points sooner, including those on the adversarial schedule.
+-- We check that this operation neither changes the final state of the honest peer,
+-- nor that it removes points from the adversarial schedules.
+shrinkHonestPeer :: Peers (PeerSchedule blk) -> [Peers (PeerSchedule blk)]
+shrinkHonestPeer Peers{honest, others} = do
+  (at, speedUpBy) <- splits
+  (honest', others') <- maybeToList $ do
+    honest' <- traverse (speedUpHonestSchedule at speedUpBy) honest
+    others' <- mapM (traverse (speedUpAdversarialSchedule at speedUpBy)) others
+    pure (honest', others')
+  pure $ Peers honest' others'
+  where
+    -- | A list of non-zero time intervals between successive points of the honest schedule
+    splits :: [(Time, DiffTime)]
+    splits = mapMaybe
+      (\((t1, _), (t2, _)) ->
+        if t1 == t2
+          then Nothing
+          else Just (t1, diffTime t2 t1)
+      )
+      (zip (value honest) (drop 1 $ value honest))
+
+-- | Speeds up an honest schedule after `at` time, by `speedUpBy`.
+-- This "speeding up" is done by removing `speedUpBy` to all points after `at`,
+-- and removing those points if they fall before `at`. We check that the operation
+-- doesn't change the final state of the peer, i.e. it doesn't remove all TP, HP, and BP
+-- in the sped up part.
+speedUpHonestSchedule :: Time -> DiffTime -> PeerSchedule blk -> Maybe (PeerSchedule blk)
+speedUpHonestSchedule at speedUpBy sch =
+  if stillValid then Just $ beforeSplit ++ spedUpSchedule else Nothing
+  where
+    (beforeSplit, afterSplit) = span ((< at) . fst) sch
+    threshold = addTime speedUpBy at
+    spedUpSchedule = mapMaybe
+      (\(t, p) -> if t < threshold then Nothing else Just (addTime (-speedUpBy) t, p))
+      afterSplit
+    stillValid =
+         (hasTP spedUpSchedule == hasTP afterSplit)
+      && (hasHP spedUpSchedule == hasHP afterSplit)
+      && (hasBP spedUpSchedule == hasBP afterSplit)
+    hasTP = any (\case (_, ScheduleTipPoint    _) -> True; _ -> False)
+    hasHP = any (\case (_, ScheduleHeaderPoint _) -> True; _ -> False)
+    hasBP = any (\case (_, ScheduleBlockPoint  _) -> True; _ -> False)
+
+-- | Speeds up an adversarial schedule after `at` time, by `speedUpBy`.
+-- This "speeding up" is done by removing `speedUpBy` to all points after `at`.
+-- We check that the schedule had no points between `at` and `at + speedUpBy`.
+speedUpAdversarialSchedule :: Time -> DiffTime -> PeerSchedule blk -> Maybe (PeerSchedule blk)
+speedUpAdversarialSchedule at speedUpBy sch =
+  if losesPoint then Nothing else Just $ beforeSplit ++ spedUpSchedule
+  where
+    (beforeSplit, afterSplit) = span ((< at) . fst) sch
+    spedUpSchedule = map (\(t, p) -> (addTime (-speedUpBy) t, p)) afterSplit
+    losesPoint = any ((< (addTime speedUpBy at)) . fst) afterSplit
 
 -- | Remove blocks from the given block tree that are not necessary for the
 -- given peer schedules. If entire branches are unused, they are removed. If the
