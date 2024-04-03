@@ -2,6 +2,18 @@
 
 # Changelog entries
 
+<a id='changelog-0.17.0.0'></a>
+## 0.17.0.0 - 2024-04-03
+
+### Breaking
+
+- Implement lightweight checkpointing [#449](https://github.com/IntersectMBO/ouroboros-consensus/issues/449).
+  A validation to help nodes follow the historical chain. A new field `topLevelConfigCheckpoints`
+  has been added to the `TopLevelConfig` record, with a new type `CheckpointsMap`.
+- LoP: run the ChainSync client against a leaky bucket
+- Add `ConvertRawTxId` and require it for `SingleEraBlock`.
+
+
 <a id='changelog-0.16.0.0'></a>
 ## 0.16.0.0 — 2024-02-23
 

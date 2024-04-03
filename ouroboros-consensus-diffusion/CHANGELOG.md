@@ -2,6 +2,36 @@
 
 # Changelog entries
 
+<a id='changelog-0.13.0.0'></a>
+## 0.13.0.0 — 2024-04-03
+
+NOTE: version jumps from `0.11.0.0` to `0.13.0.0` because `0.12.0.0` was created in a [branch](https://github.com/IntersectMBO/ouroboros-consensus/pull/997) containing backported fixes for Node 8.9.
+
+### Patch
+
+- Bugfix: DiskPolicyArgs were not being passed down to the ChainDB which resulted in default values for SnapshotInterval.
+
+- Start using `safe-wild-cards` internally.
+
+- LoP: run the ChainSync client against a leaky bucket.
+
+### Breaking
+
+- Integrate changes for lightweight checkpointing [#449](https://github.com/IntersectMBO/ouroboros-consensus/issues/449),
+  which required adding a field to `TopLevelConfig`.
+
+- Added `PeerSharingAPI` to `NodeKernel`
+
+- Added `peerSharingRng` to `NodeKernelArgs`
+
+- Refactored some diffusion functions to remove `computePeers` callback
+
+### Non-Breaking
+
+- Update network packages
+  - `ouroboros-network`: `^>=0.13`
+  - `ouroboros-network-framework`: `^>=0.12`
+
 <a id='changelog-0.11.0.0'></a>
 ## 0.11.0.0 — 2024-02-23
 

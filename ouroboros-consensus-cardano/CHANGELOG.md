@@ -2,6 +2,51 @@
 
 # Changelog entries
 
+<a id='changelog-0.15.0.0'></a>
+## 0.15.0.0 — 2024-04-03
+
+### Patch
+
+- Bugfix: Add an extra case to `isIncorrectClaimedFlag` for `Babbage` and `Conway` (https://github.com/IntersectMBO/ouroboros-consensus/issues/973).
+
+### Non-Breaking
+
+- Change the randomness stabilization window for Conway (and future eras) to
+  `4k/f` instead of `3k/f` (one stability window) that was used for Babbage and
+  TPraos-based eras. See erratum 17.3 in the Shelley ledger specs for context.
+
+  Note that this is a backwards-incompatible change for all existing chains
+  containing (at least one full epoch worth of) Conway blocks.
+
+- Use the version of cardano-git-rev in the cardano-base repo.
+
+- Bump `NodeToNodeVersion` part of `latestReleasedNodeVersion` to
+  `NodeToNodeV_13` from `NodeToNodeV_11`.
+
+- Add `ConvertRawTxId` instances for Shelley and Byron.
+
+- Update ledger packages
+  - `cardano-ledger-allegra`: `^>=1.4`
+  - `cardano-ledger-alonzo`: `^>=1.7`
+  - `cardano-ledger-api`: `^>=1.9`
+  - `cardano-ledger-babbage`: `^>=1.7`
+  - `cardano-ledger-conway`: `^>=1.13`
+  - `cardano-ledger-core`: `^>=1.11`
+  - `cardano-ledger-shelley`: `^>=1.10`
+
+- Update `plutus-tx-plugin`: `>= 1.23`
+
+- Update `cardano-slotting`: `>=0.2`
+
+### Breaking
+
+- Implement lightweight checkpointing [#449](https://github.com/IntersectMBO/ouroboros-consensus/issues/449).
+  A validation to help nodes follow the historical chain. A new field `cardanoCheckpoints`
+  has been added to the record `ProtocolParams (CardanoBlock c)` record, with a new type `CheckpointsMap`.
+
+- Remove `shelleyBasedEraName` from `ShelleyBasedEra`, use `eraName` from
+  `Cardano.Ledger.Api.Era` instead.
+
 <a id='changelog-0.14.0.0'></a>
 ## 0.14.0.0 — 2024-02-23
 
