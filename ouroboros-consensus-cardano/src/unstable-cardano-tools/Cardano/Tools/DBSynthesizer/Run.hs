@@ -25,6 +25,7 @@ import           Ouroboros.Consensus.Cardano.Node
 import           Ouroboros.Consensus.Config (configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
 import           Ouroboros.Consensus.Ledger.Abstract (Validated)
+import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import qualified Ouroboros.Consensus.Node as Node (mkChainDbArgs,
                      stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
@@ -112,7 +113,7 @@ eitherParseJson v = case fromJSON v of
     Error err -> Left err
     Success a -> Right a
 
-synthesize :: (SlotNo -> IO [Validated (GenTx (CardanoBlock StandardCrypto))]) -> DBSynthesizerConfig -> (CardanoProtocolParams StandardCrypto) -> IO ForgeResult
+synthesize :: (ExtLedgerState (CardanoBlock StandardCrypto) -> IO [Validated (GenTx (CardanoBlock StandardCrypto))]) -> DBSynthesizerConfig -> (CardanoProtocolParams StandardCrypto) -> IO ForgeResult
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
     withRegistry $ \registry -> do
         let

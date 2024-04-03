@@ -65,7 +65,7 @@ runForge ::
     -> ChainDB IO blk
     -> [BlockForging IO blk]
     -> TopLevelConfig blk
-    -> (SlotNo -> IO [Validated (GenTx blk)])
+    -> (ExtLedgerState blk -> IO [Validated (GenTx blk)])
     -> IO ForgeResult
 runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     putStrLn $ "--> epoch size: " ++ show epochSize_
@@ -159,7 +159,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
                 (ledgerState unticked)
 
         -- Let the caller generate transactions
-        txs <- lift $ genTxs currentSlot
+        txs <- lift $ genTxs unticked
 
         -- Actually produce the block
         newBlock <- lift $
