@@ -74,6 +74,7 @@ import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
 import           Ouroboros.Consensus.Node.ExitPolicy
+import           Ouroboros.Consensus.Node.Genesis (GenesisSwitch (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.InitStorage
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
@@ -1033,6 +1034,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
                 }
             , getUseBootstrapPeers = pure DontUseBootstrapPeers
             , publicPeerSelectionStateVar
+            , genesisArgs          = GenesisDisabled
             }
 
       nodeKernel <- initNodeKernel nodeKernelArgs

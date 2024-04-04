@@ -15,26 +15,26 @@ import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Foldable (for_)
-import           Data.Functor (void)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import           Ouroboros.Consensus.Genesis.Governor (runGDDGovernor)
+import           Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), CSJEnabledConfig (..), ChainDbView,
                      ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
-                     ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..),
-                     viewChainSyncState)
+                     ChainSyncLoPBucketEnabledConfig (..), viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
+import qualified Ouroboros.Consensus.Node.GsmState as GSM
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Consensus.Util.STM (forkLinkedWatcher)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
@@ -364,16 +364,15 @@ startNode schedulerConfig genesisTest interval = do
   -- peer fragments than registered clients.
   BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry getCandidates
 
-  let gddTrigger = viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
   for_ lrLoEVar $ \ var -> do
-      forkLinkedThread lrRegistry "LoE updater background" $
-        void $ runGDDGovernor
+      forkLinkedWatcher lrRegistry "LoE updater background" $
+        gddWatcher
           lrConfig
           (mkGDDTracerTestBlock lrTracer)
+          lnChainDb
+          (pure GSM.Syncing) -- TODO actually run GSM
           (readTVar handles)
           var
-          lnChainDb
-          gddTrigger
   where
     LiveResources {lrRegistry, lrTracer, lrConfig, lrPeerSim, lrLoEVar} = resources
 
