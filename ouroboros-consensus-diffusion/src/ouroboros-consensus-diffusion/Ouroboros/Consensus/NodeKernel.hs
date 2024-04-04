@@ -64,7 +64,6 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      viewChainSyncState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
-import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.JumpingGovernor as JumpingGovernor
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.Run
@@ -144,9 +143,6 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
       -- When set with the empty list '[]' block forging will be disabled.
       --
     , setBlockForging         :: [BlockForging m blk] -> m ()
-
-      -- | Handle to the shared jumping governor.
-    , getJumpingGovernor      :: JumpingGovernor.Handle m (ConnectionId addrNTN) blk
     }
 
 -- | Arguments required when initializing a node
@@ -254,8 +250,6 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         fetchClientRegistry
         blockFetchConfiguration
 
-    jumpingGovernor <- JumpingGovernor.newHandle varChainSyncHandles
-
     return NodeKernel
       { getChainDB              = chainDB
       , getMempool              = mempool
@@ -267,7 +261,6 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getPeerSharingRegistry  = peerSharingRegistry
       , getTracers              = tracers
       , setBlockForging         = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
-      , getJumpingGovernor      = jumpingGovernor
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk

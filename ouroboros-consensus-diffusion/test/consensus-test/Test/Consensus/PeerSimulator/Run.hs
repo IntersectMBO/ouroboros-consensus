@@ -29,7 +29,6 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..),
                      viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
-import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.JumpingGovernor as JumpingGovernor
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl
@@ -137,7 +136,6 @@ startChainSyncConnectionThread ::
   ChainSyncTimeout ->
   ChainSyncLoPBucketConfig ->
   StateViewTracers blk m ->
-  JumpingGovernor.Handle m PeerId blk ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   m (Thread m (), Thread m ())
 startChainSyncConnectionThread
@@ -151,14 +149,13 @@ startChainSyncConnectionThread
   chainSyncTimeouts_
   chainSyncLoPBucketConfig
   tracers
-  jumpingGovernor
   varHandles
   = do
     (clientChannel, serverChannel) <- createConnectedChannels
     clientThread <-
       forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
         bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers jumpingGovernor varHandles clientChannel
+          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varHandles clientChannel
     serverThread <-
       forkLinkedThread registry ("ChainSyncServer" <> condense srPeerId) $
         ChainSync.runChainSyncServer tracer srPeerId tracers csrServer serverChannel
@@ -280,14 +277,13 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     chainDb <- mkChainDb tracer config registry (readTVarIO <$> loEVar)
     fetchClientRegistry <- newFetchClientRegistry
     let chainDbView = CSClient.defaultChainDbView chainDb
-    jumpingGovernor <- JumpingGovernor.newHandle (psrHandles resources)
     for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
       forkLinkedThread registry ("Peer overview " ++ (show $ srPeerId prShared)) $
         -- The peerRegistry helps ensuring that if any thread fails, then
         -- the registry is closed and all threads related to the peer are
         -- killed.
         withRegistry $ \peerRegistry -> do
-          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers jumpingGovernor (psrHandles resources)
+          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrHandles resources)
           BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry (srPeerId prShared)
           (bfClient, bfServer) <- startBlockFetchConnectionThread peerRegistry tracer stateViewTracers fetchClientRegistry (pure Continue) prShared prBlockFetch blockFetchTimeouts_
           waitAnyThread [csClient, csServer, bfClient, bfServer]

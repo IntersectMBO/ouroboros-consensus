@@ -307,7 +307,6 @@ bracketChainSyncClient ::
     )
  => Tracer m (TraceChainSyncClientEvent blk)
  -> ChainDbView m blk
- -> JumpingGovernor.Handle m peer blk
  -> StrictTVar m (Map peer (ChainSyncClientHandle m blk))
     -- ^ The kill handle and states for each peer, we need the whole map because we
     -- (de)register nodes (@peer@).
@@ -319,7 +318,6 @@ bracketChainSyncClient ::
 bracketChainSyncClient
     tracer
     ChainDbView { getIsInvalidBlock }
-    jumpingGovernor
     varHandles
     peer
     version
@@ -348,8 +346,8 @@ bracketChainSyncClient
               , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
               }
             , csvJumpingGovernor = JumpingGovernor {
-                jgNextInstruction = atomically $ JumpingGovernor.nextInstruction jumpingGovernor peer
-              , jgProcessJumpResult = atomically . JumpingGovernor.processJumpResult jumpingGovernor peer
+                jgNextInstruction = atomically $ JumpingGovernor.nextInstruction varHandles peer
+              , jgProcessJumpResult = atomically . JumpingGovernor.processJumpResult varHandles peer
               }
             }
   where
@@ -360,18 +358,16 @@ bracketChainSyncClient
           , csIdling = False
           }
         tid <- myThreadId
-        atomically $ do
-          modifyTVar varHandles $ Map.insert peer ChainSyncClientHandle {
-              cschGDDKill = throwTo tid DensityTooLow
-            , cschState
-            }
-          JumpingGovernor.registerClient jumpingGovernor peer
+        atomically $
+          JumpingGovernor.registerClient
+            varHandles
+            peer
+            (throwTo tid DensityTooLow)
+            cschState
         pure cschState
 
     releaseHandle _ =
-      atomically $ do
-        modifyTVar varHandles $ Map.delete peer
-        JumpingGovernor.unregisterClient jumpingGovernor peer
+      atomically $ JumpingGovernor.unregisterClient varHandles peer
 
     invalidBlockWatcher varState =
         invalidBlockRejector

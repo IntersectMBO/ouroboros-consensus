@@ -28,7 +28,6 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
                      chainSyncClient)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.JumpingGovernor as JumpingGovernor
 import           Ouroboros.Consensus.Util (ShowProxy)
 import           Ouroboros.Consensus.Util.IOLike (Exception (fromException),
                      IOLike, MonadCatch (try), StrictTVar)
@@ -124,8 +123,6 @@ runChainSyncClient ::
   -- ^ Configuration for the LoP bucket.
   StateViewTracers blk m ->
   -- ^ Tracers used to record information for the future 'StateView'.
-  JumpingGovernor.Handle m PeerId blk ->
-  -- ^ Handle to the jumping governor.
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   -- ^ A TVar containing a map of states for each peer. This
   -- function will (via 'bracketChainSyncClient') register and de-register a
@@ -140,13 +137,11 @@ runChainSyncClient
   chainSyncTimeouts
   lopBucketConfig
   StateViewTracers {svtPeerSimulatorResultsTracer}
-  jumpingGovernor
   varHandles
   channel = do
     bracketChainSyncClient
       nullTracer
       chainDbView
-      jumpingGovernor
       varHandles
       peerId
       (maxBound :: NodeToNodeVersion)

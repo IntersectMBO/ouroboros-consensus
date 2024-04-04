@@ -89,7 +89,6 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      bracketChainSyncClient, chainSyncClient, chainSyncStateFor,
                      viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.JumpingGovernor as JumpingGovernor
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)
 import           Ouroboros.Consensus.Node.ProtocolInfo
@@ -357,7 +356,6 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
     -- separate map too, one that isn't emptied. We can use this map to look
     -- at the final state of each candidate.
     varFinalCandidates <- uncheckedNewTVarM Map.empty
-    jumpingGovernor <- JumpingGovernor.dummyHandle
     varHandles     <- uncheckedNewTVarM Map.empty
 
     (tracer, getTrace) <- do
@@ -499,7 +497,6 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
               bracketChainSyncClient
                  chainSyncTracer
                  chainDbView
-                 jumpingGovernor
                  varHandles
                  serverId
                  maxBound
