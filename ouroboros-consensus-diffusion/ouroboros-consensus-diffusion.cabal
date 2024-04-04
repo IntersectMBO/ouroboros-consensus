@@ -1,11 +1,11 @@
-cabal-version:   3.0
-name:            ouroboros-consensus-diffusion
-version:         0.13.0.0
-synopsis:        Integration for the Ouroboros Network layer
+cabal-version: 3.0
+name: ouroboros-consensus-diffusion
+version: 0.13.0.0
+synopsis: Integration for the Ouroboros Network layer
 description:
   Top level integration for consensus & network layers of the Ouroboros blockchain protocol.
 
-license:         Apache-2.0
+license: Apache-2.0
 license-files:
   LICENSE
   NOTICE
@@ -13,27 +13,33 @@ license-files:
 copyright:
   2022-2023 Input Output Global Inc (IOG), INTERSECT 2023-2024.
 
-author:          IOG Engineering Team
-maintainer:      operations@iohk.io
-category:        Network
-build-type:      Simple
+author: IOG Engineering Team
+maintainer: operations@iohk.io
+category: Network
+build-type: Simple
 extra-doc-files: CHANGELOG.md
 
 source-repository head
-  type:     git
+  type: git
   location: https://github.com/IntersectMBO/ouroboros-consensus
 
 flag asserts
   description: Enable assertions
-  manual:      False
-  default:     False
+  manual: False
+  default: False
 
 common common-lib
   default-language: Haskell2010
   ghc-options:
-    -Wall -Wcompat -Wincomplete-uni-patterns
-    -Wincomplete-record-updates -Wpartial-fields -Widentities
-    -Wredundant-constraints -Wmissing-export-lists -Wunused-packages
+    -Wall
+    -Wcompat
+    -Wincomplete-uni-patterns
+    -Wincomplete-record-updates
+    -Wpartial-fields
+    -Widentities
+    -Wredundant-constraints
+    -Wmissing-export-lists
+    -Wunused-packages
     -Wno-unticked-promoted-constructors
 
   if flag(asserts)
@@ -41,12 +47,14 @@ common common-lib
     cpp-options: -DENABLE_ASSERTIONS
 
 common common-test
-  import:      common-lib
-  ghc-options: -threaded -rtsopts
+  import: common-lib
+  ghc-options:
+    -threaded
+    -rtsopts
 
 library
-  import:             common-lib
-  hs-source-dirs:     src/ouroboros-consensus-diffusion
+  import: common-lib
+  hs-source-dirs: src/ouroboros-consensus-diffusion
   exposed-modules:
     Ouroboros.Consensus.Network.NodeToClient
     Ouroboros.Consensus.Network.NodeToNode
@@ -63,45 +71,45 @@ library
     Ouroboros.Consensus.NodeKernel
 
   reexported-modules:
-    Ouroboros.Consensus.Block
-    , Ouroboros.Consensus.Node.Run
-    , Ouroboros.Consensus.Node.NetworkProtocolVersion
+    Ouroboros.Consensus.Block,
+    Ouroboros.Consensus.Node.NetworkProtocolVersion,
+    Ouroboros.Consensus.Node.Run,
 
   build-depends:
-    , base                         >=4.14   && <4.20
-    , bytestring                   >=0.10   && <0.13
-    , cardano-slotting
-    , cborg                        ^>=0.2.2
-    , containers                   >=0.5    && <0.7
-    , contra-tracer
-    , deepseq
-    , filepath
-    , fs-api                       ^>=0.2
-    , hashable
-    , io-classes                   ^>=1.4.1
-    , mtl
-    , ouroboros-consensus          ^>=0.17
-    , ouroboros-network            ^>=0.13
-    , ouroboros-network-api        ^>=0.7
-    , ouroboros-network-framework  ^>=0.12
-    , ouroboros-network-protocols  ^>=0.8
-    , random
-    , safe-wild-cards              ^>=1.0
-    , serialise                    ^>=0.2
-    , si-timers                    ^>=1.4
-    , strict-stm                   ^>=1.4
-    , text
-    , time
-    , transformers
-    , typed-protocols
+    base >=4.14 && <4.20,
+    bytestring >=0.10 && <0.13,
+    cardano-slotting,
+    cborg ^>=0.2.2,
+    containers >=0.5 && <0.7,
+    contra-tracer,
+    deepseq,
+    filepath,
+    fs-api ^>=0.2,
+    hashable,
+    io-classes ^>=1.4.1,
+    mtl,
+    ouroboros-consensus ^>=0.17,
+    ouroboros-network ^>=0.13,
+    ouroboros-network-api ^>=0.7,
+    ouroboros-network-framework ^>=0.12,
+    ouroboros-network-protocols ^>=0.8,
+    random,
+    safe-wild-cards ^>=1.0,
+    serialise ^>=0.2,
+    si-timers ^>=1.4,
+    strict-stm ^>=1.4,
+    text,
+    time,
+    transformers,
+    typed-protocols,
 
   -- GHC 8.10.7 on aarch64-darwin cannot use text-2
-  build-depends:      text >=1.2.5.0 && <2.2
+  build-depends: text >=1.2.5.0 && <2.2
 
 library unstable-diffusion-testlib
-  import:          common-lib
-  visibility:      public
-  hs-source-dirs:  src/unstable-diffusion-testlib
+  import: common-lib
+  visibility: public
+  hs-source-dirs: src/unstable-diffusion-testlib
   exposed-modules:
     Test.ThreadNet.General
     Test.ThreadNet.Network
@@ -118,38 +126,38 @@ library unstable-diffusion-testlib
     Test.ThreadNet.Util.Seed
 
   build-depends:
-    , base
-    , bytestring
-    , cborg
-    , containers
-    , contra-tracer
-    , fgl
-    , fs-sim                                                                 ^>=0.2
-    , graphviz                                                               >=2999.20.1.0
-    , io-classes
-    , io-sim
-    , mtl
-    , ouroboros-consensus-diffusion
-    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
-    , ouroboros-network
-    , ouroboros-network-api
-    , ouroboros-network-framework
-    , ouroboros-network-mock
-    , ouroboros-network-protocols
-    , QuickCheck
-    , quiet                                                                  ^>=0.2
-    , random
-    , si-timers
-    , sop-core                                                               ^>=0.5
-    , sop-extras                                                             ^>=0.1
-    , strict-sop-core                                                        ^>=0.1
-    , text
-    , typed-protocols
+    QuickCheck,
+    base,
+    bytestring,
+    cborg,
+    containers,
+    contra-tracer,
+    fgl,
+    fs-sim ^>=0.2,
+    graphviz >=2999.20.1.0,
+    io-classes,
+    io-sim,
+    mtl,
+    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
+    ouroboros-consensus-diffusion,
+    ouroboros-network,
+    ouroboros-network-api,
+    ouroboros-network-framework,
+    ouroboros-network-mock,
+    ouroboros-network-protocols,
+    quiet ^>=0.2,
+    random,
+    si-timers,
+    sop-core ^>=0.5,
+    sop-extras ^>=0.1,
+    strict-sop-core ^>=0.1,
+    text,
+    typed-protocols,
 
 library unstable-mock-testlib
-  import:          common-lib
-  visibility:      public
-  hs-source-dirs:  src/unstable-mock-testlib
+  import: common-lib
+  visibility: public
+  hs-source-dirs: src/unstable-mock-testlib
   exposed-modules:
     Test.Consensus.Ledger.Mock.Generators
     Test.ThreadNet.TxGen.Mock
@@ -157,35 +165,35 @@ library unstable-mock-testlib
     Test.ThreadNet.Util.SimpleBlock
 
   build-depends:
-    , base
-    , bytestring
-    , cardano-crypto-class
-    , cardano-crypto-tests
-    , containers
-    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block}
-    , ouroboros-network-protocols:testlib
-    , QuickCheck
-    , serialise
-    , unstable-diffusion-testlib
+    QuickCheck,
+    base,
+    bytestring,
+    cardano-crypto-class,
+    cardano-crypto-tests,
+    containers,
+    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block},
+    ouroboros-network-protocols:testlib,
+    serialise,
+    unstable-diffusion-testlib,
 
 test-suite infra-test
-  import:         common-test
-  type:           exitcode-stdio-1.0
+  import: common-test
+  type: exitcode-stdio-1.0
   hs-source-dirs: test/infra-test
-  main-is:        Main.hs
-  other-modules:  Test.ThreadNet.Util.Tests
+  main-is: Main.hs
+  other-modules: Test.ThreadNet.Util.Tests
   build-depends:
-    , base
-    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
-    , tasty
-    , tasty-quickcheck
-    , unstable-diffusion-testlib
+    base,
+    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
+    tasty,
+    tasty-quickcheck,
+    unstable-diffusion-testlib,
 
 test-suite mock-test
-  import:         common-test
-  type:           exitcode-stdio-1.0
+  import: common-test
+  type: exitcode-stdio-1.0
   hs-source-dirs: test/mock-test
-  main-is:        Main.hs
+  main-is: Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
     Test.ThreadNet.BFT
@@ -194,37 +202,37 @@ test-suite mock-test
     Test.ThreadNet.Praos
 
   build-depends:
-    , base
-    , bytestring
-    , cborg
-    , constraints
-    , containers
-    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block}
-    , ouroboros-network-mock
-    , QuickCheck
-    , serialise
-    , tasty
-    , tasty-quickcheck
-    , unstable-diffusion-testlib
-    , unstable-mock-testlib
+    QuickCheck,
+    base,
+    bytestring,
+    cborg,
+    constraints,
+    containers,
+    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib, unstable-mock-block},
+    ouroboros-network-mock,
+    serialise,
+    tasty,
+    tasty-quickcheck,
+    unstable-diffusion-testlib,
+    unstable-mock-testlib,
 
 test-suite consensus-test
-  import:         common-test
-  type:           exitcode-stdio-1.0
+  import: common-test
+  type: exitcode-stdio-1.0
   hs-source-dirs: test/consensus-test
-  main-is:        Main.hs
+  main-is: Main.hs
   other-modules:
     Test.Consensus.BlockTree
+    Test.Consensus.GSM
+    Test.Consensus.GSM.Model
     Test.Consensus.Genesis.Setup
     Test.Consensus.Genesis.Setup.Classifiers
     Test.Consensus.Genesis.Setup.GenChains
     Test.Consensus.Genesis.Tests
     Test.Consensus.Genesis.Tests.LoE
-    Test.Consensus.Genesis.Tests.LongRangeAttack
     Test.Consensus.Genesis.Tests.LoP
+    Test.Consensus.Genesis.Tests.LongRangeAttack
     Test.Consensus.Genesis.Tests.Uniform
-    Test.Consensus.GSM
-    Test.Consensus.GSM.Model
     Test.Consensus.HardFork.Combinator
     Test.Consensus.HardFork.Combinator.A
     Test.Consensus.HardFork.Combinator.B
@@ -256,46 +264,46 @@ test-suite consensus-test
     Test.Util.TersePrinting
 
   build-depends:
-    , base
-    , binary
-    , bytestring
-    , cardano-crypto-class
-    , cardano-slotting:{cardano-slotting, testlib}
-    , containers
-    , contra-tracer
-    , directory
-    , fs-api                                                                 ^>=0.2
-    , fs-sim                                                                 ^>=0.2
-    , hashable
-    , io-classes
-    , io-sim
-    , mtl
-    , nothunks
-    , ouroboros-consensus-diffusion
-    , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
-    , ouroboros-network
-    , ouroboros-network-api
-    , ouroboros-network-framework
-    , ouroboros-network-mock
-    , ouroboros-network-protocols
-    , pretty-show
-    , QuickCheck
-    , quickcheck-state-machine:no-vendored-treediff
-    , quiet
-    , random
-    , serialise
-    , si-timers
-    , sop-extras
-    , strict-checked-vars
-    , strict-sop-core
-    , strict-stm
-    , tasty
-    , tasty-hunit
-    , tasty-quickcheck
-    , temporary
-    , time
-    , tree-diff
-    , typed-protocols
-    , typed-protocols-examples
-    , unstable-diffusion-testlib
-    , vector
+    QuickCheck,
+    base,
+    binary,
+    bytestring,
+    cardano-crypto-class,
+    cardano-slotting:{cardano-slotting, testlib},
+    containers,
+    contra-tracer,
+    directory,
+    fs-api ^>=0.2,
+    fs-sim ^>=0.2,
+    hashable,
+    io-classes,
+    io-sim,
+    mtl,
+    nothunks,
+    ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib},
+    ouroboros-consensus-diffusion,
+    ouroboros-network,
+    ouroboros-network-api,
+    ouroboros-network-framework,
+    ouroboros-network-mock,
+    ouroboros-network-protocols,
+    pretty-show,
+    quickcheck-state-machine:no-vendored-treediff,
+    quiet,
+    random,
+    serialise,
+    si-timers,
+    sop-extras,
+    strict-checked-vars,
+    strict-sop-core,
+    strict-stm,
+    tasty,
+    tasty-hunit,
+    tasty-quickcheck,
+    temporary,
+    time,
+    tree-diff,
+    typed-protocols,
+    typed-protocols-examples,
+    unstable-diffusion-testlib,
+    vector,
