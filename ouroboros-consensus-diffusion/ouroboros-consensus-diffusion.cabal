@@ -65,6 +65,7 @@ library
     Ouroboros.Consensus.Node.Exit
     Ouroboros.Consensus.Node.ExitPolicy
     Ouroboros.Consensus.Node.GSM
+    Ouroboros.Consensus.Node.Genesis
     Ouroboros.Consensus.Node.Recovery
     Ouroboros.Consensus.Node.RethrowPolicy
     Ouroboros.Consensus.Node.Tracers

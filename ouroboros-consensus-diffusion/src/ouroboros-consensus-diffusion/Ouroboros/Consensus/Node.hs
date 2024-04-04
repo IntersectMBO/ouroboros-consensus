@@ -88,6 +88,9 @@ import           Ouroboros.Consensus.Node.DbLock
 import           Ouroboros.Consensus.Node.DbMarker
 import           Ouroboros.Consensus.Node.ErrorPolicy
 import           Ouroboros.Consensus.Node.ExitPolicy
+import           Ouroboros.Consensus.Node.Genesis (GenesisConfig (..),
+                     GenesisNodeKernelArgs, GenesisSwitch (..),
+                     mkGenesisNodeKernelArgs)
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.InitStorage
@@ -193,6 +196,8 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
     , rnPeerSharing :: PeerSharing
 
     , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
+
+    , rnGenesisConfig :: GenesisSwitch GenesisConfig
     }
 
 
@@ -249,11 +254,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       -- | See 'NTN.ChainSyncTimeout'
     , llrnChainSyncTimeout :: m NTN.ChainSyncTimeout
 
-      -- | See 'CsClient.ChainSyncLoPBucketConfig'
-    , llrnChainSyncLoPBucketConfig :: ChainSyncLoPBucketConfig
-
-      -- | See 'CsClient.CSJConfig'
-    , llrnCSJConfig :: CSJConfig
+    , llrnGenesisConfig :: GenesisSwitch GenesisConfig
 
       -- | How to run the data diffusion applications
       --
@@ -413,6 +414,9 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                          llrnMaxClockSkew
                          systemTime
 
+        (genesisArgs, setLoEinChainDbArgs) <-
+          mkGenesisNodeKernelArgs llrnGenesisConfig
+
         let maybeValidateAll
               | lastShutDownWasClean
               = id
@@ -428,7 +432,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                      initLedger
                      llrnMkHasFS
                      llrnChainDbArgsDefaults
-                     (  maybeValidateAll
+                     (  setLoEinChainDbArgs
+                      . maybeValidateAll
                       . llrnCustomiseChainDbArgs
                      )
 
@@ -474,6 +479,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                     gsmMarkerFileView
                     rnGetUseBootstrapPeers
                     llrnPublicPeerSelectionStateVar
+                    genesisArgs
           nodeKernel <- initNodeKernel nodeKernelArgs
           rnNodeKernelHook registry nodeKernel
 
@@ -521,8 +527,12 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           (NTN.defaultCodecs codecConfig version encAddrNTN decAddrNTN)
           NTN.byteLimits
           llrnChainSyncTimeout
-          llrnChainSyncLoPBucketConfig
-          llrnCSJConfig
+          (case llrnGenesisConfig of
+             GenesisEnabled gcfg -> gcsChainSyncLoPBucketConfig gcfg
+             GenesisDisabled     -> ChainSyncLoPBucketDisabled)
+          (case llrnGenesisConfig of
+             GenesisEnabled gcfg -> gcsCSJConfig gcfg
+             GenesisDisabled     -> CSJDisabled)
           (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
           (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
@@ -707,6 +717,7 @@ mkNodeKernelArgs ::
   -> GSM.MarkerFileView m
   -> STM m UseBootstrapPeers
   -> StrictSTM.StrictTVar m (Diffusion.PublicPeerSelectionState addrNTN)
+  -> GenesisSwitch (GenesisNodeKernelArgs m blk)
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
@@ -723,6 +734,7 @@ mkNodeKernelArgs
   gsmMarkerFileView
   getUseBootstrapPeers
   publicPeerSelectionStateVar
+  genesisArgs
   = do
     let (kaRng, psRng) = split rng
     return NodeKernelArgs
@@ -747,6 +759,7 @@ mkNodeKernelArgs
       , keepAliveRng = kaRng
       , peerSharingRng = psRng
       , publicPeerSelectionStateVar
+      , genesisArgs
       }
   where
     defaultBlockFetchConfiguration :: BlockFetchConfiguration
@@ -884,6 +897,7 @@ stdLowLevelRunNodeArgsIO ::
 stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
                                     , rnEnableP2P
                                     , rnPeerSharing
+                                    , rnGenesisConfig
                                     }
                          $(SafeWildCards.fields 'StdRunNodeArgs) = do
     llrnBfcSalt               <- stdBfcSaltIO
@@ -892,8 +906,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
     pure LowLevelRunNodeArgs
       { llrnBfcSalt
       , llrnChainSyncTimeout = fromMaybe stdChainSyncTimeout srnChainSyncTimeout
-      , llrnChainSyncLoPBucketConfig = ChainSyncLoPBucketDisabled
-      , llrnCSJConfig = CSJDisabled
+      , llrnGenesisConfig = rnGenesisConfig
       , llrnCustomiseHardForkBlockchainTimeArgs = id
       , llrnGsmAntiThunderingHerd
       , llrnKeepAliveRng
