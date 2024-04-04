@@ -596,7 +596,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                         , CsClient.idling = csvIdling csState
                         , CsClient.loPBucket = csvLoPBucket csState
                         , CsClient.setLatestSlot = csvSetLatestSlot csState
-                        , CsClient.jumpingGovernor = csvJumpingGovernor csState
+                        , CsClient.jumping = csvJumping csState
                         }
               return (ChainSyncInitiatorResult r, trailing)
 

@@ -10,7 +10,7 @@
 {-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.JumpingGovernor (
+module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
     Instruction (..)
   , JumpResult (..)
   , nextInstruction

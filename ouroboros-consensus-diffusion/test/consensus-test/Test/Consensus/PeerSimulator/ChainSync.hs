@@ -94,7 +94,7 @@ basicChainSyncClient
       , CSClient.idling = csvIdling csState
       , CSClient.loPBucket = csvLoPBucket csState
       , CSClient.setLatestSlot = csvSetLatestSlot csState
-      , CSClient.jumpingGovernor = csvJumpingGovernor csState
+      , CSClient.jumping = csvJumping csState
       }
   where
     dummyHeaderInFutureCheck ::

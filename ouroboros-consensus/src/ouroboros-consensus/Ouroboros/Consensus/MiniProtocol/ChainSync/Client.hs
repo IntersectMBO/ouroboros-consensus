@@ -65,7 +65,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , ChainSyncStateView (..)
   , chainSyncStateFor
   , noIdling
-  , noJumpingGovernor
+  , noJumping
   , noLoPBucket
   , viewChainSyncState
   ) where
@@ -96,7 +96,7 @@ import           Ouroboros.Consensus.Ledger.Basics (LedgerState)
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
-import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.JumpingGovernor as JumpingGovernor
+import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping as Jumping
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Protocol.Abstract
@@ -253,9 +253,9 @@ noLoPBucket =
     , lbGrantToken = pure ()
     }
 
-data JumpingGovernor m blk = JumpingGovernor {
-    jgNextInstruction   :: !(m (JumpingGovernor.Instruction blk))
-  , jgProcessJumpResult :: !(JumpingGovernor.JumpResult blk -> m ())
+data Jumping m blk = Jumping {
+    jgNextInstruction   :: !(m (Jumping.Instruction blk))
+  , jgProcessJumpResult :: !(Jumping.JumpResult blk -> m ())
   }
   deriving stock (Generic)
 
@@ -264,13 +264,13 @@ deriving anyclass instance
     HasHeader blk,
     NoThunks (Header blk)
   ) =>
-  NoThunks (JumpingGovernor m blk)
+  NoThunks (Jumping m blk)
 
 -- | No-op implementation, for tests.
-noJumpingGovernor :: (Applicative m) => JumpingGovernor m blk
-noJumpingGovernor =
-  JumpingGovernor
-    { jgNextInstruction = pure JumpingGovernor.RunNormally
+noJumping :: (Applicative m) => Jumping m blk
+noJumping =
+  Jumping
+    { jgNextInstruction = pure Jumping.RunNormally
     , jgProcessJumpResult = const $ pure ()
     }
 
@@ -278,19 +278,19 @@ noJumpingGovernor =
 -- 'bracketChainSyncClient'.
 data ChainSyncStateView m blk = ChainSyncStateView {
     -- | The current candidate fragment
-    csvSetCandidate    :: !(AnchoredFragment (Header blk) -> STM m ())
+    csvSetCandidate  :: !(AnchoredFragment (Header blk) -> STM m ())
 
     -- | Update the slot of the latest received header
-  , csvSetLatestSlot   :: !(WithOrigin SlotNo -> STM m ())
+  , csvSetLatestSlot :: !(WithOrigin SlotNo -> STM m ())
 
     -- | (Un)mark the peer as idling.
-  , csvIdling          :: !(Idling m)
+  , csvIdling        :: !(Idling m)
 
     -- | Control the 'LeakyBucket' for the LoP.
-  , csvLoPBucket       :: !(LoPBucket m)
+  , csvLoPBucket     :: !(LoPBucket m)
 
-    -- | The 'JumpingGovernor' for the peer.
-  , csvJumpingGovernor :: !(JumpingGovernor m blk)
+    -- | Jumping-related API.
+  , csvJumping       :: !(Jumping m blk)
   }
   deriving stock (Generic)
 
@@ -345,9 +345,9 @@ bracketChainSyncClient
               , lbResume = LeakyBucket.setPaused lopBucket False
               , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
               }
-            , csvJumpingGovernor = JumpingGovernor {
-                jgNextInstruction = atomically $ JumpingGovernor.nextInstruction varHandles peer
-              , jgProcessJumpResult = atomically . JumpingGovernor.processJumpResult varHandles peer
+            , csvJumping = Jumping {
+                jgNextInstruction = atomically $ Jumping.nextInstruction varHandles peer
+              , jgProcessJumpResult = atomically . Jumping.processJumpResult varHandles peer
               }
             }
   where
@@ -359,7 +359,7 @@ bracketChainSyncClient
           }
         tid <- myThreadId
         atomically $
-          JumpingGovernor.registerClient
+          Jumping.registerClient
             varHandles
             peer
             (throwTo tid DensityTooLow)
@@ -367,7 +367,7 @@ bracketChainSyncClient
         pure cschState
 
     releaseHandle _ =
-      atomically $ JumpingGovernor.unregisterClient varHandles peer
+      atomically $ Jumping.unregisterClient varHandles peer
 
     invalidBlockWatcher varState =
         invalidBlockRejector
@@ -701,7 +701,7 @@ data DynamicEnv m blk = DynamicEnv {
   , setLatestSlot       :: WithOrigin SlotNo -> STM m ()
   , idling              :: Idling m
   , loPBucket           :: LoPBucket m
-  , jumpingGovernor     :: JumpingGovernor m blk
+  , jumping             :: Jumping m blk
   }
 
 -- | General values collectively needed by the top-level entry points
@@ -1082,7 +1082,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
       , idling
       , loPBucket
       , setCandidate
-      , jumpingGovernor
+      , jumping
       } = dynEnv
 
     InternalEnv {
@@ -1121,15 +1121,15 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             _continue -> do
                 -- Wait until next jumping instruction, which can be either to
                 -- jump or to run normal ChainSync.
-                traceWith tracer TraceJumpingGovernorWaitingForNextInstruction
-                instruction <- jgNextInstruction jumpingGovernor
-                traceWith tracer $ TraceJumpingGovernorInstructionIs instruction
+                traceWith tracer TraceJumpingWaitingForNextInstruction
+                instruction <- jgNextInstruction jumping
+                traceWith tracer $ TraceJumpingInstructionIs instruction
                 case instruction of
-                    JumpingGovernor.JumpTo point ->
+                    Jumping.JumpTo point ->
                           continueWithState kis
                         $ drainThePipe n
                         $ offerJump mkPipelineDecision point
-                    JumpingGovernor.RunNormally ->
+                    Jumping.RunNormally ->
                           continueWithState kis
                         $ nextStep' mkPipelineDecision n theirTip
 
@@ -1187,14 +1187,14 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
               recvMsgIntersectFound = \pt theirTip ->
                   if
                     | pt == dynamoTipPt -> do
-                        jgProcessJumpResult jumpingGovernor $ JumpingGovernor.AcceptedJump dynamoTipPt
-                        traceWith tracer $ TraceJump $ Right $ JumpingGovernor.AcceptedJump dynamoTipPt
+                        jgProcessJumpResult jumping $ Jumping.AcceptedJump dynamoTipPt
+                        traceWith tracer $ TraceJump $ Right $ Jumping.AcceptedJump dynamoTipPt
                         continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
                     | otherwise         -> throwIO InvalidJumpResponse
             ,
               recvMsgIntersectNotFound = \theirTip -> do
-                  jgProcessJumpResult jumpingGovernor $ JumpingGovernor.RejectedJump dynamoTipPt
-                  traceWith tracer $ TraceJump $ Right $ JumpingGovernor.RejectedJump dynamoTipPt
+                  jgProcessJumpResult jumping $ Jumping.RejectedJump dynamoTipPt
+                  traceWith tracer $ TraceJump $ Right $ Jumping.RejectedJump dynamoTipPt
                   continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
             }
 
@@ -2083,11 +2083,11 @@ data TraceChainSyncClientEvent blk =
     -- the considered header and the best block number known prior to this
     -- header.
   |
-    TraceJump (Either (Point blk) (JumpingGovernor.JumpResult blk))
+    TraceJump (Either (Point blk) (Jumping.JumpResult blk))
     -- ^ ChainSync Jumping to a point. Either an offering of a point, or a
     -- reply.
-  | TraceJumpingGovernorWaitingForNextInstruction
-  | TraceJumpingGovernorInstructionIs (JumpingGovernor.Instruction blk)
+  | TraceJumpingWaitingForNextInstruction
+  | TraceJumpingInstructionIs (Jumping.Instruction blk)
 
 deriving instance
   ( BlockSupportsProtocol blk
