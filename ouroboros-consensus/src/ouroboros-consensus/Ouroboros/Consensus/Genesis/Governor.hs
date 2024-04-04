@@ -6,6 +6,8 @@
 {-# LANGUAGE NamedFieldPuns       #-}
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE StandaloneDeriving   #-}
+{-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 -- | Implementation of the GDD governor
@@ -26,9 +28,10 @@
 --
 module Ouroboros.Consensus.Genesis.Governor (
     DensityBounds (..)
+  , GDDStateView (..)
   , TraceGDDEvent (..)
   , densityDisconnect
-  , runGDDGovernor
+  , gddWatcher
   , sharedCandidatePrefix
   ) where
 
@@ -39,7 +42,7 @@ import           Data.Foldable (for_, toList)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (maybeToList)
-import           Data.Void
+import           Data.Maybe.Strict (StrictMaybe)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
@@ -55,61 +58,100 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientHandle (..), ChainSyncState (..))
-import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB,
-                     triggerChainSelectionAsync)
+import           Ouroboros.Consensus.Node.GsmState
+import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import           Ouroboros.Consensus.Util (eitherToMaybe, whenJust)
 import           Ouroboros.Consensus.Util.AnchoredFragment (stripCommonPrefix)
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
+import           Ouroboros.Consensus.Util.STM (Watcher (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
--- | A never ending computation that evaluates the GDD rule whenever
--- the STM action @getTrigger@ yields a different result, writing the LoE
+-- | A 'Watcher' that evaluates the GDD rule whenever necessary, writing the LoE
 -- fragment to @varLoEFrag@, and then triggering ChainSel to reprocess all
 -- blocks that had previously been postponed by the LoE.
 --
 -- Evaluating the GDD rule might cause peers to be disconnected if they have
 -- sparser chains than the best chain.
---
--- The LoE fragment is the fragment anchored at the immutable tip and ending at
--- the LoE tip.
---
--- @getHandles@ is the callback to get the handles that allow to disconnect
--- from peers.
---
-runGDDGovernor ::
-  ( Monoid a,
-    Eq a,
-    HasHardForkHistory blk,
-    IOLike m,
-    LedgerSupportsProtocol blk,
-    Ord peer
-  ) =>
-  TopLevelConfig blk ->
-  Tracer m (TraceGDDEvent peer blk) ->
-  STM m (Map peer (ChainSyncClientHandle m blk)) ->
-  StrictTVar m (AnchoredFragment (Header blk)) ->
-  ChainDB m blk ->
-  STM m a ->
-  m Void
-runGDDGovernor cfg tracer getHandles varLoEFrag chainDb getTrigger =
-  spin mempty
+gddWatcher ::
+     forall m blk peer.
+     ( IOLike m
+     , Ord peer
+     , LedgerSupportsProtocol blk
+     , HasHardForkHistory blk
+     )
+  => TopLevelConfig blk
+  -> Tracer m (TraceGDDEvent peer blk)
+  -> ChainDB m blk
+  -> STM m GsmState
+  -> STM m (Map peer (ChainSyncClientHandle m blk))
+     -- ^ The ChainSync handles. We trigger the GDD whenever our 'GsmState'
+     -- changes, and when 'Syncing', whenever any of the candidate fragments
+     -- changes. Also, we use this to disconnect from peers with insufficient
+     -- densities.
+  -> StrictTVar m (AnchoredFragment (Header blk))
+     -- ^ The LoE fragment. It starts at a (recent) immutable tip and ends at
+     -- the common intersection of the candidate fragments.
+  -> Watcher m
+       (GsmState, GDDStateView m blk peer)
+       (Map peer (StrictMaybe (WithOrigin SlotNo), Bool))
+gddWatcher cfg tracer chainDb getGsmState getHandles varLoEFrag =
+    Watcher {
+        wInitial = Nothing
+      , wReader  = (,) <$> getGsmState <*> getGDDStateView
+      , wFingerprint
+      , wNotify
+      }
   where
-    spin oldTrigger = do
-      (newTrigger, curChain, curLedger) <- atomically $ do
-        (_, newTrigger) <- blockUntilChanged id oldTrigger getTrigger
-        curChain <- ChainDB.getCurrentChain chainDb
-        curLedger <- ChainDB.getCurrentLedger chainDb
-        pure (newTrigger, curChain, curLedger)
-      loeFrag <- evaluateGDD cfg tracer getHandles curChain curLedger
-      oldLoEFrag <- atomically $ swapTVar varLoEFrag loeFrag
-      -- The chain selection only depends on the LoE tip, so there
-      -- is no point in retriggering it if the LoE tip hasn't changed.
-      when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
-        triggerChainSelectionAsync chainDb
-      spin newTrigger
+    getGDDStateView :: STM m (GDDStateView m blk peer)
+    getGDDStateView = do
+        curChain          <- ChainDB.getCurrentChain chainDb
+        immutableLedgerSt <- ChainDB.getImmutableLedger chainDb
+        handles           <- getHandles
+        states            <- traverse (readTVar . cschState) handles
+        pure GDDStateView {
+            gddCtxCurChain          = curChain
+          , gddCtxImmutableLedgerSt = immutableLedgerSt
+          , gddCtxKillActions       = Map.map cschGDDKill handles
+          , gddCtxStates            = states
+          }
+
+    wFingerprint ::
+         (GsmState, GDDStateView m blk peer)
+      -> Map peer (StrictMaybe (WithOrigin SlotNo), Bool)
+    wFingerprint (gsmState, GDDStateView{gddCtxStates}) = case gsmState of
+        -- When we are in 'PreSyncing' (HAA not satisfied) or are caught up, we
+        -- don't have to run the GDD on changes to the candidate fragments.
+        -- (Maybe we want to do it in 'PreSycing'?)
+        PreSyncing -> Map.empty
+        CaughtUp   -> Map.empty
+        -- When syncing, wake up regularly while headers are sent.
+        -- Watching csLatestSlot ensures that GDD is woken up when a peer is
+        -- sending headers even if they are after the forecast horizon. Note
+        -- that there can be some delay between the header being validated and
+        -- it becoming visible to GDD. It will be visible only when csLatestSlot
+        -- changes again or when csIdling changes, which is guaranteed to happen
+        -- eventually.
+        Syncing    ->
+          Map.map (\css -> (csLatestSlot css, csIdling css)) gddCtxStates
+
+    wNotify :: (GsmState, GDDStateView m blk peer) -> m ()
+    wNotify (_gsmState, stateView) = do
+        loeFrag <- evaluateGDD cfg tracer stateView
+        oldLoEFrag <- atomically $ swapTVar varLoEFrag loeFrag
+        -- The chain selection only depends on the LoE tip, so there
+        -- is no point in retriggering it if the LoE tip hasn't changed.
+        when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
+          ChainDB.triggerChainSelectionAsync chainDb
+
+-- | Pure snapshot of the dynamic data the GDD operates on.
+data GDDStateView m blk peer = GDDStateView {
+    gddCtxCurChain          :: AnchoredFragment (Header blk)
+  , gddCtxImmutableLedgerSt :: ExtLedgerState blk
+  , gddCtxKillActions       :: Map peer (m ())
+  , gddCtxStates            :: Map peer (ChainSyncState blk)
+  }
 
 -- | Disconnect peers that lose density comparisons and recompute the LoE fragment.
 --
@@ -135,21 +177,21 @@ evaluateGDD ::
      )
   => TopLevelConfig blk
   -> Tracer m (TraceGDDEvent peer blk)
-  -> STM m (Map peer (ChainSyncClientHandle m blk))
-  -> AnchoredFragment (Header blk)
-  -> ExtLedgerState blk
+  -> GDDStateView m blk peer
   -> m (AnchoredFragment (Header blk))
-evaluateGDD cfg tracer getHandles curChain immutableLedgerSt = do
-    (states, candidates, candidateSuffixes, handles, loeFrag) <- atomically $ do
-      handles <- getHandles
-      states <- traverse (readTVar . cschState) handles
-      let
-        candidates = csCandidate <$> states
+evaluateGDD cfg tracer stateView = do
+    let GDDStateView {
+            gddCtxCurChain          = curChain
+          , gddCtxImmutableLedgerSt = immutableLedgerSt
+          , gddCtxKillActions       = killActions
+          , gddCtxStates            = states
+          } = stateView
+
         (loeFrag, candidateSuffixes) =
           sharedCandidatePrefix curChain candidates
-      pure (states, candidates, candidateSuffixes, handles, loeFrag)
+        candidates = csCandidate <$> states
 
-    let msgen :: Maybe GenesisWindow
+        msgen :: Maybe GenesisWindow
         -- This could also use 'runWithCachedSummary' if deemed desirable.
         msgen = eitherToMaybe $ runQuery qry summary
           where
@@ -180,7 +222,7 @@ evaluateGDD cfg tracer getHandles curChain immutableLedgerSt = do
 
       traceWith tracer TraceGDDEvent {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
 
-      for_ losingPeers $ \peer -> cschGDDKill (handles Map.! peer)
+      for_ losingPeers $ \peer -> killActions Map.! peer
 
     pure loeFrag
 
@@ -223,6 +265,8 @@ data DensityBounds blk =
     latestSlot      :: WithOrigin SlotNo,
     idling          :: Bool
   }
+
+deriving stock instance (Show (Header blk), GetHeader blk) => Show (DensityBounds blk)
 
 -- | @densityDisconnect genWin k states candidateSuffixes loeFrag@
 -- yields the list of peers which are known to lose the density comparison with
@@ -399,3 +443,7 @@ data TraceGDDEvent peer blk =
     loeHead           :: AF.Anchor (Header blk),
     sgen              :: GenesisWindow
   }
+
+deriving stock instance
+  ( GetHeader blk, Show (Header blk), Show peer
+  ) => Show (TraceGDDEvent peer blk)

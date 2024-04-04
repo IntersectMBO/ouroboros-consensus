@@ -118,7 +118,7 @@ defaultSpecificArgs = ChainDbSpecificArgs {
     , cdbsTracer          = nullTracer
     , cdbsHasFSGsmDB      = noDefault
     , cdbsTopLevelConfig  = noDefault
-    , cdbsLoE             = LoEDisabled
+    , cdbsLoE             = pure LoEDisabled
     }
 
 -- | Default arguments

@@ -1,11 +1,13 @@
 {-# LANGUAGE BangPatterns          #-}
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DeriveTraversable     #-}
 {-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE NumericUnderscores    #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
@@ -25,7 +27,6 @@ module Ouroboros.Consensus.NodeKernel (
   , getPeersFromCurrentLedgerAfterSlot
   , initNodeKernel
   ) where
-
 
 
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
@@ -52,6 +53,7 @@ import qualified Ouroboros.Consensus.Block as Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
+import           Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
@@ -65,6 +67,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      viewChainSyncState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
+import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs,
+                     GenesisSwitch (..), setGetLoEFragment)
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.Run
@@ -178,6 +182,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , peerSharingRng          :: StdGen
     , publicPeerSelectionStateVar
                               :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
+    , genesisArgs             :: GenesisSwitch (GenesisNodeKernelArgs m blk)
     }
 
 initNodeKernel ::
@@ -197,6 +202,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , gsmArgs
                                    , peerSharingRng
                                    , publicPeerSelectionStateVar
+                                   , genesisArgs
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -247,7 +253,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , GSM.setCaughtUpPersistentMark = \upd ->
                   (if upd then GSM.touchMarkerFile else GSM.removeMarkerFile)
                     gsmMarkerFileView
-              , GSM.writeGsmState = \gsmState ->
+              , GSM.writeGsmState = \gsmState -> do
                   atomicallyWithMonotonicTime $ \time -> do
                     writeTVar varGsmState gsmState
                     handles <- readTVar varChainSyncHandles
@@ -268,6 +274,25 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         peerSharingRng
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
+
+    case genesisArgs of
+      GenesisDisabled    -> pure ()
+      GenesisEnabled ctx -> do
+        varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
+        setGetLoEFragment
+          (readTVar varGsmState)
+          (readTVar varLoEFragment)
+          ctx
+
+        void $ forkLinkedWatcher registry "NodeKernel.GDD" $
+          gddWatcher
+            cfg
+            (gddTracer tracers)
+            chainDB
+            (readTVar varGsmState)
+            -- TODO GDD should only consider (big) ledger peers
+            (readTVar varChainSyncHandles)
+            varLoEFragment
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
                             blockForgingController st (LazySTM.takeTMVar blockForgingVar)
@@ -344,11 +369,11 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
                                  } = do
     varGsmState <- do
       let GsmNodeKernelArgs {..} = gsmArgs
-      j <- GSM.initializationGsmState
+      gsmState <- GSM.initializationGsmState
         (atomically $ ledgerState <$> ChainDB.getCurrentLedger chainDB)
         gsmDurationUntilTooOld
         gsmMarkerFileView
-      newTVarIO j
+      newTVarIO gsmState
 
     varChainSyncHandles <- newTVarIO mempty
     mempool       <- openMempool registry
