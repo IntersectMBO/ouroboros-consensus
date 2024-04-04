@@ -147,7 +147,7 @@ library
     , ouroboros-consensus-protocol  ^>=0.7
     , ouroboros-network-api         ^>=0.7.1
     , serialise                     ^>=0.2
-    , small-steps
+    , small-steps                   ^>=1.0
     , sop-core                      ^>=0.5
     , sop-extras                    ^>=0.1
     , strict-sop-core               ^>=0.1

@@ -166,7 +166,7 @@ putBS (CodecMK _ encVal _ _) (Internal.Db _ dbi) keyBS value = Internal.Txn $ \t
         sz = fromIntegral (LBS.length valueLBS)
     MDB_val len ptr <- mdb_reserve' Internal.defaultWriteFlags txn dbi kval sz
     let len' = fromIntegral len
-    assert (len' == sz) $ Internal.copyLazyBS valueLBS ptr len'
+    assert (len' == sz) $ Internal.copyLazyBS valueLBS (castPtr ptr) len'
 
 delete ::
      CodecMK k v
