@@ -1225,7 +1225,7 @@ test cacheConfig chunkInfo cmds = do
                 }
               sm' = sm env (initDBModel chunkInfo TestBlockCodecConfig)
 
-          (hist, model, res) <- QSM.runCommands' (pure sm') cmds
+          (hist, model, res) <- QSM.runCommands' sm' cmds
 
           trace <- getTrace
           return (hist, model, res, trace)
