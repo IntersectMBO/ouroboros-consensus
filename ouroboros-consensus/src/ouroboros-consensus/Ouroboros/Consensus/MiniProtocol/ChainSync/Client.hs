@@ -253,9 +253,14 @@ noLoPBucket =
     , lbGrantToken = pure ()
     }
 
-data Jumping m blk = Jumping {
-    jgNextInstruction   :: !(m (Jumping.Instruction blk))
-  , jgProcessJumpResult :: !(Jumping.JumpResult blk -> m ())
+-- | Hooks for ChainSync jumping.
+data Jumping m blk = Jumping
+  { -- | Get the next instruction to execute, which can be either to run normal
+    -- ChainSync or to jump to a given point. This is a blocking operation.
+    jgNextInstruction   :: !(m (Jumping.Instruction blk)),
+
+    -- | Process the result of a jump, either accepted or rejected.
+    jgProcessJumpResult :: !(Jumping.JumpResult blk -> m ())
   }
   deriving stock (Generic)
 
