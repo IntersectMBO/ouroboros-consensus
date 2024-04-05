@@ -86,6 +86,17 @@ nextInstruction handlesVar peer =
           Jumper nextJumpVar _ Happy -> writeTVar nextJumpVar $ Just $! castPoint (headPoint dynamoFragment)
           _ -> pure ()
 
+setJumpingState ::
+  ( MonadSTM m,
+    Ord peer
+  ) =>
+  StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
+  peer ->
+  ChainSyncJumpingState m blk ->
+  STM m ()
+setJumpingState handlesVar peer cschJumping =
+  modifyTVar handlesVar $ Map.update (\handle -> Just $! handle {cschJumping}) peer
+
 processJumpResult ::
   ( MonadSTM m,
     Ord peer, HasHeader blk, HasHeader (Header blk)
@@ -110,7 +121,7 @@ processJumpResult handlesVar peer jumpResult =
             let slicedDynamoFragment = fst $ fromJust $ splitAfterPoint dynamoFragment goodPoint'
             chainSyncStateVar <- cschState . (Map.! peer) <$> readTVar handlesVar
             modifyTVar chainSyncStateVar $ \chainSyncState -> chainSyncState {csCandidate = slicedDynamoFragment}
-            modifyTVar handlesVar $ Map.update (\handle -> Just $! handle {cschJumping = Jumper nextJumpVar goodPoint' Happy}) peer
+            setJumpingState handlesVar peer $ Jumper nextJumpVar goodPoint' Happy
           (Happy, RejectedJump badPoint) ->
             -- The previously happy peer just rejected a jump. We look for an
             -- intersection.
@@ -126,16 +137,24 @@ processJumpResult handlesVar peer jumpResult =
   where
     lookForIntersection nextJumpVar goodPoint badPoint = do
       (dynamoFragment0 :: AnchoredFragment (Header blk)) <- fromJust <$> getDynamoFragment handlesVar -- full fragment
-      let (dynamoFragment1 :: AnchoredFragment (Header blk)) = snd $ fromJust $ splitAfterPoint dynamoFragment0 goodPoint -- fragment from goodPoint (excl)
-      let (dynamoFragment2 :: AnchoredFragment (Header blk)) = fst $ fromJust $ splitBeforePoint dynamoFragment1 badPoint -- fragment from goodPoint to badPoint (excl)
-      case (toOldestFirst dynamoFragment2 :: [Header blk]) of
+      let dynamoFragment = fromJust $ sliceRangeExcl dynamoFragment0 goodPoint badPoint
+      case (toOldestFirst dynamoFragment :: [Header blk]) of
         [] -> do
-          modifyTVar handlesVar $ Map.update (\handle -> Just $! handle {cschJumping = Jumper nextJumpVar goodPoint FoundIntersection}) peer
+          setJumpingState handlesVar peer $ Jumper nextJumpVar goodPoint FoundIntersection
           electNewObjector handlesVar
         points -> do
           let (middlePoint :: Header blk) = points !! (length points `div` 2)
           writeTVar nextJumpVar $ Just $! (castPoint (blockPoint middlePoint) :: Point blk)
-          modifyTVar handlesVar $ Map.update (\handle -> Just $! handle {cschJumping = Jumper nextJumpVar goodPoint (LookingForIntersection badPoint)}) peer
+          setJumpingState handlesVar peer $ Jumper nextJumpVar goodPoint (LookingForIntersection badPoint)
+
+    -- | Select a slice of an anchored fragment between two points, inclusive.
+    -- Both points must exist on the chain, in order, or the result is Nothing.
+    -- REVIEW: How does this function behave if @fromExcl == toExcl@? How should
+    -- it behave? It doesn't matter much because we never have this in our code,
+    -- but still.
+    sliceRangeExcl fragment fromExcl toExcl = do
+      fragmentFrom <- snd <$> splitAfterPoint fragment fromExcl
+      fst <$> splitBeforePoint fragmentFrom toExcl
 
 getDynamo ::
   (MonadSTM m) =>
@@ -152,8 +171,7 @@ getDynamoFragment ::
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
   STM m (Maybe (AnchoredFragment (Header blk)))
 getDynamoFragment handlesVar = do
-  maybeDynamo <- getDynamo handlesVar
-  case maybeDynamo of
+  getDynamo handlesVar >>= \case
     Nothing -> pure Nothing
     Just dynamo -> do
       handles <- readTVar handlesVar
@@ -170,9 +188,8 @@ demoteObjector ::
 demoteObjector handlesVar = do
   handles <- Map.toList <$> readTVar handlesVar
   case List.find (isObjector . cschJumping . snd) handles of
-    Just (peer, ChainSyncClientHandle {cschJumping = Objector intersection}) -> do
-      cschJumping <- newJumper intersection FoundIntersection
-      modifyTVar handlesVar $ Map.update (\handle' -> Just $! handle' {cschJumping}) peer
+    Just (objector, ChainSyncClientHandle {cschJumping = Objector intersection}) ->
+      setJumpingState handlesVar objector =<< newJumper intersection FoundIntersection
     _ -> pure ()
   where
     isObjector (Objector _) = True
@@ -202,11 +219,10 @@ registerClient ::
   (ChainSyncJumpingState m blk -> ChainSyncClientHandle m blk) ->
   STM m ()
 registerClient handlesVar peer mkHandle = do
-  maybeDynamo <- getDynamo handlesVar
   cschJumping <-
-    if maybeDynamo == Nothing
-      then pure $ Dynamo Origin
-      else newJumper GenesisPoint Happy
+    getDynamo handlesVar >>= \case
+      Nothing -> pure $ Dynamo Origin
+      Just _ -> newJumper GenesisPoint Happy
   modifyTVar handlesVar $ Map.insert peer $ mkHandle cschJumping
 
 unregisterClient ::
@@ -252,7 +268,7 @@ electNewObjector handlesVar = do
   case sortedObjectorCandidates of
     [] -> pure ()
     (objector, intersection) : _ ->
-      modifyTVar handlesVar $ Map.update (\handle -> Just $! handle {cschJumping = Objector intersection}) objector
+      setJumpingState handlesVar objector $ Objector intersection
 
 electNewDynamo ::
   ( MonadSTM m,
@@ -269,10 +285,9 @@ electNewDynamo handlesVar = do
     >>= \case
       [] -> pure ()
       dynamo : jumpers -> do
-        modifyTVar handlesVar $ Map.update (\handle -> Just $! handle {cschJumping = Dynamo Origin}) dynamo
-        forM_ jumpers $ \jumper -> do
-          cschJumping <- newJumper GenesisPoint Happy
-          modifyTVar handlesVar $ Map.update (\handle -> Just $! handle {cschJumping}) jumper
+        setJumpingState handlesVar dynamo $ Dynamo Origin
+        forM_ jumpers $ \jumper ->
+          setJumpingState handlesVar jumper =<< newJumper GenesisPoint Happy
 
 -- | Size of jumps, in number of slots. FIXME: Make this configurable.
 jumpSize :: SlotNo
