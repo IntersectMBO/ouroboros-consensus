@@ -16,11 +16,8 @@ module Ouroboros.Consensus.Shelley.Node.DiffusionPipelining (
     HotIdentity (..)
   , ShelleyTentativeHeaderState (..)
   , ShelleyTentativeHeaderView (..)
-    -- * Testing
-  , isBeforeConway
   ) where
 
-import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Control.Monad (guard)
 import           Data.Set (Set)
@@ -30,6 +27,7 @@ import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Protocol.Abstract
+import           Ouroboros.Consensus.Shelley.Eras (isBeforeConway)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Protocol ()
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
@@ -77,10 +75,6 @@ data ShelleyTentativeHeaderView proto =
 
 deriving stock instance ConsensusProtocol proto => Show (ShelleyTentativeHeaderView proto)
 deriving stock instance ConsensusProtocol proto => Eq   (ShelleyTentativeHeaderView proto)
-
-isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
-isBeforeConway _ =
-    L.eraProtVerLow @era < L.eraProtVerLow @(L.ConwayEra (L.EraCrypto era))
 
 -- | This is currently a hybrid instance:
 --

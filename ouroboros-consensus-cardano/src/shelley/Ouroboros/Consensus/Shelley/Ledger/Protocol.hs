@@ -15,7 +15,7 @@ import           Ouroboros.Consensus.Protocol.Signed
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
-import           Ouroboros.Consensus.Shelley.Ledger.Config ()
+import           Ouroboros.Consensus.Shelley.Ledger.Config (BlockConfig (..))
 import           Ouroboros.Consensus.Shelley.Protocol.Abstract
                      (ShelleyProtocolHeader, pHeaderIssueNo, pHeaderIssuer,
                      pTieBreakVRFValue, protocolHeaderView)
@@ -39,6 +39,8 @@ instance ShelleyCompatible proto era => BlockSupportsProtocol (ShelleyBlock prot
     where
       hdrIssuer ::  SL.VKey 'SL.BlockIssuer (EraCrypto era)
       hdrIssuer = pHeaderIssuer shdr
+
+  projectChainOrderConfig = shelleyVRFTiebreakerFlavor
 
 -- TODO correct place for these two?
 type instance Signed (Header (ShelleyBlock proto era)) =
