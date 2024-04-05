@@ -189,6 +189,8 @@ newJumper intersection state = do
   nextJumpVar <- newTVar Nothing
   pure $ Jumper nextJumpVar intersection state
 
+-- | Register a new ChainSync client to the given map of handles. If there is no
+-- dynamo, then it starts as a dynamo; otherwise, it starts as a jumper.
 registerClient ::
   ( MonadSTM m,
     Ord peer,
@@ -196,18 +198,16 @@ registerClient ::
   ) =>
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
   peer ->
-  m () ->
-  -- ^ cschGDDKill
-  StrictTVar m (ChainSyncState blk) ->
-  -- ^ cschState
+  -- | A function to make a client handle from a jumping state.
+  (ChainSyncJumpingState m blk -> ChainSyncClientHandle m blk) ->
   STM m ()
-registerClient handlesVar peer cschGDDKill cschState = do
+registerClient handlesVar peer mkHandle = do
   maybeDynamo <- getDynamo handlesVar
   cschJumping <-
     if maybeDynamo == Nothing
       then pure $ Dynamo Origin
       else newJumper GenesisPoint Happy
-  modifyTVar handlesVar $ Map.insert peer $ ChainSyncClientHandle {cschGDDKill, cschState, cschJumping}
+  modifyTVar handlesVar $ Map.insert peer $ mkHandle cschJumping
 
 unregisterClient ::
   ( MonadSTM m,

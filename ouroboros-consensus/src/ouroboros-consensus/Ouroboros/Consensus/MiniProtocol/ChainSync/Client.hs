@@ -363,12 +363,12 @@ bracketChainSyncClient
           , csIdling = False
           }
         tid <- myThreadId
-        atomically $
-          Jumping.registerClient
-            varHandles
-            peer
-            (throwTo tid DensityTooLow)
-            cschState
+        atomically $ Jumping.registerClient varHandles peer $ \cschJumping ->
+          ChainSyncClientHandle {
+            cschGDDKill = throwTo tid DensityTooLow,
+            cschState,
+            cschJumping
+            }
         pure cschState
 
     releaseHandle _ =
