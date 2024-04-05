@@ -262,9 +262,9 @@ electNewDynamo ::
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
   STM m ()
 electNewDynamo handlesVar = do
-  -- Get everybody; choose a random new dynamo and put everyone else back to
-  -- being jumpers. NOTE: This might stop an objector from syncing and send it
-  -- back to being a jumper only for it to start again later, but nevermind.
+  -- Get everybody; choose an unspecified new dynamo and put everyone else back
+  -- to being jumpers. NOTE: This might stop an objector from syncing and send
+  -- it back to being a jumper only for it to start again later, but nevermind.
   (Map.keys <$> readTVar handlesVar)
     >>= \case
       [] -> pure ()
