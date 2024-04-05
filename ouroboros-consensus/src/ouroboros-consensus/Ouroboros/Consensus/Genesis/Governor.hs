@@ -205,7 +205,7 @@ densityDisconnect ::
      )
   => GenesisWindow
   -> SecurityParam
-  -> Map peer (ChainSyncState blk)
+  -> Map peer (ChainSyncState m blk)
   -> Map peer (AnchoredFragment (Header blk))
   -> AnchoredFragment (Header blk)
   -> ([peer], Map peer (DensityBounds blk))

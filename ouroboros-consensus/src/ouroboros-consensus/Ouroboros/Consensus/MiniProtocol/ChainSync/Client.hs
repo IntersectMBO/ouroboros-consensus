@@ -191,7 +191,7 @@ newtype Our a = Our { unOur :: a }
 viewChainSyncState ::
   IOLike m =>
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
-  (ChainSyncState blk -> a) ->
+  (ChainSyncState m blk -> a) ->
   STM m (Map peer a)
 viewChainSyncState varHandles f =
   Map.map f <$> (traverse (readTVar . cschState) =<< readTVar varHandles)
@@ -203,7 +203,7 @@ chainSyncStateFor ::
   IOLike m =>
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
   peer ->
-  STM m (ChainSyncState blk)
+  STM m (ChainSyncState m blk)
 chainSyncStateFor varHandles peer =
   readTVar . cschState . (Map.! peer) =<< readTVar varHandles
 
@@ -357,18 +357,19 @@ bracketChainSyncClient
             }
   where
     acquireHandle = do
-        cschState <- newTVarIO $ ChainSyncState {
-            csCandidate = AF.Empty AF.AnchorGenesis
-          , csLatestSlot = Nothing
-          , csIdling = False
-          }
         tid <- myThreadId
-        atomically $ Jumping.registerClient varHandles peer $ \cschJumping ->
-          ChainSyncClientHandle {
-            cschGDDKill = throwTo tid DensityTooLow,
-            cschState,
-            cschJumping
-            }
+        ChainSyncClientHandle{cschState} <-
+          atomically $ Jumping.registerClient varHandles peer $ \csJumping -> do
+            cschState <- newTVar $ ChainSyncState {
+                csCandidate = AF.Empty AF.AnchorGenesis
+              , csJumping
+              , csLatestSlot = Nothing
+              , csIdling = False
+              }
+            pure $ ChainSyncClientHandle {
+                cschGDDKill = throwTo tid DensityTooLow
+              , cschState
+              }
         pure cschState
 
     releaseHandle _ =
