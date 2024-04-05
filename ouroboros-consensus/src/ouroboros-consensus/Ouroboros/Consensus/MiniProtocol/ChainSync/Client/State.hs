@@ -69,17 +69,31 @@ deriving anyclass instance (
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncClientHandle m blk)
 
+-- | State of a peer with respect to ChainSync jumping.
 data ChainSyncJumpingState m blk
-  = Dynamo
+  = -- | The dynamo, of which there is exactly one unless there are no peers,
+    -- runs the normal ChainSync protocol and is morally supposed to give us
+    -- _the_ chain. This might not be true and the dynamo might be not be
+    -- honest, but the goal of the algorithm is to eventually have an honest,
+    -- alert peer as dynamo.
+    Dynamo
       -- | The last slot at which we triggered jumps for the jumpers.
       !(WithOrigin SlotNo)
-  | Objector
+  | -- | The objector, of which there is at most one, also runs normal
+    -- ChainSync. It is a former jumper that disagreed with the dynamo. When
+    -- that happened, we spun it up to let normal ChainSync and Genesis decide
+    -- which one to disconnect from.
+    Objector
       -- | The last known point where the objector agrees with the dynamo.
       !(Point blk)
-  | Jumper
-      -- | The next jump to be executed.
+  | -- | The jumpers can be in arbitrary numbers. They are queried regularly to
+    -- see if they agree with the chain that the dynamo is serving; otherwise,
+    -- they become candidates to be the objector. See
+    -- 'ChainSyncJumpingJumperState' for more details.
+    Jumper
+      -- | A TVar containing the next jump to be executed, if there is one.
       !(StrictTVar m (Maybe (Point blk)))
-      -- | The result of the last jump.
+      -- | The youngest point where the jumper agrees with the dynamo.
       !(Point blk)
       -- | More precisely, the state of the jumper.
       !(ChainSyncJumpingJumperState blk)
@@ -87,9 +101,13 @@ data ChainSyncJumpingState m blk
 
 deriving anyclass instance (IOLike m, HasHeader blk, NoThunks (Header blk)) => NoThunks (ChainSyncJumpingState m blk)
 
+-- | The specific state of a jumper peer. This state is to be understood as “to
+-- the best of our knowledge”, that is “last time we asked them”. For instance,
+-- a jumper might be marked as 'Happy' even though its chain has been differing
+-- from the dynamo's for hundreds of blocks, if we haven't asked them to jump
+-- since then.
 data ChainSyncJumpingJumperState blk
-  = -- | The jumper is happy with the dynamo, at least as far as the point in
-    -- the 'Jumper' constructor is concerned.
+  = -- | The jumper is happy with the dynamo.
     Happy
   | -- | The jumper disagrees with the dynamo and we are searching where exactly
     -- that happens. All we know is a point where the jumper agrees with the
@@ -97,8 +115,8 @@ data ChainSyncJumpingJumperState blk
     -- disagrees with the dynamo, carried by this constructor.
     LookingForIntersection !(Point blk)
   | -- | The jumper disagrees with the dynamo and we have determined the latest
-    -- point where dynamo and jumper agree. This point is stored in the
-    -- 'ChainSyncJumpingState'.
+    -- point where dynamo and jumper agree. This point is stored in the 'Jumper'
+    -- constructor of 'ChainSyncJumpingState'.
     FoundIntersection
   deriving (Generic)
 
