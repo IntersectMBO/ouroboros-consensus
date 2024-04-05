@@ -39,6 +39,13 @@ import: ./asserts.cabal
 -- source-repository-packages
 --
 
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/haskell-lmdb
+  tag: 0ac689a63d798316b579cd7fc40d5e6990b5532e
+  --sha256: 185w7rdpvcfvg98hyrb8pf9qj80yh9qjqhrz2rygcm7gwags23mk
+
 source-repository-package
   type: git
   location: https://github.com/jasagredo/latex-svg
