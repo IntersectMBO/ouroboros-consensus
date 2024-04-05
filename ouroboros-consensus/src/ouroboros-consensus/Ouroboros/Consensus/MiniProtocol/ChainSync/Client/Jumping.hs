@@ -67,7 +67,7 @@ nextInstruction ::
   STM m (Instruction blk)
 nextInstruction handlesVar peer =
   (cschJumping . (Map.! peer) <$> readTVar handlesVar) >>= \case
-    Dynamo lastJumpSlot -> maybeJump lastJumpSlot >> pure RunNormally
+    Dynamo lastJumpSlot -> maybeSetNextJump lastJumpSlot >> pure RunNormally
     Objector _ -> pure RunNormally
     Jumper nextJumpVar _ _ ->
       readTVar nextJumpVar >>= \case
@@ -76,7 +76,9 @@ nextInstruction handlesVar peer =
           writeTVar nextJumpVar Nothing
           pure $ JumpTo fragment
   where
-    maybeJump lastJumpSlot = do
+    -- | When the tip of the candidate fragment is 'jumpSize' slots younger than
+    -- the last jump, set jumpers to jump to it.
+    maybeSetNextJump lastJumpSlot = do
       dynamoFragment <- fromJust <$> getDynamoFragment handlesVar
       when (succWithOrigin (headSlot dynamoFragment) >= succWithOrigin lastJumpSlot + jumpSize) $ do
         handles <- readTVar handlesVar
