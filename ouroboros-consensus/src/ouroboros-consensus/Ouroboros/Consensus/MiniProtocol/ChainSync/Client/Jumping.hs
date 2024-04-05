@@ -142,7 +142,10 @@ getDynamo ::
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
   STM m (Maybe peer)
 getDynamo handlesVar =
-  (fst <$>) . List.find (\(_, handle) -> case cschJumping handle of Dynamo _ -> True; _ -> False) . Map.toList <$> readTVar handlesVar
+  (fst <$>) . List.find (isDynamo . cschJumping . snd) . Map.toList <$> readTVar handlesVar
+  where
+    isDynamo (Dynamo _) = True
+    isDynamo _ = False
 
 getDynamoFragment ::
   (MonadSTM m, Ord peer) =>
