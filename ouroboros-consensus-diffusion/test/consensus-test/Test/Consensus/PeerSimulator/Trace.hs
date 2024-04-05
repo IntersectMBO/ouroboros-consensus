@@ -332,11 +332,11 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
       trace $ "Threw an exception: " ++ show exception
     TraceTermination result ->
       trace $ "Terminated with result: " ++ show result
-    TraceJump (Left point) ->
-      trace $ "Requesting jump to " ++ tersePoint point
-    TraceJump (Right (AcceptedJump point)) ->
+    TraceOfferJump point ->
+      trace $ "Offering jump to " ++ tersePoint point
+    TraceJumpResult (AcceptedJump point) ->
       trace $ "Accepted jump to " ++ tersePoint point
-    TraceJump (Right (RejectedJump point)) ->
+    TraceJumpResult (RejectedJump point) ->
       trace $ "Rejected jump to " ++ tersePoint point
     TraceJumpingWaitingForNextInstruction ->
       trace "Waiting for next instruction from the jumping governor"

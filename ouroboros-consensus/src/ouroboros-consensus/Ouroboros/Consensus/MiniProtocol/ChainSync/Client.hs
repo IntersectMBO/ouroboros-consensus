@@ -1179,7 +1179,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             (KnownIntersectionState blk)
             (ClientPipelinedStIdle Z)
     offerJump mkPipelineDecision dynamoTipPt = Stateful $ \kis -> do
-        traceWith tracer $ TraceJump $ Left dynamoTipPt
+        traceWith tracer $ TraceOfferJump dynamoTipPt
         -- TODO offer more points?
         return $
             SendMsgFindIntersect [dynamoTipPt] $
@@ -1188,13 +1188,13 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   if
                     | pt == dynamoTipPt -> do
                         jgProcessJumpResult jumping $ Jumping.AcceptedJump dynamoTipPt
-                        traceWith tracer $ TraceJump $ Right $ Jumping.AcceptedJump dynamoTipPt
+                        traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump dynamoTipPt
                         continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
                     | otherwise         -> throwIO InvalidJumpResponse
             ,
               recvMsgIntersectNotFound = \theirTip -> do
                   jgProcessJumpResult jumping $ Jumping.RejectedJump dynamoTipPt
-                  traceWith tracer $ TraceJump $ Right $ Jumping.RejectedJump dynamoTipPt
+                  traceWith tracer $ TraceJumpResult $ Jumping.RejectedJump dynamoTipPt
                   continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
             }
 
@@ -2083,11 +2083,18 @@ data TraceChainSyncClientEvent blk =
     -- the considered header and the best block number known prior to this
     -- header.
   |
-    TraceJump (Either (Point blk) (Jumping.JumpResult blk))
-    -- ^ ChainSync Jumping to a point. Either an offering of a point, or a
-    -- reply.
-  | TraceJumpingWaitingForNextInstruction
-  | TraceJumpingInstructionIs (Jumping.Instruction blk)
+    TraceOfferJump (Point blk)
+    -- ^ ChainSync Jumping offering a point to jump to.
+  |
+    TraceJumpResult (Jumping.JumpResult blk)
+    -- ^ ChainSync Jumping -- reply.
+  |
+    TraceJumpingWaitingForNextInstruction
+    -- ^ ChainSync Jumping -- the ChainSync client is requesting the next
+    -- instruction.
+  |
+    TraceJumpingInstructionIs (Jumping.Instruction blk)
+    -- ^ ChainSync Jumping -- the ChainSync client got its next instruction.
 
 deriving instance
   ( BlockSupportsProtocol blk
