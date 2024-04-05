@@ -96,9 +96,9 @@ data ChainSyncJumpingJumperState blk
     -- dynamo (in the 'Jumper' constructor) and a point where the jumper
     -- disagrees with the dynamo, carried by this constructor.
     LookingForIntersection !(Point blk)
-  | -- | The jumper disagrees with the dynamo and we have found where exactly.
-    -- The last point where the jumper agrees with the dynamo is stored in the
-    -- ClientState.
+  | -- | The jumper disagrees with the dynamo and we have determined the latest
+    -- point where dynamo and jumper agree. This point is stored in the
+    -- 'ChainSyncJumpingState'.
     FoundIntersection
   deriving (Generic)
 
