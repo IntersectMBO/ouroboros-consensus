@@ -27,7 +27,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust, mapMaybe)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point (..),
-                     WithOrigin (..), castPoint, succWithOrigin)
+                     castPoint, pointSlot, succWithOrigin)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncClientHandle (..),
                      ChainSyncJumpingJumperState (..),
@@ -145,7 +145,7 @@ getDynamo handlesVar =
   (fst <$>) . List.find (isDynamo . cschJumping . snd) . Map.toList <$> readTVar handlesVar
   where
     isDynamo (Dynamo _) = True
-    isDynamo _ = False
+    isDynamo _          = False
 
 getDynamoFragment ::
   (MonadSTM m, Ord peer) =>
@@ -176,7 +176,7 @@ demoteObjector handlesVar = do
     _ -> pure ()
   where
     isObjector (Objector _) = True
-    isObjector _ = False
+    isObjector _            = False
 
 newJumper ::
   ( MonadSTM m,
@@ -224,12 +224,6 @@ unregisterClient handlesVar peer = do
     Jumper _ _ _ -> pure ()
     Objector _   -> electNewObjector handlesVar
     Dynamo _     -> electNewDynamo handlesVar
-
--- | REVIEW: This must exist somewhere else.
-pointSlot :: Point blk -> WithOrigin SlotNo
-pointSlot = \case
-  GenesisPoint -> Origin
-  BlockPoint slot _ -> NotOrigin slot
 
 -- | Look into all objector candidates and promote the one with the oldest
 -- intersection with the dynamo as the new objector.
