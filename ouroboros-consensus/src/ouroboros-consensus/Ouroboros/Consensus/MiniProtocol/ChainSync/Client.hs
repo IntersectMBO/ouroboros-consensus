@@ -351,8 +351,8 @@ bracketChainSyncClient
               , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
               }
             , csvJumping = Jumping {
-                jgNextInstruction = atomically $ Jumping.nextInstruction varHandles peer
-              , jgProcessJumpResult = atomically . Jumping.processJumpResult varHandles peer
+                jgNextInstruction = atomically $ Jumping.nextInstruction varState varHandles
+              , jgProcessJumpResult = atomically . Jumping.processJumpResult varState varHandles
               }
             }
   where

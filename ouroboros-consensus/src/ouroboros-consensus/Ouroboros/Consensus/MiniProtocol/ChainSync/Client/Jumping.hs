@@ -60,15 +60,18 @@ deriving anyclass instance (HasHeader blk, NoThunks (Header blk)) => NoThunks (J
 
 nextInstruction ::
   ( MonadSTM m,
-    Ord peer,
-    HasHeader blk, HasHeader (Header blk)
+    HasHeader blk,
+    HasHeader (Header blk)
   ) =>
+  -- | A TVar to the state of the peer in question. Most of the time, this is
+  -- sufficient to compute the next instruction.
+  StrictTVar m (ChainSyncState m blk) ->
+  -- | A TVar containing all the handles of all the peers. It is necessary but
+  -- used only in very specific situations.
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
-  peer ->
   STM m (Instruction blk)
-nextInstruction handlesVar peer = do
-  handle <- (Map.! peer) <$> readTVar handlesVar
-  (csJumping <$> readTVar (cschState handle)) >>= \case
+nextInstruction stateVar handlesVar =
+  (csJumping <$> readTVar stateVar) >>= \case
     Dynamo lastJumpSlot -> maybeSetNextJump lastJumpSlot >> pure RunNormally
     Objector _ -> pure RunNormally
     Jumper nextJumpVar _ _ ->
@@ -84,30 +87,33 @@ nextInstruction handlesVar peer = do
       dynamoFragment <- fromJust <$> getDynamoFragment handlesVar
       when (succWithOrigin (headSlot dynamoFragment) >= succWithOrigin lastJumpSlot + jumpSize) $ do
         handles <- readTVar handlesVar
-        forM_ (Map.elems handles) $ \handle ->
-          (csJumping <$> readTVar (cschState handle)) >>= \case
+        forM_ (Map.elems handles) $ \handle' ->
+          (csJumping <$> readTVar (cschState handle')) >>= \case
             Jumper nextJumpVar _ Happy -> writeTVar nextJumpVar $ Just $! castPoint (headPoint dynamoFragment)
             _ -> pure ()
 
 setJumpingState ::
   (MonadSTM m) =>
-  ChainSyncClientHandle m blk ->
+  StrictTVar m (ChainSyncState m blk) ->
   ChainSyncJumpingState m blk ->
   STM m ()
-setJumpingState ChainSyncClientHandle {cschState} csJumping =
-  modifyTVar cschState $ \state -> state {csJumping}
+setJumpingState stateVar csJumping =
+  modifyTVar stateVar $ \state -> state {csJumping}
 
 processJumpResult ::
   ( MonadSTM m,
-    Ord peer, HasHeader blk, HasHeader (Header blk)
+    HasHeader blk, HasHeader (Header blk)
   ) =>
+  -- | A TVar to the state of the peer in question. Most of the time, this is
+  -- sufficient to process a jump result.
+  StrictTVar m (ChainSyncState m blk) ->
+  -- | A TVar containing all the handles of all the peers. It is necessary but
+  -- used only in very specific situations.
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
-  peer ->
   JumpResult blk ->
   STM m ()
-processJumpResult handlesVar peer jumpResult = do
-  handle <- (Map.! peer) <$> readTVar handlesVar
-  (csJumping <$> readTVar (cschState handle)) >>= \case
+processJumpResult stateVar handlesVar jumpResult = do
+  (csJumping <$> readTVar stateVar) >>= \case
     Dynamo _ -> pure ()
     Objector _ -> pure ()
     Jumper nextJumpVar goodPoint state ->
@@ -123,21 +129,20 @@ processJumpResult handlesVar peer jumpResult = do
             -- objector and the dynamo request further headers.
             dynamoFragment <- fromJust <$> getDynamoFragment handlesVar
             let slicedDynamoFragment = fst $ fromJust $ splitAfterPoint dynamoFragment goodPoint'
-            chainSyncStateVar <- cschState . (Map.! peer) <$> readTVar handlesVar
-            modifyTVar chainSyncStateVar $ \chainSyncState -> chainSyncState {csCandidate = slicedDynamoFragment}
-            setJumpingState handle $ Jumper nextJumpVar goodPoint' Happy
+            modifyTVar stateVar $ \csState -> csState {csCandidate = slicedDynamoFragment}
+            setJumpingState stateVar $ Jumper nextJumpVar goodPoint' Happy
           (Happy, RejectedJump badPoint) ->
             -- The previously happy peer just rejected a jump. We look for an
             -- intersection.
-            lookForIntersection handle nextJumpVar goodPoint badPoint
+            lookForIntersection stateVar nextJumpVar goodPoint badPoint
           (LookingForIntersection badPoint, AcceptedJump goodPoint') ->
             -- The peer that was looking for an intersection accepts the given
             -- point, helping us narrow things down.
-            lookForIntersection handle nextJumpVar goodPoint' badPoint
+            lookForIntersection stateVar nextJumpVar goodPoint' badPoint
           (LookingForIntersection _, RejectedJump badPoint') ->
             -- The peer that was looking for an intersection rejects the given
             -- point, helping us narrow things down.
-            lookForIntersection handle nextJumpVar goodPoint badPoint'
+            lookForIntersection stateVar nextJumpVar goodPoint badPoint'
   where
     lookForIntersection handle nextJumpVar goodPoint badPoint = do
       (dynamoFragment0 :: AnchoredFragment (Header blk)) <- fromJust <$> getDynamoFragment handlesVar -- full fragment
@@ -197,7 +202,7 @@ demoteObjector handlesVar = do
   handlesWithState <- forM handles (\(peer, handle) -> (peer,handle,) <$> readTVar (cschState handle))
   case List.find (isObjector . csJumping . thd3) handlesWithState of
     Just (_, handle, ChainSyncState {csJumping = Objector intersection}) ->
-      setJumpingState handle =<< newJumper intersection FoundIntersection
+      setJumpingState (cschState handle) =<< newJumper intersection FoundIntersection
     _ -> pure ()
   where
     thd3 :: (a, b, c) -> c
@@ -280,7 +285,7 @@ electNewObjector handlesVar = do
   case sortedObjectorCandidates of
     [] -> pure ()
     (handle, intersection) : _ ->
-      setJumpingState handle $ Objector intersection
+      setJumpingState (cschState handle) $ Objector intersection
 
 electNewDynamo ::
   ( MonadSTM m,
@@ -292,7 +297,7 @@ electNewDynamo handlesVar = do
   -- Get everybody; choose an unspecified new dynamo and put everyone else back
   -- to being jumpers. NOTE: This might stop an objector from syncing and send
   -- it back to being a jumper only for it to start again later, but nevermind.
-  (Map.elems <$> readTVar handlesVar) >>= \case
+  (map cschState . Map.elems <$> readTVar handlesVar) >>= \case
     [] -> pure ()
     dynamo : jumpers -> do
       setJumpingState dynamo $ Dynamo Origin
