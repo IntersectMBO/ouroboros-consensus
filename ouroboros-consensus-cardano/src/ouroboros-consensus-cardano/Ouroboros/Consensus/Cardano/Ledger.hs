@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                        #-}
 {-# LANGUAGE DataKinds                  #-}
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
@@ -72,13 +73,28 @@ instance CardanoHardForkConstraints c
 
   decodeCanonicalTxIn = CardanoTxIn <$> Core.fromEraCBOR @(ShelleyEra c)
 
+-- Unpacking the fields of the era-specific TxOuts could save a chunk of memory.
+-- However, unpacking of sum types is only possible on @ghc-9.6.1@ and later, so
+-- before @ghc-9.6.1@ we only unpack the TxOuts for eras before Alonzo.
+--
+-- For more information on the @UNPACK@ pragma, see
+-- https://downloads.haskell.org/ghc/latest/docs/users_guide/exts/pragmas.html#unpack-pragma
 data CardanoTxOut c =
-    ShelleyTxOut !(Value (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
-  | AllegraTxOut !(Value (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
-  | MaryTxOut    !(Value (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
+#if MIN_VERSION_GLASGOW_HASKELL(9,6,1,0)
+    ShelleyTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
+  | AllegraTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
+  | MaryTxOut    {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
+  | AlonzoTxOut  {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
+  | BabbageTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
+  | ConwayTxOut  {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
+#else
+    ShelleyTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (ShelleyEra c))))
+  | AllegraTxOut {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (AllegraEra c))))
+  | MaryTxOut    {-# UNPACK #-} !(Value (LedgerState (ShelleyBlock (TPraos c) (MaryEra c))))
   | AlonzoTxOut  !(Value (LedgerState (ShelleyBlock (TPraos c) (AlonzoEra c))))
   | BabbageTxOut !(Value (LedgerState (ShelleyBlock (Praos c) (BabbageEra c))))
   | ConwayTxOut  !(Value (LedgerState (ShelleyBlock (Praos c) (ConwayEra c))))
+#endif
   deriving stock (Show, Eq, Generic)
   deriving anyclass NoThunks
 
