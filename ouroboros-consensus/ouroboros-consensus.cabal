@@ -293,7 +293,6 @@ library
     , cardano-slotting
     , cardano-strict-containers
     , cborg                        ^>=0.2.2
-    , constraints
     , containers                   >=0.5    && <0.7
     , contra-tracer
     , deepseq
@@ -334,11 +333,9 @@ library
   -- GHC 8.10.7 on aarch64-darwin cannot use text-2
   build-depends:   text >=1.2.5.0 && <2.2
 
-  -- documentation
-  ghc-options:     -Wno-unused-packages
-  build-depends:
-    , directory
-    , latex-svg-image
+  x-docspec-extra-packages:
+      directory
+      latex-svg-image
 
 library unstable-consensus-testlib
   import:          common-lib
@@ -800,3 +797,12 @@ benchmark backingstore-bench
     , tasty-quickcheck
     , temporary
     , unstable-consensus-testlib
+
+test-suite doctest
+    import:           common-test
+    main-is:          doctest.hs
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    default-language: Haskell2010
+    ghc-options:      -Wno-unused-packages
+    build-depends:    base, latex-svg-image
