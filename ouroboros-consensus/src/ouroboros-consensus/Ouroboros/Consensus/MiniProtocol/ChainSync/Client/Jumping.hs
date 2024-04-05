@@ -169,11 +169,14 @@ demoteObjector ::
   STM m ()
 demoteObjector handlesVar = do
   handles <- Map.toList <$> readTVar handlesVar
-  forM_ handles $ \(peer, handle) -> case cschJumping handle of
-    Objector intersection -> do
+  case List.find (isObjector . cschJumping . snd) handles of
+    Just (peer, ChainSyncClientHandle {cschJumping = Objector intersection}) -> do
       cschJumping <- newJumper intersection FoundIntersection
       modifyTVar handlesVar $ Map.update (\handle' -> Just $! handle' {cschJumping}) peer
     _ -> pure ()
+  where
+    isObjector (Objector _) = True
+    isObjector _ = False
 
 newJumper ::
   ( MonadSTM m,
