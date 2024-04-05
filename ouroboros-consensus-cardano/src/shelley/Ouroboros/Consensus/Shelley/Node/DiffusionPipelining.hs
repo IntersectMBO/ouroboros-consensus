@@ -126,7 +126,7 @@ instance
     = do
         case st' of
           NoLastInvalidSelectView  -> pure ()
-          LastInvalidSelectView sv -> guard $ compareChains sv sv' == LT
+          LastInvalidSelectView sv -> guard $ compareChains () sv sv' == LT
         pure $ LegacyShelleyTentativeHeaderState $ LastInvalidSelectView sv'
 
     | ShelleyTentativeHeaderView bno hdrIdentity <- thv

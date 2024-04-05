@@ -59,7 +59,9 @@ data PraosChainSelectView c = PraosChainSelectView
 -- 3. By a VRF value from the chain tip, with lower values preferred. See
 --    @pTieBreakVRFValue@ for which one is used.
 instance Crypto c => ChainOrder (PraosChainSelectView c) where
-  compareChains =
+  type ChainOrderConfig (PraosChainSelectView c) = ()
+
+  compareChains () =
     mconcat
       [ compare `on` csvChainLength,
         whenSame csvIssuer (compare `on` csvIssueNo),

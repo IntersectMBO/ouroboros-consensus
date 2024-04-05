@@ -288,6 +288,8 @@ instance Bridge m a => BlockSupportsProtocol (DualBlock m a) where
   validateView cfg = validateView (dualBlockConfigMain cfg) . dualHeaderMain
   selectView   cfg = selectView   (dualBlockConfigMain cfg) . dualHeaderMain
 
+  projectChainOrderConfig = projectChainOrderConfig . dualBlockConfigMain
+
 {-------------------------------------------------------------------------------
   Ledger errors
 -------------------------------------------------------------------------------}

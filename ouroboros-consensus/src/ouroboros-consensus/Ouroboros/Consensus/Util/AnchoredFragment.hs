@@ -114,6 +114,7 @@ compareAnchoredFragments cfg frag1 frag2 =
       (_ :> tip, _ :> tip') ->
         -- Case 4
         compareChains
+          (projectChainOrderConfig cfg)
           (selectView cfg tip)
           (selectView cfg tip')
   where

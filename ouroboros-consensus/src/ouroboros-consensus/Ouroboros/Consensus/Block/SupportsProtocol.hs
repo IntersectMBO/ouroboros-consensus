@@ -34,3 +34,13 @@ class ( GetHeader blk
                      => BlockConfig blk
                      -> Header blk -> SelectView (BlockProtocol blk)
   selectView _ = blockNo
+
+  projectChainOrderConfig ::
+       BlockConfig blk
+    -> ChainOrderConfig (SelectView (BlockProtocol blk))
+
+  default projectChainOrderConfig ::
+       ChainOrderConfig (SelectView (BlockProtocol blk)) ~ ()
+    => BlockConfig blk
+    -> ChainOrderConfig (SelectView (BlockProtocol blk))
+  projectChainOrderConfig _ = ()

@@ -6,6 +6,7 @@
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module Ouroboros.Consensus.Protocol.Abstract (
     -- * Abstract definition of the Ouroboros protocol
@@ -180,6 +181,9 @@ class ( Show (ChainDepState   p)
 -- | The chain order of some type; in the Consensus layer, this will always be
 -- the 'SelectView' of some 'ConsensusProtocol'.
 class Eq a => ChainOrder a where
+  -- | Static configuration needed to compare chains.
+  type ChainOrderConfig a :: Type
+
   -- | Compare chains via the information of @a@ as a proxy.
   --
   -- * If this returns 'LT' or 'GT', the latter or former chain is strictly
@@ -193,7 +197,7 @@ class Eq a => ChainOrder a where
   --
   -- === Requirements
   --
-  -- Write @cc a b@ for @'compareChains' a b@ for brevity.
+  -- Write @cc a b@ for @'compareChains' cfg a b@ for brevity.
   --
   --  [__Reflexivity__]: @cc a a == EQ@ for all @a@.
   --
@@ -241,7 +245,7 @@ class Eq a => ChainOrder a where
   --
   -- However, forgoing transitivity can enable more sophisticated tiebreaking
   -- rules that eg exhibit desirable incentive behavior.
-  compareChains :: a -> a -> Ordering
+  compareChains :: ChainOrderConfig a -> a -> a -> Ordering
 
 -- | A @DerivingVia@ helper in case the chain order is a total order (in
 -- particular, transitive).
@@ -249,7 +253,9 @@ newtype TotalChainOrder a = TotalChainOrder a
   deriving newtype (Eq)
 
 instance Ord a => ChainOrder (TotalChainOrder a) where
-  compareChains = coerce (compare @a)
+  type ChainOrderConfig (TotalChainOrder a) = ()
+
+  compareChains () = coerce (compare @a)
 
 deriving via TotalChainOrder BlockNo instance ChainOrder BlockNo
 
@@ -259,7 +265,8 @@ deriving via TotalChainOrder BlockNo instance ChainOrder BlockNo
 -- protocols /always/ sticks with the current chain.
 preferCandidate :: ConsensusProtocol p
                 => proxy      p
+                -> ChainOrderConfig (SelectView p)
                 -> SelectView p  -- ^ Tip of our chain
                 -> SelectView p  -- ^ Tip of the candidate
                 -> Bool
-preferCandidate _ ours cand = compareChains cand ours == GT
+preferCandidate _ cfg ours cand = compareChains cfg cand ours == GT

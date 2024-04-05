@@ -748,6 +748,7 @@ treePreferredChain =
       fromMaybe Genesis
     . selectUnvalidatedChain
         (Proxy @(BlockProtocol TestBlock))
+        () -- ChainOrderConfig
         blockNo
         Genesis
     . treeToChains

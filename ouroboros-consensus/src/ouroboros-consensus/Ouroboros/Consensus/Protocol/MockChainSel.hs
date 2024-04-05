@@ -31,14 +31,15 @@ import qualified Ouroboros.Network.Mock.Chain as Chain
 -- Returns 'Nothing' if we stick with our current chain.
 selectChain :: forall proxy p hdr l. ConsensusProtocol p
             => proxy p
+            -> ChainOrderConfig (SelectView p)
             -> (hdr -> SelectView p)
             -> Chain hdr           -- ^ Our chain
             -> [(Chain hdr, l)]    -- ^ Upstream chains
             -> Maybe (Chain hdr, l)
-selectChain p view ours =
+selectChain p cfg view ours =
       listToMaybe
     . map snd
-    . sortBy (flip compareChains `on` fst)
+    . sortBy (flip (compareChains cfg) `on` fst)
     . mapMaybe selectPreferredCandidate
   where
     -- | Only retain a candidate if it is preferred over the current chain. As
@@ -53,7 +54,7 @@ selectChain p view ours =
             -> Just (view candTip, x)
           (Just ourTip, Just candTip)
             | let candView = view candTip
-            , preferCandidate p (view ourTip) candView
+            , preferCandidate p cfg (view ourTip) candView
             -> Just (candView, x)
           _otherwise
             -> Nothing
@@ -61,11 +62,12 @@ selectChain p view ours =
 -- | Chain selection on unvalidated chains
 selectUnvalidatedChain :: ConsensusProtocol p
                        => proxy p
+                       -> ChainOrderConfig (SelectView p)
                        -> (hdr -> SelectView p)
                        -> Chain hdr
                        -> [Chain hdr]
                        -> Maybe (Chain hdr)
-selectUnvalidatedChain p view ours =
+selectUnvalidatedChain p cfg view ours =
       fmap fst
-    . selectChain p view ours
+    . selectChain p cfg view ours
     . map (, ())

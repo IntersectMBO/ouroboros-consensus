@@ -70,11 +70,17 @@ newtype HardForkSelectView xs = HardForkSelectView {
   deriving newtype (NoThunks)
 
 instance CanHardFork xs => ChainOrder (HardForkSelectView xs) where
-  compareChains (HardForkSelectView l) (HardForkSelectView r) =
-     acrossEraSelection
-       hardForkChainSel
-       (mapWithBlockNo getOneEraSelectView l)
-       (mapWithBlockNo getOneEraSelectView r)
+  type ChainOrderConfig (HardForkSelectView xs) = PerEraChainOrderConfig xs
+
+  compareChains
+    (PerEraChainOrderConfig cfg)
+    (HardForkSelectView l)
+    (HardForkSelectView r) =
+      acrossEraSelection
+        cfg
+        hardForkChainSel
+        (mapWithBlockNo getOneEraSelectView l)
+        (mapWithBlockNo getOneEraSelectView r)
 
 mkHardForkSelectView ::
      BlockNo
@@ -132,6 +138,12 @@ instance CanHardFork xs => BlockSupportsProtocol (HardForkBlock xs) where
       $ getHardForkHeader hdr
     where
       cfgs = getPerEraBlockConfig hardForkBlockConfigPerEra
+
+  projectChainOrderConfig =
+        PerEraChainOrderConfig
+      . hcmap proxySingle (WrapChainOrderConfig . projectChainOrderConfig)
+      . getPerEraBlockConfig
+      . hardForkBlockConfigPerEra
 
 {-------------------------------------------------------------------------------
   Ticking the chain dependent state

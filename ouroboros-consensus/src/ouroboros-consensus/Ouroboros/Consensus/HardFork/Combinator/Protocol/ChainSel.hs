@@ -42,6 +42,10 @@ data AcrossEraSelection :: Type -> Type -> Type where
   -- | Two eras using the same 'SelectView'. In this case, we can just compare
   -- chains even across eras, as the chain ordering is fully captured by
   -- 'SelectView' and its 'ChainOrder' instance.
+  --
+  -- We use the 'ChainOrderConfig' of the 'SelectView' in the newer era when
+  -- invoking 'compareChains'. (We could also make this choice configurable
+  -- here.)
   CompareSameSelectView ::
        SelectView (BlockProtocol x) ~ SelectView (BlockProtocol y)
     => AcrossEraSelection x y
@@ -52,53 +56,62 @@ data AcrossEraSelection :: Type -> Type -> Type where
 
 acrossEras ::
      forall blk blk'. SingleEraBlock blk
-  => WithBlockNo WrapSelectView blk
+  => ChainOrderConfig (SelectView (BlockProtocol blk'))
+  -> WithBlockNo WrapSelectView blk
   -> WithBlockNo WrapSelectView blk'
   -> AcrossEraSelection blk blk'
   -> Ordering
-acrossEras (WithBlockNo bnoL (WrapSelectView l))
-           (WithBlockNo bnoR (WrapSelectView r)) = \case
+acrossEras cfg (WithBlockNo bnoL (WrapSelectView l))
+               (WithBlockNo bnoR (WrapSelectView r)) = \case
     CompareBlockNo        -> compare bnoL bnoR
-    CompareSameSelectView -> compareChains l r
+    CompareSameSelectView -> compareChains cfg l r
 
 acrossEraSelection ::
      All SingleEraBlock              xs
-  => Tails AcrossEraSelection        xs
+  => NP WrapChainOrderConfig         xs
+  -> Tails AcrossEraSelection        xs
   -> WithBlockNo (NS WrapSelectView) xs
   -> WithBlockNo (NS WrapSelectView) xs
   -> Ordering
-acrossEraSelection = \ffs l r ->
-    goLeft ffs (distribBlockNo l, distribBlockNo r)
+acrossEraSelection = \cfg ffs l r ->
+    goLeft cfg ffs (distribBlockNo l, distribBlockNo r)
   where
     goLeft ::
          All SingleEraBlock                xs
-      => Tails AcrossEraSelection          xs
+      => NP WrapChainOrderConfig           xs
+      -> Tails AcrossEraSelection          xs
       -> ( NS (WithBlockNo WrapSelectView) xs
          , NS (WithBlockNo WrapSelectView) xs
          )
       -> Ordering
-    goLeft TNil            = \(a, _) -> case a of {}
-    goLeft (TCons fs ffs') = \case
-        (Z a, Z b) -> compareChains (dropBlockNo a) (dropBlockNo b)
-        (Z a, S b) ->          goRight a fs b
-        (S a, Z b) -> invert $ goRight b fs a
-        (S a, S b) -> goLeft ffs' (a, b)
+    goLeft _             TNil            = \(a, _) -> case a of {}
+    goLeft (cfg :* cfgs) (TCons fs ffs') = \case
+        (Z a, Z b) -> compareChains cfg' (dropBlockNo a) (dropBlockNo b)
+        (Z a, S b) ->          goRight a cfgs fs b
+        (S a, Z b) -> invert $ goRight b cfgs fs a
+        (S a, S b) -> goLeft cfgs ffs' (a, b)
+      where
+        cfg' = unwrapChainOrderConfig cfg
 
     goRight ::
          forall x xs. (SingleEraBlock x, All SingleEraBlock xs)
       => WithBlockNo WrapSelectView x
+      -> NP WrapChainOrderConfig         xs
       -> NP (AcrossEraSelection     x)   xs
       -> NS (WithBlockNo WrapSelectView) xs
       -> Ordering
     goRight a = go
       where
         go :: forall xs'. All SingleEraBlock  xs'
-           => NP (AcrossEraSelection x)       xs'
+           => NP WrapChainOrderConfig         xs'
+           -> NP (AcrossEraSelection x)       xs'
            -> NS (WithBlockNo WrapSelectView) xs'
            -> Ordering
-        go Nil          b  = case b of {}
-        go (f :* _)  (Z b) = acrossEras a b f
-        go (_ :* fs) (S b) = go fs b
+        go _             Nil          b  = case b of {}
+        go (cfg :* _   ) (f :* _)  (Z b) = acrossEras cfg' a b f
+          where
+            cfg' = unwrapChainOrderConfig cfg
+        go (_   :* cfgs) (_ :* fs) (S b) = go cfgs fs b
 
 {-------------------------------------------------------------------------------
   WithBlockNo
