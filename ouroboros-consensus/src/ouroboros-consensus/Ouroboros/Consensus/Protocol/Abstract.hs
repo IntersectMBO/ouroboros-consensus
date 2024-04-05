@@ -1,17 +1,26 @@
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE DefaultSignatures          #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 module Ouroboros.Consensus.Protocol.Abstract (
     -- * Abstract definition of the Ouroboros protocol
     ConsensusConfig
   , ConsensusProtocol (..)
+    -- * Chain order
+  , ChainOrder (..)
+  , TotalChainOrder (..)
   , preferCandidate
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
 
 import           Control.Monad.Except
+import           Data.Coerce (coerce)
 import           Data.Kind (Type)
 import           Data.Typeable (Typeable)
 import           GHC.Stack
@@ -41,7 +50,7 @@ class ( Show (ChainDepState   p)
       , Show (LedgerView      p)
       , Eq   (ChainDepState   p)
       , Eq   (ValidationErr   p)
-      , Ord  (SelectView      p)
+      , ChainOrder (SelectView p)
       , NoThunks (ConsensusConfig p)
       , NoThunks (ChainDepState   p)
       , NoThunks (ValidationErr   p)
@@ -66,12 +75,10 @@ class ( Show (ChainDepState   p)
   -- two things independent of a choice of consensus protocol: we never switch
   -- to chains that fork off more than @k@ blocks ago, and we never adopt an
   -- invalid chain. The actual comparison of chains however depends on the chain
-  -- selection protocol. We define chain selection (which is itself a partial
-  -- order) in terms of a totally ordered /select view/ on the headers at the
-  -- tips of those chains: chain A is strictly preferred over chain B whenever
-  -- A's select view is greater than B's select view. When the select view on A
-  -- and B is the same, the chains are considered to be incomparable (neither
-  -- chain is preferred over the other).
+  -- selection protocol. We define chain selection in terms of a /select view/
+  -- on the headers at the tips of those chains: chain A is strictly preferred
+  -- over chain B whenever A's select view is greater than B's select view
+  -- according to the 'ChainOrder' instance.
   type family SelectView p :: Type
   type SelectView p = BlockNo
 
@@ -170,6 +177,82 @@ class ( Show (ChainDepState   p)
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
 
+-- | The chain order of some type; in the Consensus layer, this will always be
+-- the 'SelectView' of some 'ConsensusProtocol'.
+class Eq a => ChainOrder a where
+  -- | Compare chains via the information of @a@ as a proxy.
+  --
+  -- * If this returns 'LT' or 'GT', the latter or former chain is strictly
+  --   preferred, respectively, and can eg be adopted if the other one is
+  --   currently selected. (With Ouroboros Genesis, there are additional
+  --   concerns here based on where the two chains intersect.)
+  --
+  -- * If this returns 'EQ', the chains are equally preferrable. In that case,
+  --   the Ouroboros class of consensus protocols /always/ sticks with the
+  --   current chain.
+  --
+  -- === Requirements
+  --
+  -- Write @cc a b@ for @'compareChains' a b@ for brevity.
+  --
+  --  [__Reflexivity__]: @cc a a == EQ@ for all @a@.
+  --
+  --  [__Antisymmetry__]: For all @a, b@:
+  --
+  --      * @cc a b == LT@ if and only if @cc b a == GT@
+  --      * @cc a b == EQ@ if and only if @cc b a == EQ@
+  --      * @cc a b == GT@ if and only if @cc b a == LT@
+  --
+  --  [__Acyclicity__]: Consider the digraph with nodes @a@ and an edge from @v@
+  --      to @w@ if @cc v w == LT@. We require that this graph is /acyclic/.
+  --
+  --      Intuitively, this means that chain selection can never go into a loop
+  --      while repeatedly selecting the same chain.
+  --
+  --      TODO talk about using a topological sort?
+  --
+  --  [__Block number precedence__]: @a@ must contain the underlying block
+  --      number, and use this as the primary way of comparing chains.
+  --
+  --      Suppose that we have a function @blockNo :: a -> Natural@. Then
+  --      for all @a, b :: a@ with
+  --
+  --      @'compare' (blockNo a) (blockNo b) /= EQ@
+  --
+  --      we must have
+  --
+  --      @'compare' (blockNo a) (blockNo b) == cc a b@
+  --
+  --      Intuitively, this means that only the logic for breaking ties between
+  --      chains with equal block number is customizable via this class.
+  --
+  -- === Transitivity as a non-requirement
+  --
+  -- We do /not/ require this relation to be transitive, ie that @cc a b == LT@
+  -- and @cc b c == LT@ implies @cc a c == LT@ for all @a, b, c@.
+  --
+  -- Note that due to the __Block number precedence__ requirement, violations of
+  -- transitivity can only occur when @a@, @b@ and @c@ have equal block number.
+  --
+  -- Generally, it is recommended to write a transitive chain order if possible
+  -- (hence inducing a total order on @a@), see 'TotalChainOrder', as it
+  -- simplifies reasoning about its behavior. In particular, any transitive
+  -- chain order is automatically acyclic.
+  --
+  -- However, forgoing transitivity can enable more sophisticated tiebreaking
+  -- rules that eg exhibit desirable incentive behavior.
+  compareChains :: a -> a -> Ordering
+
+-- | A @DerivingVia@ helper in case the chain order is a total order (in
+-- particular, transitive).
+newtype TotalChainOrder a = TotalChainOrder a
+  deriving newtype (Eq)
+
+instance Ord a => ChainOrder (TotalChainOrder a) where
+  compareChains = coerce (compare @a)
+
+deriving via TotalChainOrder BlockNo instance ChainOrder BlockNo
+
 -- | Compare a candidate chain to our own
 --
 -- If both chains are equally preferable, the Ouroboros class of consensus
@@ -179,4 +262,4 @@ preferCandidate :: ConsensusProtocol p
                 -> SelectView p  -- ^ Tip of our chain
                 -> SelectView p  -- ^ Tip of the candidate
                 -> Bool
-preferCandidate _ ours cand = cand > ours
+preferCandidate _ ours cand = compareChains cand ours == GT

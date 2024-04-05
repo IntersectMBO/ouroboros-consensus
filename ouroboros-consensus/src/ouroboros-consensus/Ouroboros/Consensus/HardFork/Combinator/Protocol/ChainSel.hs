@@ -41,7 +41,7 @@ data AcrossEraSelection :: Type -> Type -> Type where
 
   -- | Two eras using the same 'SelectView'. In this case, we can just compare
   -- chains even across eras, as the chain ordering is fully captured by
-  -- 'SelectView' and its 'Ord' instance.
+  -- 'SelectView' and its 'ChainOrder' instance.
   CompareSameSelectView ::
        SelectView (BlockProtocol x) ~ SelectView (BlockProtocol y)
     => AcrossEraSelection x y
@@ -59,7 +59,7 @@ acrossEras ::
 acrossEras (WithBlockNo bnoL (WrapSelectView l))
            (WithBlockNo bnoR (WrapSelectView r)) = \case
     CompareBlockNo        -> compare bnoL bnoR
-    CompareSameSelectView -> compare l r
+    CompareSameSelectView -> compareChains l r
 
 acrossEraSelection ::
      All SingleEraBlock              xs
@@ -79,7 +79,7 @@ acrossEraSelection = \ffs l r ->
       -> Ordering
     goLeft TNil            = \(a, _) -> case a of {}
     goLeft (TCons fs ffs') = \case
-        (Z a, Z b) -> compare (dropBlockNo a) (dropBlockNo b)
+        (Z a, Z b) -> compareChains (dropBlockNo a) (dropBlockNo b)
         (Z a, S b) ->          goRight a fs b
         (S a, Z b) -> invert $ goRight b fs a
         (S a, S b) -> goLeft ffs' (a, b)

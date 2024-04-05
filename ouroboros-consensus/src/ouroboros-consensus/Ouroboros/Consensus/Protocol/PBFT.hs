@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveAnyClass            #-}
 {-# LANGUAGE DeriveGeneric             #-}
+{-# LANGUAGE DerivingVia               #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE FlexibleInstances         #-}
@@ -135,7 +136,9 @@ data PBftSelectView = PBftSelectView {
       pbftSelectViewBlockNo :: BlockNo
     , pbftSelectViewIsEBB   :: IsEBB
     }
-  deriving (Show, Eq, Generic, NoThunks)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NoThunks)
+  deriving (ChainOrder) via TotalChainOrder PBftSelectView
 
 mkPBftSelectView :: GetHeader blk => Header blk -> PBftSelectView
 mkPBftSelectView hdr = PBftSelectView {

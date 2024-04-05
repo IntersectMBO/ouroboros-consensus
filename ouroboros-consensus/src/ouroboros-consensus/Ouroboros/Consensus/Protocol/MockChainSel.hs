@@ -6,9 +6,9 @@ module Ouroboros.Consensus.Protocol.MockChainSel (
   , selectUnvalidatedChain
   ) where
 
-import           Data.List (sortOn)
+import           Data.Function (on)
+import           Data.List (sortBy)
 import           Data.Maybe (listToMaybe, mapMaybe)
-import           Data.Ord (Down (..))
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Network.Mock.Chain (Chain)
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -38,7 +38,7 @@ selectChain :: forall proxy p hdr l. ConsensusProtocol p
 selectChain p view ours =
       listToMaybe
     . map snd
-    . sortOn (Down . fst)
+    . sortBy (flip compareChains `on` fst)
     . mapMaybe selectPreferredCandidate
   where
     -- | Only retain a candidate if it is preferred over the current chain. As

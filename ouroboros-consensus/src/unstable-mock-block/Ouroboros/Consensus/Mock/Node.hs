@@ -60,6 +60,7 @@ instance BlockSupportsMetrics (SimpleBlock c ext) where
 deriving via SelectViewDiffusionPipelining (SimpleBlock c ext) instance
   ( BlockSupportsProtocol (SimpleBlock c ext)
   , Show (SelectView (BlockProtocol (SimpleBlock c ext)))
+  , Ord  (SelectView (BlockProtocol (SimpleBlock c ext)))
   ) => BlockSupportsDiffusionPipelining (SimpleBlock c ext)
 
 instance ( LedgerSupportsProtocol      (SimpleBlock SimpleMockCrypto ext)
@@ -68,6 +69,7 @@ instance ( LedgerSupportsProtocol      (SimpleBlock SimpleMockCrypto ext)
          , Show (ForgeStateUpdateError (SimpleBlock SimpleMockCrypto ext))
          , Serialise ext
          , RunMockBlock SimpleMockCrypto ext
+         , Ord (SelectView (BlockProtocol (SimpleBlock SimpleMockCrypto ext)))
          ) => RunNode (SimpleBlock SimpleMockCrypto ext)
 
 {-------------------------------------------------------------------------------

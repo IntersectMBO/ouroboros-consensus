@@ -149,6 +149,8 @@ deriving instance Eq (ValidationErr (BlockProtocol blk)) => Eq (WrapValidationEr
 
 deriving instance Ord (SelectView (BlockProtocol blk)) => Ord (WrapSelectView blk)
 
+deriving instance ChainOrder (SelectView (BlockProtocol blk)) => ChainOrder (WrapSelectView blk)
+
 deriving instance Show (ChainDepState (BlockProtocol blk)) => Show (WrapChainDepState blk)
 deriving instance Show (LedgerView    (BlockProtocol blk)) => Show (WrapLedgerView    blk)
 deriving instance Show (SelectView    (BlockProtocol blk)) => Show (WrapSelectView    blk)

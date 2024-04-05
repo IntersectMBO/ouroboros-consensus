@@ -69,8 +69,8 @@ newtype HardForkSelectView xs = HardForkSelectView {
   deriving (Show, Eq)
   deriving newtype (NoThunks)
 
-instance CanHardFork xs => Ord (HardForkSelectView xs) where
-  compare (HardForkSelectView l) (HardForkSelectView r) =
+instance CanHardFork xs => ChainOrder (HardForkSelectView xs) where
+  compareChains (HardForkSelectView l) (HardForkSelectView r) =
      acrossEraSelection
        hardForkChainSel
        (mapWithBlockNo getOneEraSelectView l)

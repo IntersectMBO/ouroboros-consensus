@@ -41,15 +41,7 @@ newtype MaxMajorProtVer = MaxMajorProtVer
   deriving (Eq, Show, Generic)
   deriving newtype NoThunks
 
--- | View of the ledger tip for chain selection.
---
--- We order between chains as follows:
---
--- 1. By chain length, with longer chains always preferred.
--- 2. If the tip of each chain was issued by the same agent, then we prefer
---    the chain whose tip has the highest ocert issue number.
--- 3. By a VRF value from the chain tip, with lower values preferred. See
---    @pTieBreakVRFValue@ for which one is used.
+-- | View of the tip of a header fragment for chain selection.
 data PraosChainSelectView c = PraosChainSelectView
   { csvChainLength :: BlockNo,
     csvSlotNo      :: SlotNo,
@@ -59,8 +51,15 @@ data PraosChainSelectView c = PraosChainSelectView
   }
   deriving (Show, Eq, Generic, NoThunks)
 
-instance Crypto c => Ord (PraosChainSelectView c) where
-  compare =
+-- | We order between chains as follows:
+--
+-- 1. By chain length, with longer chains always preferred.
+-- 2. If the tip of each chain was issued by the same agent, then we prefer
+--    the chain whose tip has the highest ocert issue number.
+-- 3. By a VRF value from the chain tip, with lower values preferred. See
+--    @pTieBreakVRFValue@ for which one is used.
+instance Crypto c => ChainOrder (PraosChainSelectView c) where
+  compareChains =
     mconcat
       [ compare `on` csvChainLength,
         whenSame csvIssuer (compare `on` csvIssueNo),

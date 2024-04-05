@@ -225,8 +225,8 @@ instance BlockSupportsDiffusionPipelining (DisableDiffusionPipelining blk) where
 -- >   instance BlockSupportsProtocol blk
 -- >   => BlockSupportsDiffusionPipelining MyBlock
 --
--- This requires that the 'SelectView' is totally ordered, in particular that
--- the order is transitive.
+-- This requires that the 'SelectView' is totally ordered via 'Ord', in
+-- particular that the order is transitive.
 --
 -- For example, if @'SelectView' ~ 'BlockNo'@, this means that a header can be
 -- pipelined if it has a larger block number than the last tentative trap
@@ -255,6 +255,7 @@ deriving anyclass instance ConsensusProtocol proto => NoThunks (SelectViewTentat
 instance
   ( BlockSupportsProtocol blk
   , Show (SelectView (BlockProtocol blk))
+  , Ord (SelectView (BlockProtocol blk))
   ) => BlockSupportsDiffusionPipelining (SelectViewDiffusionPipelining blk) where
   type TentativeHeaderState (SelectViewDiffusionPipelining blk) =
     SelectViewTentativeState (BlockProtocol blk)

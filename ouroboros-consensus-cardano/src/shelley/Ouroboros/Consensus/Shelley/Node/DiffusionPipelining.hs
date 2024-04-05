@@ -121,13 +121,14 @@ instance
           }
 
   applyTentativeHeaderView _ thv st
-    | LegacyShelleyTentativeHeaderView thv' <- thv
+    | LegacyShelleyTentativeHeaderView sv' <- thv
     , LegacyShelleyTentativeHeaderState st' <- st
-    = LegacyShelleyTentativeHeaderState <$>
-        applyTentativeHeaderView
-          (Proxy @(SelectViewDiffusionPipelining (ShelleyBlock proto era)))
-          thv'
-          st'
+    = do
+        case st' of
+          NoLastInvalidSelectView  -> pure ()
+          LastInvalidSelectView sv -> guard $ compareChains sv sv' == LT
+        pure $ LegacyShelleyTentativeHeaderState $ LastInvalidSelectView sv'
+
     | ShelleyTentativeHeaderView bno hdrIdentity <- thv
     , ShelleyTentativeHeaderState lastBlockNo badIdentities <- st
     = case compare (NotOrigin bno) lastBlockNo of

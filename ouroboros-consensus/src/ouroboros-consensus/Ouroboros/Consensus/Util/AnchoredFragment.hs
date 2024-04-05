@@ -22,6 +22,7 @@ import           Data.Maybe (isJust)
 import           Data.Word (Word64)
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)))
@@ -112,7 +113,7 @@ compareAnchoredFragments cfg frag1 frag2 =
           else GT
       (_ :> tip, _ :> tip') ->
         -- Case 4
-        compare
+        compareChains
           (selectView cfg tip)
           (selectView cfg tip')
   where
