@@ -1,10 +1,23 @@
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module Main (main) where
 
+import qualified Data.Set as Set
+import Cardano.Ledger.Credential
+import Cardano.Ledger.Keys
+import Cardano.Api.Any
+import Cardano.Api.Key
+import Cardano.Ledger.Address
+import Cardano.Ledger.BaseTypes
+import Cardano.Ledger.Shelley.Genesis
+import Cardano.Api.KeysShelley
+import Cardano.Api.SerialiseTextEnvelope
 import qualified Cardano.Tools.DBAnalyser.Block.Cardano as Cardano
 import qualified Cardano.Tools.DBAnalyser.Run as DBAnalyser
 import           Cardano.Tools.DBAnalyser.Types
 import qualified Cardano.Tools.DBSynthesizer.Run as DBSynthesizer
 import           Cardano.Tools.DBSynthesizer.Types
+import           Cardano.Tools.DBSynthesizer.Tx
 import           Ouroboros.Consensus.Cardano.Block
 import           Test.Tasty
 import           Test.Tasty.HUnit
@@ -75,9 +88,42 @@ blockCountTest logStep = do
           testNodeFilePaths
           testNodeCredentials
           testSynthOptionsCreate
+    (skey, cred) <- readFileTextEnvelope (AsSigningKey AsGenesisUTxOKey) "test/tools-test/disk/config/utxo-keys/utxo1.skey" >>= \case
+      Left e -> throwErrorAsException e
+      Right sk@(GenesisUTxOSigningKey k)
+        | GenesisUTxOVerificationKey vk <- getVerificationKey sk -> pure (k, KeyHashObj (hashKey vk))
+    let
+      addr = Addr Testnet cred StakeRefNull
+      utxo = OwnedTxIn
+        { owned = initialFundsPseudoTxIn addr
+        , skey
+        }
+      spec =
+        [ TxOutsSpec
+            { duplicates = 999
+            , txOut = TxOutSpec
+                { nativeAssets = []
+                , datum = Nothing
+                , delegation = DelegateHash
+                }
+            }
+        , TxOutsSpec
+            { duplicates = 4999
+            , txOut = TxOutSpec
+                { nativeAssets = [ NativeAssetMintsSpec { nameLengths = Set.fromList [ 0, 3, 6 ] }
+                                 , NativeAssetMintsSpec { nameLengths = Set.singleton 5 }
+                                 ]
+                , datum = Just $ Inline 52
+                , delegation = NoDelegate
+                }
+            }
+        ]
+    genTxs <- makeGenTxs utxo spec
     resultCreate <- DBSynthesizer.synthesize genTxs options protocol
     let blockCountCreate = resultForged resultCreate
     blockCountCreate > 0 @? "no blocks have been forged during create step"
+
+    -- TODO check for txn gen
 
     logStep "running synthesis - append"
     resultAppend <- DBSynthesizer.synthesize genTxs options {confOptions = testSynthOptionsAppend} protocol
@@ -91,8 +137,6 @@ blockCountTest logStep = do
     resultAnalysis == Just (ResultCountBlock blockCount) @?
         "wrong number of blocks encountered during analysis \
         \ (counted: " ++ show resultAnalysis ++ "; expected: " ++ show blockCount ++ ")"
-  where
-    genTxs _ = pure []
 
 tests :: TestTree
 tests =

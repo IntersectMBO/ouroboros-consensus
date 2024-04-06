@@ -4,7 +4,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
-module Cardano.Tools.DBSynthesizer.Forging (runForge) where
+module Cardano.Tools.DBSynthesizer.Forging (runForge, GenTxs) where
 
 import           Cardano.Tools.DBSynthesizer.Types (ForgeLimit (..),
                      ForgeResult (..))
@@ -56,6 +56,8 @@ initialForgeState = ForgeState 0 0 0 0
 -- DUPLICATE: runForge mirrors forging loop from ouroboros-consensus/src/Ouroboros/Consensus/NodeKernel.hs
 -- For an extensive commentary of the forging loop, see there.
 
+type GenTxs blk = SlotNo -> TickedLedgerState blk -> IO [Validated (GenTx blk)]
+
 runForge ::
      forall blk.
     ( LedgerSupportsProtocol blk )
@@ -65,7 +67,7 @@ runForge ::
     -> ChainDB IO blk
     -> [BlockForging IO blk]
     -> TopLevelConfig blk
-    -> (ExtLedgerState blk -> IO [Validated (GenTx blk)])
+    -> GenTxs blk
     -> IO ForgeResult
 runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
     putStrLn $ "--> epoch size: " ++ show epochSize_
@@ -159,7 +161,7 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
                 (ledgerState unticked)
 
         -- Let the caller generate transactions
-        txs <- lift $ genTxs unticked
+        txs <- lift $ genTxs currentSlot tickedLedgerState
 
         -- Actually produce the block
         newBlock <- lift $

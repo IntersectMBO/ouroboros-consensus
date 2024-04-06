@@ -5,7 +5,7 @@
   "initialFunds": {
     "0032635dc627da054f2a9e99559c56e16b02cf5f9237ba586ee1e648336b47a4e6e19ac5257fc97bd220bd9ae368aa2d775d86315ab7ef058f": 999500000000000,
     "0064f4987ff07483636803f71f5f8442dad7f7fc46d83e2242d1548ad5d1f6f71a04ca856cc569fd068b069a555999c4776ad50b4cdd049d13": 999500000000000,
-    "602b43cb2b891e2dc9f5b07e051fb8d221a4a88ca161d95e859aa9ad8a": 9000000000000
+    "604592a46fc7dc7ccd140550081f08ade3c2552464b40d4cbeda492e3f": 9000000000000
   },
   "maxKESEvolutions": 60,
   "maxLovelaceSupply": 2010000000000000,
@@ -29,7 +29,7 @@
     "nOpt": 50,
     "poolDeposit": 500000000,
     "protocolVersion": {
-      "major": 5,
+      "major": 8,
       "minor": 0
     },
     "rho": 0.0022,

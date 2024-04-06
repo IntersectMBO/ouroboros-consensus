@@ -22,10 +22,8 @@ import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.Cardano.Node
-import           Ouroboros.Consensus.Config (configStorage)
+import           Ouroboros.Consensus.Config (configStorage, TopLevelConfig)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
-import           Ouroboros.Consensus.Ledger.Abstract (Validated)
-import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import qualified Ouroboros.Consensus.Node as Node (mkChainDbArgs,
                      stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
@@ -113,7 +111,7 @@ eitherParseJson v = case fromJSON v of
     Error err -> Left err
     Success a -> Right a
 
-synthesize :: (ExtLedgerState (CardanoBlock StandardCrypto) -> IO [Validated (GenTx (CardanoBlock StandardCrypto))]) -> DBSynthesizerConfig -> (CardanoProtocolParams StandardCrypto) -> IO ForgeResult
+synthesize :: (TopLevelConfig (CardanoBlock StandardCrypto) -> GenTxs (CardanoBlock StandardCrypto)) -> DBSynthesizerConfig -> (CardanoProtocolParams StandardCrypto) -> IO ForgeResult
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
     withRegistry $ \registry -> do
         let
@@ -139,7 +137,7 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
                             At s   -> succ s
 
                     putStrLn $ "--> starting at: " ++ show slotNo
-                    runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig genTxs
+                    runForge epochSize slotNo synthLimit chainDB forgers pInfoConfig $ genTxs pInfoConfig
             else do
                 putStrLn "--> no forgers found; leaving possibly existing ChainDB untouched"
                 pure $ ForgeResult 0
