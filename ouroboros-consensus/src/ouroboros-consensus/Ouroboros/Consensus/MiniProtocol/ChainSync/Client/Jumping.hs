@@ -42,6 +42,11 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      splitBeforePoint, toOldestFirst)
 
 -- | A context for ChainSync jumping, pointing for some data.
+--
+-- Invariants:
+--
+-- - If 'handlesVar' is not empty, then there is exactly one dynamo in it.
+-- - There is at most one objector in 'handlesVar'.
 data ContextWith peerField handleField m peer blk = Context
   { peer       :: !peerField,
     handle     :: !handleField,
@@ -49,11 +54,13 @@ data ContextWith peerField handleField m peer blk = Context
     jumpSize   :: !SlotNo
   }
 
--- | A non-specific context for ChainSync jumping.
+-- | A non-specific, generic context for ChainSync jumping.
 type Context = ContextWith () ()
 
 -- | A peer-specific context for ChainSync jumping. This is a 'PointedContext'
 -- pointing on the handler of the peer in question.
+--
+-- Invariant: The binding from 'peer' to 'handle' is present in 'handlesVar'.
 type PeerContext m peer blk = ContextWith peer (ChainSyncClientHandle m blk) m peer blk
 
 makeContext ::
@@ -63,6 +70,8 @@ makeContext ::
   Context m peer blk
 makeContext = Context () ()
 
+-- | Get a generic context from a peer context by stripping away the
+-- peer-specific fields.
 stripContext :: PeerContext m peer blk -> Context m peer blk
 stripContext context = context {peer = (), handle = ()}
 
@@ -77,6 +86,7 @@ deriving instance (HasHeader blk, Eq (Header blk)) => Eq (Instruction blk)
 deriving instance (HasHeader blk, Show (Header blk)) => Show (Instruction blk)
 deriving anyclass instance (HasHeader blk, NoThunks (Header blk)) => NoThunks (Instruction blk)
 
+-- | The result of a jump request, either accepted or rejected.
 data JumpResult blk
   = AcceptedJump !(Point blk)
   | RejectedJump !(Point blk)
@@ -86,6 +96,12 @@ deriving instance (HasHeader blk, Eq (Header blk)) => Eq (JumpResult blk)
 deriving instance (HasHeader blk, Show (Header blk)) => Show (JumpResult blk)
 deriving anyclass instance (HasHeader blk, NoThunks (Header blk)) => NoThunks (JumpResult blk)
 
+-- | Compute the next instruction for the given peer. In the majority of cases,
+-- this consists in reading the peer's handle, having the dynamo and objector
+-- run normally and the jumpers wait for the next jump. As such, this function
+-- mostly only reads the handle of the peer. For the dynamo, every once in a
+-- while, we need to indicate to the jumpers that they need to jump, and this
+-- requires writing to all TVars.
 nextInstruction ::
   ( MonadSTM m,
     HasHeader blk,
@@ -116,6 +132,12 @@ nextInstruction context =
             _ -> pure ()
         writeTVar (cschJumping (handle context)) $ Dynamo (headSlot dynamoFragment)
 
+-- | Process the result of a jump. In the happy case, this only consists in
+-- updating the peer's handle to take the new candidate fragment and the new
+-- last jump point into account. When disagreeing with the dynamo, though, we
+-- enter a phase of several jumps to pinpoint exactly where the disagreement
+-- occurs. Once this phase is finished, we trigger the election of a new
+-- objector, which might update many TVars.
 processJumpResult ::
   ( MonadSTM m,
     HasHeader blk, HasHeader (Header blk)
@@ -155,6 +177,11 @@ processJumpResult context jumpResult = do
             -- point, helping us narrow things down.
             lookForIntersection nextJumpVar goodPoint badPoint'
   where
+    -- | Given a good point (where we know we agree with the dynamo) and a bad
+    -- point (where we know we disagree with the dynamo), either decide that we
+    -- know the intersection for sure (if the bad point is the successor of the
+    -- good point) or program a jump somewhere in the middle to refine those
+    -- points.
     lookForIntersection nextJumpVar goodPoint badPoint = do
       (dynamoFragment0 :: AnchoredFragment (Header blk)) <- csCandidate <$> (readTVar . cschState =<< getDynamo' context) -- full fragment
       let dynamoFragment = fromJust $ sliceRangeExcl dynamoFragment0 goodPoint badPoint
@@ -190,8 +217,8 @@ getDynamo handlesVar = do
     isDynamo (Dynamo _) = True
     isDynamo _          = False
 
--- | Variant of 'getDynamo' in a 'PeerContext'. Because we know that at least
--- one peer exists, our invariants guarantee that there will be a dynamo.
+-- | Find the dynamo in a 'PeerContext'. Because we know that at least one peer
+-- exists, our invariants guarantee that there will be a dynamo.
 getDynamo' ::
   (MonadSTM m) =>
   PeerContext m peer blk ->
@@ -219,6 +246,8 @@ demoteObjector context = do
     isObjector (Objector _) = True
     isObjector _            = False
 
+-- | Convenience function that, given an intersection point and a jumper state,
+-- make a fresh 'Jumper' constructor.
 newJumper ::
   ( MonadSTM m,
     HasHeader blk
@@ -230,8 +259,9 @@ newJumper intersection state = do
   nextJumpVar <- newTVar Nothing
   pure $ Jumper nextJumpVar intersection state
 
--- | Register a new ChainSync client to the given map of handles. If there is no
--- dynamo, then it starts as a dynamo; otherwise, it starts as a jumper.
+-- | Register a new ChainSync client to a context, returning a 'PeerContext' for
+-- that peer. If there is no dynamo, the peer starts as dynamo; otherwise, it
+-- starts as a jumper.
 registerClient ::
   ( Ord peer,
     HasHeader blk,
@@ -254,6 +284,8 @@ registerClient context peer mkHandle = do
   modifyTVar (handlesVar context) $ Map.insert peer handle
   pure $ context {peer, handle}
 
+-- | Unregister a client from a 'PeerContext'; this might trigger the election
+-- of a new dynamo or objector if the peer was one of these two.
 unregisterClient ::
   ( MonadSTM m,
     Ord peer,
@@ -298,6 +330,11 @@ electNewObjector context = do
     (handle, intersection) : _ ->
       writeTVar (cschJumping handle) $ Objector intersection
 
+-- | Get everybody; choose an unspecified new dynamo and put everyone else back
+-- to being fresh, happy jumpers.
+--
+-- NOTE: This might stop an objector from syncing and send it back to being a
+-- jumper only for it to start again later, but nevermind.
 electNewDynamo ::
   ( MonadSTM m,
     HasHeader blk
@@ -305,9 +342,6 @@ electNewDynamo ::
   Context m peer blk ->
   STM m ()
 electNewDynamo context = do
-  -- Get everybody; choose an unspecified new dynamo and put everyone else back
-  -- to being jumpers. NOTE: This might stop an objector from syncing and send
-  -- it back to being a jumper only for it to start again later, but nevermind.
   (Map.elems <$> readTVar (handlesVar context)) >>= \case
     [] -> pure ()
     dynamo : jumpers -> do
