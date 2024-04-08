@@ -91,6 +91,7 @@ nextInstruction handle handlesVar =
           readTVar cschJumping' >>= \case
             Jumper nextJumpVar _ Happy -> writeTVar nextJumpVar $ Just $! castPoint (headPoint dynamoFragment)
             _ -> pure ()
+        writeTVar (cschJumping handle) $ Dynamo (headSlot dynamoFragment)
 
 processJumpResult ::
   ( MonadSTM m,
