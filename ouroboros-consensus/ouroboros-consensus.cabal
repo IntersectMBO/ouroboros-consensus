@@ -55,8 +55,8 @@ common common-bench
     ghc-options: -fproc-alignment=64
 
 library
-  import:          common-lib
-  hs-source-dirs:  src/ouroboros-consensus
+  import:                   common-lib
+  hs-source-dirs:           src/ouroboros-consensus
   exposed-modules:
     Ouroboros.Consensus.Block
     Ouroboros.Consensus.Block.Abstract
@@ -331,11 +331,10 @@ library
     , vector                       ^>=0.13
 
   -- GHC 8.10.7 on aarch64-darwin cannot use text-2
-  build-depends:   text >=1.2.5.0 && <2.2
-
+  build-depends:            text >=1.2.5.0 && <2.2
   x-docspec-extra-packages:
-      directory
-      latex-svg-image
+    directory
+    latex-svg-image
 
 library unstable-consensus-testlib
   import:          common-lib
@@ -799,10 +798,12 @@ benchmark backingstore-bench
     , unstable-consensus-testlib
 
 test-suite doctest
-    import:           common-test
-    main-is:          doctest.hs
-    type:             exitcode-stdio-1.0
-    hs-source-dirs:   test
-    default-language: Haskell2010
-    ghc-options:      -Wno-unused-packages
-    build-depends:    base, latex-svg-image
+  import:           common-test
+  main-is:          doctest.hs
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  default-language: Haskell2010
+  ghc-options:      -Wno-unused-packages
+  build-depends:
+    , base
+    , latex-svg-image
