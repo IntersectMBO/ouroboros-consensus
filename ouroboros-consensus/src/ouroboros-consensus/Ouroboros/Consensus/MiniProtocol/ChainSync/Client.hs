@@ -329,21 +329,21 @@ bracketChainSyncClient
     csBucketConfig
     body
   =
-    bracket acquireHandle releaseHandle
-  $ \handle ->
+    bracket acquireContext releaseContext
+  $ \peerContext@Jumping.Context{handle=ChainSyncClientHandle{cschState}} ->
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
-            (invalidBlockWatcher (cschState handle))
+            (invalidBlockWatcher cschState)
       $ LeakyBucket.execAgainstBucket lopBucketConfig
       $ \lopBucket ->
             body ChainSyncStateView {
               csvSetCandidate =
-              modifyTVar (cschState handle) . \ c s -> s {csCandidate = c}
+              modifyTVar cschState . \ c s -> s {csCandidate = c}
             , csvSetLatestSlot =
-              modifyTVar (cschState handle) . \ ls s -> s {csLatestSlot = Just $! ls}
+              modifyTVar cschState . \ ls s -> s {csLatestSlot = Just $! ls}
             , csvIdling = Idling {
-                idlingStart = atomically $ modifyTVar (cschState handle) $ \ s -> s {csIdling = True}
-              , idlingStop = atomically $ modifyTVar (cschState handle) $ \ s -> s {csIdling = False}
+                idlingStart = atomically $ modifyTVar cschState $ \ s -> s {csIdling = True}
+              , idlingStop = atomically $ modifyTVar cschState $ \ s -> s {csIdling = False}
               }
             , csvLoPBucket = LoPBucket {
                 lbPause = LeakyBucket.setPaused lopBucket True
@@ -351,12 +351,14 @@ bracketChainSyncClient
               , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
               }
             , csvJumping = Jumping {
-                jgNextInstruction = atomically $ Jumping.nextInstruction handle varHandles
-              , jgProcessJumpResult = atomically . Jumping.processJumpResult handle varHandles
+                jgNextInstruction = atomically $ Jumping.nextInstruction peerContext
+              , jgProcessJumpResult = atomically . Jumping.processJumpResult peerContext
               }
             }
   where
-    acquireHandle = do
+    context = Jumping.makeContext varHandles (2 :: SlotNo) -- FIXME: make configurable
+
+    acquireContext = do
         tid <- myThreadId
         atomically $ do
           cschState <- newTVar $ ChainSyncState {
@@ -364,14 +366,13 @@ bracketChainSyncClient
             , csLatestSlot = Nothing
             , csIdling = False
             }
-          Jumping.registerClient varHandles peer $ \cschJumping -> ChainSyncClientHandle {
+          Jumping.registerClient context peer $ \cschJumping -> ChainSyncClientHandle {
               cschGDDKill = throwTo tid DensityTooLow
             , cschState
             , cschJumping
             }
 
-    releaseHandle _ =
-      atomically $ Jumping.unregisterClient varHandles peer
+    releaseContext = atomically . Jumping.unregisterClient
 
     invalidBlockWatcher varState =
         invalidBlockRejector
