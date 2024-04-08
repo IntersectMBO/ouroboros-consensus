@@ -261,7 +261,7 @@ library
     , cardano-binary
     , cardano-crypto-class
     , cardano-prelude
-    , cardano-slotting
+    , cardano-slotting             ^>=0.1
     , cardano-strict-containers
     , cborg                        ^>=0.2.2
     , containers                   >=0.5    && <0.7
