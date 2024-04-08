@@ -2,6 +2,15 @@
 
 # Changelog entries
 
+<a id='changelog-0.14.0.0'></a>
+## 0.14.0.0 — 2024-04-08
+
+### Non-Breaking
+
+- Updated `ouroboros-consensus-diffusion` to use `ouroboros-network-0.14.0.0`.
+  `LowLevelRounNodeArgs` and `NodeKernel` records hold
+  `PublicPeerSelectionState` variable.
+
 <a id='changelog-0.12.0.0'></a>
 ## 0.12.0.0 — 2024-03-15
 

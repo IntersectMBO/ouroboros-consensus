@@ -258,7 +258,7 @@ test-suite byron-test
     , ouroboros-consensus:{ouroboros-consensus, unstable-consensus-testlib}
     , ouroboros-network-mock
     , QuickCheck
-    , small-steps
+    , small-steps                                                            <1.1
     , small-steps-test
     , tasty
     , tasty-quickcheck
@@ -526,7 +526,7 @@ library unstable-cardano-tools
     , nothunks
     , ouroboros-consensus            ^>=0.16
     , ouroboros-consensus-cardano
-    , ouroboros-consensus-diffusion  ^>=0.12
+    , ouroboros-consensus-diffusion  ^>=0.14
     , ouroboros-consensus-protocol   ^>=0.7
     , ouroboros-network
     , ouroboros-network-api
