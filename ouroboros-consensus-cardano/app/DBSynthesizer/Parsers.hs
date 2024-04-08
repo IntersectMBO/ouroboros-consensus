@@ -1,25 +1,48 @@
-
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module DBSynthesizer.Parsers (parseCommandLine) where
 
 import           Cardano.Tools.DBSynthesizer.Types
 import           Data.Word (Word64)
 import           Options.Applicative as Opt
-import           Ouroboros.Consensus.Block.Abstract (SlotNo (..))
+import           Cardano.Tools.DBSynthesizer.Tx
+import           Cardano.Ledger.Crypto
+import           Cardano.Ledger.Shelley.Genesis
+import           Cardano.Api.Any
+import           Cardano.Api.KeysShelley
+import           Cardano.Api.Key
+import           Cardano.Api.SerialiseTextEnvelope
+import           Cardano.Ledger.Credential
+import           Cardano.Ledger.Keys
+import           Cardano.Ledger.Address
+import           Cardano.Ledger.BaseTypes
 
-
-parseCommandLine :: IO (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
-parseCommandLine =
-    Opt.customExecParser p opts
+parseCommandLine :: IO (NodeFilePaths, NodeCredentials, DBSynthesizerOptions, OwnedTxIn StandardCrypto)
+parseCommandLine = do
+    (nfp, nc, dbso, genesisKeyPath) <- Opt.customExecParser p opts
+    (skey, cred) <- readFileTextEnvelope (AsSigningKey AsGenesisUTxOKey) genesisKeyPath >>= \case
+      Left e -> throwErrorAsException e
+      Right sk@(GenesisUTxOSigningKey k)
+        | GenesisUTxOVerificationKey vk <- getVerificationKey sk -> pure (k, KeyHashObj (hashKey vk))
+    pure ( nfp
+         , nc
+         , dbso
+         , OwnedTxIn
+             { owned = initialFundsPseudoTxIn $ Addr Testnet cred StakeRefNull
+             , skey
+             }
+         )
   where
     p     = Opt.prefs Opt.showHelpOnEmpty
     opts  = Opt.info parserCommandLine mempty
 
-parserCommandLine :: Parser (NodeFilePaths, NodeCredentials, DBSynthesizerOptions)
+parserCommandLine :: Parser (NodeFilePaths, NodeCredentials, DBSynthesizerOptions, FilePath)
 parserCommandLine =
-  (,,)
+  (,,,)
     <$> parseNodeFilePaths
     <*> parseNodeCredentials
     <*> parseDBSynthesizerOptions
+    <*> parseGenesisUTxOKeyPath
 
 parseNodeFilePaths :: Parser NodeFilePaths
 parseNodeFilePaths =
@@ -98,6 +121,16 @@ parseBulkFilePath =
     ( long "bulk-credentials-file"
         <> metavar "FILE"
         <> help "Path to the bulk credentials file"
+        <> completer (bashCompleter "file")
+    )
+
+-- TODO Support arbitrary UTxOs not just genesis, on the command line
+parseGenesisUTxOKeyPath :: Parser FilePath
+parseGenesisUTxOKeyPath =
+  strOption
+    ( long "genesis-utxo-signing-key-file"
+        <> metavar "FILE"
+        <> help "Path to the signing key file of the genesis UTxO to use to create UTxOs"
         <> completer (bashCompleter "file")
     )
 

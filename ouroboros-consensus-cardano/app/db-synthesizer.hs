@@ -25,16 +25,37 @@ module Main (main) where
 
 import           Cardano.Crypto.Init (cryptoInit)
 import           Cardano.Tools.DBSynthesizer.Run
+import           Cardano.Tools.DBSynthesizer.Tx
 import           DBSynthesizer.Parsers
 import           Main.Utf8 (withStdTerminalHandles)
+import qualified Data.Set as Set
 import           System.Exit
 
 
 main :: IO ()
 main = withStdTerminalHandles $ do
     cryptoInit
-    (paths, creds, forgeOpts) <- parseCommandLine
+    (paths, creds, forgeOpts, utxo) <- parseCommandLine
     let
-      genTxs _ _ _ = pure []
+      -- TODO Parse this from a config file
+      spec =
+        [ TxOutsSpec
+            { duplicates = 14999999
+            , txOut = TxOutSpec
+                { nativeAssets = []
+                , datum = Nothing
+                , delegation = DelegateHash
+                }
+            }
+        , TxOutsSpec
+            { duplicates = 14999999
+            , txOut = TxOutSpec
+                { nativeAssets = [ NativeAssetMintsSpec { nameLengths = Set.singleton 5 } ]
+                , datum = Just $ Inline 54
+                , delegation = NoDelegate
+                }
+            }
+        ]
+    genTxs <- makeGenTxs utxo spec
     result <- initialize paths creds forgeOpts >>= either die (uncurry (synthesize genTxs))
     putStrLn $ "--> done; result: " ++ show result

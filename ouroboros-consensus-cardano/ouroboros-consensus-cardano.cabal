@@ -587,8 +587,10 @@ executable db-synthesizer
   build-depends:
     , base
     , cardano-crypto-class
+    , cardano-ledger-core
+    , cardano-ledger-shelley
+    , containers
     , optparse-applicative
-    , ouroboros-consensus
     , unstable-cardano-tools
     , with-utf8
 
