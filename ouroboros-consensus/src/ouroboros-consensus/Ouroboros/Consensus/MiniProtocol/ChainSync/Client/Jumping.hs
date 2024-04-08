@@ -70,8 +70,8 @@ nextInstruction ::
   -- used only in very specific situations.
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
   STM m (Instruction blk)
-nextInstruction ChainSyncClientHandle{cschJumping} handlesVar =
-  readTVar cschJumping >>= \case
+nextInstruction handle handlesVar =
+  readTVar (cschJumping handle) >>= \case
     Dynamo lastJumpSlot -> maybeSetNextJump lastJumpSlot >> pure RunNormally
     Objector _ -> pure RunNormally
     Jumper nextJumpVar _ _ ->
@@ -81,10 +81,10 @@ nextInstruction ChainSyncClientHandle{cschJumping} handlesVar =
           writeTVar nextJumpVar Nothing
           pure $ JumpTo fragment
   where
-    -- | When the tip of the candidate fragment is 'jumpSize' slots younger than
-    -- the last jump, set Happy jumpers to jump to it.
+    -- | We are the dynamo. When the tip of our candidate fragment is 'jumpSize'
+    -- slots younger than the last jump, set happy jumpers to jump to it.
     maybeSetNextJump lastJumpSlot = do
-      dynamoFragment <- fromJust <$> getDynamoFragment handlesVar
+      dynamoFragment <- csCandidate <$> readTVar (cschState handle)
       when (succWithOrigin (headSlot dynamoFragment) >= succWithOrigin lastJumpSlot + jumpSize) $ do
         handles <- readTVar handlesVar
         forM_ (Map.elems handles) $ \ChainSyncClientHandle{cschJumping = cschJumping'} ->
@@ -119,7 +119,7 @@ processJumpResult handle handlesVar jumpResult = do
             --
             -- The candidate fragments of jumpers don't grow otherwise, as only the
             -- objector and the dynamo request further headers.
-            dynamoFragment <- fromJust <$> getDynamoFragment handlesVar
+            dynamoFragment <- csCandidate <$> (readTVar . cschState . fromJust =<< getDynamo handlesVar)
             let slicedDynamoFragment = fst $ fromJust $ splitAfterPoint dynamoFragment goodPoint'
             modifyTVar (cschState handle) $ \csState -> csState {csCandidate = slicedDynamoFragment}
             writeTVar (cschJumping handle) $ Jumper nextJumpVar goodPoint' Happy
@@ -137,7 +137,7 @@ processJumpResult handle handlesVar jumpResult = do
             lookForIntersection nextJumpVar goodPoint badPoint'
   where
     lookForIntersection nextJumpVar goodPoint badPoint = do
-      (dynamoFragment0 :: AnchoredFragment (Header blk)) <- fromJust <$> getDynamoFragment handlesVar -- full fragment
+      (dynamoFragment0 :: AnchoredFragment (Header blk)) <- csCandidate <$> (readTVar . cschState . fromJust =<< getDynamo handlesVar) -- full fragment
       let dynamoFragment = fromJust $ sliceRangeExcl dynamoFragment0 goodPoint badPoint
       case (toOldestFirst dynamoFragment :: [Header blk]) of
         [] -> do
@@ -157,30 +157,18 @@ processJumpResult handle handlesVar jumpResult = do
       fragmentFrom <- snd <$> splitAfterPoint fragment fromExcl
       fst <$> splitBeforePoint fragmentFrom toExcl
 
--- | Finds the dynamo and returns everything that we know about it, that is its
--- 'peer', its handle, and its state.
+-- | Finds the dynamo and returns its handle.
 getDynamo ::
   (MonadSTM m) =>
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
-  STM m (Maybe (peer, ChainSyncClientHandle m blk, ChainSyncJumpingState m blk))
+  STM m (Maybe (ChainSyncClientHandle m blk))
 getDynamo handlesVar = do
   handles <- Map.toList <$> readTVar handlesVar
-  handlesWithState <- forM handles (\(peer, handle) -> (peer,handle,) <$> readTVar (cschJumping handle))
-  pure $ List.find (isDynamo . thd3) $ handlesWithState
+  handlesWithState <- forM handles (\(_, handle) -> (handle,) <$> readTVar (cschJumping handle))
+  pure $ (fst <$>) $ List.find (isDynamo . snd) $ handlesWithState
   where
-    thd3 :: (a, b, c) -> c
-    thd3 (_, _, z) = z
     isDynamo (Dynamo _) = True
     isDynamo _          = False
-
-getDynamoFragment ::
-  (MonadSTM m) =>
-  StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
-  STM m (Maybe (AnchoredFragment (Header blk)))
-getDynamoFragment handlesVar = do
-  getDynamo handlesVar >>= \case
-    Nothing -> pure Nothing
-    Just (_, handle, _) -> Just . csCandidate <$> readTVar (cschState handle)
 
 -- | If there is an objector, demote it back to being a jumper.
 demoteObjector ::
@@ -191,14 +179,12 @@ demoteObjector ::
   STM m ()
 demoteObjector handlesVar = do
   handles <- Map.toList <$> readTVar handlesVar
-  handlesWithState <- forM handles (\(peer, handle) -> (peer,handle,) <$> readTVar (cschJumping handle))
-  case List.find (isObjector . thd3) handlesWithState of
-    Just (_, handle, Objector intersection) ->
+  handlesWithState <- forM handles (\(_, handle) -> (handle,) <$> readTVar (cschJumping handle))
+  case List.find (isObjector . snd) handlesWithState of
+    Just (handle, Objector intersection) ->
       writeTVar (cschJumping handle) =<< newJumper intersection FoundIntersection
     _ -> pure ()
   where
-    thd3 :: (a, b, c) -> c
-    thd3 (_, _, z) = z
     isObjector (Objector _) = True
     isObjector _            = False
 
