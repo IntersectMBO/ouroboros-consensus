@@ -29,6 +29,7 @@ module Ouroboros.Consensus.NodeKernel (
 
 
 import qualified Control.Concurrent.Class.MonadSTM as LazySTM
+import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (force)
 import           Control.Monad
 import qualified Control.Monad.Class.MonadTimer.SI as SI
@@ -85,6 +86,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (castTip, tipFromHeader)
 import           Ouroboros.Network.BlockFetch
+import           Ouroboros.Network.Diffusion (PublicPeerSelectionState)
 import           Ouroboros.Network.NodeToNode (ConnectionId,
                      MiniProtocolParameters (..))
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
@@ -168,6 +170,8 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , gsmArgs                 :: GsmNodeKernelArgs m blk
     , getUseBootstrapPeers    :: STM m UseBootstrapPeers
     , peerSharingRng          :: StdGen
+    , publicPeerSelectionStateVar
+                              :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
     }
 
 initNodeKernel ::
@@ -186,6 +190,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                    , blockFetchConfiguration
                                    , gsmArgs
                                    , peerSharingRng
+                                   , publicPeerSelectionStateVar
                                    } = do
     -- using a lazy 'TVar', 'BlockForging' does not have a 'NoThunks' instance.
     blockForgingVar :: LazySTM.TMVar m [BlockForging m blk] <- LazySTM.newTMVarIO []
@@ -246,7 +251,8 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           TooOld      -> GSM.enterPreSyncing gsm
           YoungEnough -> GSM.enterCaughtUp   gsm
 
-    peerSharingAPI <- newPeerSharingAPI peerSharingRng
+    peerSharingAPI <- newPeerSharingAPI publicPeerSelectionStateVar
+                                        peerSharingRng
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
 
@@ -275,7 +281,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getPeerSharingRegistry  = peerSharingRegistry
       , getTracers              = tracers
       , setBlockForging         = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
-      , getPeerSharingAPI      = peerSharingAPI
+      , getPeerSharingAPI       = peerSharingAPI
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
