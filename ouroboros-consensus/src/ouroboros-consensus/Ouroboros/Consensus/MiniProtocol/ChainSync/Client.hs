@@ -108,7 +108,7 @@ import           Ouroboros.Consensus.Util.AnchoredFragment (cross)
 import           Ouroboros.Consensus.Util.Assert (assertWithMsg)
 import           Ouroboros.Consensus.Util.EarlyExit (WithEarlyExit, exitEarly)
 import qualified Ouroboros.Consensus.Util.EarlyExit as EarlyExit
-import           Ouroboros.Consensus.Util.IOLike
+import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Consensus.Util.LeakyBucket as LeakyBucket
 import           Ouroboros.Consensus.Util.STM (Fingerprint, Watcher (..),
                      WithFingerprint (..), withWatcher)
@@ -191,7 +191,7 @@ newtype Our a = Our { unOur :: a }
 viewChainSyncState ::
   IOLike m =>
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
-  (ChainSyncState m blk -> a) ->
+  (ChainSyncState blk -> a) ->
   STM m (Map peer a)
 viewChainSyncState varHandles f =
   Map.map f <$> (traverse (readTVar . cschState) =<< readTVar varHandles)
@@ -203,7 +203,7 @@ chainSyncStateFor ::
   IOLike m =>
   StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
   peer ->
-  STM m (ChainSyncState m blk)
+  STM m (ChainSyncState blk)
 chainSyncStateFor varHandles peer =
   readTVar . cschState . (Map.! peer) =<< readTVar varHandles
 
@@ -330,20 +330,20 @@ bracketChainSyncClient
     body
   =
     bracket acquireHandle releaseHandle
-  $ \varState ->
+  $ \handle ->
         withWatcher
             "ChainSync.Client.rejectInvalidBlocks"
-            (invalidBlockWatcher varState)
+            (invalidBlockWatcher (cschState handle))
       $ LeakyBucket.execAgainstBucket lopBucketConfig
       $ \lopBucket ->
             body ChainSyncStateView {
               csvSetCandidate =
-              modifyTVar varState . \ c s -> s {csCandidate = c}
+              modifyTVar (cschState handle) . \ c s -> s {csCandidate = c}
             , csvSetLatestSlot =
-              modifyTVar varState . \ ls s -> s {csLatestSlot = Just $! ls}
+              modifyTVar (cschState handle) . \ ls s -> s {csLatestSlot = Just $! ls}
             , csvIdling = Idling {
-                idlingStart = atomically $ modifyTVar varState $ \ s -> s {csIdling = True}
-              , idlingStop = atomically $ modifyTVar varState $ \ s -> s {csIdling = False}
+                idlingStart = atomically $ modifyTVar (cschState handle) $ \ s -> s {csIdling = True}
+              , idlingStop = atomically $ modifyTVar (cschState handle) $ \ s -> s {csIdling = False}
               }
             , csvLoPBucket = LoPBucket {
                 lbPause = LeakyBucket.setPaused lopBucket True
@@ -351,26 +351,24 @@ bracketChainSyncClient
               , lbGrantToken = void $ LeakyBucket.fill lopBucket 1
               }
             , csvJumping = Jumping {
-                jgNextInstruction = atomically $ Jumping.nextInstruction varState varHandles
-              , jgProcessJumpResult = atomically . Jumping.processJumpResult varState varHandles
+                jgNextInstruction = atomically $ Jumping.nextInstruction handle varHandles
+              , jgProcessJumpResult = atomically . Jumping.processJumpResult handle varHandles
               }
             }
   where
     acquireHandle = do
         tid <- myThreadId
-        ChainSyncClientHandle{cschState} <-
-          atomically $ Jumping.registerClient varHandles peer $ \csJumping -> do
-            cschState <- newTVar $ ChainSyncState {
-                csCandidate = AF.Empty AF.AnchorGenesis
-              , csJumping
-              , csLatestSlot = Nothing
-              , csIdling = False
-              }
-            pure $ ChainSyncClientHandle {
-                cschGDDKill = throwTo tid DensityTooLow
-              , cschState
-              }
-        pure cschState
+        atomically $ do
+          cschState <- newTVar $ ChainSyncState {
+              csCandidate = AF.Empty AF.AnchorGenesis
+            , csLatestSlot = Nothing
+            , csIdling = False
+            }
+          Jumping.registerClient varHandles peer $ \cschJumping -> ChainSyncClientHandle {
+              cschGDDKill = throwTo tid DensityTooLow
+            , cschState
+            , cschJumping
+            }
 
     releaseHandle _ =
       atomically $ Jumping.unregisterClient varHandles peer

@@ -24,8 +24,6 @@ import           Ouroboros.Consensus.Genesis.Governor (densityDisconnect,
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientException (DensityTooLow),
                      ChainSyncState (..))
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
-                     (ChainSyncJumpingState (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HasHeader, Tip (TipGenesis),
@@ -128,11 +126,10 @@ prop_densityDisconnectStatic =
      counterexample "it should not disconnect the honest peer"
        (HonestPeer `notElem` disconnect)
   where
-    mkState :: AnchoredFragment (Header TestBlock) -> ChainSyncState m TestBlock
+    mkState :: AnchoredFragment (Header TestBlock) -> ChainSyncState TestBlock
     mkState frag =
       ChainSyncState {
         csCandidate = frag,
-        csJumping = Dynamo Origin, -- FIXME: say it's done
         csLatestSlot = Just (AF.headSlot frag),
         csIdling = False
       }
@@ -276,7 +273,6 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers} =
             candidates <&> \ csCandidate ->
               ChainSyncState {
                 csCandidate,
-                csJumping = Dynamo Origin, -- FIXME: Say it's done
                 csIdling = False,
                 csLatestSlot = Just (AF.headSlot csCandidate)
               }

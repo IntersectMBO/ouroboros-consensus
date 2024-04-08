@@ -20,13 +20,10 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 
 -- | A ChainSync client's state that's used by other components, like the GDD or
 -- the jumping governor.
-data ChainSyncState m blk = ChainSyncState {
+data ChainSyncState blk = ChainSyncState {
 
     -- | The current candidate fragment.
     csCandidate  :: !(AnchoredFragment (Header blk))
-
-    -- | The state of the peer with respect to ChainSync jumping.
-  , csJumping    :: !(ChainSyncJumpingState m blk)
 
     -- | This ChainSync client should ensure that its peer sets this flag while
     -- and only while both of the following conditions are satisfied: the
@@ -48,10 +45,9 @@ data ChainSyncState m blk = ChainSyncState {
   deriving stock (Generic)
 
 deriving anyclass instance (
-  IOLike m,
   HasHeader blk,
   NoThunks (Header blk)
-  ) => NoThunks (ChainSyncState m blk)
+  ) => NoThunks (ChainSyncState blk)
 
 -- | An interface to a ChainSync client that's used by other components, like
 -- the GDD governor.
@@ -60,7 +56,10 @@ data ChainSyncClientHandle m blk = ChainSyncClientHandle {
     cschGDDKill :: !(m ())
 
     -- | Data shared between the client and external components like GDD.
-  , cschState   :: !(StrictTVar m (ChainSyncState m blk))
+  , cschState   :: !(StrictTVar m (ChainSyncState blk))
+
+    -- | The state of the peer with respect to ChainSync jumping.
+  , cschJumping :: !(StrictTVar m (ChainSyncJumpingState m blk))
   }
   deriving stock (Generic)
 
