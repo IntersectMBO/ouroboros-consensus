@@ -171,6 +171,46 @@ instance Crypto c => Ord (PraosChainSelectView c) where
 --
 -- Then we have @'preferCandidate' cfg a b@ and @'preferCandidate' b c@, but
 -- __not__ @'preferCandidate' a c@ (despite @a < c@).
+--
+-- === Rationale for the rules
+--
+-- 1. The abstract Consensus layer requires that we first compare based on chain
+--    length (see __Chain extension precedence__ in 'ChainOrder').
+--
+-- 2. Consider the scenario where the hot key of a block issuer was compromised,
+--    and the attacker is now minting blocks using that identity. The actual
+--    block issuer can use their cold key to issue a new hot key with a higher
+--    opcert issue number and set up a new pool. Due to this tiebreaker rule,
+--    the blocks minted by that pool will take precedence (allowing the actual
+--    block issuer to decide on eg the block contents and the predecessor), and
+--    they will end up on the honest chain quickly, which means that the
+--    adversary can't extend any chain containing such a block as it would
+--    violate the monotonicity requirement on opcert issue numbers.
+--
+--     See "3.7 Block Validity and Operational Key Certificates" in "Design
+--     Specification for Delegation and Incentives in Cardano" by Kant et al for
+--     more context.
+--
+-- 3. The main motivation to do VRF comparisons is to avoid the "Frankfurt
+--    problem":
+--
+--     With only the first two rules for the chain order, almost all blocks with
+--     equal block number are equally preferrable. Consider two block issuers
+--     minting blocks in very nearby slots. As we never change our selection
+--     from one chain to an equally preferrable one, the first block to arrive
+--     at another pool is the one to be adopted, and will be extended the next
+--     time the pool is elected if no blocks with a higher block number arrive
+--     in the meantime. We observed that this effectively incentivizes block
+--     producers to concentrate geographically (historically, in Frankfurt) in
+--     order to minimize their diffusion times. This works against the goal of
+--     geographic decentralisation.
+--
+--     Also, with the VRF tiebreaker, a block with a somewhat lower propagation
+--     speed has a random chance to be selected instead of the one that arrived
+--     first by pools before the next block is forged.
+--
+--     See 'VRFTiebreakerFlavor' for more context on the exact conditions under
+--     which the VRF comparison takes place.
 instance Crypto c => ChainOrder (PraosChainSelectView c) where
   type ChainOrderConfig (PraosChainSelectView c) = VRFTiebreakerFlavor
 
