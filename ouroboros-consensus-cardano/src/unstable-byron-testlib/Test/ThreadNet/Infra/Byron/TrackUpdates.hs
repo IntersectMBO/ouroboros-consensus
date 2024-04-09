@@ -374,7 +374,7 @@ mkProtocolByronAndHardForkTxs
     TestNodeInitialization
       { tniCrucialTxs   = proposals ++ votes
       , tniProtocolInfo = pInfo
-      , tniBlockForging = pure blockForging
+      , tniBlockForging = blockForging
       }
   where
     ProtocolInfo{pInfoConfig} = pInfo

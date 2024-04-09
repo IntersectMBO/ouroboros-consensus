@@ -66,6 +66,7 @@ dualByronBlockForging creds = BlockForging {
         fmap castForgeStateUpdateInfo .: updateForgeState (dualTopLevelConfigMain cfg)
     , checkCanForge    = checkCanForge . dualTopLevelConfigMain
     , forgeBlock       = return .....: forgeDualByronBlock
+    , finalize         = return ()
     }
   where
     BlockForging {..} = byronBlockForging creds
@@ -80,10 +81,11 @@ protocolInfoDualByron :: forall m. Monad m
                       => ByronSpecGenesis
                       -> PBftParams
                       -> [CoreNodeId] -- ^ Are we a core node?
-                      -> ( ProtocolInfo DualByronBlock
-                         , m [BlockForging m DualByronBlock]
-                         )
+                      -> m ( ProtocolInfo DualByronBlock
+                           , [BlockForging m DualByronBlock]
+                           )
 protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
+  return
     ( ProtocolInfo {
         pInfoConfig = TopLevelConfig {
             topLevelConfigProtocol = PBftConfig {
@@ -116,7 +118,7 @@ protocolInfoDualByron abstractGenesis@ByronSpecGenesis{..} params credss =
            , headerState = genesisHeaderState S.empty
            }
       }
-    , return $ dualByronBlockForging . byronLeaderCredentials <$> credss
+    , dualByronBlockForging . byronLeaderCredentials <$> credss
     )
   where
     initUtxo :: Impl.UTxO

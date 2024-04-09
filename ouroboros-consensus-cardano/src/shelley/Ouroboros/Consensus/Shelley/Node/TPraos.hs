@@ -56,7 +56,6 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Mempool (TxLimits)
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Protocol.Ledger.HotKey (HotKey)
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos.Common
 import           Ouroboros.Consensus.Protocol.TPraos
@@ -66,7 +65,8 @@ import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import           Ouroboros.Consensus.Shelley.Node.Common
                      (ProtocolParamsShelleyBased (..), ShelleyEraWithCrypto,
-                     ShelleyLeaderCredentials (..), shelleyBlockIssuerVKey)
+                     ShelleyLeaderCredentials (..),
+                     shelleyBlockIssuerVKey)
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Util.Assert
@@ -89,25 +89,17 @@ shelleyBlockForging ::
       , IOLike m
       )
   => TPraosParams
+  -> HotKey.HotKey c m
   -> ShelleyLeaderCredentials (EraCrypto era)
   -> m (BlockForging m (ShelleyBlock (TPraos c) era))
-shelleyBlockForging tpraosParams credentials = do
-    hotKey <- HotKey.mkHotKey @m @c initSignKey startPeriod tpraosMaxKESEvo
-    pure $ shelleySharedBlockForging hotKey slotToPeriod credentials
+shelleyBlockForging tpraosParams hotKey credentials = do
+    let slotToPeriod :: SlotNo -> Absolute.KESPeriod
+        slotToPeriod (SlotNo slot) =
+          SL.KESPeriod $ fromIntegral $ slot `div` tpraosSlotsPerKESPeriod
+
+    shelleySharedBlockForging hotKey slotToPeriod credentials
   where
-    TPraosParams {tpraosMaxKESEvo, tpraosSlotsPerKESPeriod} = tpraosParams
-
-    ShelleyLeaderCredentials {
-        shelleyLeaderCredentialsInitSignKey = initSignKey
-      , shelleyLeaderCredentialsCanBeLeader = canBeLeader
-      } = credentials
-
-    startPeriod :: Absolute.KESPeriod
-    startPeriod = SL.ocertKESPeriod $ praosCanBeLeaderOpCert canBeLeader
-
-    slotToPeriod :: SlotNo -> Absolute.KESPeriod
-    slotToPeriod (SlotNo slot) =
-      SL.KESPeriod $ fromIntegral $ slot `div` tpraosSlotsPerKESPeriod
+    TPraosParams {tpraosSlotsPerKESPeriod} = tpraosParams
 
 -- | Create a 'BlockForging' record safely using a given 'Hotkey'.
 --
@@ -119,27 +111,29 @@ shelleySharedBlockForging ::
      , ShelleyEraWithCrypto c (TPraos c) era
      , IOLike m
      )
-  => HotKey c m
+  => HotKey.HotKey c m
   -> (SlotNo -> Absolute.KESPeriod)
   -> ShelleyLeaderCredentials c
-  -> BlockForging m     (ShelleyBlock (TPraos c) era)
-shelleySharedBlockForging hotKey slotToPeriod credentials =
-    BlockForging {
+  -> m (BlockForging m     (ShelleyBlock (TPraos c) era))
+shelleySharedBlockForging hotKey slotToPeriod credentials = do
+    pure BlockForging {
         forgeLabel       = label <> "_" <> T.pack (L.eraName @era)
       , canBeLeader      = canBeLeader
-      , updateForgeState = \_ curSlot _ ->
-                               forgeStateUpdateInfoFromUpdateInfo <$>
-                                 HotKey.evolve hotKey (slotToPeriod curSlot)
+
+      , finalize = HotKey.finalize hotKey
+
+      , updateForgeState = \_ curSlot _ -> do
+                                 forgeStateUpdateInfoFromUpdateInfo <$>
+                                   HotKey.evolve hotKey (slotToPeriod curSlot)
       , checkCanForge    = \cfg curSlot _tickedChainDepState ->
                                tpraosCheckCanForge
                                  (configConsensus cfg)
                                  forgingVRFHash
                                  curSlot
-      , forgeBlock       = \cfg ->
+      , forgeBlock       =
           forgeShelleyBlock
             hotKey
             canBeLeader
-            cfg
       }
   where
     ShelleyLeaderCredentials {
@@ -233,9 +227,9 @@ protocolInfoShelley ::
   => SL.ShelleyGenesis c
   -> ProtocolParamsShelleyBased c
   -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
-  -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c) )
-     , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
-     )
+  -> m ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c) )
+       , [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
+       )
 protocolInfoShelley shelleyGenesis
                     protocolParamsShelleyBased
                     ProtocolParamsShelley {
@@ -258,24 +252,41 @@ protocolInfoTPraosShelleyBased ::
   -> L.TransitionConfig era
   -> SL.ProtVer
      -- ^ see 'shelleyProtVer', mutatis mutandi
-  -> ( ProtocolInfo (ShelleyBlock (TPraos c) era)
-     , m [BlockForging m (ShelleyBlock (TPraos c) era)]
-     )
+  -> m ( ProtocolInfo (ShelleyBlock (TPraos c) era)
+       , [BlockForging m (ShelleyBlock (TPraos c) era)]
+       )
 protocolInfoTPraosShelleyBased ProtocolParamsShelleyBased {
                              shelleyBasedInitialNonce      = initialNonce
                            , shelleyBasedLeaderCredentials = credentialss
                            }
                          transitionCfg
-                         protVer =
-    assertWithMsg (validateGenesis genesis) $
-    ( ProtocolInfo {
-        pInfoConfig       = topLevelConfig
-      , pInfoInitLedger   = initExtLedgerState
-      }
-    , traverse
-        (shelleyBlockForging tpraosParams)
-        credentialss
-    )
+    protVer =
+    assertWithMsg (validateGenesis genesis) $ do
+    blockForgings <- traverse
+                        (\credentials -> do
+                              let canBeLeader = shelleyLeaderCredentialsCanBeLeader credentials
+
+                              let ocert :: SL.OCert c
+                                  ocert = praosCanBeLeaderOCert canBeLeader
+
+                              let startPeriod :: Absolute.KESPeriod
+                                  startPeriod = SL.ocertKESPeriod ocert
+
+                              hotKey :: HotKey.HotKey c m <- HotKey.mkHotKey
+                                          (praosCanBeLeaderKESKey canBeLeader)
+                                          startPeriod
+                                          (tpraosMaxKESEvo tpraosParams)
+
+                              shelleyBlockForging tpraosParams hotKey credentials
+                        )
+                        credentialss
+    return
+      ( ProtocolInfo {
+          pInfoConfig       = topLevelConfig
+        , pInfoInitLedger   = initExtLedgerState
+        }
+      , blockForgings
+      )
   where
     genesis :: SL.ShelleyGenesis c
     genesis = transitionCfg ^. L.tcShelleyGenesisL

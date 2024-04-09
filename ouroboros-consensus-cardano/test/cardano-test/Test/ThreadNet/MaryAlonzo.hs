@@ -230,17 +230,17 @@ prop_simple_allegraAlonzo_convergence TestSetup
 
     testOutput :: TestOutput MaryAlonzoBlock
     testOutput = runTestNetwork setupTestConfig testConfigB TestConfigMB {
-          nodeInfo = \(CoreNodeId nid) ->
+          nodeInfo = \(CoreNodeId nid) -> do
+            leaderCredentials <- Shelley.mkLeaderCredentials
+                                    (coreNodes !! fromIntegral nid)
             let protocolParamsShelleyBased =
                   ProtocolParamsShelleyBased {
                       shelleyBasedInitialNonce      = setupInitialNonce
-                    , shelleyBasedLeaderCredentials =
-                        [Shelley.mkLeaderCredentials
-                          (coreNodes !! fromIntegral nid)]
+                    , shelleyBasedLeaderCredentials = [leaderCredentials]
                     }
                 hardForkTrigger =
                   TriggerHardForkAtVersion $ SL.getVersion majorVersion2
-                (protocolInfo, blockForging) =
+            (protocolInfo, blockForging) <-
                   protocolInfoShelleyBasedHardFork
                     protocolParamsShelleyBased
                     (SL.ProtVer majorVersion1 0)
@@ -251,8 +251,7 @@ prop_simple_allegraAlonzo_convergence TestSetup
                     $ L.mkShelleyTransitionConfig shelleyGenesis
                     )
                     hardForkTrigger
-            in
-            TestNodeInitialization {
+            return TestNodeInitialization {
                 tniCrucialTxs   =
                   if not setupHardFork then [] else
                   fmap GenTxShelley1 $

@@ -114,19 +114,20 @@ prop_simple_leader_schedule_convergence TestSetup
     testOutput@TestOutput{testOutputNodes} =
         runTestNetwork testConfig testConfigB TestConfigMB
             { nodeInfo = \nid ->
-                plainTestNodeInitialization
-                  (protocolInfoPraosRule
-                    numCoreNodes
-                    nid
-                    PraosParams
-                    { praosSecurityParam = k
-                    , praosSlotsPerEpoch = unEpochSize epochSize
-                    , praosLeaderF       = dummyF
-                    }
-                    (HardFork.defaultEraParams k slotLength)
-                    schedule
-                    emptyPraosEvolvingStake)
-                  (pure blockForgingPraosRule)
+                pure $
+                  plainTestNodeInitialization
+                    (protocolInfoPraosRule
+                      numCoreNodes
+                      nid
+                      PraosParams
+                      { praosSecurityParam = k
+                      , praosSlotsPerEpoch = unEpochSize epochSize
+                      , praosLeaderF       = dummyF
+                      }
+                      (HardFork.defaultEraParams k slotLength)
+                      schedule
+                      emptyPraosEvolvingStake)
+                    blockForgingPraosRule
             , mkRekeyM = Nothing
             }
 

@@ -160,26 +160,24 @@ forgePraosFields
   PraosCanBeLeader
     { praosCanBeLeaderColdVerKey,
       praosCanBeLeaderSignKeyVRF,
-      praosCanBeLeaderOpCert
+      praosCanBeLeaderOCert
     }
   PraosIsLeader {praosIsLeaderVrfRes}
   mkToSign = do
+    let signedFields =
+          PraosToSign
+            { praosToSignIssuerVK = praosCanBeLeaderColdVerKey,
+              praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF,
+              praosToSignVrfRes = praosIsLeaderVrfRes,
+              praosToSignOCert = praosCanBeLeaderOCert
+            }
+        toSign = mkToSign signedFields
     signature <- HotKey.sign hotKey toSign
     return
       PraosFields
         { praosSignature = signature,
           praosToSign = toSign
         }
-    where
-      toSign = mkToSign signedFields
-
-      signedFields =
-        PraosToSign
-          { praosToSignIssuerVK = praosCanBeLeaderColdVerKey,
-            praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF,
-            praosToSignVrfRes = praosIsLeaderVrfRes,
-            praosToSignOCert = praosCanBeLeaderOpCert
-          }
 
 {-------------------------------------------------------------------------------
   Protocol proper

@@ -918,9 +918,10 @@ prop_simple_real_pbft_convergence TestSetup
     testOutput =
         runTestNetwork testConfig testConfigB TestConfigMB
             { nodeInfo = \nid ->
-                mkProtocolByronAndHardForkTxs
-                  params nid genesisConfig genesisSecrets
-                  theProposedProtocolVersion
+                pure $
+                  mkProtocolByronAndHardForkTxs
+                    params nid genesisConfig genesisSecrets
+                    theProposedProtocolVersion
             , mkRekeyM = Just $ fromRekeyingToRekeyM Rekeying
               { rekeyOracle   = \cid s ->
                   let nominalSlots = case refResult of
@@ -1299,7 +1300,7 @@ mkRekeyUpd genesisConfig genesisSecrets cid pInfo blockForging eno newSK = do
       in Just TestNodeInitialization
         { tniCrucialTxs = [dlgTx (blcDlgCert creds')]
         , tniProtocolInfo = pInfo
-        , tniBlockForging = pure [blockForging']
+        , tniBlockForging = [blockForging']
         }
   where
     bcfg = configBlock (pInfoConfig pInfo)

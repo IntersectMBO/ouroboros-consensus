@@ -247,14 +247,14 @@ prop_simple_real_tpraos_convergence TestSetup
 
     testOutput =
         runTestNetwork setupTestConfig testConfigB TestConfigMB
-            { nodeInfo = \(CoreNodeId nid) ->
-              let (protocolInfo, blockForging) =
+            { nodeInfo = \(CoreNodeId nid) -> do
+              (protocolInfo, blockForging) <-
                     mkProtocolShelley
                       genesisConfig
                       setupInitialNonce
                       nextProtVer
                       (coreNodes !! fromIntegral nid)
-               in TestNodeInitialization
+              return TestNodeInitialization
                     { tniProtocolInfo = protocolInfo
                     , tniCrucialTxs =
                         if not includingDUpdateTx then [] else

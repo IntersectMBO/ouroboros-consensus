@@ -37,7 +37,7 @@ module Test.ThreadNet.Infra.Shelley (
 
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm)
-import           Cardano.Crypto.KES (KESAlgorithm (..))
+import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureKESAlgorithm (..), seedSizeKES, unsoundPureSignKeyKESToSoundSignKeyKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, VRFAlgorithm, VerKeyVRF,
@@ -78,8 +78,10 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (PraosCanBeLeader),
-                     praosCanBeLeaderColdVerKey, praosCanBeLeaderOpCert,
-                     praosCanBeLeaderSignKeyVRF)
+                     praosCanBeLeaderColdVerKey,
+                     praosCanBeLeaderSignKeyVRF,
+                     praosCanBeLeaderOCert,
+                     praosCanBeLeaderKESKey)
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto, ShelleyEra)
 import           Ouroboros.Consensus.Shelley.Ledger (GenTx (..),
@@ -138,7 +140,7 @@ data CoreNode c = CoreNode {
       -- ^ The hash of the corresponding verification (public) key will be
       -- used as the staking credential.
     , cnVRF         :: !(SL.SignKeyVRF   c)
-    , cnKES         :: !(SL.SignKeyKES   c)
+    , cnKES         :: !(SL.UnsoundPureSignKeyKES   c)
     , cnOCert       :: !(SL.OCert        c)
     }
 
@@ -180,8 +182,8 @@ genCoreNode startKESPeriod = do
     delKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
     stkKey <- genKeyDSIGN <$> genSeed (seedSizeDSIGN (Proxy @(DSIGN c)))
     vrfKey <- genKeyVRF   <$> genSeed (seedSizeVRF   (Proxy @(VRF   c)))
-    kesKey <- genKeyKES   <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
-    let kesPub = deriveVerKeyKES kesKey
+    kesKey <- unsoundPureGenKeyKES   <$> genSeed (seedSizeKES   (Proxy @(KES   c)))
+    let kesPub = unsoundPureDeriveVerKeyKES kesKey
         sigma  = Cardano.Ledger.Keys.signedDSIGN
           @c
           delKey
@@ -209,14 +211,19 @@ genCoreNode startKESPeriod = do
     genSeed :: Integral a => a -> Gen Cardano.Crypto.Seed
     genSeed = fmap mkSeedFromBytes . genBytes
 
-mkLeaderCredentials :: PraosCrypto c => CoreNode c -> ShelleyLeaderCredentials c
-mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } =
+mkLeaderCredentials :: forall m c.
+                       (IOLike m, PraosCrypto c)
+                    => CoreNode c
+                    -> m (ShelleyLeaderCredentials c)
+mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } = do
+  kesKey <- unsoundPureSignKeyKESToSoundSignKeyKES cnKES
+  return
     ShelleyLeaderCredentials {
-        shelleyLeaderCredentialsInitSignKey = cnKES
-      , shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
-          praosCanBeLeaderOpCert     = cnOCert
-        , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
+       shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
+          praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
         , praosCanBeLeaderSignKeyVRF = cnVRF
+        , praosCanBeLeaderKESKey = kesKey
+        , praosCanBeLeaderOCert = cnOCert
         }
       , shelleyLeaderCredentialsLabel       = "ThreadNet"
       }
@@ -410,19 +417,21 @@ mkProtocolShelley ::
   -> SL.Nonce
   -> ProtVer
   -> CoreNode c
-  -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c))
-     , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
-     )
-mkProtocolShelley genesis initialNonce protVer coreNode =
+  -> m ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c))
+       , [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
+       )
+mkProtocolShelley genesis initialNonce protVer coreNode = do
+    leaderCredentials <- mkLeaderCredentials coreNode
     protocolInfoShelley
       genesis
       ProtocolParamsShelleyBased {
           shelleyBasedInitialNonce      = initialNonce
-        , shelleyBasedLeaderCredentials = [mkLeaderCredentials coreNode]
+        , shelleyBasedLeaderCredentials = [leaderCredentials]
         }
       ProtocolParamsShelley {
           shelleyProtVer = protVer
         }
+
 
 {-------------------------------------------------------------------------------
   Necessary transactions for updating the 'DecentralizationParam'

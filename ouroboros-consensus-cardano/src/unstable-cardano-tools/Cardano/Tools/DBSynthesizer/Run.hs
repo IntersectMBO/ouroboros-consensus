@@ -119,7 +119,13 @@ synthesize ::
   -> IO ForgeResult
 synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} runP =
     withRegistry $ \registry -> do
+        (pinfo, forgers) <- protocolInfoCardano runP
         let
+            ProtocolInfo
+                { pInfoConfig
+                , pInfoInitLedger
+                } = pinfo
+
             epochSize   = sgEpochLength confShelleyGenesis
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
             dbArgs      =
@@ -133,7 +139,6 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
               (Node.stdMkChainDbHasFS confDbDir)
               $ ChainDB.defaultArgs
 
-        forgers <- blockForging
         let fCount = length forgers
         putStrLn $ "--> forger count: " ++ show fCount
         if fCount > 0
@@ -158,12 +163,6 @@ synthesize genTxs DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir
         { synthOpenMode
         , synthLimit
         } = confOptions
-    ( ProtocolInfo
-        { pInfoConfig
-        , pInfoInitLedger
-        }
-      , blockForging
-      ) = protocolInfoCardano runP
 
 preOpenChainDB :: DBSynthesizerOpenMode -> FilePath -> IO ()
 preOpenChainDB mode db =

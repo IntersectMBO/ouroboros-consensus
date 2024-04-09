@@ -1,6 +1,7 @@
-{-# LANGUAGE FlexibleContexts   #-}
-{-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE NumericUnderscores  #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | Test that we can submit transactions to the mempool using the local
 -- submission server, in different Cardano eras.
@@ -51,15 +52,15 @@ tests =
   where
     localServerPassesRegressionTests era =
         testCase ("Passes the regression tests (" ++ show era ++ ")") $ do
-          let
-            pInfo :: ProtocolInfo (CardanoBlock StandardCrypto)
-            pInfo = mkSimpleTestProtocolInfo
-                        (Shelley.DecentralizationParam 1)
-                        (Consensus.SecurityParam 10)
-                        (ByronSlotLengthInSeconds 1)
-                        (ShelleySlotLengthInSeconds 1)
-                        (hardForkInto era)
+          pInfo :: ProtocolInfo (CardanoBlock StandardCrypto) <-
+                    mkSimpleTestProtocolInfo
+                      (Shelley.DecentralizationParam 1)
+                      (Consensus.SecurityParam 10)
+                      (ByronSlotLengthInSeconds 1)
+                      (ShelleySlotLengthInSeconds 1)
+                      (hardForkInto era)
 
+          let
             eraIndex = index_NS
                      . Telescope.tip
                      . getHardForkState

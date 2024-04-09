@@ -26,7 +26,7 @@ import           Cardano.Crypto (ProtocolMagicId, SignTag (..), Signature (..),
                      SigningKey (..), VerificationKey (..), deterministicKeyGen,
                      signRaw, toVerification, verifySignatureRaw)
 import           Cardano.Crypto.DSIGN.Class
-import           Cardano.Crypto.Seed (SeedBytesExhausted (..), getBytesFromSeed)
+import           Cardano.Crypto.Seed (getBytesFromSeedEither)
 import qualified Cardano.Crypto.Signing as Crypto
 import qualified Cardano.Crypto.Wallet as CC
 import           Cardano.Ledger.Binary
@@ -90,9 +90,9 @@ instance DSIGNAlgorithm ByronDSIGN where
     genKeyDSIGN seed =
         SignKeyByronDSIGN . snd $ deterministicKeyGen seedBytes
       where
-        seedBytes = case getBytesFromSeed 32 seed of
-          Just (x,_) -> x
-          Nothing    -> throw $ SeedBytesExhausted (-1) -- TODO We can't get the seed size!
+        seedBytes = case getBytesFromSeedEither 32 seed of
+          Right (x,_) -> x
+          Left err    -> throw err
 
     deriveVerKeyDSIGN (SignKeyByronDSIGN sk) = VerKeyByronDSIGN $ toVerification sk
 

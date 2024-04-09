@@ -236,15 +236,15 @@ prop_simple_cardano_convergence TestSetup
     testOutput =
         runTestNetwork setupTestConfig testConfigB TestConfigMB
             { nodeInfo = \coreNodeId@(CoreNodeId nid) ->
-                mkProtocolCardanoAndHardForkTxs
-                  pbftParams
-                  coreNodeId
-                  genesisByron
-                  generatedSecrets
-                  propPV
-                  genesisShelley
-                  setupInitialNonce
-                  (coreNodes !! fromIntegral nid)
+                  mkProtocolCardanoAndHardForkTxs
+                    pbftParams
+                    coreNodeId
+                    genesisByron
+                    generatedSecrets
+                    propPV
+                    genesisShelley
+                    setupInitialNonce
+                    (coreNodes !! fromIntegral nid)
             , mkRekeyM = Nothing
             }
 
@@ -438,16 +438,59 @@ mkProtocolCardanoAndHardForkTxs ::
   -> ShelleyGenesis c
   -> SL.Nonce
   -> Shelley.CoreNode c
-  -> TestNodeInitialization m (CardanoBlock c)
+  -> m (TestNodeInitialization m (CardanoBlock c))
 mkProtocolCardanoAndHardForkTxs
     pbftParams coreNodeId genesisByron generatedSecretsByron propPV
     genesisShelley initialNonce coreNodeShelley
-  =
-    TestNodeInitialization
-      { tniCrucialTxs   = crucialTxs
-      , tniProtocolInfo = protocolInfo
-      , tniBlockForging = blockForging
-      }
+  = do
+  pinfo <- mkTestProtocolInfo
+              (coreNodeId, coreNodeShelley)
+              genesisShelley
+              propPV
+              initialNonce
+              genesisByron
+              generatedSecretsByron
+              (Just $ PBftSignatureThreshold 1) -- Trivialize the PBFT signature
+                                                -- window so that the forks induced by
+                                                -- the network partition are as deep
+                                                -- as possible.
+              HardForkSpec {
+                  shelleyHardForkSpec =
+                    ( SL.ProtVer shelleyMajorVersion 0
+                    , TriggerHardForkAtVersion $ SL.getVersion shelleyMajorVersion
+                    )
+                , allegraHardForkSpec =
+                    ( SL.ProtVer allegraMajorVersion 0
+                    , TriggerHardForkAtVersion $ SL.getVersion allegraMajorVersion
+                    )
+                , maryHardForkSpec =
+                    ( SL.ProtVer maryMajorVersion    0
+                    , TriggerHardForkAtVersion $ SL.getVersion maryMajorVersion
+                    )
+                , alonzoHardForkSpec =
+                    ( SL.ProtVer alonzoMajorVersion  0
+                    , TriggerHardForkAtVersion $ SL.getVersion alonzoMajorVersion
+                    )
+                , babbageHardForkSpec =
+                    ( SL.ProtVer babbageMajorVersion  0
+                    , TriggerHardForkAtVersion $ SL.getVersion babbageMajorVersion
+                    )
+                , conwayHardForkSpec =
+                    ( SL.ProtVer conwayMajorVersion  0
+                    , TriggerHardForkAtVersion $ SL.getVersion conwayMajorVersion
+                    )
+                }
+
+  let protocolInfo :: ProtocolInfo (CardanoBlock c)
+      blockForging :: [BlockForging m (CardanoBlock c)]
+      (protocolInfo, blockForging) = pinfo
+
+
+  return TestNodeInitialization
+    { tniCrucialTxs   = crucialTxs
+    , tniProtocolInfo = protocolInfo
+    , tniBlockForging = blockForging
+    }
   where
     crucialTxs :: [GenTx (CardanoBlock c)]
     crucialTxs =
@@ -463,47 +506,6 @@ mkProtocolCardanoAndHardForkTxs
               genesisByron
               generatedSecretsByron
               propPV
-
-    protocolInfo :: ProtocolInfo (CardanoBlock c)
-    blockForging :: m [BlockForging m (CardanoBlock c)]
-    (protocolInfo, blockForging) =
-      mkTestProtocolInfo
-        (coreNodeId, coreNodeShelley)
-        genesisShelley
-        propPV
-        initialNonce
-        genesisByron
-        generatedSecretsByron
-        (Just $ PBftSignatureThreshold 1) -- Trivialize the PBFT signature
-                                          -- window so that the forks induced by
-                                          -- the network partition are as deep
-                                          -- as possible.
-        HardForkSpec {
-            shelleyHardForkSpec =
-              ( SL.ProtVer shelleyMajorVersion 0
-              , TriggerHardForkAtVersion $ SL.getVersion shelleyMajorVersion
-              )
-          , allegraHardForkSpec =
-              ( SL.ProtVer allegraMajorVersion 0
-              , TriggerHardForkAtVersion $ SL.getVersion allegraMajorVersion
-              )
-          , maryHardForkSpec =
-              ( SL.ProtVer maryMajorVersion    0
-              , TriggerHardForkAtVersion $ SL.getVersion maryMajorVersion
-              )
-          , alonzoHardForkSpec =
-              ( SL.ProtVer alonzoMajorVersion  0
-              , TriggerHardForkAtVersion $ SL.getVersion alonzoMajorVersion
-              )
-          , babbageHardForkSpec =
-              ( SL.ProtVer babbageMajorVersion  0
-              , TriggerHardForkAtVersion $ SL.getVersion babbageMajorVersion
-              )
-          , conwayHardForkSpec =
-              ( SL.ProtVer conwayMajorVersion  0
-              , TriggerHardForkAtVersion $ SL.getVersion conwayMajorVersion
-              )
-        }
 
 {-------------------------------------------------------------------------------
   Constants

@@ -58,6 +58,6 @@ fromRekeyingToRekeyM Rekeying{rekeyFreshSKs, rekeyOracle, rekeyUpd} = do
           x :< xs <- readTVar rekeyVar
           x <$ writeTVar rekeyVar xs
         eno <- mkEno s'
-        rekeyUpd cid pInfo blockForging eno x <&> \case
+        rekeyUpd cid pInfo (pure blockForging) eno x <&> \case
           Nothing  -> plainTestNodeInitialization pInfo blockForging
           Just tni -> tni

@@ -32,18 +32,18 @@ protocolInfoBinary ::
      (CanHardFork '[blk1, blk2], Monad m)
      -- First era
   => ProtocolInfo blk1
-  -> m [BlockForging m blk1]
+  -> [BlockForging m blk1]
   -> History.EraParams
   -> (ConsensusConfig (BlockProtocol blk1) -> PartialConsensusConfig (BlockProtocol blk1))
   -> (LedgerConfig blk1 -> PartialLedgerConfig blk1)
      -- Second era
   -> ProtocolInfo blk2
-  -> m [BlockForging m blk2]
+  -> [BlockForging m blk2]
   -> History.EraParams
   -> (ConsensusConfig (BlockProtocol blk2) -> PartialConsensusConfig (BlockProtocol blk2))
   -> (LedgerConfig blk2 -> PartialLedgerConfig blk2)
   -> ( ProtocolInfo (HardForkBlock '[blk1, blk2])
-     , m [BlockForging m (HardForkBlock '[blk1, blk2])]
+     , [BlockForging m (HardForkBlock '[blk1, blk2])]
      )
 protocolInfoBinary protocolInfo1 blockForging1 eraParams1 toPartialConsensusConfig1 toPartialLedgerConfig1
                    protocolInfo2 blockForging2 eraParams2 toPartialConsensusConfig2 toPartialLedgerConfig2 =
@@ -91,7 +91,7 @@ protocolInfoBinary protocolInfo1 blockForging1 eraParams1 toPartialConsensusConf
                     headerStateChainDep initHeaderState1
           }
       }
-    , alignWith alignBlockForging <$> blockForging1 <*> blockForging2
+    , alignWith alignBlockForging blockForging1 blockForging2
     )
   where
     ProtocolInfo {

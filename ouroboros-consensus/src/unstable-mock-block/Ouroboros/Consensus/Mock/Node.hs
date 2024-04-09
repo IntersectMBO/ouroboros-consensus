@@ -99,6 +99,7 @@ simpleBlockForging aCanBeLeader aForgeExt = BlockForging {
               lst
               (map txForgetValidated txs)
               proof
+    , finalize = pure ()
     }
   where
     _ = keepRedundantConstraint (Proxy @(ForgeStateUpdateError (SimpleBlock c ext) ~ Void))

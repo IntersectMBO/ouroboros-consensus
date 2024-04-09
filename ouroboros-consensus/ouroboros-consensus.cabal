@@ -467,6 +467,7 @@ library unstable-mock-block
     containers,
     deepseq,
     hashable,
+    io-classes,
     mtl,
     nothunks,
     ouroboros-consensus,

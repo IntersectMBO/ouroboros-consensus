@@ -160,7 +160,7 @@ instance Show (ForgeEbbEnv blk) where
 type RekeyM m blk =
      CoreNodeId
   -> ProtocolInfo blk
-  -> m [BlockForging m blk]
+  -> [BlockForging m blk]
   -> SlotNo
      -- ^ The slot in which the node is rekeying
   -> (SlotNo -> m EpochNo)
@@ -181,12 +181,12 @@ data TestNodeInitialization m blk = TestNodeInitialization
     -- that determines which transactions will be included in the block it's
     -- about to forge.
   , tniProtocolInfo :: ProtocolInfo blk
-  , tniBlockForging :: m [BlockForging m blk]
+  , tniBlockForging :: [BlockForging m blk]
   }
 
 plainTestNodeInitialization ::
      ProtocolInfo blk
-  -> m [BlockForging m blk]
+  -> [BlockForging m blk]
   -> TestNodeInitialization m blk
 plainTestNodeInitialization pInfo blockForging = TestNodeInitialization
     { tniCrucialTxs   = []
@@ -216,7 +216,7 @@ data ThreadNetworkArgs m blk = ThreadNetworkArgs
   { tnaForgeEbbEnv  :: Maybe (ForgeEbbEnv blk)
   , tnaFuture       :: Future
   , tnaJoinPlan     :: NodeJoinPlan
-  , tnaNodeInfo     :: CoreNodeId -> TestNodeInitialization m blk
+  , tnaNodeInfo     :: CoreNodeId -> m (TestNodeInitialization m blk)
   , tnaNumCoreNodes :: NumCoreNodes
   , tnaNumSlots     :: NumSlots
   , tnaMessageDelay :: CalcMessageDelay blk
@@ -298,7 +298,9 @@ runThreadNetwork :: forall m blk.
                     , TracingConstraints blk
                     , HasCallStack
                     )
-                 => SystemTime m -> ThreadNetworkArgs m blk -> m (TestOutput blk)
+                 => SystemTime m
+                 -> ThreadNetworkArgs m blk
+                 -> m (TestOutput blk)
 runThreadNetwork systemTime ThreadNetworkArgs
   { tnaForgeEbbEnv    = mbForgeEbbEnv
   , tnaFuture         = future
@@ -342,13 +344,14 @@ runThreadNetwork systemTime ThreadNetworkArgs
     -- node and server threads on the head node. These mini protocols begin as
     -- soon as both nodes have joined the network, according to @nodeJoinPlan@.
 
+    -- assume they all start with the empty chain and the same initial
+    -- ledger
+    nodeInitData0 <- mkProtocolInfo (CoreNodeId 0)
+
     -- allocate the status variable for each vertex
     vertexStatusVars <- fmap Map.fromList $ do
       forM coreNodeIds $ \nid -> do
-        -- assume they all start with the empty chain and the same initial
-        -- ledger
-        let nodeInitData = mkProtocolInfo (CoreNodeId 0)
-            TestNodeInitialization{tniProtocolInfo} = nodeInitData
+        let TestNodeInitialization{tniProtocolInfo} = nodeInitData0
             ProtocolInfo{pInfoInitLedger} = tniProtocolInfo
             ExtLedgerState{ledgerState} = pInfoInitLedger
         v <- uncheckedNewTVarM (VDown Genesis ledgerState)
@@ -358,8 +361,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
     let uedges = edgesNodeTopology nodeTopology
     edgeStatusVars <- fmap (Map.fromList . concat) $ do
       -- assume they all use the same CodecConfig
-      let nodeInitData = mkProtocolInfo (CoreNodeId 0)
-          TestNodeInitialization{tniProtocolInfo} = nodeInitData
+      let TestNodeInitialization{tniProtocolInfo} = nodeInitData0
           ProtocolInfo{pInfoConfig} = tniProtocolInfo
           codecConfig = configCodec pInfoConfig
       forM uedges $ \uedge -> do
@@ -464,17 +466,18 @@ runThreadNetwork systemTime ThreadNetworkArgs
       vertexStatusVar
       edgeStatusVars
       nodeInfo
-      nextInstrSlotVar =
+      nextInstrSlotVar = do
+        tni <- mkProtocolInfo coreNodeId
+        let TestNodeInitialization
+               { tniCrucialTxs
+               , tniProtocolInfo
+               , tniBlockForging
+               } = tni
+
         void $ forkLinkedThread sharedRegistry label $ do
-          loop 0 tniProtocolInfo tniBlockForging NodeRestart restarts0
+          loop 0 tniCrucialTxs tniProtocolInfo tniBlockForging NodeRestart restarts0
       where
         label = "vertex-" <> condense coreNodeId
-
-        TestNodeInitialization
-           { tniCrucialTxs
-           , tniProtocolInfo
-           , tniBlockForging
-           } = mkProtocolInfo coreNodeId
 
         restarts0 :: Map SlotNo NodeRestart
         restarts0 = Map.mapMaybe (Map.lookup coreNodeId) m
@@ -482,11 +485,13 @@ runThreadNetwork systemTime ThreadNetworkArgs
             NodeRestarts m = nodeRestarts
 
         loop :: SlotNo
+             -> [GenTx blk]
              -> ProtocolInfo blk
-             -> m [BlockForging m blk]
+             -> [BlockForging m blk]
              -> NodeRestart
-             -> Map SlotNo NodeRestart -> m ()
-        loop s pInfo blockForging nr rs = do
+             -> Map SlotNo NodeRestart
+             -> m ()
+        loop s tniCrucialTxs pInfo blockForging nr rs = do
           -- a registry solely for the resources of this specific node instance
           (again, finalChain, finalLdgr) <- withRegistry $ \nodeRegistry -> do
             -- change the node's key and prepare a delegation transaction if
@@ -559,7 +564,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
           case again of
             Nothing                                    -> pure ()
-            Just (s', pInfo', blockForging', nr', rs') -> loop s' pInfo' blockForging' nr' rs'
+            Just (s', pInfo', blockForging', nr', rs') -> loop s' tniCrucialTxs pInfo' blockForging' nr' rs'
 
     -- | Instrumentation: record the tip's block number at the onset of the
     -- slot.
@@ -797,7 +802,7 @@ runThreadNetwork systemTime ThreadNetworkArgs
       -> SlotNo
       -> ResourceRegistry m
       -> ProtocolInfo blk
-      -> m [BlockForging m blk]
+      -> [BlockForging m blk]
       -> NodeInfo blk (StrictTVar m MockFS) (Tracer m)
       -> [GenTx blk]
          -- ^ valid transactions the node should immediately propagate
@@ -1041,9 +1046,8 @@ runThreadNetwork systemTime ThreadNetworkArgs
 
       nodeKernel <- initNodeKernel nodeKernelArgs
 
-      blockForging' <-
-            map (\bf -> bf { forgeBlock = customForgeBlock bf })
-        <$> blockForging
+      let blockForging' =
+            map (\bf -> bf { forgeBlock = customForgeBlock bf }) blockForging
       setBlockForging nodeKernel blockForging'
 
       let mempool = getMempool nodeKernel

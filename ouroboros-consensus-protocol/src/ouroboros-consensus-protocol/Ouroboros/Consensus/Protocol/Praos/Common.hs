@@ -5,6 +5,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE FlexibleContexts           #-}
 
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common (
@@ -228,16 +229,15 @@ instance Crypto c => ChainOrder (PraosChainSelectView c) where
   preferCandidate cfg ours cand = comparePraos cfg ours cand == LT
 
 data PraosCanBeLeader c = PraosCanBeLeader
-  { -- | Certificate delegating rights from the stake pool cold key (or
-    -- genesis stakeholder delegate cold key) to the online KES key.
-    praosCanBeLeaderOpCert     :: !(OCert.OCert c),
-    -- | Stake pool cold key or genesis stakeholder delegate cold key.
+  { -- | Stake pool cold key or genesis stakeholder delegate cold key.
     praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer c),
-    praosCanBeLeaderSignKeyVRF :: !(SL.SignKeyVRF c)
+    praosCanBeLeaderSignKeyVRF :: !(SL.SignKeyVRF c),
+    praosCanBeLeaderOCert :: !(OCert.OCert c),
+    praosCanBeLeaderKESKey :: !(SL.SignKeyKES c)
   }
   deriving (Generic)
 
-instance Crypto c => NoThunks (PraosCanBeLeader c)
+instance (NoThunks (SL.UnsoundPureSignKeyKES c), Crypto c) => NoThunks (PraosCanBeLeader c)
 
 -- | See 'PraosProtocolSupportsNode'
 data PraosNonces = PraosNonces {

@@ -62,8 +62,11 @@ forgeShelleyBlock
     hdr <- mkHeader @_ @(ProtoCrypto proto) hotKey cbl isLeader
       curSlot curNo prevHash (SL.hashTxSeq @era body) actualBodySize protocolVersion
     let blk = mkShelleyBlock $ SL.Block hdr body
+        spkp = configSlotsPerKESPeriod $ configConsensus cfg
     return $
-      assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
+      assert (verifyHeaderIntegrity spkp (shelleyHeaderRaw $ getHeader blk)) $
+      assert (blockMatchesHeader (getHeader blk) blk) $
+      -- assert (verifyBlockIntegrity (configSlotsPerKESPeriod $ configConsensus cfg) blk) $
       assertWithMsg bodySizeEstimate blk
   where
     protocolVersion = shelleyProtocolVersion $ configBlock cfg

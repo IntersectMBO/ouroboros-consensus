@@ -184,15 +184,14 @@ mkSimpleTestProtocolInfo ::
   -> ByronSlotLengthInSeconds
   -> ShelleySlotLengthInSeconds
   -> HardForkSpec
-  -> ProtocolInfo (CardanoBlock c)
+  -> IO (ProtocolInfo (CardanoBlock c))
 mkSimpleTestProtocolInfo
     decentralizationParam
     securityParam
     byronSlotLenghtInSeconds
     shelleySlotLengthInSeconds
     hardForkSpec
-  = fst
-  $ mkTestProtocolInfo @IO
+  = fst <$> mkTestProtocolInfo @IO
       (CoreNodeId 0, coreNodeShelley)
       shelleyGenesis
       byronProtocolVersion
@@ -258,7 +257,7 @@ mkTestProtocolInfo ::
   -> Maybe PBftSignatureThreshold
   -> HardForkSpec
   -- ^ Specification of the era to which the initial state should hard-fork to.
-  -> (ProtocolInfo (CardanoBlock c), m [BlockForging m (CardanoBlock c)])
+  -> m (ProtocolInfo (CardanoBlock c), [BlockForging m (CardanoBlock c)])
 mkTestProtocolInfo
     (coreNodeId, coreNode)
     shelleyGenesis
@@ -267,9 +266,11 @@ mkTestProtocolInfo
     genesisByron
     generatedSecretsByron
     aByronPbftSignatureThreshold
-    hardForkSpec
-  =
-    protocolInfoCardano
+    hardForkSpec = do
+
+  leaderCredentialsShelley :: ShelleyLeaderCredentials c <- Shelley.mkLeaderCredentials coreNode
+
+  protocolInfoCardano
         (CardanoProtocolParams
           ProtocolParamsByron {
               byronGenesis                = genesisByron
@@ -334,6 +335,3 @@ mkTestProtocolInfo
     -- This sets a vestigial header field which is not actually used for anything.
     softVerByron :: CC.Update.SoftwareVersion
     softVerByron = Byron.theProposedSoftwareVersion
-
-    leaderCredentialsShelley :: ShelleyLeaderCredentials c
-    leaderCredentialsShelley = Shelley.mkLeaderCredentials coreNode
