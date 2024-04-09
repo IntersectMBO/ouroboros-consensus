@@ -31,6 +31,8 @@ module Cardano.Tools.DBSynthesizer.Tx
   , AddTxException(..)
   ) where
 
+import Data.Typeable
+import Data.SOP.Strict.NS
 import Cardano.Ledger.Plutus.ExUnits
 import qualified Cardano.Crypto.DSIGN.Class as Crypto
 import Cardano.Ledger.Api.Tx (calcMinFeeTx)
@@ -40,11 +42,11 @@ import Cardano.Ledger.SafeHash
 import Cardano.Ledger.Keys
 import Cardano.Ledger.Crypto
 import Control.Monad.Trans.Except
-import Data.Proxy
 import Data.SOP.Classes
 import Data.SOP.BasicFunctors
 import Ouroboros.Consensus.Byron.Ledger.Block
 import Ouroboros.Consensus.Cardano.CanHardFork
+import Ouroboros.Consensus.TypeFamilyWrappers
 import Control.Exception
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Config
@@ -67,6 +69,8 @@ import Data.Word
 import Cardano.Ledger.Api.Scripts
 import           Ouroboros.Consensus.Cardano.Block
 import           Ouroboros.Consensus.HardFork.Combinator
+import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
+import           Ouroboros.Consensus.HardFork.Combinator.State
 import Data.Coerce
 import Lens.Micro
 import qualified Data.Map.Strict as Map
@@ -74,6 +78,7 @@ import Cardano.Ledger.TxIn
 import Cardano.Ledger.UTxO hiding (balance)
 import Cardano.Ledger.Core
 import Ouroboros.Consensus.Protocol.Praos
+import Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Data.Set as Set
 import Cardano.Ledger.Mary.Value
 import Data.Sequence.Strict as Seq
@@ -129,68 +134,81 @@ mkAssetName :: Natural -> AssetName
 mkAssetName n = coerce (SBS.replicate (fromIntegral n) 0)
 
 txGenLedgerState :: forall c. (CardanoHardForkConstraints c) => TickedLedgerState (CardanoBlock c) -> Maybe (TxGenLedgerState c)
-txGenLedgerState = hcollapse . hcmap (Proxy @(MaybeTxGenLedgerState c)) (K . maybeTxGenLedgerState @c . unComp) . tickedHardForkLedgerStatePerEra
+txGenLedgerState tls = hcollapse $ hcmap (Proxy @(MaybeTxGenLedgerState c)) (K . maybeTxGenLedgerState @c tls . unComp) tls.tickedHardForkLedgerStatePerEra
 
 utxoLookupLedgerState :: forall c. (CardanoHardForkConstraints c) => TickedLedgerState (CardanoBlock c) -> TxIn c -> Maybe (Addr c, Coin)
 utxoLookupLedgerState = hcollapse . hcmap (Proxy @(UTxOLookup c)) (K . utxoLookup @c . unComp) . tickedHardForkLedgerStatePerEra
 
 -- | At least Babbage
-type TxGenCompatibleEra era =
-  ( ShelleyBasedEra era
+type TxGenCompatibleEra proto era =
+  ( ShelleyCompatible proto era
   , Value era ~ MaryValue (EraCrypto era)
   , AlonzoEraTxBody era
   , AlonzoEraTxWits era
   , BabbageEraTxOut era
   , EraUTxO era
   )
-data TxGenLedgerState c = forall era proto . (c ~ EraCrypto era, TxGenCompatibleEra era) => TxGenLedgerState
-  { nes :: !(NewEpochState era)
-  , mkCardanoTx :: !(GenTx (ShelleyBlock proto era) -> CardanoGenTx c)
+data TxGenLedgerState c = forall era proto . (c ~ EraCrypto era, TxGenCompatibleEra proto era) => TxGenLedgerState
+  { st :: !(Ticked (LedgerState (ShelleyBlock proto era)))
   , mkMintingPurpose :: !(forall f. f Word32  (PolicyID (EraCrypto era)) -> PlutusPurpose f era)
+  , extractLedgerConfig :: !(CardanoLedgerConfig c -> LedgerConfig (ShelleyBlock proto era))
+  , cardanifyValidated :: !(Validated (GenTx (ShelleyBlock proto era)) -> Validated (CardanoGenTx c))
   }
 
-data AddTxException c = AddTxException
-  { tx :: !(GenTx (CardanoBlock c))
-  , err :: !(ApplyTxErr (CardanoBlock c))
+data AddTxException proto era = AddTxException
+  { tx :: !(GenTx (ShelleyBlock proto era))
+  , err :: !(ApplyTxError era)
   }
 
-deriving stock instance (CardanoHardForkConstraints c) => Show (AddTxException c)
+deriving stock instance (ShelleyBasedEra era) => Show (AddTxException proto era)
 
-instance (CardanoHardForkConstraints c) => Exception (AddTxException c)
+instance (ShelleyBasedEra era, Typeable proto) => Exception (AddTxException proto era)
 
 class MaybeTxGenLedgerState c blk where
-  maybeTxGenLedgerState :: Ticked (LedgerState blk) -> Maybe (TxGenLedgerState c)
-
-instance MaybeTxGenLedgerState c ByronBlock where
-  maybeTxGenLedgerState = const Nothing
-
-class ShelleyTxGenLedgerState era where
-  maybeShelleyTxGenLedgerState :: NewEpochState era -> Maybe (TxGenLedgerState (EraCrypto era))
+  maybeTxGenLedgerState :: Ticked (LedgerState (CardanoBlock c)) -> Ticked (LedgerState blk) -> Maybe (TxGenLedgerState c)
 
 -- Duplicate instead of an overlappable not-supported case so we get an error in new eras
-instance ShelleyTxGenLedgerState (ShelleyEra c) where
-  maybeShelleyTxGenLedgerState = const Nothing
-instance ShelleyTxGenLedgerState (AllegraEra c) where
-  maybeShelleyTxGenLedgerState = const Nothing
-instance ShelleyTxGenLedgerState (MaryEra c) where
-  maybeShelleyTxGenLedgerState = const Nothing
-instance ShelleyTxGenLedgerState (AlonzoEra c) where
-  maybeShelleyTxGenLedgerState = const Nothing
-instance (PraosCrypto c) => ShelleyTxGenLedgerState (BabbageEra c) where
-  maybeShelleyTxGenLedgerState nes = Just $ TxGenLedgerState
-    { nes
-    , mkCardanoTx = GenTxBabbage
-    , mkMintingPurpose = AlonzoMinting
-    }
-instance (PraosCrypto c) => ShelleyTxGenLedgerState (ConwayEra c) where
-  maybeShelleyTxGenLedgerState nes = Just $ TxGenLedgerState
-    { nes
-    , mkCardanoTx = GenTxConway
-    , mkMintingPurpose = ConwayMinting
-    }
+instance MaybeTxGenLedgerState c ByronBlock where
+  maybeTxGenLedgerState _ _ = Nothing
+instance MaybeTxGenLedgerState c (ShelleyBlock proto (ShelleyEra c)) where
+  maybeTxGenLedgerState _ _ = Nothing
+instance MaybeTxGenLedgerState c (ShelleyBlock proto (AllegraEra c)) where
+  maybeTxGenLedgerState _ _ = Nothing
+instance MaybeTxGenLedgerState c (ShelleyBlock proto (MaryEra c)) where
+  maybeTxGenLedgerState _ _ = Nothing
+instance MaybeTxGenLedgerState c (ShelleyBlock proto (AlonzoEra c)) where
+  maybeTxGenLedgerState _ _ = Nothing
 
-instance (ShelleyTxGenLedgerState era, c ~ EraCrypto era) => MaybeTxGenLedgerState c (ShelleyBlock proto era) where
-  maybeTxGenLedgerState st = maybeShelleyTxGenLedgerState st.tickedShelleyLedgerState
+extractLedgerConfig'
+  :: forall proxy proto era
+   . (ShelleyCompatible proto era)
+  => proxy (ShelleyBlock proto era)
+  -> (CardanoLedgerConfig (EraCrypto era) -> PartialLedgerConfig (ShelleyBlock proto era))
+  -> Ticked (LedgerState (CardanoBlock (EraCrypto era)))
+  -> CardanoLedgerConfig (EraCrypto era)
+  -> LedgerConfig (ShelleyBlock proto era)
+extractLedgerConfig' proxy extractPartial tls cfg = completeLedgerConfig proxy eInfo $ extractPartial cfg
+  where
+    eInfo =
+      epochInfoPrecomputedTransitionInfo
+        cfg.hardForkLedgerConfigShape
+        tls.tickedHardForkLedgerStateTransition
+        tls.tickedHardForkLedgerStatePerEra
+
+instance (PraosCrypto c) => MaybeTxGenLedgerState c (ShelleyBlock (Praos c) (BabbageEra c)) where
+  maybeTxGenLedgerState tls st = Just $ TxGenLedgerState
+    { st
+    , mkMintingPurpose = AlonzoMinting
+    , extractLedgerConfig = extractLedgerConfig' (Proxy @(ShelleyBlock (Praos c) (BabbageEra c))) (\(CardanoLedgerConfig _ _ _ _ _ pCfg _) -> pCfg) tls
+    , cardanifyValidated = \vtx -> HardForkValidatedGenTx . OneEraValidatedGenTx $ S (S (S (S (S (Z $ coerce vtx)))))
+    }
+instance (PraosCrypto c) => MaybeTxGenLedgerState c (ShelleyBlock (Praos c) (ConwayEra c)) where
+  maybeTxGenLedgerState tls st = Just $ TxGenLedgerState
+    { st
+    , mkMintingPurpose = ConwayMinting
+    , extractLedgerConfig = extractLedgerConfig' (Proxy @(ShelleyBlock (Praos c) (ConwayEra c))) (\(CardanoLedgerConfig _ _ _ _ _ _ pCfg) -> pCfg) tls
+    , cardanifyValidated = \vtx -> HardForkValidatedGenTx . OneEraValidatedGenTx $ S (S (S (S (S (S (Z $ coerce vtx))))))
+    }
 
 class UTxOLookup c blk where
   utxoLookup :: Ticked (LedgerState blk) -> TxIn c -> Maybe (Addr c, Coin)
@@ -249,24 +267,31 @@ makeGenTxs (OwnedTxIn { owned, skey }) initSpec = do
         uTxOIn = st.initIn
     go tls cfg slot st = case txGenLedgerState tls of
       Nothing -> (Producing st, [])
-      Just TxGenLedgerState {nes, mkCardanoTx, mkMintingPurpose} ->
+      Just TxGenLedgerState {st = initTls, mkMintingPurpose, extractLedgerConfig, cardanifyValidated} ->
         let
-          utxos = utxosUtxo . lsUTxOState . esLState $ nesEs nes
+          nes = initTls.tickedShelleyLedgerState
           params = getPParams nes
           langViews = Set.singleton (getLanguageView params PlutusV2)
           net = getNetwork $ st.addr
           undelegAddr = Addr net def StakeRefNull
           delegAddr = Addr net def (StakeRefBase def)
 
+          -- Work around inability to match on existential type variables
+          specializeTxInBlockSize :: (LedgerSupportsMempool blk) => f (g blk) -> GenTx blk -> Word32
+          specializeTxInBlockSize _ = txInBlockSize
+          txInBlockSize' = specializeTxInBlockSize initTls
+
           -- Create as many transactions as we can fit in this block (unless we finish everything
           -- our specs request) and update our state accordingly
           makeTxs currSt currTls remainingBodySize =
               if txFits
-              then (lastSt, vtx : lastTxs)
+              then (lastSt, cardanifyValidated vtx : lastTxs)
               else (currSt, [])
             where
               -- The transaction fits if we were able to add any outputs at all, and if we have outputs we need some min-ADA for them
               txFits = minAda /= mempty
+
+              utxos = utxosUtxo . lsUTxOState . esLState . nesEs $ currTls.tickedShelleyLedgerState
 
               -- Make more transactions, if there's room
               (lastSt, lastTxs) = makeTxs nextSt nextTls nextBodySize
@@ -287,12 +312,13 @@ makeGenTxs (OwnedTxIn { owned, skey }) initSpec = do
                 Left err -> throw $ AddTxException { tx = gtx, err } -- TODO put makeTxs in IO and throwIO here?
                 Right x -> x
               eVtx = applyTx
-                (configLedger cfg)
+                (extractLedgerConfig $ configLedger cfg)
                 Intervene
                 slot
                 gtx
                 currTls
-              gtx = mkCardanoTx $ mkShelleyTx tx
+              gtx = mkShelleyTx tx
+
 
               -- Initialize the transaction
               -- We add a dummy tx witness so our size checks are accurate
@@ -316,7 +342,7 @@ makeGenTxs (OwnedTxIn { owned, skey }) initSpec = do
                   else (txSoFar, mempty, specSoFar)
                 where
                   -- We can add an output if the transaction with that output fits in the max tx size and the remaining block space
-                  outFits = params ^. ppMaxTxSizeL > (fromIntegral $ txStep ^. sizeTxF) && remainingBodySize > (txInBlockSize . mkCardanoTx $ mkShelleyTx txStep)
+                  outFits = params ^. ppMaxTxSizeL > (fromIntegral $ txStep ^. sizeTxF) && remainingBodySize > (txInBlockSize' $ mkShelleyTx txStep)
 
                   -- Add more UTxOs, if we have room
                   (finalTx, finalAda, finalSpecOuts) =
@@ -411,5 +437,5 @@ makeGenTxs (OwnedTxIn { owned, skey }) initSpec = do
 
               -- How much space is left in the block after this transaction?
               nextBodySize = remainingBodySize - txInBlockSize gtx
-          (finalSt, txs) = makeTxs st tls (txsMaxBytes tls)
+          (finalSt, txs) = makeTxs st initTls (txsMaxBytes initTls)
         in (Producing finalSt, txs)
