@@ -33,6 +33,7 @@ module Cardano.Tools.DBSynthesizer.Tx
 
 import Cardano.Ledger.Plutus.ExUnits
 import qualified Cardano.Crypto.DSIGN.Class as Crypto
+import Cardano.Ledger.Api.Tx (calcMinFeeTx)
 import Cardano.Ledger.Api.Tx.Wits
 import Cardano.Ledger.Api.Tx.Out
 import Cardano.Ledger.SafeHash
@@ -140,6 +141,7 @@ type TxGenCompatibleEra era =
   , AlonzoEraTxBody era
   , AlonzoEraTxWits era
   , BabbageEraTxOut era
+  , EraUTxO era
   )
 data TxGenLedgerState c = forall era proto . (c ~ EraCrypto era, TxGenCompatibleEra era) => TxGenLedgerState
   { nes :: !(NewEpochState era)
@@ -249,6 +251,7 @@ makeGenTxs (OwnedTxIn { owned, skey }) initSpec = do
       Nothing -> (Producing st, [])
       Just TxGenLedgerState {nes, mkCardanoTx, mkMintingPurpose} ->
         let
+          utxos = utxosUtxo . lsUTxOState . esLState $ nesEs nes
           params = getPParams nes
           langViews = Set.singleton (getLanguageView params PlutusV2)
           net = getNetwork $ st.addr
@@ -387,13 +390,18 @@ makeGenTxs (OwnedTxIn { owned, skey }) initSpec = do
                       (mintHash, mintBytes) = mkMint idx
 
               -- Finalize the transaction with the fee and setting the change output to balance
-              fee = getMinFeeTx params noFeeTx
-              change = currSt.balance ~~ (minAda <> fee)
-              setChange Seq.Empty = Seq.Empty
-              setChange (x :<| outs) = (x & coinTxOutL .~ change) :<| outs
-              unsignedTx = noFeeTx
-                & bodyTxL . feeTxBodyL .~ fee
-                & bodyTxL . outputsTxBodyL %~ setChange
+              setMinFee prevTx = if prevTx ^. bodyTxL . feeTxBodyL == neededFee
+                  then (neededChange, nextTx)
+                  else setMinFee nextTx
+                where
+                  neededFee = calcMinFeeTx utxos params prevTx 0
+                  neededChange = currSt.balance ~~ (minAda <> neededFee)
+                  nextTx = prevTx
+                    & bodyTxL . feeTxBodyL .~ neededFee
+                    & bodyTxL . outputsTxBodyL %~ setChange neededChange
+              (change, unsignedTx) = setMinFee noFeeTx
+              setChange _ Seq.Empty = Seq.Empty
+              setChange c (x :<| outs) = (x & coinTxOutL .~ c) :<| outs
 
               -- Witness the transaction
               tx = unsignedTx
