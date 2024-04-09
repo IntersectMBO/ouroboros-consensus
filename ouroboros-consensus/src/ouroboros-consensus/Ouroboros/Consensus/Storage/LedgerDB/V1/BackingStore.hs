@@ -25,6 +25,8 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore (
   , restoreBackingStore
     -- * Tracing
   , FlavorImplSpecificTrace (..)
+  , FlavorImplSpecificTraceInMemory (..)
+  , FlavorImplSpecificTraceOnDisk (..)
     -- * Testing
   , newBackingStoreInitialiser
   ) where
