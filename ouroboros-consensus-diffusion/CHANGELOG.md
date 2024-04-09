@@ -2,6 +2,17 @@
 
 # Changelog entries
 
+<a id='changelog-0.15.0.0'></a>
+## 0.15.0.0 — 2024-04-03
+
+NOTE: version jumps from `0.13.0.0` to `0.15.0.0` because `0.14.0.0` was created in a [branch](https://github.com/IntersectMBO/ouroboros-consensus/pull/1042) containing backported fixes for Node 8.9.
+
+### Breaking
+
+- Updated `ouroboros-consensus-diffusion` to use `ouroboros-network-0.14.0.0`.
+  `LowLevelRounNodeArgs` and `NodeKernel` records hold
+  `PublicPeerSelectionState` variable.
+
 <a id='changelog-0.13.0.0'></a>
 ## 0.13.0.0 — 2024-04-03
 
