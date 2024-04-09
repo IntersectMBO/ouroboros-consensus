@@ -77,7 +77,7 @@ nextInstruction handlesVar peer =
           pure $ JumpTo fragment
   where
     -- | When the tip of the candidate fragment is 'jumpSize' slots younger than
-    -- the last jump, set jumpers to jump to it.
+    -- the last jump, set Happy jumpers to jump to it.
     maybeSetNextJump lastJumpSlot = do
       dynamoFragment <- fromJust <$> getDynamoFragment handlesVar
       when (succWithOrigin (headSlot dynamoFragment) >= succWithOrigin lastJumpSlot + jumpSize) $ do
@@ -115,8 +115,11 @@ processJumpResult handlesVar peer jumpResult =
             -- Ignore jump results when we already found the intersection.
             pure ()
           (Happy, AcceptedJump goodPoint') -> do
-            -- The jump was accepted; we bump the peer's candidate fragment to
+            -- The jump was accepted; we set the jumper's candidate fragment to
             -- the dynamo's candidate fragment up to the accepted point.
+            --
+            -- The candidate fragments of jumpers don't grow otherwise, as only the
+            -- objector and the dynamo request further headers.
             dynamoFragment <- fromJust <$> getDynamoFragment handlesVar
             let slicedDynamoFragment = fst $ fromJust $ splitAfterPoint dynamoFragment goodPoint'
             chainSyncStateVar <- cschState . (Map.! peer) <$> readTVar handlesVar
