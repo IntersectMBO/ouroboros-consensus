@@ -52,7 +52,12 @@ data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
     --
     -- Note that this is not inside 'ShelleyCanBeLeader' since it gets evolved
     -- automatically, whereas 'ShelleyCanBeLeader' does not change.
-    shelleyLeaderCredentialsInitSignKey :: SL.SignKeyKES c,
+    -- TODO: this currently uses 'UnsoundPureSignKeyKES', so the KES key is not
+    -- mlocked, and does not provide full forward security. Eventually, this
+    -- field should be removed entirely, and the KES sign key acquired through
+    -- different means, ensuring a fully mlocked in-memory chain from key
+    -- generation to block forging.
+    shelleyLeaderCredentialsInitSignKey :: SL.UnsoundPureSignKeyKES c,
     shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c,
     -- | Identifier for this set of credentials.
     --

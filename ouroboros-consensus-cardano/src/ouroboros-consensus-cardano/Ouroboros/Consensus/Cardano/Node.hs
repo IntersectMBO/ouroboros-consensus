@@ -59,6 +59,7 @@ module Ouroboros.Consensus.Cardano.Node (
 
 import           Cardano.Binary (DecoderError (..), enforceSize)
 import           Cardano.Chain.Slotting (EpochSlots)
+import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
@@ -1051,7 +1052,8 @@ protocolInfoCardano paramsCardano
               startPeriod :: Absolute.KESPeriod
               startPeriod = Absolute.ocertKESPeriod $ praosCanBeLeaderOpCert canBeLeader
 
-          HotKey.mkHotKey @m @c initSignKey startPeriod maxKESEvo
+          skSound <- KES.unsoundPureSignKeyKESToSoundSignKeyKES initSignKey
+          HotKey.mkHotKey @m @c skSound startPeriod maxKESEvo
 
         let slotToPeriod :: SlotNo -> Absolute.KESPeriod
             slotToPeriod (SlotNo slot) = assert (tpraosSlotsPerKESPeriod == praosSlotsPerKESPeriod) $

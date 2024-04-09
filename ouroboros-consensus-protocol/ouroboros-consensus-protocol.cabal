@@ -90,6 +90,7 @@ library unstable-protocol-testlib
     base,
     cardano-crypto-class,
     cardano-crypto-tests,
+    cardano-ledger-core,
     cardano-ledger-shelley-test,
     cardano-protocol-tpraos,
     cardano-slotting,

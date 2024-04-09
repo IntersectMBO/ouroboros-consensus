@@ -193,8 +193,7 @@ mkSimpleTestProtocolInfo
     byronSlotLenghtInSeconds
     shelleySlotLengthInSeconds
     hardForkSpec
-  = fst
-  $ mkTestProtocolInfo @IO
+  = fst $ mkTestProtocolInfo @IO
       (CoreNodeId 0, coreNodeShelley)
       shelleyGenesis
       byronProtocolVersion
@@ -270,8 +269,7 @@ mkTestProtocolInfo
     generatedSecretsByron
     aByronPbftSignatureThreshold
     hardForkSpec
-  =
-    protocolInfoCardano
+  = protocolInfoCardano
         (CardanoProtocolParams
           ProtocolParamsByron {
               byronGenesis                = genesisByron
@@ -340,9 +338,9 @@ mkTestProtocolInfo
           generatedSecretsByron
           coreNodeId
 
+    leaderCredentialsShelley :: ShelleyLeaderCredentials c
+    leaderCredentialsShelley = Shelley.mkLeaderCredentials coreNode
+
     -- This sets a vestigial header field which is not actually used for anything.
     softVerByron :: CC.Update.SoftwareVersion
     softVerByron = Byron.theProposedSoftwareVersion
-
-    leaderCredentialsShelley :: ShelleyLeaderCredentials c
-    leaderCredentialsShelley = Shelley.mkLeaderCredentials coreNode

@@ -181,14 +181,11 @@ mkHotKey initKey startPeriod@(Absolute.KESPeriod start) maxKESEvolutions = do
       , sign_      = \toSign -> do
           KESState { kesStateInfo, kesStateKey } <- readMVar varKESState
           case kesStateKey of
-            KESKeyPoisoned -> error "trying to sign with a poisoned key"
+            KESKeyPoisoned ->
+              error "trying to sign with a poisoned key"
             KESKey key     -> do
               let evolution = kesEvolution kesStateInfo
-                  signed    = SL.signedKES () evolution toSign key
-              -- Force the signature to WHNF (for 'SignedKES', WHNF implies
-              -- NF) so that we don't have any thunks holding on to a key that
-              -- might be destructively updated when evolved.
-              evaluate signed
+              SL.signedKES () evolution toSign key
       }
   where
     initKESState :: KESState c
@@ -265,13 +262,15 @@ evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
       | targetEvolution <= curEvolution
       = return $ KESState { kesStateInfo = info, kesStateKey = KESKey key }
       | otherwise
-      = case SL.updateKES () key curEvolution of
-          -- This cannot happen
-          Nothing    -> error "Could not update KES key"
-          Just !key' -> do
-            -- Clear the memory associated with the old key
-            forgetSignKeyKES key
-            let info' = info { kesEvolution = curEvolution + 1 }
-            go targetEvolution info' key'
+      = do
+          maybeKey' <- SL.updateKES () key curEvolution
+          case maybeKey' of
+            -- This cannot happen
+            Nothing    -> error "Could not update KES key"
+            Just !key' -> do
+              -- Clear the memory associated with the old key
+              forgetSignKeyKES key
+              let info' = info { kesEvolution = curEvolution + 1 }
+              go targetEvolution info' key'
       where
         curEvolution = kesEvolution info

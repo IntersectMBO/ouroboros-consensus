@@ -34,6 +34,7 @@ module Ouroboros.Consensus.Shelley.Node.TPraos (
   ) where
 
 import qualified Cardano.Crypto.VRF as VRF
+import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -94,7 +95,8 @@ shelleyBlockForging ::
   -> ShelleyLeaderCredentials (EraCrypto era)
   -> m (BlockForging m (ShelleyBlock (TPraos c) era))
 shelleyBlockForging tpraosParams maxTxCapacityOverrides credentials = do
-    hotKey <- HotKey.mkHotKey @m @c initSignKey startPeriod tpraosMaxKESEvo
+    skSound <- KES.unsoundPureSignKeyKESToSoundSignKeyKES initSignKey
+    hotKey <- HotKey.mkHotKey @m @c skSound startPeriod tpraosMaxKESEvo
     pure $ shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
   where
     TPraosParams {tpraosMaxKESEvo, tpraosSlotsPerKESPeriod} = tpraosParams

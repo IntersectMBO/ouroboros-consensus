@@ -45,3 +45,64 @@ source-repository-package
   subdir:
     ouroboros-network-api
     ouroboros-network-protocols
+
+-- For the time being, we need to override some dependency bounds
+allow-newer: plutus-core:cardano-crypto-class
+           , cardano-slotting
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-base
+  tag: a2f139eb08255741860751e05e5f37177ff9145c
+  --sha256: 0944wg2nqazmhlmsynwgdwxxj6ay0hb9qig9l128isb2cjia0hlp
+  subdir:
+    -- cardano-binary
+    cardano-crypto-class
+    cardano-crypto-tests
+    cardano-crypto-praos
+    cardano-mempool
+    -- cardano-slotting
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-ledger-executable-spec.git
+  tag: ddfb7f4a311dcc52971b3bb847ba52b68d0b0a3f
+  --sha256: sha256-dQVyvzVhVUOsLUuX8XQvN/wPGmbIvYeAmX7RpnT1gk8=
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/cardano-ledger
+  tag: ddb5b99fe86f88faf00ed63c3304922d3798b22b
+  --sha256: 0944wg2nqazmhlmsynwgdwxxj6ay0hb9qig9l128isb2cjia0hlp
+  subdir:
+      eras/allegra/impl
+      eras/alonzo/impl
+      eras/alonzo/test-suite
+      eras/babbage/impl
+      eras/babbage/test-suite
+      eras/byron/chain/executable-spec
+      eras/byron/crypto
+      eras/byron/crypto/test
+      eras/byron/ledger/executable-spec
+      eras/byron/ledger/impl
+      eras/byron/ledger/impl/test
+      eras/conway/impl
+      eras/conway/test-suite
+      eras/mary/impl
+      eras/shelley/impl
+      eras/shelley-ma/test-suite
+      eras/shelley/test-suite
+      libs/cardano-data
+      libs/cardano-ledger-api
+      libs/cardano-ledger-binary
+      libs/cardano-ledger-conformance
+      libs/cardano-ledger-core
+      libs/cardano-ledger-test
+      libs/cardano-protocol-tpraos
+      libs/constrained-generators
+      libs/ledger-state
+      libs/non-integral
+      libs/plutus-preprocessor
+      libs/set-algebra
+      libs/small-steps
+      libs/vector-map

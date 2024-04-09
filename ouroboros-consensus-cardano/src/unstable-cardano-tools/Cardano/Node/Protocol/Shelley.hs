@@ -161,7 +161,9 @@ readLeaderCredentialsSingleton
 
     (opCert, kesSKey) <- opCertKesKeyCheck kesFile opCertFile
 
-    return [mkPraosLeaderCredentials opCert vrfSKey kesSKey]
+    let leaderCredentials = mkPraosLeaderCredentials opCert vrfSKey kesSKey
+
+    return [leaderCredentials]
 
 -- But not OK to supply some of the files without the others.
 readLeaderCredentialsSingleton ProtocolFilepaths {shelleyCertFile = Nothing} =
@@ -176,12 +178,12 @@ opCertKesKeyCheck ::
   -- ^ KES key
   -> FilePath
   -- ^ Operational certificate
-  -> ExceptT PraosLeaderCredentialsError IO (OperationalCertificate, SigningKey KesKey)
+  -> ExceptT PraosLeaderCredentialsError IO (OperationalCertificate, SigningKey UnsoundPureKesKey)
 opCertKesKeyCheck kesFile certFile = do
   opCert <-
     firstExceptT FileError (newExceptT $ readFileTextEnvelope AsOperationalCertificate certFile)
   kesSKey <-
-    firstExceptT FileError (newExceptT $ readFileTextEnvelope (AsSigningKey AsKesKey) kesFile)
+    firstExceptT FileError (newExceptT $ readFileTextEnvelope (AsSigningKey AsUnsoundPureKesKey) kesFile)
   let opCertSpecifiedKesKeyhash = verificationKeyHash $ getHotKey opCert
       suppliedKesKeyHash = verificationKeyHash $ getVerificationKey kesSKey
   -- Specified KES key in operational certificate should match the one
@@ -207,10 +209,10 @@ readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
      :: ShelleyCredentials
      -> ExceptT PraosLeaderCredentialsError IO (ShelleyLeaderCredentials StandardCrypto)
    parseShelleyCredentials ShelleyCredentials { scCert, scVrf, scKes } = do
-     mkPraosLeaderCredentials
-       <$> parseEnvelope AsOperationalCertificate scCert
-       <*> parseEnvelope (AsSigningKey AsVrfKey) scVrf
-       <*> parseEnvelope (AsSigningKey AsKesKey) scKes
+     cert <- parseEnvelope AsOperationalCertificate scCert
+     vrfKey <- parseEnvelope (AsSigningKey AsVrfKey) scVrf
+     kesKey <- parseEnvelope (AsSigningKey AsUnsoundPureKesKey) scKes
+     return $ mkPraosLeaderCredentials cert vrfKey kesKey
 
    readBulkFile
      :: Maybe FilePath
@@ -234,7 +236,7 @@ readLeaderCredentialsBulk ProtocolFilepaths { shelleyBulkCredsFile = mfp } =
 mkPraosLeaderCredentials ::
      OperationalCertificate
   -> SigningKey VrfKey
-  -> SigningKey KesKey
+  -> SigningKey UnsoundPureKesKey
   -> ShelleyLeaderCredentials StandardCrypto
 mkPraosLeaderCredentials
     (OperationalCertificate opcert (StakePoolVerificationKey vkey))
