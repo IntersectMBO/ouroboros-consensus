@@ -45,7 +45,7 @@ import           Ouroboros.Consensus.Util ((..:))
 class GetTip l where
   -- | Point of the most recently applied block
   --
-  -- Should be 'genesisPoint' when no blocks have been applied yet
+  -- Should be 'GenesisPoint' when no blocks have been applied yet
   getTip :: l -> Point l
 
 type instance HeaderHash (Ticked l) = HeaderHash l
@@ -98,6 +98,8 @@ pureLedgerResult a = LedgerResult {
 -------------------------------------------------------------------------------}
 
 -- | Static environment required for the ledger
+--
+-- Types that inhabit this family will come from the Ledger code.
 type family LedgerCfg l :: Type
 
 class ( -- Requirements on the ledger state itself
@@ -172,6 +174,17 @@ applyChainTick = lrResult ..: applyChainTickLedgerResult
 -------------------------------------------------------------------------------}
 
 -- | Ledger state associated with a block
+--
+-- This is the Consensus notion of a /ledger state/. Each block type is
+-- associated with one of the Ledger types for the /ledger state/. Virtually
+-- every concept in this codebase revolves around this type, or the referenced
+-- @blk@. Whenever we use the type variable @l@, we intend to denote that the
+-- expected instantiation is either a 'LedgerState' or some wrapper over it
+-- (like the 'Ouroboros.Consensus.Ledger.Extended.ExtLedgerState').
+--
+-- The main operations we can do with a 'LedgerState' are /ticking/ (defined in
+-- 'IsLedger'), and /applying a block/ (defined in
+-- 'Ouroboros.Consensus.Ledger.Abstract.ApplyBlock').
 data family LedgerState blk :: Type
 
 type instance HeaderHash (LedgerState blk) = HeaderHash blk
