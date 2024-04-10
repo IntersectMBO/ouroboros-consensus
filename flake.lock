@@ -101,6 +101,23 @@
         "type": "github"
       }
     },
+    "cabal-extras": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1703004694,
+        "narHash": "sha256-IEEXktsFL5mnBxqP/x/I+rVsQsPxW4Y3YnPfO7HGIQI=",
+        "owner": "phadej",
+        "repo": "cabal-extras",
+        "rev": "1eb4198381e3461298e27a67997761f91a5ba3d4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "phadej",
+        "ref": "cabal-docspec-0.0.0.20231219",
+        "repo": "cabal-extras",
+        "type": "github"
+      }
+    },
     "cardano-shell": {
       "flake": false,
       "locked": {
@@ -165,6 +182,22 @@
       "original": {
         "owner": "numtide",
         "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "gentle-introduction": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1712341100,
+        "narHash": "sha256-epTiIoOeAZW5mS1vYwqh6g4DGEN3vSHDZ0fOvIngDPo=",
+        "owner": "phadej",
+        "repo": "gentle-introduction",
+        "rev": "027e070551f4bc8059b1622f13b519d9c5e6ba50",
+        "type": "github"
+      },
+      "original": {
+        "owner": "phadej",
+        "repo": "gentle-introduction",
         "type": "github"
       }
     },
@@ -707,8 +740,10 @@
     "root": {
       "inputs": {
         "CHaP": "CHaP",
+        "cabal-extras": "cabal-extras",
         "flake-compat": "flake-compat",
         "flake-utils": "flake-utils",
+        "gentle-introduction": "gentle-introduction",
         "hackageNix": "hackageNix",
         "haskellNix": "haskellNix",
         "iohkNix": "iohkNix",

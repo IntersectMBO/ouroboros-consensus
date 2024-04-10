@@ -36,6 +36,20 @@ in
     }];
   }).cabal-install.components.exes.cabal;
 
+  cabal-docspec = tool "cabal-docspec" "git" {
+    src = inputs.cabal-extras;
+    cabalProject = ''
+      packages: peura cabal-docspec ${inputs.gentle-introduction}
+    '';
+    cabalProjectLocal = ''
+      allow-newer: cabal-docspec:*
+                 , gentle-introduction:*
+                 , peura:*
+                 , paths:*
+      constraints: directory <1.3.8.0
+    '';
+  };
+
   cabal-hoogle = tool "cabal-hoogle" "git" {
     src = final.fetchFromGitHub {
       owner = "kokobd";
