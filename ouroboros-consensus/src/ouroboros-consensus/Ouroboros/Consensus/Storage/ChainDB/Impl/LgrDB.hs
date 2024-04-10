@@ -48,8 +48,6 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (
   , mkLgrDB
   ) where
 
-import           Codec.CBOR.Decoding (Decoder)
-import           Codec.CBOR.Encoding (Encoding)
 import           Codec.Serialise (Serialise (decode))
 import           Control.Monad.Trans.Class
 import           Control.Tracer
@@ -236,7 +234,7 @@ initFromDisk LgrDbArgs { lgrHasFS = hasFS, .. }
         replayTracer
         lgrTracer
         hasFS
-        decodeExtLedgerState'
+        (decodeDiskExtLedgerState ccfg)
         decode
         (LedgerDB.configLedgerDb lgrTopLevelConfig)
         lgrGenesis
@@ -244,12 +242,6 @@ initFromDisk LgrDbArgs { lgrHasFS = hasFS, .. }
     return (db, replayed)
   where
     ccfg = configCodec lgrTopLevelConfig
-
-    decodeExtLedgerState' :: forall s. Decoder s (ExtLedgerState blk)
-    decodeExtLedgerState' = decodeExtLedgerState
-                              (decodeDisk ccfg)
-                              (decodeDisk ccfg)
-                              (decodeDisk ccfg)
 
 -- | For testing purposes
 mkLgrDB :: StrictTVar m (LedgerDB' blk)
@@ -300,16 +292,10 @@ takeSnapshot lgrDB@LgrDB{ cfg, tracer, hasFS } = wrapFailure (Proxy @blk) $ do
     LedgerDB.takeSnapshot
       tracer
       hasFS
-      encodeExtLedgerState'
+      (encodeDiskExtLedgerState ccfg)
       ledgerDB
   where
     ccfg = configCodec cfg
-
-    encodeExtLedgerState' :: ExtLedgerState blk -> Encoding
-    encodeExtLedgerState' = encodeExtLedgerState
-                              (encodeDisk ccfg)
-                              (encodeDisk ccfg)
-                              (encodeDisk ccfg)
 
 trimSnapshots ::
      forall m blk. (MonadCatch m, HasHeader blk)
