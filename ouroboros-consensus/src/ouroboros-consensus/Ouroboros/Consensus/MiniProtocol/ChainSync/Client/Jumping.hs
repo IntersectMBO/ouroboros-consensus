@@ -128,6 +128,10 @@ nextInstruction context =
         handles <- readTVar (handlesVar context)
         forM_ (Map.elems handles) $ \ChainSyncClientHandle{cschJumping = cschJumping'} ->
           readTVar cschJumping' >>= \case
+            -- REVIEW: We are now proposing a jump to 'headPoint', which is the
+            -- first block _after_ (including) @lastJumpSlot + jumpSize@. We
+            -- might want to propose the jump to the last block _before_ that
+            -- point.
             Jumper nextJumpVar _ Happy -> writeTVar nextJumpVar $ Just $! castPoint (headPoint dynamoFragment)
             _ -> pure ()
         writeTVar (cschJumping (handle context)) $ Dynamo (headSlot dynamoFragment)
