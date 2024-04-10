@@ -6,6 +6,7 @@
 
 module Cardano.Tools.DBSynthesizer.Forging (runForge, GenTxs) where
 
+import Data.Time
 import           Cardano.Tools.DBSynthesizer.Types (ForgeLimit (..),
                      ForgeResult (..))
 import           Control.Monad (when)
@@ -180,6 +181,9 @@ runForge epochSize_ nextSlot opts chainDB blockForging cfg genTxs = do
 
         when (mbCurTip /= SuccesfullyAddedBlock (blockPoint newBlock)) $
             exitEarly' "block not adopted"
+        now <- lift $ getCurrentTime
+        lift . putStrLn $ show now ++ ": forged block " ++ show bcBlockNo ++ " at slot " ++ show currentSlot
+        
 
 -- | Context required to forge a block
 data BlockContext blk = BlockContext
