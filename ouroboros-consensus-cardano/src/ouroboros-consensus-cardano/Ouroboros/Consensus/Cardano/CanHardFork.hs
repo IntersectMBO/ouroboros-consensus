@@ -544,7 +544,7 @@ translateValidatedTxShelleyToAllegraWrapper = InjectValidatedTx $
     fmap unComp . eitherToMaybe . runExcept . SL.translateEra () . Comp
 
 {-------------------------------------------------------------------------------
-  Translation from Shelley to Allegra
+  Translation from Allegra to Mary
 -------------------------------------------------------------------------------}
 
 translateLedgerStateAllegraToMaryWrapper ::
@@ -558,10 +558,6 @@ translateLedgerStateAllegraToMaryWrapper =
     ignoringBoth $
       Translate $ \_epochNo ->
         unComp . SL.translateEra' () . Comp
-
-{-------------------------------------------------------------------------------
-  Translation from Allegra to Mary
--------------------------------------------------------------------------------}
 
 translateTxAllegraToMaryWrapper ::
      (PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
