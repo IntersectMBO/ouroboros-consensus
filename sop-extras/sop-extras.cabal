@@ -3,7 +3,7 @@ name: sop-extras
 synopsis: Type-level and data utilities that build upon SOP.
 description:
   This package provides some more constructs that are not present on the
-  @sop-core@ package but build upon the same foundations.
+  @sop-core@ package but built upon the same foundations.
 
 version: 0.1.0.0
 license: Apache-2.0
@@ -48,6 +48,7 @@ library
 
   build-depends:
     base >=4.14 && <4.20,
+    constraints ^>=0.14,
     nothunks ^>=0.1,
     sop-core ^>=0.5,
     strict-sop-core ^>=0.1,

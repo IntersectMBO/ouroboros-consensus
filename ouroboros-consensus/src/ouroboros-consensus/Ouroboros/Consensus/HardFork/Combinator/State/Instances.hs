@@ -2,11 +2,14 @@
 {-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DerivingVia           #-}
 {-# LANGUAGE FlexibleContexts      #-}
+{-# LANGUAGE InstanceSigs          #-}
 {-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE StandaloneDeriving    #-}
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
@@ -25,6 +28,7 @@ import           Cardano.Binary (enforceSize)
 import           Codec.CBOR.Decoding (Decoder)
 import           Codec.CBOR.Encoding (Encoding, encodeListLen)
 import           Codec.Serialise
+import           Data.Coerce
 import           Data.Proxy
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -61,6 +65,22 @@ instance HSequence HardForkState where
 
 instance HCollapse HardForkState where
   hcollapse = hcollapse . hmap currentState . Telescope.tip . getHardForkState
+
+instance HTrans HardForkState HardForkState where
+  htrans p t (HardForkState st) = HardForkState $
+      htrans p (\(Current b fx) -> Current b $ t fx) st
+
+  hcoerce ::
+       forall f g xs ys. AllZipN (Prod HardForkState) (LiftedCoercible f g) xs ys
+    => HardForkState f xs
+    -> HardForkState g ys
+  hcoerce (HardForkState st) = HardForkState $
+      htrans
+        (Proxy @(LiftedCoercible f g))
+        (\(Current b fx) -> Current b $ coerce fx)
+        st
+
+type instance Same HardForkState = HardForkState
 
 {-------------------------------------------------------------------------------
   Eq, Show, NoThunks

@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE GADTs                    #-}
 {-# LANGUAGE LambdaCase               #-}
+{-# LANGUAGE PolyKinds                #-}
 {-# LANGUAGE RankNTypes               #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
@@ -31,6 +32,7 @@ module Data.SOP.Index (
   , npWithIndices
   , nsFromIndex
   , nsToIndex
+  , toWord8
   ) where
 
 import           Data.Coerce
@@ -43,7 +45,7 @@ import           Data.SOP.Sing
 import           Data.SOP.Strict
 import           Data.Word
 
-type Index :: [Type] -> Type -> Type
+type Index :: [k] -> k -> Type
 data Index xs x where
   IZ ::               Index (x ': xs) x
   IS :: Index xs x -> Index (y ': xs) x
@@ -194,3 +196,11 @@ nsFromIndex n = go 0 sList
       | i == n    = Just $ Z $ K ()
       | otherwise = S <$> go (i + 1) sList
     go !_ SNil    = Nothing
+
+toWord8 :: Index xs x -> Word8
+toWord8 = go 0
+  where
+    go :: Word8 -> Index ys y -> Word8
+    go !n = \case
+      IZ      -> n
+      IS idx' -> go (n + 1) idx'
