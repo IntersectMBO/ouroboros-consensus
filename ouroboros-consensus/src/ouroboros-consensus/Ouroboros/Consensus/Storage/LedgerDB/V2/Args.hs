@@ -10,7 +10,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Ouroboros.Consensus.Storage.LedgerDB.V2.Args (
-    FlavorImplSpecificTrace
+    FlavorImplSpecificTrace (..)
   , HandleArgs (..)
   , LedgerDbFlavorArgs (..)
   ) where
