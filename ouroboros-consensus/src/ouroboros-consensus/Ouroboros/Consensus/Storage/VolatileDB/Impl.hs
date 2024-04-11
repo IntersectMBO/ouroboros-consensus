@@ -233,8 +233,9 @@ closeDBImpl VolatileDBEnv { varInternalState, tracer, hasFS } = do
       RAWLock.withWriteAccess varInternalState $ \st -> return (DbClosed, st)
     case mbInternalState of
       DbClosed -> traceWith tracer DBAlreadyClosed
-      DbOpen ost ->
+      DbOpen ost -> do
         wrapFsError (Proxy @blk) $ closeOpenHandles hasFS ost
+        traceWith tracer DBClosed
 
 getBlockComponentImpl ::
      forall m blk b.
