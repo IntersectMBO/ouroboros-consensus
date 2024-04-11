@@ -30,6 +30,7 @@ jobs:
     - env:
         BASE_REF: ${{ github.event.pull_request.base.ref }}
         NO_CHANGELOG_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'no changelog') }}
+        RELEASE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'release') }}
       run: ./scripts/ci/check-changelogs.sh
 
   check-cabal-files:

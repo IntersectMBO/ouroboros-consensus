@@ -6,18 +6,22 @@
 
 packages=(ouroboros-consensus ouroboros-consensus-diffusion ouroboros-consensus-protocol ouroboros-consensus-cardano sop-extras strict-sop-core)
 
+ok=1
+
 echo "Checking that changelog and .cabal versions match:"
 for p in "${packages[@]}"; do
     if [[ $(grep -E "^<a id='changelog-" "$p/CHANGELOG.md" | head -n1) =~ $(grep -E "^version:" "$p/$p.cabal" | rev | cut -d' ' -f1 | rev) ]]; then
         printf "\t- %s OK\n" "$p"
     else
         printf "\t- %s FAIL\n" "$p"
-        exit 1
+        ok=0
     fi
 done
 
-if [ "${NO_CHANGELOG_LABEL}" = "true" ]; then
-    exit 0
+[ $ok = 0 ] && exit 1
+
+if [ "${NO_CHANGELOG_LABEL}" = "true" ] || [ "${RELEASE_LABEL}" = "true" ]; then
+    echo "Label set: No new changelog fragments expected"
 else
     echo "Checking for new changelog fragments:"
     for p in "${packages[@]}"; do
@@ -30,10 +34,24 @@ else
                 printf "\t\tNo new fragments found, but code changed. Please push a fragment or add the \"no changelog\" label to the PR. The diff follows:\n"
                 git --no-pager -c color.diff=always diff "origin/${BASE_REF}" -- "$p/***.hs" | sed 's/^/diff> /g'
                 git --no-pager -c color.diff=always diff "origin/${BASE_REF}" -- "$p/***.cabal" | sed 's/^/diff> /g'
-                exit 1
+                ok=0
             fi
         else
             printf "\t\tNo haskell/cabal code changes\n"
         fi
     done
+fi
+
+[ $ok = 0 ] && exit 1
+
+if [ "${RELEASE_LABEL}" = "true" ]; then
+  echo "This PR is said to be a release. Checking that changelog.d directories are in fact empty"
+  for p in "${packages[@]}"; do
+    if [ 1 = $(ls -1 $p/changelog.d | wc -l) ]; then
+      printf "\t- %s OK" "$p"
+    else
+      printf "\t- %s ERROR: There are fragments remaining in changelog.d!"
+      exit 1
+    fi
+  done
 fi
