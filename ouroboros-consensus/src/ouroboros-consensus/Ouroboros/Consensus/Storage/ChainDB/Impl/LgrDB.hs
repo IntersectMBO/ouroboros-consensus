@@ -69,15 +69,13 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDbFailure (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache
                      (BlockCache)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCache
-import           Ouroboros.Consensus.Storage.Common
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB)
-import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
+import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB (LedgerDB')
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
 import           Ouroboros.Consensus.Storage.Serialisation
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
-import           Ouroboros.Consensus.Util.ResourceRegistry
 import           System.FS.API (SomeHasFS (..), createDirectoryIfMissing)
 import           System.FS.API.Types (FsError, mkFsPath)
 
@@ -373,37 +371,6 @@ validate LgrDB{..} ledgerDB blockCache numRollbacks trace = \hdrs -> do
     addPoints :: [RealPoint blk]
               -> Set (RealPoint blk) -> Set (RealPoint blk)
     addPoints hs set = foldl' (flip Set.insert) set hs
-
-{-------------------------------------------------------------------------------
-  Stream API to the immutable DB
--------------------------------------------------------------------------------}
-
-streamAPI ::
-     forall m blk.
-     (IOLike m, HasHeader blk)
-  => ImmutableDB m blk -> LedgerDB.StreamAPI m blk
-streamAPI immutableDB = LedgerDB.StreamAPI streamAfter
-  where
-    streamAfter :: HasCallStack
-                => Point blk
-                -> (Either (RealPoint blk) (m (LedgerDB.NextBlock blk)) -> m a)
-                -> m a
-    streamAfter tip k = withRegistry $ \registry -> do
-        eItr <-
-          ImmutableDB.streamAfterPoint
-            immutableDB
-            registry
-            GetBlock
-            tip
-        case eItr of
-          -- Snapshot is too recent
-          Left  err -> k $ Left  $ ImmutableDB.missingBlockPoint err
-          Right itr -> k $ Right $ streamUsing itr
-
-    streamUsing :: ImmutableDB.Iterator m blk blk -> m (LedgerDB.NextBlock blk)
-    streamUsing itr = ImmutableDB.iteratorNext itr >>= \case
-      ImmutableDB.IteratorExhausted  -> return $ LedgerDB.NoMoreBlocks
-      ImmutableDB.IteratorResult blk -> return $ LedgerDB.NextBlock blk
 
 {-------------------------------------------------------------------------------
   Previously applied blocks

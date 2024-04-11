@@ -32,10 +32,10 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
 import           Ouroboros.Consensus.Storage.LedgerDB.Query
 import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-import           Ouroboros.Consensus.Storage.LedgerDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB.Update
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Block (Point (Point))
@@ -103,7 +103,7 @@ initLedgerDB ::
   -> (forall s. Decoder s (HeaderHash blk))
   -> LedgerDbCfg (ExtLedgerState blk)
   -> m (ExtLedgerState blk) -- ^ Genesis ledger state
-  -> StreamAPI m blk
+  -> StreamAPI m blk blk
   -> m (InitLog blk, LedgerDB' blk, Word64)
 initLedgerDB replayTracer
              tracer
@@ -112,7 +112,7 @@ initLedgerDB replayTracer
              decHash
              cfg
              getGenesisLedger
-             streamAPI = do
+             stream = do
     snapshots <- listSnapshots hasFS
     tryNewestFirst id snapshots
   where
@@ -124,7 +124,7 @@ initLedgerDB replayTracer
         traceWith replayTracer ReplayFromGenesis
         initDb <- ledgerDbWithAnchor <$> getGenesisLedger
         let replayTracer' = decorateReplayTracerWithStart (Point Origin) replayTracer
-        ml     <- runExceptT $ initStartingWith replayTracer' cfg streamAPI initDb
+        ml     <- runExceptT $ initStartingWith replayTracer' cfg stream initDb
         case ml of
           Left _  -> error "invariant violation: invalid current chain"
           Right (l, replayed) -> return (acc InitFromGenesis, l, replayed)
@@ -136,7 +136,7 @@ initLedgerDB replayTracer
                              decLedger
                              decHash
                              cfg
-                             streamAPI
+                             stream
                              s
         case ml of
           Left err -> do
@@ -170,10 +170,10 @@ initFromSnapshot ::
   -> (forall s. Decoder s (ExtLedgerState blk))
   -> (forall s. Decoder s (HeaderHash blk))
   -> LedgerDbCfg (ExtLedgerState blk)
-  -> StreamAPI m blk
+  -> StreamAPI m blk blk
   -> DiskSnapshot
   -> ExceptT (SnapshotFailure blk) m (RealPoint blk, LedgerDB' blk, Word64)
-initFromSnapshot tracer hasFS decLedger decHash cfg streamAPI ss = do
+initFromSnapshot tracer hasFS decLedger decHash cfg stream ss = do
     initSS <- withExceptT InitFailureRead $
                 readSnapshot hasFS decLedger decHash ss
     let initialPoint = withOrigin (Point Origin) annTipPoint $ headerStateTip $ headerState $ initSS
@@ -186,7 +186,7 @@ initFromSnapshot tracer hasFS decLedger decHash cfg streamAPI ss = do
           initStartingWith
             tracer'
             cfg
-            streamAPI
+            stream
             (ledgerDbWithAnchor initSS)
         return (tip, initDB, replayed)
 
@@ -200,11 +200,11 @@ initStartingWith ::
        )
   => Tracer m (ReplayStart blk -> ReplayGoal blk -> TraceReplayEvent blk)
   -> LedgerDbCfg (ExtLedgerState blk)
-  -> StreamAPI m blk
+  -> StreamAPI m blk blk
   -> LedgerDB' blk
   -> ExceptT (SnapshotFailure blk) m (LedgerDB' blk, Word64)
-initStartingWith tracer cfg streamAPI initDb = do
-    streamAll streamAPI (castPoint (ledgerDbTip initDb))
+initStartingWith tracer cfg stream initDb = do
+    streamAll stream (castPoint (ledgerDbTip initDb))
       InitFailureTooRecent
       (initDb, 0)
       push

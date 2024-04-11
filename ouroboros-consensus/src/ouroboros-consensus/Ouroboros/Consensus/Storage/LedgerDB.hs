@@ -128,10 +128,6 @@ module Ouroboros.Consensus.Storage.LedgerDB (
   , PushStart (..)
   , Pushing (..)
   , UpdateLedgerDbTraceEvent (..)
-    -- * Streaming
-  , NextBlock (..)
-  , StreamAPI (..)
-  , streamAll
     -- * Snapshots
   , DiskSnapshot (..)
     -- ** Read from disk
@@ -180,8 +176,6 @@ import           Ouroboros.Consensus.Storage.LedgerDB.Snapshots
                      deleteSnapshot, diskSnapshotIsTemporary, encodeSnapshot,
                      listSnapshots, readSnapshot, snapshotToFileName,
                      snapshotToPath, takeSnapshot, trimSnapshots, writeSnapshot)
-import           Ouroboros.Consensus.Storage.LedgerDB.Stream (NextBlock (..),
-                     StreamAPI (..), streamAll)
 import           Ouroboros.Consensus.Storage.LedgerDB.Update
                      (AnnLedgerError (..), AnnLedgerError', Ap (..),
                      ExceededRollback (..), PushGoal (..), PushStart (..),

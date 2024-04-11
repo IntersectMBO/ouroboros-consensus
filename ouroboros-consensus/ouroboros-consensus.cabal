@@ -218,13 +218,13 @@ library
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Util
     Ouroboros.Consensus.Storage.ImmutableDB.Impl.Validation
+    Ouroboros.Consensus.Storage.ImmutableDB.Stream
     Ouroboros.Consensus.Storage.LedgerDB
     Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
     Ouroboros.Consensus.Storage.LedgerDB.Init
     Ouroboros.Consensus.Storage.LedgerDB.LedgerDB
     Ouroboros.Consensus.Storage.LedgerDB.Query
     Ouroboros.Consensus.Storage.LedgerDB.Snapshots
-    Ouroboros.Consensus.Storage.LedgerDB.Stream
     Ouroboros.Consensus.Storage.LedgerDB.Update
     Ouroboros.Consensus.Storage.Serialisation
     Ouroboros.Consensus.Storage.VolatileDB
