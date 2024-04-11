@@ -15,7 +15,9 @@ author: IOG Engineering Team
 maintainer: operations@iohk.io
 category: Network
 build-type: Simple
-extra-doc-files: CHANGELOG.md
+extra-doc-files:
+  CHANGELOG.md
+  docs/haddocks/*.svg
 
 source-repository head
   type: git
@@ -310,6 +312,9 @@ library
 
   -- GHC 8.10.7 on aarch64-darwin cannot use text-2
   build-depends: text >=1.2.5.0 && <2.2
+  x-docspec-extra-packages:
+    directory
+    latex-svg-image
 
 library unstable-consensus-testlib
   import: common-lib
@@ -708,3 +713,14 @@ benchmark ChainSync-client-bench
     typed-protocols-examples,
     unstable-consensus-testlib,
     with-utf8,
+
+test-suite doctest
+  import: common-test
+  main-is: doctest.hs
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  default-language: Haskell2010
+  ghc-options: -Wno-unused-packages
+  build-depends:
+    base,
+    latex-svg-image,

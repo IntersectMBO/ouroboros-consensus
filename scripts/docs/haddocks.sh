@@ -21,6 +21,17 @@ BUILD_DIR=${2:-"dist-newstyle"}
 SCRIPTS_DIR=$(realpath "$(dirname "$(realpath "$0")")")
 GHC_VERSION=$(ghc --numeric-version)
 
+# pre-requisites
+if ! command -v cabal-docspec &> /dev/null
+then
+  # cabal-docspec. Download binary
+  curl -sL https://github.com/phadej/cabal-extras/releases/download/cabal-docspec-0.0.0.20230517/cabal-docspec-0.0.0.20230517-x86_64-linux.xz > cabal-docspec.xz
+  xz -d < cabal-docspec.xz > "$HOME"/.local/bin/cabal-docspec
+  rm -f cabal-docspec.xz
+  chmod a+x "$HOME"/.local/bin/cabal-docspec
+  export PATH=$PATH:"$HOME"/.local/bin/
+fi
+
 # we don't include `--use-index` option, because then quickjump data is not
 # generated.  This is not ideal, but there is no way to generate only top level
 # `doc-index.html` file.  With this approach we get:
@@ -49,10 +60,15 @@ echo "Building documentation of the packages"
 # build documentation of all modules
 grey=$(printf "\\033[38;5;245m")
 white=$(printf "\\033[0m")
+
+cabal build all 2>&1 | sed "s/^/${white}cabal> ${grey}/"
+
+OS_ARCH="$(jq -r '.arch + "-" + .os' dist-newstyle/cache/plan.json | head -n 1 | xargs)"
+
+cabal-docspec 2>&1 | sed "s/^/${white}cabal-docspec> ${grey}/"
+
 cabal haddock "${HADDOCK_OPTS[@]}" all 2>&1 | sed "s/^/${white}haddock> ${grey}/"
 echo -e -n "\\033[0m"
-
-OS_ARCH=$(jq -r '.arch + "-" + .os' dist-newstyle/cache/plan.json | head -n 1 | xargs)
 
 if [[ ! ( -d ${OUTPUT_DIR} ) ]]; then
   mkdir -p "${OUTPUT_DIR}"
