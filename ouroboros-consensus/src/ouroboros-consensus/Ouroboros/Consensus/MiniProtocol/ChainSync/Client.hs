@@ -259,6 +259,13 @@ data Jumping m blk = Jumping
     -- ChainSync or to jump to a given point. This is a blocking operation.
     jgNextInstruction   :: !(m (Jumping.Instruction blk)),
 
+    -- | To be called whenever the situation changed enough to maybe warrant an
+    -- update of ChainSync jumping; if we are processing a header, pass its
+    -- 'SlotNo'. For instance, when receiving a new header or when receiving
+    -- 'MsgAwaitReply'.
+    -- FIXME: Custom type, or even two callbacks?
+    jgTriggerJumping :: !(Maybe SlotNo -> m ()),
+
     -- | Process the result of a jump, either accepted or rejected.
     jgProcessJumpResult :: !(Jumping.JumpResult blk -> m ())
   }
@@ -276,6 +283,7 @@ noJumping :: (Applicative m) => Jumping m blk
 noJumping =
   Jumping
     { jgNextInstruction = pure Jumping.RunNormally
+    , jgTriggerJumping = const $ pure ()
     , jgProcessJumpResult = const $ pure ()
     }
 
@@ -352,11 +360,16 @@ bracketChainSyncClient
               }
             , csvJumping = Jumping {
                 jgNextInstruction = atomically $ Jumping.nextInstruction peerContext
+              , jgTriggerJumping = atomically . Jumping.triggerJumping peerContext
               , jgProcessJumpResult = atomically . Jumping.processJumpResult peerContext
               }
             }
   where
-    context = Jumping.makeContext varHandles (2 :: SlotNo) -- FIXME: make configurable
+    context =
+      Jumping.makeContext
+        varHandles
+        (2 :: SlotNo) -- FIXME: make configurable
+        (GenesisWindow undefined) -- FIXME: get actual value
 
     acquireContext = do
         tid <- myThreadId
@@ -1220,7 +1233,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     theirTipBlockNo
             onMsgAwaitReply =
               idlingStart idling >>
-              lbPause loPBucket
+              lbPause loPBucket >>
+              jgTriggerJumping jumping Nothing
         in
         case (n, decision) of
           (Zero, (Request, mkPipelineDecision')) ->
@@ -1307,6 +1321,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
+            jgTriggerJumping jumping $ Just $! slotNo
             atomically (setLatestSlot dynEnv (NotOrigin slotNo))
 
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case
