@@ -269,8 +269,11 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       guard $ AF.lastPoint frag0 /= AF.lastPoint frag1
       -- peer1 offers more than k blocks
       guard offersMoreThanK
-      -- peer1 definitely has higher density than peer0
-      guard $ lb1 > ub0
+      -- peer1 has the same or better density than peer0
+      --
+      -- This matters to ChainSync jumping, where dynamo and objector
+      -- could offer chains of equal density.
+      guard $ lb1 >= ub0
       pure peer0
 
     loeIntersectionSlot = AF.headSlot loeFrag
