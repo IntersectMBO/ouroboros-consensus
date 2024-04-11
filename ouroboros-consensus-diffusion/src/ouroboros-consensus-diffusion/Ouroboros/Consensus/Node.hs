@@ -581,12 +581,12 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           ( apps
           , Diffusion.P2PApplications
               P2P.ApplicationsExtra {
-                P2P.daRethrowPolicy          = consensusRethrowPolicy (Proxy @blk),
-                P2P.daReturnPolicy           = returnPolicy,
-                P2P.daLocalRethrowPolicy     = localRethrowPolicy,
-                P2P.daPeerMetrics            = peerMetrics,
-                P2P.daBlockFetchMode         = getFetchMode kernel,
-                P2P.daPeerSharingRegistry    = getPeerSharingRegistry kernel
+                P2P.daRethrowPolicy                  = consensusRethrowPolicy (Proxy @blk),
+                P2P.daReturnPolicy                   = returnPolicy,
+                P2P.daLocalRethrowPolicy             = localRethrowPolicy,
+                P2P.daPeerMetrics                    = peerMetrics,
+                P2P.daBlockFetchMode                 = getFetchMode kernel,
+                P2P.daPeerSharingRegistry            = getPeerSharingRegistry kernel
               }
           )
         DisabledP2PMode ->
@@ -632,7 +632,10 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   lpGetLatestSlot = getImmTipSlot kernel,
                   lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
                   lpGetLedgerStateJudgement = getLedgerStateJudgement kernel
-                }
+                },
+            -- TODO: consensus can use this callback to store information if the
+            -- node is connected to peers other than local roots.
+            Diffusion.daUpdateOutboundConnectionsState = \_ -> return ()
           }
 
         localRethrowPolicy :: RethrowPolicy
