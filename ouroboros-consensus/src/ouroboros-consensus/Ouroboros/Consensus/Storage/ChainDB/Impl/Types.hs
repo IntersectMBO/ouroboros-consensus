@@ -623,7 +623,7 @@ data SelectionChangedInfo blk = SelectionChangedInfo {
     , newTipSelectView  :: SelectView (BlockProtocol blk)
       -- ^ The 'SelectView' of the new tip. It is guaranteed that
       --
-      -- >>> Just newTipSelectView > oldTipSelectView
+      -- > Just newTipSelectView > oldTipSelectView
       -- True
     , oldTipSelectView  :: Maybe (SelectView (BlockProtocol blk))
       -- ^ The 'SelectView' of the old, previous tip. This can be 'Nothing' when
