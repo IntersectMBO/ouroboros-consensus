@@ -22,7 +22,6 @@ module Ouroboros.Consensus.Node (
     -- * Standard arguments
   , StdRunNodeArgs (..)
   , stdBfcSaltIO
-  , stdChainSyncTimeout
   , stdGsmAntiThunderingHerdIO
   , stdKeepAliveRngIO
   , stdLowLevelRunNodeArgsIO
@@ -110,9 +109,9 @@ import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Consensus.Util.Time (secondsToNominalDiffTime)
 import           Ouroboros.Network.BlockFetch (BlockFetchConfiguration (..))
 import qualified Ouroboros.Network.Diffusion as Diffusion
+import qualified Ouroboros.Network.Diffusion.Configuration as Diffusion
 import qualified Ouroboros.Network.Diffusion.NonP2P as NonP2P
 import qualified Ouroboros.Network.Diffusion.P2P as P2P
-import qualified Ouroboros.Network.Diffusion.Policies as Diffusion
 import           Ouroboros.Network.Magic
 import           Ouroboros.Network.NodeToClient (ConnectionId, LocalAddress,
                      LocalSocket, NodeToClientVersionData (..), combineVersions,
@@ -129,7 +128,6 @@ import           Ouroboros.Network.PeerSelection.PeerMetric (PeerMetrics,
 import           Ouroboros.Network.PeerSelection.PeerSharing (PeerSharing)
 import           Ouroboros.Network.PeerSelection.PeerSharing.Codec
                      (decodeRemoteAddress, encodeRemoteAddress)
-import           Ouroboros.Network.Protocol.Limits (shortWait)
 import           Ouroboros.Network.RethrowPolicy
 import qualified SafeWildCards
 import           System.Exit (ExitCode (..))
@@ -137,7 +135,7 @@ import           System.FilePath ((</>))
 import           System.FS.API (SomeHasFS (..))
 import           System.FS.API.Types
 import           System.FS.IO (ioHasFS)
-import           System.Random (StdGen, newStdGen, randomIO, randomRIO, split)
+import           System.Random (StdGen, newStdGen, randomIO, split)
 
 {-------------------------------------------------------------------------------
   The arguments to the Consensus Layer node functionality
@@ -626,7 +624,10 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   lpGetLatestSlot = getImmTipSlot kernel,
                   lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
                   lpGetLedgerStateJudgement = getLedgerStateJudgement kernel
-                }
+                },
+            -- TODO: consensus can use this callback to store information if the
+            -- node is connected to peers other than local roots.
+            Diffusion.daUpdateOutboundConnectionsState = \_ -> return ()
           }
 
         localRethrowPolicy :: RethrowPolicy
@@ -732,7 +733,7 @@ mkNodeKernelArgs
       , blockFetchSize          = estimateBlockSize
       , mempoolCapacityOverride = NoMempoolCapacityBytesOverride
       , miniProtocolParameters  = defaultMiniProtocolParameters
-      , blockFetchConfiguration = defaultBlockFetchConfiguration
+      , blockFetchConfiguration = Diffusion.defaultBlockFetchConfiguration bfcSalt
       , gsmArgs = GsmNodeKernelArgs {
           gsmAntiThunderingHerd
         , gsmDurationUntilTooOld
@@ -743,15 +744,6 @@ mkNodeKernelArgs
       , keepAliveRng = kaRng
       , peerSharingRng = psRng
       , publicPeerSelectionStateVar
-      }
-  where
-    defaultBlockFetchConfiguration :: BlockFetchConfiguration
-    defaultBlockFetchConfiguration = BlockFetchConfiguration
-      { bfcMaxConcurrencyBulkSync = 1
-      , bfcMaxConcurrencyDeadline = 1
-      , bfcMaxRequestsInflight    = fromIntegral $ blockFetchPipeliningMax defaultMiniProtocolParameters
-      , bfcDecisionLoopInterval   = 0.01 -- 10ms
-      , bfcSalt
       }
 
 -- | We allow the user running the node to customise the 'NodeKernelArgs'
@@ -799,33 +791,6 @@ stdGsmAntiThunderingHerdIO = newStdGen
 
 stdKeepAliveRngIO :: IO StdGen
 stdKeepAliveRngIO = newStdGen
-
-stdChainSyncTimeout :: IO NTN.ChainSyncTimeout
-stdChainSyncTimeout = do
-    -- These values approximately correspond to false positive
-    -- thresholds for streaks of empty slots with 99% probability,
-    -- 99.9% probability up to 99.999% probability.
-    -- t = T_s [log (1-Y) / log (1-f)]
-    -- Y = [0.99, 0.999...]
-    -- T_s = slot length of 1s.
-    -- f = 0.05
-    -- The timeout is randomly picked per bearer to avoid all bearers
-    -- going down at the same time in case of a long streak of empty
-    -- slots.
-    -- To avoid global synchronosation the timeout is picked uniformly
-    -- from the interval 135 - 269, corresponds to the a 99.9% to
-    -- 99.9999% thresholds.
-    -- TODO: The timeout should be drawn at random everytime chainsync
-    --       enters the must reply state. A static per connection timeout
-    --       leads to selection preassure for connections with a large
-    --       timeout, see #4244.
-    mustReplyTimeout <- Just <$> realToFrac <$> randomRIO (135,269 :: Double)
-    return NTN.ChainSyncTimeout
-      { canAwaitTimeout  = shortWait
-      , intersectTimeout = shortWait
-      , mustReplyTimeout
-      , idleTimeout      = Just 3673
-      }
 
 stdVersionDataNTN :: NetworkMagic
                   -> DiffusionMode
@@ -887,7 +852,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
     llrnKeepAliveRng          <- stdKeepAliveRngIO
     pure LowLevelRunNodeArgs
       { llrnBfcSalt
-      , llrnChainSyncTimeout = fromMaybe stdChainSyncTimeout srnChainSyncTimeout
+      , llrnChainSyncTimeout = fromMaybe Diffusion.defaultChainSyncTimeout srnChainSyncTimeout
       , llrnChainSyncLoPBucketConfig = ChainSyncLoPBucketDisabled
       , llrnCustomiseHardForkBlockchainTimeArgs = id
       , llrnGsmAntiThunderingHerd
