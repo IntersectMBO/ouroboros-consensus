@@ -464,6 +464,7 @@ library unstable-mock-block
     ouroboros-network-api,
     ouroboros-network-mock,
     serialise,
+    text,
     time,
     unstable-consensus-testlib,
 
