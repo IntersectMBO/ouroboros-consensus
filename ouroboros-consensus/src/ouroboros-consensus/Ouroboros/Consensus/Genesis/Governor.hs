@@ -174,7 +174,7 @@ runGdd loEUpdater varLoEFrag chainDb getTrigger =
 
 data DensityBounds blk =
   DensityBounds {
-    fragment        :: AnchoredFragment (Header blk),
+    clippedFragment :: AnchoredFragment (Header blk),
     offersMoreThanK :: Bool,
     lowerBound      :: Word64,
     upperBound      :: Word64,
@@ -213,7 +213,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
   (losingPeers, densityBounds)
   where
     densityBounds = Map.fromList $ do
-      (peer, fragment) <- Map.toList competingFrags
+      (peer, clippedFragment) <- Map.toList clippedFrags
       state <- maybeToList (states Map.!? peer)
       -- Skip peers that haven't sent any headers yet.
       -- They should be disconnected by timeouts instead.
@@ -227,25 +227,23 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
                max (AF.headSlot candidateSuffix) latestSlot
             >= NotOrigin firstSlotAfterGenesisWindow
 
-          -- If the peer is idling, we assume it has no more headers to send.
-          --
           -- If the slot of the latest header we know of is _after_ the end of
           -- the Genesis window (either because the candidate fragment extends
           -- beyond it or because we are waiting to validate a header beyond the
           -- forecast horizon that we already received), there can be no headers
           -- in between and 'potentialSlots' is 0.
-          --
-          -- If the peer has more headers that it hasn't sent yet, each slot
-          -- between the latest header we know of and the end of the Genesis
-          -- window could contain a block, so the upper bound for the total
-          -- number of blocks in the window is the sum of the known blocks and
-          -- that number of remaining slots.
           potentialSlots =
-            if idling || hasBlockAfter then 0
-            else sgen - totalBlockCount
+            if hasBlockAfter then 0
+            else unknownTrailingSlots
+
+          -- Number of trailing slots in the genesis window that could have
+          -- headers which haven't been sent yet
+          unknownTrailingSlots = unSlotNo $
+            -- cannot underflow as the fragment is clipped to the genesis window
+            firstSlotAfterGenesisWindow - succWithOrigin (AF.headSlot clippedFragment)
 
           -- The number of blocks within the Genesis window we know with certainty
-          lowerBound = fromIntegral $ AF.length fragment
+          lowerBound = fromIntegral $ AF.length clippedFragment
 
           upperBound = lowerBound + potentialSlots
 
@@ -257,20 +255,45 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           -- If not, it is not qualified to compete by density (yet).
           offersMoreThanK = totalBlockCount > k
 
-      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
+      pure (peer, DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 
-    losingPeers = nubOrd $ do
-      (peer0 , DensityBounds {fragment = frag0, upperBound = ub0}) <-
+    losingPeers = nubOrd $ Map.toList densityBounds >>= \
+      (peer0 , DensityBounds { clippedFragment = frag0
+                             , lowerBound = lb0
+                             , upperBound = ub0
+                             , hasBlockAfter = hasBlockAfter0
+                             , idling = idling0
+                             }) ->
+      -- If the density is 0, the peer should be disconnected. This affects
+      -- ChainSync jumping, where genesis windows with no headers prevent jumps
+      -- from happening.
+      if ub0 == 0 then pure peer0 else do
+      (_peer1, DensityBounds {clippedFragment = frag1, offersMoreThanK, lowerBound = lb1 }) <-
         Map.toList densityBounds
-      (_peer1, DensityBounds {fragment = frag1, offersMoreThanK, lowerBound = lb1 }) <-
-        Map.toList densityBounds
+      -- Don't disconnect peer0 if it sent no headers after the intersection yet
+      -- and it is not idling.
+      --
+      -- See Note [Chain disagreement]
+      --
+      -- Note: hasBlockAfter0 is False if frag0 is empty and ub0>0.
+      -- But we leave it here as a reminder that we care about it.
+      guard $ idling0 || not (AF.null frag0) || hasBlockAfter0
       -- ensure that the two peer fragments don't share any
       -- headers after the LoE
       guard $ AF.lastPoint frag0 /= AF.lastPoint frag1
-      -- peer1 offers more than k blocks
-      guard offersMoreThanK
-      -- peer1 definitely has higher density than peer0
-      guard $ lb1 > ub0
+      -- peer1 offers more than k blocks or peer0 has sent all headers in the
+      -- genesis window after the intersection (idling or not)
+      guard $ offersMoreThanK || lb0 == ub0
+      -- peer1 has the same or better density than peer0
+      -- If peer0 is idling, we assume no more headers will be sent.
+      --
+      -- Having the same density is enough to disconnect peer0, as the honest
+      -- chain is expected to have a strictly higher density than all of the
+      -- other chains.
+      --
+      -- This matters to ChainSync jumping, where adversarial dynamo and
+      -- objector could offer chains of equal density.
+      guard $ lb1 >= (if idling0 then lb0 else ub0)
       pure peer0
 
     loeIntersectionSlot = AF.headSlot loeFrag
@@ -281,8 +304,31 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
     dropBeyondGenesisWindow =
       AF.takeWhileOldest ((< firstSlotAfterGenesisWindow) . blockSlot)
 
-    competingFrags =
+    clippedFrags =
       Map.map dropBeyondGenesisWindow candidateSuffixes
+
+-- Note [Chain disagreement]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- Imagine two peers serving the following chain:
+--
+-- > k: 1
+-- > sgen: 2
+-- >
+-- >   0 1 2
+-- > G---1-2
+--
+-- Say peer1 sent no headers yet and peer2 sent 2 headers.
+-- The intersection of both is G, the density of peer2's chain is 2,
+-- while the upperbound of the density of peer1 is also 2.
+--
+-- For GDD to disconnect peer1 safely, it is essential that both chains
+-- disagree after the intersection.
+--
+-- To know if the chains will dissagree we defer disconnecting peer1
+-- until it declares to have no more headers, or until it sends one header
+-- after the intersection. If both chains agree on the next header after
+-- the intersection, we don't disconnect peer1 either.
 
 data TraceGDDEvent peer blk =
   TraceGDDEvent {
