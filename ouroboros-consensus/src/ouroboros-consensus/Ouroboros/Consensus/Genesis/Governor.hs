@@ -260,10 +260,19 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 
     losingPeers = nubOrd $ do
-      (peer0 , DensityBounds {fragment = frag0, upperBound = ub0}) <-
+      (peer0 , DensityBounds { fragment = frag0
+                             , upperBound = ub0
+                             , hasBlockAfter = hasBlockAfter0
+                             , idling = idling0
+                             }) <-
         Map.toList densityBounds
       (_peer1, DensityBounds {fragment = frag1, offersMoreThanK, lowerBound = lb1 }) <-
         Map.toList densityBounds
+      -- Don't disconnect peer0 if it sent no headers after the intersection yet
+      -- and it is not idling.
+      --
+      -- See Note [Chain disagreement]
+      guard $ idling0 || not (AF.null frag0) || hasBlockAfter0
       -- ensure that the two peer fragments don't share any
       -- headers after the LoE
       guard $ AF.lastPoint frag0 /= AF.lastPoint frag1
@@ -290,6 +299,30 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 
     competingFrags =
       Map.map dropBeyondGenesisWindow candidateSuffixes
+
+-- Note [Chain disagreement]
+-- ~~~~~~~~~~~~~~~~~~~~~~~~~
+--
+-- Imagine two peers serving the following chain:
+--
+-- > k: 1
+-- > sgen: 2
+-- >
+-- >   0 1 2
+-- > G---1-2
+--
+-- Say peer1 sent no headers yet and peer2 sent 2 headers.
+-- The intersection of both is G, the density of peer2's chain is 2,
+-- while the upperbound of the density of peer1 is also 2.
+--
+-- Before this commit, GDD would disconnect peer1 as it cannot improve
+-- the density of peer2's chain. For this decision to be correct, however,
+-- it is essential that both chains disagree after the intersection.
+--
+-- To know if the chains will dissagree we defer disconnecting peer1
+-- until it declares to have no more headers, or until it sends one header
+-- after the intersection. If both chains agree on the next header after
+-- the intersection, we don't disconnect peer1 either.
 
 data TraceGDDEvent peer blk =
   TraceGDDEvent {
