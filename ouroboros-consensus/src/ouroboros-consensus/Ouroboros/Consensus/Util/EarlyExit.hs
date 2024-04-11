@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE QuantifiedConstraints      #-}
@@ -38,7 +39,7 @@ import           Data.Proxy
 import           NoThunks.Class (NoThunks (..))
 import           Ouroboros.Consensus.Util ((.:))
 import           Ouroboros.Consensus.Util.IOLike (IOLike (..), PrimMonad (..),
-                     StrictSVar, StrictTVar)
+                     StrictSVar, StrictTVar, castStrictSVar, castStrictTVar)
 import           Ouroboros.Consensus.Util.NormalForm.StrictMVar (StrictMVar)
 
 {-------------------------------------------------------------------------------
@@ -55,6 +56,18 @@ newtype WithEarlyExit m a = WithEarlyExit {
            , MonadTrans
            , MonadPlus
            )
+
+instance NoThunks (StrictTVar m a)
+      => NoThunks (StrictTVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictTVar (WithEarlyExit m)"
+  wNoThunks ctxt tv = do
+      wNoThunks ctxt (castStrictTVar tv :: StrictTVar m a)
+
+instance NoThunks (StrictSVar m a)
+      => NoThunks (StrictSVar (WithEarlyExit m) a) where
+  showTypeOf _ = "StrictSVar (WithEarlyExit m)"
+  wNoThunks ctxt tv = do
+      wNoThunks ctxt (castStrictSVar tv :: StrictSVar m a)
 
 -- | Internal only
 earlyExit :: m (Maybe a) -> WithEarlyExit m a
