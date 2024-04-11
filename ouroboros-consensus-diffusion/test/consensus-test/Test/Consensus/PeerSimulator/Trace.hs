@@ -376,7 +376,7 @@ terseGDDEvent = \case
       [
       "      Candidate suffixes (bounds):"
       ] ++
-      showPeers (terseHFragment . fragment <$> bounds) ++
+      showPeers (terseHFragment . clippedFragment <$> bounds) ++
       ["      Density bounds:"] ++
       showPeers (showBounds <$> bounds) ++
       ["      New candidate tips:"] ++
@@ -386,7 +386,7 @@ terseGDDEvent = \case
       "      Setting loeFrag: " ++ terseAnchor (AF.castAnchor loeHead)
       ]
   where
-    showBounds DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling} =
+    showBounds DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling} =
       show lowerBound ++ "/" ++ show upperBound ++ "[" ++ more ++ "], " ++
       lastPoint ++ "latest: " ++ showLatestSlot latestSlot ++ block ++ showIdling
       where
@@ -396,7 +396,7 @@ terseGDDEvent = \case
 
         lastPoint =
           "point: " ++
-          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.headPoint fragment)) ++
+          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.headPoint clippedFragment)) ++
           ", "
 
         showLatestSlot = \case
