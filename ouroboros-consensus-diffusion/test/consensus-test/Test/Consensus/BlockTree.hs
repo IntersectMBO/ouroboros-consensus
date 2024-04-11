@@ -80,7 +80,7 @@ mkTrunk btTrunk = BlockTree { btTrunk, btBranches = [] }
 
 -- | Add a branch to an existing block tree.
 --
--- PRECONDITION: The given fragment intersects with the trunk or its anchor.
+-- Yields @Nothing@ if the given fragment does not intersect with the trunk or its anchor.
 --
 -- FIXME: we should enforce that the branch's prefix shares the same anchor as
 -- the trunk.
@@ -95,7 +95,7 @@ addBranch branch bt = do
   let btbFull = fromJust $ AF.join btbPrefix btbSuffix
   pure $ bt { btBranches = BlockTreeBranch { .. } : btBranches bt }
 
--- | Same as @addBranch@ but assumes that the precondition holds.
+-- | Same as @addBranch@ but calls to 'error' if the former yields 'Nothing'.
 addBranch' :: AF.HasHeader blk => AF.AnchoredFragment blk -> BlockTree blk -> BlockTree blk
 addBranch' branch blockTree =
   fromMaybe (error "addBranch': precondition does not hold") $ addBranch branch blockTree
