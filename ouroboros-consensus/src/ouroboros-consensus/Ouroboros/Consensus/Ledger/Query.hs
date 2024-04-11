@@ -11,9 +11,9 @@
 {-# LANGUAGE UndecidableInstances  #-}
 module Ouroboros.Consensus.Ledger.Query (
     BlockQuery
+  , BlockSupportsLedgerQuery (..)
   , ConfigSupportsNode (..)
   , Query (..)
-  , QueryLedger (..)
   , QueryVersion (..)
   , ShowQuery (..)
   , answerQuery
@@ -124,8 +124,10 @@ data QueryEncoderException blk =
          (SomeSecond Query blk)
          QueryVersion
 
-deriving instance Show (SomeSecond BlockQuery blk) => Show (QueryEncoderException blk)
-instance (Typeable blk, Show (SomeSecond BlockQuery blk)) => Exception (QueryEncoderException blk)
+deriving instance Show (SomeSecond BlockQuery blk)
+    => Show (QueryEncoderException blk)
+instance (Typeable blk, Show (SomeSecond BlockQuery blk))
+    => Exception (QueryEncoderException blk)
 
 queryEncodeNodeToClient ::
      forall blk.
@@ -202,7 +204,10 @@ queryDecodeNodeToClient codecConfig queryVersion blockVersion
           (1, 3) -> requireVersion QueryVersion2 $ SomeSecond GetChainPoint
           _      -> fail $ "Query: invalid size and tag" <> show (size, tag)
 
-    requireVersion :: QueryVersion -> SomeSecond Query blk -> Decoder s (SomeSecond Query blk)
+    requireVersion ::
+         QueryVersion
+      -> SomeSecond Query blk
+      -> Decoder s (SomeSecond Query blk)
     requireVersion expectedVersion someSecondQuery =
       if queryVersion >= expectedVersion
         then return someSecondQuery
@@ -261,7 +266,7 @@ deriving instance Show (BlockQuery blk result) => Show (Query blk result)
 
 -- | Answer the given query about the extended ledger state.
 answerQuery ::
-     (QueryLedger blk, ConfigSupportsNode blk, HasAnnTip blk)
+     (BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk)
   => ExtLedgerCfg blk
   -> Query blk result
   -> ExtLedgerState blk
@@ -279,12 +284,18 @@ data family BlockQuery blk :: Type -> Type
 --
 -- Used by the LocalStateQuery protocol to allow clients to query the extended
 -- ledger state.
-class (ShowQuery (BlockQuery blk), SameDepIndex (BlockQuery blk)) => QueryLedger blk where
+class (ShowQuery (BlockQuery blk), SameDepIndex (BlockQuery blk))
+   => BlockSupportsLedgerQuery blk where
 
   -- | Answer the given query about the extended ledger state.
-  answerBlockQuery :: ExtLedgerCfg blk -> BlockQuery blk result -> ExtLedgerState blk -> result
+  answerBlockQuery ::
+      ExtLedgerCfg blk
+   -> BlockQuery blk result
+   -> ExtLedgerState blk
+   -> result
 
 instance SameDepIndex (BlockQuery blk) => Eq (SomeSecond BlockQuery blk) where
   SomeSecond qry == SomeSecond qry' = isJust (sameDepIndex qry qry')
 
-deriving instance (forall result. Show (BlockQuery blk result)) => Show (SomeSecond BlockQuery blk)
+deriving instance (forall result. Show (BlockQuery blk result))
+   => Show (SomeSecond BlockQuery blk)

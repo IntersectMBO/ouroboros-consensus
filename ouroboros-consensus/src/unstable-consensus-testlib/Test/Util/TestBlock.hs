@@ -647,7 +647,7 @@ instance HasHardForkHistory TestBlock where
 data instance BlockQuery TestBlock result where
   QueryLedgerTip :: BlockQuery TestBlock (Point TestBlock)
 
-instance QueryLedger TestBlock where
+instance BlockSupportsLedgerQuery TestBlock where
   answerBlockQuery _cfg QueryLedgerTip (ExtLedgerState TestLedger { lastAppliedPoint } _) =
     lastAppliedPoint
 

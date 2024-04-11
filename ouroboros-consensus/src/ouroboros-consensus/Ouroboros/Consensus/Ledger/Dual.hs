@@ -502,7 +502,7 @@ instance (Typeable m, Typeable a)
     => ShowProxy (BlockQuery (DualBlock m a)) where
 
 -- | Not used in the tests: no constructors
-instance Bridge m a => QueryLedger (DualBlock m a) where
+instance Bridge m a => BlockSupportsLedgerQuery (DualBlock m a) where
   answerBlockQuery _ = \case {}
 
 instance SameDepIndex (BlockQuery (DualBlock m a)) where

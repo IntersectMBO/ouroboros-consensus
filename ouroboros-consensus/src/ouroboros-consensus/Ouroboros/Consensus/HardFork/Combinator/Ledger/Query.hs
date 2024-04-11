@@ -109,7 +109,7 @@ data instance BlockQuery (HardForkBlock xs) :: Type -> Type where
     => QueryHardFork (x ': xs) result
     -> BlockQuery (HardForkBlock (x ': xs)) result
 
-instance All SingleEraBlock xs => QueryLedger (HardForkBlock xs) where
+instance All SingleEraBlock xs => BlockSupportsLedgerQuery (HardForkBlock xs) where
   answerBlockQuery
     (ExtLedgerCfg cfg)
     query

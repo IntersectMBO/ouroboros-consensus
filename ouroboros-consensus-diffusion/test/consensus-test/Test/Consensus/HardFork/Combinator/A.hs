@@ -347,7 +347,7 @@ instance ShowQuery (BlockQuery BlockA) where
 data instance BlockQuery BlockA result
   deriving (Show)
 
-instance QueryLedger BlockA where
+instance BlockSupportsLedgerQuery BlockA where
   answerBlockQuery _ qry = case qry of {}
 
 instance SameDepIndex (BlockQuery BlockA) where

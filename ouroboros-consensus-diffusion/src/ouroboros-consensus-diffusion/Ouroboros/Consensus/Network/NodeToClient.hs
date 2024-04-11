@@ -109,7 +109,7 @@ mkHandlers ::
      ( IOLike m
      , LedgerSupportsMempool blk
      , LedgerSupportsProtocol blk
-     , QueryLedger blk
+     , BlockSupportsLedgerQuery blk
      , ConfigSupportsNode blk
      )
   => NodeKernelArgs m addrNTN addrNTC blk
@@ -290,7 +290,7 @@ clientCodecs ccfg version networkVersion = Codecs {
     dec = decodeNodeToClient ccfg version
 
 -- | Identity codecs used in tests.
-identityCodecs :: (Monad m, QueryLedger blk)
+identityCodecs :: (Monad m, BlockSupportsLedgerQuery blk)
                => Codecs blk CodecFailure m
                     (AnyMessage (ChainSync (Serialised blk) (Point blk) (Tip blk)))
                     (AnyMessage (LocalTxSubmission (GenTx blk) (ApplyTxErr blk)))

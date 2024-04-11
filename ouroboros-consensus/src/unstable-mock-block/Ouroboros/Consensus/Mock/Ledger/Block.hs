@@ -494,7 +494,7 @@ txSize = fromIntegral . Lazy.length . serialise
 data instance BlockQuery (SimpleBlock c ext) result where
     QueryLedgerTip :: BlockQuery (SimpleBlock c ext) (Point (SimpleBlock c ext))
 
-instance MockProtocolSpecific c ext => QueryLedger (SimpleBlock c ext) where
+instance MockProtocolSpecific c ext => BlockSupportsLedgerQuery (SimpleBlock c ext) where
   answerBlockQuery _cfg QueryLedgerTip =
         castPoint
       . ledgerTipPoint

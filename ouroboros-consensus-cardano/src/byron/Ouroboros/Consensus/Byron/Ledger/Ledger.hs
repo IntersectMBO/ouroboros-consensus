@@ -199,7 +199,7 @@ instance ApplyBlock (LedgerState ByronBlock) ByronBlock where
 data instance BlockQuery ByronBlock :: Type -> Type where
   GetUpdateInterfaceState :: BlockQuery ByronBlock UPI.State
 
-instance QueryLedger ByronBlock where
+instance BlockSupportsLedgerQuery ByronBlock where
   answerBlockQuery _cfg GetUpdateInterfaceState (ExtLedgerState ledgerState _) =
     CC.cvsUpdateState (byronLedgerState ledgerState)
 
