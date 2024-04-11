@@ -335,13 +335,17 @@ prop_densityDisconnectTriggersChainSel =
 
     shrinkByRemovingAdversaries
 
-    ( \GenesisTest {gtBlockTree} stateView@StateView {svTipBlock} ->
+    ( \GenesisTest {gtBlockTree, gtSchedule} stateView@StateView {svTipBlock} ->
         let
+          othersCount = Map.size (others gtSchedule)
           exnCorrect = case exceptionsByComponent ChainSyncClient stateView of
             [fromException -> Just DensityTooLow] -> True
+            []                 | othersCount == 0 -> True
             _                                     -> False
           tipPointCorrect = Just (getTrunkTip gtBlockTree) == svTipBlock
-        in exnCorrect && tipPointCorrect
+        in counterexample "Unexpected exceptions" exnCorrect
+            .&&.
+           counterexample "The tip of the final selection is not the expected one" tipPointCorrect
     )
 
   where
