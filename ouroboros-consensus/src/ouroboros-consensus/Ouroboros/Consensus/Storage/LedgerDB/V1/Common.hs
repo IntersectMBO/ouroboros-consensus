@@ -203,16 +203,17 @@ getEnvSTM1 (LDBHandle varState) f a = readTVar varState >>= \case
 -------------------------------------------------------------------------------}
 
 data ForkerEnv m l blk = ForkerEnv {
-    -- * Local, consistent view of ledger state
+    -- | Local, consistent view of backing store
     foeBackingStoreValueHandle :: !(LedgerBackingStoreValueHandle m l)
+    -- | In memory db changelog
   , foeChangelog               :: !(StrictTVar m (AnchorlessDbChangelog l))
-    -- * Communication with the LedgerDB
     -- | Points to 'ldbChangelog'.
   , foeSwitchVar               :: !(StrictTVar m (DbChangelog l))
-    -- * Config
+    -- | Config
   , foeSecurityParam           :: !SecurityParam
+     -- | Config
   , foeQueryBatchSize          :: !QueryBatchSize
-    -- * Resource registry
+    -- | Resource registry
   , foeTracer                  :: !(Tracer m TraceForkerEvent)
   }
   deriving Generic

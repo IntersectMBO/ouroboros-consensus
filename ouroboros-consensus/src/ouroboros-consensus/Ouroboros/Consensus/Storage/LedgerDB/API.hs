@@ -33,7 +33,7 @@
 --     <<docs/haddocks/ledgerdb-switch.svg>>
 --
 --     Our current chain's tip is \(C_2\), but the fork containing blocks
---     \(F_1\), \(F_2\), and \(F_3\) is more preferable. We roll back our chain
+--      \(F_1\), \(F_2\), and \(F_3\) is more preferable. We roll back our chain
 --     to the intersection point of the two chains, \(I\), which must be not
 --     more than \(k\) blocks back from our current tip. Next, we must validate
 --     block \(F_1\) using the ledger state at block \(I\), after which we can
@@ -54,8 +54,7 @@
 --     - __Chain sync client__: To validate headers of a chain that intersects
 --        with any of the past \(k\) blocks.
 --
--- - __Providing 'Ouroboros.Consensus.Ledger.Tables.Basics.LedgerTable's at any
---     of the last \(k\) ledger states__: To apply blocks or transactions on top
+-- - __Providing 'Ouroboros.Consensus.Ledger.Tables.Basics.LedgerTable's at any of the last \(k\) ledger states__: To apply blocks or transactions on top
 --     of ledger states, the LedgerDB must be able to provide the appropriate
 --     ledger tables at any of those ledger states.
 --
@@ -69,7 +68,7 @@
 --     For this reason, a recent snapshot of the ledger state should be
 --     periodically written to disk. Upon the next startup, that snapshot can be
 --     read and used to restore the current ledger state, as well as the past
---     \(k\) ledger states.
+--      \(k\) ledger states.
 --
 -- - __Flushing 'LedgerTable' differences__: The running Consensus has to
 --     periodically flush chunks of [differences]("Data.Map.Diff.Strict")
@@ -311,7 +310,7 @@ data Forker m l blk = Forker {
     -- and not by the LedgerDB.
     forkerClose :: !(m ())
 
-    -- * Queries
+    -- Queries
 
     -- | Read ledger tables from disk.
   , forkerReadTables :: !(LedgerTables l KeysMK -> m (LedgerTables l ValuesMK))
@@ -327,7 +326,7 @@ data Forker m l blk = Forker {
     -- Returns 'Nothing' if the implementation is backed by @lsm-tree@.
   , forkerReadStatistics :: !(m (Maybe Statistics))
 
-    -- * Updates
+    -- Updates
 
     -- | Advance the fork handle by pushing a new ledger state to the tip of the
     -- current fork.
