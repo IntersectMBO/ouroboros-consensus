@@ -132,12 +132,15 @@ getPeer pid peers
   | otherwise
   = others peers Map.! pid
 
-updatePeer :: (a -> a) -> PeerId -> Peers a -> Peers a
+updatePeer :: (a -> (a, b)) -> PeerId -> Peers a -> (Peers a, b)
 updatePeer f pid Peers {honest, others}
   | HonestPeer <- pid
-  = Peers {honest = f <$> honest, others}
+  , let (a, b) = f (value honest)
+  = (Peers {honest = a <$ honest, others}, b)
   | otherwise
-  = Peers {honest, others = Map.adjust (fmap f) pid others}
+  , let p = others Map.! pid
+        (a, b) = f (value p)
+  = (Peers {honest, others = Map.adjust (a <$) pid others}, b)
 
 -- | Convert 'Peers' to a list of 'Peer'.
 peersList :: Peers a -> NonEmpty (Peer a)
