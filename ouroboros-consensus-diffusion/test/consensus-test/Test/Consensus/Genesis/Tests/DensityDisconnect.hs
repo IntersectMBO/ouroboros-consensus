@@ -1,29 +1,37 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE ViewPatterns          #-}
 module Test.Consensus.Genesis.Tests.DensityDisconnect (tests) where
 
-import           Cardano.Slotting.Slot (WithOrigin (..), unSlotNo)
+import           Cardano.Slotting.Slot (SlotNo (unSlotNo), WithOrigin (..))
 import           Control.Exception (fromException)
 import           Control.Monad.Class.MonadTime.SI (Time (..))
-import           Data.Bifunctor (second)
-import           Data.Foldable (minimumBy, toList)
+import           Data.Bifunctor
+import           Data.Foldable (maximumBy, minimumBy, toList)
 import           Data.Function (on)
 import           Data.Functor (($>), (<&>))
 import           Data.List (intercalate)
+import           Data.List.NonEmpty (nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe (fromMaybe)
 import           Data.Semigroup (Endo (..))
-import           Ouroboros.Consensus.Block (fromWithOrigin, withOrigin)
+import           Data.Set (Set, (\\))
+import qualified Data.Set as Set
+import           Ouroboros.Consensus.Block (Point (GenesisPoint),
+                     WithOrigin (NotOrigin), blockSlot, fromWithOrigin,
+                     withOrigin)
 import           Ouroboros.Consensus.Block.Abstract (Header, getHeader)
 import           Ouroboros.Consensus.Config.SecurityParam
                      (SecurityParam (SecurityParam), maxRollbacks)
-import           Ouroboros.Consensus.Genesis.Governor (densityDisconnect,
-                     sharedCandidatePrefix)
+import           Ouroboros.Consensus.Genesis.Governor (DensityBounds,
+                     densityDisconnect, sharedCandidatePrefix)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (ChainSyncClientException (DensityTooLow),
                      ChainSyncState (..))
+import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HasHeader, Tip (TipGenesis),
@@ -37,6 +45,7 @@ import           Test.Consensus.PeerSimulator.Run
 import           Test.Consensus.PeerSimulator.StateView
                      (PeerSimulatorComponent (..), StateView (..),
                      exceptionsByComponent)
+import           Test.Consensus.PeerSimulator.Trace (prettyDensityBounds)
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers
 import           Test.Consensus.PointSchedule.Shrinking
@@ -45,17 +54,18 @@ import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..),
                      scheduleBlockPoint, scheduleHeaderPoint, scheduleTipPoint)
 import qualified Test.QuickCheck as QC
 import           Test.QuickCheck
+import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TersePrinting (terseHFragment)
+import           Test.Util.TersePrinting (terseHFragment, terseHeader)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
                      adjustQuickCheckTests)
 
 tests :: TestTree
 tests =
-    adjustQuickCheckTests (* 4) $
+  adjustQuickCheckTests (* 4) $
   adjustQuickCheckMaxSize (`div` 5) $
   testGroup "gdd" [
     testProperty "basic" prop_densityDisconnectStatic,
@@ -145,18 +155,25 @@ data EvolvingPeer =
     suffix      :: [Header TestBlock],
     tip         :: Tip TestBlock,
     prefixSlots :: Int,
-    killed      :: Bool
+    forkSlot    :: WithOrigin SlotNo
   }
   deriving Show
 
 data EvolvingPeers =
   EvolvingPeers {
-    k       :: SecurityParam,
-    sgen    :: GenesisWindow,
-    peers   :: Peers EvolvingPeer,
-    loeFrag :: AnchoredFragment (Header TestBlock)
+    k        :: SecurityParam,
+    sgen     :: GenesisWindow,
+    peers    :: Peers EvolvingPeer,
+    loeFrag  :: AnchoredFragment (Header TestBlock),
+    fullTree :: BlockTree TestBlock
   }
   deriving Show
+
+data Evolution =
+  Evolution {
+    peers  :: Peers EvolvingPeer,
+    killed :: Set PeerId
+  }
 
 lastSlot ::
   AF.HasHeader b =>
@@ -171,7 +188,8 @@ initCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
     k = gtSecurityParam,
     sgen = gtGenesisWindow,
     peers,
-    loeFrag = AF.Empty AF.AnchorGenesis
+    loeFrag = AF.Empty AF.AnchorGenesis,
+    fullTree = gtBlockTree
   }
   where
     peers = mkPeers (peer trunk (AF.Empty (AF.headAnchor trunk)) (btTrunk gtBlockTree)) (branchPeer <$> branches)
@@ -186,7 +204,7 @@ initCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
         suffix = AF.toOldestFirst headers,
         tip = branchTip chain,
         prefixSlots = lastSlot forkPrefix,
-        killed = False
+        forkSlot = AF.lastSlot forkSuffix
       }
       where
         headers = toHeaders chain
@@ -195,126 +213,240 @@ initCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
 
     branches = btBranches gtBlockTree
 
+data UpdateEvent = UpdateEvent {
+     -- | The peer whose candidate was extended in this step
+    target   :: PeerId
+    -- | The header appended to the candidate of 'target'
+  , added    :: Header TestBlock
+    -- | Peers that have been disconnected in the current step
+  , killed   :: Set PeerId
+    -- | The GDD data
+  , bounds   :: Map PeerId (DensityBounds TestBlock)
+    -- | The current chains
+  , tree     :: BlockTree (Header TestBlock)
+  , loeFrag  :: AnchoredFragment (Header TestBlock)
+  , curChain :: AnchoredFragment (Header TestBlock)
+  }
+
+snapshotTree :: Peers EvolvingPeer -> BlockTree (Header TestBlock)
+snapshotTree Peers {honest, others} =
+  foldr addBranch' (mkTrunk (candidate (value honest))) (candidate . value <$> others)
+
+prettyUpdateEvent :: UpdateEvent -> [String]
+prettyUpdateEvent UpdateEvent {target, added, killed, bounds, tree, loeFrag, curChain} =
+  [
+    "Extended " ++ condense target ++ " with " ++ terseHeader added,
+    "        disconnect: " ++ show killed,
+    "        LoE frag: " ++ terseHFragment loeFrag,
+    "        selection: " ++ terseHFragment curChain
+  ]
+  ++ prettyDensityBounds bounds
+  ++ "" : prettyBlockTree tree
+
 data MonotonicityResult =
   HonestKilled
   |
-  Nonmonotonic
+  Nonmonotonic UpdateEvent
   |
   Finished
-  deriving Show
 
--- | Check whether the honest peer was killed or a peer's new losing state violates monotonicity, i.e. if it was found
--- to be losing before, it shouldn't be found winning later.
+-- | Check whether the honest peer was killed or a peer's new losing state
+-- violates monotonicity, i.e. if it was found to be losing before, it shouldn't
+-- be found winning later.
 --
--- If that is the case, return @Left (False, peers)@ to indicate that the test is over and failed.
+-- If that is the case, return @Left (HonestKilled|Nonmonotonic, peers)@ to
+-- indicate that the test is over and failed.
 --
--- Otherwise, remove all adversaries that either have no more blocks or have more than @sgen@ slots after their fork
--- intersection.
+-- Otherwise, remove all adversaries that either have no more blocks or have
+-- more than @sgen@ slots after their fork intersection. There is not other
+-- motivation to shrink the adversary set other than ensuring termination.
 --
--- If no adversaries remain, return @Left (True, peers)@ to indicate that the test is over and succeeded.
+-- If no adversaries remain, return @Left (Finished, peers)@ to indicate that
+-- the test is over and succeeded.
 --
 -- Otherwise, return @Right remaining@ to continue with the next step.
 updatePeers ::
   GenesisWindow ->
-  PeerId ->
-  [PeerId] ->
   Peers EvolvingPeer ->
-  Either (MonotonicityResult, Peers EvolvingPeer) (Peers EvolvingPeer)
-updatePeers (GenesisWindow sgen) target disconnect peers
-  | HonestPeer `elem` disconnect
+  -- | Peers that were disconnected previously
+  Set PeerId ->
+  UpdateEvent ->
+  Either (MonotonicityResult, Peers EvolvingPeer) Evolution
+updatePeers (GenesisWindow sgen) peers killedBefore event@UpdateEvent {target, killed = killedNow}
+  | HonestPeer `Set.member` killedNow
   = Left (HonestKilled, peers)
-  | killed peer
-  , not (target `elem` disconnect)
-  = Left (Nonmonotonic, peers)
+  | not (null violations)
+  = Left (Nonmonotonic event, peers)
   | null remaining
   = Left (Finished, peers)
   | otherwise
-  = Right peers {others = remaining}
+  = Right evo
   where
-    Peer {value = peer} = getPeer target peers
+    -- The peers that were killed in an earlier step but not in the current one
+    violations = killedBefore \\ killedNow
 
-    remaining = Map.filter (not . discardPeer) (others peers)
+    -- The new state if no violations were detected
+    evo@Evolution {peers = Peers {others = remaining}}
+      | targetExhausted
+      -- If the target is done, reset the set of killed peers, since other peers
+      -- may have lost only against the target.
+      -- Remove the target from the active peers.
+      = Evolution {peers = peers {others = Map.delete target (others peers)}, killed = mempty}
+      | otherwise
+      -- Otherwise replace the killed peers with the current set
+      = Evolution {peers, killed = killedNow}
 
-    discardPeer Peer {value = EvolvingPeer {candidate, suffix, prefixSlots}} =
-      null suffix || lastSlot candidate - prefixSlots > fromIntegral sgen
+    -- Whether the extended peer is uninteresting for GDD from now on
+    targetExhausted =
+      -- Its fragment cannot be extended anymore, or
+      null suffix ||
+      -- Its candidate is longer than a Genesis window
+      lastSlot candidate - prefixSlots > fromIntegral sgen
 
--- | Find the earliest intersection, used to compute the selection.
+    Peer {value = EvolvingPeer {candidate, suffix, prefixSlots}} = getPeer target peers
+
+-- | Find the peer whose candidate has the earliest intersection.
+-- If no peer has reached its fork suffix yet, return the one with the highest slot.
+--
+-- The selection will then be computed by taking up to k blocks after the immutable tip
+-- on this peer's candidate fragment.
 firstBranch :: Peers EvolvingPeer -> Peer EvolvingPeer
-firstBranch peers =
-  minimumBy (compare `on` predicate) (toList (others peers))
+firstBranch Peers {honest, others} =
+  fromMaybe newest $
+  minimumBy (compare `on` forkAnchor) <$> nonEmpty (filter hasForked (toList others))
   where
-    predicate = fromWithOrigin 0 . AF.anchorToSlotNo . AF.anchor . forkSuffix . value
+    newest = maximumBy (compare `on` (AF.headSlot . candidate . value)) (honest : toList others)
+    forkAnchor = fromWithOrigin 0 . AF.anchorToSlotNo . AF.anchor . forkSuffix . value
+    hasForked Peer {value = EvolvingPeer {candidate, forkSlot}} =
+      AF.headSlot candidate >= forkSlot
+
+-- | Determine the immutable tip by computing the latest point before the fork intesection
+-- for all peers, and then taking the earliest among the results.
+immutableTip :: Peers EvolvingPeer -> AF.Point (Header TestBlock)
+immutableTip peers =
+  minimum (lastHonest <$> toList (others peers))
+  where
+    lastHonest Peer {value = EvolvingPeer {candidate, forkSlot = NotOrigin forkSlot}} =
+      AF.headPoint $
+      AF.dropWhileNewest (\ b -> blockSlot b >= forkSlot) candidate
+    lastHonest _ = GenesisPoint
 
 -- | Take one block off the peer's suffix and append it to the candidate fragment.
 --
 -- Since we don't remove the honest peer when it's exhausted, this may be called with an empty suffix.
-movePeer :: EvolvingPeer -> EvolvingPeer
+movePeer :: EvolvingPeer -> (EvolvingPeer, Maybe (Header TestBlock))
 movePeer = \case
-  peer@EvolvingPeer {candidate, suffix = h : t} -> peer {candidate = candidate AF.:> h, suffix = t}
-  peer -> peer
+  peer@EvolvingPeer {candidate, suffix = h : t} ->
+    (peer {candidate = candidate AF.:> h, suffix = t}, Just h)
+  peer -> (peer, Nothing)
 
--- | Repeatedly run the GDD, each time updating a random peer to advance by one block.
--- The selection is set to the first k blocks of the first fork.
--- The tips are the last blocks of each full branch.
--- The returned 'Bool' indicates whether the honest peer won and no monotonicity violations were detected.
+-- | Repeatedly run the GDD, each time updating the candidate fragment of a
+-- random peer to advance by one header, until all peers have been discarded
+-- (not the same as disconnected!) according to 'updatePeers'.
+--
+-- The selection is set to the first k blocks of the first fork, the
+-- anchor being the intersection.
+--
+-- The latest slots are the youngest header of each candidate fragments.
+--
+-- The returned 'MonotonicityResult' indicates whether the honest peer won and
+-- no monotonicity violations were detected (the peer stays being disconnected
+-- if it starts being disconnected).
 evolveBranches ::
   EvolvingPeers ->
-  Gen (MonotonicityResult, EvolvingPeers)
-evolveBranches EvolvingPeers {k, sgen, peers = initialPeers} =
-  step initialPeers
+  Gen (MonotonicityResult, EvolvingPeers, [UpdateEvent])
+evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
+  step [] Evolution {peers = initialPeers, killed = mempty}
   where
-    step ps = do
-      target <- elements ids
+    step events Evolution {peers = ps, killed = killedBefore} = do
+      (target, nextPeers, added) <- unsafeMapSuchThatJust $ do
+        -- Select a random peer
+        pid <- elements ids
+        pure $ do
+          -- Add a block to the candidate. If the peer has no more blocks,
+          -- this returns 'Nothing' and the generator retries.
+          (nextPeers, added) <- sequence (updatePeer movePeer pid ps)
+          pure (pid, nextPeers, added)
       let
-          curChain = selection (value (firstBranch ps))
-          next = updatePeer movePeer target ps
-          candidates = candidate . value <$> toMap next
-          states =
-            candidates <&> \ csCandidate ->
-              ChainSyncState {
-                csCandidate,
-                csIdling = False,
-                csLatestSlot = Just (AF.headSlot csCandidate)
-              }
-          (loeFrag, suffixes) = sharedCandidatePrefix curChain candidates
-          disconnect = fst (densityDisconnect sgen k states suffixes loeFrag)
-      either (pure . second (result loeFrag)) step (updatePeers sgen target disconnect next)
+        -- Compute the selection.
+        curChain = selection (immutableTip ps) (firstBranch ps)
+        candidates = candidate . value <$> toMap nextPeers
+        states =
+          candidates <&> \ csCandidate ->
+            ChainSyncState {
+              csCandidate,
+              csIdling = False,
+              csLatestSlot = Just (AF.headSlot csCandidate)
+            }
+        -- Run GDD.
+        (loeFrag, suffixes) = sharedCandidatePrefix curChain candidates
+        (killedNow, bounds) = first Set.fromList $ densityDisconnect sgen k states suffixes loeFrag
+        event = UpdateEvent {
+          target,
+          added,
+          killed = killedNow,
+          bounds,
+          tree = snapshotTree nextPeers,
+          loeFrag,
+          curChain
+          }
+        newEvents = event : events
+        -- Check the termination condition and remove exhausted peers.
+        updated = updatePeers sgen nextPeers killedBefore event
+      either (pure . result newEvents loeFrag) (step newEvents) updated
       where
-        result f final = EvolvingPeers {k, sgen, peers = final, loeFrag = f}
+        result evs f (res, final) = (res, EvolvingPeers {k, sgen, peers = final, loeFrag = f, fullTree}, reverse evs)
 
-        selection branch =
-          AF.takeOldest (AF.length (forkPrefix branch) + fromIntegral k') (forkSuffix branch)
+        -- Take k blocks after the immutable tip on the first fork.
+        selection imm Peer {value = EvolvingPeer {candidate}} =
+          case AF.splitAfterPoint candidate imm of
+            Just (_, s) -> AF.takeOldest (fromIntegral k') s
+            Nothing     -> error "immutable tip not on candidate"
 
         ids = toList (getPeerIds ps)
 
     SecurityParam k' = k
-    _tips = tip <$> toMap' initialPeers
 
 peerInfo :: EvolvingPeers -> [String]
-peerInfo EvolvingPeers {k = SecurityParam k, sgen = GenesisWindow sgen, peers = Peers {honest, others}, loeFrag} =
+peerInfo EvolvingPeers {k = SecurityParam k, sgen = GenesisWindow sgen, loeFrag} =
   [
     "k: " <> show k,
     "sgen: " <> show sgen,
-    "loeFrag: " <> terseHFragment loeFrag,
-    intercalate "\n" (prettyBlockTree tree)
+    "loeFrag: " <> terseHFragment loeFrag
   ]
-  where
-    tree = foldr addBranch' (mkTrunk (candidate (value honest))) (candidate . value <$> others)
 
+-- | Tests that when GDD disconnects a peer, it continues to disconnect it when
+-- its candidate fragment is extended.
 prop_densityDisconnectMonotonic :: Property
 prop_densityDisconnectMonotonic =
-  forAllBlind gen $ \ (result, final) ->
+  forAllBlind gen $ \ (result, final, events) ->
     appEndo (foldMap (Endo . counterexample) (peerInfo final)) $
-    check result
+    check final events result
   where
-    check = \case
-      HonestKilled -> counterexample "Honest peer was killed" False
-      Nonmonotonic -> counterexample "Peer went from losing to winning" False
+    check final events = \case
+      HonestKilled -> withEvents $ counterexample "Honest peer was killed" False
+      Nonmonotonic event -> do
+        let msg = "Peer went from losing to remaining"
+        withEvents $ counterexample (catLines (msg : prettyUpdateEvent event)) False
       Finished -> property True
+      where
+        withEvents | debug = counterexample (catLines debugInfo)
+                   | otherwise = id
+
+        debugInfo =
+          "Event log:" : ((++ [""]) . prettyUpdateEvent =<< events) ++
+          ["k: " ++ show k'] ++
+          ("Full tree:" : prettyBlockTree (fullTree final) ++ [""])
+
+        EvolvingPeers {k = SecurityParam k'} = final
+
+    catLines = intercalate "\n"
 
     gen = do
       gt <- genChains (QC.choose (1, 4))
       evolveBranches (initCandidates gt)
+
+    debug = True
 
 -- | Tests that a GDD disconnection re-triggers chain selection, i.e. when the current
 -- selection is blocked by LoE, and the leashing adversary reveals it is not dense enough,
