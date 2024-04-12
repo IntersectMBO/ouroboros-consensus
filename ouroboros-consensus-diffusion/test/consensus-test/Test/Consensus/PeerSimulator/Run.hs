@@ -31,9 +31,9 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Storage.ChainDB.Impl
-                     (ChainDbArgs (cdbTracer), cdbLoE)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+                     (ChainDbSpecificArgs (cdbsLoE), updateTracer)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -360,21 +360,20 @@ mkChainDb ::
   ResourceRegistry m ->
   GetLoEFragment m TestBlock ->
   m (ChainDB m TestBlock)
-mkChainDb tracer nodeCfg registry cdbLoE = do
+mkChainDb tracer nodeCfg registry cdbsLoE = do
     chainDbArgs <- do
-      mcdbNodeDBs <- emptyNodeDBs
-      pure $ (
-        fromMinimalChainDbArgs MinimalChainDbArgs {
-            mcdbTopLevelConfig = nodeCfg
-          , mcdbChunkInfo      = mkTestChunkInfo nodeCfg
-          , mcdbInitLedger     = testInitExtLedger
-          , mcdbRegistry       = registry
-          , mcdbNodeDBs
-          }
-        ) {
-            cdbTracer = Tracer (traceWith tracer . TraceChainDBEvent),
-            cdbLoE
-        }
+      mcdbNodeDBs  <- emptyNodeDBs
+      let args = updateTracer
+            (Tracer (traceWith tracer . TraceChainDBEvent))
+            (fromMinimalChainDbArgs MinimalChainDbArgs {
+                mcdbTopLevelConfig = nodeCfg
+              , mcdbChunkInfo      = mkTestChunkInfo nodeCfg
+              , mcdbInitLedger     = testInitExtLedger
+              , mcdbRegistry       = registry
+              , mcdbNodeDBs
+              }
+            )
+      pure $ args { ChainDB.Impl.cdbsArgs = (ChainDB.Impl.cdbsArgs args) { cdbsLoE } }
     (_, (chainDB, ChainDB.Impl.Internal{intAddBlockRunner})) <-
       allocate
         registry

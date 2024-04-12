@@ -98,7 +98,7 @@ data LgrDB m blk = LgrDB {
       -- this set.
     , resolveBlock   :: !(RealPoint blk -> m blk)
       -- ^ Read a block from disk
-    , cfg            :: !(TopLevelConfig blk)
+    , cfg            :: !(LedgerDB.LedgerDbCfg (ExtLedgerState blk))
     , diskPolicy     :: !LedgerDB.DiskPolicy
     , hasFS          :: !(SomeHasFS m)
     , tracer         :: !(Tracer m (LedgerDB.TraceSnapshotEvent blk))
@@ -126,23 +126,18 @@ type LgrDbSerialiseConstraints blk =
 data LgrDbArgs f m blk = LgrDbArgs {
       lgrDiskPolicyArgs :: LedgerDB.DiskPolicyArgs
     , lgrGenesis        :: HKD f (m (ExtLedgerState blk))
-    , lgrHasFS          :: SomeHasFS m
-    , lgrTopLevelConfig :: HKD f (TopLevelConfig blk)
-    , lgrTraceLedger    :: Tracer m (LedgerDB' blk)
+    , lgrHasFS          :: HKD f (SomeHasFS m)
+    , lgrConfig         :: HKD f (LedgerDB.LedgerDbCfg (ExtLedgerState blk))
     , lgrTracer         :: Tracer m (LedgerDB.TraceSnapshotEvent blk)
     }
 
 -- | Default arguments
-defaultArgs ::
-     Applicative m
-  => SomeHasFS m
-  -> LgrDbArgs Defaults m blk
-defaultArgs lgrHasFS = LgrDbArgs {
+defaultArgs :: Applicative m => Incomplete LgrDbArgs m blk
+defaultArgs = LgrDbArgs {
       lgrDiskPolicyArgs = LedgerDB.defaultDiskPolicyArgs
-    , lgrGenesis        = NoDefault
-    , lgrHasFS
-    , lgrTopLevelConfig = NoDefault
-    , lgrTraceLedger    = nullTracer
+    , lgrGenesis        = noDefault
+    , lgrHasFS          = noDefault
+    , lgrConfig         = noDefault
     , lgrTracer         = nullTracer
     }
 
@@ -157,7 +152,7 @@ openDB :: forall m blk.
           , InspectLedger blk
           , HasCallStack
           )
-       => LgrDbArgs Identity m blk
+       => Complete LgrDbArgs m blk
        -- ^ Stateless initializaton arguments
        -> Tracer m (LedgerDB.ReplayGoal blk -> LedgerDB.TraceReplayEvent blk)
        -- ^ Used to trace the progress while replaying blocks against the
@@ -203,8 +198,8 @@ openDB args@LgrDbArgs { lgrHasFS = lgrHasFS@(SomeHasFS hasFS), .. } replayTracer
             varDB          = varDB
           , varPrevApplied = varPrevApplied
           , resolveBlock   = getBlock
-          , cfg            = lgrTopLevelConfig
-          , diskPolicy     = let k = configSecurityParam lgrTopLevelConfig
+          , cfg            = lgrConfig
+          , diskPolicy     = let k = LedgerDB.ledgerDbCfgSecParam lgrConfig
             in  LedgerDB.mkDiskPolicy k lgrDiskPolicyArgs
           , hasFS          = lgrHasFS
           , tracer         = lgrTracer
@@ -220,7 +215,7 @@ initFromDisk ::
      , InspectLedger blk
      , HasCallStack
      )
-  => LgrDbArgs Identity m blk
+  => Complete LgrDbArgs m blk
   -> Tracer m (LedgerDB.ReplayGoal blk -> LedgerDB.TraceReplayEvent blk)
   -> ImmutableDB m blk
   -> m (LedgerDB' blk, Word64)
@@ -234,24 +229,24 @@ initFromDisk LgrDbArgs { lgrHasFS = hasFS, .. }
         hasFS
         (decodeDiskExtLedgerState ccfg)
         decode
-        (LedgerDB.configLedgerDb lgrTopLevelConfig)
+        lgrConfig
         lgrGenesis
         (streamAPI immutableDB)
     return (db, replayed)
   where
-    ccfg = configCodec lgrTopLevelConfig
+    ccfg = configCodec $ getExtLedgerCfg $ LedgerDB.ledgerDbCfg lgrConfig
 
 -- | For testing purposes
 mkLgrDB :: StrictTVar m (LedgerDB' blk)
         -> StrictTVar m (Set (RealPoint blk))
         -> (RealPoint blk -> m blk)
-        -> LgrDbArgs Identity m blk
+        -> Complete LgrDbArgs m blk
         -> SecurityParam
         -> LgrDB m blk
 mkLgrDB varDB varPrevApplied resolveBlock args k = LgrDB {..}
   where
     LgrDbArgs {
-        lgrTopLevelConfig = cfg
+        lgrConfig         = cfg
       , lgrDiskPolicyArgs = diskPolicyArgs
       , lgrHasFS          = hasFS
       , lgrTracer         = tracer
@@ -293,7 +288,7 @@ takeSnapshot lgrDB@LgrDB{ cfg, tracer, hasFS } = wrapFailure (Proxy @blk) $ do
       (encodeDiskExtLedgerState ccfg)
       ledgerDB
   where
-    ccfg = configCodec cfg
+    ccfg = configCodec $ getExtLedgerCfg $ LedgerDB.ledgerDbCfg cfg
 
 trimSnapshots ::
      forall m blk. (MonadCatch m, HasHeader blk)
@@ -328,7 +323,7 @@ validate LgrDB{..} ledgerDB blockCache numRollbacks trace = \hdrs -> do
     aps <- mkAps hdrs <$> atomically (readTVar varPrevApplied)
     res <- fmap rewrap $ LedgerDB.defaultResolveWithErrors resolveBlock $
              LedgerDB.ledgerDbSwitch
-               (LedgerDB.configLedgerDb cfg)
+               cfg
                numRollbacks
                (lift . lift . trace)
                aps

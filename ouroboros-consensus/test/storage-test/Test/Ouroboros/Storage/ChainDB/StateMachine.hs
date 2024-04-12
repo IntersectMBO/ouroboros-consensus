@@ -81,7 +81,7 @@ module Test.Ouroboros.Storage.ChainDB.StateMachine (
 
 import           Codec.Serialise (Serialise)
 import           Control.Monad (replicateM, void)
-import           Control.Tracer
+import           Control.Tracer as CT
 import           Data.Bifoldable
 import           Data.Bifunctor
 import qualified Data.Bifunctor.TH as TH
@@ -117,6 +117,7 @@ import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Storage.Common (SizeInBytes)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
@@ -1546,8 +1547,15 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       varCurSlot         <- uncheckedNewTVarM 0
       varNextId          <- uncheckedNewTVarM 0
       nodeDBs            <- emptyNodeDBs
-      let args = mkArgs testCfg chunkInfo testInitExtLedger threadRegistry nodeDBs tracer
-                   maxClockSkew varCurSlot
+      let args = mkArgs
+                   testCfg
+                   chunkInfo
+                   testInitExtLedger
+                   threadRegistry
+                   nodeDBs
+                   tracer
+                   maxClockSkew
+                   varCurSlot
 
       (hist, model, res, trace) <- bracket
         (open args >>= newTVarIO)
@@ -1688,7 +1696,7 @@ mkArgs :: IOLike m
        -> ExtLedgerState Blk
        -> ResourceRegistry m
        -> NodeDBs (StrictTVar m MockFS)
-       -> Tracer m (TraceEvent Blk)
+       -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
        -> ChainDbArgs Identity m Blk
@@ -1700,10 +1708,17 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
           , mcdbRegistry = registry
           , mcdbNodeDBs = nodeDBs
           }
-  in args { cdbCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
-          , cdbCheckIntegrity = testBlockIsValid
-          , cdbBlocksToAddSize = 2
-          , cdbTracer = tracer
+  in ChainDB.updateTracer tracer $
+      args { cdbsArgs = (cdbsArgs args) {
+               ChainDB.cdbsCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
+             , ChainDB.cdbsBlocksToAddSize = 2
+             }
+           , cdbImmDbArgs = (cdbImmDbArgs args) {
+               ImmutableDB.immCheckIntegrity = testBlockIsValid
+               }
+           , cdbVolDbArgs = (cdbVolDbArgs args) {
+               VolatileDB.volCheckIntegrity = testBlockIsValid
+               }
           }
 
 tests :: TestTree

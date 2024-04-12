@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE TupleSections       #-}
 {-# LANGUAGE TypeApplications    #-}
 -- | Run the whole Node
 --
@@ -49,7 +50,6 @@ module Ouroboros.Consensus.Node (
   , Tracers
   , Tracers' (..)
     -- * Internal helpers
-  , mkChainDbArgs
   , mkNodeKernelArgs
   , nodeKernelArgsEnforceInvariants
   , openChainDB
@@ -100,13 +100,9 @@ import           Ouroboros.Consensus.Node.Tracers
 import           Ouroboros.Consensus.NodeKernel
 import           Ouroboros.Consensus.Storage.ChainDB (ChainDB, ChainDbArgs)
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
-import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (LoEDisabled))
-import           Ouroboros.Consensus.Storage.ImmutableDB (ChunkInfo,
-                     ValidationPolicy (..))
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy
                      (DiskPolicyArgs (..))
-import           Ouroboros.Consensus.Storage.VolatileDB
-                     (BlockValidationPolicy (..))
 import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
@@ -220,12 +216,16 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
                         -> m a
 
       -- | The " static " ChainDB arguments
-    , llrnChainDbArgsDefaults :: ChainDbArgs Defaults m blk
+    , llrnChainDbArgsDefaults :: Incomplete ChainDbArgs m blk
+
+      -- | File-system on which the directories for the different databases will
+      -- be created.
+    , llrnMkHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS m
 
       -- | Customise the 'ChainDbArgs'
     , llrnCustomiseChainDbArgs ::
-           ChainDbArgs Identity m blk
-        -> ChainDbArgs Identity m blk
+           Complete ChainDbArgs m blk
+        -> Complete ChainDbArgs m blk
 
       -- | Customise the 'NodeArgs'
     , llrnCustomiseNodeKernelArgs ::
@@ -410,29 +410,24 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                          llrnMaxClockSkew
                          systemTime
 
-        let customiseChainDbArgs' args
+        let maybeValidateAll
               | lastShutDownWasClean
-              = llrnCustomiseChainDbArgs args
+              = id
               | otherwise
                 -- When the last shutdown was not clean, validate the complete
-                -- ChainDB to detect and recover from any corruptions. This will
-                -- override the default value /and/ the user-customised value of
-                -- the 'ChainDB.cdbImmValidation' and the
-                -- 'ChainDB.cdbVolValidation' fields.
-              = (llrnCustomiseChainDbArgs args) {
-                    ChainDB.cdbImmutableDbValidation = ValidateAllChunks
-                  , ChainDB.cdbVolatileDbValidation  = ValidateAll
-                  }
+                -- ChainDB to detect and recover from any disk corruption.
+              = ChainDB.ensureValidateAll
 
-        let finalChainDbArgs =
-              mkFinalChainDbArgs
-                registry
-                inFuture
-                cfg
-                initLedger
-                llrnChainDbArgsDefaults
-                customiseChainDbArgs'
-        chainDB <- ChainDB.openDB finalChainDbArgs
+        (chainDB, finalArgs) <- openChainDB
+                     registry
+                     inFuture
+                     cfg
+                     initLedger
+                     llrnMkHasFS
+                     llrnChainDbArgsDefaults
+                     (  maybeValidateAll
+                      . llrnCustomiseChainDbArgs
+                     )
 
         continueWithCleanChainDB chainDB $ do
           btime <-
@@ -458,7 +453,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                 llrnMaxCaughtUpAge
                 systemTime
               let gsmMarkerFileView =
-                    case ChainDB.cdbHasFSGsmDB finalChainDbArgs of
+                    case ChainDB.cdbsHasFSGsmDB $ ChainDB.cdbsArgs finalArgs of
                         SomeHasFS x -> GSM.realMarkerFileView chainDB x
               fmap (nodeKernelArgsEnforceInvariants . llrnCustomiseNodeKernelArgs)
                 $ mkNodeKernelArgs
@@ -674,57 +669,23 @@ openChainDB ::
   -> TopLevelConfig blk
   -> ExtLedgerState blk
      -- ^ Initial ledger
-  -> ChainDbArgs Defaults m blk
-  -> (ChainDbArgs Identity m blk -> ChainDbArgs Identity m blk)
+  -> (ChainDB.RelativeMountPoint -> SomeHasFS m)
+  -> Incomplete ChainDbArgs m blk
+     -- ^ A set of default arguments (possibly modified from 'defaultArgs')
+  -> (Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk)
       -- ^ Customise the 'ChainDbArgs'
-  -> m (ChainDB m blk)
-openChainDB registry inFuture cfg initLedger defArgs customiseArgs =
-    ChainDB.openDB
-  $ mkFinalChainDbArgs registry inFuture cfg initLedger defArgs customiseArgs
-
-mkFinalChainDbArgs
-  :: forall m blk. (RunNode blk, IOLike m)
-  => ResourceRegistry m
-  -> CheckInFuture m blk
-  -> TopLevelConfig blk
-  -> ExtLedgerState blk
-     -- ^ Initial ledger
-  -> ChainDbArgs Defaults m blk
-  -> (ChainDbArgs Identity m blk -> ChainDbArgs Identity m blk)
-      -- ^ Customise the 'ChainDbArgs'
-  -> ChainDbArgs Identity m blk
-mkFinalChainDbArgs registry inFuture cfg initLedger defArgs customiseArgs =
-    customiseArgs $
-      mkChainDbArgs registry inFuture cfg initLedger
-      (nodeImmutableDbChunkInfo (configStorage cfg))
-      defArgs
-
-mkChainDbArgs ::
-     forall m blk. (RunNode blk, IOLike m)
-  => ResourceRegistry m
-  -> CheckInFuture m blk
-  -> TopLevelConfig blk
-  -> ExtLedgerState blk
-     -- ^ Initial ledger
-  -> ChunkInfo
-  -> ChainDbArgs Defaults m blk
-  -> ChainDbArgs Identity m blk
-mkChainDbArgs
-  registry
-  inFuture
-  cfg
-  initLedger
-  chunkInfo
-  defArgs
-  = defArgs {
-      ChainDB.cdbTopLevelConfig = cfg
-    , ChainDB.cdbChunkInfo      = chunkInfo
-    , ChainDB.cdbCheckIntegrity = nodeCheckIntegrity (configStorage cfg)
-    , ChainDB.cdbGenesis        = return initLedger
-    , ChainDB.cdbCheckInFuture  = inFuture
-    , ChainDB.cdbLoE            = LoEDisabled
-    , ChainDB.cdbRegistry       = registry
-    }
+  -> m (ChainDB m blk, Complete ChainDbArgs m blk)
+openChainDB registry inFuture cfg initLedger fs defArgs customiseArgs =
+   let args = customiseArgs $ ChainDB.completeChainDbArgs
+               registry
+               inFuture
+               cfg
+               initLedger
+               (nodeImmutableDbChunkInfo (configStorage cfg))
+               (nodeCheckIntegrity (configStorage cfg))
+               fs
+               defArgs
+      in (,args) <$> ChainDB.openDB args
 
 mkNodeKernelArgs ::
      forall m addrNTN addrNTC blk. (RunNode blk, IOLike m)
@@ -931,8 +892,8 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnCustomiseHardForkBlockchainTimeArgs = id
       , llrnGsmAntiThunderingHerd
       , llrnKeepAliveRng
-      , llrnChainDbArgsDefaults =
-          updateChainDbDefaults $ ChainDB.defaultArgs mkHasFS
+      , llrnMkHasFS = stdMkChainDbHasFS srnDatabasePath
+      , llrnChainDbArgsDefaults = updateChainDbDefaults ChainDB.defaultArgs
       , llrnCustomiseChainDbArgs = id
       , llrnCustomiseNodeKernelArgs
       , llrnRunDataDiffusion =
@@ -973,23 +934,19 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
           Diffusion.daPublicPeerSelectionVar srnDiffusionArguments
       }
   where
-    mkHasFS :: ChainDB.RelativeMountPoint -> SomeHasFS IO
-    mkHasFS = stdMkChainDbHasFS srnDatabasePath
-
     networkMagic :: NetworkMagic
     networkMagic = getNetworkMagic $ configBlock $ pInfoConfig rnProtocolInfo
 
     updateChainDbDefaults ::
-         ChainDbArgs Defaults IO blk
-      -> ChainDbArgs Defaults IO blk
+         Incomplete ChainDbArgs IO blk
+      -> Incomplete ChainDbArgs IO blk
     updateChainDbDefaults =
-        (\x -> x { ChainDB.cdbTracer         = srnTraceChainDB
-                 , ChainDB.cdbDiskPolicyArgs = srnDiskPolicyArgs
-                 }) .
-        (if not srnChainDbValidateOverride then id else \x -> x
-          { ChainDB.cdbImmutableDbValidation = ValidateAllChunks
-          , ChainDB.cdbVolatileDbValidation  = ValidateAll
-          })
+          ChainDB.updateDiskPolicyArgs srnDiskPolicyArgs
+        . ChainDB.updateTracer srnTraceChainDB
+        . (if   not srnChainDbValidateOverride
+           then id
+           else ChainDB.ensureValidateAll)
+
 
     llrnCustomiseNodeKernelArgs ::
          NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk

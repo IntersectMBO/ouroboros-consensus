@@ -123,7 +123,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
     immutableDB <- ImmutableDB.openDB argsImmutableDb $ innerOpenCont ImmutableDB.closeDB
     immutableDbTipPoint <- lift $ atomically $ ImmutableDB.getTipPoint immutableDB
     let immutableDbTipChunk =
-          chunkIndexOfPoint (Args.cdbChunkInfo args) immutableDbTipPoint
+          chunkIndexOfPoint (ImmutableDB.immChunkInfo argsImmutableDb) immutableDbTipPoint
     lift $ traceWith tracer $
       TraceOpenEvent $
         OpenedImmutableDB immutableDbTipPoint immutableDbTipChunk
@@ -155,16 +155,15 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                           volatileDB
                           lgrDB
                           initChainSelTracer
-                          (Args.cdbTopLevelConfig args)
+                          (Args.cdbsTopLevelConfig cdbSpecificArgs)
                           varInvalid
                           varFutureBlocks
-                          (Args.cdbCheckInFuture args)
-                          (Args.cdbLoE args)
+                          (Args.cdbsCheckInFuture cdbSpecificArgs)
+                          (Args.cdbsLoE cdbSpecificArgs)
       traceWith initChainSelTracer InitialChainSelected
 
       let chain  = VF.validatedFragment chainAndLedger
           ledger = VF.validatedLedger   chainAndLedger
-          cfg    = Args.cdbTopLevelConfig args
 
       atomically $ LgrDB.setCurrent lgrDB ledger
       varChain           <- newTVarIO chain
@@ -177,7 +176,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       varKillBgThreads   <- newTVarIO $ return ()
       copyFuse           <- newFuse "copy to immutable db"
       chainSelFuse       <- newFuse "chain selection"
-      chainSelQueue      <- newChainSelQueue (Args.cdbBlocksToAddSize args)
+      chainSelQueue      <- newChainSelQueue (Args.cdbsBlocksToAddSize cdbSpecificArgs)
 
       let env = CDB { cdbImmutableDB     = immutableDB
                     , cdbVolatileDB      = volatileDB
@@ -187,24 +186,21 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                     , cdbTentativeHeader = varTentativeHeader
                     , cdbIterators       = varIterators
                     , cdbFollowers       = varFollowers
-                    , cdbTopLevelConfig  = cfg
+                    , cdbTopLevelConfig  = Args.cdbsTopLevelConfig cdbSpecificArgs
                     , cdbInvalid         = varInvalid
                     , cdbNextIteratorKey = varNextIteratorKey
                     , cdbNextFollowerKey = varNextFollowerKey
                     , cdbCopyFuse        = copyFuse
                     , cdbChainSelFuse    = chainSelFuse
                     , cdbTracer          = tracer
-                    , cdbTraceLedger     = Args.cdbTraceLedger args
-                    , cdbRegistry        = Args.cdbRegistry args
-                    , cdbGcDelay         = Args.cdbGcDelay args
-                    , cdbGcInterval      = Args.cdbGcInterval args
+                    , cdbRegistry        = Args.cdbsRegistry cdbSpecificArgs
+                    , cdbGcDelay         = Args.cdbsGcDelay cdbSpecificArgs
+                    , cdbGcInterval      = Args.cdbsGcInterval cdbSpecificArgs
                     , cdbKillBgThreads   = varKillBgThreads
-                    , cdbChunkInfo       = Args.cdbChunkInfo args
-                    , cdbCheckIntegrity  = Args.cdbCheckIntegrity args
-                    , cdbCheckInFuture   = Args.cdbCheckInFuture args
+                    , cdbCheckInFuture   = Args.cdbsCheckInFuture cdbSpecificArgs
                     , cdbChainSelQueue   = chainSelQueue
                     , cdbFutureBlocks    = varFutureBlocks
-                    , cdbLoE             = Args.cdbLoE args
+                    , cdbLoE             = Args.cdbsLoE cdbSpecificArgs
                     }
       h <- fmap CDBHandle $ newTVarIO $ ChainDbOpen env
       let chainDB = API.ChainDB
@@ -243,12 +239,12 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
       return (chainDB, testing, env)
 
-    _ <- lift $ allocate (Args.cdbRegistry args) (\_ -> return $ chainDB) API.closeDB
+    _ <- lift $ allocate (Args.cdbsRegistry cdbSpecificArgs) (\_ -> return $ chainDB) API.closeDB
 
     return ((chainDB, testing), env)
   where
-    tracer = Args.cdbTracer args
-    (argsImmutableDb, argsVolatileDb, argsLgrDb, _) = Args.fromChainDbArgs args
+    tracer = Args.cdbsTracer cdbSpecificArgs
+    Args.ChainDbArgs argsImmutableDb argsVolatileDb argsLgrDb cdbSpecificArgs = args
 
 -- | We use 'runInnerWithTempRegistry' for the component databases.
 innerOpenCont ::

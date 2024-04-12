@@ -153,20 +153,25 @@ import           System.FS.API.Lazy
 ------------------------------------------------------------------------------}
 
 data VolatileDbArgs f m blk = VolatileDbArgs {
+      -- | Predicate to check for integrity of
+      -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
+      -- extracting them from the VolatileDB.
       volCheckIntegrity   :: HKD f (blk -> Bool)
     , volCodecConfig      :: HKD f (CodecConfig blk)
-    , volHasFS            :: SomeHasFS m
+    , volHasFS            :: HKD f (SomeHasFS m)
     , volMaxBlocksPerFile :: BlocksPerFile
     , volTracer           :: Tracer m (TraceEvent blk)
+      -- | Should the parser for the VolatileDB fail when it encounters a
+      -- corrupt/invalid block?
     , volValidationPolicy :: BlockValidationPolicy
     }
 
 -- | Default arguments
-defaultArgs :: Applicative m => SomeHasFS m -> VolatileDbArgs Defaults m blk
-defaultArgs volHasFS = VolatileDbArgs {
-      volCheckIntegrity   = NoDefault
-    , volCodecConfig      = NoDefault
-    , volHasFS
+defaultArgs :: Applicative m => Incomplete VolatileDbArgs m blk
+defaultArgs = VolatileDbArgs {
+      volCheckIntegrity   = noDefault
+    , volCodecConfig      = noDefault
+    , volHasFS            = noDefault
     , volMaxBlocksPerFile = mkBlocksPerFile 1000
     , volTracer           = nullTracer
     , volValidationPolicy = NoValidation
@@ -188,7 +193,7 @@ openDB ::
      , GetPrevHash blk
      , VolatileDbSerialiseConstraints blk
      )
-  => VolatileDbArgs Identity m blk
+  => Complete VolatileDbArgs m blk
   -> (forall st. WithTempRegistry st m (VolatileDB m blk, st) -> ans)
   -> ans
 openDB VolatileDbArgs { volHasFS = SomeHasFS hasFS, .. } cont = cont $ do

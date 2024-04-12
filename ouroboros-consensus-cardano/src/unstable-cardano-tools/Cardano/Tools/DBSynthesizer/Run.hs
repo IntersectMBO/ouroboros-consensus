@@ -23,16 +23,15 @@ import           Data.Bool (bool)
 import           Data.ByteString as BS (ByteString, readFile)
 import           Ouroboros.Consensus.Config (configStorage)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture (dontCheck)
-import qualified Ouroboros.Consensus.Node as Node (mkChainDbArgs,
-                     stdMkChainDbHasFS)
+import qualified Ouroboros.Consensus.Node as Node (stdMkChainDbHasFS)
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
                      (nodeImmutableDbChunkInfo)
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import           Ouroboros.Consensus.Shelley.Node (ShelleyGenesis (..),
                      validateGenesis)
-import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
-                     (ChainDbArgs (..), defaultArgs, getTipPoint)
+import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB (getTipPoint)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB (withDB)
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Util.IOLike (atomically)
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Ouroboros.Network.Block
@@ -114,9 +113,16 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
         let
             epochSize   = sgEpochLength confShelleyGenesis
             chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage pInfoConfig)
-            dbArgs      = Node.mkChainDbArgs
-                registry InFuture.dontCheck pInfoConfig pInfoInitLedger chunkInfo $
-                    ChainDB.defaultArgs (Node.stdMkChainDbHasFS confDbDir)
+            dbArgs      =
+             ChainDB.completeChainDbArgs
+              registry
+              InFuture.dontCheck
+              pInfoConfig
+              pInfoInitLedger
+              chunkInfo
+              (const True)
+              (Node.stdMkChainDbHasFS confDbDir)
+              $ ChainDB.defaultArgs
 
         forgers <- blockForging
         let fCount = length forgers
@@ -126,7 +132,7 @@ synthesize DBSynthesizerConfig{confOptions, confShelleyGenesis, confDbDir} (Some
                 putStrLn $ "--> opening ChainDB on file system with mode: " ++ show synthOpenMode
                 preOpenChainDB synthOpenMode confDbDir
                 let dbTracer = nullTracer
-                ChainDB.withDB dbArgs {ChainDB.cdbTracer = dbTracer} $ \chainDB -> do
+                ChainDB.withDB (ChainDB.updateTracer dbTracer dbArgs) $ \chainDB -> do
                     slotNo <- do
                         tip <- atomically (ChainDB.getTipPoint chainDB)
                         pure $ case pointSlot tip of
