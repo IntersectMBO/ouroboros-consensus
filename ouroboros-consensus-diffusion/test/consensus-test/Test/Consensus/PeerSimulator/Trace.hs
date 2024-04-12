@@ -15,6 +15,7 @@ module Test.Consensus.PeerSimulator.Trace (
   , TraceScheduledServerHandlerEvent (..)
   , TraceSchedulerEvent (..)
   , mkGDDTracerTestBlock
+  , prettyDensityBounds
   , traceLinesWith
   , tracerTestBlock
   ) where
@@ -425,28 +426,9 @@ traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
   where
     trace = traceUnitWith tracer ("BlockFetchClient " ++ condense pid)
 
--- * Other utilities
-terseGDDEvent :: TraceGDDEvent PeerId TestBlock -> String
-terseGDDEvent = \case
-  TraceGDDEvent {sgen = GenesisWindow sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead} ->
-    unlines $ [
-      "GDD | Window: " ++ window sgen loeHead,
-      "      Selection: " ++ terseHFragment curChain,
-      "      Candidates:"
-      ] ++
-      showPeers (either (const "G") terseHeader . AF.head <$> candidates) ++
-      [
-      "      Candidate suffixes (bounds):"
-      ] ++
-      showPeers (terseHFragment . clippedFragment <$> bounds) ++
-      ["      Density bounds:"] ++
-      showPeers (showBounds <$> bounds) ++
-      ["      New candidate tips:"] ++
-      showPeers (tersePoint . castPoint <$> Map.map AF.headPoint candidateSuffixes) ++
-      [
-        "      Losing peers: " ++ show losingPeers,
-      "      Setting loeFrag: " ++ terseAnchor (AF.castAnchor loeHead)
-      ]
+prettyDensityBounds :: Map.Map PeerId (DensityBounds TestBlock) -> [String]
+prettyDensityBounds bounds =
+  showPeers (showBounds <$> bounds)
   where
     showBounds DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling} =
       show lowerBound ++ "/" ++ show upperBound ++ "[" ++ more ++ "], " ++
@@ -470,6 +452,33 @@ terseGDDEvent = \case
 
         showIdling | idling = ", idling"
                    | otherwise = ""
+
+    showPeers :: Map.Map PeerId String -> [String]
+    showPeers = fmap (\ (peer, v) -> "        " ++ condense peer ++ ": " ++ v) . Map.toList
+
+-- * Other utilities
+terseGDDEvent :: TraceGDDEvent PeerId TestBlock -> String
+terseGDDEvent = \case
+  TraceGDDEvent {sgen = GenesisWindow sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead} ->
+    unlines $ [
+      "GDG | Window: " ++ window sgen loeHead,
+      "      Selection: " ++ terseHFragment curChain,
+      "      Candidates:"
+      ] ++
+      showPeers (either (const "G") terseHeader . AF.head <$> candidates) ++
+      [
+      "      Candidate suffixes (bounds):"
+      ] ++
+      showPeers (terseHFragment . clippedFragment <$> bounds) ++
+      ["      Density bounds:"] ++
+      prettyDensityBounds bounds ++
+      ["      New candidate tips:"] ++
+      showPeers (tersePoint . castPoint <$> Map.map AF.headPoint candidateSuffixes) ++
+      [
+        "      Losing peers: " ++ show losingPeers,
+      "      Setting loeFrag: " ++ terseAnchor (AF.castAnchor loeHead)
+      ]
+  where
 
     window sgen loeHead =
       show winStart ++ " -> " ++ show winEnd
