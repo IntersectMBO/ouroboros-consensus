@@ -5,11 +5,8 @@
 \newcommand{\XOR}{\mathsf{XOR}}
 
 This chapter introduces the view of the blockchain layer as required for the
-ledger. This covers the transitions that keep track of produced blocks in order to
-calculate rewards and penalties for stake pools.
-
-The main transition rule is $\mathsf{CHAIN}$ which calls the subrules
-$\mathsf{TICK}$, $\mathsf{TICKN}$, $\mathsf{PRTCL}$ and $\mathsf{BBODY}$.
+consensus. The main transition rule is $\mathsf{CHAINHEAD}$ which calls the subrules
+$\mathsf{TICKF}$, $\mathsf{TICKN}$ and $\mathsf{PRTCL}$.
 
 \subsection{Block Definitions}
 \label{sec:defs-blocks}
@@ -67,10 +64,6 @@ $\mathsf{TICK}$, $\mathsf{TICKN}$, $\mathsf{PRTCL}$ and $\mathsf{BBODY}$.
       \var{bh}
       & \BHeader
       & \BHBody \times \Sig
-      \\
-      \var{b}
-      & \Block
-      & \BHeader \times \seqof{\Tx}
     \end{array}
   \end{equation*}
   \emph{Abstract functions}
@@ -81,13 +74,10 @@ $\mathsf{TICK}$, $\mathsf{TICKN}$, $\mathsf{PRTCL}$ and $\mathsf{BBODY}$.
                    & \text{hash of a block header} \\
       \bHeaderSize{} & \BHeader \to \N
                    & \text{size of a block header} \\
-      \bBodySize{} & \seqof{\Tx} \to \N
-                   & \text{size of a block body} \\
       \slotToSeed{} & \Slot \to \Seed
                     & \text{convert a slot to a seed} \\
       \prevHashToNonce{} & \HashHeader^? \to \Seed
                     & \text{convert an optional header hash to a seed} \\
-      \fun{bbodyhash} & \seqof{\Tx} \to \HashBBody \\
     \end{array}
   \end{equation*}
   %
@@ -97,16 +87,15 @@ $\mathsf{TICK}$, $\mathsf{TICKN}$, $\mathsf{PRTCL}$ and $\mathsf{BBODY}$.
       \fun{bheader} & \Block \to \BHeader &
       \fun{bhbody} & \BHeader \to \BHBody \\
       \fun{hsig} & \BHeader \to \Sig &
-      \fun{bbody} & \Block \to \seqof{\Tx} \\
-      \fun{bvkcold} & \BHBody \to \VKey &
-      \fun{bvkvrf} & \BHBody \to \VKey \\
-      \fun{bprev} & \BHBody \to \HashHeader^? &
-      \fun{bslot} & \BHBody \to \Slot \\
-      \fun{bblockno} & \BHBody \to \BlockNo &
-      \fun{bVrfRes} & \BHBody \to \Seed \\
-      \fun{bVrfProof} & \BHBody \to \Proof &
-      \fun{hBbsize} & \BHBody \to \N \\
-      \fun{bhash} & \BHBody \to \HashBBody &
+      \fun{bvkcold} & \BHBody \to \VKey \\
+      \fun{bvkvrf} & \BHBody \to \VKey &
+      \fun{bprev} & \BHBody \to \HashHeader^? \\
+      \fun{bslot} & \BHBody \to \Slot &
+      \fun{bblockno} & \BHBody \to \BlockNo \\
+      \fun{bVrfRes} & \BHBody \to \Seed &
+      \fun{bVrfProof} & \BHBody \to \Proof \\
+      \fun{hBbsize} & \BHBody \to \N &
+      \fun{bhash} & \BHBody \to \HashBBody \\
       \fun{bocert} & \BHBody \to \OCert \\
     \end{array}
   \end{equation*}
@@ -122,10 +111,10 @@ $\mathsf{TICK}$, $\mathsf{TICKN}$, $\mathsf{PRTCL}$ and $\mathsf{BBODY}$.
   \emph{Block Helper Functions}
   \begin{align*}
       & \fun{bleader} \in \BHBody \to \Seed \\
-      & \fun{bleader}~(\var{bhb}) = \fun{hash}~(``L"~|~(\fun{bVrfRes}~\var{bhb}))\\
+      & \fun{bleader}~\var{bhb} = \fun{hash}~(``L"~|~(\fun{bVrfRes}~\var{bhb}))\\
       \\
       & \fun{bnonce} \in \BHBody \to \Seed \\
-      & \fun{bnonce}~(\var{bhb}) = \fun{hash}~(``N"~|~(\fun{bVrfRes}~\var{bhb}))\\
+      & \fun{bnonce}~\var{bhb} = \fun{hash}~(``N"~|~(\fun{bVrfRes}~\var{bhb}))\\
   \end{align*}
   %
   \caption{Helper Functions used for Blocks}
@@ -142,7 +131,7 @@ previous epoch's hash nonce at the start of an epoch. Its environment is shown i
 Figure~\ref{fig:ts-types:ticknonce} and consists of the protocol parameters
 $\var{pp}$, the candidate nonce $\eta_c$ and the previous epoch's last block
 header hash as a nonce. Its state consists of the epoch nonce $\eta_0$ and
-the previous epoch's last block header hash nonce.
+the previous epoch's last block header hash nonce $\eta_h$.
 
 \begin{figure}
   \emph{Tick Nonce environments}
@@ -163,7 +152,7 @@ the previous epoch's last block header hash nonce.
     \left(
       \begin{array}{r@{~\in~}lr}
         \eta_0 & \Seed & \text{epoch nonce} \\
-        \eta_h & \Seed & \text{seed generated from hash of previous epoch's last block header} \\
+        \eta_h & \Seed & \text{seed from hash of previous epoch's last block header} \\
       \end{array}
     \right)
   \end{equation*}
@@ -231,7 +220,7 @@ nonce and the previous hash. Otherwise, we do nothing.
 The Update Nonce Transition updates the nonces until the randomness gets fixed.
 The environment is shown in Figure~\ref{fig:ts-types:updnonce} and consists of
 the block nonce $\eta$.
-The update nonce state is shown in Figure~\ref{fig:ts-types:updnonce} and consists of
+The state is shown in Figure~\ref{fig:ts-types:updnonce} and consists of
 the candidate nonce $\eta_c$ and the evolving nonce $\eta_v$.
 
 \begin{figure}
@@ -265,7 +254,7 @@ the candidate nonce $\eta_c$ and the evolving nonce $\eta_v$.
                \times \UpdateNonceState
               )
   \end{equation*}
-  \caption{UpdNonce transition-system types}
+  \caption{Update Nonce transition-system types}
   \label{fig:ts-types:updnonce}
 \end{figure}
 
@@ -359,17 +348,17 @@ Its signal is a block header.
         \text{otherwise} & \Nothing
       \end{cases}
   \end{align*}
-  \caption{OCert transition-system types}
+  \caption{Operational Certificate transition-system types}
   \label{fig:ts-types:ocert}
 \end{figure}
 
-The transition rule is shown in Figure~\ref{fig:rules:ocert}. From the block
+The transition rule $\mathsf{OCERT}$ is shown in Figure~\ref{fig:rules:ocert}. From the block
 header body \var{bhb} we first extract the following:
 
 \begin{itemize}
   \item The operational certificate, consisting of the hot key \var{vk_{hot}},
     the certificate issue number \var{n}, the KES period start \var{c_0} and the cold key
-  signature.
+  signature $\tau$.
 \item The cold key \var{vk_{cold}}.
 \item The slot \var{s} for the block.
 \item The number of KES periods that have elapsed since the start period on the certificate.
@@ -385,7 +374,8 @@ transition which are the following:
   The value of $\MaxKESEvo$ is the agreed-upon lifetime of an operational certificate,
   see \cite{delegation_design}.
 \item \var{hk} exists as key in the mapping of certificate issues numbers to a KES
-  period \var{m} and that period is less than or equal to \var{n}.
+  period \var{m} and that period is less than or equal to \var{n}. Also, \var{n} must
+  be less than or equal to the successor of \var{m}.
 \item The signature $\tau$ can be verified with the cold verification key
   \var{vk_{cold}}.
 \item The KES signature $\sigma$ can be verified with the hot verification key
@@ -430,11 +420,11 @@ of the key \var{hk} with the KES period \var{n}.
       \trans{ocert}{\var{bh}}\varUpdate{\var{cs}\unionoverrideRight\{\var{hk}\mapsto n\}}
     }
   \end{equation}
-  \caption{OCert rules}
+  \caption{Operational Certificate rules}
   \label{fig:rules:ocert}
 \end{figure}
 
-The OCERT rule has seven predicate failures:
+The $\mathsf{OCERT}$ rule has seven predicate failures:
 \begin{itemize}
 \item If the KES period is less than the KES period start in the certificate,
   there is a \emph{KESBeforeStart} failure.
@@ -457,7 +447,7 @@ The OCERT rule has seven predicate failures:
 \subsection{Verifiable Random Function}
 \label{sec:verif-rand-funct}
 
-In this section we define a function $\fun{vrfChecks}$ which performs all the VRF related checks
+In this section we define a function $\fun{praosVrfChecks}$ which performs all the VRF related checks
 on a given block header body.
 In addition to the block header body, the function requires the epoch nonce,
 the stake distribution (aggregated by pool), and the active slots coefficient from the protocol
@@ -562,8 +552,8 @@ The states for this transition consists of:
   \begin{equation}\label{eq:prtcl}
     \inference[PRTCL]
     {
-      \var{bhb}\leteq\bheader{bh} &
-      \eta\leteq\fun{bnonce}~(\bhbody{bhb})
+      \var{bhb}\leteq\bhbody{bh} &
+      \eta\leteq\fun{bnonce}~bhb
       \\~\\
       {
         \eta
@@ -627,7 +617,7 @@ it is worth examining the interaction closely.
   header, to check that the operator is allowed to produce the block.
 \end{itemize}
 
-The PRTCL rule has 4 predicate failures:
+The $\mathsf{PRTCL}$ rule has 4 predicate failures:
 \begin{itemize}
 \item If the VRF key is not in the pool distribution, there is a
   \emph{VRFKeyUnknown} failure.
@@ -641,171 +631,139 @@ The PRTCL rule has 4 predicate failures:
 
 \clearpage
 
-\subsection{Block Body Transition}
-\label{sec:block-body-trans}
+\subsection{Tick Forecast Transition}
+\label{sec:tickf-trans}
 
-The Block Body Transition updates the block body state which comprises the ledger state and the
-map describing the produced blocks.
-The environment of the $\mathsf{BBODY}$ transition are
-the protocol parameters and the accounting state.
-The environments and states are defined in Figure~\ref{fig:ts-types:bbody}, along with
-a helper function $\fun{incrBlocks}$, which counts the number of blocks produced by each stake
-pool.
+The Tick Forecast Transition performs some chain level
+upkeep. The state is the
+epoch specific state necessary for the $\mathsf{NEWEPOCH}$ transition.
+
+Part of the upkeep is updating the genesis key delegation mapping
+according to the future delegation mapping.
+For each genesis key, we adopt the most recent delegation in $\var{fGenDelegs}$
+that is past the current slot, and any future genesis key delegations past the current
+slot is removed. The helper function $\fun{adoptGenesisDelegs}$ accomplishes the update.
 
 \begin{figure}
-  \emph{BBody environments}
+  \emph{Tick Forecast Transitions}
   \begin{equation*}
-    \BBodyEnv =
-    \left(
-      \begin{array}{r@{~\in~}lr}
-        \var{pp} & \PParams & \text{protocol parameters} \\
-        \var{acnt} & \Acnt & \text{accounting state}
-      \end{array}
-    \right)
-  \end{equation*}
-  %
-  \emph{BBody states}
-  \begin{equation*}
-    \BBodyState =
-    \left(
-      \begin{array}{r@{~\in~}lr}
-        \var{ls} & \LState & \text{ledger state} \\
-        \var{b} & \BlocksMade & \text{blocks made} \\
-      \end{array}
-    \right)
-  \end{equation*}
-  %
-  \emph{BBody Transitions}
-  \begin{equation*}
-    \_ \vdash \var{\_} \trans{bbody}{\_} \var{\_} \subseteq
-    \powerset (\BBodyEnv \times \BBodyState \times \Block \times \BBodyState)
-  \end{equation*}
-  \caption{BBody transition-system types}
-  \label{fig:ts-types:bbody}
-  %
-  \emph{BBody helper function}
+    \vdash \var{\_} \trans{tickf}{\_} \var{\_} \subseteq
+    \powerset (\NewEpochState \times \Slot \times \NewEpochState)
+  \end{equation*}  %
+  \emph{Tick Forecast helper function}
   \begin{align*}
-      & \fun{incrBlocks} \in \KeyHash_{pool} \to \BlocksMade \to \BlocksMade \\
-      & \fun{incrBlocks}~\var{hk}~\var{b} =
-        \begin{cases}
-          b\cup\{\var{hk}\mapsto 1\} & \text{if }\var{hk}\notin\dom{b} \\
-          b\unionoverrideRight\{\var{hk}\mapsto n+1\} & \text{if }\var{hk}\mapsto n\in b \\
-        \end{cases}
+      & \fun{adoptGenesisDelegs} \in \EpochState \to \Slot \to \EpochState
+      \\
+      & \fun{adoptGenesisDelegs}~\var{es}~\var{slot} = \var{es'}
+      \\
+      & ~~~~\where
+      \\
+      & ~~~~~~~~~~
+      (\var{acnt},~\var{ss},(\var{us},(\var{ds},\var{ps})),~\var{prevPp},~\var{pp})
+      \leteq\var{es}
+      \\
+      & ~~~~~~~~~~
+      (~\var{rewards},~\var{delegations},~\var{ptrs},
+      ~\var{fGenDelegs},~\var{genDelegs},~\var{i_{rwd}})\leteq\var{ds}
+      \\
+      & ~~~~~~~~~~\var{curr}\leteq
+        \{
+          (\var{s},~\var{gkh})\mapsto(\var{vkh},~\var{vrf})\in\var{fGenDelegs}
+          ~\mid~
+          \var{s}\leq\var{slot}
+        \}
+      \\
+      & ~~~~~~~~~~\var{fGenDelegs'}\leteq
+          \var{fGenDelegs}\setminus\var{curr}
+      \\
+      & ~~~~~~~~~~\var{genDelegs'}\leteq
+          \left\{
+            \var{gkh}\mapsto(\var{vkh},~\var{vrf})
+            ~\mathrel{\Bigg|}~
+            {
+              \begin{array}{l}
+                (\var{s},~\var{gkh})\mapsto(\var{vkh},~\var{vrf})\in\var{curr}\\
+                \var{s}=\max\{s'~\mid~(s',~\var{gkh})\in\dom{\var{curr}}\}
+              \end{array}
+            }
+          \right\}
+      \\
+      & ~~~~~~~~~~\var{ds'}\leteq
+          (\var{rewards},~\var{delegations},~\var{ptrs},
+          ~\var{fGenDelegs'},~\var{genDelegs}\unionoverrideRight\var{genDelegs'},~\var{i_{rwd}})
+      \\
+      & ~~~~~~~~~~\var{es'}\leteq
+      (\var{acnt},~\var{ss},(\var{us},(\var{ds'},\var{ps})),~\var{prevPp},~\var{pp})
   \end{align*}
-
+  \caption{Tick Forecast transition-system types}
+  \label{fig:ts-types:tickf}
 \end{figure}
 
-The $\mathsf{BBODY}$ transition rule is shown in Figure~\ref{fig:rules:bbody},
-its sub-rule is $\mathsf{LEDGERS}$ which does the update of the ledger
-state. The signal is a block from which we extract:
+The $\mathsf{TICKF}$ transition rule is shown in Figure~\ref{fig:rules:tickf}.
+The signal is a slot \var{s}.
 
-\begin{itemize}
-\item The sequence of transactions \var{txs} of the block.
-\item The block header body \var{bhb}.
-\item The verification key \var{vk} of the issuer of the \var{block} and its
-  hash \var{hk}.
-\end{itemize}
-
-The transition is executed if the following preconditions are met:
-
-\begin{itemize}
-\item The size of the block body matches the value given in the block header body.
-\item The hash of the block body matches the value given in the block header body.
-\item The $\mathsf{LEDGERS}$ transition succeeds.
-\end{itemize}
-
-After this, the transition system updates the mapping of the hashed stake pool
-keys to the incremented value of produced blocks (\var{n} + 1).
+One sub-transition is done:
+The $\mathsf{NEWEPOCH}$ transition performs any state change needed if it is the first
+block of a new epoch.
 
 \begin{figure}[ht]
-  \begin{equation}\label{eq:bbody}
-    \inference[Block-Body]
+  \begin{equation}\label{eq:tickf}
+    \inference[TickForecast]
     {
-      \var{txs} \leteq \bbody{block}
-      &
-      \var{bhb} \leteq \bhbody{(\bheader{block})}
-      &
-      \var{hk} \leteq \hashKey{(\bvkcold{bhb})}
-      \\~\\
-      \bBodySize{txs} = \hBbsize{bhb}
-      &
-      \fun{bbodyhash}~{txs} = \bhash{bhb}
-      \\~\\
       {
-        {\begin{array}{c}
-                 \bslot{bhb} \\
-                 \var{pp} \\
-                 \var{acnt}
-        \end{array}}
         \vdash
-             \var{ls} \\
-        \trans{\hyperref[fig:ts-types:ledgers]{ledgers}}{\var{txs}}
-             \var{ls}' \\
+        \var{nes}
+        \trans{\hyperref[fig:ts-types:newepoch]{newepoch}}{\epoch{s}}
+        \var{nes}'
       }
+      \\~\\
+      (\var{e_\ell'},~\var{b_{prev}'},~\var{b_{cur}'},~\var{es'},~\var{ru'},~\var{pd'})
+      \leteq\var{nes'}
+      \\
+      \var{es''}\leteq\fun{adoptGenesisDelegs}~\var{es'}~\var{s}
+      \\
+      \var{forecast}\leteq
+      (\var{e_\ell'},~\var{b_{prev}'},~\var{b_{cur}'},~\var{es''},~\var{ru'},~\var{pd'})
+      \\~\\
     }
     {
-      {\begin{array}{c}
-               \var{pp} \\
-               \var{acnt}
-      \end{array}}
-      \vdash
-      {\left(\begin{array}{c}
-            \var{ls} \\
-            \var{b} \\
-      \end{array}\right)}
-      \trans{bbody}{\var{block}}
-      {\left(\begin{array}{c}
-            \varUpdate{\var{ls}'} \\
-            \varUpdate{\fun{incrBlocks}~{hk}~{b}} \\
-      \end{array}\right)}
+      \vdash\var{nes}\trans{tickf}{\var{s}}\varUpdate{\var{forecast}}
     }
   \end{equation}
-  \caption{BBody rules}
-  \label{fig:rules:bbody}
+  \caption{Tick Forecast rules}
+  \label{fig:rules:tickf}
 \end{figure}
-
-The BBODY rule has two predicate failures:
-\begin{itemize}
-\item if the size of the block body in the header is not equal to the real size
-  of the block body, there is a \emph{WrongBlockBodySize} failure.
-\item if the hash of the block body is not also the hash of transactions, there is an \emph{InvalidBodyHash} failure.
-\end{itemize}
 
 \clearpage
 
-\subsection{Chain Transition}
-\label{sec:chain-trans}
+\subsection{Chain Head Transition}
+\label{sec:chainhead-trans}
 
-The $\mathsf{CHAIN}$ transition rule is the main rule of the blockchain layer
-part of the STS. It calls $\mathsf{TICK}$, $\mathsf{TICKN}$, $\mathsf{PRTCL}$, and
-$\mathsf{BBODY}$ as sub-rules.
-
-The chain rule has no environment.
+The $\mathsf{CHAINHEAD}$ transition rule is the main rule of the blockchain layer
+part of the STS. It calls $\mathsf{TICKF}$, $\mathsf{TICKN}$, and $\mathsf{PRTCL}$,
+as sub-rules.
 
 The transition checks six things
-(via $\fun{chainChecks}$ and $\fun{prtlSeqChecks}$ from Figure~\ref{fig:funcs:chain-helper}):
+(via $\fun{chainChecks}$ and $\fun{prtlSeqChecks}$ from Figure~\ref{fig:funcs:chainhead-helper}):
 \begin{itemize}
 \item The slot in the block header body is larger than the last slot recorded.
 \item The block number increases by exactly one.
 \item The previous hash listed in the block header matches the previous
   block header hash which was recorded.
-\item The size of \var{bh} is less than or equal to the maximal size that the
+\item The size of the block header is less than or equal to the maximal size that the
   protocol parameters allow for block headers.
 \item The size of the block body, as claimed by the block header, is less than or equal to the
   maximal size that the protocol parameters allow for block bodies.
-  It will later be verified that the size of the block body matches the size claimed
-  in the header (see Figure~\ref{fig:rules:bbody}).
 \item The node is not obsolete, meaning that the major component of the
   protocol version in the protocol parameters
   is not bigger than the constant $\MaxMajorPV$.
 \end{itemize}
 
 
-The chain state is shown in Figure~\ref{fig:ts-types:chain}, it consists of the
+The $\mathsf{CHAINHEAD}$ state is shown in Figure~\ref{fig:ts-types:chainhead}, it consists of the
 following:
 
 \begin{itemize}
-  \item The epoch specific state $\var{nes}$.
   \item The operational certificate issue number map $\var{cs}$.
   \item The epoch nonce $\eta_0$.
   \item The evolving nonce $\eta_v$.
@@ -817,7 +775,7 @@ following:
 \end{itemize}
 
 \begin{figure}
-  \emph{Chain states}
+  \emph{Chain Head states}
   \begin{equation*}
     \LastAppliedBlock =
     \left(
@@ -830,65 +788,38 @@ following:
   \end{equation*}
   %
   \begin{equation*}
-    \ChainState =
+    \ChainHeadState =
     \left(
       \begin{array}{r@{~\in~}lr}
-        \var{nes} & \NewEpochState & \text{epoch specific state} \\
         \var{cs} & \KeyHash_{pool} \mapsto \N & \text{operational certificate issue numbers} \\
         ~\eta_0 & \Seed & \text{epoch nonce} \\
         ~\eta_v & \Seed & \text{evolving nonce} \\
         ~\eta_c & \Seed & \text{candidate nonce} \\
-        ~\eta_h & \Seed & \text{seed from hash of previous epoch's last header} \\
+        ~\eta_h & \Seed & \text{seed from hash of last epoch's last header} \\
         \var{lab} & \LastAppliedBlock^? & \text{latest applied block} \\
       \end{array}
     \right)
   \end{equation*}
   %
-  \emph{Chain Transitions}
+  \emph{Chain Head Transitions}
   \begin{equation*}
-    \vdash \var{\_} \trans{chain}{\_} \var{\_} \subseteq
-    \powerset (\ChainState \times \Block \times \ChainState)
+    \_ \vdash \var{\_} \trans{chainhead}{\_} \var{\_} \subseteq
+    \powerset (\NewEpochState \times \ChainHeadState \times \BHeader \times \ChainHeadState)
   \end{equation*}
-  \caption{Chain transition-system types}
-  \label{fig:ts-types:chain}
+  \caption{Chain Head transition-system types}
+  \label{fig:ts-types:chainhead}
 \end{figure}
 
-The $\mathsf{CHAIN}$ transition rule is shown in Figure~\ref{fig:rules:chain}. Its signal is a \var{block}.
-The transition uses a few helper functions defined in Figure~\ref{fig:funcs:chain-helper}.
+The $\mathsf{CHAINHEAD}$ transition rule is shown in Figure~\ref{fig:rules:chainhead}.
+It contains a new epoch state $\var{nes}$ in the environment and its signal is a block
+header $\var{bh}$.
+The transition uses a few helper functions defined in Figure~\ref{fig:funcs:chainhead-helper}.
 
 %%
-%% Figure - Helper Functions for Chain Rules
+%% Figure - Helper Functions for Chain Head Rules
 %%
 \begin{figure}[htb]
-  \emph{Chain Transition Helper Functions}
-  \begin{align*}
-      & \fun{getGKeys} \in \NewEpochState \to \powerset{\KeyHashGen} \\
-      & \fun{getGKeys}~\var{nes} = \dom{genDelegs} \\
-      &
-      \begin{array}{lr@{~=~}l}
-        \where
-          & (\wcard,~\wcard,~\wcard,~\var{es},~\wcard,~\wcard)
-          & \var{nes}
-          \\
-          & (\wcard,~\wcard,~\var{ls},~\wcard,~\wcard)
-          & \var{es}
-          \\
-          & (\wcard,~((\wcard,~\wcard,~\wcard,~\wcard,~\var{genDelegs},~\wcard),~\wcard))
-          & \var{ls}
-      \end{array}
-  \end{align*}
-  %
-  \begin{align*}
-      & \fun{updateNES} \in \NewEpochState \to \BlocksMade \to \LState \to \NewEpochState \\
-      & \fun{updateNES}~
-      (\var{e_\ell},~\var{b_{prev}},~\wcard,~(\var{acnt},~\var{ss},~\wcard,~\var{prevPp},~\var{pp}),
-       ~\var{ru},~\var{pd})
-          ~\var{b_{cur}}~\var{ls} = \\
-      & ~~~~
-      (\var{e_\ell},~\var{b_{prev}},~\var{b_{cur}},
-       ~(\var{acnt},~\var{ss},~\var{ls},~\var{prevPp},~\var{pp}),~\var{ru},~\var{pd})
-  \end{align*}
-  %
+  \emph{Chain Head Transition Helper Functions}
   \begin{align*}
       & \fun{chainChecks} \in \N \to (\N,\N, \ProtVer) \to \BHeader \to \Bool \\
       & \fun{chainChecks}~\var{maxpv}~(\var{maxBHSize},~\var{maxBBSize},~\var{protocolVersion})~\var{bh} = \\
@@ -928,16 +859,14 @@ The transition uses a few helper functions defined in Figure~\ref{fig:funcs:chai
       & ~~~~~~~~~~\var{ph} \leteq \lastAppliedHash{lab} \\
   \end{align*}
 
-  \caption{Helper Functions used in the CHAIN transition}
-  \label{fig:funcs:chain-helper}
+  \caption{Helper functions used in the Chain Head transition}
+  \label{fig:funcs:chainhead-helper}
 \end{figure}
 
 \begin{figure}[ht]
-  \begin{equation}\label{eq:chain}
-    \inference[Chain]
+  \begin{equation}\label{eq:chain-head}
+    \inference[ChainHead]
     {
-      \var{bh} \leteq \bheader{block}
-      &
       \var{bhb} \leteq \bhbody{bh}
       &
       \var{s} \leteq \bslot{bhb}
@@ -945,20 +874,18 @@ The transition uses a few helper functions defined in Figure~\ref{fig:funcs:chai
       \fun{prtlSeqChecks}~\var{lab}~\var{bh}
       \\~\\
       {
-        \vdash\var{nes}\trans{\hyperref[fig:ts-types:tick]{tick}}{\var{s}}\var{nes'}
+        \vdash\var{nes}\trans{\hyperref[fig:rules:tickf]{tickf}}{\var{s}}\var{forecast}
       } \\~\\
       (\var{e_1},~\wcard,~\wcard,~\wcard,~\wcard,~\wcard)
         \leteq\var{nes} \\
-      (\var{e_2},~\wcard,~\var{b_{cur}},~\var{es},~\wcard,~\wcard,~\var{pd})
-        \leteq\var{nes'} \\
+      (\var{e_2},~\wcard,~\wcard,~\var{es},~\wcard,~\var{pd})
+        \leteq\var{forecast} \\
         (\var{acnt},~\wcard,\var{ls},~\wcard,~\var{pp})\leteq\var{es}\\
           \var{ne} \leteq  \var{e_1} \neq \var{e_2}\\
-          \eta_{ph} \leteq \prevHashToNonce{(\lastAppliedHash{lab})}
-          \\~\\
-          \fun{chainChecks}~
-            \MaxMajorPV~(\fun{maxHeaderSize}~\var{pp},~\fun{maxBlockSize}~\var{pp},~\fun{pv}~\var{pp})~
-            \var{bh}
-          \\~\\
+          \eta_{ph} \leteq \prevHashToNonce{(\lastAppliedHash{lab})} \\~\\
+      \fun{chainChecks}~
+        \MaxMajorPV~(\fun{maxHeaderSize}~\var{pp},~\fun{maxBlockSize}~\var{pp},~\fun{pv}~\var{pp})~
+        \var{bh}\\~\\
       {
         {\begin{array}{c}
         \var{pp} \\
@@ -994,29 +921,12 @@ The transition uses a few helper functions defined in Figure~\ref{fig:funcs:chai
               \eta_c' \\
         \end{array}\right)}
       } \\~\\~\\
-      {
-        {\begin{array}{c}
-                 \var{pp} \\
-                 \var{acnt}
-        \end{array}}
-        \vdash
-        {\left(\begin{array}{c}
-              \var{ls} \\
-              \var{b_{cur}} \\
-        \end{array}\right)}
-        \trans{\hyperref[fig:rules:bbody]{bbody}}{\var{block}}
-        {\left(\begin{array}{c}
-              \var{ls}' \\
-              \var{b_{cur}'} \\
-        \end{array}\right)}
-      }\\~\\
-      \var{nes''}\leteq\fun{updateNES}~\var{nes'}~\var{b_{cur}'},~\var{ls'} \\
-      \var{lab'}\leteq (\bblockno{bhb},~\var{s},~\bhash{bh} ) \\
+      \var{lab'}\leteq (\bblockno{bhb},~\var{s},~\bhash{bhb} ) \\
     }
     {
+      \var{nes}
       \vdash
       {\left(\begin{array}{c}
-            \var{nes} \\
             \var{cs} \\
             \eta_0 \\
             \eta_v \\
@@ -1024,31 +934,29 @@ The transition uses a few helper functions defined in Figure~\ref{fig:funcs:chai
             \eta_h \\
             \var{lab} \\
       \end{array}\right)}
-      \trans{chain}{\var{block}}
+      \trans{chainhead}{\var{bh}}
       {\left(\begin{array}{c}
-            \varUpdate{\var{nes}''} \\
-            \varUpdate{\var{cs}'} \\
-            \varUpdate{\eta_0'} \\
-            \varUpdate{\eta_v'} \\
-            \varUpdate{\eta_c'} \\
-            \varUpdate{\eta_h'} \\
-            \varUpdate{\var{lab}'} \\
+            \var{cs}' \\
+            \eta_0' \\
+            \eta_v' \\
+            \eta_c' \\
+            \eta_h' \\
+            \var{lab}' \\
       \end{array}\right)}
     }
   \end{equation}
-  \caption{Chain rules}
-  \label{fig:rules:chain}
+  \caption{Chain Head rules}
+  \label{fig:rules:chainhead}
 \end{figure}
 
-The CHAIN rule has six predicate failures:
+The $\mathsf{CHAINHEAD}$ transition rule has six predicate failures:
 \begin{itemize}
-\item If the slot of the block header body is not larger than the last slot or
-  greater than the current slot, there is a \emph{WrongSlotInterval} failure.
+\item If the slot of the block header body is not larger than the last slot,
+  there is a \emph{WrongSlotInterval} failure.
 \item If the block number does not increase by exactly one,
   there is a \emph{WrongBlockNo} failure.
 \item If the hash of the previous header of the block header body is not equal
-  to the hash given in the environment, there is a \emph{WrongBlockSequence}
-  failure.
+  to the last header hash, there is a \emph{WrongBlockSequence} failure.
 \item If the size of the block header is larger than the maximally allowed size,
   there is a \emph{HeaderSizeTooLarge} failure.
 \item If the size of the block body is larger than the maximally allowed size,

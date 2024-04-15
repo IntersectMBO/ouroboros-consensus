@@ -3,8 +3,8 @@
 
 Figure~\ref{fig:sts-rules-dependencies} shows all STS rules, the sub-rules they
 use and possible dependencies. Each node in the graph represents one rule, the
-top rule being CHAIN.\@ A straight arrow from one node to another one represents
-a sub-rule relationship.
+top rule being $\mathsf{CHAINHEAD}$.\@ A straight arrow from one node to another
+one represents a sub-rule relationship.
 
 An arrow with a dotted line from one node to another represents a dependency in
 the sense that the output of the target rule is an input to the source one,
@@ -21,7 +21,3 @@ reaching the base case with an empty input sequence.
   \label{fig:sts-rules-dependencies}
 \end{figure}
 
-%%% Local Variables:
-%%% mode: latex
-%%% TeX-master: "ledger-spec"
-%%% End:

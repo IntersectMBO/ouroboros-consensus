@@ -15,6 +15,12 @@
 \newblock
   \urlprefix\url{https://github.com/intersectmbo/cardano-ledger/tree/master/docs/}.
 
+\bibitem[SL-D5]{shelley_chain_spec}
+{IOHK Formal Methods Team}.
+\newblock {A Formal Specification of the Cardano Ledger}, 2019.
+\newblock
+  \urlprefix\url{https://github.com/intersectmbo/cardano-ledger/releases/latest/download/shelley-ledger.pdf}
+
 \bibitem[DGKR17]{ouroboros_praos}
 B.~M. David, P.~Gazi, A.~Kiayias, and A.~Russell.
 \newblock Ouroboros praos: An adaptively-secure, semi-synchronous

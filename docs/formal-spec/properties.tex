@@ -7,19 +7,12 @@
 \section{Properties}
 \label{sec:properties}
 
-This section describes the properties that the ledger should have. The goal is to
-to include these properties in the executable specification to enable e.g.
-property-based testing or formal verification.
-
-% TODO - the hand proofs of preservation of ada and non-negative deposit
-% pot are woefully out of date, mostly due to the removal of decaying deposits.
-%\input{hand_proofs}
+This section describes the properties that the consensus layer should have.
+The goal is to include these properties in the executable specification
+to enable e.g. property-based testing or formal verification.
 
 \subsection{Header-Only Validation}
 \label{sec:header-only-validation}
-The header-only validation properties of the Shelley Ledger are the analogs
-of those from Section 8.1 of \cite{byron_chain_spec}.
-
 In any given chain state, the consensus layer needs to be able to validate the
 block headers without having to download the block bodies.
 Property~\ref{prop:header-only-validation} states that if an extension of a
@@ -27,139 +20,8 @@ chain that spans less than $\StabilityWindow$ slots is valid, then validating th
 headers of that extension is also valid. This property is useful for its
 converse: if the header validation check for a sequence of headers does not
 pass, then we know that the block validation that corresponds to those headers
-will not pass either.
-
-First we define the header-only version of the $\mathsf{CHAIN}$ transition,
-which we call $\mathsf{CHAINHEAD}$.
-It is very similar to $\mathsf{CHAIN}$, the differences being:
-\begin{itemize}
-  \item The $\mathsf{CHAINHEAD}$ signal is not a block, but a block header ($\BHeader$).
-  \item $\mathsf{CHAINHEAD}$ does not call $\mathsf{BBODY}$.
-  \item $\mathsf{CHAINHEAD}$ does not call $\mathsf{TICK}$, but instead
-    calls the similar $\mathsf{TICKF}$, which differs by
-    not calling the reward update transition $\mathsf{RUPD}$.
-  \item $\mathsf{CHAINHEAD}$ does not store the new epoch state $\var{nes}$ in
-    its state, but rather contains it in the environment.
-    We will conveniently \textbf{abuse the tuple notation} and write
-    $(nes, \tilde{s}) = s$
-    for splitting the chain state into the new epoch state and the remaiing fields.
-\end{itemize}
-
-\begin{figure}[ht]
-  \begin{equation}\label{eq:tickf}
-    \inference[TickForecast]
-    {
-      {
-        \vdash
-        \var{nes}
-        \trans{newepoch}{\epoch{slot}}
-        \var{nes}'
-      }
-      \\~\\
-      (\var{e_\ell'},~\var{b_{prev}'},~\var{b_{cur}'},~\var{es'},~\var{ru'},~\var{pd'})
-      \leteq\var{nes'}
-      \\
-      \var{es''}\leteq\fun{adoptGenesisDelegs}~\var{es'}~\var{slot}
-      \\
-      \var{forecast}\leteq
-      (\var{e_\ell'},~\var{b_{prev}'},~\var{b_{cur}'},~\var{es''},~\var{ru'},~\var{pd'})
-      \\~\\
-    }
-    {
-      \vdash\var{nes}\trans{tickf}{\var{slot}}\varUpdate{\var{forecast}}
-    }
-  \end{equation}
-  \caption{Tick Forecast rules}
-  \label{fig:rules:tickf}
-\end{figure}
-
-\clearpage
-
-\begin{figure}[ht]
-  \begin{equation}\label{eq:chain-head}
-    \inference[ChainHead]
-    {
-      \var{bhb} \leteq \bhbody{bh}
-      &
-      \var{s} \leteq \bslot{bhb}
-      \\~\\
-      \fun{prtlSeqChecks}~\var{lab}~\var{bh}
-      \\~\\
-      {
-        \vdash\var{nes}\trans{\hyperref[fig:rules:tickf]{tickf}}{\var{s}}\var{forecast}
-      } \\~\\
-      (\var{e_1},~\wcard,~\wcard,~\wcard,~\wcard,~\wcard)
-        \leteq\var{nes} \\
-      (\var{e_2},~\wcard,~\wcard,~\var{es},~\wcard,~\wcard,~\var{pd})
-        \leteq\var{forecast} \\
-        (\var{acnt},~\wcard,\var{ls},~\wcard,~\var{pp})\leteq\var{es}\\
-          \var{ne} \leteq  \var{e_1} \neq \var{e_2}\\
-          \eta_{ph} \leteq \prevHashToNonce{(\lastAppliedHash{lab})} \\~\\
-      \fun{chainChecks}~
-        \MaxMajorPV~(\fun{maxHeaderSize}~\var{pp},~\fun{maxBlockSize}~\var{pp},~\fun{pv}~\var{pp})~
-        \var{bh}\\~\\
-      {
-        {\begin{array}{c}
-        \var{pp} \\
-        \eta_c \\
-        \eta_\var{ph} \\
-        \end{array}}
-        \vdash
-        {\left(\begin{array}{c}
-        \eta_0 \\
-        \eta_h \\
-        \end{array}\right)}
-        \trans{\hyperref[fig:rules:tick-nonce]{tickn}}{\var{ne}}
-        {\left(\begin{array}{c}
-        \eta_0' \\
-        \eta_h' \\
-        \end{array}\right)}
-      }\\~\\~\\
-      {
-        {\begin{array}{c}
-            \var{pd} \\
-            \eta_0' \\
-         \end{array}}
-        \vdash
-        {\left(\begin{array}{c}
-              \var{cs} \\
-              \eta_v \\
-              \eta_c \\
-        \end{array}\right)}
-        \trans{\hyperref[fig:rules:prtcl]{prtcl}}{\var{bh}}
-        {\left(\begin{array}{c}
-              \var{cs'} \\
-              \eta_v' \\
-              \eta_c' \\
-        \end{array}\right)}
-      } \\~\\~\\
-      \var{lab'}\leteq (\bblockno{bhb},~\var{s},~\bhash{bh} ) \\
-    }
-    {
-      \var{nes}
-      \vdash
-      {\left(\begin{array}{c}
-            \var{cs} \\
-            \eta_0 \\
-            \eta_v \\
-            \eta_c \\
-            \eta_h \\
-            \var{lab} \\
-      \end{array}\right)}
-      \trans{chainhead}{\var{bh}}
-      {\left(\begin{array}{c}
-            \var{cs}' \\
-            \eta_0' \\
-            \eta_v' \\
-            \eta_c' \\
-            \eta_h' \\
-            \var{lab}' \\
-      \end{array}\right)}
-    }
-  \end{equation}
-  \caption{Chain-Head rules}
-  \label{fig:rules:chainhead}
-\end{figure}
+will not pass either. In these properties, we refer to the $\mathsf{CHAIN}$
+transition system as defined in \cite{shelley_chain_spec}.
 
 \begin{property}[Header only validation]\label{prop:header-only-validation}
   For all states $s$ with slot number $t$\footnote{i.e. the
@@ -205,16 +67,16 @@ of headers, we can validate their bodies independently and be sure that the
 blocks will pass the chain validation rule. To see this, given an environment
 $e$ and initial state $s$, assume that a sequence of headers
 $H = [h_0, \ldots, h_n]$ corresponding to blocks in $E = [b_0, \ldots, b_n]$ is
-valid according to the $\mathsf{chainhead}$ transition system:
+valid according to the $\mathsf{CHAINHEAD}$ transition system:
 %
 $$
 \var{nes} \vdash \tilde{s} \transtar{\hyperref[fig:rules:chainhead]{chainhead}}{H} \tilde{s'}
 $$
 %
 Assume the bodies of $E$ are valid
-according to the $\mathsf{bbody}$ rules, but $E$ is not valid according to
-the $\mathsf{chain}$ rule. Assume that there is a $b_j \in E$ such that it is
-\textbf{the first block} such that does not pass the $\mathsf{chain}$
+according to the $\mathsf{BBODY}$ rules, but $E$ is not valid according to
+the $\mathsf{CHAIN}$ rule. Assume that there is a $b_j \in E$ such that it is
+\textbf{the first block} such that does not pass the $\mathsf{CHAIN}$
 validation. Then:
 %
 $$
