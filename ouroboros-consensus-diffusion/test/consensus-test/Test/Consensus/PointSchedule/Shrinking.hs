@@ -3,8 +3,9 @@
 
 module Test.Consensus.PointSchedule.Shrinking (
     shrinkByRemovingAdversaries
+    -- | Exported only for testing (that is, checking the properties of the function)
+  , shrinkHonestPeer
   , shrinkPeerSchedules
-  , trimBlockTree'
   ) where
 
 import           Control.Monad.Class.MonadTime.SI (DiffTime, Time, addTime,
