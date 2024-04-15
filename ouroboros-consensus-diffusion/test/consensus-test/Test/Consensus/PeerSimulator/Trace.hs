@@ -59,6 +59,10 @@ data TraceSchedulerEvent blk
     -- @0@), the duration of the tick, the states, the current chain and the
     -- candidate fragment.
     TraceNewTick Int DiffTime (Peer (NodeState blk)) (AnchoredFragment (Header blk)) (Maybe (AnchoredFragment (Header blk)))
+  | TraceNodeShutdownStart (WithOrigin SlotNo)
+  | TraceNodeShutdownComplete
+  | TraceNodeStartupStart
+  | TraceNodeStartupComplete (AnchoredFragment (Header blk))
 
 type HandlerName = String
 
@@ -191,6 +195,15 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
           "  current chain: " ++ terseHFragment currentChain,
           "  candidate fragment: " ++ maybe "Nothing" terseHFragment mCandidateFrag
         ]
+
+    TraceNodeShutdownStart immTip ->
+      traceWith tracer0 ("  Initiating node shutdown with immutable tip at slot " ++ condense immTip)
+    TraceNodeShutdownComplete ->
+      traceWith tracer0 "  Node shutdown complete"
+    TraceNodeStartupStart ->
+      traceWith tracer0 "  Initiating node startup"
+    TraceNodeStartupComplete selection ->
+      traceWith tracer0 ("  Node startup complete with selection " ++ terseHFragment selection)
 
 traceScheduledServerHandlerEventTestBlockWith ::
   Tracer m String ->
@@ -394,9 +407,12 @@ terseGDDEvent = \case
 
         block = if hasBlockAfter then ", has header after sgen" else " "
 
+        -- Note: At some point, I changed this to use @headPoint@ erroneously, so to be clear about what this signifies:
+        -- The first point after the anchor (which is returned by @lastPoint@, clearly) is used for the condition that
+        -- the density comparison should not be applied to two peers if they share any headers after the LoE fragment.
         lastPoint =
           "point: " ++
-          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.headPoint clippedFragment)) ++
+          tersePoint (castPoint @(Header TestBlock) @TestBlock (AF.lastPoint clippedFragment)) ++
           ", "
 
         showLatestSlot = \case
