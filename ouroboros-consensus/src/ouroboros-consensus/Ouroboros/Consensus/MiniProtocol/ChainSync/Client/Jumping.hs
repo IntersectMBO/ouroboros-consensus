@@ -21,7 +21,8 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
   , processJumpResult
   , registerClient
   , unregisterClient
-  , triggerJumping
+  , onRollForward
+  , onAwaitReply
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo(..), WithOrigin (..))
@@ -32,7 +33,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust, mapMaybe)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point (..),
-                     castPoint, pointSlot, succWithOrigin, blockSlot, GenesisWindow (unGenesisWindow))
+                     castPoint, pointSlot, succWithOrigin, GenesisWindow (unGenesisWindow))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncClientHandle (..),
                      ChainSyncJumpingJumperState (..),
@@ -40,9 +41,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      blockPoint, headPoint, headSlot, splitAfterPoint,
-                     splitBeforePoint, toOldestFirst, toNewestFirst)
-import Ouroboros.Consensus.Block.Abstract (GenesisWindow)
-import Cardano.Prelude (unsnoc, uncons)
+                     splitBeforePoint, toOldestFirst)
 
 -- | A context for ChainSync jumping, pointing for some data.
 --
@@ -146,101 +145,42 @@ nextInstruction context =
             _ -> pure ()
         writeTVar (cschJumping (handle context)) $ Dynamo (headSlot dynamoFragment)
 
--- | Given a 'SlotNo', find the block in the dynamo's candidate fragment that is
--- either right before if there is one or right after otherwise. Returns
--- 'Nothing' if there is no block in the fragment.
+-- | This function is called when we receive a 'MsgRollForward' message.
 --
--- NOTE: The candidate fragment is contained within a genesis window of the
--- common intersection. Therefore, we now that the selected block, if it exists,
--- will also be in that genesis window, making it validable and therefore
--- eligible for jumping.
---
--- PRECONDITION: The 'PeerContext' is that of the dynamo.
-whereShouldWeJump ::
-  ( MonadSTM m,
-    HasHeader blk,
-    HasHeader (Header blk)
-  ) =>
-  PeerContext m peer blk ->
-  WithOrigin SlotNo ->
-  STM m (Maybe (Point blk))
-whereShouldWeJump context lastJumpSlot = do
-  dynamoFragment <- csCandidate <$> readTVar (cschState (handle context))
-  let (older, newer) =
-        span
-          (\hdr -> 1 + blockSlot hdr <= succWithOrigin lastJumpSlot + jumpSize context)
-          (toOldestFirst dynamoFragment)
-  let block =
-        case (unsnoc older, uncons newer) of
-          (Just (_, block'), _) -> Just block'
-          (_, Just (block', _)) -> Just block'
-          _ -> Nothing
-  pure $ castPoint . blockPoint <$> block
-
-triggerJumping ::
+-- When we roll forward, we might need to elect a new dynamo if the header is
+-- beyond the forecast horizon and this is the Dynamo.
+onRollForward ::
   ( MonadSTM m,
     HasHeader blk
   ) =>
   PeerContext m peer blk ->
-  Maybe SlotNo ->
-  -- ^ @Just s@ if we just received (but not yet validated) 'MsgRollForward'
-  -- with a header at slot @s@; @Nothing@ if we received 'MsgAwaitReply'.
+  SlotNo ->
   STM m ()
-triggerJumping context maybeSlot =
+onRollForward context slot =
   readTVar (cschJumping (handle context)) >>= \case
-    Objector _ -> pure ()
-    Jumper _ _ _ -> pure ()
-    Dynamo lastJumpSlot -> do
-      let newJumpSlot = succWithOrigin lastJumpSlot + jumpSize context - 1
-      case maybeSlot of
-
-        -- NOTE: We compare with @1+@ on one side and 'succWithOrigin' on the other
-        -- side, which is morally the same as comparing without those but handles
-        -- the case of 'Origin' gracefully.
-        --
-        --               genesisWindow
-        --     <-------------------------------->
-        -- -o--o----o------o-o-------o-----o---o|---x-----
-        --     ^                     ^              ^
-        -- lastJumpSlot           blocks           slot
-        Just slot
-          | 1 + slot >= succWithOrigin lastJumpSlot + genesisWindowSlot ->
-            undefined
-
-        --               genesisWindow
-        --     <-------------------------------->
-        --     |       jumpSize                 |
-        --     <------------------------>       |
-        -- -o--o----o------o-o-------o--|--x----|---------
-        --     ^                     ^     ^
-        -- lastJumpSlot           blocks  slot
-        Just slot
-          | slot >= newJumpSlot ->
-            whereShouldWeJump context newJumpSlot >>= \case
-              Nothing -> undefined -- FIXME: kill the peer
-              Just point -> undefined
-
-        --               genesisWindow
-        --     <-------------------------------->
-        --     |       jumpSize                 |
-        --     <------------------------>       |
-        -- -o--o----o------o-o-------x--|-------|---------
-        --     ^                     ^
-        -- lastJumpSlot             slot
-        Just _ -> pure ()
-
-        -- We received 'MsgAwaitReply', meaning that our peer is either
-        -- adversary or honest but at the tip of its chain (either syncing or
-        -- caught-up), which means in any case that it is not suitable to be the
-        -- dynamo anymore.
-        --
-        -- TODO: Demote the dynamo and put it in a state where it cannot be
-        -- elected again. (Maybe the 'Done' state?)
-        Nothing ->
-          undefined
-
+    Objector{} -> pure ()
+    Jumper{} -> pure ()
+    Dynamo lastJumpSlot
+      | slot >= succWithOrigin lastJumpSlot + genesisWindowSlot -> electNewDynamo (stripContext context)
+      | otherwise -> pure ()
   where
     genesisWindowSlot = SlotNo (unGenesisWindow (genesisWindow context))
+
+-- | This function is called when we receive a 'MsgAwaitReply' message.
+--
+-- If this is the dynamo, we need to elect a new dynamo as no more headers
+-- are available.
+onAwaitReply ::
+  ( MonadSTM m,
+    HasHeader blk
+  ) =>
+  PeerContext m peer blk ->
+  STM m ()
+onAwaitReply context =
+  readTVar (cschJumping (handle context)) >>= \case
+    Objector{} -> pure ()
+    Jumper{} -> pure ()
+    Dynamo{} -> electNewDynamo (stripContext context)
 
 -- | Process the result of a jump. In the happy case, this only consists in
 -- updating the peer's handle to take the new candidate fragment and the new
