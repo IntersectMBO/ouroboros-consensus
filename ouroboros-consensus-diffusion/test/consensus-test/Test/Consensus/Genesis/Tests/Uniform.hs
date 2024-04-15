@@ -18,12 +18,11 @@ module Test.Consensus.Genesis.Tests.Uniform (
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.Class.MonadTime.SI (DiffTime, Time (Time),
-                     addTime)
+import           Control.Monad.Class.MonadTime.SI (Time, addTime)
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, fromMaybe, mapMaybe)
+import           Data.Maybe (fromMaybe, mapMaybe)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
@@ -70,7 +69,13 @@ tests =
     adjustQuickCheckTests (`div` 10) $
     testProperty "serve adversarial branches" prop_serveAdversarialBranches,
     adjustQuickCheckTests (`div` 100) $
-    testProperty "the LoE stalls the chain, but the immutable tip is honest" prop_loeStalling
+    testProperty "the LoE stalls the chain, but the immutable tip is honest" prop_loeStalling,
+    adjustQuickCheckTests (`div` 100) $
+    -- This is a crude way of ensuring that we don't get chains with more than 100 blocks,
+    -- because this test writes the immutable chain to disk and `instance Binary TestBlock`
+    -- chokes on long chains.
+    adjustQuickCheckMaxSize (const 10) $
+    testProperty "the node is shut down and restarted after some time" prop_downtime
     ]
 
 theProperty ::
@@ -204,22 +209,9 @@ prop_leashingAttackStalling =
     -- timeouts to disconnect adversaries.
     genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genLeashingSchedule genesisTest = do
-      Peers honest advs0 <- genUniformSchedulePoints genesisTest
-      let peerCount = 1 + length advs0
-          extendedHonest =
-            duplicateLastPoint (endingDelay peerCount genesisTest) <$> honest
+      Peers honest advs0 <- ensureScheduleDuration genesisTest <$> genUniformSchedulePoints genesisTest
       advs <- mapM (mapM dropRandomPoints) advs0
-      pure $ Peers extendedHonest advs
-
-    endingDelay peerCount gt =
-     let cst = gtChainSyncTimeouts gt
-         bft = gtBlockFetchTimeouts gt
-      in 1 + fromIntegral peerCount * maximum (0 : catMaybes
-           [ canAwaitTimeout cst
-           , intersectTimeout cst
-           , busyTimeout bft
-           , streamingTimeout bft
-           ])
+      pure $ Peers honest advs
 
     disableBoringTimeouts gt =
       gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
@@ -241,13 +233,6 @@ prop_leashingAttackStalling =
     dropElemsAt xs (i:is) =
       let (ys, zs) = splitAt i xs
        in ys ++ dropElemsAt (drop 1 zs) is
-
-    duplicateLastPoint
-      :: DiffTime -> [(Time, SchedulePoint TestBlock)] -> [(Time, SchedulePoint TestBlock)]
-    duplicateLastPoint d [] = [(Time d, ScheduleTipPoint Origin)]
-    duplicateLastPoint d xs =
-      let (t, p) = last xs
-       in xs ++ [(addTime d t, p)]
 
 -- | Test that the leashing attacks do not delay the immutable tip after. The
 -- immutable tip needs to be advanced enough when the honest peer has offered
@@ -393,3 +378,20 @@ prop_loeStalling =
         allTips = simpleHash . AF.headHash <$> (btTrunk : suffixes)
 
         suffixes = btbSuffix <$> btBranches
+
+-- | This test sets 'scDowntime', which instructs the scheduler to shut all components down whenever a tick's duration
+-- is greater than 11 seconds, and restarts it while only preserving the immutable DB after advancing the time.
+--
+-- This ensures that a user may shut down their machine while syncing without additional vulnerabilities.
+prop_downtime :: Property
+prop_downtime = forAllGenesisTest
+
+    (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
+      ensureScheduleDuration gt <$> stToGen (uniformPointsWithDowntime (gtSecurityParam gt) (gtBlockTree gt)))
+
+    (defaultSchedulerConfig
+       {scEnableLoE = True, scEnableLoP = True, scDowntime = Just 11})
+
+    shrinkPeerSchedules
+
+    theProperty
