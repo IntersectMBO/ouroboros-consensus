@@ -221,10 +221,18 @@ processJumpResult context jumpResult = do
           (LookingForIntersection badPoint, AcceptedJump goodPoint') ->
             -- The peer that was looking for an intersection accepts the given
             -- point, helping us narrow things down.
+            --
+            -- goodPoint' is guaranteed to be the midpoint of goodPoint and badPoint
+            -- as only `lookForIntersection` asks jumps for jumpers in state
+            -- `LookingForIntersection`.
             lookForIntersection nextJumpVar goodPoint' badPoint
-          (LookingForIntersection _, RejectedJump badPoint') ->
+          (LookingForIntersection _badPoint, RejectedJump badPoint') ->
             -- The peer that was looking for an intersection rejects the given
             -- point, helping us narrow things down.
+            --
+            -- badPoint' is guaranteed to be the midpoint of goodPoint and _badPoint
+            -- as only `lookForIntersection` asks jumps for jumpers in state
+            -- `LookingForIntersection`.
             lookForIntersection nextJumpVar goodPoint badPoint'
   where
     -- | Given a good point (where we know we agree with the dynamo) and a bad
@@ -244,11 +252,11 @@ processJumpResult context jumpResult = do
           writeTVar nextJumpVar $ Just $! (castPoint (blockPoint middlePoint) :: Point blk)
           writeTVar (cschJumping (handle context)) $ Jumper nextJumpVar goodPoint (LookingForIntersection badPoint)
 
-    -- | Select a slice of an anchored fragment between two points, inclusive.
-    -- Both points must exist on the chain, in order, or the result is Nothing.
-    -- REVIEW: How does this function behave if @fromExcl == toExcl@? How should
-    -- it behave? It doesn't matter much because we never have this in our code,
-    -- but still.
+    -- | Select a slice of an anchored fragment between two points. The slice
+    -- includes neither of the points.
+    --
+    -- Both points must exist on the anchored fragment, in order,
+    -- and `fromExcl /= toExcl`, otherwise the result is `Nothing`.
     sliceRangeExcl fragment fromExcl toExcl = do
       fragmentFrom <- snd <$> splitAfterPoint fragment fromExcl
       fst <$> splitBeforePoint fragmentFrom toExcl
