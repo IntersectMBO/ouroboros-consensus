@@ -133,7 +133,7 @@ nextInstruction context =
         -- (including) @lastJumpSlot + jumpSize@ onwards. This means that we
         -- must _see_ a block there and therefore that @jumpSize@ must be small
         -- enough compared to the forecast range. If we are blocked behind the
-        -- forecase range, we never call 'nextInstruction'.
+        -- forecast range, we never call 'nextInstruction'.
         handles <- readTVar (handlesVar context)
         forM_ (Map.elems handles) $ \ChainSyncClientHandle{cschJumping = cschJumping'} ->
           readTVar cschJumping' >>= \case
