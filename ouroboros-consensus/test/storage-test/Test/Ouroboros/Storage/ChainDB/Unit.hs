@@ -45,7 +45,6 @@ import           Ouroboros.Consensus.Util.ResourceRegistry (closeRegistry,
                      unsafeNewRegistry)
 import           Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint)
 import qualified Ouroboros.Network.Mock.Chain as Mock
-import qualified System.FS.Sim.MockFS as Mock
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
 import           Test.Ouroboros.Storage.ChainDB.Model (Model)
 import qualified Test.Ouroboros.Storage.ChainDB.StateMachine as SM
@@ -411,9 +410,8 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
       varCurSlot <- uncheckedNewTVarM 0
       varNextId <- uncheckedNewTVarM 0
       nodeDbs <- emptyNodeDBs
-      gsmhasfs <- newTVarIO Mock.empty
       (tracer, getTrace) <- recordingTracerTVar
-      let args = chainDbArgs threadRegistry nodeDbs tracer gsmhasfs
+      let args = chainDbArgs threadRegistry nodeDbs tracer
       varDB <- open args >>= newTVarIO
       let env = ChainDBEnv
             { varDB
@@ -430,12 +428,11 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
       closeRegistry (registry env)
       closeRegistry (cdbsRegistry . cdbsArgs $ args env)
 
-    chainDbArgs registry nodeDbs tracer gsmhasfs =
+    chainDbArgs registry nodeDbs tracer =
       let args = fromMinimalChainDbArgs MinimalChainDbArgs
             { mcdbTopLevelConfig = topLevelConfig
             , mcdbChunkInfo = chunkInfo
             , mcdbInitLedger = extLedgerState
-            , mcdbGSMHasFS = gsmhasfs
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDbs
             }

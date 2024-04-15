@@ -1576,14 +1576,12 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       varCurSlot         <- uncheckedNewTVarM 0
       varNextId          <- uncheckedNewTVarM 0
       nodeDBs            <- emptyNodeDBs
-      gsmhasfs           <- atomically $ newTVar Mock.empty
       let args = mkArgs
                    testCfg
                    chunkInfo
                    (testInitExtLedger `withLedgerTables` emptyLedgerTables)
                    threadRegistry
                    nodeDBs
-                   gsmhasfs
                    tracer
                    maxClockSkew
                    varCurSlot
@@ -1727,19 +1725,17 @@ mkArgs :: IOLike m
        -> ExtLedgerState Blk ValuesMK
        -> ResourceRegistry m
        -> NodeDBs (StrictTVar m MockFS)
-       -> StrictTVar m MockFS
        -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
        -> ChainDbArgs Identity m Blk
-mkArgs cfg chunkInfo initLedger registry nodeDBs gsmhasfs tracer (MaxClockSkew maxClockSkew) varCurSlot =
+mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot =
   let args = fromMinimalChainDbArgs MinimalChainDbArgs {
             mcdbTopLevelConfig = cfg
           , mcdbChunkInfo = chunkInfo
           , mcdbInitLedger = initLedger
           , mcdbRegistry = registry
           , mcdbNodeDBs = nodeDBs
-          , mcdbGSMHasFS = gsmhasfs
           }
   in ChainDB.updateTracer tracer $
       args { cdbsArgs = (cdbsArgs args) {

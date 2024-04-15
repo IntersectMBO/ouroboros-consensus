@@ -746,21 +746,19 @@ runThreadNetwork systemTime ThreadNetworkArgs
               -- ^ ledger updates tracer
            -> Tracer m (ChainDB.TracePipeliningEvent blk)
            -> NodeDBs (StrictTVar m MockFS)
-           -> StrictTVar m MockFS
            -> CoreNodeId
            -> ChainDbArgs Identity m blk
     mkArgs
       clock registry
       cfg initLedger
       invalidTracer addTracer selTracer updatesTracer pipeliningTracer
-      nodeDBs gsmFs _coreNodeId =
+      nodeDBs _coreNodeId =
         let args = fromMinimalChainDbArgs MinimalChainDbArgs {
                 mcdbTopLevelConfig = cfg
               , mcdbChunkInfo      = ImmutableDB.simpleChunkInfo epochSize0
               , mcdbInitLedger     = initLedger
               , mcdbRegistry       = registry
               , mcdbNodeDBs        = nodeDBs
-              , mcdbGSMHasFS       = gsmFs
               }
             tr = instrumentationTracer <> nullDebugTracer
         in args { cdbImmDbArgs = (cdbImmDbArgs args) {
@@ -848,7 +846,6 @@ runThreadNetwork systemTime ThreadNetworkArgs
       let NodeInfo
             { nodeInfoEvents
             , nodeInfoDBs
-            , nodeInfoGSMFs
             } = nodeInfo
 
       -- prop_general relies on these tracers
@@ -870,7 +867,6 @@ runThreadNetwork systemTime ThreadNetworkArgs
             updatesTracer
             pipeliningTracer
             nodeInfoDBs
-            nodeInfoGSMFs
             coreNodeId
       chainDB <- snd <$>
         allocate registry (const (ChainDB.openDB chainDbArgs)) ChainDB.closeDB
@@ -1488,7 +1484,6 @@ createConnectedChannelsWithDelay registry (client, server, proto) middle = do
 data NodeInfo blk db ev = NodeInfo
   { nodeInfoEvents :: NodeEvents blk ev
   , nodeInfoDBs    :: NodeDBs db
-  , nodeInfoGSMFs  :: db
   }
 
 -- | A vector with an @ev@-shaped element for a particular set of
@@ -1551,10 +1546,9 @@ newNodeInfo = do
           , NodeDBs <$> m1 <*> m2 <*> m3 <*> m4 <*> m5
           )
 
-  nodeInfoGSMFs <- uncheckedNewTVarM Mock.empty
   pure
-      ( NodeInfo{nodeInfoEvents, nodeInfoDBs, nodeInfoGSMFs }
-      , NodeInfo <$> readEvents <*> atomically readDBs <*> readTVarIO nodeInfoGSMFs
+      ( NodeInfo{nodeInfoEvents, nodeInfoDBs }
+      , NodeInfo <$> readEvents <*> atomically readDBs
       )
 
 {-------------------------------------------------------------------------------

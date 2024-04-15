@@ -78,7 +78,6 @@ data MinimalChainDbArgs m blk = MinimalChainDbArgs {
   , mcdbNodeDBs        :: NodeDBs (StrictTVar m MockFS)
   -- ^ File systems underlying the immutable, volatile and ledger databases.
   -- Would be useful to default this to StrictTVar's containing empty MockFS's.
-  , mcdbGSMHasFS       :: StrictTVar m MockFS
   }
 
 -- | Utility function to get a default chunk info in case we have EraParams available.
@@ -121,25 +120,25 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
           lgrSnapshotPolicyArgs = LedgerDB.SnapshotPolicyArgs LedgerDB.DefaultSnapshotInterval LedgerDB.DefaultNumOfDiskSnapshots
           -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
           -- k seconds, where k is the security parameter.
-        , lgrGenesis          = return mcdbInitLedger
-        , lgrHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgr mcdbNodeDBs)
-        , lgrSSDHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgrSSD mcdbNodeDBs)
-        , lgrSnapshotTablesSSD = False
-        , lgrSnapshotStateSSD = False
-        , lgrTracer           = nullTracer
-        , lgrRegistry         = mcdbRegistry
-        , lgrConfig           = configLedgerDb mcdbTopLevelConfig
-        , lgrFlavorArgs       =
+        , lgrGenesis            = return mcdbInitLedger
+        , lgrHasFS              = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgr mcdbNodeDBs)
+        , lgrSSDHasFS           = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgrSSD mcdbNodeDBs)
+        , lgrSnapshotTablesSSD  = False
+        , lgrSnapshotStateSSD   = False
+        , lgrTracer             = nullTracer
+        , lgrRegistry           = mcdbRegistry
+        , lgrConfig             = configLedgerDb mcdbTopLevelConfig
+        , lgrFlavorArgs         =
             LedgerDbFlavorArgsV1
               (V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs)
-        , lgrStartSnapshot    = Nothing
+        , lgrStartSnapshot      = Nothing
         }
     , cdbsArgs = ChainDbSpecificArgs {
           cdbsBlocksToAddSize = 1
         , cdbsCheckInFuture   = CheckInFuture $ \vf -> pure (VF.validatedFragment vf, [])
           -- Blocks are never in the future
         , cdbsGcDelay         = 1
-        , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS $ unsafeToUncheckedStrictTVar mcdbGSMHasFS
+        , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS $ unsafeToUncheckedStrictTVar $ nodeDBsGsm mcdbNodeDBs
         , cdbsGcInterval      = 1
         , cdbsRegistry        = mcdbRegistry
         , cdbsTracer          = nullTracer

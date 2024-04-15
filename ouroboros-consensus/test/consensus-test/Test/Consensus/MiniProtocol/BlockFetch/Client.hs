@@ -75,7 +75,6 @@ import           Ouroboros.Network.Protocol.BlockFetch.Server
                      BlockFetchServer (..), blockFetchServerPeer)
 import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch,
                      ChainRange (..), Message (MsgBlock))
-import qualified System.FS.Sim.MockFS as MockFS
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -246,14 +245,12 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
     mkChainDbView registry tracer = do
         chainDbArgs <- do
           nodeDBs <- emptyNodeDBs
-          fs <- newTVarIO MockFS.empty
           let args = fromMinimalChainDbArgs $ MinimalChainDbArgs {
                   mcdbTopLevelConfig = topLevelConfig
                 , mcdbChunkInfo = mkTestChunkInfo topLevelConfig
                 , mcdbInitLedger = testInitExtLedger
                 , mcdbRegistry = registry
                 , mcdbNodeDBs = nodeDBs
-                , mcdbGSMHasFS = fs
                 }
           -- TODO: Test with more interesting behaviour for cdbCheckInFuture
           pure $ args { cdbImmDbArgs = (cdbImmDbArgs args) { immTracer = TraceImmutableDBEvent >$< cdbTracer }

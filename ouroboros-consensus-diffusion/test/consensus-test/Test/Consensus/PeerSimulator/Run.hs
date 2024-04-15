@@ -55,7 +55,6 @@ import           Ouroboros.Network.Protocol.ChainSync.PipelineDecision
                      (pipelineDecisionLowHighMark)
 import           Ouroboros.Network.Protocol.ChainSync.Server
                      (chainSyncServerPeer)
-import qualified System.FS.Sim.MockFS as Mock
 import qualified Test.Consensus.BlockTree as BT
 import           Test.Consensus.Genesis.Setup.GenChains (GenesisTest)
 import           Test.Consensus.Network.Driver.Limits.Extras
@@ -306,7 +305,6 @@ mkChainDb ::
 mkChainDb tracer _candidateVars nodeCfg registry = do
     chainDbArgs <- do
       mcdbNodeDBs <- emptyNodeDBs
-      mcdbGSMHasFS <- uncheckedNewTVarM Mock.empty
       pure $ updateTracer (mkCdbTracer tracer) (
         fromMinimalChainDbArgs MinimalChainDbArgs {
             mcdbTopLevelConfig = nodeCfg
@@ -314,7 +312,6 @@ mkChainDb tracer _candidateVars nodeCfg registry = do
           , mcdbInitLedger     = testInitExtLedger
           , mcdbRegistry       = registry
           , mcdbNodeDBs
-          , mcdbGSMHasFS
           }
         )
     (_, (chainDB, ChainDB.Impl.Internal{intAddBlockRunner})) <-
