@@ -251,6 +251,7 @@ test-suite consensus-test
     Test.Consensus.PointSchedule
     Test.Consensus.PointSchedule.Peers
     Test.Consensus.PointSchedule.Shrinking
+    Test.Consensus.PointSchedule.Shrinking.Tests
     Test.Consensus.PointSchedule.SinglePeer
     Test.Consensus.PointSchedule.SinglePeer.Indices
     Test.Consensus.PointSchedule.Tests
