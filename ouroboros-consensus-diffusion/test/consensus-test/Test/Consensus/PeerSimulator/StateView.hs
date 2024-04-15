@@ -15,10 +15,12 @@ module Test.Consensus.PeerSimulator.StateView (
   , exceptionsByComponent
   , pscrToException
   , snapshotStateView
+  , stateViewTracersWithInitial
   ) where
 
-import           Control.Tracer (Tracer)
+import           Control.Tracer (Tracer, traceWith)
 import           Data.Containers.ListUtils (nubOrd)
+import           Data.Foldable (for_)
 import           Data.List (sort)
 import           Data.Maybe (mapMaybe)
 import           Network.TypedProtocol.Codec (AnyMessage)
@@ -195,6 +197,16 @@ defaultStateViewTracers ::
 defaultStateViewTracers = do
   (svtPeerSimulatorResultsTracer, svtGetPeerSimulatorResults) <- recordingTracerTVar
   pure StateViewTracers {svtPeerSimulatorResultsTracer, svtGetPeerSimulatorResults}
+
+-- | Call 'defaultStateViewTracers' and add the provided results.
+stateViewTracersWithInitial ::
+  IOLike m =>
+  [PeerSimulatorResult blk] ->
+  m (StateViewTracers blk m)
+stateViewTracersWithInitial initial = do
+  svt <- defaultStateViewTracers
+  for_ initial (traceWith (svtPeerSimulatorResultsTracer svt))
+  pure svt
 
 -- | Use the state view tracers as well as some extra information to produce a
 -- state view. This mostly consists in reading and storing the current state of
