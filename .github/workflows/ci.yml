@@ -174,7 +174,12 @@ jobs:
         && github.ref == 'refs/heads/main'
         && matrix.ghc=='9.6.4'
       run: |
-        cabal build --dry-run --enable-tests all
+        # need for latex, dvisvgm and standalone
+        sudo apt install texlive-latex-extra texlive-latex-base
+        # cabal-docspec doesn't work with XDG https://github.com/phadej/cabal-extras/issues/136
+        sed -i 's_-- store-dir:_store-dir: /home/runner/.local/state/cabal/store_g' ~/.config/cabal/config
+        export CABAL_CONFIG=~/.config/cabal/config
+
         ./scripts/docs/haddocks.sh
         tar vzcf haddocks.tgz ./docs/website/static/haddocks
 
