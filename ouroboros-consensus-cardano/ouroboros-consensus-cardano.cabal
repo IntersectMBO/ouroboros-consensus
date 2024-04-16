@@ -113,6 +113,7 @@ library
     Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol
     Ouroboros.Consensus.Shelley.Node
     Ouroboros.Consensus.Shelley.Node.Common
+    Ouroboros.Consensus.Shelley.Node.DiffusionPipelining
     Ouroboros.Consensus.Shelley.Node.Praos
     Ouroboros.Consensus.Shelley.Node.Serialisation
     Ouroboros.Consensus.Shelley.Node.TPraos
@@ -413,6 +414,7 @@ test-suite cardano-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Cardano.ByronCompatibility
+    Test.Consensus.Cardano.DiffusionPipelining
     Test.Consensus.Cardano.Golden
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.ByteStringTxParser
     Test.Consensus.Cardano.MiniProtocol.LocalTxSubmission.Server
@@ -432,8 +434,9 @@ test-suite cardano-test
     cardano-ledger-alonzo,
     cardano-ledger-alonzo-test,
     cardano-ledger-api,
+    cardano-ledger-binary:testlib,
     cardano-ledger-byron,
-    cardano-ledger-core,
+    cardano-ledger-core:{cardano-ledger-core, testlib},
     cardano-ledger-shelley,
     cardano-protocol-tpraos,
     cardano-slotting,

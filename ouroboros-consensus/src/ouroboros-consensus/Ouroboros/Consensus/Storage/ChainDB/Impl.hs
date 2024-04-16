@@ -4,6 +4,7 @@
 {-# LANGUAGE PatternSynonyms          #-}
 {-# LANGUAGE RecordWildCards          #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
+{-# LANGUAGE TypeApplications         #-}
 
 module Ouroboros.Consensus.Storage.ChainDB.Impl (
     -- * Initialization
@@ -68,8 +69,6 @@ import           Ouroboros.Consensus.Util.ResourceRegistry (WithTempRegistry,
                      allocate, runInnerWithTempRegistry, runWithTempRegistry)
 import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
                      WithFingerprint (..))
-import           Ouroboros.Consensus.Util.TentativeState
-                     (TentativeState (NoLastInvalidTentative))
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
 {-------------------------------------------------------------------------------
@@ -80,6 +79,7 @@ withDB ::
      forall m blk a.
      ( IOLike m
      , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
      , InspectLedger blk
      , HasHardForkHistory blk
      , ConvertRawHash blk
@@ -94,6 +94,7 @@ openDB ::
      forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
      , InspectLedger blk
      , HasHardForkHistory blk
      , ConvertRawHash blk
@@ -107,6 +108,7 @@ openDBInternal ::
      forall m blk.
      ( IOLike m
      , LedgerSupportsProtocol blk
+     , BlockSupportsDiffusionPipelining blk
      , InspectLedger blk
      , HasHardForkHistory blk
      , ConvertRawHash blk
@@ -165,7 +167,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
       atomically $ LgrDB.setCurrent lgrDB ledger
       varChain           <- newTVarIO chain
-      varTentativeState  <- newTVarIO NoLastInvalidTentative
+      varTentativeState  <- newTVarIO $ initialTentativeHeaderState (Proxy @blk)
       varTentativeHeader <- newTVarIO SNothing
       varIterators       <- newTVarIO Map.empty
       varFollowers       <- newTVarIO Map.empty

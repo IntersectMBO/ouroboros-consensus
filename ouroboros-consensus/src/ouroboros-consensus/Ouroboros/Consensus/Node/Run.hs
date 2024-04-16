@@ -92,6 +92,7 @@ class ( LedgerSupportsProtocol           blk
       , LedgerSupportsPeerSelection      blk
       , NodeInitStorage                  blk
       , BlockSupportsMetrics             blk
+      , BlockSupportsDiffusionPipelining blk
       , Show                (CannotForge blk)
       , Show             (ForgeStateInfo blk)
       , Show      (ForgeStateUpdateError blk)

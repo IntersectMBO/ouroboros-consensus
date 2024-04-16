@@ -74,6 +74,7 @@ library
     Ouroboros.Consensus.Block.Forging
     Ouroboros.Consensus.Block.NestedContent
     Ouroboros.Consensus.Block.RealPoint
+    Ouroboros.Consensus.Block.SupportsDiffusionPipelining
     Ouroboros.Consensus.Block.SupportsMetrics
     Ouroboros.Consensus.Block.SupportsProtocol
     Ouroboros.Consensus.BlockchainTime
@@ -117,6 +118,7 @@ library
     Ouroboros.Consensus.HardFork.Combinator.Lifting
     Ouroboros.Consensus.HardFork.Combinator.Mempool
     Ouroboros.Consensus.HardFork.Combinator.Node
+    Ouroboros.Consensus.HardFork.Combinator.Node.DiffusionPipelining
     Ouroboros.Consensus.HardFork.Combinator.Node.InitStorage
     Ouroboros.Consensus.HardFork.Combinator.Node.Metrics
     Ouroboros.Consensus.HardFork.Combinator.PartialConfig
@@ -261,7 +263,6 @@ library
     Ouroboros.Consensus.Util.RedundantConstraints
     Ouroboros.Consensus.Util.ResourceRegistry
     Ouroboros.Consensus.Util.STM
-    Ouroboros.Consensus.Util.TentativeState
     Ouroboros.Consensus.Util.Time
     Ouroboros.Consensus.Util.TraceSize
     Ouroboros.Consensus.Util.Versioned
@@ -330,6 +331,7 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.ChainGenerator.RaceIterator
     Test.Ouroboros.Consensus.ChainGenerator.Slot
     Test.Ouroboros.Consensus.ChainGenerator.Some
+    Test.Ouroboros.Consensus.DiffusionPipelining
     Test.QuickCheck.Extras
     Test.Util.BoolProps
     Test.Util.ChainDB

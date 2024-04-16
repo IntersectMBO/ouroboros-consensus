@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
@@ -737,6 +738,13 @@ instance DecodeDiskDep   (NestedCtxt Header) TestBlock
 -- ChainDepState
 instance EncodeDisk TestBlock ()
 instance DecodeDisk TestBlock ()
+
+{-------------------------------------------------------------------------------
+  Additional instances
+-------------------------------------------------------------------------------}
+
+deriving via SelectViewDiffusionPipelining TestBlock
+  instance BlockSupportsDiffusionPipelining TestBlock
 
 {-------------------------------------------------------------------------------
   Corruption

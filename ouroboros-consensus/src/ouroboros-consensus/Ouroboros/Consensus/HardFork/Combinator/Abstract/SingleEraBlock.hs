@@ -66,6 +66,7 @@ class ( LedgerSupportsProtocol blk
       , LedgerSupportsPeerSelection blk
       , ConfigSupportsNode blk
       , NodeInitStorage blk
+      , BlockSupportsDiffusionPipelining blk
       , BlockSupportsMetrics blk
         -- Instances required to support testing
       , Eq   (GenTx blk)
