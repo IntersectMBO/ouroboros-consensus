@@ -98,6 +98,7 @@ import           Data.List.NonEmpty (NonEmpty (..))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
+import           Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import           Data.Proxy
 import           Data.Time.Calendar (fromGregorian)
 import           Data.Time.Clock (UTCTime (..))
@@ -213,17 +214,17 @@ data Validity = Valid | Invalid
 -- instance. See the former class for more details.
 --
 data TestBlockWith ptype = TestBlockWith {
-      tbHash    :: TestHash
-    , tbSlot    :: SlotNo
+      tbHash    :: !TestHash
+    , tbSlot    :: !SlotNo
       -- ^ We store a separate 'Block.SlotNo', as slots can have gaps between
       -- them, unlike block numbers.
       --
       -- Note that when generating a 'TestBlock', you must make sure that
       -- blocks with the same 'TestHash' have the same slot number.
-    , tbValid   :: Validity
+    , tbValid   :: !Validity
       -- ^ Note that when generating a 'TestBlock', you must make sure that
       -- blocks with the same 'TestHash' have the same value for 'tbValid'.
-    , tbPayload :: ptype
+    , tbPayload :: !ptype
     }
   deriving stock    (Show, Eq, Ord, Generic)
   deriving anyclass (Serialise, NoThunks, ToExpr)
@@ -547,16 +548,16 @@ testInitExtLedgerWithState st = ExtLedgerState {
     }
 
 data TestBlockLedgerConfig = TestBlockLedgerConfig {
-  tblcHardForkParams :: HardFork.EraParams,
+  tblcHardForkParams :: !HardFork.EraParams,
   -- | `Nothing` means an infinite forecast range.
   -- Instead of SlotNo, it should be something like "SlotRange"
-  tblcForecastRange  :: Maybe SlotNo
+  tblcForecastRange  :: !(StrictMaybe SlotNo)
 }
   deriving (Show, Eq, Generic)
   deriving anyclass (NoThunks)
 
 testBlockLedgerConfigFrom :: HardFork.EraParams -> TestBlockLedgerConfig
-testBlockLedgerConfigFrom eraParams = TestBlockLedgerConfig eraParams Nothing
+testBlockLedgerConfigFrom eraParams = TestBlockLedgerConfig eraParams SNothing
 
 type instance LedgerCfg (LedgerState (TestBlockWith ptype)) = TestBlockLedgerConfig
 
@@ -592,7 +593,7 @@ instance (PayloadSemantics ptype) => ValidateEnvelope (TestBlockWith ptype) wher
 instance (PayloadSemantics ptype) => LedgerSupportsProtocol (TestBlockWith ptype) where
   protocolLedgerView   _ _  = ()
   ledgerViewForecastAt cfg state =
-    constantForecastInRange (tblcForecastRange cfg) () (getTipSlot state)
+    constantForecastInRange (strictMaybeToMaybe (tblcForecastRange cfg)) () (getTipSlot state)
 
 singleNodeTestConfigWith ::
      CodecConfig (TestBlockWith ptype)
@@ -624,7 +625,7 @@ singleNodeTestConfigWith codecConfig storageConfig k genesisWindow = TopLevelCon
     ledgerCfgParams :: TestBlockLedgerConfig
     ledgerCfgParams = TestBlockLedgerConfig {
       tblcHardForkParams = HardFork.defaultEraParams k slotLength,
-      tblcForecastRange = Nothing
+      tblcForecastRange = SNothing
     }
 
     _eraParams :: HardFork.EraParams

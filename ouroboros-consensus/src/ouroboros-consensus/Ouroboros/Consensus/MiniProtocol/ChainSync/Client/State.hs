@@ -21,6 +21,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin)
 import           Data.Function (on)
+import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Typeable (Proxy (..), typeRep)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point)
@@ -56,7 +57,7 @@ data ChainSyncState blk = ChainSyncState {
     -- processing it further, and the latest slot may refer to a header beyond
     -- the forecast horizon while the candidate fragment isn't extended yet, to
     -- signal to GDD that the density is known up to this slot.
-  , csLatestSlot :: !(Maybe (WithOrigin SlotNo))
+  , csLatestSlot :: !(StrictMaybe (WithOrigin SlotNo))
   }
   deriving stock (Generic)
 
@@ -131,7 +132,7 @@ data ChainSyncJumpingState m blk
     -- honest, but the goal of the algorithm is to eventually have an honest,
     -- alert peer as dynamo.
     Dynamo
-      (DynamoInitState blk)
+      !(DynamoInitState blk)
       -- | The last slot at which we triggered jumps for the jumpers.
       !(WithOrigin SlotNo)
   | -- | The objector, of which there is at most one, also runs normal
@@ -139,7 +140,7 @@ data ChainSyncJumpingState m blk
     -- that happened, we spun it up to let normal ChainSync and Genesis decide
     -- which one to disconnect from.
     Objector
-      ObjectorInitState
+      !ObjectorInitState
       -- | The youngest point where the objector agrees with the dynamo.
       !(JumpInfo blk)
       -- | The point where the objector dissented with the dynamo when it was a

@@ -167,6 +167,7 @@ import           Data.List (sortOn)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe)
+import           Data.Maybe.Strict (StrictMaybe (..))
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader (getHeaderFields), Header,
                      Point (..), castPoint, pointSlot, succWithOrigin)
@@ -587,7 +588,7 @@ processJumpResult context jumpResult =
     updateChainSyncState handle jump = do
       let fragment = jTheirFragment jump
       modifyTVar (cschState handle) $ \csState ->
-        csState {csCandidate = fragment, csLatestSlot = Just (AF.headSlot fragment) }
+        csState {csCandidate = fragment, csLatestSlot = SJust (AF.headSlot fragment) }
       writeTVar (cschJumpInfo handle) $ Just jump
 
     mkGoodJumpInfo :: Maybe (JumpInfo blk) -> JumpInfo blk -> JumpInfo blk

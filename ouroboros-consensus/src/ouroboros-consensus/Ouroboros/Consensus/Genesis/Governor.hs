@@ -37,7 +37,7 @@ module Ouroboros.Consensus.Genesis.Governor (
 import           Control.Monad (guard)
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Containers.ListUtils (nubOrd)
-import           Data.Foldable (for_)
+import           Data.Foldable (for_, toList)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (maybeToList)
@@ -212,7 +212,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       state <- maybeToList (states Map.!? peer)
       -- Skip peers that haven't sent any headers yet.
       -- They should be disconnected by timeouts instead.
-      latestSlot <- maybeToList (csLatestSlot state)
+      latestSlot <- toList (csLatestSlot state)
       let candidateSuffix = candidateSuffixes Map.! peer
 
           idling = csIdling state

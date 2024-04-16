@@ -18,6 +18,7 @@ import           Data.List.NonEmpty (nonEmpty)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
+import           Data.Maybe.Strict (StrictMaybe (..))
 import           Data.Semigroup (Endo (..))
 import           Data.Set (Set, (\\))
 import qualified Data.Set as Set
@@ -141,7 +142,7 @@ prop_densityDisconnectStatic =
     mkState frag =
       ChainSyncState {
         csCandidate = frag,
-        csLatestSlot = Just (AF.headSlot frag),
+        csLatestSlot = SJust (AF.headSlot frag),
         csIdling = False
       }
     gen = do
@@ -377,7 +378,7 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
             ChainSyncState {
               csCandidate,
               csIdling = False,
-              csLatestSlot = Just (AF.headSlot csCandidate)
+              csLatestSlot = SJust (AF.headSlot csCandidate)
             }
         -- Run GDD.
         (loeFrag, suffixes) = sharedCandidatePrefix curChain candidates

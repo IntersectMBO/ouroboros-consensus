@@ -5,6 +5,7 @@ module Test.Consensus.PeerSimulator.Config (defaultCfg) where
 import           Cardano.Crypto.DSIGN (SignKeyDSIGN (..), VerKeyDSIGN (..))
 import           Cardano.Slotting.Time (SlotLength, slotLengthFromSec)
 import qualified Data.Map.Strict as Map
+import           Data.Maybe.Strict (StrictMaybe (..))
 import           Ouroboros.Consensus.Config (SecurityParam, TopLevelConfig (..),
                      emptyCheckpointsMap)
 import           Ouroboros.Consensus.HardFork.History
@@ -39,7 +40,7 @@ defaultCfg secParam (ForecastRange sfor) sgen = TopLevelConfig {
       , (CoreId (CoreNodeId 1), VerKeyMockDSIGN 1)
       ]
     }
-  , topLevelConfigLedger      = TestBlockLedgerConfig eraParams (Just $ fromIntegral sfor)
+  , topLevelConfigLedger      = TestBlockLedgerConfig eraParams (SJust (fromIntegral sfor))
   , topLevelConfigBlock       = TestBlockConfig numCoreNodes
   , topLevelConfigCodec       = TestBlockCodecConfig
   , topLevelConfigStorage     = TestBlockStorageConfig
