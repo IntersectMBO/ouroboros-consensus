@@ -97,6 +97,7 @@ import           Data.List.NonEmpty (NonEmpty (..), (<|))
 import           Data.Maybe (fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.Text (Text)
 import           Data.Void
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
@@ -414,11 +415,11 @@ electric :: m a -> Electric m a
 electric = Electric
 
 -- | A simple semaphore, though instead of blocking a fatal exception is thrown.
-data Fuse m = Fuse !String !(StrictMVar m ()) deriving (Generic)
+data Fuse m = Fuse !Text !(StrictMVar m ()) deriving (Generic)
 
 deriving instance NoThunks (StrictMVar m ()) => NoThunks (Fuse m)
 
-newFuse :: MonadMVar m => String -> m (Fuse m)
+newFuse :: MonadMVar m => Text -> m (Fuse m)
 newFuse name = Fuse name <$> newMVar ()
 
 -- | Put full load on the 'Fuse' while the 'Electric' is running.
@@ -446,6 +447,6 @@ withFuse (Fuse name m) (Electric io) = do
   pure a
 
 -- | Too much electrical load was put on the 'Fuse', see 'withFuse'.
-newtype FuseBlownException  = FuseBlownException  String
+newtype FuseBlownException = FuseBlownException Text
  deriving (Show)
  deriving anyclass (Exception)
