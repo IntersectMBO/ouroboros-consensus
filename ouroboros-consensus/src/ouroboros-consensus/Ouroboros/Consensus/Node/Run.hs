@@ -80,7 +80,7 @@ class ( LedgerSupportsProtocol           blk
       , HasHardForkHistory               blk
       , LedgerSupportsMempool            blk
       , HasTxId                   (GenTx blk)
-      , QueryLedger                      blk
+      , BlockSupportsLedgerQuery         blk
       , SupportedNetworkProtocolVersion  blk
       , ConfigSupportsNode               blk
       , ConvertRawHash                   blk

@@ -256,8 +256,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       --
       -- 'run' will not return before this does.
     , llrnRunDataDiffusion ::
-           ResourceRegistry m
-        -> Diffusion.Applications
+           Diffusion.Applications
              addrNTN NodeToNodeVersion   versionDataNTN
              addrNTC NodeToClientVersion versionDataNTC
              m NodeToNodeInitiatorResult
@@ -491,7 +490,7 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                                         nodeKernel
                                         peerMetrics
 
-          llrnRunDataDiffusion registry apps appsExtra
+          llrnRunDataDiffusion apps appsExtra
   where
     ProtocolInfo
       { pInfoConfig       = cfg
@@ -937,7 +936,7 @@ stdLowLevelRunNodeArgsIO RunNodeArgs{ rnProtocolInfo
       , llrnCustomiseChainDbArgs = id
       , llrnCustomiseNodeKernelArgs
       , llrnRunDataDiffusion =
-          \_reg apps extraApps ->
+          \apps extraApps ->
             stdRunDataDiffusion srnDiffusionTracers
                                 srnDiffusionTracersExtra
                                 srnDiffusionArguments

@@ -20,7 +20,9 @@ module Ouroboros.Consensus.Ledger.Extended (
   , ExtLedgerState (..)
   , ExtValidationError (..)
     -- * Serialisation
+  , decodeDiskExtLedgerState
   , decodeExtLedgerState
+  , encodeDiskExtLedgerState
   , encodeExtLedgerState
     -- * Casts
   , castExtLedgerState
@@ -43,6 +45,7 @@ import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
+import           Ouroboros.Consensus.Storage.Serialisation
 
 {-------------------------------------------------------------------------------
   Extended ledger state
@@ -194,6 +197,19 @@ encodeExtLedgerState encodeLedgerState
                            encodeChainDepState
                            encodeAnnTip
 
+encodeDiskExtLedgerState ::
+     forall blk.
+     (EncodeDisk blk (LedgerState blk),
+      EncodeDisk blk (ChainDepState (BlockProtocol blk)),
+      EncodeDisk blk (AnnTip blk)
+     )
+  => (CodecConfig blk -> ExtLedgerState blk -> Encoding)
+encodeDiskExtLedgerState cfg =
+  encodeExtLedgerState
+    (encodeDisk cfg)
+    (encodeDisk cfg)
+    (encodeDisk cfg)
+
 decodeExtLedgerState :: (forall s. Decoder s (LedgerState    blk))
                      -> (forall s. Decoder s (ChainDepState  (BlockProtocol blk)))
                      -> (forall s. Decoder s (AnnTip         blk))
@@ -209,6 +225,19 @@ decodeExtLedgerState decodeLedgerState
     decodeHeaderState' = decodeHeaderState
                            decodeChainDepState
                            decodeAnnTip
+
+decodeDiskExtLedgerState ::
+     forall blk.
+     (DecodeDisk blk (LedgerState blk),
+      DecodeDisk blk (ChainDepState (BlockProtocol blk)),
+      DecodeDisk blk (AnnTip blk)
+     )
+  => (CodecConfig blk -> forall s. Decoder s (ExtLedgerState blk))
+decodeDiskExtLedgerState cfg =
+  decodeExtLedgerState
+    (decodeDisk cfg)
+    (decodeDisk cfg)
+    (decodeDisk cfg)
 
 {-------------------------------------------------------------------------------
   Casts

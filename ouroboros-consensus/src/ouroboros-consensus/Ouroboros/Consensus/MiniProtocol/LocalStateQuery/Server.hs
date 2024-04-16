@@ -13,7 +13,7 @@ import           Ouroboros.Network.Protocol.LocalStateQuery.Type
                      (AcquireFailure (..), Target (..))
 
 localStateQueryServer ::
-     forall m blk. (IOLike m, QueryLedger blk, ConfigSupportsNode blk, HasAnnTip blk)
+     forall m blk. (IOLike m, BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk)
   => ExtLedgerCfg blk
   -> STM m (Point blk)
      -- ^ Get tip point

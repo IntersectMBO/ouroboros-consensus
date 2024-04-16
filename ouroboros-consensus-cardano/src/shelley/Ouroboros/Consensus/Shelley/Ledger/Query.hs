@@ -300,7 +300,8 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
 instance (Typeable era, Typeable proto)
   => ShowProxy (BlockQuery (ShelleyBlock proto era)) where
 
-instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto) => QueryLedger (ShelleyBlock proto era) where
+instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
+      => BlockSupportsLedgerQuery (ShelleyBlock proto era) where
   answerBlockQuery cfg query ext =
       case query of
         GetLedgerTip ->

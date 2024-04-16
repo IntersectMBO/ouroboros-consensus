@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE PolyKinds     #-}
 {-# LANGUAGE TypeFamilies  #-}
 -- | Utilities for arguments record with defaults
 --
@@ -33,10 +34,13 @@ module Ouroboros.Consensus.Util.Args (
   , HKD
   , MapHKD (..)
     -- * Re-exported for convenience
+  , Complete
   , Identity (..)
+  , Incomplete
   ) where
 
 import           Data.Functor.Identity (Identity (..))
+import           Data.Kind
 
 data Defaults t = NoDefault
   deriving (Functor)
@@ -44,6 +48,9 @@ data Defaults t = NoDefault
 type family HKD f a where
   HKD Identity a = a
   HKD f        a = f a
+
+type Incomplete (args :: (Type -> Type) -> k) = args Defaults
+type Complete   (args :: (Type -> Type) -> k) = args Identity
 
 class MapHKD f where
   mapHKD :: proxy (f b) -> (a -> b) -> HKD f a -> HKD f b
@@ -53,5 +60,3 @@ instance MapHKD Identity where
 
 instance MapHKD Defaults where
   mapHKD _ _ = const NoDefault
-
-

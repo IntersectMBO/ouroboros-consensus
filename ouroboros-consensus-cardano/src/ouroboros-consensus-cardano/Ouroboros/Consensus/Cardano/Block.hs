@@ -2,6 +2,7 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE GADTs                    #-}
 {-# LANGUAGE PatternSynonyms          #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE ViewPatterns             #-}
 module Ouroboros.Consensus.Cardano.Block (
@@ -9,6 +10,7 @@ module Ouroboros.Consensus.Cardano.Block (
     CardanoEras
   , CardanoShelleyEras
   , module Ouroboros.Consensus.Shelley.Eras
+  , ShelleyBasedLedgerEras
     -- * Block
   , CardanoBlock
     -- Note: by exporting the pattern synonyms as part of the matching data
@@ -66,6 +68,7 @@ module Ouroboros.Consensus.Cardano.Block (
   , EraMismatch (..)
   ) where
 
+import           Data.Kind
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Strict
 import           Ouroboros.Consensus.Block (BlockProtocol)
@@ -94,8 +97,10 @@ import           Ouroboros.Consensus.TypeFamilyWrappers
 -- We parameterise over the crypto used in the post-Byron eras: @c@.
 --
 -- TODO: parameterise ByronBlock over crypto too
+type CardanoEras :: Type -> [Type]
 type CardanoEras c = ByronBlock ': CardanoShelleyEras c
 
+type CardanoShelleyEras :: Type -> [Type]
 type CardanoShelleyEras c =
   '[ ShelleyBlock (TPraos c) (ShelleyEra c)
    , ShelleyBlock (TPraos c) (AllegraEra c)
@@ -103,6 +108,16 @@ type CardanoShelleyEras c =
    , ShelleyBlock (TPraos c) (AlonzoEra c)
    , ShelleyBlock (Praos c)  (BabbageEra c)
    , ShelleyBlock (Praos c)  (ConwayEra c)
+   ]
+
+type ShelleyBasedLedgerEras :: Type -> [Type]
+type ShelleyBasedLedgerEras c =
+  '[ ShelleyEra c
+   , AllegraEra c
+   , MaryEra c
+   , AlonzoEra c
+   , BabbageEra c
+   , ConwayEra c
    ]
 
 {-------------------------------------------------------------------------------
@@ -200,7 +215,7 @@ pattern TeleConway  byron shelley allegra mary alonzo babbage x = TS byron (TS s
 -- | /The/ Cardano block.
 --
 -- Thanks to the pattern synonyms, you can treat this as a sum type with
--- constructors 'BlockByron' and 'BlockShelley'.
+-- constructors 'BlockByron', 'BlockShelley', etc.
 --
 -- > f :: CardanoBlock c -> _
 -- > f (BlockByron   b) = _

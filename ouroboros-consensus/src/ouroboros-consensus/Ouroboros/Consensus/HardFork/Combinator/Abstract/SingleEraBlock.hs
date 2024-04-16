@@ -57,7 +57,7 @@ class ( LedgerSupportsProtocol blk
       , InspectLedger blk
       , LedgerSupportsMempool blk
       , ConvertRawTxId (GenTx blk)
-      , QueryLedger blk
+      , BlockSupportsLedgerQuery blk
       , HasPartialConsensusConfig (BlockProtocol blk)
       , HasPartialLedgerConfig blk
       , ConvertRawHash blk

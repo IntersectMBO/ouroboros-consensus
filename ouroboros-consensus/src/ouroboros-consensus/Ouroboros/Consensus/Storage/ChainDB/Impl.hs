@@ -130,8 +130,9 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
 
     lift $ traceWith tracer $ TraceOpenEvent StartedOpeningVolatileDB
     volatileDB <- VolatileDB.openDB argsVolatileDb $ innerOpenCont VolatileDB.closeDB
+    maxSlot <- lift $ atomically $ VolatileDB.getMaxSlotNo volatileDB
     (chainDB, testing, env) <- lift $ do
-      traceWith tracer $ TraceOpenEvent OpenedVolatileDB
+      traceWith tracer $ TraceOpenEvent (OpenedVolatileDB maxSlot)
       let lgrReplayTracer =
             LgrDB.decorateReplayTracerWithGoal
               immutableDbTipPoint

@@ -68,6 +68,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Storage.ImmutableDB.Stream
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util
 import           Ouroboros.Consensus.Util.IOLike
@@ -665,12 +666,12 @@ initStandaloneDB dbEnv@DbEnv{..} = do
         , "or LedgerDB not re-initialized after chain truncation"
         ]
 
-dbStreamAPI :: forall m. IOLike m => StandaloneDB m -> StreamAPI m TestBlock
+dbStreamAPI :: forall m. IOLike m => StandaloneDB m -> StreamAPI m TestBlock TestBlock
 dbStreamAPI DB{..} = StreamAPI {..}
   where
     streamAfter ::
          Point TestBlock
-      -> (Either (RealPoint TestBlock) (m (NextBlock TestBlock)) -> m a)
+      -> (Either (RealPoint TestBlock) (m (NextItem TestBlock)) -> m a)
       -> m a
     streamAfter tip k = do
         pts <- atomically $ reverse . fst <$> readTVar dbState
@@ -693,7 +694,7 @@ dbStreamAPI DB{..} = StreamAPI {..}
     blocksToStream Origin        = id
     blocksToStream (NotOrigin r) = tail . dropWhile (/= r)
 
-    getNext :: StrictTVar m [RealPoint TestBlock] -> m (NextBlock TestBlock)
+    getNext :: StrictTVar m [RealPoint TestBlock] -> m (NextItem TestBlock)
     getNext toStream = do
         mr <- atomically $ do
                 rs <- readTVar toStream
@@ -701,10 +702,10 @@ dbStreamAPI DB{..} = StreamAPI {..}
                   []    -> return Nothing
                   r:rs' -> writeTVar toStream rs' >> return (Just r)
         case mr of
-          Nothing -> return NoMoreBlocks
+          Nothing -> return NoMoreItems
           Just r  -> do mb <- atomically $ Map.lookup r <$> readTVar dbBlocks
                         case mb of
-                          Just b  -> return $ NextBlock b
+                          Just b  -> return $ NextItem b
                           Nothing -> error blockNotFound
 
     blockNotFound :: String
@@ -721,7 +722,7 @@ runDB standalone@DB{..} cmd =
     case dbEnv of
       DbEnv{dbHasFS} -> Resp <$> go dbHasFS cmd
   where
-    streamAPI = dbStreamAPI standalone
+    stream = dbStreamAPI standalone
 
     annLedgerErr' ::
          AnnLedgerError (ExtLedgerState TestBlock) TestBlock
@@ -771,7 +772,7 @@ runDB standalone@DB{..} cmd =
             S.decode
             dbLedgerDbCfg
             (return (testInitExtLedgerWithState initialTestLedgerState))
-            streamAPI
+            stream
         atomically $ modifyTVar dbState (\(rs, _) -> (rs, db))
         return $ Restored (fromInitLog initLog, ledgerDbCurrent db)
     go hasFS (Corrupt c ss) =

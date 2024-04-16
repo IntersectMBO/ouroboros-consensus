@@ -98,7 +98,11 @@ data InternalState blk = IS {
 
       -- | The most recent 'SlotNo' that 'isTxs' was validated against
       --
-      -- This comes from 'applyChainTick' ('tickedSlotNo').
+      -- Note in particular that if the mempool is revalidated against a state S
+      -- at slot s, then the state will be ticked (for now to the successor
+      -- slot, see 'tickLedgerState') and 'isSlotNo' will be set to @succ s@,
+      -- which is different from the slot of the original ledger state, which
+      -- will remain in 'isTip'.
     , isSlotNo       :: !SlotNo
 
       -- | The mempool 'TicketNo' counter.

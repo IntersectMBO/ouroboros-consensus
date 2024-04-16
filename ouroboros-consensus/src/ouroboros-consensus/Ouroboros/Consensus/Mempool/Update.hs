@@ -235,7 +235,9 @@ implRemoveTxs ::
   => MempoolEnv m blk
   -> [GenTxId blk]
   -> m ()
-implRemoveTxs menv txs = do
+implRemoveTxs menv txs
+  | null txs = pure ()
+  | otherwise = do
     tr <- atomically $ do
         is <- readTVar istate
         ls <- getCurrentLedgerState ldgrInterface
