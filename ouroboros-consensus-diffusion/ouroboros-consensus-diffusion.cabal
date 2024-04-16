@@ -229,6 +229,7 @@ test-suite consensus-test
     Test.Consensus.Genesis.Setup.Classifiers
     Test.Consensus.Genesis.Setup.GenChains
     Test.Consensus.Genesis.Tests
+    Test.Consensus.Genesis.Tests.DensityDisconnect
     Test.Consensus.Genesis.Tests.LoE
     Test.Consensus.Genesis.Tests.LoP
     Test.Consensus.Genesis.Tests.LongRangeAttack
@@ -238,7 +239,6 @@ test-suite consensus-test
     Test.Consensus.HardFork.Combinator.B
     Test.Consensus.IOSimQSM.Test.StateMachine.Sequential
     Test.Consensus.Network.AnchoredFragment.Extras
-    Test.Consensus.Network.Driver.Limits.Extras
     Test.Consensus.Node
     Test.Consensus.PeerSimulator.BlockFetch
     Test.Consensus.PeerSimulator.ChainSync
@@ -252,6 +252,7 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.StateDiagram
     Test.Consensus.PeerSimulator.StateView
     Test.Consensus.PeerSimulator.Tests
+    Test.Consensus.PeerSimulator.Tests.LinkedThreads
     Test.Consensus.PeerSimulator.Tests.Rollback
     Test.Consensus.PeerSimulator.Tests.Timeouts
     Test.Consensus.PeerSimulator.Trace
@@ -304,6 +305,5 @@ test-suite consensus-test
     time,
     tree-diff,
     typed-protocols,
-    typed-protocols-examples,
     unstable-diffusion-testlib,
     vector,
