@@ -127,18 +127,9 @@ nextInstruction context =
     maybeSetNextJump lastJumpSlot = do
       dynamoFragment <- csCandidate <$> readTVar (cschState (handle context))
       when (succWithOrigin (headSlot dynamoFragment) >= succWithOrigin lastJumpSlot + jumpSize context) $ do
-        -- NOTE: This condition is only true from the first block _after_
-        -- (including) @lastJumpSlot + jumpSize@ onwards. This means that we
-        -- must _see_ a block there and therefore that @jumpSize@ must be small
-        -- enough compared to the forecast range. If we are blocked behind the
-        -- forecast range, we never call 'nextInstruction'.
         handles <- readTVar (handlesVar context)
         forM_ (Map.elems handles) $ \ChainSyncClientHandle{cschJumping = cschJumping'} ->
           readTVar cschJumping' >>= \case
-            -- REVIEW: We are now proposing a jump to 'headPoint', which is the
-            -- first block _after_ (including) @lastJumpSlot + jumpSize@. We
-            -- might want to propose the jump to the last block _before_ that
-            -- point.
             Jumper nextJumpVar -> writeTVar nextJumpVar $ Just $! castPoint (headPoint dynamoFragment)
             _ -> pure ()
         writeTVar (cschJumping (handle context)) $ Dynamo (headSlot dynamoFragment)
