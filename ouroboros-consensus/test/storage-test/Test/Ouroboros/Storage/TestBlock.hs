@@ -97,6 +97,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
 import           Ouroboros.Consensus.NodeId
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.BFT
 import           Ouroboros.Consensus.Protocol.ModChainSel
 import           Ouroboros.Consensus.Protocol.Signed
@@ -459,7 +460,9 @@ data BftWithEBBsSelectView = BftWithEBBsSelectView {
     , bebbChainLength :: !ChainLength
     , bebbHash        :: !TestHeaderHash
     }
-  deriving (Show, Eq, Generic, NoThunks)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (NoThunks)
+  deriving (ChainOrder) via SimpleChainOrder BftWithEBBsSelectView
 
 instance Ord BftWithEBBsSelectView where
   compare (BftWithEBBsSelectView lBlockNo lIsEBB lChainLength lHash)

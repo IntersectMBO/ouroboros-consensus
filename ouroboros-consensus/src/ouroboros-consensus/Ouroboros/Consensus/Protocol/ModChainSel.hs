@@ -21,7 +21,7 @@ newtype instance ConsensusConfig (ModChainSel p s) = McsConsensusConfig {
   deriving (Generic)
 
 instance ( ConsensusProtocol p
-         , Ord  s
+         , ChainOrder s
          , Show s
          , Typeable s
          , NoThunks s

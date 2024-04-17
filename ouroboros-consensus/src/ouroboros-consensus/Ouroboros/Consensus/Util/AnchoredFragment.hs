@@ -22,6 +22,7 @@ import           Data.Maybe (isJust)
 import           Data.Word (Word64)
 import           GHC.Stack
 import           Ouroboros.Consensus.Block
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Util.Assert
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      AnchoredSeq (Empty, (:>)))
@@ -72,16 +73,12 @@ forksAtMostKBlocks k ours theirs = case ours `AF.intersect` theirs of
 -- For a detailed discussion of this precondition, and a justification for the
 -- definition of this function, please refer to the Consensus Report.
 --
--- Usage note: the primary user of this function is the chain database. It
--- establishes the precondition in two different ways:
---
--- * When comparing a candidate fragment to our current chain, the fragment is
---   guaranteed (by the chain sync client) to intersect with our chain (indeed,
---   within at most @k@ blocks from our tip, although the exact distance does
---   not matter for 'compareAnchoredFragments').
--- * It will only compare candidate fragments that it has previously verified
---   are preferable to our current chain. Since these fragments intersect with
---   our current chain, they must by transitivity also intersect each other.
+-- Usage note: the primary user of this function is the chain database when
+-- sorting fragments that are preferred over our selection. It establishes the
+-- precondition in the following way: It will only compare candidate fragments
+-- that it has previously verified are preferable to our current chain. Since
+-- these fragments intersect with our current chain, they must by transitivity
+-- also intersect each other.
 compareAnchoredFragments ::
      forall blk. (BlockSupportsProtocol blk, HasCallStack)
   => BlockConfig blk
@@ -89,7 +86,7 @@ compareAnchoredFragments ::
   -> AnchoredFragment (Header blk)
   -> Ordering
 compareAnchoredFragments cfg frag1 frag2 =
-    assertWithMsg precondition $
+    assertWithMsg (precondition frag1 frag2) $
     case (frag1, frag2) of
       (Empty _, Empty _) ->
         -- The fragments intersect but are equal: their anchors must be equal,
@@ -115,21 +112,17 @@ compareAnchoredFragments cfg frag1 frag2 =
         compare
           (selectView cfg tip)
           (selectView cfg tip')
-  where
-    precondition :: Either String ()
-    precondition
-      | not (AF.null frag1), not (AF.null frag2)
-      = return ()
-      | isJust (AF.intersectionPoint frag1 frag2)
-      = return ()
-      | otherwise
-      = throwError
-          "precondition violated: fragments should both be non-empty or they \
-          \should intersect"
 
 -- | Lift 'preferCandidate' to 'AnchoredFragment'
 --
--- See discussion for 'compareAnchoredFragments'.
+-- PRECONDITION: Either both fragments are non-empty or they intersect.
+--
+-- Usage note: the primary user of this function is the chain database. It
+-- establishes the precondition when comparing a candidate fragment to our
+-- current chain in the following way: The fragment is guaranteed (by the chain
+-- sync client) to intersect with our chain (indeed, within at most @k@ blocks
+-- from our tip, although the exact distance does not matter for
+-- 'compareAnchoredFragments').
 preferAnchoredCandidate ::
      forall blk. (BlockSupportsProtocol blk, HasCallStack)
   => BlockConfig blk
@@ -137,7 +130,32 @@ preferAnchoredCandidate ::
   -> AnchoredFragment (Header blk)      -- ^ Candidate
   -> Bool
 preferAnchoredCandidate cfg ours cand =
-    compareAnchoredFragments cfg ours cand == LT
+    assertWithMsg (precondition ours cand) $
+    case (ours, cand) of
+      (_, Empty _) -> False
+      (Empty ourAnchor, _ :> theirTip) ->
+        blockPoint theirTip /= AF.anchorToPoint ourAnchor
+      (_ :> ourTip, _ :> theirTip) ->
+        preferCandidate
+          (projectChainOrderConfig cfg)
+          (selectView cfg ourTip)
+          (selectView cfg theirTip)
+
+-- For 'compareAnchoredFragment' and 'preferAnchoredCandidate'.
+precondition ::
+     GetHeader blk
+  => AnchoredFragment (Header blk)
+  -> AnchoredFragment (Header blk)
+  -> Either String ()
+precondition frag1 frag2
+  | not (AF.null frag1), not (AF.null frag2)
+  = return ()
+  | isJust (AF.intersectionPoint frag1 frag2)
+  = return ()
+  | otherwise
+  = throwError
+      "precondition violated: fragments should both be non-empty or they \
+      \should intersect"
 
 -- | If the two fragments `c1` and `c2` intersect, return the intersection
 -- point and join the prefix of `c1` before the intersection with the suffix

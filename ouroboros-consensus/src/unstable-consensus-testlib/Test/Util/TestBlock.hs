@@ -123,6 +123,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.NodeId
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.BFT
 import           Ouroboros.Consensus.Protocol.MockChainSel
 import           Ouroboros.Consensus.Protocol.Signed
@@ -748,6 +749,7 @@ treePreferredChain =
       fromMaybe Genesis
     . selectUnvalidatedChain
         (Proxy @(BlockProtocol TestBlock))
+        (() :: ChainOrderConfig (SelectView (BlockProtocol TestBlock)))
         blockNo
         Genesis
     . treeToChains

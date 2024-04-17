@@ -21,6 +21,7 @@
 module Ouroboros.Consensus.HardFork.Combinator.AcrossEras (
     -- * Value for /each/ era
     PerEraBlockConfig (..)
+  , PerEraChainOrderConfig (..)
   , PerEraCodecConfig (..)
   , PerEraConsensusConfig (..)
   , PerEraLedgerConfig (..)
@@ -97,13 +98,14 @@ import           Ouroboros.Consensus.Util.Condense (Condense (..))
   Value for /each/ era
 -------------------------------------------------------------------------------}
 
-newtype PerEraBlockConfig     xs = PerEraBlockConfig     { getPerEraBlockConfig     :: NP BlockConfig                xs }
-newtype PerEraCodecConfig     xs = PerEraCodecConfig     { getPerEraCodecConfig     :: NP CodecConfig                xs }
-newtype PerEraConsensusConfig xs = PerEraConsensusConfig { getPerEraConsensusConfig :: NP WrapPartialConsensusConfig xs }
-newtype PerEraLedgerConfig    xs = PerEraLedgerConfig    { getPerEraLedgerConfig    :: NP WrapPartialLedgerConfig    xs }
-newtype PerEraStorageConfig   xs = PerEraStorageConfig   { getPerEraStorageConfig   :: NP StorageConfig              xs }
+newtype PerEraBlockConfig      xs = PerEraBlockConfig      { getPerEraBlockConfig      :: NP BlockConfig                xs }
+newtype PerEraChainOrderConfig xs = PerEraChainOrderConfig { getPerEraChainOrderConfig :: NP WrapChainOrderConfig       xs }
+newtype PerEraCodecConfig      xs = PerEraCodecConfig      { getPerEraCodecConfig      :: NP CodecConfig                xs }
+newtype PerEraConsensusConfig  xs = PerEraConsensusConfig  { getPerEraConsensusConfig  :: NP WrapPartialConsensusConfig xs }
+newtype PerEraLedgerConfig     xs = PerEraLedgerConfig     { getPerEraLedgerConfig     :: NP WrapPartialLedgerConfig    xs }
+newtype PerEraStorageConfig    xs = PerEraStorageConfig    { getPerEraStorageConfig    :: NP StorageConfig              xs }
 
-newtype PerEraProtocolParams  xs = PerEraProtocolParams  { getPerEraProtocolParams  :: NP ProtocolParams             xs }
+newtype PerEraProtocolParams   xs = PerEraProtocolParams   { getPerEraProtocolParams   :: NP ProtocolParams             xs }
 
 {-------------------------------------------------------------------------------
   Values for /some/ eras
