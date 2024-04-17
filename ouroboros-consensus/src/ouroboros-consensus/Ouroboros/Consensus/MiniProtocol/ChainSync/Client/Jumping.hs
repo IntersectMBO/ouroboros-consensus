@@ -30,18 +30,16 @@ import           Control.Monad (forM, forM_, when)
 import qualified Data.List as List
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromJust, mapMaybe)
+import           Data.Maybe (fromJust)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point (..),
                      castPoint, pointSlot, succWithOrigin, GenesisWindow (unGenesisWindow))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncClientHandle (..),
-                     ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), ChainSyncState (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     blockPoint, headPoint, headSlot, splitAfterPoint,
-                     splitBeforePoint, toOldestFirst)
+import           Ouroboros.Network.AnchoredFragment (
+                     headPoint, headSlot, splitAfterPoint)
 
 -- | A context for ChainSync jumping, pointing for some data.
 --
@@ -117,7 +115,7 @@ nextInstruction context =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo lastJumpSlot -> maybeSetNextJump lastJumpSlot >> pure RunNormally
     Objector _ -> pure RunNormally
-    Jumper nextJumpVar _ _ ->
+    Jumper nextJumpVar ->
       readTVar nextJumpVar >>= \case
         Nothing -> retry
         Just fragment -> do
@@ -125,7 +123,7 @@ nextInstruction context =
           pure $ JumpTo fragment
   where
     -- | We are the dynamo. When the tip of our candidate fragment is 'jumpSize'
-    -- slots younger than the last jump, set happy jumpers to jump to it.
+    -- slots younger than the last jump, set jumpers to jump to it.
     maybeSetNextJump lastJumpSlot = do
       dynamoFragment <- csCandidate <$> readTVar (cschState (handle context))
       when (succWithOrigin (headSlot dynamoFragment) >= succWithOrigin lastJumpSlot + jumpSize context) $ do
@@ -141,7 +139,7 @@ nextInstruction context =
             -- first block _after_ (including) @lastJumpSlot + jumpSize@. We
             -- might want to propose the jump to the last block _before_ that
             -- point.
-            Jumper nextJumpVar _ Happy -> writeTVar nextJumpVar $ Just $! castPoint (headPoint dynamoFragment)
+            Jumper nextJumpVar -> writeTVar nextJumpVar $ Just $! castPoint (headPoint dynamoFragment)
             _ -> pure ()
         writeTVar (cschJumping (handle context)) $ Dynamo (headSlot dynamoFragment)
 
@@ -171,7 +169,7 @@ onRollForward ::
 onRollForward context slot =
   readTVar (cschJumping (handle context)) >>= \case
     Objector _ -> pure ()
-    Jumper _ _ _ -> pure ()
+    Jumper{} -> pure ()
     Dynamo lastJumpSlot
       | slot >= succWithOrigin lastJumpSlot + genesisWindowSlot -> do
           csTipPoint <- headPoint . csCandidate <$> readTVar (cschState (handle context))
@@ -185,7 +183,7 @@ onRollForward context slot =
         handles <- readTVar (handlesVar context)
         forM_ (Map.elems handles) $ \h ->
           readTVar (cschJumping h) >>= \case
-            Jumper nextJumpVar _ Happy -> writeTVar nextJumpVar $ Just $! point
+            Jumper nextJumpVar -> writeTVar nextJumpVar $ Just $! point
             _ -> pure ()
 
 -- | This function is called when we receive a 'MsgAwaitReply' message.
@@ -221,12 +219,9 @@ processJumpResult context jumpResult = do
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo _ -> pure ()
     Objector _ -> pure ()
-    Jumper nextJumpVar goodPoint state ->
-        case (state, jumpResult) of
-          (FoundIntersection, _) ->
-            -- Ignore jump results when we already found the intersection.
-            pure ()
-          (Happy, AcceptedJump goodPoint') -> do
+    Jumper nextJumpVar ->
+        case jumpResult of
+          AcceptedJump goodPoint' -> do
             -- The jump was accepted; we set the jumper's candidate fragment to
             -- the dynamo's candidate fragment up to the accepted point.
             --
@@ -235,53 +230,9 @@ processJumpResult context jumpResult = do
             dynamoFragment <- csCandidate <$> (readTVar . cschState =<< getDynamo' context)
             let slicedDynamoFragment = fst $ fromJust $ splitAfterPoint dynamoFragment goodPoint'
             modifyTVar (cschState (handle context)) $ \csState -> csState {csCandidate = slicedDynamoFragment}
-            writeTVar (cschJumping (handle context)) $ Jumper nextJumpVar goodPoint' Happy
-          (Happy, RejectedJump badPoint) ->
-            -- The previously happy peer just rejected a jump. We look for an
-            -- intersection.
-            lookForIntersection nextJumpVar goodPoint badPoint
-          (LookingForIntersection badPoint, AcceptedJump goodPoint') ->
-            -- The peer that was looking for an intersection accepts the given
-            -- point, helping us narrow things down.
-            --
-            -- goodPoint' is guaranteed to be the midpoint of goodPoint and badPoint
-            -- as only `lookForIntersection` asks jumps for jumpers in state
-            -- `LookingForIntersection`.
-            lookForIntersection nextJumpVar goodPoint' badPoint
-          (LookingForIntersection _badPoint, RejectedJump badPoint') ->
-            -- The peer that was looking for an intersection rejects the given
-            -- point, helping us narrow things down.
-            --
-            -- badPoint' is guaranteed to be the midpoint of goodPoint and _badPoint
-            -- as only `lookForIntersection` asks jumps for jumpers in state
-            -- `LookingForIntersection`.
-            lookForIntersection nextJumpVar goodPoint badPoint'
-  where
-    -- | Given a good point (where we know we agree with the dynamo) and a bad
-    -- point (where we know we disagree with the dynamo), either decide that we
-    -- know the intersection for sure (if the bad point is the successor of the
-    -- good point) or program a jump somewhere in the middle to refine those
-    -- points.
-    lookForIntersection nextJumpVar goodPoint badPoint = do
-      (dynamoFragment0 :: AnchoredFragment (Header blk)) <- csCandidate <$> (readTVar . cschState =<< getDynamo' context) -- full fragment
-      let dynamoFragment = fromJust $ sliceRangeExcl dynamoFragment0 goodPoint badPoint
-      case (toOldestFirst dynamoFragment :: [Header blk]) of
-        [] -> do
-          writeTVar (cschJumping (handle context)) $ Jumper nextJumpVar goodPoint FoundIntersection
-          electNewObjector (stripContext context)
-        points -> do
-          let (middlePoint :: Header blk) = points !! (length points `div` 2)
-          writeTVar nextJumpVar $ Just $! (castPoint (blockPoint middlePoint) :: Point blk)
-          writeTVar (cschJumping (handle context)) $ Jumper nextJumpVar goodPoint (LookingForIntersection badPoint)
-
-    -- | Select a slice of an anchored fragment between two points. The slice
-    -- includes neither of the points.
-    --
-    -- Both points must exist on the anchored fragment, in order,
-    -- and `fromExcl /= toExcl`, otherwise the result is `Nothing`.
-    sliceRangeExcl fragment fromExcl toExcl = do
-      fragmentFrom <- snd <$> splitAfterPoint fragment fromExcl
-      fst <$> splitBeforePoint fragmentFrom toExcl
+            writeTVar (cschJumping (handle context)) $ Jumper nextJumpVar
+          RejectedJump badPoint ->
+            writeTVar (cschJumping (handle context)) $ Objector badPoint
 
 -- | Find the dynamo in a TVar containing a map of handles. Returns then handle
 -- of the dynamo, or 'Nothing' if there is none.
@@ -308,36 +259,16 @@ getDynamo' context =
     Nothing -> error "getDynamo': invariant violation"
     Just dynamo -> pure dynamo
 
--- | If there is an objector, demote it back to being a jumper.
-demoteObjector ::
-  ( MonadSTM m,
-    HasHeader blk
-  ) =>
-  Context m peer blk ->
-  STM m ()
-demoteObjector context = do
-  handles <- Map.toList <$> readTVar (handlesVar context)
-  handlesWithState <- forM handles (\(_, handle) -> (handle,) <$> readTVar (cschJumping handle))
-  case List.find (isObjector . snd) handlesWithState of
-    Just (handle, Objector intersection) ->
-      writeTVar (cschJumping handle) =<< newJumper intersection FoundIntersection
-    _ -> pure ()
-  where
-    isObjector (Objector _) = True
-    isObjector _            = False
-
 -- | Convenience function that, given an intersection point and a jumper state,
 -- make a fresh 'Jumper' constructor.
 newJumper ::
   ( MonadSTM m,
     HasHeader blk
   ) =>
-  Point blk ->
-  ChainSyncJumpingJumperState blk ->
   STM m (ChainSyncJumpingState m blk)
-newJumper intersection state = do
+newJumper = do
   nextJumpVar <- newTVar Nothing
-  pure $ Jumper nextJumpVar intersection state
+  pure $ Jumper nextJumpVar
 
 -- | Register a new ChainSync client to a context, returning a 'PeerContext' for
 -- that peer. If there is no dynamo, the peer starts as dynamo; otherwise, it
@@ -358,7 +289,7 @@ registerClient context peer mkHandle = do
     newTVar
       =<< ( getDynamo (handlesVar context) >>= \case
               Nothing -> pure $ Dynamo Origin
-              Just _ -> newJumper GenesisPoint Happy
+              Just _ -> newJumper
           )
   let handle = mkHandle cschJumping
   modifyTVar (handlesVar context) $ Map.insert peer handle
@@ -377,38 +308,9 @@ unregisterClient context = do
   modifyTVar (handlesVar context) $ Map.delete (peer context)
   let context' = stripContext context
   readTVar (cschJumping (handle context)) >>= \case
-    Jumper _ _ _ -> pure ()
-    Objector _ -> electNewObjector context'
+    Jumper{} -> pure ()
+    Objector{} -> pure ()
     Dynamo _ -> electNewDynamo context'
-
--- | Look into all objector candidates and promote the one with the oldest
--- intersection with the dynamo as the new objector.
-electNewObjector ::
-  ( MonadSTM m,
-    HasHeader blk
-  ) =>
-  Context m peer blk ->
-  STM m ()
-electNewObjector context = do
-  demoteObjector context
-  -- Get all the jumpers that disagree with the dynamo and for which we know the
-  -- precise intersection; find the one with the oldest intersection (which is
-  -- very important) and promote it to objector.
-  handles <- Map.toList <$> readTVar (handlesVar context)
-  handlesWithState <- forM handles (\(_, handle) -> (handle,) <$> readTVar (cschJumping handle))
-  let sortedObjectorCandidates =
-        List.sortOn (pointSlot . snd) $
-          mapMaybe
-            ( \(handle, state) ->
-                case state of
-                  Jumper _ intersection FoundIntersection -> Just (handle, intersection)
-                  _ -> Nothing
-            )
-            handlesWithState
-  case sortedObjectorCandidates of
-    [] -> pure ()
-    (handle, intersection) : _ ->
-      writeTVar (cschJumping handle) $ Objector intersection
 
 -- | Get everybody; choose an unspecified new dynamo and put everyone else back
 -- to being fresh, happy jumpers.
@@ -427,4 +329,4 @@ electNewDynamo context = do
     dynamo : jumpers -> do
       writeTVar (cschJumping dynamo) $ Dynamo Origin
       forM_ jumpers $ \jumper ->
-        writeTVar (cschJumping jumper) =<< newJumper GenesisPoint Happy
+        writeTVar (cschJumping jumper) =<< newJumper

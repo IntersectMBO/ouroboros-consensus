@@ -7,7 +7,6 @@
 
 module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
     ChainSyncClientHandle (..)
-  , ChainSyncJumpingJumperState (..)
   , ChainSyncJumpingState (..)
   , ChainSyncState (..)
   ) where
@@ -84,7 +83,8 @@ data ChainSyncJumpingState m blk
     -- that happened, we spun it up to let normal ChainSync and Genesis decide
     -- which one to disconnect from.
     Objector
-      -- | The last known point where the objector agrees with the dynamo.
+      -- | The point where the objector dissented with the dynamo when it was a
+      -- jumper.
       !(Point blk)
   | -- | The jumpers can be in arbitrary numbers. They are queried regularly to
     -- see if they agree with the chain that the dynamo is serving; otherwise,
@@ -93,31 +93,6 @@ data ChainSyncJumpingState m blk
     Jumper
       -- | A TVar containing the next jump to be executed, if there is one.
       !(StrictTVar m (Maybe (Point blk)))
-      -- | The youngest point where the jumper agrees with the dynamo.
-      !(Point blk)
-      -- | More precisely, the state of the jumper.
-      !(ChainSyncJumpingJumperState blk)
   deriving (Generic)
 
 deriving anyclass instance (IOLike m, HasHeader blk, NoThunks (Header blk)) => NoThunks (ChainSyncJumpingState m blk)
-
--- | The specific state of a jumper peer. This state is to be understood as “to
--- the best of our knowledge”, that is “last time we asked them”. For instance,
--- a jumper might be marked as 'Happy' even though its chain has been differing
--- from the dynamo's for hundreds of blocks, if we haven't asked them to jump
--- since then.
-data ChainSyncJumpingJumperState blk
-  = -- | The jumper is happy with the dynamo.
-    Happy
-  | -- | The jumper disagrees with the dynamo and we are searching where exactly
-    -- that happens. All we know is a point where the jumper agrees with the
-    -- dynamo (in the 'Jumper' constructor) and a point where the jumper
-    -- disagrees with the dynamo, carried by this constructor.
-    LookingForIntersection !(Point blk)
-  | -- | The jumper disagrees with the dynamo and we have determined the latest
-    -- point where dynamo and jumper agree. This point is stored in the 'Jumper'
-    -- constructor of 'ChainSyncJumpingState'.
-    FoundIntersection
-  deriving (Generic)
-
-deriving anyclass instance (HasHeader blk, NoThunks (Header blk)) => NoThunks (ChainSyncJumpingJumperState blk)
