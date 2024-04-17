@@ -192,7 +192,8 @@ onRollForward context slot =
 -- are available.
 onAwaitReply ::
   ( MonadSTM m,
-    HasHeader blk
+    HasHeader blk,
+    Eq peer
   ) =>
   PeerContext m peer blk ->
   STM m ()
@@ -312,21 +313,29 @@ unregisterClient context = do
     Objector{} -> pure ()
     Dynamo _ -> electNewDynamo context'
 
--- | Get everybody; choose an unspecified new dynamo and put everyone else back
--- to being fresh, happy jumpers.
---
--- NOTE: This might stop an objector from syncing and send it back to being a
--- jumper only for it to start again later, but nevermind.
+-- | Choose an unspecified new non-idling dynamo and demote all other peers to
+-- jumpers.
 electNewDynamo ::
   ( MonadSTM m,
-    HasHeader blk
+    HasHeader blk,
+    Eq peer
   ) =>
   Context m peer blk ->
   STM m ()
 electNewDynamo context = do
-  (Map.elems <$> readTVar (handlesVar context)) >>= \case
-    [] -> pure ()
-    dynamo : jumpers -> do
+  peerStates <- Map.toList <$> readTVar (handlesVar context)
+  mDynamo <- findNonIdling peerStates
+  case mDynamo of
+    Nothing -> pure () -- TODO: turn off CSJ
+    Just (dynId, dynamo) -> do
       writeTVar (cschJumping dynamo) $ Dynamo Origin
-      forM_ jumpers $ \jumper ->
-        writeTVar (cschJumping jumper) =<< newJumper
+      forM_ peerStates $ \(peer, st) ->
+        when (peer /= dynId) $
+          writeTVar (cschJumping st) =<< newJumper
+  where
+    findNonIdling [] = pure Nothing
+    findNonIdling ((peer, st) : rest) = do
+      idling <- csIdling <$> readTVar (cschState st)
+      if idling
+        then findNonIdling rest
+        else pure $ Just (peer, st)
