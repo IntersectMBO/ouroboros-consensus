@@ -35,6 +35,11 @@ final: prev: {
 
       cp tech-reports/**/*.pdf $out/
       cp formal-spec/consensus-spec.pdf $out/
+
+      mkdir -p $out/nix-support
+      for pdf in $out/*.pdf; do
+        echo "file binary-dist $pdf" >> $out/nix-support/hydra-build-products
+      done
     '';
   };
 }
