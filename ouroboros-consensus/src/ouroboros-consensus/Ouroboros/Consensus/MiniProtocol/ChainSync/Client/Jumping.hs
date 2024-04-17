@@ -145,26 +145,48 @@ nextInstruction context =
             _ -> pure ()
         writeTVar (cschJumping (handle context)) $ Dynamo (headSlot dynamoFragment)
 
+-- | The CSJ dynamo offers an empty genesis window in the chain it is serving.
+data DynamoOffersEmptyGenesisWindow = DynamoOffersEmptyGenesisWindow
+  deriving (Exception, Show)
+
 -- | This function is called when we receive a 'MsgRollForward' message.
 --
--- When we roll forward, we might need to elect a new dynamo if the header is
--- beyond the forecast horizon and this is the Dynamo.
+-- When a dynamo rolls forward, we might need to jump to the candidate
+-- fragment's tip to advance the jumpers if the dynamo sent all the headers
+-- in the genesis window since the last jump. e.g.
+--
+-- > -- last jump -- h0 -- h1 -- ... -- tip -- genesis window limit -- next header
+--
+-- This is necessary when the tip is before the next jump according to the jump
+-- size.
+--
 onRollForward ::
   ( MonadSTM m,
-    HasHeader blk
+    MonadThrow (STM m),
+    HasHeader (Header blk)
   ) =>
   PeerContext m peer blk ->
   SlotNo ->
   STM m ()
 onRollForward context slot =
   readTVar (cschJumping (handle context)) >>= \case
-    Objector{} -> pure ()
-    Jumper{} -> pure ()
+    Objector _ -> pure ()
+    Jumper _ _ _ -> pure ()
     Dynamo lastJumpSlot
-      | slot >= succWithOrigin lastJumpSlot + genesisWindowSlot -> electNewDynamo (stripContext context)
+      | slot >= succWithOrigin lastJumpSlot + genesisWindowSlot -> do
+          csTipPoint <- headPoint . csCandidate <$> readTVar (cschState (handle context))
+          if pointSlot csTipPoint > lastJumpSlot
+            then setJumps (castPoint csTipPoint)
+            else throwSTM DynamoOffersEmptyGenesisWindow
       | otherwise -> pure ()
   where
     genesisWindowSlot = SlotNo (unGenesisWindow (genesisWindow context))
+    setJumps point = do
+        handles <- readTVar (handlesVar context)
+        forM_ (Map.elems handles) $ \h ->
+          readTVar (cschJumping h) >>= \case
+            Jumper nextJumpVar _ Happy -> writeTVar nextJumpVar $ Just $! point
+            _ -> pure ()
 
 -- | This function is called when we receive a 'MsgAwaitReply' message.
 --
