@@ -263,7 +263,7 @@ data Jumping m blk = Jumping
     jgOnAwaitReply :: !(m ()),
 
     -- | To be called whenever a header is received from the peer.
-    jgOnRollForward :: !(SlotNo -> m ()),
+    jgOnRollForward :: !(Header blk -> m ()),
 
     -- | Process the result of a jump, either accepted or rejected.
     jgProcessJumpResult :: !(Jumping.JumpResult blk -> m ())
@@ -1322,7 +1322,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
             checkKnownInvalid cfgEnv dynEnv intEnv hdr
 
-            jgOnRollForward jumping slotNo
+            jgOnRollForward jumping hdr
             atomically (setLatestSlot dynEnv (NotOrigin slotNo))
 
             checkTime cfgEnv dynEnv intEnv kis arrival slotNo >>= \case

@@ -33,7 +33,8 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromJust)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader, Header, Point (..),
-                     castPoint, pointSlot, succWithOrigin, GenesisWindow (unGenesisWindow))
+                     blockSlot, castPoint, pointSlot, succWithOrigin,
+                     GenesisWindow (unGenesisWindow))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncClientHandle (..),
                      ChainSyncJumpingState (..), ChainSyncState (..))
@@ -134,8 +135,11 @@ nextInstruction context =
             _ -> pure ()
         writeTVar (cschJumping (handle context)) $ Dynamo (headSlot dynamoFragment)
 
--- | The CSJ dynamo offers an empty genesis window in the chain it is serving.
-data DynamoOffersEmptyGenesisWindow = DynamoOffersEmptyGenesisWindow
+data ChainSyncJumpingExceptions
+   = -- | The CSJ dynamo offers an empty genesis window in the chain it is serving.
+     DynamoOffersEmptyGenesisWindow
+   | -- | The CSJ dynamo offers an empty genesis window in the chain it is serving.
+     ObjectorRolledBackAsJumper
   deriving (Exception, Show)
 
 -- | This function is called when we receive a 'MsgRollForward' message.
@@ -155,14 +159,18 @@ onRollForward ::
     HasHeader (Header blk)
   ) =>
   PeerContext m peer blk ->
-  SlotNo ->
+  Header blk ->
   STM m ()
-onRollForward context slot =
+onRollForward context hdr =
   readTVar (cschJumping (handle context)) >>= \case
-    Objector _ -> pure ()
+    Objector badPoint
+      | blockSlot hdr /= pointSlot badPoint -> pure ()
+      | blockSlot hdr >= currentSlot - genesisWindowSlot -> pure ()
+      | headerHash hdr /= pointHash badPoint -> throwSTM ObjectorRolledBackAsJumper
+      | otherwise -> pure ()
     Jumper{} -> pure ()
     Dynamo lastJumpSlot
-      | slot >= succWithOrigin lastJumpSlot + genesisWindowSlot -> do
+      | blockSlot hdr >= succWithOrigin lastJumpSlot + genesisWindowSlot -> do
           csTipPoint <- headPoint . csCandidate <$> readTVar (cschState (handle context))
           if pointSlot csTipPoint > lastJumpSlot
             then setJumps (castPoint csTipPoint)
