@@ -353,30 +353,13 @@ instance SupportsTwoPhaseValidation (BabbageEra c) where
 instance SupportsTwoPhaseValidation (ConwayEra c) where
   isIncorrectClaimedFlag _ = \case
     SL.ConwayUtxowFailure
-      ( Babbage.AlonzoInBabbageUtxowPredFailure
-          ( Alonzo.ShelleyInAlonzoUtxowPredFailure
-              ( SL.UtxoFailure
-                  ( Babbage.AlonzoInBabbageUtxoPredFailure
-                      ( Alonzo.UtxosFailure
-                          ( Conway.ValidationTagMismatch
-                              (Alonzo.IsValid _claimedFlag)
-                              _validationErrs
-                            )
-                        )
-                    )
-                )
-            )
-        ) -> True
-    SL.ConwayUtxowFailure
-      ( Babbage.UtxoFailure
-          ( Babbage.AlonzoInBabbageUtxoPredFailure
-              ( Alonzo.UtxosFailure
+      ( Conway.UtxoFailure
+              ( Conway.UtxosFailure
                   ( Conway.ValidationTagMismatch
                       (Alonzo.IsValid _claimedFlag)
                       _validationErrs
                   )
               )
-          )
       ) -> True
     _ -> False
 
