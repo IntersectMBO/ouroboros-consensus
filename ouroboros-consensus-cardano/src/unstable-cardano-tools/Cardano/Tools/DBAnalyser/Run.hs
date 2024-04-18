@@ -22,10 +22,10 @@ import qualified Ouroboros.Consensus.Node as Node
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args (fromChainDbArgs)
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (lgrHasFS)
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (readSnapshot)
-import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -56,16 +56,17 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
         mkProtocolInfo args
       let chunkInfo  = Node.nodeImmutableDbChunkInfo (configStorage cfg)
           args' =
-            Node.mkChainDbArgs
-              registry InFuture.dontCheck cfg genesisLedger chunkInfo $
-            ChainDB.defaultArgs (Node.stdMkChainDbHasFS dbDir)
-          chainDbArgs = args' {
-              ChainDB.cdbImmutableDbValidation = immValidationPolicy
-            , ChainDB.cdbVolatileDbValidation  = volValidationPolicy
-            , ChainDB.cdbTracer                = chainDBTracer
-            }
-          (immutableDbArgs, _, _, _) = fromChainDbArgs chainDbArgs
-          ledgerDbFS = ChainDB.cdbHasFSLgrDB chainDbArgs
+            completeChainDbArgs
+              registry
+              InFuture.dontCheck
+              cfg
+              genesisLedger
+              chunkInfo
+              (const True)
+              (Node.stdMkChainDbHasFS dbDir) $ defaultArgs
+          chainDbArgs = maybeValidateAll $ updateTracer chainDBTracer args'
+          immutableDbArgs = ChainDB.cdbImmDbArgs chainDbArgs
+          ledgerDbFS = lgrHasFS $ ChainDB.cdbLgrDbArgs chainDbArgs
 
       case selectDB of
         SelectImmutableDB initializeFrom -> do
@@ -125,14 +126,8 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
       where
         withLock = bracket_ (takeMVar lock) (putMVar lock ())
 
-    immValidationPolicy = case (analysis, validation) of
-      (_, Just ValidateAllBlocks)      -> ImmutableDB.ValidateAllChunks
-      (_, Just MinimumBlockValidation) -> ImmutableDB.ValidateMostRecentChunk
-      (OnlyValidation, _ )             -> ImmutableDB.ValidateAllChunks
-      _                                -> ImmutableDB.ValidateMostRecentChunk
-
-    volValidationPolicy = case (analysis, validation) of
-      (_, Just ValidateAllBlocks)      -> VolatileDB.ValidateAll
-      (_, Just MinimumBlockValidation) -> VolatileDB.NoValidation
-      (OnlyValidation, _ )             -> VolatileDB.ValidateAll
-      _                                -> VolatileDB.NoValidation
+    maybeValidateAll = case (analysis, validation) of
+      (_, Just ValidateAllBlocks)      -> ensureValidateAll
+      (_, Just MinimumBlockValidation) -> id
+      (OnlyValidation, _ )             -> ensureValidateAll
+      _                                -> id

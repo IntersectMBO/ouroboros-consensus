@@ -35,6 +35,7 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.API as API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as API
 import           Ouroboros.Consensus.Storage.ChainDB.Impl (TraceEvent)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Storage.Common (StreamFrom (..),
                      StreamTo (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
@@ -424,7 +425,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
     closeChainDbEnv (env, _) = do
       readTVarIO (varDB env) >>= close
       closeRegistry (registry env)
-      closeRegistry (cdbRegistry $ args env)
+      closeRegistry (cdbsRegistry $ cdbsArgs $ args env)
 
     chainDbArgs registry nodeDbs tracer =
       let args = fromMinimalChainDbArgs MinimalChainDbArgs
@@ -434,7 +435,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
             , mcdbRegistry = registry
             , mcdbNodeDBs = nodeDbs
             }
-      in args { cdbTracer = tracer }
+      in ChainDB.updateTracer tracer args
 
 
 instance IOLike m => SupportsUnitTest (SystemM blk m) where

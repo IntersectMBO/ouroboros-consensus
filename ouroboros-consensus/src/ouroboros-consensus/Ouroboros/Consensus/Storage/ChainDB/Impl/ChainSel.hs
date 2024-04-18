@@ -904,7 +904,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
           mkTraceEvent events selChangedInfo curChain newChain
         whenJust (strictMaybeToMaybe prevTentativeHeader) $ traceWith $
           PipeliningEvent . OutdatedTentativeHeader >$< addBlockTracer
-        traceWith cdbTraceLedger newLedger
 
         return $ castPoint $ AF.headPoint newChain
       where

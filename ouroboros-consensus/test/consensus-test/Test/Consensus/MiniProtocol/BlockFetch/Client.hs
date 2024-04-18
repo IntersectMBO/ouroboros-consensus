@@ -41,8 +41,8 @@ import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.Node.ProtocolInfo (NumCoreNodes (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import           Ouroboros.Consensus.Storage.ChainDB.Impl (ChainDbArgs (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDBImpl
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
@@ -246,7 +246,7 @@ runBlockFetchTest BlockFetchClientTestSetup{..} = withRegistry \registry -> do
                 , mcdbNodeDBs = nodeDBs
                 }
           -- TODO: Test with more interesting behaviour for cdbCheckInFuture
-          pure $ args { cdbTracer = cdbTracer }
+          pure $ ChainDB.updateTracer cdbTracer args
         (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
           allocate
             registry

@@ -88,8 +88,8 @@ import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      UnknownRange)
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment)
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LedgerDB',
-                     LgrDB, LgrDbSerialiseConstraints)
+import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LgrDB,
+                     LgrDbSerialiseConstraints)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
 import           Ouroboros.Consensus.Storage.ImmutableDB (ImmutableDB,
                      ImmutableDbSerialiseConstraints)
@@ -236,7 +236,6 @@ data ChainDbEnv m blk = CDB
   , cdbCopyFuse        :: !(Fuse m)
   , cdbChainSelFuse    :: !(Fuse m)
   , cdbTracer          :: !(Tracer m (TraceEvent blk))
-  , cdbTraceLedger     :: !(Tracer m (LedgerDB' blk))
   , cdbRegistry        :: !(ResourceRegistry m)
     -- ^ Resource registry that will be used to (re)start the background
     -- threads, see 'cdbBgThreads'.
@@ -248,8 +247,6 @@ data ChainDbEnv m blk = CDB
     -- garbage collections.
   , cdbKillBgThreads   :: !(StrictTVar m (m ()))
     -- ^ A handle to kill the background threads.
-  , cdbChunkInfo       :: !ImmutableDB.ChunkInfo
-  , cdbCheckIntegrity  :: !(blk -> Bool)
   , cdbCheckInFuture   :: !(CheckInFuture m blk)
   , cdbChainSelQueue   :: !(ChainSelQueue m blk)
     -- ^ Queue of blocks that still have to be added.

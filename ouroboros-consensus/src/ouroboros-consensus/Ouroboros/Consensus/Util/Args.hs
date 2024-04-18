@@ -13,18 +13,18 @@
 -- >     , hasDefault   :: Bool
 -- >     }
 -- >
--- > defaultArgs :: Args Defaults
+-- > defaultArgs :: Incomplete Args
 -- > defaultArgs = Args {
--- >       hasNoDefault = NoDefault
+-- >       hasNoDefault = noDefault
 -- >     , hasDefault   = False
 -- >     }
 -- >
--- > theArgs :: Args Identity
+-- > theArgs :: Complete Args
 -- > theArgs = defaultArgs {
 -- >       hasNoDefault = 0
 -- >     }
 -- >
--- > useArgs :: Args Identity -> (Int, Bool)
+-- > useArgs :: Complete Args -> (Int, Bool)
 -- > useArgs (Args a b) = (a, b)
 --
 -- Leaving out the 'hasNoDefault' field from 'theArgs' will result in a type
@@ -33,10 +33,10 @@ module Ouroboros.Consensus.Util.Args (
     Defaults (..)
   , HKD
   , MapHKD (..)
-    -- * Re-exported for convenience
+    -- * Types
   , Complete
-  , Identity (..)
   , Incomplete
+  , noDefault
   ) where
 
 import           Data.Functor.Identity (Identity (..))
@@ -44,6 +44,9 @@ import           Data.Kind
 
 data Defaults t = NoDefault
   deriving (Functor)
+
+noDefault :: Defaults t
+noDefault = NoDefault
 
 type family HKD f a where
   HKD Identity a = a

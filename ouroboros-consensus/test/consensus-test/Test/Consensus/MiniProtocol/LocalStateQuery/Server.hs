@@ -38,7 +38,8 @@ import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.BlockCache as BlockCac
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (LgrDB,
                      LgrDbArgs (..), mkLgrDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB as LgrDB
-import           Ouroboros.Consensus.Storage.LedgerDB (defaultDiskPolicyArgs)
+import           Ouroboros.Consensus.Storage.LedgerDB (configLedgerDb,
+                     defaultDiskPolicyArgs)
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LgrDB (ledgerDbPast,
                      ledgerDbTip, ledgerDbWithAnchor)
 import           Ouroboros.Consensus.Util.IOLike
@@ -213,7 +214,7 @@ initLgrDB k chain = do
     blockMapping = Map.fromList
       [(blockRealPoint b, b) | b <- Chain.toOldestFirst chain]
 
-    cfg = testCfg k
+    cfg = configLedgerDb $ testCfg k
 
     genesisLedgerDB = LgrDB.ledgerDbWithAnchor testInitExtLedger
 
@@ -221,12 +222,11 @@ initLgrDB k chain = do
     noopTrace = const $ pure ()
 
     args = LgrDbArgs
-      { lgrTopLevelConfig       = cfg
+      { lgrConfig               = cfg
       , lgrHasFS                = SomeHasFS (error "lgrHasFS" :: HasFS m ())
       , lgrDiskPolicyArgs       = defaultDiskPolicyArgs
       , lgrGenesis              = return testInitExtLedger
       , lgrTracer               = nullTracer
-      , lgrTraceLedger          = nullTracer
       }
 
 testCfg :: SecurityParam -> TopLevelConfig TestBlock

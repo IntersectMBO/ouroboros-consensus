@@ -3,6 +3,7 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE ViewPatterns        #-}
 
 module Cardano.Tools.DBTruncater.Run (truncate) where
@@ -46,12 +47,13 @@ truncate DBTruncaterConfig{ dbDir, truncateAfter, verbose } args = do
       chunkInfo = Node.nodeImmutableDbChunkInfo (configStorage config)
       immutableDBArgs :: ImmutableDbArgs Identity IO block
       immutableDBArgs =
-        (ImmutableDB.defaultArgs fs)
+        (ImmutableDB.defaultArgs @IO)
           { immTracer = immutableDBTracer
           , immRegistry = registry
           , immCheckIntegrity = nodeCheckIntegrity (configStorage config)
           , immCodecConfig = configCodec config
           , immChunkInfo = chunkInfo
+          , immHasFS = fs
           }
 
     withDB immutableDBArgs $ \(immutableDB, internal) -> do
