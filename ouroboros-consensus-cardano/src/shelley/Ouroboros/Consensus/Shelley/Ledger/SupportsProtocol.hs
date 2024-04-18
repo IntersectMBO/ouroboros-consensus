@@ -54,7 +54,7 @@ instance
   protocolLedgerView _cfg = SL.currentLedgerView . tickedShelleyLedgerState
 
   -- Extra context available in
-  -- https://github.com/IntersectMBO/ouroboros-network/blob/master/ouroboros-consensus/docs/HardWonWisdom.md#why-doesnt-ledger-code-ever-return-pasthorizonexception
+  -- https://github.com/IntersectMBO/ouroboros-consensus/blob/main/docs/website/contents/for-developers/HardWonWisdom.md#why-doesnt-ledger-code-ever-return-pasthorizonexception
   ledgerViewForecastAt cfg ledgerState = Forecast at $ \for ->
     if
         | NotOrigin for == at ->
