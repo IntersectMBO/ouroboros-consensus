@@ -242,7 +242,12 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           -- that number of remaining slots.
           potentialSlots =
             if idling || hasBlockAfter then 0
-            else sgen - totalBlockCount
+            else unknownTrailingSlots
+
+          -- Number of trailing slots in the genesis window that could have
+          -- headers which haven't been sent yet
+          unknownTrailingSlots = unSlotNo $
+            firstSlotAfterGenesisWindow - succWithOrigin (AF.headSlot fragment)
 
           -- The number of blocks within the Genesis window we know with certainty
           lowerBound = fromIntegral $ AF.length fragment
