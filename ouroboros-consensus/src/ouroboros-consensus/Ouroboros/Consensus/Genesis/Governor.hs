@@ -268,7 +268,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- If the density is 0, the peer should be disconnected. This affects
       -- ChainSync jumping, where genesis windows with no headers prevent jumps
       -- from happening.
-      if ub0 == 0 && not idling0 then pure peer0 else do
+      if ub0 == 0 && hasBlockAfter0 then pure peer0 else do
       (_peer1, DensityBounds {fragment = frag1, offersMoreThanK, lowerBound = lb1 }) <-
         Map.toList densityBounds
       -- Don't disconnect peer0 if it sent no headers after the intersection yet
