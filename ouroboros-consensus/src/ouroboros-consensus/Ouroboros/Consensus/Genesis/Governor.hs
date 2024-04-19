@@ -273,6 +273,9 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- and it is not idling.
       --
       -- See Note [Chain disagreement]
+      --
+      -- Note: hasBlockAfter0 is False if frag0 is empty and ub0>0.
+      -- But we leave it here as a reminder that we care about it.
       guard $ idling0 || not (AF.null frag0) || hasBlockAfter0
       -- ensure that the two peer fragments don't share any
       -- headers after the LoE
