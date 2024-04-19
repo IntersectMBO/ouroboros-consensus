@@ -318,9 +318,8 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 -- The intersection of both is G, the density of peer2's chain is 2,
 -- while the upperbound of the density of peer1 is also 2.
 --
--- Before this commit, GDD would disconnect peer1 as it cannot improve
--- the density of peer2's chain. For this decision to be correct, however,
--- it is essential that both chains disagree after the intersection.
+-- For GDD to disconnect peer1 safely, it is essential that both chains
+-- disagree after the intersection.
 --
 -- To know if the chains will dissagree we defer disconnecting peer1
 -- until it declares to have no more headers, or until it sends one header
