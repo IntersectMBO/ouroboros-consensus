@@ -227,21 +227,13 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
                max (AF.headSlot candidateSuffix) latestSlot
             >= NotOrigin firstSlotAfterGenesisWindow
 
-          -- If the peer is idling, we assume it has no more headers to send.
-          --
           -- If the slot of the latest header we know of is _after_ the end of
           -- the Genesis window (either because the candidate fragment extends
           -- beyond it or because we are waiting to validate a header beyond the
           -- forecast horizon that we already received), there can be no headers
           -- in between and 'potentialSlots' is 0.
-          --
-          -- If the peer has more headers that it hasn't sent yet, each slot
-          -- between the latest header we know of and the end of the Genesis
-          -- window could contain a block, so the upper bound for the total
-          -- number of blocks in the window is the sum of the known blocks and
-          -- that number of remaining slots.
           potentialSlots =
-            if idling || hasBlockAfter then 0
+            if hasBlockAfter then 0
             else unknownTrailingSlots
 
           -- Number of trailing slots in the genesis window that could have
@@ -266,6 +258,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 
     losingPeers = nubOrd $ Map.toList densityBounds >>= \
       (peer0 , DensityBounds { fragment = frag0
+                             , lowerBound = lb0
                              , upperBound = ub0
                              , hasBlockAfter = hasBlockAfter0
                              , idling = idling0
@@ -287,6 +280,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- peer1 offers more than k blocks
       guard offersMoreThanK
       -- peer1 has the same or better density than peer0
+      -- If peer0 is idling, we assume no more headers will be sent.
       --
       -- Having the same density is enough to disconnect peer0, as the honest
       -- chain is expected to have a strictly higher density than all of the
@@ -294,7 +288,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       --
       -- This matters to ChainSync jumping, where adversarial dynamo and
       -- objector could offer chains of equal density.
-      guard $ lb1 >= ub0
+      guard $ lb1 >= (if idling0 then lb0 else ub0)
       pure peer0
 
     loeIntersectionSlot = AF.headSlot loeFrag
