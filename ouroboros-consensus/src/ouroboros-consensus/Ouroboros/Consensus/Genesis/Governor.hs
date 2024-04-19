@@ -280,8 +280,9 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- ensure that the two peer fragments don't share any
       -- headers after the LoE
       guard $ AF.lastPoint frag0 /= AF.lastPoint frag1
-      -- peer1 offers more than k blocks
-      guard offersMoreThanK
+      -- peer1 offers more than k blocks or peer0 has sent all headers in the
+      -- genesis window after the intersection (idling or not)
+      guard $ offersMoreThanK || lb0 == ub0
       -- peer1 has the same or better density than peer0
       -- If peer0 is idling, we assume no more headers will be sent.
       --
