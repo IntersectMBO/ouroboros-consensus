@@ -887,7 +887,7 @@ data LoE a =
   -- When the selection's tip is @k@ blocks after the earliest intersection of
   -- of all candidate fragments, ChainSel will not add new blocks to the
   -- selection.
-  LoEEnabled a
+  LoEEnabled !a
   deriving (Eq, Show, Generic, NoThunks, Functor, Foldable, Traversable)
 
 type GetLoEFragment m blk = LoE (m (AnchoredFragment (Header blk)))
