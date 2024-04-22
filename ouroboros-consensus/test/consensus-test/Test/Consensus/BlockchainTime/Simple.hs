@@ -38,6 +38,7 @@
 module Test.Consensus.BlockchainTime.Simple (tests) where
 
 import           Control.Applicative (Alternative (..))
+import           Control.DeepSeq
 import           Control.Monad (MonadPlus, when)
 import qualified Control.Monad.Class.MonadSTM.Internal as LazySTM
 import           Control.Monad.Class.MonadTime
@@ -339,7 +340,7 @@ testOverrideDelay systemStart slotLength maxClockRewind numSlots = do
       withWatcher
         "testOverrideDelay"
         ( knownSlotWatcher btime $ \slotNo -> do
-            atomically $ modifyTVar slotsVar (slotNo :)
+            atomically $ modifyTVar slotsVar $ force . (slotNo :)
         ) $ do
         -- Wait to collect the required number of slots
         atomically $ do
