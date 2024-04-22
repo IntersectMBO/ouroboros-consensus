@@ -174,7 +174,7 @@ runGdd loEUpdater varLoEFrag chainDb getTrigger =
 
 data DensityBounds blk =
   DensityBounds {
-    fragment        :: AnchoredFragment (Header blk),
+    clippedFragment :: AnchoredFragment (Header blk),
     offersMoreThanK :: Bool,
     lowerBound      :: Word64,
     upperBound      :: Word64,
@@ -213,7 +213,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
   (losingPeers, densityBounds)
   where
     densityBounds = Map.fromList $ do
-      (peer, fragment) <- Map.toList competingFrags
+      (peer, clippedFragment) <- Map.toList clippedFrags
       state <- maybeToList (states Map.!? peer)
       -- Skip peers that haven't sent any headers yet.
       -- They should be disconnected by timeouts instead.
@@ -239,10 +239,11 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           -- Number of trailing slots in the genesis window that could have
           -- headers which haven't been sent yet
           unknownTrailingSlots = unSlotNo $
-            firstSlotAfterGenesisWindow - succWithOrigin (AF.headSlot fragment)
+            -- cannot underflow as the fragment is clipped to the genesis window
+            firstSlotAfterGenesisWindow - succWithOrigin (AF.headSlot clippedFragment)
 
           -- The number of blocks within the Genesis window we know with certainty
-          lowerBound = fromIntegral $ AF.length fragment
+          lowerBound = fromIntegral $ AF.length clippedFragment
 
           upperBound = lowerBound + potentialSlots
 
@@ -254,10 +255,10 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
           -- If not, it is not qualified to compete by density (yet).
           offersMoreThanK = totalBlockCount > k
 
-      pure (peer, DensityBounds {fragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
+      pure (peer, DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 
     losingPeers = nubOrd $ Map.toList densityBounds >>= \
-      (peer0 , DensityBounds { fragment = frag0
+      (peer0 , DensityBounds { clippedFragment = frag0
                              , lowerBound = lb0
                              , upperBound = ub0
                              , hasBlockAfter = hasBlockAfter0
@@ -267,7 +268,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- ChainSync jumping, where genesis windows with no headers prevent jumps
       -- from happening.
       if ub0 == 0 then pure peer0 else do
-      (_peer1, DensityBounds {fragment = frag1, offersMoreThanK, lowerBound = lb1 }) <-
+      (_peer1, DensityBounds {clippedFragment = frag1, offersMoreThanK, lowerBound = lb1 }) <-
         Map.toList densityBounds
       -- Don't disconnect peer0 if it sent no headers after the intersection yet
       -- and it is not idling.
@@ -303,7 +304,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
     dropBeyondGenesisWindow =
       AF.takeWhileOldest ((< firstSlotAfterGenesisWindow) . blockSlot)
 
-    competingFrags =
+    clippedFrags =
       Map.map dropBeyondGenesisWindow candidateSuffixes
 
 -- Note [Chain disagreement]
