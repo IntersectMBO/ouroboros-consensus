@@ -64,6 +64,7 @@ import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Range
 import           Test.Util.TestEnv (adjustQuickCheckTests)
 import           Test.Util.Time
+import Control.DeepSeq
 
 tests :: TestTree
 tests = testGroup "WallClock" [
@@ -339,7 +340,7 @@ testOverrideDelay systemStart slotLength maxClockRewind numSlots = do
       withWatcher
         "testOverrideDelay"
         ( knownSlotWatcher btime $ \slotNo -> do
-            atomically $ modifyTVar slotsVar (slotNo :)
+            atomically $ modifyTVar slotsVar $ force . (slotNo :)
         ) $ do
         -- Wait to collect the required number of slots
         atomically $ do
