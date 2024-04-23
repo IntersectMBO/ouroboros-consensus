@@ -369,7 +369,9 @@ nextInstruction context = whenEnabled context RunNormally $
 -- validating it.
 --
 -- We request jumpers to jump here if the next header received by the dynamo is
--- at least jump size slots after the last jump.
+-- at least jump size slots after the last jump. Note that, since this function
+-- runs before validating the next header, it will not be part of the fragment
+-- considered for the jump.
 --
 -- We also check that the Objector disagrees with the header sent at its
 -- rejected jump. If it agrees to it, we disengage it.
