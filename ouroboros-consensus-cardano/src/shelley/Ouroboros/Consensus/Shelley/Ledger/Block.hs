@@ -12,6 +12,7 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilyDependencies     #-}
 {-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE UndecidableSuperClasses    #-}
 module Ouroboros.Consensus.Shelley.Ledger.Block (
     GetHeader (..)
@@ -141,12 +142,12 @@ mkShelleyBlock raw = ShelleyBlock {
     }
 
 class
-  ( ShelleyBasedEra (ShelleyBlockLedgerEra blk)
+  ( ShelleyCompatible (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
   , blk ~ ShelleyBlock (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
   ) => ShelleyBasedBlock blk
 
 instance ( proto ~ BlockProtocol (ShelleyBlock proto era)
-         , ShelleyBasedEra era
+         , ShelleyCompatible proto era
          ) => ShelleyBasedBlock (ShelleyBlock proto era)
 
 type family ShelleyBlockLedgerEra blk where
