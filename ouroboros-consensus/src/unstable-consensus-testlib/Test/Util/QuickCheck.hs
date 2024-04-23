@@ -29,6 +29,8 @@ module Test.Util.QuickCheck (
   , collects
   , forAllGenRunShrinkCheck
   , implies
+    -- * Typeclass laws
+  , prop_lawfulEqAndTotalOrd
   ) where
 
 import           Control.Monad.Except
@@ -226,3 +228,42 @@ collects = repeatedly collect
 implies :: Testable prop => Bool -> prop -> Property
 implies p1 p2 = not p1 .||. p2
 infixr 0 `implies`
+
+{-------------------------------------------------------------------------------
+  Typeclass laws
+-------------------------------------------------------------------------------}
+
+prop_lawfulEqAndTotalOrd ::
+     forall a. (Show a, Ord a)
+  => a -> a -> a -> Property
+prop_lawfulEqAndTotalOrd a b c = conjoin
+    [ counterexample "Not total: a <= b || b <= a VIOLATED" $
+        a <= b || b <= a
+    , counterexample "Not transitive: a <= b && b <= c => a <= c VIOLATED" $
+        let antecedent = a <= b && b <= c in
+        classify antecedent "Antecedent for transitivity" $
+        antecedent `implies` a <= c
+    , counterexample "Not reflexive: a <= a VIOLATED" $
+        a `le` a
+    , counterexample "Not antisymmetric: a <= b && b <= a => a == b VIOLATED" $
+        let antecedent = a <= b && b <= a in
+        classify antecedent "Antecedent for antisymmetry" $
+        antecedent `implies` a == b
+    , -- compatibility laws
+      counterexample "(a <= b) == (b >= a) VIOLATED" $
+        (a <= b) === (b >= a)
+    , counterexample "(a < b) == (a <= b && a /= b) VIOLATED" $
+        (a < b) === (a <= b && a /= b)
+    , counterexample "(a > b) = (b < a) VIOLATED" $
+        (a > b) === (b < a)
+    , counterexample "(a < b) == (compare a b == LT) VIOLATED" $
+        (a < b) === (compare a b == LT)
+    , counterexample "(a > b) == (compare a b == GT) VIOLATED" $
+        (a > b) === (compare a b == GT)
+    , counterexample "(a == b) == (compare a b == EQ) VIOLATED" $
+        (a == b) === (compare a b == EQ)
+    , counterexample "min a b == if a <= b then a else b VIOLATED" $
+        min a b === if a <= b then a else b
+    , counterexample "max a b == if a >= b then a else b VIOLATED" $
+        max a b === if a >= b then a else b
+    ]
