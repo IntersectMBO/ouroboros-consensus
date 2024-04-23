@@ -151,6 +151,7 @@ library unstable-diffusion-testlib
     sop-core ^>=0.5,
     sop-extras ^>=0.2,
     strict-sop-core ^>=0.1,
+    strict-stm,
     text,
     typed-protocols,
 

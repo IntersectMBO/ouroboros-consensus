@@ -45,3 +45,12 @@ source-repository-package
   subdir:
     ouroboros-network-api
     ouroboros-network-protocols
+
+source-repository-package
+  type: git
+  location: https://github.com/input-output-hk/fs-sim
+  tag: 793b56d80d032252fb81d50473b0e7b4d9e3e8cf
+  --sha256: 08nifzc14m61b8v4scv4g325v3qcm9yg99gn6g7c6lnsby5j0f1f
+  subdir:
+    fs-api
+    fs-sim

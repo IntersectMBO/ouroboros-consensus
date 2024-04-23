@@ -45,6 +45,7 @@ module Test.Ouroboros.Storage.ImmutableDB.StateMachine (
   , tests
   ) where
 
+import           Control.Concurrent.Class.MonadSTM.Strict (newTMVar)
 import           Control.Monad (forM_, void)
 import           Data.Bifunctor (first)
 import           Data.ByteString.Lazy (ByteString)
@@ -1157,14 +1158,14 @@ test :: Index.CacheConfig
      -> QSM.Commands (At CmdErr IO) (At Resp IO)
      -> IO (QSM.History (At CmdErr IO) (At Resp IO), Property)
 test cacheConfig chunkInfo cmds = do
-    fsVar              <- uncheckedNewTVarM Mock.empty
+    fsVar              <- atomically $ newTMVar Mock.empty
     varErrors          <- uncheckedNewTVarM emptyErrors
     varNextId          <- uncheckedNewTVarM 0
     varIters           <- uncheckedNewTVarM []
     (tracer, getTrace) <- recordingTracerIORef
 
     withRegistry $ \registry -> do
-      let hasFS = mkSimErrorHasFS (unsafeToUncheckedStrictTVar fsVar) (unsafeToUncheckedStrictTVar varErrors)
+      let hasFS = mkSimErrorHasFS fsVar (unsafeToUncheckedStrictTVar varErrors)
           args  = ImmutableDbArgs {
               immCacheConfig      = cacheConfig
             , immCheckIntegrity   = testBlockIsValid
@@ -1197,7 +1198,7 @@ test cacheConfig chunkInfo cmds = do
           trace <- getTrace
           return (hist, model, res, trace)
 
-      fs <- atomically $ readTVar fsVar
+      fs <- atomically $ readTMVar fsVar
 
       let modelTip = dbmTip $ dbModel model
           prop =
