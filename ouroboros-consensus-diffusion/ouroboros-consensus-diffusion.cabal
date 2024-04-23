@@ -229,6 +229,7 @@ test-suite consensus-test
     Test.Consensus.Genesis.Setup.Classifiers
     Test.Consensus.Genesis.Setup.GenChains
     Test.Consensus.Genesis.Tests
+    Test.Consensus.Genesis.Tests.CSJ
     Test.Consensus.Genesis.Tests.DensityDisconnect
     Test.Consensus.Genesis.Tests.LoE
     Test.Consensus.Genesis.Tests.LoP
