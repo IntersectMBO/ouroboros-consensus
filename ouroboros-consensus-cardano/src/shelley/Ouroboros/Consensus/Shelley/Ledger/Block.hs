@@ -17,8 +17,10 @@ module Ouroboros.Consensus.Shelley.Ledger.Block (
     GetHeader (..)
   , Header (..)
   , NestedCtxt_ (..)
+  , ShelleyBasedBlock
   , ShelleyBasedEra
   , ShelleyBlock (..)
+  , ShelleyBlockLedgerEra
   , ShelleyHash (..)
     -- * Shelley Compatibility
   , ShelleyCompatible
@@ -137,6 +139,18 @@ mkShelleyBlock raw = ShelleyBlock {
       shelleyBlockRaw        = raw
     , shelleyBlockHeaderHash = pHeaderHash $ SL.bheader raw
     }
+
+class
+  ( ShelleyBasedEra (ShelleyBlockLedgerEra blk)
+  , blk ~ ShelleyBlock (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
+  ) => ShelleyBasedBlock blk
+
+instance ( proto ~ BlockProtocol (ShelleyBlock proto era)
+         , ShelleyBasedEra era
+         ) => ShelleyBasedBlock (ShelleyBlock proto era)
+
+type family ShelleyBlockLedgerEra blk where
+  ShelleyBlockLedgerEra (ShelleyBlock proto era) = era
 
 data instance Header (ShelleyBlock proto era) = ShelleyHeader {
       shelleyHeaderRaw  :: !(ShelleyProtocolHeader proto)
