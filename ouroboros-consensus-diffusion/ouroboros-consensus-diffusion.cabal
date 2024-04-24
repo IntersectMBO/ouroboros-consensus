@@ -258,6 +258,7 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.Tests.Timeouts
     Test.Consensus.PeerSimulator.Trace
     Test.Consensus.PointSchedule
+    Test.Consensus.PointSchedule.NodeState
     Test.Consensus.PointSchedule.Peers
     Test.Consensus.PointSchedule.Shrinking
     Test.Consensus.PointSchedule.Shrinking.Tests

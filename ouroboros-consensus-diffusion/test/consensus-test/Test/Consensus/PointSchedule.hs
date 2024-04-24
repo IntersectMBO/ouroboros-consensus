@@ -28,7 +28,6 @@ module Test.Consensus.PointSchedule (
   , GenesisTestFull
   , GenesisWindow (..)
   , LoPBucketParams (..)
-  , NodeState (..)
   , PeerSchedule
   , PeersSchedule
   , RunGenesisTestResult (..)
@@ -36,7 +35,6 @@ module Test.Consensus.PointSchedule (
   , ensureScheduleDuration
   , genesisNodeState
   , longRangeAttack
-  , nsTipTip
   , peerSchedulesBlocks
   , peerStates
   , peersStates
@@ -65,18 +63,18 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
 import           Ouroboros.Consensus.Protocol.Abstract
                      (SecurityParam (SecurityParam), maxRollbacks)
-import           Ouroboros.Consensus.Util.Condense (Condense (..),
-                     CondenseList (..), PaddingDirection (..),
-                     condenseListWithPadding, padListWith)
+import           Ouroboros.Consensus.Util.Condense (CondenseList (..),
+                     PaddingDirection (..), condenseListWithPadding)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (SlotNo (..), Tip (..), blockSlot,
-                     tipFromHeader)
+import           Ouroboros.Network.Block (SlotNo (..), blockSlot)
 import           Ouroboros.Network.Point (withOrigin)
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      allFragments, prettyBlockTree)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
+import           Test.Consensus.PointSchedule.NodeState (NodeState (..),
+                     genesisNodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
                      mkPeers, peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -88,52 +86,9 @@ import           Test.Consensus.PointSchedule.SinglePeer.Indices
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
-import           Test.Util.TersePrinting (terseBlock, terseFragment,
-                     terseWithOrigin)
+import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
-
-----------------------------------------------------------------------------------------------------
--- Data types
-----------------------------------------------------------------------------------------------------
-
--- | The state of a peer at a given point in time.
-data NodeState blk =
-  NodeState {
-    nsTip    :: WithOrigin blk,
-    nsHeader :: WithOrigin blk,
-    nsBlock  :: WithOrigin blk
-  }
-  deriving (Eq, Show)
-
-nsTipTip :: AF.HasHeader blk => NodeState blk -> Tip blk
-nsTipTip = withOrigin TipGenesis tipFromHeader . nsTip
-
-instance Condense (NodeState TestBlock) where
-  condense NodeState {nsTip, nsHeader, nsBlock} =
-    "TP " ++ terseWithOrigin terseBlock nsTip ++
-    " | HP " ++ terseWithOrigin terseBlock nsHeader ++
-    " | BP " ++ terseWithOrigin terseBlock nsBlock
-
-instance CondenseList (NodeState TestBlock) where
-  condenseList points =
-    zipWith3
-      (\tip header block ->
-        "TP " ++ tip ++
-          " | HP " ++ header ++
-          " | BP " ++ block
-      )
-      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsTip) points)
-      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsHeader) points)
-      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsBlock) points)
-
-genesisNodeState :: NodeState blk
-genesisNodeState =
-  NodeState {
-    nsTip = Origin,
-    nsHeader = Origin,
-    nsBlock = Origin
-  }
 
 prettyPeersSchedule ::
   forall blk.

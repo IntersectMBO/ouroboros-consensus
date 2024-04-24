@@ -18,7 +18,7 @@ import           Ouroboros.Network.Protocol.BlockFetch.Server
 import           Test.Consensus.PeerSimulator.ScheduledServer
                      (ScheduledServer (..), awaitOnlineState, runHandler)
 import           Test.Consensus.PeerSimulator.Trace
-import           Test.Consensus.PointSchedule (NodeState)
+import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 
 -- | Return values for the 'handlerSendBlocks'.

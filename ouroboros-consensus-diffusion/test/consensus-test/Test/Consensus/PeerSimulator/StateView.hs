@@ -36,6 +36,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import           Ouroboros.Network.Block (StandardHash, Tip)
 import           Ouroboros.Network.Protocol.BlockFetch.Type (BlockFetch)
 import           Ouroboros.Network.Protocol.ChainSync.Type (ChainSync)
+import           Test.Consensus.PeerSimulator.Trace (TraceEvent)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 import           Test.Util.TersePrinting (terseBlock, terseHFragment,
                      terseMaybe)
@@ -143,7 +144,9 @@ data StateView blk = StateView {
     svPeerSimulatorResults :: [PeerSimulatorResult blk],
     -- | This field holds the most recent point in the selection (incl. anchor)
     -- for which we have a full block (not just a header).
-    svTipBlock             :: Maybe blk
+    svTipBlock             :: Maybe blk,
+    -- | List of all TraceEvent that have been sent during the simulation.
+    svTrace                :: [TraceEvent blk]
   }
 
 instance Condense (StateView TestBlock) where
@@ -164,6 +167,8 @@ collectDisconnectedPeers stateView = nubOrd $
 data StateViewTracers blk m = StateViewTracers {
     svtPeerSimulatorResultsTracer :: Tracer m (PeerSimulatorResult blk)
   , svtGetPeerSimulatorResults    :: m [PeerSimulatorResult blk]
+  , svtTraceTracer                :: Tracer m (TraceEvent blk)
+  , svtGetTracerTrace             :: m [TraceEvent blk]
   }
 
 -- | Helper to get exceptions from a StateView.
@@ -196,7 +201,13 @@ defaultStateViewTracers ::
   m (StateViewTracers blk m)
 defaultStateViewTracers = do
   (svtPeerSimulatorResultsTracer, svtGetPeerSimulatorResults) <- recordingTracerTVar
-  pure StateViewTracers {svtPeerSimulatorResultsTracer, svtGetPeerSimulatorResults}
+  (svtTraceTracer, svtGetTracerTrace) <- recordingTracerTVar
+  pure StateViewTracers
+    { svtPeerSimulatorResultsTracer
+    , svtGetPeerSimulatorResults
+    , svtTraceTracer
+    , svtGetTracerTrace
+    }
 
 -- | Call 'defaultStateViewTracers' and add the provided results.
 stateViewTracersWithInitial ::
@@ -216,8 +227,9 @@ snapshotStateView ::
   StateViewTracers blk m ->
   ChainDB m blk ->
   m (StateView blk)
-snapshotStateView StateViewTracers{svtGetPeerSimulatorResults} chainDb = do
+snapshotStateView StateViewTracers{svtGetPeerSimulatorResults, svtGetTracerTrace} chainDb = do
   svPeerSimulatorResults <- svtGetPeerSimulatorResults
+  svTrace <- svtGetTracerTrace
   svSelectedChain <- atomically $ ChainDB.getCurrentChain chainDb
   svTipBlock <- ChainDB.getTipBlock chainDb
-  pure StateView {svSelectedChain, svPeerSimulatorResults, svTipBlock}
+  pure StateView {svSelectedChain, svPeerSimulatorResults, svTipBlock, svTrace}
