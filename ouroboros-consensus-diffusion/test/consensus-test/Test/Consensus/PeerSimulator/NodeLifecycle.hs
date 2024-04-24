@@ -40,12 +40,17 @@ import           Test.Util.TestBlock (TestBlock, testInitExtLedger)
 
 -- | Resources used for a single live interval of the node, constructed when the
 -- node is started.
--- When the node is shut down, 'lnCopyToImmDb' is used to persist the immutable
+-- When the node is shut down, 'lnCopyToImmDb' is used to persist the current
 -- chain.
 data LiveNode blk m = LiveNode {
     lnChainDb          :: ChainDB m blk
   , lnStateViewTracers :: StateViewTracers blk m
   , lnStateTracer      :: Tracer m ()
+
+    -- | Write persistent ChainDB state (the immutable and volatile DBs, but not
+    -- the ledger and GSM state) to the VFS TVars to preserve it for the next
+    -- interval.
+    -- Returns the immutable tip's slot for tracing.
   , lnCopyToImmDb      :: m (WithOrigin SlotNo)
 
     -- | The set of peers that should be started.
@@ -65,9 +70,9 @@ data LiveIntervalResult blk = LiveIntervalResult {
   , lirActive      :: Set PeerId
   }
 
--- | Resources used by the handlers in 'NodeLifecycle' to shut down running
--- components, construct tracers used for single intervals, and reset and
--- persist state.
+-- | Resources used by the handlers 'lifecycleStart' and 'lifecycleStop' to
+-- shut down running components, construct tracers used for single intervals,
+-- and reset and persist state.
 data LiveResources blk m = LiveResources {
     lrRegistry :: ResourceRegistry m
   , lrPeerSim  :: PeerSimulatorResources m blk
@@ -98,6 +103,10 @@ data NodeLifecycle blk m = NodeLifecycle {
     -- | The minimum tick duration that triggers a node downtime.
     -- If this is 'Nothing', downtimes are disabled.
     nlMinDuration :: Maybe DiffTime
+
+    -- | Start the node with prior state.
+    -- For the first start, this must be called with an empty 'lirPeerResults'
+    -- and the initial set of all peers in 'lirActive'.
   , nlStart       :: LiveIntervalResult blk -> m (LiveNode blk m)
   , nlShutdown    :: LiveNode blk m -> m (LiveIntervalResult blk)
   }
@@ -135,7 +144,7 @@ mkChainDb resources = do
   where
     LiveResources {lrRegistry, lrTracer, lrConfig, lrCdb, lrLoEVar} = resources
 
--- | Allocate all the resources that depend on the the results of previous live
+-- | Allocate all the resources that depend on the results of previous live
 -- intervals, the ChainDB and its persisted state.
 restoreNode ::
   IOLike m =>

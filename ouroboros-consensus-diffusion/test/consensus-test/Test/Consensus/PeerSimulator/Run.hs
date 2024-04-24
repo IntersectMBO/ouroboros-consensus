@@ -211,7 +211,7 @@ dispatchTick :: forall m blk.
   LiveNode blk m ->
   (Int, (DiffTime, Peer (NodeState blk))) ->
   m (LiveNode blk m)
-dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid state)) = do
+dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid state)) =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
       traceNewTick
@@ -225,7 +225,6 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
       | Just minInterval <- nlMinDuration
       , duration > minInterval
       = do
-        threadDelay 0.00001
         results <- nlShutdown node
         threadDelay duration
         nlStart results
@@ -319,9 +318,30 @@ startNode schedulerConfig genesisTest interval = do
       -- the registry is closed and all threads related to the peer are
       -- killed.
       withRegistry $ \peerRegistry -> do
-        (csClient, csServer) <- startChainSyncConnectionThread peerRegistry lrTracer lrConfig chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig lnStateViewTracers handles
+        (csClient, csServer) <-
+          startChainSyncConnectionThread
+          peerRegistry
+          lrTracer
+          lrConfig
+          chainDbView
+          fetchClientRegistry
+          prShared
+          prChainSync
+          chainSyncTimeouts_
+          chainSyncLoPBucketConfig
+          lnStateViewTracers
+          handles
         BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry pid
-        (bfClient, bfServer) <- startBlockFetchConnectionThread peerRegistry lrTracer lnStateViewTracers fetchClientRegistry (pure Continue) prShared prBlockFetch blockFetchTimeouts_
+        (bfClient, bfServer) <-
+          startBlockFetchConnectionThread
+          peerRegistry
+          lrTracer
+          lnStateViewTracers
+          fetchClientRegistry
+          (pure Continue)
+          prShared
+          prBlockFetch
+          blockFetchTimeouts_
         waitAnyThread [csClient, csServer, bfClient, bfServer]
   -- The block fetch logic needs to be started after the block fetch clients
   -- otherwise, an internal assertion fails because getCandidates yields more
