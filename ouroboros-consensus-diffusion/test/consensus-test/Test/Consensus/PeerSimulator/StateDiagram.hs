@@ -54,8 +54,8 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HeaderHash)
 import           Test.Consensus.BlockTree (BlockTree (btBranches, btTrunk),
                      BlockTreeBranch (btbSuffix), prettyBlockTree)
-import qualified Test.Consensus.PointSchedule as PS
-import           Test.Consensus.PointSchedule (NodeState, genesisNodeState)
+import           Test.Consensus.PointSchedule.NodeState (NodeState (..),
+                     genesisNodeState)
 import           Test.Consensus.PointSchedule.Peers (PeerId (..))
 import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 
@@ -478,7 +478,7 @@ addPoints :: Map PeerId (NodeState TestBlock) -> TreeSlots -> TreeSlots
 addPoints peerPoints treeSlots =
   foldl' step treeSlots (Map.toList peerPoints)
   where
-    step z (pid, ap) = addTipPoint pid (PS.nsTip ap) z
+    step z (pid, ap) = addTipPoint pid (nsTip ap) z
 
 ----------------------------------------------------------------------------------------------------
 -- Cells
