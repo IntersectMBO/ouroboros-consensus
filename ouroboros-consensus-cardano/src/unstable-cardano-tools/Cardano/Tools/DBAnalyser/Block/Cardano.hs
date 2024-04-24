@@ -76,7 +76,7 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley.Ledger
-import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBasedBlock,
+import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
                      ShelleyBlock, ShelleyBlockLedgerEra)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           System.Directory (makeAbsolute)
@@ -236,7 +236,7 @@ instance Aeson.FromJSON CardanoConfig where
 
     triggers <- do
       let parseTrigger ::
-               forall blk era. (ShelleyBasedBlock blk, ShelleyBlockLedgerEra blk ~ era)
+               forall blk era. (IsShelleyBlock blk, ShelleyBlockLedgerEra blk ~ era)
             => (Aeson.Parser :.: K TriggerHardFork) blk
           parseTrigger = Comp $ fmap K $
                         (fmap TriggerHardForkAtEpoch <$> (v Aeson..:? nm))
@@ -244,7 +244,7 @@ instance Aeson.FromJSON CardanoConfig where
             where
               nm = fromString $ "Test" <> L.eraName @era <> "HardForkAtEpoch"
 
-      triggers <- hsequence' $ hcpure (Proxy @ShelleyBasedBlock) parseTrigger
+      triggers <- hsequence' $ hcpure (Proxy @IsShelleyBlock) parseTrigger
 
       let isBad :: NP (K TriggerHardFork) xs -> Bool
           isBad = \case

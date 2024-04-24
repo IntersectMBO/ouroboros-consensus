@@ -112,7 +112,7 @@ import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
-import           Ouroboros.Consensus.Shelley.Ledger.Block (ShelleyBasedBlock,
+import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
                      ShelleyBlockLedgerEra)
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Shelley.Node
@@ -978,7 +978,7 @@ protocolInfoCardano paramsCardano
 
         registerAny :: NP (LedgerState -.-> LedgerState) (CardanoShelleyEras c)
         registerAny =
-            hcmap (Proxy @ShelleyBasedBlock) injectIntoTestState $
+            hcmap (Proxy @IsShelleyBlock) injectIntoTestState $
                 WrapTransitionConfig transitionConfigShelley
              :* WrapTransitionConfig transitionConfigAllegra
              :* WrapTransitionConfig transitionConfigMary
