@@ -53,9 +53,10 @@ import           Test.Consensus.PeerSimulator.StateDiagram
                      (peerSimStateDiagramSTMTracerDebug)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
-import           Test.Consensus.PointSchedule (BlockFetchTimeout, CSJParams (..),
-                     GenesisTest (..), GenesisTestFull, LoPBucketParams (..),
-                     NodeState, PeersSchedule, peersStatesRelative)
+import           Test.Consensus.PointSchedule (BlockFetchTimeout,
+                     CSJParams (..), GenesisTest (..), GenesisTestFull,
+                     LoPBucketParams (..), PeersSchedule, peersStatesRelative)
+import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
 import           Test.Util.ChainDB
@@ -335,7 +336,7 @@ startNode schedulerConfig genesisTest interval = do
         (csClient, csServer) <-
           startChainSyncConnectionThread
           peerRegistry
-          lrTracer
+          tracer
           lrConfig
           chainDbView
           fetchClientRegistry
@@ -350,7 +351,7 @@ startNode schedulerConfig genesisTest interval = do
         (bfClient, bfServer) <-
           startBlockFetchConnectionThread
           peerRegistry
-          lrTracer
+          tracer
           lnStateViewTracers
           fetchClientRegistry
           (pure Continue)
@@ -390,6 +391,13 @@ startNode schedulerConfig genesisTest interval = do
       , gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
       , gtCSJParams = CSJParams { csjpJumpSize }
       } = genesisTest
+
+    StateViewTracers{svtTraceTracer} = lnStateViewTracers
+
+    -- FIXME: This type of configuration should move to `Trace.mkTracer`.
+    tracer = if scTrace schedulerConfig
+      then Tracer (\evt -> traceWith lrTracer evt >> traceWith svtTraceTracer evt)
+      else svtTraceTracer
 
     chainSyncTimeouts_ =
       if scEnableChainSyncTimeouts schedulerConfig

@@ -46,7 +46,7 @@ import           Test.Consensus.PeerSimulator.ScheduledChainSyncServer
 import           Test.Consensus.PeerSimulator.Trace
                      (TraceScheduledBlockFetchServerEvent (..),
                      TraceScheduledChainSyncServerEvent (..))
-import           Test.Consensus.PointSchedule
+import           Test.Consensus.PointSchedule.NodeState
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.TestBlock (TestBlock, TestHash (TestHash))
 
