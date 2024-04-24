@@ -47,7 +47,7 @@ import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
                      headPoint)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (SlotNo (SlotNo), Tip, castPoint)
-import           Test.Consensus.PointSchedule (NodeState)
+import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (Peer), PeerId)
 import           Test.Util.TersePrinting (terseAnchor, terseBlock,
                      terseFragment, terseHFragment, terseHeader, tersePoint,
