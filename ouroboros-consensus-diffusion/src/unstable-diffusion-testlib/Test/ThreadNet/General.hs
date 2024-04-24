@@ -74,6 +74,7 @@ import           Test.Util.HardFork.Future (Future)
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.Orphans.NoThunks ()
+import           Test.Util.QuickCheck
 import           Test.Util.Range
 import           Test.Util.Shrink (andId, dropId)
 import           Test.Util.Slots (NumSlots (..))
@@ -674,10 +675,6 @@ prop_general_internal syncity pga testOutput =
                 | ((s1, _, max1), (s2, min2, _)) <- orderedPairs extrema
                 ]
       where
-        -- QuickCheck's @==>@ 'discard's the test if @p1@ fails; that's not
-        -- what we want
-        implies p1 p2 = not p1 .||. p2
-
         -- all pairs @(x, y)@ where @x@ precedes @y@ in the given list
         orderedPairs :: [a] -> [(a, a)]
         orderedPairs = \case

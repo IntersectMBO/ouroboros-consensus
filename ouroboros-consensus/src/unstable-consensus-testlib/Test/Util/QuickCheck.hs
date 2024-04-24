@@ -28,6 +28,7 @@ module Test.Util.QuickCheck (
     -- * Convenience
   , collects
   , forAllGenRunShrinkCheck
+  , implies
   ) where
 
 import           Control.Monad.Except
@@ -218,3 +219,10 @@ shrinkNP g f np = npToSListI np $ cshrinkNP (Proxy @Top) g f np
 
 collects :: Show a => [a] -> Property -> Property
 collects = repeatedly collect
+
+-- | QuickCheck's '==>' 'discard's the test if @p1@ fails; this is sometimes not
+-- what we want, for example if we have other properties that do not depend on
+-- @p1@ being true.
+implies :: Testable prop => Bool -> prop -> Property
+implies p1 p2 = not p1 .||. p2
+infixr 0 `implies`
