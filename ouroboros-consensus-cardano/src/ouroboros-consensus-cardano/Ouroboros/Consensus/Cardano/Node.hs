@@ -112,6 +112,8 @@ import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock)
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley
+import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
+                     ShelleyBlockLedgerEra)
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
@@ -1118,15 +1120,6 @@ mkPartialLedgerConfigShelley transitionConfig maxMajorProtVer shelleyTriggerHard
               maxMajorProtVer
         , shelleyTriggerHardFork = shelleyTriggerHardFork
         }
-
-class
-  ( ShelleyBasedEra (ShelleyBlockLedgerEra blk)
-  , blk ~ ShelleyBlock (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
-  ) => IsShelleyBlock blk
-instance ShelleyBasedEra era => IsShelleyBlock (ShelleyBlock proto era)
-
-type family ShelleyBlockLedgerEra blk where
-  ShelleyBlockLedgerEra (ShelleyBlock proto era) = era
 
 -- | We need this wrapper to partially apply a 'TransitionConfig' in an NP.
 newtype WrapTransitionConfig blk =

@@ -12,13 +12,16 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeFamilyDependencies     #-}
 {-# LANGUAGE TypeOperators              #-}
+{-# LANGUAGE UndecidableInstances       #-}
 {-# LANGUAGE UndecidableSuperClasses    #-}
 module Ouroboros.Consensus.Shelley.Ledger.Block (
     GetHeader (..)
   , Header (..)
+  , IsShelleyBlock
   , NestedCtxt_ (..)
   , ShelleyBasedEra
   , ShelleyBlock (..)
+  , ShelleyBlockLedgerEra
   , ShelleyHash (..)
     -- * Shelley Compatibility
   , ShelleyCompatible
@@ -137,6 +140,18 @@ mkShelleyBlock raw = ShelleyBlock {
       shelleyBlockRaw        = raw
     , shelleyBlockHeaderHash = pHeaderHash $ SL.bheader raw
     }
+
+class
+  ( ShelleyCompatible (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
+  , blk ~ ShelleyBlock (BlockProtocol blk) (ShelleyBlockLedgerEra blk)
+  ) => IsShelleyBlock blk
+
+instance ( proto ~ BlockProtocol (ShelleyBlock proto era)
+         , ShelleyCompatible proto era
+         ) => IsShelleyBlock (ShelleyBlock proto era)
+
+type family ShelleyBlockLedgerEra blk where
+  ShelleyBlockLedgerEra (ShelleyBlock proto era) = era
 
 data instance Header (ShelleyBlock proto era) = ShelleyHeader {
       shelleyHeaderRaw  :: !(ShelleyProtocolHeader proto)
