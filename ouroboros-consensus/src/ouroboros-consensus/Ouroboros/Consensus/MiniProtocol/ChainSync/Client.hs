@@ -1094,6 +1094,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                               } = kis'
                         atomically $ do
                           setCandidate theirFrag
+                          setLatestSlot dynEnv (AF.headSlot theirFrag)
                         return $
                             requestNext
                                 kis'
