@@ -23,7 +23,9 @@ data ChainSyncState blk = ChainSyncState {
     -- | The current candidate fragment.
     csCandidate  :: !(AnchoredFragment (Header blk))
 
-    -- | This ChainSync client should ensure that its peer sets this flag while
+    -- | Whether the last message sent by the peer was MsgAwaitReply.
+    --
+    -- This ChainSync client should ensure that its peer sets this flag while
     -- and only while both of the following conditions are satisfied: the
     -- peer's latest message has been fully processed (especially that its
     -- candidate has been updated; previous argument) and its latest message
