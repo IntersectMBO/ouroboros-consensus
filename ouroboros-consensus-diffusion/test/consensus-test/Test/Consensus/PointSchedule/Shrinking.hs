@@ -123,13 +123,17 @@ speedUpHonestSchedule at speedUpBy sch =
 -- | Speeds up an adversarial schedule after `at` time, by `speedUpBy`.
 -- This "speeding up" is done by removing `speedUpBy` to all points after `at`.
 -- We check that the schedule had no points between `at` and `at + speedUpBy`.
+-- We also keep the last point where it is, so that the end time stays the same.
 speedUpAdversarialSchedule :: Time -> DiffTime -> PeerSchedule blk -> Maybe (PeerSchedule blk)
 speedUpAdversarialSchedule at speedUpBy sch =
-  if losesPoint then Nothing else Just $ beforeSplit ++ spedUpSchedule
+  if losesPoint then Nothing else Just $ beforeSplit ++ spedUpSchedule ++ lastPoint
   where
     (beforeSplit, afterSplit) = span ((< at) . fst) sch
-    spedUpSchedule = map (\(t, p) -> (addTime (-speedUpBy) t, p)) afterSplit
+    spedUpSchedule = map (\(t, p) -> (addTime (-speedUpBy) t, p)) $ take (length afterSplit - 1) afterSplit
     losesPoint = any ((< (addTime speedUpBy at)) . fst) afterSplit
+    lastPoint = case afterSplit of
+      [] -> []
+      as -> [last as]
 
 -- | Remove blocks from the given block tree that are not necessary for the
 -- given peer schedules. If entire branches are unused, they are removed. If the
