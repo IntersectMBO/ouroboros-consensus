@@ -136,7 +136,10 @@ data HotKey c m = HotKey {
       --
       -- POSTCONDITION: the signature is in normal form.
     , sign_      :: forall toSign. (SL.KESignable c toSign, HasCallStack)
-                 => toSign -> m (SL.SignedKES c toSign)
+                 => toSign
+                 -> m (SL.SignedKES c toSign)
+      -- | Securely erase the key and release its memory.
+    , forget :: m ()
     }
 
 sign ::
@@ -179,13 +182,15 @@ mkHotKey initKey startPeriod@(Absolute.KESPeriod start) maxKESEvolutions = do
       , getInfo    = kesStateInfo <$> readMVar varKESState
       , isPoisoned = kesKeyIsPoisoned . kesStateKey <$> readMVar varKESState
       , sign_      = \toSign -> do
-          KESState { kesStateInfo, kesStateKey } <- readMVar varKESState
-          case kesStateKey of
-            KESKeyPoisoned ->
-              error "trying to sign with a poisoned key"
-            KESKey key     -> do
-              let evolution = kesEvolution kesStateInfo
-              SL.signedKES () evolution toSign key
+          withMVar varKESState $ \KESState { kesStateInfo, kesStateKey } -> do
+            case kesStateKey of
+              KESKeyPoisoned ->
+                error "trying to sign with a poisoned key"
+              KESKey key     -> do
+                let evolution = kesEvolution kesStateInfo
+                SL.signedKES () evolution toSign key
+      , forget = do
+          modifyMVar_ varKESState $ poisonState
       }
   where
     initKESState :: KESState c
@@ -198,6 +203,17 @@ mkHotKey initKey startPeriod@(Absolute.KESPeriod start) maxKESEvolutions = do
           }
       , kesStateKey = KESKey initKey
       }
+
+poisonState :: forall m c. (Crypto c, IOLike m)
+            => KESState c -> m (KESState c)
+poisonState kesState = do
+  case kesStateKey kesState of
+    KESKeyPoisoned -> do
+      -- already poisoned
+      return kesState
+    KESKey sk -> do
+      forgetSignKeyKES sk
+      return kesState { kesStateKey = KESKeyPoisoned }
 
 -- | Evolve the 'HotKey' so that its evolution matches the given KES period.
 --
@@ -236,9 +252,10 @@ evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
 
         -- When the absolute period is after the end period, we can't evolve
         -- anymore and poison the expired key.
-        AfterKESEnd {} ->
+        AfterKESEnd {} -> do
             let err = KESCouldNotEvolve info targetPeriod
-            in return (poisonState kesState, UpdateFailed err)
+            poisonedState <- poisonState kesState
+            return (poisonedState, UpdateFailed err)
 
         InKESRange targetEvolution
           -- No evolving needed
@@ -251,9 +268,6 @@ evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
                go targetEvolution info key
 
   where
-    poisonState :: KESState c -> KESState c
-    poisonState kesState = kesState { kesStateKey = KESKeyPoisoned }
-
     -- | PRECONDITION:
     --
     -- > targetEvolution >= curEvolution
@@ -265,8 +279,9 @@ evolveKey varKESState targetPeriod = modifyMVar varKESState $ \kesState -> do
       = do
           maybeKey' <- SL.updateKES () key curEvolution
           case maybeKey' of
-            -- This cannot happen
-            Nothing    -> error "Could not update KES key"
+            Nothing    ->
+              -- This cannot happen
+              error "Could not update KES key"
             Just !key' -> do
               -- Clear the memory associated with the old key
               forgetSignKeyKES key
