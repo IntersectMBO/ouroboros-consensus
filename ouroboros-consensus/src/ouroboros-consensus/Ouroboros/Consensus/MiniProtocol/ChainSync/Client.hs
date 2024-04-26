@@ -1435,7 +1435,7 @@ checkTime ::
   -> SlotNo
   -> m (UpdatedIntersectionState blk (LedgerView (BlockProtocol blk)))
 checkTime cfgEnv dynEnv intEnv =
-    \kis arrival slotNo -> castEarlyExitIntersects $ do
+    \kis arrival slotNo -> pauseBucket $ castEarlyExitIntersects $ do
         Intersects kis2 lst        <- checkArrivalTime kis arrival
         Intersects kis3 ledgerView <- case projectLedgerView slotNo lst of
             Just ledgerView -> pure $ Intersects kis2 ledgerView
@@ -1443,10 +1443,7 @@ checkTime cfgEnv dynEnv intEnv =
               EarlyExit.lift $
                   traceWith (tracer cfgEnv)
                 $ TraceWaitingBeyondForecastHorizon slotNo
-              -- Pause the bucket if LedgerView-Starved.
-              EarlyExit.lift $ lbPause (loPBucket dynEnv)
               res <- readLedgerState kis2 (projectLedgerView slotNo)
-              EarlyExit.lift $ lbResume (loPBucket dynEnv)
               EarlyExit.lift $
                   traceWith (tracer cfgEnv)
                 $ TraceAccessingForecastHorizon slotNo
@@ -1557,6 +1554,17 @@ checkTime cfgEnv dynEnv intEnv =
                 -- changes to the current chain via the call to
                 -- 'intersectsWithCurrentChain' before it.
                 Nothing
+
+    -- Pause the LoP bucket for the entire duration of 'checkTime'. It will
+    -- either execute very fast, or it will block on the time translation or
+    -- forecast horizon, waiting for our selection to advance. During this
+    -- period, we should not leak tokens as our peer is not responsible for this
+    -- waiting time.
+    pauseBucket :: m a -> m a
+    pauseBucket =
+        bracket_
+          (lbPause (loPBucket dynEnv))
+          (lbResume (loPBucket dynEnv))
 
 -- | Update the 'KnownIntersectionState' according to the header, if it's valid
 --
