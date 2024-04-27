@@ -169,7 +169,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader (getHeaderFields), Header,
-                     Point (..), castPoint, pointSlot)
+                     Point (..), castPoint, pointSlot, succWithOrigin)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
@@ -393,7 +393,8 @@ onRollForward context point = whenEnabled context () $
     Disengaged -> pure ()
     Jumper{} -> pure ()
     Dynamo lastJumpSlot
-      | pointSlot point >= ((jumpSize context +) <$> lastJumpSlot) -> do
+      | let jumpBoundaryPlus1 = jumpSize context + succWithOrigin lastJumpSlot
+      , succWithOrigin (pointSlot point) >= jumpBoundaryPlus1 -> do
           mJumpInfo <- readTVar (cschJumpInfo (handle context))
           setJumps mJumpInfo
       | otherwise -> pure ()
