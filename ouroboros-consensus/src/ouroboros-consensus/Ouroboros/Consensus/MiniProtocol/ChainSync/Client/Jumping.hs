@@ -539,6 +539,8 @@ processJumpResult context jumpResult = whenEnabled context () $
       if len <= 1 then do
         -- If the fragment only contains the bad tip, we know the
         -- intersection is the good point.
+        -- Clear any subsequent jumps requested by the dynamo.
+        writeTVar nextJumpVar Nothing
         maybeElectNewObjector nextJumpVar goodPoint (AF.headPoint badFragment)
       else do
         let middlePoint = len `div` 2
