@@ -510,9 +510,10 @@ processJumpResult context jumpResult = whenEnabled context () $
                 error "processJumpResult: Jumpers in state FoundIntersection shouldn't be further jumping."
 
           RejectedJump badJumpInfo -> do
-            -- @goodPoint@ is in @jTheirFragment jumpInfo@. If the jump was
-            -- requested by the dynamo, this holds because the dynamo is not
-            -- allowed to rollback before the jumps that it requests.
+            -- @goodPoint@ is in @jTheirFragment jumpInfo@ or is an ancestor of
+            -- it. If the jump was requested by the dynamo, this holds because
+            -- the dynamo is not allowed to rollback before the jumps that it
+            -- requests.
             --
             -- If the jump was requested by the jumper, this holds because the
             -- jumper is looking for an intersection, and such jumper only asks
@@ -527,25 +528,25 @@ processJumpResult context jumpResult = whenEnabled context () $
     -- of the good point) or program a jump somewhere in the middle to refine
     -- those points.
     --
-    -- PRECONDITION: The good point is in the bad fragment.
+    -- PRECONDITION: The good point is in the bad fragment or is an ancestor of it.
     lookForIntersection nextJumpVar goodPoint badJumpInfo = do
       let badFragment = jTheirFragment badJumpInfo
-      case snd <$> AF.splitAfterPoint badFragment goodPoint of
-        Nothing ->
-          error "processJumpResult: goodPoint not in badFragment"
-        Just nextFragment -> do
-          let len = AF.length nextFragment
-          if len <= 1 then do
-            -- If the fragment only contains the bad tip, we know the
-            -- intersection is the good point.
-            maybeElectNewObjector nextJumpVar goodPoint (AF.headPoint badFragment)
-          else do
-            let middlePoint = len `div` 2
-                theirFragment = AF.dropNewest middlePoint badFragment
-            writeTVar nextJumpVar $ Just
-              badJumpInfo { jTheirFragment = theirFragment }
-            writeTVar (cschJumping (handle context)) $
-              Jumper nextJumpVar goodPoint (LookingForIntersection badJumpInfo)
+          -- If the good point is not in the bad fragment, the anchor of the bad
+          -- fragment should be a good point too.
+          nextFragment = maybe badFragment snd $
+                           AF.splitAfterPoint badFragment goodPoint
+      let len = AF.length nextFragment
+      if len <= 1 then do
+        -- If the fragment only contains the bad tip, we know the
+        -- intersection is the good point.
+        maybeElectNewObjector nextJumpVar goodPoint (AF.headPoint badFragment)
+      else do
+        let middlePoint = len `div` 2
+            theirFragment = AF.dropNewest middlePoint badFragment
+        writeTVar nextJumpVar $ Just
+          badJumpInfo { jTheirFragment = theirFragment }
+        writeTVar (cschJumping (handle context)) $
+          Jumper nextJumpVar goodPoint (LookingForIntersection badJumpInfo)
 
     maybeElectNewObjector nextJumpVar goodPoint badPoint =
       findObjector (stripContext context) >>= \case
