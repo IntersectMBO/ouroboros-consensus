@@ -226,8 +226,11 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
     traceJumpingState :: ChainSyncJumpingState m TestBlock -> String
     traceJumpingState = \case
       Dynamo lastJump -> "Dynamo " ++ terseWithOrigin show lastJump
-      Objector badPoint ->
-        "Objector " ++ tersePoint (castPoint badPoint)
+      Objector goodPoint badPoint -> unwords
+          [ "Objector"
+          , tersePoint (castPoint goodPoint)
+          , tersePoint (castPoint badPoint)
+          ]
       Disengaged -> "Disengaged"
       Jumper _ goodPoint st ->
         "Jumper _ " ++ tersePoint (castPoint goodPoint) ++ " " ++ traceJumperState st

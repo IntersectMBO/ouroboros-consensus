@@ -357,7 +357,7 @@ nextInstruction context = whenEnabled context RunNormally $
   readTVar (cschJumping (handle context)) >>= \case
     Disengaged -> pure RunNormally
     Dynamo{} -> pure RunNormally
-    Objector _ -> pure RunNormally
+    Objector{} -> pure RunNormally
     Jumper nextJumpVar _ _ -> do
       readTVar nextJumpVar >>= \case
         Nothing -> retry
@@ -385,7 +385,7 @@ onRollForward :: forall m peer blk.
   STM m ()
 onRollForward context point = whenEnabled context () $
   readTVar (cschJumping (handle context)) >>= \case
-    Objector badPoint
+    Objector _ badPoint
       | badPoint == castPoint point -> do
           disengage (handle context)
           electNewObjector (stripContext context)
@@ -425,7 +425,7 @@ onRollBackward :: forall m peer blk.
   STM m ()
 onRollBackward context slot = whenEnabled context () $
   readTVar (cschJumping (handle context)) >>= \case
-    Objector badPoint
+    Objector _ badPoint
       | slot < pointSlot badPoint -> do
           disengage (handle context)
           electNewObjector (stripContext context)
@@ -481,7 +481,7 @@ processJumpResult context jumpResult = whenEnabled context () $
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo _ -> pure ()
     Disengaged -> pure ()
-    Objector _ -> pure ()
+    Objector{} -> pure ()
     Jumper nextJumpVar goodPoint jumperState ->
         case jumpResult of
           AcceptedJump jumpInfo -> do
@@ -554,8 +554,8 @@ processJumpResult context jumpResult = whenEnabled context () $
       findObjector (stripContext context) >>= \case
         Nothing ->
           -- There is no objector yet. Promote the jumper to objector.
-          writeTVar (cschJumping (handle context)) (Objector badPoint)
-        Just (objectorPoint, objectorHandle)
+          writeTVar (cschJumping (handle context)) (Objector goodPoint badPoint)
+        Just (objectorGoodPoint, objectorPoint, objectorHandle)
           | pointSlot objectorPoint <= pointSlot badPoint ->
               -- The objector's intersection is still old enough. Keep it.
               writeTVar (cschJumping (handle context)) $
@@ -563,9 +563,9 @@ processJumpResult context jumpResult = whenEnabled context () $
           | otherwise -> do
               -- Found an earlier intersection. Demote the old objector and
               -- promote the jumper to objector.
-              newJumper Nothing (FoundIntersection objectorPoint) >>=
+              newJumper Nothing objectorGoodPoint (FoundIntersection objectorPoint) >>=
                 writeTVar (cschJumping objectorHandle)
-              writeTVar (cschJumping (handle context)) (Objector badPoint)
+              writeTVar (cschJumping (handle context)) (Objector goodPoint badPoint)
 
 updateJumpInfo ::
   (MonadSTM m) =>
@@ -600,11 +600,11 @@ newJumper ::
     LedgerSupportsProtocol blk
   ) =>
   Maybe (JumpInfo blk) ->
+  Point (Header blk) ->
   ChainSyncJumpingJumperState blk ->
   STM m (ChainSyncJumpingState m blk)
-newJumper jumpInfo jumperState = do
+newJumper jumpInfo goodPoint jumperState = do
   nextJumpVar <- newTVar jumpInfo
-  let goodPoint = maybe GenesisPoint (AF.anchorPoint . jTheirFragment) jumpInfo
   pure $ Jumper nextJumpVar goodPoint jumperState
 
 -- | Register a new ChainSync client to a context, returning a 'PeerContext' for
@@ -628,7 +628,7 @@ registerClient context peer csState mkHandle = do
       pure $ Dynamo $ pointSlot $ AF.anchorPoint fragment
     Just handle -> do
       mJustInfo <- readTVar (cschJumpInfo handle)
-      newJumper mJustInfo Happy
+      newJumper mJustInfo GenesisPoint Happy
   cschJumping <- newTVar csjState
   let handle = mkHandle cschJumping
   modifyTVar (handlesVar context) $ Map.insert peer handle
@@ -668,7 +668,7 @@ electNewDynamo context = do
     Nothing -> writeTVar (csjEnabled context) False
     Just (dynId, dynamo) -> do
       fragment <- csCandidate <$> readTVar (cschState dynamo)
-      mJustInfo <- readTVar (cschJumpInfo dynamo)
+      mJumpInfo <- readTVar (cschJumpInfo dynamo)
       -- We assume no rollbacks are possible earlier than the anchor of the
       -- candidate fragment
       writeTVar (cschJumping dynamo) $
@@ -676,8 +676,10 @@ electNewDynamo context = do
       forM_ peerStates $ \(peer, st) ->
         when (peer /= dynId) $ do
           jumpingState <- readTVar (cschJumping st)
-          when (not (isDisengaged jumpingState)) $
-            writeTVar (cschJumping st) =<< newJumper mJustInfo Happy
+          when (not (isDisengaged jumpingState)) $ do
+            let goodPoint = maybe GenesisPoint (AF.anchorPoint . jTheirFragment) mJumpInfo
+            newJumper mJumpInfo goodPoint Happy
+              >>= writeTVar (cschJumping st)
   where
     findNonDisengaged =
       findM $ \(_, st) -> not . isDisengaged <$> readTVar (cschJumping st)
@@ -694,14 +696,14 @@ findM p (x : xs) = p x >>= \case
 findObjector ::
   (MonadSTM m) =>
   Context m peer blk ->
-  STM m (Maybe (Point (Header blk), ChainSyncClientHandle m blk))
+  STM m (Maybe (Point (Header blk), Point (Header blk), ChainSyncClientHandle m blk))
 findObjector context = do
   readTVar (handlesVar context) >>= go . Map.toList
   where
     go [] = pure Nothing
     go ((_, handle):xs) =
       readTVar (cschJumping handle) >>= \case
-        Objector badPoint -> pure $ Just (badPoint, handle)
+        Objector goodPoint badPoint -> pure $ Just (goodPoint, badPoint, handle)
         _ -> go xs
 
 -- | Look into all dissenting jumper and promote the one with the oldest
@@ -715,8 +717,8 @@ electNewObjector context = do
   dissentingJumpers <- collectDissentingJumpers peerStates
   let sortedJumpers = sortOn (pointSlot . fst) dissentingJumpers
   case sortedJumpers of
-    (badPoint, handle):_ ->
-      writeTVar (cschJumping handle) $ Objector badPoint
+    (goodPoint, (badPoint, handle)):_ ->
+      writeTVar (cschJumping handle) $ Objector goodPoint badPoint
     _ ->
       pure ()
   where
@@ -724,7 +726,7 @@ electNewObjector context = do
       fmap catMaybes $
       forM peerStates $ \(_, handle) ->
         readTVar (cschJumping handle) >>= \case
-          Jumper _ _ (FoundIntersection badPoint) ->
-            pure $ Just (badPoint, handle)
+          Jumper _ goodPoint (FoundIntersection badPoint) ->
+            pure $ Just (goodPoint, (badPoint, handle))
           _ ->
             pure Nothing

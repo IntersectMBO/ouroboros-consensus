@@ -101,6 +101,8 @@ data ChainSyncJumpingState m blk
     -- that happened, we spun it up to let normal ChainSync and Genesis decide
     -- which one to disconnect from.
     Objector
+      -- | The youngest point where the objector agrees with the dynamo.
+      !(Point (Header blk))
       -- | The point where the objector dissented with the dynamo when it was a
       -- jumper.
       !(Point (Header blk))
