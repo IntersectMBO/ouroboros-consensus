@@ -465,7 +465,7 @@ terseGDDEvent = \case
       "      Selection: " ++ terseHFragment curChain,
       "      Candidates:"
       ] ++
-      showPeers (either (const "G") terseHeader . AF.head <$> candidates) ++
+      showPeers (tersePoint . castPoint . AF.headPoint <$> candidates) ++
       [
       "      Candidate suffixes (bounds):"
       ] ++
