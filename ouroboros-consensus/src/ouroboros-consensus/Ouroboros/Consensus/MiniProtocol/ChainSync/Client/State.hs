@@ -102,7 +102,7 @@ data ChainSyncJumpingState m blk
     -- which one to disconnect from.
     Objector
       -- | The youngest point where the objector agrees with the dynamo.
-      !(Point (Header blk))
+      !(AnchoredFragment (Header blk))
       -- | The point where the objector dissented with the dynamo when it was a
       -- jumper.
       !(Point (Header blk))
@@ -116,8 +116,9 @@ data ChainSyncJumpingState m blk
     Jumper
       -- | A TVar containing the next jump to be executed.
       !(StrictTVar m (Maybe (JumpInfo blk)))
-      -- | The youngest point where the jumper agrees with the dynamo.
-      !(Point (Header blk))
+      -- | Fragment whose tip is the youngest point where the jumper agrees with
+      -- the dynamo.
+      !(AnchoredFragment (Header blk))
       -- | More precisely, the state of the jumper.
       !(ChainSyncJumpingJumperState blk)
   deriving (Generic)
@@ -164,7 +165,8 @@ data ChainSyncJumpingJumperState blk
     -- dynamo (in the 'Jumper' constructor) and a point where the jumper
     -- disagrees with the dynamo, carried by this constructor.
     --
-    -- INVARIANT: The point in the 'Jumper' constructor is in the given fragment.
+    -- INVARIANT: The tip of the fragment in the 'Jumper' constructor is in the
+    -- given fragment or it is an ancestor of it.
     LookingForIntersection !(JumpInfo blk)
   | -- | The jumper disagrees with the dynamo and we have determined the latest
     -- point where dynamo and jumper agree. This point is stored in the 'Jumper'
