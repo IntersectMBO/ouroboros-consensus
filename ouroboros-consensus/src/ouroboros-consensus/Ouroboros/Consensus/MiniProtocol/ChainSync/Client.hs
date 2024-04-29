@@ -1167,7 +1167,11 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     Jumping.JumpTo jumpInfo ->
                       continueWithState kis
                         $ drainThePipe n
-                        $ offerJump mkPipelineDecision jumpInfo
+                        $ offerJump mkPipelineDecision (Right jumpInfo)
+                    Jumping.JumpToGoodPoint fragment ->
+                      continueWithState kis
+                        $ drainThePipe n
+                        $ offerJump mkPipelineDecision (Left fragment)
                     Jumping.RunNormally -> do
                       lbResume loPBucket
                       continueWithState kis
@@ -1215,12 +1219,12 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
     offerJump ::
         MkPipelineDecision
-     -> JumpInfo blk
+     -> Either (AnchoredFragment (Header blk)) (JumpInfo blk)
      -> Stateful m blk
             (KnownIntersectionState blk)
             (ClientPipelinedStIdle Z)
-    offerJump mkPipelineDecision jumpInfo = Stateful $ \kis -> do
-        let dynamoTipPt = castPoint $ AF.headPoint $ jTheirFragment jumpInfo
+    offerJump mkPipelineDecision jump = Stateful $ \kis -> do
+        let dynamoTipPt = castPoint $ AF.headPoint $ either id jTheirFragment jump
         traceWith tracer $ TraceOfferJump dynamoTipPt
         return $
             SendMsgFindIntersect [dynamoTipPt] $
@@ -1228,16 +1232,29 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
               recvMsgIntersectFound = \pt theirTip ->
                   if
                     | pt == dynamoTipPt -> do
-                        Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jumpInfo
-                        traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jumpInfo
-                        let kis' = combineJumpInfo kis jumpInfo
-                        continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
+                      case jump of
+                        Right jumpInfo -> do
+                          Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jumpInfo
+                          traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jumpInfo
+                          let kis' = combineJumpInfo kis jumpInfo
+                          continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
+                        Left fragment -> do
+                          Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedGoodPointJump fragment
+                          traceWith tracer $ TraceJumpResult $ Jumping.AcceptedGoodPointJump fragment
+                          let kis' = combineJumpFragment kis fragment
+                          continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
                     | otherwise         -> throwIO InvalidJumpResponse
             ,
               recvMsgIntersectNotFound = \theirTip -> do
-                  Jumping.jgProcessJumpResult jumping $ Jumping.RejectedJump jumpInfo
-                  traceWith tracer $ TraceJumpResult $ Jumping.RejectedJump jumpInfo
-                  continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
+                case jump of
+                  Right jumpInfo -> do
+                    Jumping.jgProcessJumpResult jumping $ Jumping.RejectedJump jumpInfo
+                    traceWith tracer $ TraceJumpResult $ Jumping.RejectedJump jumpInfo
+                    continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
+                  Left fragment -> do
+                    Jumping.jgProcessJumpResult jumping $ Jumping.RejectedGoodPointJump fragment
+                    traceWith tracer $ TraceJumpResult $ Jumping.RejectedGoodPointJump fragment
+                    continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
             }
         where
           combineJumpInfo ::
@@ -1277,6 +1294,35 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   , theirFrag = jTheirFragment ji
                   , theirHeaderStateHistory = rewoundHistory
                   , kBestBlockNo = max (fromWithOrigin 0 $ AF.headBlockNo $ jTheirFragment ji) (kBestBlockNo kis)
+                  }
+
+          combineJumpFragment ::
+               KnownIntersectionState blk
+            -> AnchoredFragment (Header blk)
+            -> KnownIntersectionState blk
+          combineJumpFragment kis@KnownIntersectionState{ourFrag} fragment =
+            let mRewoundHistory =
+                  HeaderStateHistory.rewind
+                    (AF.castPoint $ AF.headPoint fragment)
+                    (theirHeaderStateHistory kis)
+                rewoundHistory =
+                  -- When jumping to a good point, the history should be
+                  -- rewindable because it was rewindable when the good point
+                  -- was discovered.
+                  fromMaybe (error "offerJump: cannot rewind history for a good point") mRewoundHistory
+                intersection =
+                  case AF.intersect ourFrag fragment of
+                    Just (po, _, _, _) -> castPoint $ AF.headPoint po
+                    -- ourFrag should intersect with the good fragment, or otherwise
+                    -- it would not intersect with it at the time the good
+                    -- fragment was discovered.
+                    Nothing -> error "offerJump: the fragment should have a valid intersection with the current selection"
+             in KnownIntersectionState
+                  { mostRecentIntersection = intersection
+                  , ourFrag = ourFrag
+                  , theirFrag = fragment
+                  , theirHeaderStateHistory = rewoundHistory
+                  , kBestBlockNo = max (fromWithOrigin 0 $ AF.headBlockNo fragment) (kBestBlockNo kis)
                   }
 
     requestNext ::

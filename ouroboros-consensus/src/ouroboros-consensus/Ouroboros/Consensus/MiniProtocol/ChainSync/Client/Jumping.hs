@@ -176,7 +176,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncClientHandle (..),
                      ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), ChainSyncState (..),
-                     JumpInfo (..))
+                     JumpInfo (..), ObjectorInitState (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -298,6 +298,10 @@ data Instruction blk
   = RunNormally
   | -- | Jump to the tip of the given fragment.
     JumpTo !(JumpInfo blk)
+  | -- | Used to set the intersection of the servers of starting objectors.
+    -- Otherwise, the ChainSync server wouldn't know which headers to start
+    -- serving.
+    JumpToGoodPoint !(AF.AnchoredFragment (Header blk))
   deriving (Generic)
 
 deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)
@@ -307,6 +311,8 @@ instance (HasHeader (Header blk), Show (Header blk)) => Show (Instruction blk) w
     RunNormally -> showString "RunNormally"
     JumpTo jumpInfo ->
       showParen (p > 10) $ showString "JumpTo " . shows (AF.headPoint $ jTheirFragment jumpInfo)
+    JumpToGoodPoint fragment ->
+      showParen (p > 10) $ showString "JumpToGoodPoint " . shows (AF.headPoint fragment)
 
 deriving anyclass instance
   ( HasHeader blk,
@@ -318,6 +324,8 @@ deriving anyclass instance
 data JumpResult blk
   = AcceptedJump !(JumpInfo blk)
   | RejectedJump !(JumpInfo blk)
+  | AcceptedGoodPointJump !(AF.AnchoredFragment (Header blk))
+  | RejectedGoodPointJump !(AF.AnchoredFragment (Header blk))
   deriving (Generic)
 
 deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (JumpResult blk)
@@ -328,6 +336,10 @@ instance (HasHeader (Header blk), Show (Header blk)) => Show (JumpResult blk) wh
       showParen (p > 10) $ showString "AcceptedJump " . shows (AF.headPoint $ jTheirFragment jumpInfo)
     RejectedJump jumpInfo ->
       showParen (p > 10) $ showString "RejectedJump " . shows (AF.headPoint $ jTheirFragment jumpInfo)
+    AcceptedGoodPointJump fragment ->
+      showParen (p > 10) $ showString "AcceptedGoodPointJump " . shows (AF.headPoint fragment)
+    RejectedGoodPointJump fragment ->
+      showParen (p > 10) $ showString "RejectedGoodPointJump " . shows (AF.headPoint fragment)
 
 deriving anyclass instance
   ( HasHeader blk,
@@ -357,7 +369,9 @@ nextInstruction context = whenEnabled context RunNormally $
   readTVar (cschJumping (handle context)) >>= \case
     Disengaged -> pure RunNormally
     Dynamo{} -> pure RunNormally
-    Objector{} -> pure RunNormally
+    Objector Starting goodFragment _ -> do
+      pure $ JumpToGoodPoint goodFragment
+    Objector Started _ _ -> pure RunNormally
     Jumper nextJumpVar _ _ -> do
       readTVar nextJumpVar >>= \case
         Nothing -> retry
@@ -385,7 +399,7 @@ onRollForward :: forall m peer blk.
   STM m ()
 onRollForward context point = whenEnabled context () $
   readTVar (cschJumping (handle context)) >>= \case
-    Objector _ badPoint
+    Objector _ _ badPoint
       | badPoint == castPoint point -> do
           disengage (handle context)
           electNewObjector (stripContext context)
@@ -425,7 +439,7 @@ onRollBackward :: forall m peer blk.
   STM m ()
 onRollBackward context slot = whenEnabled context () $
   readTVar (cschJumping (handle context)) >>= \case
-    Objector _ badPoint
+    Objector _ _ badPoint
       | slot < pointSlot badPoint -> do
           disengage (handle context)
           electNewObjector (stripContext context)
@@ -481,7 +495,23 @@ processJumpResult context jumpResult = whenEnabled context () $
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo _ -> pure ()
     Disengaged -> pure ()
-    Objector{} -> pure ()
+    Objector Starting goodFragment badPoint ->
+      case jumpResult of
+        AcceptedGoodPointJump fragment -> do
+          writeTVar (cschJumping (handle context)) $
+            Objector Started goodFragment badPoint
+          updateChainSyncState (handle context) fragment
+        RejectedGoodPointJump{} -> do
+          -- If the objector rejects a good point, it is a sign of a rollback
+          -- to earlier than the last jump.
+          disengage (handle context)
+          electNewObjector (stripContext context)
+
+        -- Not interesting in the objector state
+        AcceptedJump{} -> pure ()
+        RejectedJump{} -> pure ()
+
+    Objector Started _ _ -> pure ()
     Jumper nextJumpVar goodFragment jumperState ->
         case jumpResult of
           AcceptedJump jumpInfo -> do
@@ -491,8 +521,7 @@ processJumpResult context jumpResult = whenEnabled context () $
             -- The candidate fragments of jumpers don't grow otherwise, as only the
             -- objector and the dynamo request further headers.
             let fragment = jTheirFragment jumpInfo
-            modifyTVar (cschState (handle context)) $ \csState ->
-              csState {csCandidate = fragment, csLatestSlot = Just (AF.headSlot fragment) }
+            updateChainSyncState (handle context) fragment
             writeTVar (cschJumpInfo (handle context)) $ Just jumpInfo
             case jumperState of
               LookingForIntersection badJumpInfo ->
@@ -519,9 +548,19 @@ processJumpResult context jumpResult = whenEnabled context () $
             -- jumper is looking for an intersection, and such jumper only asks
             -- for jumps that meet this condition.
             lookForIntersection nextJumpVar goodFragment badJumpInfo
+
+          -- These aren't interesting in the case of jumpers.
+          AcceptedGoodPointJump{} -> pure ()
+          RejectedGoodPointJump{} -> pure ()
   where
     -- Avoid redundant constraint "HasHeader blk" reported by some ghc's
     _ = getHeaderFields @blk
+
+    updateChainSyncState :: ChainSyncClientHandle m blk -> AF.AnchoredFragment (Header blk) -> STM m ()
+    updateChainSyncState handle fragment = do
+      modifyTVar (cschState handle) $ \csState ->
+        csState {csCandidate = fragment, csLatestSlot = Just (AF.headSlot fragment) }
+
     -- | Given a good point (where we know we agree with the dynamo) and a bad
     -- fragment (where we know the tip disagrees with the dynamo), either decide
     -- that we know the intersection for sure (if the bad point is the successor
@@ -554,7 +593,7 @@ processJumpResult context jumpResult = whenEnabled context () $
       findObjector (stripContext context) >>= \case
         Nothing ->
           -- There is no objector yet. Promote the jumper to objector.
-          writeTVar (cschJumping (handle context)) (Objector goodFragment badPoint)
+          writeTVar (cschJumping (handle context)) (Objector Starting goodFragment badPoint)
         Just (objectorGoodFragment, objectorPoint, objectorHandle)
           | pointSlot objectorPoint <= pointSlot badPoint ->
               -- The objector's intersection is still old enough. Keep it.
@@ -565,7 +604,7 @@ processJumpResult context jumpResult = whenEnabled context () $
               -- promote the jumper to objector.
               newJumper Nothing objectorGoodFragment (FoundIntersection objectorPoint) >>=
                 writeTVar (cschJumping objectorHandle)
-              writeTVar (cschJumping (handle context)) (Objector goodFragment badPoint)
+              writeTVar (cschJumping (handle context)) (Objector Starting goodFragment badPoint)
 
 updateJumpInfo ::
   (MonadSTM m) =>
@@ -704,7 +743,7 @@ findObjector context = do
     go [] = pure Nothing
     go ((_, handle):xs) =
       readTVar (cschJumping handle) >>= \case
-        Objector goodFragment badPoint -> pure $ Just (goodFragment, badPoint, handle)
+        Objector _ goodFragment badPoint -> pure $ Just (goodFragment, badPoint, handle)
         _ -> go xs
 
 -- | Look into all dissenting jumper and promote the one with the oldest
@@ -719,7 +758,7 @@ electNewObjector context = do
   let sortedJumpers = sortOn (pointSlot . fst) dissentingJumpers
   case sortedJumpers of
     (badPoint, (goodFragment, handle)):_ ->
-      writeTVar (cschJumping handle) $ Objector goodFragment badPoint
+      writeTVar (cschJumping handle) $ Objector Starting goodFragment badPoint
     _ ->
       pure ()
   where

@@ -13,6 +13,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , ChainSyncJumpingState (..)
   , ChainSyncState (..)
   , JumpInfo (..)
+  , ObjectorInitState (..)
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin)
@@ -86,6 +87,13 @@ deriving anyclass instance (
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncClientHandle m blk)
 
+data ObjectorInitState
+  = -- | The objector still needs to set the intersection of the ChainSync
+    -- server before resuming retrieval of headers.
+    Starting
+  | Started
+  deriving (Generic, Show, NoThunks)
+
 -- | State of a peer with respect to ChainSync jumping.
 data ChainSyncJumpingState m blk
   = -- | The dynamo, of which there is exactly one unless there are no peers,
@@ -101,6 +109,7 @@ data ChainSyncJumpingState m blk
     -- that happened, we spun it up to let normal ChainSync and Genesis decide
     -- which one to disconnect from.
     Objector
+      ObjectorInitState
       -- | The youngest point where the objector agrees with the dynamo.
       !(AnchoredFragment (Header blk))
       -- | The point where the objector dissented with the dynamo when it was a
