@@ -744,8 +744,8 @@ electNewDynamo context = do
     Just (dynId, dynamo) -> do
       fragment <- csCandidate <$> readTVar (cschState dynamo)
       mJumpInfo <- readTVar (cschJumpInfo dynamo)
-      -- We assume no rollbacks are possible earlier than the anchor of the
-      -- candidate fragment
+      -- If there is no jump info, the dynamo must be just starting and
+      -- there is no need to set the intersection of the ChainSync server.
       let dynamoInitState = maybe DynamoStarted DynamoStarting mJumpInfo
       writeTVar (cschJumping dynamo) $
         Dynamo dynamoInitState $ pointSlot $ AF.headPoint fragment
