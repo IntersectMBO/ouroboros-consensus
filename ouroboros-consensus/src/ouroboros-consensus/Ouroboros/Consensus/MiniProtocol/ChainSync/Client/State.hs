@@ -179,19 +179,20 @@ instance LedgerSupportsProtocol blk => NoThunks (JumpInfo blk) where
 -- from the dynamo's for hundreds of blocks, if we haven't asked them to jump
 -- since then.
 data ChainSyncJumpingJumperState blk
-  = -- | The jumper is happy with the dynamo.
+  = -- | The jumper is happy with the dynamo, and we hold the jump info of the
+    -- last accepted jump.
     Happy !(Maybe (JumpInfo blk))
   | -- | The jumper disagrees with the dynamo and we are searching where exactly
     -- that happens. All we know is a point where the jumper agrees with the
     -- dynamo and a point where the jumper disagrees with the dynamo, carried by
     -- this constructor.
     --
-    -- INVARIANT: The tip of the fragment in the good jump is in the
-    -- fragment of the bad jump or is an ancestor of it.
+    -- INVARIANT: The tip of the fragment in the good jump info (first argument)
+    -- is in the fragment of the bad jump info or is an ancestor of it.
     LookingForIntersection !(JumpInfo blk) !(JumpInfo blk)
   | -- | The jumper disagrees with the dynamo and we have determined the latest
-    -- point where dynamo and jumper agree. We store here the latest accepted
-    -- jump and the earliest rejected jump.
+    -- point where dynamo and jumper agree. We store here the jump info of the
+    -- latest accepted jump and the point of the earliest rejected jump.
     FoundIntersection !(JumpInfo blk) !(Point (Header blk))
   deriving (Generic)
 
