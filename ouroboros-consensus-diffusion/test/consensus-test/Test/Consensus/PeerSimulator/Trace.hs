@@ -226,23 +226,22 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
     traceJumpingState :: ChainSyncJumpingState m TestBlock -> String
     traceJumpingState = \case
       Dynamo lastJump -> "Dynamo " ++ terseWithOrigin show lastJump
-      Objector initState goodFragment badPoint -> unwords
+      Objector initState goodJumpInfo badPoint -> unwords
           [ "Objector"
           , show initState
-          , tersePoint (castPoint $ headPoint goodFragment)
+          , terseJumpInfo goodJumpInfo
           , tersePoint (castPoint badPoint)
           ]
       Disengaged -> "Disengaged"
-      Jumper _ goodFragment st ->
-        "Jumper _ " ++ tersePoint (castPoint $ headPoint goodFragment) ++ " " ++ traceJumperState st
+      Jumper _ st -> "Jumper _ " ++ traceJumperState st
 
     traceJumperState :: ChainSyncJumpingJumperState TestBlock -> String
     traceJumperState = \case
-      Happy -> "Happy"
-      FoundIntersection point ->
-        "(FoundIntersection " ++ (tersePoint $ castPoint point) ++ ")"
-      LookingForIntersection ji ->
-        "(LookingForIntersection " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji) ++ ")"
+      Happy mGoodJumpInfo -> "Happy " ++ maybe "Nothing" terseJumpInfo mGoodJumpInfo
+      FoundIntersection goodJumpInfo point -> unwords
+        ["(FoundIntersection", terseJumpInfo goodJumpInfo, tersePoint $ castPoint point, ")"]
+      LookingForIntersection goodJumpInfo badJumpInfo -> unwords
+        ["(LookingForIntersection", terseJumpInfo goodJumpInfo, terseJumpInfo badJumpInfo, ")"]
 
 traceScheduledServerHandlerEventTestBlockWith ::
   Tracer m String ->
@@ -385,13 +384,13 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
     TraceOfferJump point ->
       trace $ "Offering jump to " ++ tersePoint point
     TraceJumpResult (AcceptedJump (JumpTo ji)) ->
-      trace $ "Accepted jump to " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
+      trace $ "Accepted jump to " ++ terseJumpInfo ji
     TraceJumpResult (RejectedJump (JumpTo ji)) ->
-      trace $ "Rejected jump to " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
-    TraceJumpResult (AcceptedJump (JumpToGoodPoint fragment)) ->
-      trace $ "Accepted jump to good point: " ++ terseHFragment fragment
-    TraceJumpResult (RejectedJump (JumpToGoodPoint fragment)) ->
-      trace $ "Rejected jump to good point: " ++ terseHFragment fragment
+      trace $ "Rejected jump to " ++ terseJumpInfo ji
+    TraceJumpResult (AcceptedJump (JumpToGoodPoint ji)) ->
+      trace $ "Accepted jump to good point: " ++ terseJumpInfo ji
+    TraceJumpResult (RejectedJump (JumpToGoodPoint ji)) ->
+      trace $ "Rejected jump to good point: " ++ terseJumpInfo ji
     TraceJumpingWaitingForNextInstruction ->
       trace "Waiting for next instruction from the jumping governor"
     TraceJumpingInstructionIs instr ->
@@ -401,9 +400,12 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
 
     showInstr :: Instruction TestBlock -> String
     showInstr = \case
-      JumpInstruction (JumpTo ji) -> "JumpTo " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
-      JumpInstruction (JumpToGoodPoint fragment) -> "JumpToGoodPoint " ++ terseHFragment fragment
+      JumpInstruction (JumpTo ji) -> "JumpTo " ++ terseJumpInfo ji
+      JumpInstruction (JumpToGoodPoint ji) -> "JumpToGoodPoint " ++ terseJumpInfo ji
       RunNormally -> "RunNormally"
+
+terseJumpInfo :: JumpInfo TestBlock -> String
+terseJumpInfo ji = tersePoint (castPoint $ headPoint $ jTheirFragment ji)
 
 traceChainSyncClientTerminationEventTestBlockWith ::
   PeerId ->

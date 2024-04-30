@@ -167,7 +167,7 @@ import           Control.Monad (forM, forM_, when)
 import           Data.List (sortOn)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (catMaybes, fromMaybe)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader (getHeaderFields), Header,
                      Point (..), castPoint, pointSlot, succWithOrigin)
@@ -309,13 +309,12 @@ deriving anyclass instance
     NoThunks (Header blk)
   ) => NoThunks (Instruction blk)
 
-
 data JumpInstruction blk
   = JumpTo !(JumpInfo blk)
   | -- | Used to set the intersection of the servers of starting objectors.
     -- Otherwise, the ChainSync server wouldn't know which headers to start
     -- serving.
-    JumpToGoodPoint !(AF.AnchoredFragment (Header blk))
+    JumpToGoodPoint !(JumpInfo blk)
   deriving (Generic)
 
 deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (JumpInstruction blk)
@@ -323,8 +322,8 @@ instance (HasHeader (Header blk), Show (Header blk)) => Show (JumpInstruction bl
   showsPrec p = \case
     JumpTo jumpInfo ->
       showParen (p > 10) $ showString "JumpTo " . shows (AF.headPoint $ jTheirFragment jumpInfo)
-    JumpToGoodPoint fragment ->
-      showParen (p > 10) $ showString "JumpToGoodPoint " . shows (AF.headPoint fragment)
+    JumpToGoodPoint jumpInfo ->
+      showParen (p > 10) $ showString "JumpToGoodPoint " . shows (AF.headPoint $ jTheirFragment jumpInfo)
 
 deriving anyclass instance
   ( HasHeader blk,
@@ -369,10 +368,10 @@ nextInstruction context = whenEnabled context RunNormally $
   readTVar (cschJumping (handle context)) >>= \case
     Disengaged -> pure RunNormally
     Dynamo{} -> pure RunNormally
-    Objector Starting goodFragment _ -> do
-      pure $ JumpInstruction $ JumpToGoodPoint goodFragment
+    Objector Starting goodJump _ -> do
+      pure $ JumpInstruction $ JumpToGoodPoint goodJump
     Objector Started _ _ -> pure RunNormally
-    Jumper nextJumpVar _ _ -> do
+    Jumper nextJumpVar _ -> do
       readTVar nextJumpVar >>= \case
         Nothing -> retry
         Just jumpInfo -> do
@@ -420,7 +419,7 @@ onRollForward context point = whenEnabled context () $
         handles <- readTVar (handlesVar context)
         forM_ (Map.elems handles) $ \h ->
           readTVar (cschJumping h) >>= \case
-            Jumper nextJumpVar _ Happy -> writeTVar nextJumpVar (Just jumpInfo)
+            Jumper nextJumpVar Happy{} -> writeTVar nextJumpVar (Just jumpInfo)
             _ -> pure ()
 
 -- | This function is called when we receive a 'MsgRollBackward' message.
@@ -495,12 +494,12 @@ processJumpResult context jumpResult = whenEnabled context () $
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo _ -> pure ()
     Disengaged -> pure ()
-    Objector Starting goodFragment badPoint ->
+    Objector Starting goodJump badPoint ->
       case jumpResult of
-        AcceptedJump (JumpToGoodPoint fragment) -> do
+        AcceptedJump (JumpToGoodPoint jumpInfo) -> do
           writeTVar (cschJumping (handle context)) $
-            Objector Started goodFragment badPoint
-          updateChainSyncState (handle context) fragment
+            Objector Started goodJump badPoint
+          updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           -- If the objector rejects a good point, it is a sign of a rollback
           -- to earlier than the last jump.
@@ -512,33 +511,32 @@ processJumpResult context jumpResult = whenEnabled context () $
         RejectedJump JumpTo{} -> pure ()
 
     Objector Started _ _ -> pure ()
-    Jumper nextJumpVar goodFragment jumperState ->
+    Jumper nextJumpVar jumperState ->
         case jumpResult of
-          AcceptedJump (JumpTo jumpInfo) -> do
+          AcceptedJump (JumpTo goodJumpInfo) -> do
             -- The jump was accepted; we set the jumper's candidate fragment to
             -- the dynamo's candidate fragment up to the accepted point.
             --
             -- The candidate fragments of jumpers don't grow otherwise, as only the
             -- objector and the dynamo request further headers.
-            let fragment = jTheirFragment jumpInfo
-            updateChainSyncState (handle context) fragment
-            writeTVar (cschJumpInfo (handle context)) $ Just jumpInfo
+            updateChainSyncState (handle context) goodJumpInfo
+            writeTVar (cschJumpInfo (handle context)) $ Just goodJumpInfo
             case jumperState of
-              LookingForIntersection badJumpInfo ->
+              LookingForIntersection _goodJumpInfo badJumpInfo ->
                 -- @AF.headPoint fragment@ is in @badFragment@, as the jumper
                 -- looking for an intersection is the only client asking for its
                 -- jumps.
-                lookForIntersection nextJumpVar fragment badJumpInfo
-              Happy ->
+                lookForIntersection nextJumpVar goodJumpInfo badJumpInfo
+              Happy _mGoodJumpInfo ->
                 writeTVar (cschJumping (handle context)) $
-                  Jumper nextJumpVar fragment Happy
+                  Jumper nextJumpVar $ Happy $ Just goodJumpInfo
               FoundIntersection{} ->
                 -- Only happy jumpers are asked to jump by the dynamo, and only
                 -- jumpers looking for an intersection are asked to jump by
                 -- themselves.
                 error "processJumpResult: Jumpers in state FoundIntersection shouldn't be further jumping."
 
-          RejectedJump (JumpTo badJumpInfo) -> do
+          RejectedJump (JumpTo badJumpInfo) ->
             -- The tip of @goodFragment@ is in @jTheirFragment jumpInfo@ or is
             -- an ancestor of it. If the jump was requested by the dynamo, this
             -- holds because the dynamo is not allowed to rollback before the
@@ -547,7 +545,13 @@ processJumpResult context jumpResult = whenEnabled context () $
             -- If the jump was requested by the jumper, this holds because the
             -- jumper is looking for an intersection, and such jumper only asks
             -- for jumps that meet this condition.
-            lookForIntersection nextJumpVar goodFragment badJumpInfo
+            case jumperState of
+              LookingForIntersection goodJumpInfo _ ->
+                lookForIntersection nextJumpVar goodJumpInfo badJumpInfo
+              Happy mGoodJumpInfo ->
+                lookForIntersection nextJumpVar (mkGoodJumpInfo mGoodJumpInfo badJumpInfo) badJumpInfo
+              FoundIntersection{} ->
+                error "processJumpResult (rejected): Jumpers in state FoundIntersection shouldn't be further jumping."
 
           -- These aren't interesting in the case of jumpers.
           AcceptedJump JumpToGoodPoint{} -> pure ()
@@ -556,10 +560,19 @@ processJumpResult context jumpResult = whenEnabled context () $
     -- Avoid redundant constraint "HasHeader blk" reported by some ghc's
     _ = getHeaderFields @blk
 
-    updateChainSyncState :: ChainSyncClientHandle m blk -> AF.AnchoredFragment (Header blk) -> STM m ()
-    updateChainSyncState handle fragment = do
+    updateChainSyncState :: ChainSyncClientHandle m blk -> JumpInfo blk -> STM m ()
+    updateChainSyncState handle jump = do
+      let fragment = jTheirFragment jump
       modifyTVar (cschState handle) $ \csState ->
         csState {csCandidate = fragment, csLatestSlot = Just (AF.headSlot fragment) }
+
+    mkGoodJumpInfo :: Maybe (JumpInfo blk) -> JumpInfo blk -> JumpInfo blk
+    mkGoodJumpInfo mGoodJumpInfo badJumpInfo = do
+      let badFragment = jTheirFragment badJumpInfo
+          -- use the jump info of the rejected jump if the good jump info is
+          -- not available (i.e. there were no accepted jumps)
+          badFragmentStart = AF.takeOldest 0 badFragment
+       in fromMaybe (badJumpInfo {jTheirFragment = badFragmentStart}) mGoodJumpInfo
 
     -- | Given a good point (where we know we agree with the dynamo) and a bad
     -- fragment (where we know the tip disagrees with the dynamo), either decide
@@ -567,44 +580,46 @@ processJumpResult context jumpResult = whenEnabled context () $
     -- of the good point) or program a jump somewhere in the middle to refine
     -- those points.
     --
-    -- PRECONDITION: The good point is in the bad fragment or is an ancestor of it.
-    lookForIntersection nextJumpVar goodFragment badJumpInfo = do
+    -- PRECONDITION: The good point is in the candidate fragment of
+    -- @badJumpInfo@ or it is an ancestor of it.
+    lookForIntersection nextJumpVar goodJumpInfo badJumpInfo = do
       let badFragment = jTheirFragment badJumpInfo
           -- If the good point is not in the bad fragment, the anchor of the bad
           -- fragment should be a good point too.
-          nextFragment = maybe badFragment snd $
-                           AF.splitAfterPoint badFragment (AF.headPoint goodFragment)
-      let len = AF.length nextFragment
+          searchFragment =
+              maybe badFragment snd $
+                AF.splitAfterPoint badFragment (AF.headPoint $ jTheirFragment goodJumpInfo)
+      let len = AF.length searchFragment
       if len <= 1 then do
         -- If the fragment only contains the bad tip, we know the
         -- intersection is the good point.
         -- Clear any subsequent jumps requested by the dynamo.
         writeTVar nextJumpVar Nothing
-        maybeElectNewObjector nextJumpVar goodFragment (AF.headPoint badFragment)
+        maybeElectNewObjector nextJumpVar goodJumpInfo (AF.headPoint badFragment)
       else do
         let middlePoint = len `div` 2
             theirFragment = AF.dropNewest middlePoint badFragment
         writeTVar nextJumpVar $ Just
           badJumpInfo { jTheirFragment = theirFragment }
         writeTVar (cschJumping (handle context)) $
-          Jumper nextJumpVar goodFragment (LookingForIntersection badJumpInfo)
+          Jumper nextJumpVar (LookingForIntersection goodJumpInfo badJumpInfo)
 
-    maybeElectNewObjector nextJumpVar goodFragment badPoint =
+    maybeElectNewObjector nextJumpVar goodJumpInfo badPoint = do
       findObjector (stripContext context) >>= \case
         Nothing ->
           -- There is no objector yet. Promote the jumper to objector.
-          writeTVar (cschJumping (handle context)) (Objector Starting goodFragment badPoint)
-        Just (objectorGoodFragment, objectorPoint, objectorHandle)
-          | pointSlot objectorPoint <= pointSlot badPoint ->
+          writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
+        Just (oGoodJump, oPoint, oHandle)
+          | pointSlot oPoint <= pointSlot badPoint ->
               -- The objector's intersection is still old enough. Keep it.
               writeTVar (cschJumping (handle context)) $
-                Jumper nextJumpVar goodFragment (FoundIntersection badPoint)
+                Jumper nextJumpVar (FoundIntersection goodJumpInfo badPoint)
           | otherwise -> do
               -- Found an earlier intersection. Demote the old objector and
               -- promote the jumper to objector.
-              newJumper Nothing objectorGoodFragment (FoundIntersection objectorPoint) >>=
-                writeTVar (cschJumping objectorHandle)
-              writeTVar (cschJumping (handle context)) (Objector Starting goodFragment badPoint)
+              newJumper Nothing (FoundIntersection oGoodJump oPoint) >>=
+                writeTVar (cschJumping oHandle)
+              writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
 
 updateJumpInfo ::
   (MonadSTM m) =>
@@ -639,12 +654,11 @@ newJumper ::
     LedgerSupportsProtocol blk
   ) =>
   Maybe (JumpInfo blk) ->
-  AF.AnchoredFragment (Header blk) ->
   ChainSyncJumpingJumperState blk ->
   STM m (ChainSyncJumpingState m blk)
-newJumper jumpInfo goodFragment jumperState = do
+newJumper jumpInfo jumperState = do
   nextJumpVar <- newTVar jumpInfo
-  pure $ Jumper nextJumpVar goodFragment jumperState
+  pure $ Jumper nextJumpVar jumperState
 
 -- | Register a new ChainSync client to a context, returning a 'PeerContext' for
 -- that peer. If there is no dynamo, the peer starts as dynamo; otherwise, it
@@ -667,7 +681,7 @@ registerClient context peer csState mkHandle = do
       pure $ Dynamo $ pointSlot $ AF.anchorPoint fragment
     Just handle -> do
       mJustInfo <- readTVar (cschJumpInfo handle)
-      newJumper mJustInfo (AF.Empty AF.AnchorGenesis) Happy
+      newJumper mJustInfo (Happy Nothing)
   cschJumping <- newTVar csjState
   let handle = mkHandle cschJumping
   modifyTVar (handlesVar context) $ Map.insert peer handle
@@ -716,9 +730,7 @@ electNewDynamo context = do
         when (peer /= dynId) $ do
           jumpingState <- readTVar (cschJumping st)
           when (not (isDisengaged jumpingState)) $ do
-            let goodFragment = AF.Empty $
-                  maybe AF.AnchorGenesis (AF.anchor . jTheirFragment) mJumpInfo
-            newJumper mJumpInfo goodFragment Happy
+            newJumper mJumpInfo (Happy Nothing)
               >>= writeTVar (cschJumping st)
   where
     findNonDisengaged =
@@ -736,14 +748,14 @@ findM p (x : xs) = p x >>= \case
 findObjector ::
   (MonadSTM m) =>
   Context m peer blk ->
-  STM m (Maybe (AF.AnchoredFragment (Header blk), Point (Header blk), ChainSyncClientHandle m blk))
+  STM m (Maybe (JumpInfo blk, Point (Header blk), ChainSyncClientHandle m blk))
 findObjector context = do
   readTVar (handlesVar context) >>= go . Map.toList
   where
     go [] = pure Nothing
     go ((_, handle):xs) =
       readTVar (cschJumping handle) >>= \case
-        Objector _ goodFragment badPoint -> pure $ Just (goodFragment, badPoint, handle)
+        Objector _ goodJump badPoint -> pure $ Just (goodJump, badPoint, handle)
         _ -> go xs
 
 -- | Look into all dissenting jumper and promote the one with the oldest
@@ -757,8 +769,8 @@ electNewObjector context = do
   dissentingJumpers <- collectDissentingJumpers peerStates
   let sortedJumpers = sortOn (pointSlot . fst) dissentingJumpers
   case sortedJumpers of
-    (badPoint, (goodFragment, handle)):_ ->
-      writeTVar (cschJumping handle) $ Objector Starting goodFragment badPoint
+    (badPoint, (goodJumpInfo, handle)):_ ->
+      writeTVar (cschJumping handle) $ Objector Starting goodJumpInfo badPoint
     _ ->
       pure ()
   where
@@ -766,7 +778,7 @@ electNewObjector context = do
       fmap catMaybes $
       forM peerStates $ \(_, handle) ->
         readTVar (cschJumping handle) >>= \case
-          Jumper _ goodFragment (FoundIntersection badPoint) ->
-            pure $ Just (badPoint, (goodFragment, handle))
+          Jumper _ (FoundIntersection goodJumpInfo badPoint) ->
+            pure $ Just (badPoint, (goodJumpInfo, handle))
           _ ->
             pure Nothing

@@ -1220,9 +1220,10 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             (KnownIntersectionState blk)
             (ClientPipelinedStIdle Z)
     offerJump mkPipelineDecision jump = Stateful $ \kis -> do
-        let dynamoTipPt = castPoint $ AF.headPoint $ case jump of
-              Jumping.JumpTo jumpInfo -> jTheirFragment jumpInfo
-              Jumping.JumpToGoodPoint fragment -> fragment
+        let jumpInfo = case jump of
+              Jumping.JumpTo ji -> ji
+              Jumping.JumpToGoodPoint ji -> ji
+            dynamoTipPt = castPoint $ AF.headPoint $ jTheirFragment jumpInfo
         traceWith tracer $ TraceOfferJump dynamoTipPt
         return $
             SendMsgFindIntersect [dynamoTipPt] $
@@ -1232,11 +1233,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     | pt == dynamoTipPt -> do
                       Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
                       traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
-                      let kis' = case jump of
-                            Jumping.JumpTo jumpInfo ->
-                              combineJumpInfo kis jumpInfo
-                            Jumping.JumpToGoodPoint fragment ->
-                              combineJumpFragment kis fragment
+                      let kis' = combineJumpInfo kis jumpInfo
                       continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
                     | otherwise         -> throwIO InvalidJumpResponse
             ,
@@ -1283,35 +1280,6 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                   , theirFrag = jTheirFragment ji
                   , theirHeaderStateHistory = rewoundHistory
                   , kBestBlockNo = max (fromWithOrigin 0 $ AF.headBlockNo $ jTheirFragment ji) (kBestBlockNo kis)
-                  }
-
-          combineJumpFragment ::
-               KnownIntersectionState blk
-            -> AnchoredFragment (Header blk)
-            -> KnownIntersectionState blk
-          combineJumpFragment kis@KnownIntersectionState{ourFrag} fragment =
-            let mRewoundHistory =
-                  HeaderStateHistory.rewind
-                    (AF.castPoint $ AF.headPoint fragment)
-                    (theirHeaderStateHistory kis)
-                rewoundHistory =
-                  -- When jumping to a good point, the history should be
-                  -- rewindable because it was rewindable when the good point
-                  -- was discovered.
-                  fromMaybe (error "offerJump: cannot rewind history for a good point") mRewoundHistory
-                intersection =
-                  case AF.intersect ourFrag fragment of
-                    Just (po, _, _, _) -> castPoint $ AF.headPoint po
-                    -- ourFrag should intersect with the good fragment, or otherwise
-                    -- it would not intersect with it at the time the good
-                    -- fragment was discovered.
-                    Nothing -> error "offerJump: the fragment should have a valid intersection with the current selection"
-             in KnownIntersectionState
-                  { mostRecentIntersection = intersection
-                  , ourFrag = ourFrag
-                  , theirFrag = fragment
-                  , theirHeaderStateHistory = rewoundHistory
-                  , kBestBlockNo = max (fromWithOrigin 0 $ AF.headBlockNo fragment) (kBestBlockNo kis)
                   }
 
     requestNext ::

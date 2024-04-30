@@ -111,7 +111,7 @@ data ChainSyncJumpingState m blk
     Objector
       ObjectorInitState
       -- | The youngest point where the objector agrees with the dynamo.
-      !(AnchoredFragment (Header blk))
+      !(JumpInfo blk)
       -- | The point where the objector dissented with the dynamo when it was a
       -- jumper.
       !(Point (Header blk))
@@ -125,9 +125,6 @@ data ChainSyncJumpingState m blk
     Jumper
       -- | A TVar containing the next jump to be executed.
       !(StrictTVar m (Maybe (JumpInfo blk)))
-      -- | Fragment whose tip is the youngest point where the jumper agrees with
-      -- the dynamo.
-      !(AnchoredFragment (Header blk))
       -- | More precisely, the state of the jumper.
       !(ChainSyncJumpingJumperState blk)
   deriving (Generic)
@@ -168,20 +165,19 @@ instance LedgerSupportsProtocol blk => NoThunks (JumpInfo blk) where
 -- since then.
 data ChainSyncJumpingJumperState blk
   = -- | The jumper is happy with the dynamo.
-    Happy
+    Happy !(Maybe (JumpInfo blk))
   | -- | The jumper disagrees with the dynamo and we are searching where exactly
     -- that happens. All we know is a point where the jumper agrees with the
-    -- dynamo (in the 'Jumper' constructor) and a point where the jumper
-    -- disagrees with the dynamo, carried by this constructor.
+    -- dynamo and a point where the jumper disagrees with the dynamo, carried by
+    -- this constructor.
     --
-    -- INVARIANT: The tip of the fragment in the 'Jumper' constructor is in the
-    -- given fragment or it is an ancestor of it.
-    LookingForIntersection !(JumpInfo blk)
+    -- INVARIANT: The tip of the fragment in the good jump is in the
+    -- fragment of the bad jump or is an ancestor of it.
+    LookingForIntersection !(JumpInfo blk) !(JumpInfo blk)
   | -- | The jumper disagrees with the dynamo and we have determined the latest
-    -- point where dynamo and jumper agree. This point is stored in the 'Jumper'
-    -- constructor of 'ChainSyncJumpingState'. This constructor carries the
-    -- oldest point of disagreement.
-    FoundIntersection !(Point (Header blk))
+    -- point where dynamo and jumper agree. We store here the latest accepted
+    -- jump and the earliest rejected jump.
+    FoundIntersection !(JumpInfo blk) !(Point (Header blk))
   deriving (Generic)
 
 deriving anyclass instance
