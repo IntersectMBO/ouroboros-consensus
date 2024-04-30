@@ -266,7 +266,6 @@ mkJumping peerContext = Jumping
 data ContextWith peerField handleField m peer blk = Context
   { peer       :: !peerField,
     handle     :: !handleField,
-    csjEnabled :: !(StrictTVar m Bool),
     handlesVar :: !(StrictTVar m (Map peer (ChainSyncClientHandle m blk))),
     jumpSize   :: !SlotNo
   }
@@ -287,8 +286,7 @@ makeContext ::
   -- ^ The size of jumps, in number of slots.
   STM m (Context m peer blk)
 makeContext h jumpSize = do
-  enabledTVar <- newTVar True
-  pure $ Context () () enabledTVar h jumpSize
+  pure $ Context () () h jumpSize
 
 -- | Get a generic context from a peer context by stripping away the
 -- peer-specific fields.
@@ -348,14 +346,6 @@ deriving anyclass instance
     NoThunks (Header blk)
   ) => NoThunks (JumpResult blk)
 
--- | Run the given action if CSJ is enabled. Otherwise, return the given
--- value.
-whenEnabled :: MonadSTM m => PeerContext m peer blk -> a -> STM m a -> STM m a
-whenEnabled context x action = do
-  readTVar (csjEnabled context) >>= \case
-    False -> pure x
-    True -> action
-
 -- | Compute the next instruction for the given peer. In the majority of cases,
 -- this consists in reading the peer's handle, having the dynamo and objector
 -- run normally and the jumpers wait for the next jump. As such, this function
@@ -366,7 +356,7 @@ nextInstruction ::
   ( MonadSTM m ) =>
   PeerContext m peer blk ->
   STM m (Instruction blk)
-nextInstruction context = whenEnabled context RunNormally $
+nextInstruction context =
   readTVar (cschJumping (handle context)) >>= \case
     Disengaged -> pure RunNormally
     Dynamo (DynamoStarting goodJumpInfo) _ ->
@@ -401,7 +391,7 @@ onRollForward :: forall m peer blk.
   PeerContext m peer blk ->
   Point (Header blk) ->
   STM m ()
-onRollForward context point = whenEnabled context () $
+onRollForward context point =
   readTVar (cschJumping (handle context)) >>= \case
     Objector _ _ badPoint
       | badPoint == castPoint point -> do
@@ -441,7 +431,7 @@ onRollBackward :: forall m peer blk.
   PeerContext m peer blk ->
   WithOrigin SlotNo ->
   STM m ()
-onRollBackward context slot = whenEnabled context () $
+onRollBackward context slot =
   readTVar (cschJumping (handle context)) >>= \case
     Objector _ _ badPoint
       | slot < pointSlot badPoint -> do
@@ -467,7 +457,7 @@ onAwaitReply ::
   ) =>
   PeerContext m peer blk ->
   STM m ()
-onAwaitReply context = whenEnabled context () $
+onAwaitReply context =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo{} -> do
       disengage (handle context)
@@ -496,7 +486,7 @@ processJumpResult :: forall m peer blk.
   PeerContext m peer blk ->
   JumpResult blk ->
   STM m ()
-processJumpResult context jumpResult = whenEnabled context () $
+processJumpResult context jumpResult =
   readTVar (cschJumping (handle context)) >>= \case
     Dynamo DynamoStarting{} lastJumpSlot ->
       case jumpResult of
@@ -648,8 +638,10 @@ updateJumpInfo ::
   PeerContext m peer blk ->
   JumpInfo blk ->
   STM m ()
-updateJumpInfo context jumpInfo = whenEnabled context () $
-  writeTVar (cschJumpInfo (handle context)) $ Just jumpInfo
+updateJumpInfo context jumpInfo =
+  readTVar (cschJumping (handle context)) >>= \case
+    Disengaged -> pure ()
+    _ -> writeTVar (cschJumpInfo (handle context)) $ Just jumpInfo
 
 -- | Find the dynamo in a TVar containing a map of handles. Returns then handle
 -- of the dynamo, or 'Nothing' if there is none.
@@ -667,7 +659,9 @@ getDynamo handlesVar = do
 -- | Disengage a peer, meaning that it will no longer be asked to jump or
 -- act as dynamo or objector.
 disengage :: MonadSTM m => ChainSyncClientHandle m blk -> STM m ()
-disengage handle = writeTVar (cschJumping handle) Disengaged
+disengage handle = do
+  writeTVar (cschJumping handle) Disengaged
+  writeTVar (cschJumpInfo handle) Nothing
 
 -- | Convenience function that, given an intersection point and a jumper state,
 -- make a fresh 'Jumper' constructor.
@@ -740,7 +734,7 @@ electNewDynamo context = do
   peerStates <- Map.toList <$> readTVar (handlesVar context)
   mDynamo <- findNonDisengaged peerStates
   case mDynamo of
-    Nothing -> writeTVar (csjEnabled context) False
+    Nothing -> pure ()
     Just (dynId, dynamo) -> do
       fragment <- csCandidate <$> readTVar (cschState dynamo)
       mJumpInfo <- readTVar (cschJumpInfo dynamo)
