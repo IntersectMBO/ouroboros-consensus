@@ -177,7 +177,9 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncClientHandle (..),
                      ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), ChainSyncState (..),
-                     JumpInfo (..), ObjectorInitState (..))
+                     JumpInfo (..),
+                     DynamoInitState (..),
+                     ObjectorInitState (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -367,7 +369,10 @@ nextInstruction ::
 nextInstruction context = whenEnabled context RunNormally $
   readTVar (cschJumping (handle context)) >>= \case
     Disengaged -> pure RunNormally
-    Dynamo{} -> pure RunNormally
+    Dynamo (DynamoStarting goodJumpInfo) _ ->
+      pure $ JumpInstruction $ JumpToGoodPoint goodJumpInfo
+    Dynamo DynamoStarted _ ->
+      pure RunNormally
     Objector Starting goodJump _ -> do
       pure $ JumpInstruction $ JumpToGoodPoint goodJump
     Objector Started _ _ -> pure RunNormally
@@ -405,7 +410,7 @@ onRollForward context point = whenEnabled context () $
       | otherwise -> pure ()
     Disengaged -> pure ()
     Jumper{} -> pure ()
-    Dynamo lastJumpSlot
+    Dynamo _ lastJumpSlot
       | let jumpBoundaryPlus1 = jumpSize context + succWithOrigin lastJumpSlot
       , succWithOrigin (pointSlot point) >= jumpBoundaryPlus1 -> do
           mJumpInfo <- readTVar (cschJumpInfo (handle context))
@@ -415,7 +420,7 @@ onRollForward context point = whenEnabled context () $
     setJumps Nothing = error "onRollForward: Dynamo without jump info"
     setJumps (Just jumpInfo) = do
         writeTVar (cschJumping (handle context)) $
-          Dynamo $ pointSlot $ AF.headPoint $ jTheirFragment jumpInfo
+          Dynamo DynamoStarted $ pointSlot $ AF.headPoint $ jTheirFragment jumpInfo
         handles <- readTVar (handlesVar context)
         forM_ (Map.elems handles) $ \h ->
           readTVar (cschJumping h) >>= \case
@@ -445,7 +450,7 @@ onRollBackward context slot = whenEnabled context () $
       | otherwise -> pure ()
     Disengaged -> pure ()
     Jumper{} -> pure ()
-    Dynamo lastJumpSlot
+    Dynamo _ lastJumpSlot
       | slot < lastJumpSlot -> do
           disengage (handle context)
           electNewDynamo (stripContext context)
@@ -485,6 +490,7 @@ onAwaitReply context = whenEnabled context () $
 -- objector, which might update many TVars.
 processJumpResult :: forall m peer blk.
   ( MonadSTM m,
+    Eq peer,
     LedgerSupportsProtocol blk
   ) =>
   PeerContext m peer blk ->
@@ -492,7 +498,22 @@ processJumpResult :: forall m peer blk.
   STM m ()
 processJumpResult context jumpResult = whenEnabled context () $
   readTVar (cschJumping (handle context)) >>= \case
-    Dynamo _ -> pure ()
+    Dynamo DynamoStarting{} lastJumpSlot ->
+      case jumpResult of
+        AcceptedJump (JumpToGoodPoint jumpInfo) -> do
+          writeTVar (cschJumping (handle context)) $
+            Dynamo DynamoStarted lastJumpSlot
+          updateChainSyncState (handle context) jumpInfo
+        RejectedJump JumpToGoodPoint{} -> do
+          disengage (handle context)
+          electNewDynamo (stripContext context)
+
+        -- Not interesting in the dynamo state
+        AcceptedJump JumpTo{} -> pure ()
+        RejectedJump JumpTo{} -> pure ()
+
+    Dynamo DynamoStarted _lastJumpSlot -> pure ()
+
     Disengaged -> pure ()
     Objector Starting goodJump badPoint ->
       case jumpResult of
@@ -565,6 +586,7 @@ processJumpResult context jumpResult = whenEnabled context () $
       let fragment = jTheirFragment jump
       modifyTVar (cschState handle) $ \csState ->
         csState {csCandidate = fragment, csLatestSlot = Just (AF.headSlot fragment) }
+      writeTVar (cschJumpInfo handle) $ Just jump
 
     mkGoodJumpInfo :: Maybe (JumpInfo blk) -> JumpInfo blk -> JumpInfo blk
     mkGoodJumpInfo mGoodJumpInfo badJumpInfo = do
@@ -639,8 +661,8 @@ getDynamo handlesVar = do
   handles <- Map.elems <$> readTVar handlesVar
   findM (\handle -> isDynamo <$> readTVar (cschJumping handle)) handles
   where
-    isDynamo (Dynamo _) = True
-    isDynamo _          = False
+    isDynamo Dynamo{} = True
+    isDynamo _        = False
 
 -- | Disengage a peer, meaning that it will no longer be asked to jump or
 -- act as dynamo or objector.
@@ -678,7 +700,7 @@ registerClient context peer csState mkHandle = do
   csjState <- getDynamo (handlesVar context) >>= \case
     Nothing -> do
       fragment <- csCandidate <$> readTVar csState
-      pure $ Dynamo $ pointSlot $ AF.anchorPoint fragment
+      pure $ Dynamo DynamoStarted $ pointSlot $ AF.anchorPoint fragment
     Just handle -> do
       mJustInfo <- readTVar (cschJumpInfo handle)
       newJumper mJustInfo (Happy Nothing)
@@ -703,7 +725,7 @@ unregisterClient context = do
     Disengaged -> pure ()
     Jumper{} -> pure ()
     Objector{} -> electNewObjector context'
-    Dynamo _ -> electNewDynamo context'
+    Dynamo{} -> electNewDynamo context'
 
 -- | Choose an unspecified new non-idling dynamo and demote all other peers to
 -- jumpers.
@@ -724,12 +746,14 @@ electNewDynamo context = do
       mJumpInfo <- readTVar (cschJumpInfo dynamo)
       -- We assume no rollbacks are possible earlier than the anchor of the
       -- candidate fragment
+      let dynamoInitState = maybe DynamoStarted DynamoStarting mJumpInfo
       writeTVar (cschJumping dynamo) $
-        Dynamo $ pointSlot $ AF.headPoint fragment
+        Dynamo dynamoInitState $ pointSlot $ AF.headPoint fragment
+      -- Demote all other peers to jumpers
       forM_ peerStates $ \(peer, st) ->
         when (peer /= dynId) $ do
           jumpingState <- readTVar (cschJumping st)
-          when (not (isDisengaged jumpingState)) $ do
+          when (not (isDisengaged jumpingState)) $
             newJumper mJumpInfo (Happy Nothing)
               >>= writeTVar (cschJumping st)
   where

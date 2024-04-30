@@ -13,6 +13,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , ChainSyncJumpingState (..)
   , ChainSyncState (..)
   , JumpInfo (..)
+  , DynamoInitState (..)
   , ObjectorInitState (..)
   ) where
 
@@ -87,6 +88,19 @@ deriving anyclass instance (
   NoThunks (Header blk)
   ) => NoThunks (ChainSyncClientHandle m blk)
 
+data DynamoInitState blk
+  = -- | The dynamo has not yet started jumping and we first need to jump to the
+    -- given jump info to set the intersection of the ChainSync server.
+    DynamoStarting !(JumpInfo blk)
+  | DynamoStarted
+  deriving (Generic)
+
+deriving anyclass instance
+  ( HasHeader blk,
+    LedgerSupportsProtocol blk,
+    NoThunks (Header blk)
+  ) => NoThunks (DynamoInitState blk)
+
 data ObjectorInitState
   = -- | The objector still needs to set the intersection of the ChainSync
     -- server before resuming retrieval of headers.
@@ -102,6 +116,7 @@ data ChainSyncJumpingState m blk
     -- honest, but the goal of the algorithm is to eventually have an honest,
     -- alert peer as dynamo.
     Dynamo
+      (DynamoInitState blk)
       -- | The last slot at which we triggered jumps for the jumpers.
       !(WithOrigin SlotNo)
   | -- | The objector, of which there is at most one, also runs normal
