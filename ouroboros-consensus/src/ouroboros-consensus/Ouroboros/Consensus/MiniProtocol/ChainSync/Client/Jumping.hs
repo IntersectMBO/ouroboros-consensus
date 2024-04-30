@@ -407,7 +407,7 @@ onRollForward context point =
     Jumper{} -> pure ()
     Dynamo _ lastJumpSlot
       | let jumpBoundaryPlus1 = jumpSize context + succWithOrigin lastJumpSlot
-      , succWithOrigin (pointSlot point) >= jumpBoundaryPlus1 -> do
+      , succWithOrigin (pointSlot point) > jumpBoundaryPlus1 -> do
           mJumpInfo <- readTVar (cschJumpInfo (handle context))
           setJumps mJumpInfo
       | otherwise -> pure ()
