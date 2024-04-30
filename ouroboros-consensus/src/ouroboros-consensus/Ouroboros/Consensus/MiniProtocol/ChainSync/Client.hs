@@ -1233,7 +1233,12 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     | pt == dynamoTipPt -> do
                       Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
                       traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
-                      let kis' = combineJumpInfo kis jumpInfo
+                      let kis' = case jump of
+                            -- Since the updated kis is needed to validate headers,
+                            -- we only update it if we are becoming a Dynamo or
+                            -- an objector
+                            Jumping.JumpToGoodPoint{} -> combineJumpInfo kis jumpInfo
+                            _ -> kis
                       continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
                     | otherwise         -> throwIO InvalidJumpResponse
             ,
