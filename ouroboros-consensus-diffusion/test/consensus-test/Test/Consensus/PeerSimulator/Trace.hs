@@ -31,7 +31,7 @@ import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
-                     (Instruction (..), JumpResult (..))
+                     (Instruction (..), JumpResult (..), JumpInstruction (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), JumpInfo (..))
@@ -384,13 +384,13 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
       trace $ "Terminated with result: " ++ show result
     TraceOfferJump point ->
       trace $ "Offering jump to " ++ tersePoint point
-    TraceJumpResult (AcceptedJump ji) ->
+    TraceJumpResult (AcceptedJump (JumpTo ji)) ->
       trace $ "Accepted jump to " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
-    TraceJumpResult (RejectedJump ji) ->
+    TraceJumpResult (RejectedJump (JumpTo ji)) ->
       trace $ "Rejected jump to " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
-    TraceJumpResult (AcceptedGoodPointJump fragment) ->
+    TraceJumpResult (AcceptedJump (JumpToGoodPoint fragment)) ->
       trace $ "Accepted jump to good point: " ++ terseHFragment fragment
-    TraceJumpResult (RejectedGoodPointJump fragment) ->
+    TraceJumpResult (RejectedJump (JumpToGoodPoint fragment)) ->
       trace $ "Rejected jump to good point: " ++ terseHFragment fragment
     TraceJumpingWaitingForNextInstruction ->
       trace "Waiting for next instruction from the jumping governor"
@@ -401,8 +401,8 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
 
     showInstr :: Instruction TestBlock -> String
     showInstr = \case
-      JumpTo ji -> "JumpTo " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
-      JumpToGoodPoint fragment -> "JumpToGoodPoint " ++ terseHFragment fragment
+      JumpInstruction (JumpTo ji) -> "JumpTo " ++ tersePoint (castPoint $ headPoint $ jTheirFragment ji)
+      JumpInstruction (JumpToGoodPoint fragment) -> "JumpToGoodPoint " ++ terseHFragment fragment
       RunNormally -> "RunNormally"
 
 traceChainSyncClientTerminationEventTestBlockWith ::

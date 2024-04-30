@@ -1164,14 +1164,10 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                 instruction <- Jumping.jgNextInstruction jumping
                 traceWith tracer $ TraceJumpingInstructionIs instruction
                 case instruction of
-                    Jumping.JumpTo jumpInfo ->
+                    Jumping.JumpInstruction jumpInstruction ->
                       continueWithState kis
                         $ drainThePipe n
-                        $ offerJump mkPipelineDecision (Right jumpInfo)
-                    Jumping.JumpToGoodPoint fragment ->
-                      continueWithState kis
-                        $ drainThePipe n
-                        $ offerJump mkPipelineDecision (Left fragment)
+                        $ offerJump mkPipelineDecision jumpInstruction
                     Jumping.RunNormally -> do
                       lbResume loPBucket
                       continueWithState kis
@@ -1219,12 +1215,14 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
 
     offerJump ::
         MkPipelineDecision
-     -> Either (AnchoredFragment (Header blk)) (JumpInfo blk)
+     -> Jumping.JumpInstruction blk
      -> Stateful m blk
             (KnownIntersectionState blk)
             (ClientPipelinedStIdle Z)
     offerJump mkPipelineDecision jump = Stateful $ \kis -> do
-        let dynamoTipPt = castPoint $ AF.headPoint $ either id jTheirFragment jump
+        let dynamoTipPt = castPoint $ AF.headPoint $ case jump of
+              Jumping.JumpTo jumpInfo -> jTheirFragment jumpInfo
+              Jumping.JumpToGoodPoint fragment -> fragment
         traceWith tracer $ TraceOfferJump dynamoTipPt
         return $
             SendMsgFindIntersect [dynamoTipPt] $
@@ -1232,29 +1230,20 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
               recvMsgIntersectFound = \pt theirTip ->
                   if
                     | pt == dynamoTipPt -> do
-                      case jump of
-                        Right jumpInfo -> do
-                          Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jumpInfo
-                          traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jumpInfo
-                          let kis' = combineJumpInfo kis jumpInfo
-                          continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
-                        Left fragment -> do
-                          Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedGoodPointJump fragment
-                          traceWith tracer $ TraceJumpResult $ Jumping.AcceptedGoodPointJump fragment
-                          let kis' = combineJumpFragment kis fragment
-                          continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
+                      Jumping.jgProcessJumpResult jumping $ Jumping.AcceptedJump jump
+                      traceWith tracer $ TraceJumpResult $ Jumping.AcceptedJump jump
+                      let kis' = case jump of
+                            Jumping.JumpTo jumpInfo ->
+                              combineJumpInfo kis jumpInfo
+                            Jumping.JumpToGoodPoint fragment ->
+                              combineJumpFragment kis fragment
+                      continueWithState kis' $ nextStep mkPipelineDecision Zero (Their theirTip)
                     | otherwise         -> throwIO InvalidJumpResponse
             ,
               recvMsgIntersectNotFound = \theirTip -> do
-                case jump of
-                  Right jumpInfo -> do
-                    Jumping.jgProcessJumpResult jumping $ Jumping.RejectedJump jumpInfo
-                    traceWith tracer $ TraceJumpResult $ Jumping.RejectedJump jumpInfo
-                    continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
-                  Left fragment -> do
-                    Jumping.jgProcessJumpResult jumping $ Jumping.RejectedGoodPointJump fragment
-                    traceWith tracer $ TraceJumpResult $ Jumping.RejectedGoodPointJump fragment
-                    continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
+                Jumping.jgProcessJumpResult jumping $ Jumping.RejectedJump jump
+                traceWith tracer $ TraceJumpResult $ Jumping.RejectedJump jump
+                continueWithState kis $ nextStep mkPipelineDecision Zero (Their theirTip)
             }
         where
           combineJumpInfo ::

@@ -152,6 +152,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
     Context
   , ContextWith (..)
   , Instruction (..)
+  , JumpInstruction (..)
   , JumpResult (..)
   , Jumping (..)
   , makeContext
@@ -297,18 +298,29 @@ stripContext context = context {peer = (), handle = ()}
 data Instruction blk
   = RunNormally
   | -- | Jump to the tip of the given fragment.
-    JumpTo !(JumpInfo blk)
+    JumpInstruction !(JumpInstruction blk)
+  deriving (Generic)
+
+deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)
+deriving instance (HasHeader (Header blk), Show (Header blk)) => Show (Instruction blk)
+deriving anyclass instance
+  ( HasHeader blk,
+    LedgerSupportsProtocol blk,
+    NoThunks (Header blk)
+  ) => NoThunks (Instruction blk)
+
+
+data JumpInstruction blk
+  = JumpTo !(JumpInfo blk)
   | -- | Used to set the intersection of the servers of starting objectors.
     -- Otherwise, the ChainSync server wouldn't know which headers to start
     -- serving.
     JumpToGoodPoint !(AF.AnchoredFragment (Header blk))
   deriving (Generic)
 
-deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (Instruction blk)
-
-instance (HasHeader (Header blk), Show (Header blk)) => Show (Instruction blk) where
+deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (JumpInstruction blk)
+instance (HasHeader (Header blk), Show (Header blk)) => Show (JumpInstruction blk) where
   showsPrec p = \case
-    RunNormally -> showString "RunNormally"
     JumpTo jumpInfo ->
       showParen (p > 10) $ showString "JumpTo " . shows (AF.headPoint $ jTheirFragment jumpInfo)
     JumpToGoodPoint fragment ->
@@ -318,28 +330,16 @@ deriving anyclass instance
   ( HasHeader blk,
     LedgerSupportsProtocol blk,
     NoThunks (Header blk)
-  ) => NoThunks (Instruction blk)
+  ) => NoThunks (JumpInstruction blk)
 
 -- | The result of a jump request, either accepted or rejected.
 data JumpResult blk
-  = AcceptedJump !(JumpInfo blk)
-  | RejectedJump !(JumpInfo blk)
-  | AcceptedGoodPointJump !(AF.AnchoredFragment (Header blk))
-  | RejectedGoodPointJump !(AF.AnchoredFragment (Header blk))
+  = AcceptedJump !(JumpInstruction blk)
+  | RejectedJump !(JumpInstruction blk)
   deriving (Generic)
 
 deriving instance (HasHeader (Header blk), Eq (Header blk)) => Eq (JumpResult blk)
-
-instance (HasHeader (Header blk), Show (Header blk)) => Show (JumpResult blk) where
-  showsPrec p = \case
-    AcceptedJump jumpInfo ->
-      showParen (p > 10) $ showString "AcceptedJump " . shows (AF.headPoint $ jTheirFragment jumpInfo)
-    RejectedJump jumpInfo ->
-      showParen (p > 10) $ showString "RejectedJump " . shows (AF.headPoint $ jTheirFragment jumpInfo)
-    AcceptedGoodPointJump fragment ->
-      showParen (p > 10) $ showString "AcceptedGoodPointJump " . shows (AF.headPoint fragment)
-    RejectedGoodPointJump fragment ->
-      showParen (p > 10) $ showString "RejectedGoodPointJump " . shows (AF.headPoint fragment)
+deriving instance (HasHeader (Header blk), Show (Header blk)) => Show (JumpResult blk)
 
 deriving anyclass instance
   ( HasHeader blk,
@@ -370,14 +370,14 @@ nextInstruction context = whenEnabled context RunNormally $
     Disengaged -> pure RunNormally
     Dynamo{} -> pure RunNormally
     Objector Starting goodFragment _ -> do
-      pure $ JumpToGoodPoint goodFragment
+      pure $ JumpInstruction $ JumpToGoodPoint goodFragment
     Objector Started _ _ -> pure RunNormally
     Jumper nextJumpVar _ _ -> do
       readTVar nextJumpVar >>= \case
         Nothing -> retry
         Just jumpInfo -> do
           writeTVar nextJumpVar Nothing
-          pure $ JumpTo jumpInfo
+          pure $ JumpInstruction $ JumpTo jumpInfo
 
 -- | This function is called when we receive a 'MsgRollForward' message before
 -- validating it.
@@ -497,24 +497,24 @@ processJumpResult context jumpResult = whenEnabled context () $
     Disengaged -> pure ()
     Objector Starting goodFragment badPoint ->
       case jumpResult of
-        AcceptedGoodPointJump fragment -> do
+        AcceptedJump (JumpToGoodPoint fragment) -> do
           writeTVar (cschJumping (handle context)) $
             Objector Started goodFragment badPoint
           updateChainSyncState (handle context) fragment
-        RejectedGoodPointJump{} -> do
+        RejectedJump JumpToGoodPoint{} -> do
           -- If the objector rejects a good point, it is a sign of a rollback
           -- to earlier than the last jump.
           disengage (handle context)
           electNewObjector (stripContext context)
 
         -- Not interesting in the objector state
-        AcceptedJump{} -> pure ()
-        RejectedJump{} -> pure ()
+        AcceptedJump JumpTo{} -> pure ()
+        RejectedJump JumpTo{} -> pure ()
 
     Objector Started _ _ -> pure ()
     Jumper nextJumpVar goodFragment jumperState ->
         case jumpResult of
-          AcceptedJump jumpInfo -> do
+          AcceptedJump (JumpTo jumpInfo) -> do
             -- The jump was accepted; we set the jumper's candidate fragment to
             -- the dynamo's candidate fragment up to the accepted point.
             --
@@ -538,7 +538,7 @@ processJumpResult context jumpResult = whenEnabled context () $
                 -- themselves.
                 error "processJumpResult: Jumpers in state FoundIntersection shouldn't be further jumping."
 
-          RejectedJump badJumpInfo -> do
+          RejectedJump (JumpTo badJumpInfo) -> do
             -- The tip of @goodFragment@ is in @jTheirFragment jumpInfo@ or is
             -- an ancestor of it. If the jump was requested by the dynamo, this
             -- holds because the dynamo is not allowed to rollback before the
@@ -550,8 +550,8 @@ processJumpResult context jumpResult = whenEnabled context () $
             lookForIntersection nextJumpVar goodFragment badJumpInfo
 
           -- These aren't interesting in the case of jumpers.
-          AcceptedGoodPointJump{} -> pure ()
-          RejectedGoodPointJump{} -> pure ()
+          AcceptedJump JumpToGoodPoint{} -> pure ()
+          RejectedJump JumpToGoodPoint{} -> pure ()
   where
     -- Avoid redundant constraint "HasHeader blk" reported by some ghc's
     _ = getHeaderFields @blk
