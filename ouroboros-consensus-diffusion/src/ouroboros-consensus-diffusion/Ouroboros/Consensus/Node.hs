@@ -60,6 +60,7 @@ import qualified Codec.CBOR.Encoding as CBOR
 import           Codec.Serialise (DeserialiseFailure)
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (NFData)
+import           Control.Monad (when)
 import           Control.Monad.Class.MonadTime.SI (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer, contramap, traceWith)
@@ -626,7 +627,11 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
                   lpGetLatestSlot = getImmTipSlot kernel,
                   lpGetLedgerPeers = fromMaybe [] <$> getPeersFromCurrentLedger kernel (const True),
                   lpGetLedgerStateJudgement = getLedgerStateJudgement kernel
-                }
+                },
+            Diffusion.daUpdateOutboundConnectionsState =
+              let varOcs = getOutboundConnectionsState kernel in \newOcs -> do
+                oldOcs <- readTVar varOcs
+                when (newOcs /= oldOcs) $ writeTVar varOcs newOcs
           }
 
         localRethrowPolicy :: RethrowPolicy

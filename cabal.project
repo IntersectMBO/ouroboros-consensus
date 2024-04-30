@@ -61,19 +61,12 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/IntersectMBO/ouroboros-network
-  tag: eb6ac9aa088aa3763e1163824a405fbb21303eb4
-  --sha256: sha256-KZAxb6Lf9++JtoOTkapvCMpQOwz97zkOO30Bu8Asuak=
-  subdir: cardano-ping
-          monoidal-synchronisation
-          network-mux
-          ouroboros-network
+  tag: a38e5a1b6305bd830ae7d088942ff709e187e3fc
+  --sha256: sha256-L/EV1MX3Dhq2+Hlg+F/3Y2h8YLeld05hUGty2VRrsuM=
+  subdir: ouroboros-network
           ouroboros-network-api
           ouroboros-network-framework
-          ouroboros-network-mock
           ouroboros-network-protocols
-          ouroboros-network-testing
-          ntp-client
-          cardano-client
 
 -- We want to always build the test-suites and benchmarks
 tests: true
