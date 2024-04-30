@@ -1270,8 +1270,8 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                 -- Recompute the intersection only if a suffix of the candidate
                 -- fragment was trimmed.
                 intersection
-                  | historyNeedsRewinding = case AF.intersect (jOurFragment ji) (jTheirFragment ji) of
-                      Just (po, _, _, _) -> castPoint $ AF.headPoint po
+                  | historyNeedsRewinding = case AF.intersectionPoint (jOurFragment ji) (jTheirFragment ji) of
+                      Just po -> castPoint po
                       Nothing -> error "offerJump: the jumpInfo should have a valid intersection"
                   | otherwise = jMostRecentIntersection ji
              in KnownIntersectionState
