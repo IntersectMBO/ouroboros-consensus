@@ -237,7 +237,7 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
           , terseJumpInfo goodJumpInfo
           , tersePoint (castPoint badPoint)
           ]
-      Disengaged -> "Disengaged"
+      Disengaged initState -> "Disengaged " ++ show initState
       Jumper _ st -> "Jumper _ " ++ traceJumperState st
 
     traceJumperState :: ChainSyncJumpingJumperState TestBlock -> String
@@ -408,6 +408,7 @@ traceChainSyncClientEventTestBlockWith pid tracer = \case
       JumpInstruction (JumpTo ji) -> "JumpTo " ++ terseJumpInfo ji
       JumpInstruction (JumpToGoodPoint ji) -> "JumpToGoodPoint " ++ terseJumpInfo ji
       RunNormally -> "RunNormally"
+      Restart -> "Restart"
 
 terseJumpInfo :: JumpInfo TestBlock -> String
 terseJumpInfo ji = tersePoint (castPoint $ headPoint $ jTheirFragment ji)

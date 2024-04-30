@@ -179,7 +179,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      ChainSyncJumpingState (..), ChainSyncState (..),
                      JumpInfo (..),
                      DynamoInitState (..),
-                     ObjectorInitState (..))
+                     ObjectorInitState (..),
+                     DisengagedInitState (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -294,9 +295,10 @@ stripContext :: PeerContext m peer blk -> Context m peer blk
 stripContext context = context {peer = (), handle = ()}
 
 -- | Instruction from the jumping governor, either to run normal ChainSync, or
--- to jump to follow a dynamo with the given fragment.
+-- to jump to follow a dynamo with the given fragment, or to restart ChainSync.
 data Instruction blk
   = RunNormally
+  | Restart
   | -- | Jump to the tip of the given fragment.
     JumpInstruction !(JumpInstruction blk)
   deriving (Generic)
@@ -358,7 +360,10 @@ nextInstruction ::
   STM m (Instruction blk)
 nextInstruction context =
   readTVar (cschJumping (handle context)) >>= \case
-    Disengaged -> pure RunNormally
+    Disengaged DisengagedDone -> pure RunNormally
+    Disengaged Disengaging -> do
+      writeTVar (cschJumping (handle context)) (Disengaged DisengagedDone)
+      pure Restart
     Dynamo (DynamoStarting goodJumpInfo) _ ->
       pure $ JumpInstruction $ JumpToGoodPoint goodJumpInfo
     Dynamo DynamoStarted _ ->
@@ -398,7 +403,7 @@ onRollForward context point =
           disengage (handle context)
           electNewObjector (stripContext context)
       | otherwise -> pure ()
-    Disengaged -> pure ()
+    Disengaged{} -> pure ()
     Jumper{} -> pure ()
     Dynamo _ lastJumpSlot
       | let jumpBoundaryPlus1 = jumpSize context + succWithOrigin lastJumpSlot
@@ -438,7 +443,7 @@ onRollBackward context slot =
           disengage (handle context)
           electNewObjector (stripContext context)
       | otherwise -> pure ()
-    Disengaged -> pure ()
+    Disengaged{} -> pure ()
     Jumper{} -> pure ()
     Dynamo _ lastJumpSlot
       | slot < lastJumpSlot -> do
@@ -469,7 +474,7 @@ onAwaitReply context =
       -- A jumper might be receiving a 'MsgAwaitReply' message if it was
       -- previously an objector and a new dynamo was elected.
       disengage (handle context)
-    Disengaged ->
+    Disengaged{} ->
       pure ()
 
 -- | Process the result of a jump. In the happy case, this only consists in
@@ -504,7 +509,7 @@ processJumpResult context jumpResult =
 
     Dynamo DynamoStarted _lastJumpSlot -> pure ()
 
-    Disengaged -> pure ()
+    Disengaged{} -> pure ()
     Objector Starting goodJump badPoint ->
       case jumpResult of
         AcceptedJump (JumpToGoodPoint jumpInfo) -> do
@@ -640,7 +645,7 @@ updateJumpInfo ::
   STM m ()
 updateJumpInfo context jumpInfo =
   readTVar (cschJumping (handle context)) >>= \case
-    Disengaged -> pure ()
+    Disengaged{} -> pure ()
     _ -> writeTVar (cschJumpInfo (handle context)) $ Just jumpInfo
 
 -- | Find the dynamo in a TVar containing a map of handles. Returns then handle
@@ -660,7 +665,7 @@ getDynamo handlesVar = do
 -- act as dynamo or objector.
 disengage :: MonadSTM m => ChainSyncClientHandle m blk -> STM m ()
 disengage handle = do
-  writeTVar (cschJumping handle) Disengaged
+  writeTVar (cschJumping handle) (Disengaged Disengaging)
   writeTVar (cschJumpInfo handle) Nothing
 
 -- | Convenience function that, given an intersection point and a jumper state,
@@ -716,7 +721,7 @@ unregisterClient context = do
   modifyTVar (handlesVar context) $ Map.delete (peer context)
   let context' = stripContext context
   readTVar (cschJumping (handle context)) >>= \case
-    Disengaged -> pure ()
+    Disengaged{} -> pure ()
     Jumper{} -> pure ()
     Objector{} -> electNewObjector context'
     Dynamo{} -> electNewDynamo context'
@@ -753,7 +758,7 @@ electNewDynamo context = do
   where
     findNonDisengaged =
       findM $ \(_, st) -> not . isDisengaged <$> readTVar (cschJumping st)
-    isDisengaged Disengaged = True
+    isDisengaged Disengaged{} = True
     isDisengaged _          = False
 
 findM :: Monad m => (a -> m Bool) -> [a] -> m (Maybe a)

@@ -15,6 +15,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , JumpInfo (..)
   , DynamoInitState (..)
   , ObjectorInitState (..)
+  , DisengagedInitState (..)
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin)
@@ -108,6 +109,13 @@ data ObjectorInitState
   | Started
   deriving (Generic, Show, NoThunks)
 
+data DisengagedInitState
+  = -- | The node is being disengaged and for that we need to restart the
+    -- ChainSync protocol.
+    Disengaging
+  | DisengagedDone
+  deriving (Generic, Show, NoThunks)
+
 -- | State of a peer with respect to ChainSync jumping.
 data ChainSyncJumpingState m blk
   = -- | The dynamo, of which there is exactly one unless there are no peers,
@@ -132,7 +140,7 @@ data ChainSyncJumpingState m blk
       !(Point (Header blk))
   | -- | Headers continue to be downloaded from 'Disengaged' peers. They
     -- are not requested to jump, nor elected as dynamos or objectors.
-    Disengaged
+    Disengaged DisengagedInitState
   | -- | The jumpers can be in arbitrary numbers. They are queried regularly to
     -- see if they agree with the chain that the dynamo is serving; otherwise,
     -- they become candidates to be the objector. See

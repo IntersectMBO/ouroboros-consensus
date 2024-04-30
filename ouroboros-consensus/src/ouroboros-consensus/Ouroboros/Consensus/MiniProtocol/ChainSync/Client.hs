@@ -377,7 +377,7 @@ bracketChainSyncClient
     withCSJCallbacks cschState CSJDisabled f = do
       tid <- myThreadId
       cschJumpInfo <- newTVarIO Nothing
-      cschJumping <- newTVarIO Disengaged
+      cschJumping <- newTVarIO (Disengaged DisengagedDone)
       let handle = ChainSyncClientHandle {
               cschGDDKill = throwTo tid DensityTooLow
             , cschState
@@ -1172,6 +1172,16 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                       lbResume loPBucket
                       continueWithState kis
                         $ nextStep' mkPipelineDecision n theirTip
+                    Jumping.Restart -> do
+                      lbResume loPBucket
+                      continueWithState ()
+                        $ drainThePipe n
+                        $ findIntersectionTop
+                            cfgEnv
+                            dynEnv
+                            intEnv
+                            (kBestBlockNo kis)
+                            NoMoreIntersection
 
     nextStep' ::
         MkPipelineDecision
