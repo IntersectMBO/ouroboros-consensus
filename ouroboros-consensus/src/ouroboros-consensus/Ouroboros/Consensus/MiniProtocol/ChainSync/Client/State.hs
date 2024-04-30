@@ -12,10 +12,10 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , ChainSyncJumpingJumperState (..)
   , ChainSyncJumpingState (..)
   , ChainSyncState (..)
-  , JumpInfo (..)
-  , DynamoInitState (..)
-  , ObjectorInitState (..)
   , DisengagedInitState (..)
+  , DynamoInitState (..)
+  , JumpInfo (..)
+  , ObjectorInitState (..)
   ) where
 
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin)

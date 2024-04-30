@@ -31,11 +31,11 @@ import           Ouroboros.Consensus.Genesis.Governor (DensityBounds (..),
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (TraceChainSyncClientEvent (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping
-                     (Instruction (..), JumpResult (..), JumpInstruction (..))
+                     (Instruction (..), JumpInstruction (..), JumpResult (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncJumpingJumperState (..),
-                     ChainSyncJumpingState (..), JumpInfo (..),
-                     DynamoInitState (..))
+                     ChainSyncJumpingState (..), DynamoInitState (..),
+                     JumpInfo (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API (LoE (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Types
@@ -229,7 +229,7 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
       Dynamo initState lastJump ->
         let showInitState = case initState of
               DynamoStarting ji -> terseJumpInfo ji
-              DynamoStarted -> "Nothing"
+              DynamoStarted     -> "Nothing"
          in unwords ["Dynamo", showInitState, terseWithOrigin show lastJump]
       Objector initState goodJumpInfo badPoint -> unwords
           [ "Objector"

@@ -177,10 +177,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncClientHandle (..),
                      ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), ChainSyncState (..),
-                     JumpInfo (..),
-                     DynamoInitState (..),
-                     ObjectorInitState (..),
-                     DisengagedInitState (..))
+                     DisengagedInitState (..), DynamoInitState (..),
+                     JumpInfo (..), ObjectorInitState (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -759,7 +757,7 @@ electNewDynamo context = do
     findNonDisengaged =
       findM $ \(_, st) -> not . isDisengaged <$> readTVar (cschJumping st)
     isDisengaged Disengaged{} = True
-    isDisengaged _          = False
+    isDisengaged _            = False
 
 findM :: Monad m => (a -> m Bool) -> [a] -> m (Maybe a)
 findM _ [] = pure Nothing

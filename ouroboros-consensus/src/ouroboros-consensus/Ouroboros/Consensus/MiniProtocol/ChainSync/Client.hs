@@ -1231,7 +1231,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             (ClientPipelinedStIdle Z)
     offerJump mkPipelineDecision jump = Stateful $ \kis -> do
         let jumpInfo = case jump of
-              Jumping.JumpTo ji -> ji
+              Jumping.JumpTo ji          -> ji
               Jumping.JumpToGoodPoint ji -> ji
             dynamoTipPt = castPoint $ AF.headPoint $ jTheirFragment jumpInfo
         traceWith tracer $ TraceOfferJump dynamoTipPt
