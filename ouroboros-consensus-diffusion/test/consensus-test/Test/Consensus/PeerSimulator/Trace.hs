@@ -229,7 +229,7 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
       Dynamo initState lastJump ->
         let showInitState = case initState of
               DynamoStarting ji -> terseJumpInfo ji
-              DynamoStarted     -> "Nothing"
+              DynamoStarted     -> "DynamoStarted"
          in unwords ["Dynamo", showInitState, terseWithOrigin show lastJump]
       Objector initState goodJumpInfo badPoint -> unwords
           [ "Objector"
@@ -242,7 +242,8 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
 
     traceJumperState :: ChainSyncJumpingJumperState TestBlock -> String
     traceJumperState = \case
-      Happy mGoodJumpInfo -> "Happy " ++ maybe "Nothing" terseJumpInfo mGoodJumpInfo
+      Happy initState mGoodJumpInfo ->
+        "Happy " ++ show initState ++ " " ++ maybe "Nothing" terseJumpInfo mGoodJumpInfo
       FoundIntersection goodJumpInfo point -> unwords
         ["(FoundIntersection", terseJumpInfo goodJumpInfo, tersePoint $ castPoint point, ")"]
       LookingForIntersection goodJumpInfo badJumpInfo -> unwords

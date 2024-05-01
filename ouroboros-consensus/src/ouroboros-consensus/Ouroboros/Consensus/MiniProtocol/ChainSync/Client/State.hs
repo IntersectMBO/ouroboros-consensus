@@ -15,6 +15,7 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State (
   , DisengagedInitState (..)
   , DynamoInitState (..)
   , JumpInfo (..)
+  , JumperInitState (..)
   , ObjectorInitState (..)
   ) where
 
@@ -116,6 +117,12 @@ data DisengagedInitState
   | DisengagedDone
   deriving (Generic, Show, NoThunks)
 
+data JumperInitState
+  = -- | The jumper hasn't been requested to jump yet
+    FreshJumper
+  | StartedJumper
+  deriving (Generic, Show, NoThunks)
+
 -- | State of a peer with respect to ChainSync jumping.
 data ChainSyncJumpingState m blk
   = -- | The dynamo, of which there is exactly one unless there are no peers,
@@ -189,7 +196,7 @@ instance LedgerSupportsProtocol blk => NoThunks (JumpInfo blk) where
 data ChainSyncJumpingJumperState blk
   = -- | The jumper is happy with the dynamo, and we hold the jump info of the
     -- last accepted jump.
-    Happy !(Maybe (JumpInfo blk))
+    Happy JumperInitState !(Maybe (JumpInfo blk))
   | -- | The jumper disagrees with the dynamo and we are searching where exactly
     -- that happens. All we know is a point where the jumper agrees with the
     -- dynamo and a point where the jumper disagrees with the dynamo, carried by

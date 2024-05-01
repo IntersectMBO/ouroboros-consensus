@@ -178,7 +178,7 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), ChainSyncState (..),
                      DisengagedInitState (..), DynamoInitState (..),
-                     JumpInfo (..), ObjectorInitState (..))
+                     JumpInfo (..), JumperInitState (..), ObjectorInitState (..))
 import           Ouroboros.Consensus.Util.IOLike hiding (handle)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
@@ -369,11 +369,16 @@ nextInstruction context =
     Objector Starting goodJump _ -> do
       pure $ JumpInstruction $ JumpToGoodPoint goodJump
     Objector Started _ _ -> pure RunNormally
-    Jumper nextJumpVar _ -> do
+    Jumper nextJumpVar jumperState -> do
       readTVar nextJumpVar >>= \case
         Nothing -> retry
         Just jumpInfo -> do
           writeTVar nextJumpVar Nothing
+          case jumperState of
+            Happy FreshJumper mGoodJumpInfo ->
+              writeTVar (cschJumping (handle context)) $
+                Jumper nextJumpVar $ Happy StartedJumper mGoodJumpInfo
+            _ -> pure ()
           pure $ JumpInstruction $ JumpTo jumpInfo
 
 -- | This function is called when we receive a 'MsgRollForward' message before
@@ -541,9 +546,11 @@ processJumpResult context jumpResult =
                 -- looking for an intersection is the only client asking for its
                 -- jumps.
                 lookForIntersection nextJumpVar goodJumpInfo badJumpInfo
-              Happy _mGoodJumpInfo ->
+              Happy StartedJumper _mGoodJumpInfo ->
                 writeTVar (cschJumping (handle context)) $
-                  Jumper nextJumpVar $ Happy $ Just goodJumpInfo
+                  Jumper nextJumpVar $ Happy StartedJumper $ Just goodJumpInfo
+              Happy FreshJumper _mGoodJumpInfo ->
+                pure ()
               FoundIntersection{} ->
                 -- Only happy jumpers are asked to jump by the dynamo, and only
                 -- jumpers looking for an intersection are asked to jump by
@@ -562,8 +569,10 @@ processJumpResult context jumpResult =
             case jumperState of
               LookingForIntersection goodJumpInfo _ ->
                 lookForIntersection nextJumpVar goodJumpInfo badJumpInfo
-              Happy mGoodJumpInfo ->
+              Happy StartedJumper mGoodJumpInfo ->
                 lookForIntersection nextJumpVar (mkGoodJumpInfo mGoodJumpInfo badJumpInfo) badJumpInfo
+              Happy FreshJumper _ ->
+                pure ()
               FoundIntersection{} ->
                 error "processJumpResult (rejected): Jumpers in state FoundIntersection shouldn't be further jumping."
 
@@ -700,7 +709,7 @@ registerClient context peer csState mkHandle = do
       pure $ Dynamo DynamoStarted $ pointSlot $ AF.anchorPoint fragment
     Just handle -> do
       mJustInfo <- readTVar (cschJumpInfo handle)
-      newJumper mJustInfo (Happy Nothing)
+      newJumper mJustInfo (Happy FreshJumper Nothing)
   cschJumping <- newTVar csjState
   let handle = mkHandle cschJumping
   modifyTVar (handlesVar context) $ Map.insert peer handle
@@ -751,7 +760,7 @@ electNewDynamo context = do
         when (peer /= dynId) $ do
           jumpingState <- readTVar (cschJumping st)
           when (not (isDisengaged jumpingState)) $
-            newJumper mJumpInfo (Happy Nothing)
+            newJumper mJumpInfo (Happy FreshJumper Nothing)
               >>= writeTVar (cschJumping st)
   where
     findNonDisengaged =
