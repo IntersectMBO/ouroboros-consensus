@@ -503,7 +503,7 @@ processJumpResult context jumpResult =
             Dynamo DynamoStarted lastJumpSlot
           updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
-          disengage (handle context)
+          startDisengaging (handle context)
           electNewDynamo (stripContext context)
 
         -- Not interesting in the dynamo state
@@ -522,7 +522,7 @@ processJumpResult context jumpResult =
         RejectedJump JumpToGoodPoint{} -> do
           -- If the objector rejects a good point, it is a sign of a rollback
           -- to earlier than the last jump.
-          disengage (handle context)
+          startDisengaging (handle context)
           electNewObjector (stripContext context)
 
         -- Not interesting in the objector state
@@ -671,9 +671,21 @@ getDynamo handlesVar = do
 -- | Disengage a peer, meaning that it will no longer be asked to jump or
 -- act as dynamo or objector.
 disengage :: MonadSTM m => ChainSyncClientHandle m blk -> STM m ()
-disengage handle = do
-  writeTVar (cschJumping handle) (Disengaged Disengaging)
+disengage = disengageWith DisengagedDone
+
+-- | Like 'disengage', but additionally restart ChainSync
+startDisengaging :: MonadSTM m => ChainSyncClientHandle m blk -> STM m ()
+startDisengaging = disengageWith Disengaging
+
+disengageWith ::
+  MonadSTM m =>
+  DisengagedInitState ->
+  ChainSyncClientHandle m blk ->
+  STM m ()
+disengageWith initState handle = do
+  writeTVar (cschJumping handle) (Disengaged initState)
   writeTVar (cschJumpInfo handle) Nothing
+
 
 -- | Convenience function that, given an intersection point and a jumper state,
 -- make a fresh 'Jumper' constructor.
