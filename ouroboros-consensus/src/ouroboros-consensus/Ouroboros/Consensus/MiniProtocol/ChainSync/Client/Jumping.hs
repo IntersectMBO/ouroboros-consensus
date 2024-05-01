@@ -633,15 +633,15 @@ processJumpResult context jumpResult =
         Nothing ->
           -- There is no objector yet. Promote the jumper to objector.
           writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
-        Just (oGoodJump, oPoint, oHandle)
+        Just (oInitState, oGoodJump, oPoint, oHandle)
           | pointSlot oPoint <= pointSlot badPoint ->
               -- The objector's intersection is still old enough. Keep it.
               writeTVar (cschJumping (handle context)) $
-                Jumper nextJumpVar (FoundIntersection goodJumpInfo badPoint)
+                Jumper nextJumpVar (FoundIntersection Starting goodJumpInfo badPoint)
           | otherwise -> do
               -- Found an earlier intersection. Demote the old objector and
               -- promote the jumper to objector.
-              newJumper Nothing (FoundIntersection oGoodJump oPoint) >>=
+              newJumper Nothing (FoundIntersection oInitState oGoodJump oPoint) >>=
                 writeTVar (cschJumping oHandle)
               writeTVar (cschJumping (handle context)) (Objector Starting goodJumpInfo badPoint)
 
@@ -790,14 +790,15 @@ findM p (x : xs) = p x >>= \case
 findObjector ::
   (MonadSTM m) =>
   Context m peer blk ->
-  STM m (Maybe (JumpInfo blk, Point (Header blk), ChainSyncClientHandle m blk))
+  STM m (Maybe (ObjectorInitState, JumpInfo blk, Point (Header blk), ChainSyncClientHandle m blk))
 findObjector context = do
   readTVar (handlesVar context) >>= go . Map.toList
   where
     go [] = pure Nothing
     go ((_, handle):xs) =
       readTVar (cschJumping handle) >>= \case
-        Objector _ goodJump badPoint -> pure $ Just (goodJump, badPoint, handle)
+        Objector initState goodJump badPoint ->
+          pure $ Just (initState, goodJump, badPoint, handle)
         _ -> go xs
 
 -- | Look into all dissenting jumper and promote the one with the oldest
@@ -811,8 +812,8 @@ electNewObjector context = do
   dissentingJumpers <- collectDissentingJumpers peerStates
   let sortedJumpers = sortOn (pointSlot . fst) dissentingJumpers
   case sortedJumpers of
-    (badPoint, (goodJumpInfo, handle)):_ ->
-      writeTVar (cschJumping handle) $ Objector Starting goodJumpInfo badPoint
+    (badPoint, (initState, goodJumpInfo, handle)):_ ->
+      writeTVar (cschJumping handle) $ Objector initState goodJumpInfo badPoint
     _ ->
       pure ()
   where
@@ -820,7 +821,7 @@ electNewObjector context = do
       fmap catMaybes $
       forM peerStates $ \(_, handle) ->
         readTVar (cschJumping handle) >>= \case
-          Jumper _ (FoundIntersection goodJumpInfo badPoint) ->
-            pure $ Just (badPoint, (goodJumpInfo, handle))
+          Jumper _ (FoundIntersection initState goodJumpInfo badPoint) ->
+            pure $ Just (badPoint, (initState, goodJumpInfo, handle))
           _ ->
             pure Nothing

@@ -208,7 +208,10 @@ data ChainSyncJumpingJumperState blk
   | -- | The jumper disagrees with the dynamo and we have determined the latest
     -- point where dynamo and jumper agree. We store here the jump info of the
     -- latest accepted jump and the point of the earliest rejected jump.
-    FoundIntersection !(JumpInfo blk) !(Point (Header blk))
+    --
+    -- The init state indicates the initialization to use for the objector in
+    -- case this jumper is promoted.
+    FoundIntersection ObjectorInitState !(JumpInfo blk) !(Point (Header blk))
   deriving (Generic)
 
 deriving anyclass instance

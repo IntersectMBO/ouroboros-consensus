@@ -244,8 +244,12 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
     traceJumperState = \case
       Happy initState mGoodJumpInfo ->
         "Happy " ++ show initState ++ " " ++ maybe "Nothing" terseJumpInfo mGoodJumpInfo
-      FoundIntersection goodJumpInfo point -> unwords
-        ["(FoundIntersection", terseJumpInfo goodJumpInfo, tersePoint $ castPoint point, ")"]
+      FoundIntersection initState goodJumpInfo point -> unwords
+        [ "(FoundIntersection"
+        , show initState
+        , terseJumpInfo goodJumpInfo
+        , tersePoint $ castPoint point, ")"
+        ]
       LookingForIntersection goodJumpInfo badJumpInfo -> unwords
         ["(LookingForIntersection", terseJumpInfo goodJumpInfo, terseJumpInfo badJumpInfo, ")"]
 
