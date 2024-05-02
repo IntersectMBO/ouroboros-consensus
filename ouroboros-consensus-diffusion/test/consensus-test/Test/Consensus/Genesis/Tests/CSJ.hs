@@ -103,9 +103,6 @@ prop_happyPath synchronized =
       ps <- genUniformSchedulePoints gt
       pure $ value $ honest ps
 
-    -- NOTE: We might change the way the jumps are decided, which would require
-    -- also changing this condition. cf
-    -- https://github.com/IntersectMBO/ouroboros-consensus/pull/1081/files#r1583263224
     isNewerThanJumpSizeFromTip :: GenesisTestFull TestBlock -> Header TestBlock -> Bool
     isNewerThanJumpSizeFromTip gt hdr =
       let jumpSize = csjpJumpSize $ gtCSJParams gt
@@ -113,4 +110,4 @@ prop_happyPath synchronized =
           hdrSlot = blockSlot hdr
        in
         -- Sanity check: add @1 +@ after @>@ and watch the World burn.
-        hdrSlot + jumpSize > succWithOrigin tipSlot
+        hdrSlot + jumpSize >= succWithOrigin tipSlot
