@@ -35,7 +35,7 @@ import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.QuickCheck (forAllGenRunShrinkCheck)
 import           Test.Util.TestBlock (TestBlock)
-import           Test.Util.Tracer (recordingTracerTVar)
+import           Test.Util.Tracer (recordingTracerM)
 import           Text.Printf (printf)
 
 
@@ -56,7 +56,7 @@ runGenesisTest ::
   RunGenesisTestResult
 runGenesisTest schedulerConfig genesisTest =
   runSimStrictShutdownOrThrow $ do
-    (recordingTracer, getTrace) <- recordingTracerTVar
+    (recordingTracer, getTrace) <- recordingTracerM
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
     traceLinesWith tracer $ prettyGenesisTest prettyPeersSchedule genesisTest
