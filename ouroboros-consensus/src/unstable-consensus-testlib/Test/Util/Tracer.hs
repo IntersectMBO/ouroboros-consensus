@@ -1,11 +1,14 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 module Test.Util.Tracer (
     recordingTracerIORef
   , recordingTracerTVar
+  , recordingTracerM
   ) where
 
 import           Control.Tracer
 import           Data.IORef
 import           Ouroboros.Consensus.Util.IOLike
+import           System.IO.Unsafe (unsafePerformIO)
 
 -- | Create a 'Tracer' that stores all events in an 'IORef' that is atomically
 -- updated. The second return value lets you obtain the events recorded so far
@@ -24,3 +27,26 @@ recordingTracerTVar = uncheckedNewTVarM [] >>= \ref -> return
     ( Tracer $ \ev -> atomically $ modifyTVar ref (ev:)
     , atomically $ reverse <$> readTVar ref
     )
+
+-- | Like 'recordingTracerIORef', but lifts IO to an arbitrary applicative.
+-- This is useful to record events without changing the scheduling during a
+-- test.
+recordingTracerM :: forall m ev. Monad m => m (Tracer m ev, m [ev])
+recordingTracerM = do
+  (tr, get) <- liftIOtoM recordingTracerIORef
+  pure (natTracer liftIOtoM tr, liftIOtoM get)
+  where
+    liftIOtoM :: IO a -> m a
+    liftIOtoM m = do
+      -- The ficticious state is only used to force unsafePerformIO to run @m@
+      -- every time @liftIOtoM m@ is evaluated.
+      s <- getStateM
+      pure $! snd $ unsafePerformIO $ do
+        r <- m
+        pure (s, r)
+
+    -- We mark this function as NOINLINE to ensure the compiler cannot reason
+    -- that two calls of @getStateM@ might yield the same value.
+    {-# NOINLINE getStateM #-}
+    getStateM :: m Int
+    getStateM = pure 0
