@@ -362,11 +362,15 @@ nextInstruction context =
     Disengaged Disengaging -> do
       writeTVar (cschJumping (handle context)) (Disengaged DisengagedDone)
       pure Restart
-    Dynamo (DynamoStarting goodJumpInfo) _ ->
+    Dynamo (DynamoStarting goodJumpInfo) lastJumpSlot -> do
+      writeTVar (cschJumping (handle context)) $
+        Dynamo DynamoStarted lastJumpSlot
       pure $ JumpInstruction $ JumpToGoodPoint goodJumpInfo
     Dynamo DynamoStarted _ ->
       pure RunNormally
-    Objector Starting goodJump _ -> do
+    Objector Starting goodJump badPoint -> do
+      writeTVar (cschJumping (handle context)) $
+        Objector Started goodJump badPoint
       pure $ JumpInstruction $ JumpToGoodPoint goodJump
     Objector Started _ _ -> pure RunNormally
     Jumper nextJumpVar jumperState -> do
@@ -496,11 +500,9 @@ processJumpResult :: forall m peer blk.
   STM m ()
 processJumpResult context jumpResult =
   readTVar (cschJumping (handle context)) >>= \case
-    Dynamo DynamoStarting{} lastJumpSlot ->
+    Dynamo{} ->
       case jumpResult of
-        AcceptedJump (JumpToGoodPoint jumpInfo) -> do
-          writeTVar (cschJumping (handle context)) $
-            Dynamo DynamoStarted lastJumpSlot
+        AcceptedJump (JumpToGoodPoint jumpInfo) ->
           updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           startDisengaging (handle context)
@@ -510,14 +512,10 @@ processJumpResult context jumpResult =
         AcceptedJump JumpTo{} -> pure ()
         RejectedJump JumpTo{} -> pure ()
 
-    Dynamo DynamoStarted _lastJumpSlot -> pure ()
-
     Disengaged{} -> pure ()
-    Objector Starting goodJump badPoint ->
+    Objector{} ->
       case jumpResult of
-        AcceptedJump (JumpToGoodPoint jumpInfo) -> do
-          writeTVar (cschJumping (handle context)) $
-            Objector Started goodJump badPoint
+        AcceptedJump (JumpToGoodPoint jumpInfo) ->
           updateChainSyncState (handle context) jumpInfo
         RejectedJump JumpToGoodPoint{} -> do
           -- If the objector rejects a good point, it is a sign of a rollback
@@ -529,7 +527,6 @@ processJumpResult context jumpResult =
         AcceptedJump JumpTo{} -> pure ()
         RejectedJump JumpTo{} -> pure ()
 
-    Objector Started _ _ -> pure ()
     Jumper nextJumpVar jumperState ->
         case jumpResult of
           AcceptedJump (JumpTo goodJumpInfo) -> do
