@@ -35,8 +35,10 @@ tests =
   adjustQuickCheckMaxSize (`div` 5) $
   testGroup
     "CSJ"
-    [ testProperty "“Happy Path” synchronous scenario only speaks to one peer" $ prop_happyPath True
-    , testProperty "“Happy Path” asynchronous scenario only speaks to one peer" $ prop_happyPath False
+    [ testGroup "Happy Path"
+      [ testProperty "synchronous" $ prop_happyPath True
+      , testProperty "asynchronous" $ prop_happyPath False
+      ]
     ]
 
 prop_happyPath :: Bool -> Property
