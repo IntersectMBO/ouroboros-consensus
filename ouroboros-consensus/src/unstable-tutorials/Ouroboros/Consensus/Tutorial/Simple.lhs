@@ -178,7 +178,8 @@ The `preferCandidate` function in `Ouroboros.Consensus.Protocol.Abstract`
 demonstrates how this is used.
 
 Note that instantiations of `ConsensusProtocol` for some protocol `p`
-consequently requires `Ord (SelectView p)`.
+consequently requires `ChainOrder (SelectView p)` (which in particular requires
+`Ord (SelectView p)`.
 
 For `SP` we will use only `BlockNo` - to implement the simplest rule of
 preferring longer chains to shorter chains.

@@ -437,6 +437,7 @@ addBlock cfg blk m = Model {
         fromMaybe (currentChain m, currentLedger m)
       . selectChain
           (Proxy @(BlockProtocol blk))
+          (projectChainOrderConfig (configBlock cfg))
           (selectView (configBlock cfg) . getHeader)
           (currentChain m)
       $ consideredCandidates
@@ -1004,6 +1005,7 @@ wipeVolatileDB cfg m =
         isSameAsImmutableDbChain
       $ selectChain
           (Proxy @(BlockProtocol blk))
+          (projectChainOrderConfig (configBlock cfg))
           (selectView (configBlock cfg) . getHeader)
           Chain.genesis
       $ snd

@@ -1,12 +1,20 @@
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE DefaultSignatures          #-}
+{-# LANGUAGE DerivingVia                #-}
+{-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables        #-}
+{-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeApplications           #-}
+{-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 module Ouroboros.Consensus.Protocol.Abstract (
     -- * Abstract definition of the Ouroboros protocol
     ConsensusConfig
   , ConsensusProtocol (..)
-  , preferCandidate
+    -- * Chain order
+  , ChainOrder (..)
+  , SimpleChainOrder (..)
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
@@ -41,7 +49,7 @@ class ( Show (ChainDepState   p)
       , Show (LedgerView      p)
       , Eq   (ChainDepState   p)
       , Eq   (ValidationErr   p)
-      , Ord  (SelectView      p)
+      , ChainOrder (SelectView p)
       , NoThunks (ConsensusConfig p)
       , NoThunks (ChainDepState   p)
       , NoThunks (ValidationErr   p)
@@ -66,12 +74,10 @@ class ( Show (ChainDepState   p)
   -- two things independent of a choice of consensus protocol: we never switch
   -- to chains that fork off more than @k@ blocks ago, and we never adopt an
   -- invalid chain. The actual comparison of chains however depends on the chain
-  -- selection protocol. We define chain selection (which is itself a partial
-  -- order) in terms of a totally ordered /select view/ on the headers at the
-  -- tips of those chains: chain A is strictly preferred over chain B whenever
-  -- A's select view is greater than B's select view. When the select view on A
-  -- and B is the same, the chains are considered to be incomparable (neither
-  -- chain is preferred over the other).
+  -- selection protocol. We define chain selection in terms of a /select view/
+  -- on the headers at the tips of those chains: chain A is strictly preferred
+  -- over chain B whenever A's select view is preferred over B's select view
+  -- according to the 'ChainOrder' instance.
   type family SelectView p :: Type
   type SelectView p = BlockNo
 
@@ -170,13 +176,68 @@ class ( Show (ChainDepState   p)
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
 
--- | Compare a candidate chain to our own
+-- | The chain order of some type; in the Consensus layer, this will always be
+-- the 'SelectView' of some 'ConsensusProtocol'.
 --
--- If both chains are equally preferable, the Ouroboros class of consensus
--- protocols /always/ sticks with the current chain.
-preferCandidate :: ConsensusProtocol p
-                => proxy      p
-                -> SelectView p  -- ^ Tip of our chain
-                -> SelectView p  -- ^ Tip of the candidate
-                -> Bool
-preferCandidate _ ours cand = cand > ours
+-- See 'preferCandidate' for the primary documentation.
+--
+-- Additionally, we require a total order on this type, such that eg different
+-- candidate chains that are preferred over our current selection can be sorted
+-- for prioritization. For example, this is used in ChainSel during initial
+-- chain selection or when blocks arrive out of order (not the case when the
+-- node is caught up), or in the BlockFetch decision logic. Future work could
+-- include also recording\/storing arrival information and using that instead
+-- of\/in addition to the 'Ord' instance.
+class Ord sv => ChainOrder sv where
+  type ChainOrderConfig sv :: Type
+
+  -- | Compare a candidate chain to our own.
+  --
+  -- This method defines when a candidate chain is /strictly/ preferable to our
+  -- current chain. If both chains are equally preferable, the Ouroboros class
+  -- of consensus protocols /always/ sticks with the current chain.
+  --
+  -- === Requirements
+  --
+  -- Write @ours ⊏ cand@ for @'preferCandidate' cfg ours cand@ for brevity.
+  --
+  --  [__Consistency with 'Ord'__]: When @ours ⊏ cand@, then @ours < cand@.
+  --
+  --      This means that @cand@ can only be preferred over @ours@ when @cand@
+  --      is greater than @ours@ according to the 'Ord' instance.
+  --
+  --      However, this is not necessarily a sufficient condition; a concrete
+  --      implementation may decide to not have @ours ⊏ cand@ despite @ours <
+  --      cand@ for some pairs @ours, can@. However, it is recommended to think
+  --      about this carefully and rather use 'SimpleChainOrder' if possible,
+  --      which defines @ours ⊏ cand@ as @ours < cand@, as it simplifies
+  --      reasoning about the chain ordering.
+  --
+  --      However, forgoing 'SimpleChainOrder' can enable more sophisticated
+  --      tiebreaking rules that eg exhibit desirable incentive behavior.
+  --
+  --  [__Chain extension precedence__]: @a@ must contain the underlying block
+  --      number, and use this as the primary way of comparing chains.
+  --
+  --      Suppose that we have a function @blockNo :: sv -> Natural@. Then for
+  --      all @a, b@ with @blockNo a < blockNo b@ we must have @a ⊏ b@.
+  --
+  --      Intuitively, this means that only the logic for breaking ties between
+  --      chains with equal block number is customizable via this class.
+  preferCandidate ::
+       ChainOrderConfig sv
+    -> sv -- ^ Tip of our chain
+    -> sv -- ^ Tip of the candidate
+    -> Bool
+
+-- | A @DerivingVia@ helper to implement 'preferCandidate' in terms of the 'Ord'
+-- instance.
+newtype SimpleChainOrder sv = SimpleChainOrder sv
+  deriving newtype (Eq, Ord)
+
+instance Ord sv => ChainOrder (SimpleChainOrder sv) where
+  type ChainOrderConfig (SimpleChainOrder sv) = ()
+
+  preferCandidate _cfg ours cand = ours < cand
+
+deriving via SimpleChainOrder BlockNo instance ChainOrder BlockNo

@@ -2,8 +2,11 @@
 {-# LANGUAGE DeriveAnyClass             #-}
 {-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE DerivingStrategies         #-}
+{-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeFamilies               #-}
+{-# LANGUAGE UndecidableInstances       #-}
 
 -- | Various things common to iterations of the Praos protocol.
 module Ouroboros.Consensus.Protocol.Praos.Common (
@@ -41,15 +44,7 @@ newtype MaxMajorProtVer = MaxMajorProtVer
   deriving (Eq, Show, Generic)
   deriving newtype NoThunks
 
--- | View of the ledger tip for chain selection.
---
--- We order between chains as follows:
---
--- 1. By chain length, with longer chains always preferred.
--- 2. If the tip of each chain was issued by the same agent, then we prefer
---    the chain whose tip has the highest ocert issue number.
--- 3. By a VRF value from the chain tip, with lower values preferred. See
---    @pTieBreakVRFValue@ for which one is used.
+-- | View of the tip of a header fragment for chain selection.
 data PraosChainSelectView c = PraosChainSelectView
   { csvChainLength :: BlockNo,
     csvSlotNo      :: SlotNo,
@@ -59,6 +54,13 @@ data PraosChainSelectView c = PraosChainSelectView
   }
   deriving (Show, Eq, Generic, NoThunks)
 
+-- | We order between chains as follows:
+--
+-- 1. By chain length, with longer chains always preferred.
+-- 2. If the tip of each chain was issued by the same agent, then we prefer
+--    the chain whose tip has the highest ocert issue number.
+-- 3. By a VRF value from the chain tip, with lower values preferred. See
+--    @pTieBreakVRFValue@ for which one is used.
 instance Crypto c => Ord (PraosChainSelectView c) where
   compare =
     mconcat
@@ -79,6 +81,9 @@ instance Crypto c => Ord (PraosChainSelectView c) where
             comp v1 v2
         | otherwise =
             EQ
+
+deriving via SimpleChainOrder (PraosChainSelectView c)
+  instance Crypto c => ChainOrder (PraosChainSelectView c)
 
 data PraosCanBeLeader c = PraosCanBeLeader
   { -- | Certificate delegating rights from the stake pool cold key (or

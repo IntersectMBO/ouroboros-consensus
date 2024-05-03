@@ -331,6 +331,7 @@ library unstable-consensus-testlib
     Test.Ouroboros.Consensus.ChainGenerator.Slot
     Test.Ouroboros.Consensus.ChainGenerator.Some
     Test.Ouroboros.Consensus.DiffusionPipelining
+    Test.Ouroboros.Consensus.Protocol
     Test.QuickCheck.Extras
     Test.Util.BoolProps
     Test.Util.ChainDB
