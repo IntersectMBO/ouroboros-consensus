@@ -365,17 +365,10 @@ startNode schedulerConfig genesisTest interval = do
   -- The block fetch logic needs to be started after the block fetch clients
   -- otherwise, an internal assertion fails because getCandidates yields more
   -- peer fragments than registered clients.
-  let getCurrentChain = ChainDB.getCurrentChain lnChainDb
-
-      gdd = updateLoEFragGenesis lrConfig (mkGDDTracerTestBlock lrTracer) (readTVar handles)
-      -- We make GDD rerun every time the anchor or the blocks of the
-      -- selection change.
-      gddTrigger = do
-        s <- viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
-        c <- getCurrentChain
-        return (s, [AF.anchorToHash $ AF.headAnchor c])
-
   BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry getCandidates
+
+  let gdd = updateLoEFragGenesis lrConfig (mkGDDTracerTestBlock lrTracer) (readTVar handles)
+      gddTrigger = viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
   for_ lrLoEVar $ \ var -> do
       forkLinkedThread lrRegistry "LoE updater background" $
         void $ runGdd gdd var lnChainDb gddTrigger
