@@ -583,7 +583,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       , Just maxExtra <- computeLoEMaxExtra loeFrag newBlockFrag -> do
         -- ### Add to current chain
         traceWith addBlockTracer (TryAddToCurrentChain p)
-        addToCurrentChain succsOf' curChainAndLedger maxExtra
+        addToCurrentChain succsOf' curChainAndLedger loeFrag maxExtra
 
       -- The block is reachable from the current selection
       -- and it doesn't fit after the current selection
@@ -595,7 +595,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       , Just maxExtra <- computeLoEMaxExtra loeFrag newBlockFrag -> do
         -- ### Switch to a fork
         traceWith addBlockTracer (TrySwitchToAFork p diff)
-        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger maxExtra diff
+        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger loeFrag maxExtra diff
 
       -- We cannot reach the block from the current selection
       | otherwise -> do
@@ -647,10 +647,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
+      -> LoE (AnchoredFragment (Header blk))
+         -- ^ LoE fragment
       -> LoELimit
          -- ^ How many extra blocks to select after @b@ at most.
       -> m (Point blk)
-    addToCurrentChain succsOf curChainAndLedger maxExtra = do
+    addToCurrentChain succsOf curChainAndLedger loeFrag maxExtra = do
         -- Extensions of @B@ that do not exceed the LoE
         let suffixesAfterB = Paths.maximalCandidates succsOf maxExtra (realPointToPoint p)
 
@@ -672,6 +674,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         let chainDiffs = NE.nonEmpty
               $ map Diff.extend
+              $ filter (followsLoEFrag loeFrag)
               $ NE.filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain)
                 candidates
         -- All candidates are longer than the current chain, so they will be
@@ -704,6 +707,17 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         curTip      = castPoint $ AF.headPoint curChain
         curHead     = AF.headAnchor curChain
 
+    -- Either frag extends loe or loe extends frag
+    --
+    -- PRECONDITION: @AF.withinFragmentBounds (AF.anchorPoint frag) loe@
+    followsLoEFrag :: LoE (AnchoredFragment (Header blk))
+                   -> AnchoredFragment (Header blk)
+                   -> Bool
+    followsLoEFrag LoEDisabled _ = True
+    followsLoEFrag (LoEEnabled loe) frag =
+         AF.withinFragmentBounds (AF.headPoint loe) frag
+      || AF.withinFragmentBounds (AF.headPoint frag) loe
+
     -- | We have found a 'ChainDiff' through the VolatileDB connecting the new
     -- block to the current chain. We'll call the intersection/anchor @x@.
     --
@@ -716,22 +730,26 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -> LookupBlockInfo blk
       -> ChainAndLedger blk
          -- ^ The current chain (anchored at @i@) and ledger
+      -> LoE (AnchoredFragment (Header blk))
+         -- ^ LoE fragment
       -> LoELimit
          -- ^ How many extra blocks to select after @b@ at most.
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
       -> m (Point blk)
-    switchToAFork succsOf lookupBlockInfo curChainAndLedger maxExtra diff = do
+    switchToAFork succsOf lookupBlockInfo curChainAndLedger loeFrag maxExtra diff = do
         -- We use a cache to avoid reading the headers from disk multiple
         -- times in case they're part of multiple forks that go through @b@.
         let initCache = Map.singleton (headerHash hdr) hdr
         chainDiffs <-
+            fmap (filter (followsLoEFrag loeFrag . Diff.getSuffix))
+
           -- 4. Filter out candidates that are not preferred over the current
           -- chain.
           --
           -- The suffixes all fork off from the current chain within @k@
           -- blocks, so it satisfies the precondition of 'preferCandidate'.
-            fmap
+          . fmap
               ( filter
                   ( preferAnchoredCandidate (bcfg chainSelEnv) curChain
                   . Diff.getSuffix
