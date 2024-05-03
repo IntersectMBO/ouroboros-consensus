@@ -14,10 +14,10 @@ let
   };
   hsPkgs = haskell-nix.cabalProject {
     src = ./..;
-    compiler-nix-name = "ghc964";
+    compiler-nix-name = "ghc965";
     flake.variants = {
       ghc810 = { compiler-nix-name = lib.mkForce "ghc8107"; };
-      ghc98 = { compiler-nix-name = lib.mkForce "ghc981"; };
+      ghc98 = { compiler-nix-name = lib.mkForce "ghc982"; };
     };
     inputMap = {
       "https://chap.intersectmbo.org/" = inputs.CHaP;

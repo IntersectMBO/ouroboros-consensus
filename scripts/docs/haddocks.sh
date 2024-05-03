@@ -25,7 +25,7 @@ GHC_VERSION=$(ghc --numeric-version)
 if ! command -v cabal-docspec &> /dev/null
 then
   # cabal-docspec. Download binary
-  curl -sL https://github.com/phadej/cabal-extras/releases/download/cabal-docspec-0.0.0.20231219/cabal-docspec-0.0.0.20231219-x86_64-linux.xz > cabal-docspec.xz
+  curl -sL https://github.com/phadej/cabal-extras/releases/download/cabal-docspec-0.0.0.20240414/cabal-docspec-0.0.0.20240414-x86_64-linux.xz > cabal-docspec.xz
   # this doesn't seem to exist in GH runners?
   mkdir -p "$HOME"/.local/bin
   xz -d < cabal-docspec.xz > "$HOME"/.local/bin/cabal-docspec
