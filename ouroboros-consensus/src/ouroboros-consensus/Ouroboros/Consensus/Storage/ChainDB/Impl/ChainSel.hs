@@ -583,7 +583,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       , Just maxExtra <- computeLoEMaxExtra loeFrag newBlockFrag -> do
         -- ### Add to current chain
         traceWith addBlockTracer (TryAddToCurrentChain p)
-        addToCurrentChain succsOf' curChainAndLedger maxExtra
+        addToCurrentChain succsOf' curChainAndLedger loeFrag maxExtra
 
       -- The block is reachable from the current selection
       -- and it doesn't fit after the current selection
@@ -647,10 +647,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
+      -> LoE (AnchoredFragment (Header blk))
+         -- ^ LoE fragment
       -> LoELimit
          -- ^ How many extra blocks to select after @b@ at most.
       -> m (Point blk)
-    addToCurrentChain succsOf curChainAndLedger maxExtra = do
+    addToCurrentChain succsOf curChainAndLedger loeFrag maxExtra = do
         -- Extensions of @B@ that do not exceed the LoE
         let suffixesAfterB = Paths.maximalCandidates succsOf maxExtra (realPointToPoint p)
 
@@ -672,6 +674,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         let chainDiffs = NE.nonEmpty
               $ map Diff.extend
+              $ filter (followsLoEFrag loeFrag)
               $ NE.filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain)
                 candidates
         -- All candidates are longer than the current chain, so they will be
@@ -703,6 +706,17 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         curChain    = VF.validatedFragment curChainAndLedger
         curTip      = castPoint $ AF.headPoint curChain
         curHead     = AF.headAnchor curChain
+
+        -- Either frag extends loe or loe extends frag
+        followsLoEFrag :: LoE (AnchoredFragment (Header blk))
+                      -> AnchoredFragment (Header blk)
+                      -> Bool
+        followsLoEFrag LoEDisabled _ = True
+        followsLoEFrag (LoEEnabled loe) frag =
+          case AF.intersect frag loe of
+            Just (_, _, AF.Empty{}, _) -> True
+            Just (_, _, _, AF.Empty{}) -> True
+            _                          -> False
 
     -- | We have found a 'ChainDiff' through the VolatileDB connecting the new
     -- block to the current chain. We'll call the intersection/anchor @x@.
