@@ -583,7 +583,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       , Just maxExtra <- computeLoEMaxExtra loeFrag newBlockFrag -> do
         -- ### Add to current chain
         traceWith addBlockTracer (TryAddToCurrentChain p)
-        addToCurrentChain succsOf' curChainAndLedger maxExtra
+        addToCurrentChain succsOf' curChainAndLedger loeFrag maxExtra
 
       -- The block is reachable from the current selection
       -- and it doesn't fit after the current selection
@@ -595,7 +595,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       , Just maxExtra <- computeLoEMaxExtra loeFrag newBlockFrag -> do
         -- ### Switch to a fork
         traceWith addBlockTracer (TrySwitchToAFork p diff)
-        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger maxExtra diff
+        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger loeFrag maxExtra diff
 
       -- We cannot reach the block from the current selection
       | otherwise -> do
@@ -647,10 +647,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       => (ChainHash blk -> Set (HeaderHash blk))
       -> ChainAndLedger blk
          -- ^ The current chain and ledger
+      -> LoE (AnchoredFragment (Header blk))
+         -- ^ LoE fragment
       -> LoELimit
          -- ^ How many extra blocks to select after @b@ at most.
       -> m (Point blk)
-    addToCurrentChain succsOf curChainAndLedger maxExtra = do
+    addToCurrentChain succsOf curChainAndLedger loeFrag maxExtra = do
         -- Extensions of @B@ that do not exceed the LoE
         let suffixesAfterB = Paths.maximalCandidates succsOf maxExtra (realPointToPoint p)
 
@@ -671,10 +673,10 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
               return $ AF.fromOldestFirst curHead (hdr : hdrs)
 
         let chainDiffs = NE.nonEmpty
-              $ NE.filter ( preferAnchoredCandidate (bcfg chainSelEnv) curChain
-                          . Diff.getSuffix
-                          )
-              $ fmap Diff.extend candidates
+              $ map Diff.extend
+              $ filter (followsLoEFrag loeFrag)
+              $ NE.filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain)
+                candidates
         -- All candidates are longer than the current chain, so they will be
         -- preferred over it, /unless/ the block we just added is an EBB,
         -- which has the same 'BlockNo' as the block before it, so when
@@ -705,6 +707,17 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         curTip      = castPoint $ AF.headPoint curChain
         curHead     = AF.headAnchor curChain
 
+    -- Either frag extends loe or loe extends frag
+    --
+    -- PRECONDITION: @AF.withinFragmentBounds (AF.anchorPoint frag) loe@
+    followsLoEFrag :: LoE (AnchoredFragment (Header blk))
+                   -> AnchoredFragment (Header blk)
+                   -> Bool
+    followsLoEFrag LoEDisabled _ = True
+    followsLoEFrag (LoEEnabled loe) frag =
+         AF.withinFragmentBounds (AF.headPoint loe) frag
+      || AF.withinFragmentBounds (AF.headPoint frag) loe
+
     -- | We have found a 'ChainDiff' through the VolatileDB connecting the new
     -- block to the current chain. We'll call the intersection/anchor @x@.
     --
@@ -717,22 +730,26 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -> LookupBlockInfo blk
       -> ChainAndLedger blk
          -- ^ The current chain (anchored at @i@) and ledger
+      -> LoE (AnchoredFragment (Header blk))
+         -- ^ LoE fragment
       -> LoELimit
          -- ^ How many extra blocks to select after @b@ at most.
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
       -> m (Point blk)
-    switchToAFork succsOf lookupBlockInfo curChainAndLedger maxExtra diff = do
+    switchToAFork succsOf lookupBlockInfo curChainAndLedger loeFrag maxExtra diff = do
         -- We use a cache to avoid reading the headers from disk multiple
         -- times in case they're part of multiple forks that go through @b@.
         let initCache = Map.singleton (headerHash hdr) hdr
         chainDiffs <-
+            fmap (filter (followsLoEFrag loeFrag . Diff.getSuffix))
+
           -- 4. Filter out candidates that are not preferred over the current
           -- chain.
           --
           -- The suffixes all fork off from the current chain within @k@
           -- blocks, so it satisfies the precondition of 'preferCandidate'.
-            fmap
+          . fmap
               ( filter
                   ( preferAnchoredCandidate (bcfg chainSelEnv) curChain
                   . Diff.getSuffix
@@ -770,11 +787,16 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     -- | How many extra blocks to select at most after the tip of @newBlockFrag@
     -- according to the LoE.
     --
-    -- In no case the selection is allowed to be extended by more than k blocks.
-    -- We don't control from what chain those blocks would be selected at this
-    -- point. If we allowed more than k blocks, the immutable tip could enter an
-    -- adversarial branch.
+    -- There are two cases to consider:
     --
+    -- 1. If @newBlockFrag@ and @loeFrag@ are on the same chain, then we cannot
+    --    select more than @loeLimit@ blocks after @loeFrag@.
+    --
+    -- 2. If @newBlockFrag@ and @loeFrag@ are on different chains, then we
+    --   cannot select more than @loeLimit@ blocks after their intersection.
+    --
+    -- In any case, 'Nothing' is returned if @newBlockFrag@ extends beyond
+    -- what LoE allows.
     computeLoEMaxExtra ::
          (HasHeader x, HeaderHash x ~ HeaderHash blk)
       => LoE (AnchoredFragment (Header blk))
@@ -784,13 +806,20 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ The fragment with the new block @b@ as its tip, with the same
          -- anchor as @curChain@.
       -> Maybe LoELimit
-    computeLoEMaxExtra (LoEEnabled loeFrag) newBlockFrag
-        | rollback > k  = Nothing
-        | otherwise = Just $ LoELimit $ k - rollback
-       where
-         d = Diff.diff newBlockFrag loeFrag
-         rollback = Diff.getRollback d
-
+    computeLoEMaxExtra (LoEEnabled loeFrag) newBlockFrag =
+        -- Both fragments are on the same chain
+        if loeSuffixLength == 0 || rollback == 0 then
+          if rollback > k + loeSuffixLength
+            then Nothing
+            else Just $ LoELimit $ k + loeSuffixLength - rollback
+        else
+          if rollback > k
+            then Nothing
+            else Just $ LoELimit $ k - rollback
+      where
+        d = Diff.diff newBlockFrag loeFrag
+        rollback = Diff.getRollback d
+        loeSuffixLength = fromIntegral $ AF.length (Diff.getSuffix d)
     computeLoEMaxExtra LoEDisabled _ =
       Just LoEUnlimited
 
