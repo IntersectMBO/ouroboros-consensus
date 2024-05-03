@@ -45,6 +45,7 @@ import qualified Cardano.Ledger.EpochBoundary as SL
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (..))
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Ledger.Shelley.Core as LC
+import           Cardano.Ledger.Shelley.LedgerState (AccountState)
 import qualified Cardano.Ledger.Shelley.LedgerState as SL (RewardAccounts,
                      newEpochStateGovStateL)
 import qualified Cardano.Ledger.Shelley.PParams as SL (emptyPPPUpdates)
@@ -283,6 +284,9 @@ data instance BlockQuery (ShelleyBlock proto era) :: Type -> Type where
     => Set (SL.Credential 'SL.Staking (EraCrypto era))
     -> BlockQuery (ShelleyBlock proto era) (VoteDelegatees (EraCrypto era))
 
+  GetAccountState
+    :: BlockQuery (ShelleyBlock proto era) AccountState
+
   -- WARNING: please add new queries to the end of the list and stick to this
   -- order in all other pattern matches on queries. This helps in particular
   -- with the en/decoders, as we want the CBOR tags to be ordered.
@@ -434,6 +438,8 @@ instance (ShelleyCompatible proto era, ProtoCrypto proto ~ crypto)
           SL.queryCommitteeMembersState coldCreds hotCreds statuses st
         GetFilteredVoteDelegatees stakeCreds ->
           getFilteredVoteDelegatees st stakeCreds
+        GetAccountState ->
+          SL.queryAccountState st
     where
       lcfg    = configLedger $ getExtLedgerCfg cfg
       globals = shelleyLedgerGlobals lcfg
@@ -585,6 +591,8 @@ instance SameDepIndex (BlockQuery (ShelleyBlock proto era)) where
     | otherwise
     = Nothing
   sameDepIndex GetFilteredVoteDelegatees {} _ = Nothing
+  sameDepIndex GetAccountState {} GetAccountState {} = Just Refl
+  sameDepIndex GetAccountState {} _ = Nothing
 
 deriving instance Eq   (BlockQuery (ShelleyBlock proto era) result)
 deriving instance Show (BlockQuery (ShelleyBlock proto era) result)
@@ -620,6 +628,7 @@ instance ShelleyCompatible proto era => ShowQuery (BlockQuery (ShelleyBlock prot
       GetDRepStakeDistr {}                       -> show
       GetCommitteeMembersState {}                -> show
       GetFilteredVoteDelegatees {}               -> show
+      GetAccountState {}                         -> show
 
 -- | Is the given query supported by the given 'ShelleyNodeToClientVersion'?
 querySupportedVersion :: BlockQuery (ShelleyBlock proto era) result -> ShelleyNodeToClientVersion -> Bool
@@ -653,6 +662,7 @@ querySupportedVersion = \case
     GetDRepStakeDistr {}                       -> (>= v8)
     GetCommitteeMembersState {}                -> (>= v8)
     GetFilteredVoteDelegatees {}               -> (>= v8)
+    GetAccountState {}                         -> (>= v8)
     -- WARNING: when adding a new query, a new @ShelleyNodeToClientVersionX@
     -- must be added. See #2830 for a template on how to do this.
   where
@@ -774,6 +784,8 @@ encodeShelleyQuery query = case query of
       CBOR.encodeListLen 4 <> CBOR.encodeWord8 27 <> toCBOR coldCreds <> toCBOR hotCreds <> LC.toEraCBOR @era statuses
     GetFilteredVoteDelegatees stakeCreds ->
       CBOR.encodeListLen 2 <> CBOR.encodeWord8 28 <> LC.toEraCBOR @era stakeCreds
+    GetAccountState ->
+      CBOR.encodeListLen 1 <> CBOR.encodeWord8 29
 
 decodeShelleyQuery ::
      forall era proto. ShelleyBasedEra era
@@ -830,6 +842,7 @@ decodeShelleyQuery = do
         return $ SomeSecond $ GetCommitteeMembersState coldCreds hotCreds statuses
       (2, 28) -> requireCG $ do
         SomeSecond . GetFilteredVoteDelegatees <$> LC.fromEraCBOR @era
+      (1, 29) ->             return $ SomeSecond GetAccountState
       _       -> failmsg "invalid"
 
 encodeShelleyResult ::
@@ -866,6 +879,7 @@ encodeShelleyResult v query = case query of
     GetDRepStakeDistr {}                       -> LC.toEraCBOR @era
     GetCommitteeMembersState {}                -> LC.toEraCBOR @era
     GetFilteredVoteDelegatees {}               -> LC.toEraCBOR @era
+    GetAccountState {}                         -> LC.toEraCBOR @era
 
 decodeShelleyResult ::
      forall proto era result. ShelleyCompatible proto era
@@ -902,6 +916,7 @@ decodeShelleyResult v query = case query of
     GetDRepStakeDistr {}                       -> LC.fromEraCBOR @era
     GetCommitteeMembersState {}                -> LC.fromEraCBOR @era
     GetFilteredVoteDelegatees {}               -> LC.fromEraCBOR @era
+    GetAccountState {}                         -> LC.fromEraCBOR @era
 
 currentPParamsEnDecoding ::
      forall era s.
