@@ -671,10 +671,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
               return $ AF.fromOldestFirst curHead (hdr : hdrs)
 
         let chainDiffs = NE.nonEmpty
-              $ NE.filter ( preferAnchoredCandidate (bcfg chainSelEnv) curChain
-                          . Diff.getSuffix
-                          )
-              $ fmap Diff.extend candidates
+              $ map Diff.extend
+              $ NE.filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain)
+                candidates
         -- All candidates are longer than the current chain, so they will be
         -- preferred over it, /unless/ the block we just added is an EBB,
         -- which has the same 'BlockNo' as the block before it, so when
