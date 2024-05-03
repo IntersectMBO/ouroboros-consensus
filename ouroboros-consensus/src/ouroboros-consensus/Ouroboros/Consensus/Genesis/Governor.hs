@@ -34,7 +34,7 @@ module Ouroboros.Consensus.Genesis.Governor (
   , updateLoEFragUnconditional
   ) where
 
-import           Control.Monad (guard)
+import           Control.Monad (guard, when)
 import           Control.Tracer (Tracer, traceWith)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_, toList)
@@ -163,8 +163,11 @@ runGdd loEUpdater varLoEFrag chainDb getTrigger =
         curLedger <- ChainDB.getCurrentLedger chainDb
         pure (newTrigger, curChain, curLedger)
       loeFrag <- updateLoEFrag loEUpdater curChain curLedger
-      atomically $ writeTVar varLoEFrag loeFrag
-      triggerChainSelectionAsync chainDb
+      oldLoEFrag <- atomically $ swapTVar varLoEFrag loeFrag
+      -- The chain selection only depends on the LoE tip, so there
+      -- is no point in retriggering it if the LoE tip hasn't changed.
+      when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
+        triggerChainSelectionAsync chainDb
       spin newTrigger
 
 data DensityBounds blk =
