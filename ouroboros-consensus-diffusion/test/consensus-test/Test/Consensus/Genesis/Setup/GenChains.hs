@@ -9,6 +9,7 @@
 module Test.Consensus.Genesis.Setup.GenChains (
     GenesisTest (..)
   , genChains
+  , genChainsWithExtraHonestPeers
   ) where
 
 import           Cardano.Slotting.Time (SlotLength, getSlotLength,
@@ -95,6 +96,9 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
         let H.ChainSchema _ v = A.uniformAdversarialChain (Just alternativeAsc) testRecipeA'' seed
         pure $ Just (prefixCount, Vector.toList (getVector v))
 
+genChains :: QC.Gen Word -> QC.Gen (GenesisTest TestBlock ())
+genChains  = genChainsWithExtraHonestPeers (pure 0)
+
 -- | Random generator for a block tree. The block tree contains one trunk (the
 -- “honest” chain) and as many branches as given as a parameter (the
 -- “alternative” chains or “bad” chains). For instance, one such tree could be
@@ -104,8 +108,10 @@ genAlternativeChainSchema (testRecipeH, arHonest) =
 --     trunk: O─────1──2──3──4─────5──6──7
 --                     │           ╰─────6
 --                     ╰─────3──4─────5
-genChains :: QC.Gen Word -> QC.Gen (GenesisTest TestBlock ())
-genChains genNumForks = do
+-- For now, the @extraHonestPeers@ generator is only used to fill the GenesisTest field.
+-- However, in the future it could also be used to generate "short forks" near the tip of the trunk.
+genChainsWithExtraHonestPeers :: QC.Gen Word -> QC.Gen Word -> QC.Gen (GenesisTest TestBlock ())
+genChainsWithExtraHonestPeers genNumExtraHonest genNumForks = do
   (asc, honestRecipe, someHonestChainSchema) <- genHonestChainSchema
 
   H.SomeHonestChainSchema _ _ honestChainSchema <- pure someHonestChainSchema
@@ -117,6 +123,7 @@ genChains genNumForks = do
       HonestRecipe (Kcp kcp) (Scg scg) delta _len = honestRecipe
 
   numForks <- genNumForks
+  gtExtraHonestPeers <- genNumExtraHonest
   alternativeChainSchemas <- replicateM (fromIntegral numForks) (genAlternativeChainSchema (honestRecipe, honestChainSchema))
   pure $ GenesisTest {
     gtSecurityParam = SecurityParam (fromIntegral kcp),
@@ -132,6 +139,7 @@ genChains genNumForks = do
     -- would make for interesting tests.
     gtCSJParams = CSJParams $ fromIntegral scg,
     gtBlockTree = foldl' (flip BT.addBranch') (BT.mkTrunk goodChain) $ zipWith (genAdversarialFragment goodBlocks) [1..] alternativeChainSchemas,
+    gtExtraHonestPeers,
     gtSchedule = ()
     }
 

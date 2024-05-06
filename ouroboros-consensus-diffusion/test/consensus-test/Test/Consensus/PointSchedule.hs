@@ -428,6 +428,13 @@ data GenesisTest blk schedule = GenesisTest
     gtLoPBucketParams    :: LoPBucketParams,
     gtCSJParams          :: CSJParams,
     gtSlotLength         :: SlotLength,
+    -- | The number of extra honest peers we want in the test.
+    -- It is stored here for convenience, and because it may affect schedule and block tree generation.
+    --
+    -- There will be at most one adversarial peer per alternative branch in the block tree
+    -- (exactly one per branch if no adversary does a rollback),
+    -- and `1 + gtExtraHonestPeers` honest peers.
+    gtExtraHonestPeers   :: Word,
     gtSchedule           :: schedule
   }
 
