@@ -2,8 +2,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
 module Test.Consensus.PointSchedule.Shrinking (
-    shrinkByRemovingAdversaries
     -- | Exported only for testing (that is, checking the properties of the function)
+    shrinkByRemovingAdversaries
   , shrinkHonestPeer
   , shrinkPeerSchedules
   ) where
@@ -11,7 +11,9 @@ module Test.Consensus.PointSchedule.Shrinking (
 import           Control.Monad.Class.MonadTime.SI (DiffTime, Time, addTime,
                      diffTime)
 import           Data.Containers.ListUtils (nubOrd)
+import           Data.Function ((&))
 import           Data.Functor ((<&>))
+import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe, maybeToList)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
@@ -22,7 +24,7 @@ import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule (GenesisTest (..),
                      GenesisTestFull, PeerSchedule, PeersSchedule,
                      peerSchedulesBlocks)
-import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..))
+import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock, isAncestorOf,
@@ -38,16 +40,19 @@ shrinkPeerSchedules ::
   [GenesisTestFull TestBlock]
 shrinkPeerSchedules genesisTest _stateView =
   let trimmedBlockTree sch = trimBlockTree' sch (gtBlockTree genesisTest)
-      shrunkOthers = shrinkOtherPeers shrinkPeerSchedule (gtSchedule genesisTest) <&>
-        \shrunkSchedule -> genesisTest
-          { gtSchedule = shrunkSchedule
-          , gtBlockTree = trimmedBlockTree shrunkSchedule
-          }
-      shrunkHonest = shrinkHonestPeer
-        (gtSchedule genesisTest)
-        -- No need to update the tree here, shrinking the honest peer never discards blocks
-        <&> \shrunkSchedule -> genesisTest {gtSchedule = shrunkSchedule}
-  in shrunkOthers ++ shrunkHonest
+      shrunkAdversarialPeers =
+        shrinkAdversarialPeers shrinkPeerSchedule (gtSchedule genesisTest)
+          <&> \shrunkSchedule ->
+            genesisTest
+              { gtSchedule = shrunkSchedule,
+                gtBlockTree = trimmedBlockTree shrunkSchedule
+              }
+      shrunkHonestPeers =
+        shrinkHonestPeers
+          (gtSchedule genesisTest)
+          -- No need to update the tree here, shrinking the honest peers never discards blocks
+          <&> \shrunkSchedule -> genesisTest {gtSchedule = shrunkSchedule}
+   in shrunkAdversarialPeers ++ shrunkHonestPeers
 
 -- | Shrink a 'Peers PeerSchedule' by removing adversaries. This does not affect
 -- the honest peer; and it does not remove ticks from the schedules of the
@@ -57,7 +62,7 @@ shrinkByRemovingAdversaries ::
   StateView TestBlock ->
   [GenesisTestFull TestBlock]
 shrinkByRemovingAdversaries genesisTest _stateView =
-  shrinkOtherPeers (const []) (gtSchedule genesisTest) <&> \shrunkSchedule ->
+  shrinkAdversarialPeers (const []) (gtSchedule genesisTest) <&> \shrunkSchedule ->
     let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
      in (genesisTest{gtSchedule = shrunkSchedule, gtBlockTree = trimmedBlockTree})
 
@@ -68,25 +73,45 @@ shrinkPeerSchedule = shrinkList (const [])
 
 -- | Shrink the 'others' field of a 'Peers' structure by attempting to remove
 -- peers or by shrinking their values using the given shrinking function.
-shrinkOtherPeers :: (a -> [a]) -> Peers a -> [Peers a]
-shrinkOtherPeers shrink Peers{honest, others} =
-  map (Peers honest . Map.fromList) $
-    shrinkList (traverse (traverse shrink)) $ Map.toList others
+shrinkAdversarialPeers :: (a -> [a]) -> Peers a -> [Peers a]
+shrinkAdversarialPeers shrink Peers {honestPeers, adversarialPeers} =
+  map (Peers honestPeers . Map.fromList) $
+    shrinkList (traverse shrink) $
+      Map.toList adversarialPeers
 
--- | Shrinks an honest peer by removing ticks.
--- Because we are manipulating `PeerSchedule` at that point, there is no proper
--- notion of a tick. Instead, we remove points of the honest `PeerSchedule`,
--- and move all other points sooner, including those on the adversarial schedule.
--- We check that this operation neither changes the final state of the honest peer,
--- nor that it removes points from the adversarial schedules.
-shrinkHonestPeer :: Peers (PeerSchedule blk) -> [Peers (PeerSchedule blk)]
-shrinkHonestPeer Peers{honest, others} = do
+-- | Shrinks honest peers by removing ticks. Because we are manipulating
+-- 'PeerSchedule' at this point, there is no proper notion of a tick. Instead,
+-- we remove points from the honest 'PeerSchedule', and move all other points
+-- sooner, including those on the other schedules. We check that this operation
+-- neither changes the final state of the honest peer, nor removes points from
+-- the other schedules.
+shrinkHonestPeers :: Peers (PeerSchedule blk) -> [Peers (PeerSchedule blk)]
+shrinkHonestPeers Peers {honestPeers, adversarialPeers} =
+  Map.toList honestPeers
+    & concatMap
+      ( \(n, schedule) ->
+          shrinkTheHonestPeer schedule (Map.delete n honestPeers) adversarialPeers
+            & map
+              ( \(schedule', otherHonestPeers', otherAdversarialPeers') ->
+                  Peers
+                    { honestPeers = Map.insert n schedule' otherHonestPeers',
+                      adversarialPeers = otherAdversarialPeers'
+                    }
+              )
+      )
+
+shrinkTheHonestPeer ::
+  PeerSchedule blk ->
+  Map Int (PeerSchedule blk) ->
+  Map Int (PeerSchedule blk) ->
+  [(PeerSchedule blk, Map Int (PeerSchedule blk), Map Int (PeerSchedule blk))]
+shrinkTheHonestPeer theSchedule otherHonestPeers otherAdversarialPeers = do
   (at, speedUpBy) <- splits
-  (honest', others') <- maybeToList $ do
-    honest' <- traverse (speedUpHonestSchedule at speedUpBy) honest
-    others' <- mapM (traverse (speedUpAdversarialSchedule at speedUpBy)) others
-    pure (honest', others')
-  pure $ Peers honest' others'
+  maybeToList $ do
+    theSchedule' <- speedUpTheSchedule at speedUpBy theSchedule
+    otherHonestPeers' <- mapM (speedUpOtherSchedule at speedUpBy) otherHonestPeers
+    otherAdversarialPeers' <- mapM (speedUpOtherSchedule at speedUpBy) otherAdversarialPeers
+    pure (theSchedule', otherHonestPeers', otherAdversarialPeers')
   where
     -- | A list of non-zero time intervals between successive points of the honest schedule
     splits :: [(Time, DiffTime)]
@@ -96,15 +121,29 @@ shrinkHonestPeer Peers{honest, others} = do
           then Nothing
           else Just (t1, diffTime t2 t1)
       )
-      (zip (value honest) (drop 1 $ value honest))
+      (zip theSchedule (drop 1 theSchedule))
 
--- | Speeds up an honest schedule after `at` time, by `speedUpBy`.
--- This "speeding up" is done by removing `speedUpBy` to all points after `at`,
--- and removing those points if they fall before `at`. We check that the operation
--- doesn't change the final state of the peer, i.e. it doesn't remove all TP, HP, and BP
--- in the sped up part.
-speedUpHonestSchedule :: Time -> DiffTime -> PeerSchedule blk -> Maybe (PeerSchedule blk)
-speedUpHonestSchedule at speedUpBy sch =
+-- | For testing purposes only. Assumes there is exactly one honest peer and
+-- shrinks it.
+shrinkHonestPeer :: PeersSchedule blk -> [PeersSchedule blk]
+shrinkHonestPeer Peers {honestPeers, adversarialPeers} =
+  shrinkTheHonestPeer (honestPeers Map.! 1) Map.empty adversarialPeers
+    & map
+      ( \(schedule', _, otherAdversarialPeers') ->
+          Peers
+            { honestPeers = Map.singleton 1 schedule',
+              adversarialPeers = otherAdversarialPeers'
+            }
+      )
+
+-- | Speeds up _the_ schedule (that is, the one that we are actually trying to
+-- speed up) after `at` time, by `speedUpBy`. This "speeding up" is done by
+-- removing `speedUpBy` to all points after `at`, and removing those points if
+-- they fall before `at`. We check that the operation doesn't change the final
+-- state of the peer, i.e. it doesn't remove all TP, HP, and BP in the sped up
+-- part.
+speedUpTheSchedule :: Time -> DiffTime -> PeerSchedule blk -> Maybe (PeerSchedule blk)
+speedUpTheSchedule at speedUpBy sch =
   if stillValid then Just $ beforeSplit ++ spedUpSchedule else Nothing
   where
     (beforeSplit, afterSplit) = span ((< at) . fst) sch
@@ -120,12 +159,12 @@ speedUpHonestSchedule at speedUpBy sch =
     hasHP = any (\case (_, ScheduleHeaderPoint _) -> True; _ -> False)
     hasBP = any (\case (_, ScheduleBlockPoint  _) -> True; _ -> False)
 
--- | Speeds up an adversarial schedule after `at` time, by `speedUpBy`.
--- This "speeding up" is done by removing `speedUpBy` to all points after `at`.
--- We check that the schedule had no points between `at` and `at + speedUpBy`.
--- We also keep the last point where it is, so that the end time stays the same.
-speedUpAdversarialSchedule :: Time -> DiffTime -> PeerSchedule blk -> Maybe (PeerSchedule blk)
-speedUpAdversarialSchedule at speedUpBy sch =
+-- | Speeds up the other schedules after `at` time, by `speedUpBy`. This
+-- "speeding up" is done by removing `speedUpBy` to all points after `at`. We
+-- check that the schedule had no points between `at` and `at + speedUpBy`. We
+-- also keep the last point where it is, so that the end time stays the same.
+speedUpOtherSchedule :: Time -> DiffTime -> PeerSchedule blk -> Maybe (PeerSchedule blk)
+speedUpOtherSchedule at speedUpBy sch =
   if losesPoint then Nothing else Just $ beforeSplit ++ spedUpSchedule ++ lastPoint
   where
     (beforeSplit, afterSplit) = span ((< at) . fst) sch
