@@ -168,8 +168,7 @@ runGdd loEUpdater varLoEFrag chainDb getTrigger =
         curLedger <- ChainDB.getCurrentLedger chainDb
         pure (newTrigger, curChain, curLedger)
       loeFrag <- updateLoEFrag loEUpdater curChain curLedger
-      oldLoEFrag <- atomically $
-        readTVar varLoEFrag <* writeTVar varLoEFrag loeFrag
+      oldLoEFrag <- atomically $ swapTVar varLoEFrag loeFrag
       -- The chain selection only depends on the LoE tip, so there
       -- is no point in retriggering it if the LoE tip hasn't changed.
       when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
