@@ -708,15 +708,15 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         curHead     = AF.headAnchor curChain
 
     -- Either frag extends loe or loe extends frag
+    --
+    -- PRECONDITION: @AF.withinFragmentBounds (AF.anchorPoint frag) loe@
     followsLoEFrag :: LoE (AnchoredFragment (Header blk))
                    -> AnchoredFragment (Header blk)
                    -> Bool
     followsLoEFrag LoEDisabled _ = True
     followsLoEFrag (LoEEnabled loe) frag =
-      case AF.intersect frag loe of
-        Just (_, _, AF.Empty{}, _) -> True
-        Just (_, _, _, AF.Empty{}) -> True
-        _                          -> False
+         AF.withinFragmentBounds (AF.headPoint loe) frag
+      || AF.withinFragmentBounds (AF.headPoint frag) loe
 
     -- | We have found a 'ChainDiff' through the VolatileDB connecting the new
     -- block to the current chain. We'll call the intersection/anchor @x@.
