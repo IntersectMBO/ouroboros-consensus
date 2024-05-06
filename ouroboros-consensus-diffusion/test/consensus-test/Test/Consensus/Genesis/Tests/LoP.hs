@@ -22,7 +22,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers, mkPeers,
+import           Test.Consensus.PointSchedule.Peers (Peers, peers',
                      peersOnlyHonest)
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
@@ -30,6 +30,7 @@ import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.PartialAccessors
 import           Test.Util.TestEnv (adjustQuickCheckTests)
 
 tests :: TestTree
@@ -212,27 +213,18 @@ prop_delayAttack lopEnabled =
            in selectedCorrect && exceptionsCorrect
       )
   where
-    getOnlyBranch :: BlockTree blk -> BlockTreeBranch blk
-    getOnlyBranch BlockTree {btBranches} = case btBranches of
-      [branch] -> branch
-      _        -> error "tree must have exactly one alternate branch"
-
     delaySchedule :: (HasHeader blk) => BlockTree blk -> Peers (PeerSchedule blk)
     delaySchedule tree =
-      let trunkTip = case btTrunk tree of
-            (AF.Empty _)       -> error "tree must have at least one block"
-            (_ AF.:> tipBlock) -> tipBlock
+      let trunkTip = getTrunkTip tree
           branch = getOnlyBranch tree
           intersectM = case btbPrefix branch of
             (AF.Empty _)       -> Nothing
             (_ AF.:> tipBlock) -> Just tipBlock
-          branchTip = case btbFull branch of
-            (AF.Empty _) -> error "alternate branch must have at least one block"
-            (_ AF.:> tipBlock) -> tipBlock
-       in mkPeers
+          branchTip = getOnlyBranchTip tree
+       in peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain.
-            ( (Time 0, scheduleTipPoint trunkTip) : case intersectM of
+            [ (Time 0, scheduleTipPoint trunkTip) : case intersectM of
                 Nothing ->
                   [ (Time 0.5, scheduleHeaderPoint trunkTip),
                     (Time 0.5, scheduleBlockPoint trunkTip)
@@ -243,7 +235,7 @@ prop_delayAttack lopEnabled =
                     (Time 5, scheduleHeaderPoint trunkTip),
                     (Time 5, scheduleBlockPoint trunkTip)
                   ]
-            )
+            ]
             -- Advertise the alternate branch early, but don't serve it
             -- past the intersection, and wait for LoP bucket.
             [ (Time 0, scheduleTipPoint branchTip) : case intersectM of

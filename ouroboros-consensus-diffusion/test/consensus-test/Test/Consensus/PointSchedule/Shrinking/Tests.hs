@@ -11,7 +11,7 @@ import           Test.Consensus.Genesis.Setup (genChains)
 import           Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
 import           Test.Consensus.PointSchedule (PeerSchedule, PeersSchedule,
                      prettyPeersSchedule)
-import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..))
+import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.Consensus.PointSchedule.Shrinking (shrinkHonestPeer)
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import           Test.QuickCheck (Property, conjoin, counterexample)
@@ -45,7 +45,7 @@ lastM [a]    = Just a
 lastM (_:ps) = lastM ps
 
 samePeers :: PeersSchedule blk -> PeersSchedule blk -> Bool
-samePeers sch1 sch2 = (keys $ others sch1) == (keys $ others sch2)
+samePeers sch1 sch2 = (keys $ adversarialPeers sch1) == (keys $ adversarialPeers sch2)
 
 -- | Checks whether at least one peer schedule in the second given peers schedule
 -- is shorter than its corresponding one in the fist given peers schedule. “Shorter”
@@ -84,8 +84,8 @@ doesNotRemoveAdversarialPoints original shrunk =
   samePeers original shrunk
   && (and $ zipWith
     (\oldSch newSch -> fmap snd oldSch == fmap snd newSch)
-    (toList $ (fmap value) $ others original)
-    (toList $ (fmap value) $ others shrunk)
+    (toList $ adversarialPeers original)
+    (toList $ adversarialPeers shrunk)
   )
 
 checkShrinkProperty :: (PeersSchedule TestBlock -> PeersSchedule TestBlock -> Bool) -> Property
