@@ -77,7 +77,7 @@ import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule.NodeState (NodeState (..),
                      genesisNodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
-                     mkPeers, peersList)
+                     peers', peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
                      (IsTrunk (IsBranch, IsTrunk), PeerScheduleParams (..),
                      SchedulePoint (..), defaultPeerScheduleParams, mergeOn,
@@ -97,8 +97,8 @@ prettyPeersSchedule ::
   PeersSchedule blk ->
   [String]
 prettyPeersSchedule peers =
-  [ "honest peers: 1"
-  , "adversaries: " ++ show (Map.size (others peers))
+  [ "honest peers: " ++ show (Map.size (honestPeers peers))
+  , "adversaries: " ++ show (Map.size (adversarialPeers peers))
   ] ++
   zipWith3
     (\number time peerState ->
@@ -195,7 +195,7 @@ longRangeAttack ::
 longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
   adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
-  pure (mkPeers honest [adv])
+  pure (peers' [honest] [adv])
   where
     honParams = defaultPeerScheduleParams {pspHeaderDelayInterval = (0.3, 0.4)}
     advParams = defaultPeerScheduleParams {pspTipDelayInterval = (0, 0.1)}
@@ -218,7 +218,7 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
   honestTip0 <- firstTip btTrunk
   honest <- mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
   advs <- takeBranches btBranches
-  pure (mkPeers honest advs)
+  pure (peers' [honest] advs)
   where
     takeBranches = \case
         [] -> pure []
@@ -340,7 +340,7 @@ uniformPointsWithDowntime (SecurityParam k) BlockTree {btTrunk, btBranches} g = 
   honest <- mkSchedule [(IsTrunk, [honestTip0, minusClamp (AF.length btTrunk) 1])] []
   advs <- takeBranches pauseSlot btBranches
   let (honest', advs') = syncTips honest advs
-  pure (mkPeers honest' advs')
+  pure (peers' [honest'] advs')
   where
     takeBranches pause = \case
         [] -> pure []
@@ -394,7 +394,6 @@ uniformPointsWithDowntime (SecurityParam k) BlockTree {btTrunk, btBranches} g = 
       pure defaultPeerScheduleParams {pspTipDelayInterval = (tipL, tipU), pspHeaderDelayInterval = (headerL, headerU)}
 
     rollbackProb = 0.2
-
 
 newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)
@@ -503,11 +502,9 @@ duplicateLastPoint d xs =
     in xs ++ [(addTime d t, p)]
 
 ensureScheduleDuration :: GenesisTest blk a -> PeersSchedule blk -> PeersSchedule blk
-ensureScheduleDuration gt Peers {honest, others} =
-  Peers {honest = extendHonest, others}
+ensureScheduleDuration gt peers =
+    duplicateLastPoint endingDelay <$> peers
   where
-    extendHonest = duplicateLastPoint endingDelay <$> honest
-
     endingDelay =
      let cst = gtChainSyncTimeouts gt
          bft = gtBlockFetchTimeouts gt
@@ -517,5 +514,4 @@ ensureScheduleDuration gt Peers {honest, others} =
            , busyTimeout bft
            , streamingTimeout bft
            ])
-
-    peerCount = 1 + length others
+    peerCount = length (peersList peers)

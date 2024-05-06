@@ -119,7 +119,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
     tips = branchTip <$> candidates
 
     candidates :: Map PeerId (AnchoredFragment TestBlock)
-    candidates = Map.fromList (zip (HonestPeer : enumerateAdversaries) chains)
+    candidates = Map.fromList (zip (HonestPeer 1 : enumerateAdversaries) chains)
 
     chains = btTrunk gtBlockTree : (btbFull <$> branches)
 
@@ -134,7 +134,7 @@ prop_densityDisconnectStatic =
     counterexample "it should disconnect some node" (not (null disconnect))
       .&&.
      counterexample "it should not disconnect the honest peer"
-       (HonestPeer `notElem` disconnect)
+       (HonestPeer 1 `notElem` disconnect)
   where
     mkState :: AnchoredFragment (Header TestBlock) -> ChainSyncState TestBlock
     mkState frag =
@@ -192,7 +192,7 @@ initCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
     fullTree = gtBlockTree
   }
   where
-    peers = mkPeers (peer trunk (AF.Empty (AF.headAnchor trunk)) (btTrunk gtBlockTree)) (branchPeer <$> branches)
+    peers = peers' [peer trunk (AF.Empty (AF.headAnchor trunk)) (btTrunk gtBlockTree)] (branchPeer <$> branches)
 
     branchPeer branch = peer (btbPrefix branch) (btbSuffix branch) (btbFull branch)
 
@@ -229,8 +229,8 @@ data UpdateEvent = UpdateEvent {
   }
 
 snapshotTree :: Peers EvolvingPeer -> BlockTree (Header TestBlock)
-snapshotTree Peers {honest, others} =
-  foldr addBranch' (mkTrunk (candidate (value honest))) (candidate . value <$> others)
+snapshotTree Peers {honestPeers, adversarialPeers} =
+  foldr addBranch' (mkTrunk (candidate (honestPeers Map.! 1))) (candidate <$> adversarialPeers)
 
 prettyUpdateEvent :: UpdateEvent -> [String]
 prettyUpdateEvent UpdateEvent {target, added, killed, bounds, tree, loeFrag, curChain} =
@@ -273,7 +273,7 @@ updatePeers ::
   UpdateEvent ->
   Either (MonotonicityResult, Peers EvolvingPeer) Evolution
 updatePeers (GenesisWindow sgen) peers killedBefore event@UpdateEvent {target, killed = killedNow}
-  | HonestPeer `Set.member` killedNow
+  | HonestPeer 1 `Set.member` killedNow
   = Left (HonestKilled, peers)
   | not (null violations)
   = Left (Nonmonotonic event, peers)
@@ -286,12 +286,12 @@ updatePeers (GenesisWindow sgen) peers killedBefore event@UpdateEvent {target, k
     violations = killedBefore \\ killedNow
 
     -- The new state if no violations were detected
-    evo@Evolution {peers = Peers {others = remaining}}
+    evo@Evolution {peers = Peers {adversarialPeers = remaining}}
       | targetExhausted
       -- If the target is done, reset the set of killed peers, since other peers
       -- may have lost only against the target.
       -- Remove the target from the active peers.
-      = Evolution {peers = peers {others = Map.delete target (others peers)}, killed = mempty}
+      = Evolution {peers = deletePeer target peers, killed = mempty}
       | otherwise
       -- Otherwise replace the killed peers with the current set
       = Evolution {peers, killed = killedNow}
@@ -311,11 +311,11 @@ updatePeers (GenesisWindow sgen) peers killedBefore event@UpdateEvent {target, k
 -- The selection will then be computed by taking up to k blocks after the immutable tip
 -- on this peer's candidate fragment.
 firstBranch :: Peers EvolvingPeer -> Peer EvolvingPeer
-firstBranch Peers {honest, others} =
+firstBranch peers =
   fromMaybe newest $
-  minimumBy (compare `on` forkAnchor) <$> nonEmpty (filter hasForked (toList others))
+  minimumBy (compare `on` forkAnchor) <$> nonEmpty (filter hasForked (toList (adversarialPeers'' peers)))
   where
-    newest = maximumBy (compare `on` (AF.headSlot . candidate . value)) (honest : toList others)
+    newest = maximumBy (compare `on` (AF.headSlot . candidate . value)) (toList (honestPeers'' peers) ++ toList (adversarialPeers'' peers))
     forkAnchor = fromWithOrigin 0 . AF.anchorToSlotNo . AF.anchor . forkSuffix . value
     hasForked Peer {value = EvolvingPeer {candidate, forkSlot}} =
       AF.headSlot candidate >= forkSlot
@@ -324,7 +324,7 @@ firstBranch Peers {honest, others} =
 -- for all peers, and then taking the earliest among the results.
 immutableTip :: Peers EvolvingPeer -> AF.Point (Header TestBlock)
 immutableTip peers =
-  minimum (lastHonest <$> toList (others peers))
+  minimum (lastHonest <$> toList (adversarialPeers'' peers))
   where
     lastHonest Peer {value = EvolvingPeer {candidate, forkSlot = NotOrigin forkSlot}} =
       AF.headPoint $
@@ -469,7 +469,7 @@ prop_densityDisconnectTriggersChainSel =
 
     ( \GenesisTest {gtBlockTree, gtSchedule} stateView@StateView {svTipBlock} ->
         let
-          othersCount = Map.size (others gtSchedule)
+          othersCount = Map.size (adversarialPeers gtSchedule)
           exnCorrect = case exceptionsByComponent ChainSyncClient stateView of
             [fromException -> Just DensityTooLow] -> True
             []                 | othersCount == 0 -> True
@@ -508,13 +508,13 @@ prop_densityDisconnectTriggersChainSel =
           advTip = case btbFull branch of
             (AF.Empty _) -> error "alternate branch must have at least one block"
             (_ AF.:> tipBlock) -> tipBlock
-       in mkPeers
+       in peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain up to the intersection.
-            [ (Time 0, scheduleTipPoint trunkTip),
+            [[(Time 0, scheduleTipPoint trunkTip),
               (Time 0.5, scheduleHeaderPoint trunkTip),
               (Time 0.5, scheduleBlockPoint trunkTip)
-            ]
+            ]]
             -- Advertise the alternate branch early, but wait for the honest
             -- node to have served its chain before disclosing the alternate
             -- branch is not dense enough.

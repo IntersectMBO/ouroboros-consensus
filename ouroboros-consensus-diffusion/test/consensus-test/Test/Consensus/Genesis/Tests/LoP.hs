@@ -23,7 +23,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers, mkPeers,
+import           Test.Consensus.PointSchedule.Peers (Peers, peers',
                      peersOnlyHonest)
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
@@ -230,10 +230,10 @@ prop_delayAttack lopEnabled =
           branchTip = case btbFull branch of
             (AF.Empty _) -> error "alternate branch must have at least one block"
             (_ AF.:> tipBlock) -> tipBlock
-       in mkPeers
+       in peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain.
-            ( (Time 0, scheduleTipPoint trunkTip) : case intersectM of
+            [ (Time 0, scheduleTipPoint trunkTip) : case intersectM of
                 Nothing ->
                   [ (Time 0.5, scheduleHeaderPoint trunkTip),
                     (Time 0.5, scheduleBlockPoint trunkTip)
@@ -244,7 +244,7 @@ prop_delayAttack lopEnabled =
                     (Time 5, scheduleHeaderPoint trunkTip),
                     (Time 5, scheduleBlockPoint trunkTip)
                   ]
-            )
+            ]
             -- Advertise the alternate branch early, but don't serve it
             -- past the intersection, and wait for LoP bucket.
             [ (Time 0, scheduleTipPoint branchTip) : case intersectM of

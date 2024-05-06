@@ -40,8 +40,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..),
-                     value)
+import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..))
 import           Test.Consensus.PointSchedule.Shrinking
                      (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -89,13 +88,13 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
   -- to the governor that the density is too low.
   longerThanGenesisWindow ==>
   conjoin [
-    counterexample "The honest peer was disconnected" (HonestPeer `notElem` disconnected),
+    counterexample "The honest peer was disconnected" (HonestPeer 1 `notElem` disconnected),
     counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
     property (isHonest immutableTipHash),
     immutableTipIsRecent
   ]
   where
-    advCount = Map.size (others (gtSchedule genesisTest))
+    advCount = Map.size (adversarialPeers (gtSchedule genesisTest))
 
     immutableTipIsRecent =
       counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
@@ -129,7 +128,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
       [] -> "No peers were disconnected"
       peers -> "Some peers were disconnected: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ value $ honest $ gtSchedule genesisTest
+    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ (Map.! 1) $ honestPeers $ gtSchedule genesisTest
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
@@ -212,7 +211,7 @@ prop_leashingAttackStalling =
     genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- ensureScheduleDuration genesisTest <$> genUniformSchedulePoints genesisTest
-      advs <- mapM (mapM dropRandomPoints) advs0
+      advs <- mapM dropRandomPoints advs0
       pure $ Peers honest advs
 
     disableBoringTimeouts gt =
@@ -270,9 +269,9 @@ prop_leashingAttackTimeLimited =
       let timeLimit = estimateTimeBound
             (gtChainSyncTimeouts genesisTest)
             (gtLoPBucketParams genesisTest)
-            (value honest)
-            (map value $ Map.elems advs0)
-          advs = fmap (fmap (takePointsUntil timeLimit)) advs0
+            (honest Map.! 1)
+            (Map.elems advs0)
+          advs = fmap (takePointsUntil timeLimit) advs0
           extendedHonest = extendScheduleUntil timeLimit <$> honest
       pure $ Peers extendedHonest advs
 

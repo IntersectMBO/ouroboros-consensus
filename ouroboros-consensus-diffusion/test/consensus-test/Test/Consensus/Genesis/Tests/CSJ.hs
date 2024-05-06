@@ -7,6 +7,7 @@ import           Control.Monad (replicateM)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Functor (($>))
 import           Data.List (nub)
+import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Ouroboros.Consensus.Block (blockSlot, succWithOrigin)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -22,8 +23,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
 import           Test.Consensus.PeerSimulator.StateView (StateView (..))
 import           Test.Consensus.PeerSimulator.Trace (TraceEvent (..))
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
-                     mkPeers)
+import           Test.Consensus.PointSchedule.Peers (Peers (..), peers')
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -70,7 +70,7 @@ prop_happyPath synchronized =
         otherHonests <- if synchronized
           then pure $ replicate numOthers honest
           else replicateM numOthers (genHonestSchedule gt)
-        pure $ gt $> mkPeers honest otherHonests
+        pure $ gt $> peers' [honest] otherHonests
     )
     ( defaultSchedulerConfig
       { scEnableCSJ = True
@@ -122,7 +122,7 @@ prop_happyPath synchronized =
     genHonestSchedule :: GenesisTest TestBlock () -> Gen (PeerSchedule TestBlock)
     genHonestSchedule gt = do
       ps <- genUniformSchedulePoints gt
-      pure $ value $ honest ps
+      pure $ honestPeers ps Map.! 1
 
     isNewerThanJumpSizeFromTip :: GenesisTestFull TestBlock -> Header TestBlock -> Bool
     isNewerThanJumpSizeFromTip gt hdr =

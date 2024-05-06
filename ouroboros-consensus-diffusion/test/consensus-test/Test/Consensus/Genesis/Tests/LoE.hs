@@ -20,7 +20,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers, mkPeers)
+import           Test.Consensus.PointSchedule.Peers (Peers, peers')
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
@@ -94,10 +94,10 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
           branchTip = case btbFull branch of
             (AF.Empty _) -> error "alternate branch must have at least one block"
             (_ AF.:> tipBlock) -> tipBlock
-       in mkPeers
+       in peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain.
-            ( (Time 0, scheduleTipPoint trunkTip) : case intersectM of
+            [ (Time 0, scheduleTipPoint trunkTip) : case intersectM of
                 Nothing ->
                   [ (Time 0.5, scheduleHeaderPoint trunkTip),
                     (Time 0.5, scheduleBlockPoint trunkTip)
@@ -108,7 +108,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
                     (Time 5, scheduleHeaderPoint trunkTip),
                     (Time 5, scheduleBlockPoint trunkTip)
                   ]
-            )
+            ]
             -- The one adversarial peer advertises and serves up to the
             -- intersection early, then waits more than the short wait timeout.
             [ (Time 0, scheduleTipPoint branchTip) : case intersectM of
