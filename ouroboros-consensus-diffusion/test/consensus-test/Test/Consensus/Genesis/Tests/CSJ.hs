@@ -5,7 +5,6 @@ module Test.Consensus.Genesis.Tests.CSJ (tests) where
 
 import           Control.Monad (replicateM)
 import           Data.Containers.ListUtils (nubOrd)
-import           Data.Functor (($>))
 import           Data.List (nub)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
@@ -63,14 +62,8 @@ tests =
 prop_happyPath :: Bool -> Property
 prop_happyPath synchronized =
   forAllGenesisTest
-    ( do
-        gt <- genChains $ pure 0
-        honest <- genHonestSchedule gt
-        numOthers <- choose (1, 3)
-        otherHonests <- if synchronized
-          then pure $ replicate numOthers honest
-          else replicateM numOthers (genHonestSchedule gt)
-        pure $ gt $> peers' [honest] otherHonests
+    ( genChains (pure 0) `enrichedWith`
+        ((=<< choose (2, 4)) . genHonestSchedules)
     )
     ( defaultSchedulerConfig
       { scEnableCSJ = True
@@ -119,10 +112,17 @@ prop_happyPath synchronized =
     -- | This might seem wasteful, as we discard generated adversarial schedules.
     -- It actually isn't, since we call it on trees that have no branches besides
     -- the trunk, so no adversaries are generated.
-    genHonestSchedule :: GenesisTest TestBlock () -> Gen (PeerSchedule TestBlock)
+    genHonestSchedules :: GenesisTest TestBlock () -> Int -> Gen (PeersSchedule TestBlock)
+    genHonestSchedules gt numberOfPeers = do
+      schedule <- genHonestSchedule gt
+      otherSchedules <- if synchronized
+        then pure $ replicate numberOfPeers schedule
+        else replicateM numberOfPeers (genHonestSchedule gt)
+      pure $ peers' (schedule : otherSchedules) []
+
     genHonestSchedule gt = do
-      ps <- genUniformSchedulePoints gt
-      pure $ honestPeers ps Map.! 1
+      Peers {honestPeers} <- genUniformSchedulePoints gt
+      pure $ honestPeers Map.! 1
 
     isNewerThanJumpSizeFromTip :: GenesisTestFull TestBlock -> Header TestBlock -> Bool
     isNewerThanJumpSizeFromTip gt hdr =
