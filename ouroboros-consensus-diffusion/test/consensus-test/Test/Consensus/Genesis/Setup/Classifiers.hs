@@ -252,8 +252,7 @@ scheduleClassifiers GenesisTest{gtSchedule = schedule} =
     rollbacks = hasRollback <$> schedule
 
     adversaryRollback = any id $ adversarialPeers rollbacks
-
-    honestRollback = honestPeers rollbacks Map.! 1
+    honestRollback = any id $ honestPeers rollbacks
 
     allAdversariesEmpty = all id $ adversarialPeers $ null <$> schedule
 

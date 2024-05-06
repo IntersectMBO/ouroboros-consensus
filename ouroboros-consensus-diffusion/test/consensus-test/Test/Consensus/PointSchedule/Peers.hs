@@ -25,6 +25,8 @@ module Test.Consensus.PointSchedule.Peers (
   , getPeerIds
   , honestPeers'
   , honestPeers''
+  , isAdversarialPeerId
+  , isHonestPeerId
   , peers'
   , peersFromPeerIdList
   , peersFromPeerIdList'
@@ -248,3 +250,11 @@ deletePeer (HonestPeer n) Peers {honestPeers, adversarialPeers} =
   Peers {honestPeers = Map.delete n honestPeers, adversarialPeers}
 deletePeer (AdversarialPeer n) Peers {honestPeers, adversarialPeers} =
   Peers {honestPeers, adversarialPeers = Map.delete n adversarialPeers}
+
+isHonestPeerId :: PeerId -> Bool
+isHonestPeerId (HonestPeer _) = True
+isHonestPeerId _              = False
+
+isAdversarialPeerId :: PeerId -> Bool
+isAdversarialPeerId (AdversarialPeer _) = True
+isAdversarialPeerId _                   = False

@@ -40,7 +40,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (PeerId (..), Peers (..))
+import           Test.Consensus.PointSchedule.Peers (Peers (..), isHonestPeerId)
 import           Test.Consensus.PointSchedule.Shrinking
                      (shrinkByRemovingAdversaries, shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -88,7 +88,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
   -- to the governor that the density is too low.
   longerThanGenesisWindow ==>
   conjoin [
-    counterexample "The honest peer was disconnected" (HonestPeer 1 `notElem` disconnected),
+    counterexample "An honest peer was disconnected" (not $ any isHonestPeerId disconnected),
     counterexample ("The immutable tip is not honest: " ++ show immutableTip) $
     property (isHonest immutableTipHash),
     immutableTipIsRecent

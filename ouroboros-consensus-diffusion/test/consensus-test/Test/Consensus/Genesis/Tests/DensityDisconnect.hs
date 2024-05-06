@@ -133,8 +133,8 @@ prop_densityDisconnectStatic =
     let (disconnect, _) = densityDisconnect sgen k (mkState <$> suffixes) suffixes loeFrag
     counterexample "it should disconnect some node" (not (null disconnect))
       .&&.
-     counterexample "it should not disconnect the honest peer"
-       (HonestPeer 1 `notElem` disconnect)
+     counterexample "it should not disconnect the honest peers"
+       (not $ any isHonestPeerId disconnect)
   where
     mkState :: AnchoredFragment (Header TestBlock) -> ChainSyncState TestBlock
     mkState frag =
