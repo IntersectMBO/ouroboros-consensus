@@ -23,6 +23,7 @@
 module Test.Consensus.PointSchedule (
     BlockFetchTimeout (..)
   , CSJParams (..)
+  , DowntimeParams (..)
   , ForecastRange (..)
   , GenesisTest (..)
   , GenesisTestFull
@@ -30,6 +31,7 @@ module Test.Consensus.PointSchedule (
   , LoPBucketParams (..)
   , PeerSchedule
   , PeersSchedule
+  , PointsGeneratorParams (..)
   , RunGenesisTestResult (..)
   , enrichedWith
   , ensureScheduleDuration
@@ -43,10 +45,10 @@ module Test.Consensus.PointSchedule (
   , prettyPeersSchedule
   , stToGen
   , uniformPoints
-  , uniformPointsWithDowntime
   ) where
 
 import           Cardano.Slotting.Time (SlotLength)
+import           Control.Monad (replicateM)
 import           Control.Monad.Class.MonadTime.SI (Time (Time), addTime,
                      diffTime)
 import           Control.Monad.ST (ST)
@@ -203,22 +205,45 @@ longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
 longRangeAttack _ _ =
   error "longRangeAttack can only deal with single adversary"
 
--- | Generate a schedule in which the trunk and branches are served by one peer each, using
--- a single tip point, without specifically assigned delay intervals like in
--- 'newLongRangeAttack'.
---
--- Include rollbacks in a percentage of adversaries, in which case that peer uses two branchs.
---
+data PointsGeneratorParams = PointsGeneratorParams {
+  pgpExtraHonestPeers :: Int,
+  pgpDowntime         :: DowntimeParams
+}
+
+data DowntimeParams = NoDowntime | DowntimeWithSecurityParam SecurityParam
+
 uniformPoints ::
   (StatefulGen g m, AF.HasHeader blk) =>
+  PointsGeneratorParams ->
   BlockTree blk ->
   g ->
   m (PeersSchedule blk)
-uniformPoints BlockTree {btTrunk, btBranches} g = do
+uniformPoints PointsGeneratorParams {pgpExtraHonestPeers, pgpDowntime} = case pgpDowntime of
+  NoDowntime                  -> uniformPointsWithExtraHonestPeers pgpExtraHonestPeers
+  DowntimeWithSecurityParam k -> uniformPointsWithExtraHonestPeersAndDowntime pgpExtraHonestPeers k
+
+-- | Generate a schedule in which the trunk is served by @pgpExtraHonestPeers + 1@ peers,
+-- and extra branches are served by one peer each, using a single tip point,
+-- without specifically assigned delay intervals like in 'newLongRangeAttack'.
+--
+-- Include rollbacks in a percentage of adversaries, in which case that peer uses two branchs.
+--
+uniformPointsWithExtraHonestPeers ::
+  (StatefulGen g m, AF.HasHeader blk) =>
+  Int ->
+  BlockTree blk ->
+  g ->
+  m (PeersSchedule blk)
+uniformPointsWithExtraHonestPeers
+    extraHonestPeers
+    BlockTree {btTrunk, btBranches}
+    g
+  = do
   honestTip0 <- firstTip btTrunk
-  honest <- mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
+  honests <- replicateM (extraHonestPeers + 1) $
+    mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
   advs <- takeBranches btBranches
-  pure (peers' [honest] advs)
+  pure (peers' honests advs)
   where
     takeBranches = \case
         [] -> pure []
@@ -305,16 +330,16 @@ bumpTips tips =
       = (tn, (t0, p))
     step ts a = (ts, a)
 
-syncTips :: [(Time, SchedulePoint blk)] -> [[(Time, SchedulePoint blk)]] -> ([(Time, SchedulePoint blk)], [[(Time, SchedulePoint blk)]])
-syncTips honest advs =
-  (bump honest, bump <$> advs)
+syncTips :: [[(Time, SchedulePoint blk)]] -> [[(Time, SchedulePoint blk)]] -> ([[(Time, SchedulePoint blk)]], [[(Time, SchedulePoint blk)]])
+syncTips honests advs =
+  (bump <$> honests, bump <$> advs)
   where
     bump = bumpTips earliestTips
     earliestTips = chooseEarliest <$> zipPadN (tipTimes <$> scheds)
-    scheds = honest : advs
+    scheds = honests <> advs
     chooseEarliest times = minimum (fromMaybe (Time 0) <$> times)
 
--- | This is a variant of 'uniformPoints' that uses multiple tip points, used to simulate node downtimes.
+-- | This is a variant of 'uniformPointsWithExtraHonestPeers' that uses multiple tip points, used to simulate node downtimes.
 -- Ultimately, this should be replaced by a redesign of the peer schedule generator that is aware of node liveness
 -- intervals.
 --
@@ -324,23 +349,30 @@ syncTips honest advs =
 -- The second tip is the last block of each branch.
 --
 -- Includes rollbacks in some schedules.
-uniformPointsWithDowntime ::
+uniformPointsWithExtraHonestPeersAndDowntime ::
   (StatefulGen g m, AF.HasHeader blk) =>
+  Int ->
   SecurityParam ->
   BlockTree blk ->
   g ->
   m (PeersSchedule blk)
-uniformPointsWithDowntime (SecurityParam k) BlockTree {btTrunk, btBranches} g = do
+uniformPointsWithExtraHonestPeersAndDowntime
+    extraHonestPeers
+    (SecurityParam k)
+    BlockTree {btTrunk, btBranches}
+    g
+  = do
   let
     kSlot = withOrigin 0 (fromIntegral . unSlotNo) (AF.headSlot (AF.takeOldest (fromIntegral k) btTrunk))
     midSlot = (AF.length btTrunk) `div` 2
     lowerBound = max kSlot midSlot
   pauseSlot <- SlotNo . fromIntegral <$> Random.uniformRM (lowerBound, AF.length btTrunk - 1) g
   honestTip0 <- firstTip pauseSlot btTrunk
-  honest <- mkSchedule [(IsTrunk, [honestTip0, minusClamp (AF.length btTrunk) 1])] []
+  honests <- replicateM (extraHonestPeers + 1) $
+    mkSchedule [(IsTrunk, [honestTip0, minusClamp (AF.length btTrunk) 1])] []
   advs <- takeBranches pauseSlot btBranches
-  let (honest', advs') = syncTips honest advs
-  pure (peers' [honest'] advs')
+  let (honests', advs') = syncTips honests advs
+  pure (peers' honests' advs')
   where
     takeBranches pause = \case
         [] -> pure []

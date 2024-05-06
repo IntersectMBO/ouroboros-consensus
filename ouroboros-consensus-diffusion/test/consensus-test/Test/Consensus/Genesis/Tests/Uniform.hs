@@ -160,7 +160,12 @@ prop_serveAdversarialBranches = forAllGenesisTest
     theProperty
 
 genUniformSchedulePoints :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
-genUniformSchedulePoints gt = stToGen (uniformPoints (gtBlockTree gt))
+genUniformSchedulePoints gt = stToGen (uniformPoints pointsGeneratorParams (gtBlockTree gt))
+  where
+    pointsGeneratorParams = PointsGeneratorParams
+      { pgpExtraHonestPeers = fromIntegral $ gtExtraHonestPeers gt
+      , pgpDowntime = NoDowntime
+      }
 
 -- Note [Leashing attacks]
 --
@@ -389,7 +394,7 @@ prop_downtime :: Property
 prop_downtime = forAllGenesisTest
 
     (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
-      ensureScheduleDuration gt <$> stToGen (uniformPointsWithDowntime (gtSecurityParam gt) (gtBlockTree gt)))
+      ensureScheduleDuration gt <$> stToGen (uniformPoints (pointsGeneratorParams gt) (gtBlockTree gt)))
 
     defaultSchedulerConfig
       { scEnableLoE = True
@@ -401,3 +406,9 @@ prop_downtime = forAllGenesisTest
     shrinkPeerSchedules
 
     theProperty
+
+  where
+    pointsGeneratorParams gt = PointsGeneratorParams
+      { pgpExtraHonestPeers = fromIntegral (gtExtraHonestPeers gt)
+      , pgpDowntime = DowntimeWithSecurityParam (gtSecurityParam gt)
+      }
