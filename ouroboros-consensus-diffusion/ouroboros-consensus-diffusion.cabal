@@ -266,6 +266,7 @@ test-suite consensus-test
     Test.Consensus.PointSchedule.SinglePeer
     Test.Consensus.PointSchedule.SinglePeer.Indices
     Test.Consensus.PointSchedule.Tests
+    Test.Util.PartialAccessors
     Test.Util.TersePrinting
 
   build-depends:

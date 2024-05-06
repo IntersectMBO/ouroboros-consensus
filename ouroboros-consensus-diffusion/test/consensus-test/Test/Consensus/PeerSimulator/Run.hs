@@ -16,6 +16,7 @@ import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
 import           Data.Foldable (for_)
 import           Data.Functor (void)
+import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
@@ -460,7 +461,7 @@ runPointSchedule ::
   m (StateView TestBlock)
 runPointSchedule schedulerConfig genesisTest tracer0 =
   withRegistry $ \registry -> do
-    peerSim <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
+    peerSim <- makePeerSimulatorResources tracer gtBlockTree (NonEmpty.fromList $ getPeerIds gtSchedule)
     lifecycle <- nodeLifecycle schedulerConfig genesisTest tracer registry peerSim
     (chainDb, stateViewTracers) <- runScheduler
       (Tracer $ traceWith tracer . TraceSchedulerEvent)
