@@ -80,7 +80,7 @@
 --
 -- Jumpers don't leak the Limit on Patience (LoP) bucket until they are promoted
 -- to dynamos or objectors. And the leaking is stopped as soon as they are
--- disengaged or demoted.
+-- demoted.
 --
 -- If a jumper refrains from answering to jumps, they will be disconnected with
 -- the 'intersectTimeout' (in 'ChainSyncTimeout').
@@ -186,9 +186,9 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 -- | Hooks for ChainSync jumping.
 data Jumping m blk = Jumping
   { -- | Get the next instruction to execute, which can be either to run normal
-    -- ChainSync or to jump to a given point. When the peer is a jumper and
-    -- there is no jump request, 'jgNextInstruction' blocks until a jump request
-    -- is made.
+    -- ChainSync, to jump to a given point, or to restart ChainSync. When the
+    -- peer is a jumper and there is no jump request, 'jgNextInstruction' blocks
+    -- until a jump request is made.
     jgNextInstruction   :: !(m (Instruction blk)),
 
     -- | To be called whenever the peer claims to have no more headers.
@@ -297,6 +297,9 @@ stripContext context = context {peer = (), handle = ()}
 -- to jump to follow a dynamo with the given fragment, or to restart ChainSync.
 data Instruction blk
   = RunNormally
+    -- | The restart instruction restarts the ChainSync protocol. This is
+    -- necessary when disengaging a peer of which we know no point that we
+    -- could set the intersection of the ChainSync server to.
   | Restart
   | -- | Jump to the tip of the given fragment.
     JumpInstruction !(JumpInstruction blk)
@@ -312,9 +315,9 @@ deriving anyclass instance
 
 data JumpInstruction blk
   = JumpTo !(JumpInfo blk)
-  | -- | Used to set the intersection of the servers of starting objectors.
-    -- Otherwise, the ChainSync server wouldn't know which headers to start
-    -- serving.
+  | -- | Used to set the intersection of the ChainSync servers of starting
+    -- objectors and dynamos. Otherwise, the ChainSync server wouldn't know
+    -- which headers to start serving.
     JumpToGoodPoint !(JumpInfo blk)
   deriving (Generic)
 

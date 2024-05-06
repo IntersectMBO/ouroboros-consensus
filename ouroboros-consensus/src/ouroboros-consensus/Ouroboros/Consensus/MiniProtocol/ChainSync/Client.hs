@@ -1157,8 +1157,10 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             Terminate -> terminateAfterDrain n $ AskedToTerminate
             _continue -> do
                 -- Wait until next jumping instruction, which can be either to
-                -- jump or to run normal ChainSync.
+                -- jumap, to run normal ChainSync, or to restart the ChainSync
+                -- client.
                 -- Pause LoP while waiting, we'll resume it if we get `RunNormally`
+                -- or `Restart`.
                 traceWith tracer TraceJumpingWaitingForNextInstruction
                 lbPause loPBucket
                 instruction <- Jumping.jgNextInstruction jumping
