@@ -70,35 +70,6 @@ import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
--- | Compute the fragment @loeFrag@ between the immutable tip and the
--- earliest intersection between @curChain@ and any of the @candidates@.
---
--- The immutable tip is the anchor of @curChain@.
---
--- The function also yields the suffixes of the intersection of @loeFrag@ with
--- every candidate fragment.
-sharedCandidatePrefix ::
-  GetHeader blk =>
-  AnchoredFragment (Header blk) ->
-  Map peer (AnchoredFragment (Header blk)) ->
-  (AnchoredFragment (Header blk), Map peer (AnchoredFragment (Header blk)))
-sharedCandidatePrefix curChain candidates =
-  stripCommonPrefix (AF.anchor curChain) immutableTipSuffixes
-  where
-    immutableTip = AF.anchorPoint curChain
-
-    splitAfterImmutableTip frag =
-      snd <$> AF.splitAfterPoint frag immutableTip
-
-    immutableTipSuffixes =
-      -- If a ChainSync client's candidate forks off before the
-      -- immutable tip, then this transaction is currently winning an
-      -- innocuous race versus the thread that will fatally raise
-      -- 'InvalidIntersection' within that ChainSync client, so it's
-      -- sound to pre-emptively discard their candidate from this
-      -- 'Map' via 'mapMaybe'.
-      Map.mapMaybe splitAfterImmutableTip candidates
-
 -- | A never ending computation that evaluates the GDD rule whenever
 -- the STM action @getTrigger@ yields a different result, writing the LoE
 -- fragment to @varLoEFrag@, and then triggering ChainSel to reprocess all
@@ -144,6 +115,108 @@ runGDDGovernor cfg tracer getHandles varLoEFrag chainDb getTrigger =
       when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
         triggerChainSelectionAsync chainDb
       spin newTrigger
+
+-- | Disconnect peers that lose density comparisons and recompute the LoE fragment.
+--
+-- Disconnecting peers causes candidate fragments to be removed, which causes
+-- the GDD governor to reevaluate GDD over and over until no more peers are
+-- disconnected.
+--
+-- @getHandles@ is the callback to get the handles that allow to disconnect
+-- from peers.
+--
+-- @curChain@ is the current chain selection.
+--
+-- @immutableLedgerSt@ is the current ledger state.
+--
+-- Yields the new LoE fragment.
+--
+evaluateGDD ::
+     forall m blk peer.
+     ( IOLike m
+     , Ord peer
+     , LedgerSupportsProtocol blk
+     , HasHardForkHistory blk
+     )
+  => TopLevelConfig blk
+  -> Tracer m (TraceGDDEvent peer blk)
+  -> STM m (Map peer (ChainSyncClientHandle m blk))
+  -> AnchoredFragment (Header blk)
+  -> ExtLedgerState blk
+  -> m (AnchoredFragment (Header blk))
+evaluateGDD cfg tracer getHandles curChain immutableLedgerSt = do
+    (states, candidates, candidateSuffixes, handles, loeFrag) <- atomically $ do
+      handles <- getHandles
+      states <- traverse (readTVar . cschState) handles
+      let
+        candidates = csCandidate <$> states
+        (loeFrag, candidateSuffixes) =
+          sharedCandidatePrefix curChain candidates
+      pure (states, candidates, candidateSuffixes, handles, loeFrag)
+
+    let msgen :: Maybe GenesisWindow
+        -- This could also use 'runWithCachedSummary' if deemed desirable.
+        msgen = eitherToMaybe $ runQuery qry summary
+          where
+            -- We use the Genesis window for the first slot /after/ the common
+            -- intersection. In particular, when the intersection is the last
+            -- slot of an era, we will use the Genesis window of the next era,
+            -- as all slots in the Genesis window reside in that next era.
+            slot    = succWithOrigin $ AF.headSlot loeFrag
+            qry     = qryFromExpr $ slotToGenesisWindow slot
+            summary =
+              hardForkSummary
+                (configLedger cfg)
+                -- Due to the cross-chain lemma (Property 17.3 in the Consensus
+                -- report) one could also use the ledger state at the tip of our
+                -- selection here (in which case this should never return
+                -- 'Nothing'), but this is subtle and maybe not desirable.
+                --
+                -- In any case, the immutable ledger state will also
+                -- /eventually/ catch up to the LoE tip, so @msgen@ won't be
+                -- 'Nothing' forever.
+                (ledgerState immutableLedgerSt)
+
+    whenJust msgen $ \sgen -> do
+      let
+        (losingPeers, bounds) =
+          densityDisconnect sgen (configSecurityParam cfg) states candidateSuffixes loeFrag
+        loeHead = AF.headAnchor loeFrag
+
+      traceWith tracer TraceGDDEvent {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
+
+      for_ losingPeers $ \peer -> cschGDDKill (handles Map.! peer)
+
+    pure loeFrag
+
+-- | Compute the fragment @loeFrag@ between the immutable tip and the
+-- earliest intersection between @curChain@ and any of the @candidates@.
+--
+-- The immutable tip is the anchor of @curChain@.
+--
+-- The function also yields the suffixes of the intersection of @loeFrag@ with
+-- every candidate fragment.
+sharedCandidatePrefix ::
+  GetHeader blk =>
+  AnchoredFragment (Header blk) ->
+  Map peer (AnchoredFragment (Header blk)) ->
+  (AnchoredFragment (Header blk), Map peer (AnchoredFragment (Header blk)))
+sharedCandidatePrefix curChain candidates =
+  stripCommonPrefix (AF.anchor curChain) immutableTipSuffixes
+  where
+    immutableTip = AF.anchorPoint curChain
+
+    splitAfterImmutableTip frag =
+      snd <$> AF.splitAfterPoint frag immutableTip
+
+    immutableTipSuffixes =
+      -- If a ChainSync client's candidate forks off before the
+      -- immutable tip, then this transaction is currently winning an
+      -- innocuous race versus the thread that will fatally raise
+      -- 'InvalidIntersection' within that ChainSync client, so it's
+      -- sound to pre-emptively discard their candidate from this
+      -- 'Map' via 'mapMaybe'.
+      Map.mapMaybe splitAfterImmutableTip candidates
 
 data DensityBounds blk =
   DensityBounds {
@@ -313,76 +386,3 @@ data TraceGDDEvent peer blk =
     loeHead           :: AF.Anchor (Header blk),
     sgen              :: GenesisWindow
   }
-
--- | Disconnect peers that lose density comparisons and recompute the LoE fragment.
---
--- Disconnecting peers causes candidate fragments to be removed, which causes
--- the GDD governor to reevaluate GDD over and over until no more peers are
--- disconnected.
---
--- @getHandles@ is the callback to get the handles that allow to disconnect
--- from peers.
---
--- @curChain@ is the current chain selection.
---
--- @immutableLedgerSt@ is the current ledger state.
---
--- Yields the new LoE fragment.
---
-evaluateGDD ::
-     forall m blk peer.
-     ( IOLike m
-     , Ord peer
-     , LedgerSupportsProtocol blk
-     , HasHardForkHistory blk
-     )
-  => TopLevelConfig blk
-  -> Tracer m (TraceGDDEvent peer blk)
-  -> STM m (Map peer (ChainSyncClientHandle m blk))
-  -> AnchoredFragment (Header blk)
-  -> ExtLedgerState blk
-  -> m (AnchoredFragment (Header blk))
-evaluateGDD cfg tracer getHandles curChain immutableLedgerSt = do
-    (states, candidates, candidateSuffixes, handles, loeFrag) <- atomically $ do
-      handles <- getHandles
-      states <- traverse (readTVar . cschState) handles
-      let
-        candidates = csCandidate <$> states
-        (loeFrag, candidateSuffixes) =
-          sharedCandidatePrefix curChain candidates
-      pure (states, candidates, candidateSuffixes, handles, loeFrag)
-
-    let msgen :: Maybe GenesisWindow
-        -- This could also use 'runWithCachedSummary' if deemed desirable.
-        msgen = eitherToMaybe $ runQuery qry summary
-          where
-            -- We use the Genesis window for the first slot /after/ the common
-            -- intersection. In particular, when the intersection is the last
-            -- slot of an era, we will use the Genesis window of the next era,
-            -- as all slots in the Genesis window reside in that next era.
-            slot    = succWithOrigin $ AF.headSlot loeFrag
-            qry     = qryFromExpr $ slotToGenesisWindow slot
-            summary =
-              hardForkSummary
-                (configLedger cfg)
-                -- Due to the cross-chain lemma (Property 17.3 in the Consensus
-                -- report) one could also use the ledger state at the tip of our
-                -- selection here (in which case this should never return
-                -- 'Nothing'), but this is subtle and maybe not desirable.
-                --
-                -- In any case, the immutable ledger state will also
-                -- /eventually/ catch up to the LoE tip, so @msgen@ won't be
-                -- 'Nothing' forever.
-                (ledgerState immutableLedgerSt)
-
-    whenJust msgen $ \sgen -> do
-      let
-        (losingPeers, bounds) =
-          densityDisconnect sgen (configSecurityParam cfg) states candidateSuffixes loeFrag
-        loeHead = AF.headAnchor loeFrag
-
-      traceWith tracer TraceGDDEvent {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
-
-      for_ losingPeers $ \peer -> cschGDDKill (handles Map.! peer)
-
-    pure loeFrag
