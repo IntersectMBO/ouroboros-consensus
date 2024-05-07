@@ -18,14 +18,16 @@
 -- The GDD governor is the component responsible for identifying and
 -- disconnecting peers offering sparser chains than the best. This has the
 -- effect of unblocking the Limit on Eagerness, since removing disagreeing
--- peers allows the current selection to advance.
+-- peers allows the current selection to advance. See
+-- 'Ouroboros.Consensus.Storage.ChainDB.API.LoE' for more details.
 --
 -- The GDD governor, invoked with 'runGDDGovernor', is supposed to run in a background
 -- thread. It evaluates candidate chains whenever they change, or whenever a
 -- peer claims to have no more headers, or whenever a peer starts sending
 -- headers beyond the forecast horizon.
 --
--- Whenever GDD disconnects peers, the chain selection is updated.
+-- Whenever GDD disconnects peers, and as a result the youngest header present
+-- in all candidate fragments changes, the chain selection is updated.
 --
 module Ouroboros.Consensus.Genesis.Governor (
     DensityBounds (..)
@@ -240,8 +242,14 @@ data DensityBounds blk =
 -- ChainSync instruction the peer sent, and whether the peer is idling (i.e. it
 -- sent @MsgAwaitReply@).
 --
--- @loeFrag@ is the fragment from the immutable tip to the first intersection
--- with a candidate fragment.
+-- @loeFrag@ is the fragment anchored at the immutable tip and ending in the
+-- LoE tip.
+--
+-- ChainSync jumping depends on this function to disconnect either of any two
+-- peers that offer different chains and provided a header in the last slot of
+-- the genesis window or later. Either of them should be disconnected, even if
+-- both of them are serving adversarial chains. See
+-- "Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping" for more details.
 --
 densityDisconnect ::
      ( Ord peer
@@ -327,6 +335,9 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       guard $ AF.lastPoint frag0 /= AF.lastPoint frag1
       -- peer1 offers more than k blocks or peer0 has sent all headers in the
       -- genesis window after the intersection (idling or not)
+      --
+      -- Checking for offersMoreThanK is important to avoid disconnecting
+      -- competing honest peers when the syncing node is nearly caught up.
       guard $ offersMoreThanK || lb0 == ub0
       -- peer1 has the same or better density than peer0
       -- If peer0 is idling, we assume no more headers will be sent.
@@ -338,6 +349,15 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- This matters to ChainSync jumping, where adversarial dynamo and
       -- objector could offer chains of equal density.
       guard $ lb1 >= (if idling0 then lb0 else ub0)
+
+      -- We disconnect peer0 if there is at least another peer peer1 with a
+      -- chain which is at least as good, and peer0 is either idling or there is
+      -- no extension to peer0's chain that can make it better than peer1's, and
+      -- peer1's has more than k headers or peer0 has sent all its headers in
+      -- the genesis window anchored at the intersection.
+      --
+      -- A chain is "as good as another" if it has at least as many headers in
+      -- the genesis window anchored at the intersection.
       pure peer0
 
     loeIntersectionSlot = AF.headSlot loeFrag
