@@ -23,7 +23,7 @@ import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Genesis.Governor (runGDDGovernor,
-                     updateLoEFragGenesis)
+                     evaluateGenesisGDD)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -367,7 +367,7 @@ startNode schedulerConfig genesisTest interval = do
   -- peer fragments than registered clients.
   BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry getCandidates
 
-  let gdd = updateLoEFragGenesis lrConfig (mkGDDTracerTestBlock lrTracer) (readTVar handles)
+  let gdd = evaluateGenesisGDD lrConfig (mkGDDTracerTestBlock lrTracer) (readTVar handles)
       gddTrigger = viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
   for_ lrLoEVar $ \ var -> do
       forkLinkedThread lrRegistry "LoE updater background" $
