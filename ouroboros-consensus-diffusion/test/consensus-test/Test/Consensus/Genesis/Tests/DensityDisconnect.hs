@@ -231,7 +231,7 @@ data UpdateEvent = UpdateEvent {
 
 snapshotTree :: Peers EvolvingPeer -> BlockTree (Header TestBlock)
 snapshotTree Peers {honestPeers, adversarialPeers} =
-  foldr addBranch' (mkTrunk (candidate (honestPeers Map.! 1))) (candidate <$> adversarialPeers)
+  foldr addBranch' (mkTrunk (candidate (getHonestPeer honestPeers))) (candidate <$> adversarialPeers)
 
 prettyUpdateEvent :: UpdateEvent -> [String]
 prettyUpdateEvent UpdateEvent {target, added, killed, bounds, tree, loeFrag, curChain} =

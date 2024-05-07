@@ -5,7 +5,6 @@ module Test.Consensus.Genesis.Tests.CSJ (tests) where
 
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (nub)
-import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
 import           Ouroboros.Consensus.Block (blockSlot, succWithOrigin)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
@@ -25,6 +24,7 @@ import           Test.Consensus.PointSchedule.Peers (Peers (..), peers')
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.PartialAccessors
 import           Test.Util.TestBlock (Header, TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize)
 
@@ -115,7 +115,7 @@ prop_happyPath synchronized =
     genDuplicatedHonestSchedule gt@GenesisTest{gtExtraHonestPeers} = do
       Peers {honestPeers} <- genUniformSchedulePoints gt
       pure $ peers'
-        (replicate (fromIntegral gtExtraHonestPeers + 1) (honestPeers Map.! 1))
+        (replicate (fromIntegral gtExtraHonestPeers + 1) (getHonestPeer honestPeers))
         []
 
     isNewerThanJumpSizeFromTip :: GenesisTestFull TestBlock -> Header TestBlock -> Bool

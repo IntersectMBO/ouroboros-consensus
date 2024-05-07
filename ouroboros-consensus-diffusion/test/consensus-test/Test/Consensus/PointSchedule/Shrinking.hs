@@ -27,6 +27,7 @@ import           Test.Consensus.PointSchedule (GenesisTest (..),
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import           Test.QuickCheck (shrinkList)
+import           Test.Util.PartialAccessors
 import           Test.Util.TestBlock (TestBlock, isAncestorOf,
                      isStrictAncestorOf)
 
@@ -127,7 +128,7 @@ shrinkTheHonestPeer theSchedule otherHonestPeers otherAdversarialPeers = do
 -- shrinks it.
 shrinkHonestPeer :: PeersSchedule blk -> [PeersSchedule blk]
 shrinkHonestPeer Peers {honestPeers, adversarialPeers} =
-  shrinkTheHonestPeer (honestPeers Map.! 1) Map.empty adversarialPeers
+  shrinkTheHonestPeer (getHonestPeer honestPeers) Map.empty adversarialPeers
     & map
       ( \(schedule', _, otherAdversarialPeers') ->
           Peers

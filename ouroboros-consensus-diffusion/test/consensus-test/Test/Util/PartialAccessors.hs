@@ -5,11 +5,13 @@
 -- We know they won't fail there, because we generated the structures
 -- with the correct properties.
 module Test.Util.PartialAccessors (
-    getOnlyBranch
+    getHonestPeer
+  , getOnlyBranch
   , getOnlyBranchTip
   , getTrunkTip
   ) where
 
+import qualified Data.Map as Map
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (HasHeader)
 import           Test.Consensus.BlockTree
@@ -30,3 +32,11 @@ getOnlyBranchTip BlockTree {btBranches} = case btBranches of
     (AF.Empty _)       -> error "alternate branch must have at least one block"
     (_ AF.:> tipBlock) -> tipBlock
   _ -> error "tree must have exactly one alternate branch"
+
+getHonestPeer :: Map.Map Int a -> a
+getHonestPeer honests =
+  if Map.size honests /= 1
+    then error "there must be exactly one honest peer"
+    else case Map.lookup 1 honests of
+      Nothing -> error "the only honest peer must have id 1"
+      Just p  -> p

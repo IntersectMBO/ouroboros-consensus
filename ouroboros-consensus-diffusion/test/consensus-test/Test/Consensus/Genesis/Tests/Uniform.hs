@@ -51,6 +51,7 @@ import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.PartialAccessors
 import           Test.Util.QuickCheck (le)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
@@ -128,7 +129,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
       [] -> "No peers were disconnected"
       peers -> "Some peers were disconnected: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ (Map.! 1) $ honestPeers $ gtSchedule genesisTest
+    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ getHonestPeer $ honestPeers $ gtSchedule genesisTest
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
@@ -270,15 +271,15 @@ prop_leashingAttackTimeLimited =
     -- | A schedule which doesn't run past the last event of the honest peer
     genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genTimeLimitedSchedule genesisTest = do
-      Peers honest advs0 <- genUniformSchedulePoints genesisTest
+      Peers honests advs0 <- genUniformSchedulePoints genesisTest
       let timeLimit = estimateTimeBound
             (gtChainSyncTimeouts genesisTest)
             (gtLoPBucketParams genesisTest)
-            (honest Map.! 1)
+            (getHonestPeer honests)
             (Map.elems advs0)
           advs = fmap (takePointsUntil timeLimit) advs0
-          extendedHonest = extendScheduleUntil timeLimit <$> honest
-      pure $ Peers extendedHonest advs
+          extendedHonests = extendScheduleUntil timeLimit <$> honests
+      pure $ Peers extendedHonests advs
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 
