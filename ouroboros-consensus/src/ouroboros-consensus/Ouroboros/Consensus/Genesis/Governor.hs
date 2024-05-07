@@ -242,8 +242,14 @@ data DensityBounds blk =
 -- ChainSync instruction the peer sent, and whether the peer is idling (i.e. it
 -- sent @MsgAwaitReply@).
 --
--- @loeFrag@ is the fragment from the immutable tip to the first intersection
--- with a candidate fragment.
+-- @loeFrag@ is the fragment anchored at the immutable tip and ending in the
+-- LoE tip.
+--
+-- ChainSync jumping depends on this function to disconnect either of any two
+-- peers that offer different chains and provided a header in the last slot of
+-- the genesis window or later. Either of them should be disconnected, even if
+-- both of them are serving adversarial chains. See
+-- "Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping" for more details.
 --
 densityDisconnect ::
      ( Ord peer
@@ -340,6 +346,15 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- This matters to ChainSync jumping, where adversarial dynamo and
       -- objector could offer chains of equal density.
       guard $ lb1 >= (if idling0 then lb0 else ub0)
+
+      -- Conjecture 1: All of the guards above imply that peer0 is not aware of
+      -- the best chain up to the last slot of the genesis window anchored at
+      -- the oldest intersection.
+      --
+      -- Conjecture 2: If peer0 is not aware of the best chain up to the last
+      -- slot of the genesis window anchored at the oldest intersection, and
+      -- there is no peer with an older intersection, then all of the guards
+      -- above should be true.
       pure peer0
 
     loeIntersectionSlot = AF.headSlot loeFrag
