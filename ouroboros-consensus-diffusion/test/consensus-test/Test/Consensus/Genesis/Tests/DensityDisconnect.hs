@@ -58,6 +58,7 @@ import           Test.QuickCheck.Extras (unsafeMapSuchThatJust)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
+import           Test.Util.PartialAccessors
 import           Test.Util.TersePrinting (terseHFragment, terseHeader)
 import           Test.Util.TestBlock (TestBlock)
 import           Test.Util.TestEnv (adjustQuickCheckMaxSize,
@@ -481,16 +482,6 @@ prop_densityDisconnectTriggersChainSel =
     )
 
   where
-    getOnlyBranch :: BlockTree blk -> BlockTreeBranch blk
-    getOnlyBranch BlockTree {btBranches} = case btBranches of
-      [branch] -> branch
-      _        -> error "tree must have exactly one alternate branch"
-
-    getTrunkTip :: HasHeader blk => BlockTree blk -> blk
-    getTrunkTip tree = case btTrunk tree of
-      (AF.Empty _)       -> error "tree must have at least one block"
-      (_ AF.:> tipBlock) -> tipBlock
-
     -- 1. The adversary advertises blocks up to the intersection.
     -- 2. The honest node advertises all its chain, which is
     --    long enough to be blocked by the LoE.
@@ -505,9 +496,7 @@ prop_densityDisconnectTriggersChainSel =
           intersect = case btbPrefix branch of
             (AF.Empty _)       -> Origin
             (_ AF.:> tipBlock) -> At tipBlock
-          advTip = case btbFull branch of
-            (AF.Empty _) -> error "alternate branch must have at least one block"
-            (_ AF.:> tipBlock) -> tipBlock
+          advTip = getOnlyBranchTip tree
        in peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain up to the intersection.
