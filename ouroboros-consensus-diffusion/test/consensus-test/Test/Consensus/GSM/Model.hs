@@ -29,6 +29,7 @@ import           Test.QuickCheck (choose, elements, shrink)
 import qualified Test.StateMachine as QSM
 import           Test.StateMachine (Concrete, Symbolic)
 import qualified Test.StateMachine.Types.Rank2 as QSM
+import           Test.Util.Orphans.ToExpr ()
 
 ----- the QSM model
 
@@ -589,8 +590,6 @@ data Notable =
 instance TD.ToExpr Notable where toExpr = TD.defaultExprViaShow
 
 ----- orphans
-
-instance TD.ToExpr SI.Time where toExpr = TD.defaultExprViaShow
 
 deriving instance Read LedgerStateJudgement
 

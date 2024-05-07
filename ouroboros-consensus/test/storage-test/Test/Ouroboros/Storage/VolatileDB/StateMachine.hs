@@ -9,7 +9,7 @@
 {-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeOperators       #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
+
 -- | Tests for the volatile DB
 --
 -- The set of commands for the volatile DB is similar to the immutable DB,
@@ -175,25 +175,7 @@ deriving instance Generic1        (At Resp)
 deriving instance Rank2.Foldable  (At Resp)
 deriving instance Show1 r => Show (Resp :@ r)
 
-deriving instance ToExpr FsPath
-deriving instance ToExpr MaxSlotNo
-deriving instance ToExpr IsEBB
-deriving instance ToExpr BlocksPerFile
-deriving instance ToExpr (ChainHash Block)
-deriving instance ToExpr (BlockInfo Block)
-deriving instance ToExpr (BlocksInFile Block)
-deriving instance ToExpr (CodecConfig Block)
-deriving instance ToExpr (DBModel Block)
 deriving instance ToExpr (Model r)
-deriving instance ToExpr TestHeaderHash
-deriving instance ToExpr TestBodyHash
-deriving instance ToExpr EBB
-deriving instance ToExpr ChainLength
-deriving instance ToExpr TestHeader
-deriving instance ToExpr TestBody
-deriving instance ToExpr TestBlock
-deriving instance ToExpr BinaryBlockInfo
-deriving instance ToExpr (ChainHash TestHeader)
 
 instance CommandNames (At Cmd) where
   cmdName (At cmd) = constrName cmd

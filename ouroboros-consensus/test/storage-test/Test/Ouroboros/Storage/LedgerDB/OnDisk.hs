@@ -24,7 +24,6 @@
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
-{-# OPTIONS_GHC -Wno-orphans #-}
 #if __GLASGOW_HASKELL__ >= 908
 {-# OPTIONS_GHC -Wno-x-partial #-}
 #endif
@@ -1027,8 +1026,6 @@ instance Traversable t => Rank2.Traversable (At t) where
       lift f (QSM.Reference x) = QSM.Reference <$> f x
 
 instance ToExpr (Model Concrete)
-instance ToExpr SecurityParam
-instance ToExpr DiskSnapshot
 
 {-------------------------------------------------------------------------------
   Final state machine

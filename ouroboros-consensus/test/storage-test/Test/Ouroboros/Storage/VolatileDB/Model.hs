@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE GADTs                #-}
@@ -41,6 +42,7 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.TreeDiff
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
@@ -75,6 +77,10 @@ data DBModel blk = DBModel {
     , codecConfig   :: CodecConfig blk
     }
   deriving (Generic)
+
+deriving instance ( ToExpr blk
+                  , ToExpr (CodecConfig blk)
+                  ) => ToExpr (DBModel blk)
 
 deriving instance (Show blk, Show (CodecConfig blk)) => Show (DBModel blk)
 
@@ -157,6 +163,8 @@ newtype BlocksInFile blk = BlocksInFile {
       getBlocksInFile :: [blk]
     }
   deriving (Show, Generic)
+
+instance ToExpr blk => ToExpr (BlocksInFile blk)
 
 emptyFile :: BlocksInFile blk
 emptyFile = BlocksInFile []

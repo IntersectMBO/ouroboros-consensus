@@ -1,5 +1,7 @@
+{-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
+{-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE GADTs                #-}
 {-# LANGUAGE LambdaCase           #-}
 {-# LANGUAGE NamedFieldPuns       #-}
@@ -44,6 +46,7 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
+import           Data.TreeDiff
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
@@ -57,6 +60,7 @@ import           Ouroboros.Consensus.Util (lastMaybe, takeUntil)
 import           Ouroboros.Consensus.Util.CallStack
 import           System.FS.API.Types (FsPath, fsPathSplit)
 import           Test.Ouroboros.Storage.TestBlock hiding (EBB)
+import           Test.Util.Orphans.ToExpr ()
 
 data InSlot blk =
     -- | This slot contains only a regular block
@@ -155,6 +159,10 @@ type IteratorId = Int
 -- model.
 newtype IteratorModel blk = IteratorModel [blk]
   deriving (Show, Eq, Generic)
+
+instance ToExpr (IteratorModel TestBlock)
+instance ToExpr (DBModel TestBlock)
+instance ToExpr (InSlot TestBlock)
 
 {------------------------------------------------------------------------------
   Helpers

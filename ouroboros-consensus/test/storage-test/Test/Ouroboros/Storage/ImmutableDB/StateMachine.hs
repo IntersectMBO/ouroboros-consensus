@@ -15,7 +15,6 @@
 {-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wno-orphans      #-}
 -- | Model-based tests for the immutable DB.
 --
 -- This is the main test for the immutable DB. As in any model based, we have a
@@ -59,7 +58,7 @@ import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe)
-import           Data.TreeDiff (Expr (App), ToExpr (..), defaultExprViaShow)
+import           Data.TreeDiff (ToExpr (..))
 import           Data.Typeable (Typeable)
 import           Data.Word (Word16, Word64)
 import qualified Generics.SOP as SOP
@@ -79,7 +78,7 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import           Prelude hiding (elem, notElem)
 import           System.FS.API (HasFS (..), SomeHasFS (..))
-import           System.FS.API.Types (FsError (..), FsPath, mkFsPath)
+import           System.FS.API.Types (FsPath, mkFsPath)
 import           System.FS.Sim.Error (Errors, emptyErrors, mkSimErrorHasFS,
                      withErrors)
 import qualified System.FS.Sim.MockFS as Mock
@@ -1108,38 +1107,6 @@ instance CommandNames (At CmdErr m) where
   cmdNames (_ :: Proxy (At CmdErr m r)) =
     constrNames (Proxy @(Cmd (IterRef m r)))
 
-instance ToExpr ChunkSize
-instance ToExpr ChunkNo
-instance ToExpr ChunkSlot
-instance ToExpr RelativeSlot
-instance (ToExpr a, ToExpr b, ToExpr c, ToExpr d, ToExpr e, ToExpr f, ToExpr g,
-          ToExpr h, ToExpr i, ToExpr j)
-      => ToExpr (a, b, c, d, e, f, g, h, i, j) where
-    toExpr (a, b, c, d, e, f, g, h, i, j) = App "_×_×_×_×_×_×_×_×_x_"
-      [ toExpr a, toExpr b, toExpr c, toExpr d, toExpr e, toExpr f, toExpr g
-      , toExpr h, toExpr i, toExpr j
-      ]
-instance ToExpr (IteratorModel TestBlock)
-instance ToExpr EBB
-instance ToExpr IsEBB
-instance ToExpr ChainLength
-instance ToExpr TestHeaderHash
-instance ToExpr TestBodyHash
-instance ToExpr (ChainHash TestHeader)
-instance ToExpr TestHeader
-instance ToExpr TestBody
-instance ToExpr TestBlock
-instance ToExpr (Tip TestBlock)
-instance ToExpr (InSlot TestBlock)
-instance ToExpr (CodecConfig TestBlock)
-instance ToExpr (DBModel TestBlock)
-
-instance ToExpr FsError where
-  toExpr fsError = App (show fsError) []
-
-instance ToExpr ChunkInfo where
-  toExpr = defaultExprViaShow
-
 instance ToExpr (Model m Concrete)
 
 {-------------------------------------------------------------------------------
@@ -1266,15 +1233,3 @@ tests = testGroup "ImmutableDB q-s-m"
 
 unusedEnv :: ImmutableDBEnv
 unusedEnv = error "ImmutableDBEnv used during command generation"
-
-instance Arbitrary Index.CacheConfig where
-  arbitrary = do
-    pastChunksToCache <- frequency
-      -- Pick small values so that we exercise cache eviction
-      [ (1, return 1)
-      , (1, return 2)
-      , (1, choose (3, 10))
-      ]
-    -- TODO create a Cmd that advances time, so this is being exercised too.
-    expireUnusedAfter <- (fromIntegral :: Int -> DiffTime) <$> choose (1, 100)
-    return Index.CacheConfig {..}

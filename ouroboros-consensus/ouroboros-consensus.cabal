@@ -409,6 +409,7 @@ library unstable-consensus-testlib
     quiet,
     random,
     serialise,
+    si-timers,
     sop-core,
     sop-extras,
     strict-checked-vars,
