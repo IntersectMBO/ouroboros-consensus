@@ -39,6 +39,7 @@ import           Data.Maybe (isJust, isNothing)
 import           Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -59,7 +60,7 @@ import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..), ChainType (..),
-                     InvalidBlockReason (..), LoE (..), LoELimit (..))
+                     InvalidBlockReason (..), LoE (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment
                      (InvalidBlockPunishment, noPunishment)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API.Types.InvalidBlockPunishment as InvalidBlockPunishment
@@ -175,9 +176,7 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
         suffixesAfterI :: [NonEmpty (HeaderHash blk)]
         suffixesAfterI = Paths.maximalCandidates succsOf limit (AF.anchorToPoint i)
           where
-            limit = case loE of
-              LoEEnabled _ -> LoELimit k
-              LoEDisabled  -> LoEUnlimited
+            limit = k <$ loE
 
         constructChain ::
              NonEmpty (HeaderHash blk)
@@ -649,7 +648,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ The current chain and ledger
       -> LoE (AnchoredFragment (Header blk))
          -- ^ LoE fragment
-      -> LoELimit
+      -> LoE Word64
          -- ^ How many extra blocks to select after @b@ at most.
       -> m (Point blk)
     addToCurrentChain succsOf curChainAndLedger loeFrag maxExtra = do
@@ -732,7 +731,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ The current chain (anchored at @i@) and ledger
       -> LoE (AnchoredFragment (Header blk))
          -- ^ LoE fragment
-      -> LoELimit
+      -> LoE Word64
          -- ^ How many extra blocks to select after @b@ at most.
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
@@ -805,23 +804,23 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
       -> AnchoredFragment x
          -- ^ The fragment with the new block @b@ as its tip, with the same
          -- anchor as @curChain@.
-      -> Maybe LoELimit
+      -> Maybe (LoE Word64)
     computeLoEMaxExtra (LoEEnabled loeFrag) newBlockFrag =
         -- Both fragments are on the same chain
         if loeSuffixLength == 0 || rollback == 0 then
           if rollback > k + loeSuffixLength
             then Nothing
-            else Just $ LoELimit $ k + loeSuffixLength - rollback
+            else Just $ LoEEnabled $ k + loeSuffixLength - rollback
         else
           if rollback > k
             then Nothing
-            else Just $ LoELimit $ k - rollback
+            else Just $ LoEEnabled $ k - rollback
       where
         d = Diff.diff newBlockFrag loeFrag
         rollback = Diff.getRollback d
         loeSuffixLength = fromIntegral $ AF.length (Diff.getSuffix d)
     computeLoEMaxExtra LoEDisabled _ =
-      Just LoEUnlimited
+        Just LoEDisabled
 
     mkSelectionChangedInfo ::
          AnchoredFragment (Header blk) -- ^ old chain
