@@ -14,7 +14,9 @@
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE UndecidableInstances       #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Ouroboros.Storage.TestBlock (
     -- * Test block
     BlockConfig (..)
@@ -76,6 +78,7 @@ import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (maybeToList)
+import           Data.TreeDiff
 import           Data.Typeable (Typeable)
 import           Data.Word
 import           GHC.Generics (Generic)
@@ -101,16 +104,21 @@ import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.BFT
 import           Ouroboros.Consensus.Protocol.ModChainSel
 import           Ouroboros.Consensus.Protocol.Signed
+import           Ouroboros.Consensus.Storage.ImmutableDB (Tip)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks
 import           Ouroboros.Consensus.Storage.Serialisation
+import           Ouroboros.Consensus.Storage.VolatileDB
 import           Ouroboros.Consensus.Util.Condense
 import           Ouroboros.Consensus.Util.Orphans ()
 import qualified Ouroboros.Network.Mock.Chain as Chain
 import           System.FS.API.Lazy
 import           Test.Cardano.Slotting.Numeric ()
+import           Test.Cardano.Slotting.TreeDiff ()
+import           Test.Ouroboros.Storage.ChainDB.Model
 import           Test.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 import           Test.Util.Orphans.SignableRepresentation ()
+import           Test.Util.Orphans.ToExpr ()
 
 {-------------------------------------------------------------------------------
   TestBlock
@@ -834,3 +842,30 @@ instance Hashable IsEBB
 
 instance (StandardHash b, Hashable (HeaderHash b)) => Hashable (ChainHash b)
   -- use generic instance
+
+instance ToExpr EBB
+instance ToExpr IsEBB
+instance ToExpr ChainLength
+instance ToExpr TestHeaderHash
+instance ToExpr TestBodyHash
+instance ToExpr TestHeader
+instance ToExpr TestBody
+instance ToExpr TestBlock
+instance ToExpr (CodecConfig TestBlock)
+instance ToExpr (Tip TestBlock)
+
+
+deriving instance ToExpr TestBlockError
+deriving instance ToExpr (TipInfoIsEBB TestBlock)
+deriving instance ToExpr (LedgerState TestBlock)
+deriving instance ToExpr (HeaderError TestBlock)
+deriving instance ToExpr TestBlockOtherHeaderEnvelopeError
+deriving instance ToExpr (HeaderEnvelopeError TestBlock)
+deriving instance ToExpr BftValidationErr
+deriving instance ToExpr (ExtValidationError TestBlock)
+
+instance ModelSupportsBlock TestBlock
+
+deriving anyclass instance ToExpr FsPath
+deriving anyclass instance ToExpr BlocksPerFile
+deriving instance ToExpr BinaryBlockInfo

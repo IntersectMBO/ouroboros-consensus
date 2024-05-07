@@ -1,4 +1,5 @@
 {-# LANGUAGE DefaultSignatures    #-}
+{-# LANGUAGE DeriveAnyClass       #-}
 {-# LANGUAGE DeriveGeneric        #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE LambdaCase           #-}
@@ -92,13 +93,16 @@ import           Data.Maybe (fromMaybe, isJust)
 import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.TreeDiff
 import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
+import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.MockChainSel
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..),
@@ -115,7 +119,10 @@ import qualified Ouroboros.Network.AnchoredFragment as Fragment
 import           Ouroboros.Network.Block (MaxSlotNo (..))
 import           Ouroboros.Network.Mock.Chain (Chain (..), ChainUpdate)
 import qualified Ouroboros.Network.Mock.Chain as Chain
+import           Ouroboros.Network.Mock.ProducerState (ChainProducerState)
 import qualified Ouroboros.Network.Mock.ProducerState as CPS
+import           Test.Cardano.Slotting.TreeDiff ()
+
 
 type IteratorId = Int
 
@@ -141,6 +148,19 @@ data Model blk = Model {
       -- it is used while closed.
     }
   deriving (Generic)
+
+deriving instance ( ToExpr blk
+                  , ToExpr (HeaderHash blk)
+                  , ToExpr (ChainDepState (BlockProtocol blk))
+                  , ToExpr (TipInfo blk)
+                  , ToExpr (LedgerState blk)
+                  , ToExpr (ExtValidationError blk)
+                  , ToExpr (Chain blk)
+                  , ToExpr (ChainProducerState blk)
+                  , ToExpr (ExtLedgerState blk)
+                  , ToExpr (InvalidBlockReason blk)
+                  )
+                 => ToExpr (Model blk)
 
 deriving instance (LedgerSupportsProtocol blk, Show blk) => Show (Model blk)
 

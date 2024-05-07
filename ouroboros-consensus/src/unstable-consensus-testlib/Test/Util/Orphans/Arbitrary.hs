@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE NumericUnderscores         #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
@@ -54,6 +55,7 @@ import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (ChunkNo (..), ChunkSize (..), RelativeSlot (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout
+import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index as Index
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Network.SizeInBytes
 import           Test.Cardano.Slotting.Arbitrary ()
@@ -391,3 +393,16 @@ instance Arbitrary (SomeSecond BlockQuery blk)
   arbitrary = do
     SomeSecond someBlockQuery <- arbitrary
     return (SomeSecond (BlockQuery someBlockQuery))
+
+
+instance Arbitrary Index.CacheConfig where
+  arbitrary = do
+    pastChunksToCache <- frequency
+      -- Pick small values so that we exercise cache eviction
+      [ (1, return 1)
+      , (1, return 2)
+      , (1, choose (3, 10))
+      ]
+    -- TODO create a Cmd that advances time, so this is being exercised too.
+    expireUnusedAfter <- (fromIntegral :: Int -> DiffTime) <$> choose (1, 100)
+    return Index.CacheConfig {Index.pastChunksToCache, Index.expireUnusedAfter}

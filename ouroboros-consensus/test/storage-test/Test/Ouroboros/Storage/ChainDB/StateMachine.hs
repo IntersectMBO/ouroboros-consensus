@@ -112,7 +112,6 @@ import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.Inspect
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Protocol.Abstract
-import           Ouroboros.Consensus.Protocol.BFT
 import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
@@ -131,16 +130,10 @@ import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike hiding (invariant)
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Consensus.Util.STM (Fingerprint (..),
-                     WithFingerprint (..))
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (ChainUpdate, MaxSlotNo)
-import           Ouroboros.Network.Mock.Chain (Chain (..))
 import qualified Ouroboros.Network.Mock.Chain as Chain
-import           Ouroboros.Network.Mock.ProducerState (ChainProducerState,
-                     FollowerNext, FollowerState)
-import qualified Ouroboros.Network.Mock.ProducerState as CPS
 import qualified System.FS.Sim.MockFS as Mock
 import           System.FS.Sim.MockFS (MockFS)
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
@@ -1220,35 +1213,6 @@ instance CommandNames (At Cmd blk m) where
   cmdNames (_ :: Proxy (At Cmd blk m r)) =
     constrNames (Proxy @(Cmd blk () ()))
 
-deriving instance Generic FollowerNext
-deriving instance Generic IteratorId
-deriving instance Generic (Chain blk)
-deriving instance Generic (ChainProducerState blk)
-deriving instance Generic (FollowerState blk)
-
-deriving anyclass instance ToExpr Fingerprint
-deriving anyclass instance ToExpr FollowerNext
-deriving anyclass instance ToExpr MaxSlotNo
-deriving instance ToExpr (HeaderHash blk) => ToExpr (ChainHash blk)
-deriving instance ToExpr (HeaderHash blk) => ToExpr (FollowerState blk)
-deriving instance ToExpr blk => ToExpr (Chain blk)
-deriving instance ( ToExpr blk
-                  , ToExpr (HeaderHash blk)
-                  )
-                 => ToExpr (ChainProducerState blk)
-deriving instance ToExpr a => ToExpr (WithFingerprint a)
-deriving instance ( ToExpr (HeaderHash blk)
-                  , ToExpr (ExtValidationError blk)
-                  )
-                 => ToExpr (InvalidBlockReason blk)
-deriving instance ( ToExpr blk
-                  , ToExpr (HeaderHash blk)
-                  , ToExpr (ChainDepState (BlockProtocol blk))
-                  , ToExpr (TipInfo blk)
-                  , ToExpr (LedgerState blk)
-                  , ToExpr (ExtValidationError blk)
-                  )
-                 => ToExpr (DBModel blk)
 deriving instance ( ToExpr blk
                   , ToExpr (HeaderHash  blk)
                   , ToExpr (ChainDepState (BlockProtocol blk))
@@ -1257,26 +1221,6 @@ deriving instance ( ToExpr blk
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (Model blk IO Concrete)
-
--- Blk specific instances
-
-deriving anyclass instance ToExpr ChainLength
-deriving anyclass instance ToExpr TestHeaderHash
-deriving anyclass instance ToExpr TestBodyHash
-
-deriving instance ToExpr EBB
-deriving instance ToExpr IsEBB
-deriving instance ToExpr TestHeader
-deriving instance ToExpr TestBody
-deriving instance ToExpr TestBlockError
-deriving instance ToExpr Blk
-deriving instance ToExpr (TipInfoIsEBB Blk)
-deriving instance ToExpr (LedgerState Blk)
-deriving instance ToExpr (HeaderError Blk)
-deriving instance ToExpr TestBlockOtherHeaderEnvelopeError
-deriving instance ToExpr (HeaderEnvelopeError Blk)
-deriving instance ToExpr BftValidationErr
-deriving instance ToExpr (ExtValidationError Blk)
 
 {-------------------------------------------------------------------------------
   Labelling
@@ -1372,8 +1316,6 @@ execCmds model = \(QSM.Commands cs) -> go model cs
 -------------------------------------------------------------------------------}
 
 type Blk = TestBlock
-
-instance ModelSupportsBlock TestBlock
 
 -- | Note that the 'Blk = TestBlock' is general enough to be used by both the
 -- ChainDB /and/ the ImmutableDB, its generators cannot. For example, in the
