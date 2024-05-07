@@ -354,10 +354,10 @@ prop_loeStalling =
         pure gt {gtChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}}
     )
 
-    (defaultSchedulerConfig {
+    defaultSchedulerConfig {
       scEnableLoE = True,
-      scEnableChainSyncTimeouts = True
-    })
+      scEnableCSJ = True
+    }
 
     shrinkPeerSchedules
 
@@ -392,8 +392,12 @@ prop_downtime = forAllGenesisTest
     (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
       ensureScheduleDuration gt <$> stToGen (uniformPointsWithDowntime (gtSecurityParam gt) (gtBlockTree gt)))
 
-    (defaultSchedulerConfig
-       {scEnableLoE = True, scEnableLoP = True, scDowntime = Just 11})
+    defaultSchedulerConfig
+      { scEnableLoE = True
+      , scEnableLoP = True
+      , scDowntime = Just 11
+      , scEnableCSJ = True
+      }
 
     shrinkPeerSchedules
 
