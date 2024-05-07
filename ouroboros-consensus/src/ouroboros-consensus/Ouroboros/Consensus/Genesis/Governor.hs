@@ -32,12 +32,9 @@
 module Ouroboros.Consensus.Genesis.Governor (
     DensityBounds (..)
   , TraceGDDEvent (..)
-  , EvaluateGDD (..)
   , densityDisconnect
   , runGDDGovernor
   , sharedCandidatePrefix
-  , evaluateGenesisGDD
-  , evaluateForgivingGDD
   ) where
 
 import           Control.Monad (guard, when)
@@ -49,7 +46,6 @@ import qualified Data.Map.Strict as Map
 import           Data.Maybe (maybeToList)
 import           Data.Void
 import           Data.Word (Word64)
-import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
                      configSecurityParam)
@@ -73,31 +69,6 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.STM (blockUntilChanged)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-
--- | A function to disconnect peers and compute the new LoE fragment.
---
--- The LoE fragment is the fragment anchored at the immutable tip and ending at
--- the LoE tip.
---
--- The callback is applied to the current chain and the current ledger state,
--- and yields the new LoE fragment.
-data EvaluateGDD m blk = EvaluateGDD {
-    evaluateGDD ::
-         AnchoredFragment (Header blk)
-      -> ExtLedgerState blk
-      -> m (AnchoredFragment (Header blk))
-  }
-  deriving stock (Generic)
-  deriving anyclass (NoThunks)
-
--- | A dummy version of GDD that doesn't disconnect nodes and returns as LoE
--- fragment the current chain selection. This can be seen as emulating Praos
--- behavior.
-evaluateForgivingGDD ::
-  MonadSTM m =>
-  EvaluateGDD m blk
-evaluateForgivingGDD =
-  EvaluateGDD $ \ curChain _ -> pure curChain
 
 -- | Compute the fragment @loeFrag@ between the immutable tip and the
 -- earliest intersection between @curChain@ and any of the @candidates@.
@@ -128,19 +99,36 @@ sharedCandidatePrefix curChain candidates =
       -- 'Map' via 'mapMaybe'.
       Map.mapMaybe splitAfterImmutableTip candidates
 
--- | A never ending computation that runs the GDD governor whenever
--- the STM action @getTrigger@ changes, writing the LoE fragment
--- computed by @loEUpdater@ to @varLoEFrag@, and then triggering
--- ChainSel to reprocess all blocks that had previously been
--- postponed by the LoE.
+-- | A never ending computation that evaluates the GDD rule whenever
+-- the STM action @getTrigger@ yields a different result, writing the LoE
+-- fragment to @varLoEFrag@, and then triggering ChainSel to reprocess all
+-- blocks that had previously been postponed by the LoE.
+--
+-- Evaluating the GDD rule might cause peers to be disconnected if they have
+-- sparser chains than the best chain.
+--
+-- The LoE fragment is the fragment anchored at the immutable tip and ending at
+-- the LoE tip.
+--
+-- @getHandles@ is the callback to get the handles that allow to disconnect
+-- from peers.
+--
 runGDDGovernor ::
-  (Monoid a, Eq a, IOLike m, LedgerSupportsProtocol blk) =>
-  EvaluateGDD m blk ->
+  ( Monoid a,
+    Eq a,
+    HasHardForkHistory blk,
+    IOLike m,
+    LedgerSupportsProtocol blk,
+    Ord peer
+  ) =>
+  TopLevelConfig blk ->
+  Tracer m (TraceGDDEvent peer blk) ->
+  STM m (Map peer (ChainSyncClientHandle m blk)) ->
   StrictTVar m (AnchoredFragment (Header blk)) ->
   ChainDB m blk ->
   STM m a ->
   m Void
-runGDDGovernor loEUpdater varLoEFrag chainDb getTrigger =
+runGDDGovernor cfg tracer getHandles varLoEFrag chainDb getTrigger =
   spin mempty
   where
     spin oldTrigger = do
@@ -149,7 +137,7 @@ runGDDGovernor loEUpdater varLoEFrag chainDb getTrigger =
         curChain <- ChainDB.getCurrentChain chainDb
         curLedger <- ChainDB.getCurrentLedger chainDb
         pure (newTrigger, curChain, curLedger)
-      loeFrag <- evaluateGDD loEUpdater curChain curLedger
+      loeFrag <- evaluateGDD cfg tracer getHandles curChain curLedger
       oldLoEFrag <- atomically $ swapTVar varLoEFrag loeFrag
       -- The chain selection only depends on the LoE tip, so there
       -- is no point in retriggering it if the LoE tip hasn't changed.
@@ -326,11 +314,7 @@ data TraceGDDEvent peer blk =
     sgen              :: GenesisWindow
   }
 
--- | Disconnect nodes and recompute the LoE fragment.
---
--- See 'EvaluateGDD' for the definition of LoE fragment.
---
--- Additionally, disconnect the peers that lose density comparisons.
+-- | Disconnect peers that lose density comparisons and recompute the LoE fragment.
 --
 -- Disconnecting peers causes candidate fragments to be removed, which causes
 -- the GDD governor to reevaluate GDD over and over until no more peers are
@@ -338,7 +322,14 @@ data TraceGDDEvent peer blk =
 --
 -- @getHandles@ is the callback to get the handles that allow to disconnect
 -- from peers.
-evaluateGenesisGDD ::
+--
+-- @curChain@ is the current chain selection.
+--
+-- @immutableLedgerSt@ is the current ledger state.
+--
+-- Yields the new LoE fragment.
+--
+evaluateGDD ::
      forall m blk peer.
      ( IOLike m
      , Ord peer
@@ -348,9 +339,10 @@ evaluateGenesisGDD ::
   => TopLevelConfig blk
   -> Tracer m (TraceGDDEvent peer blk)
   -> STM m (Map peer (ChainSyncClientHandle m blk))
-  -> EvaluateGDD m blk
-evaluateGenesisGDD cfg tracer getHandles =
-  EvaluateGDD $ \ curChain immutableLedgerSt -> do
+  -> AnchoredFragment (Header blk)
+  -> ExtLedgerState blk
+  -> m (AnchoredFragment (Header blk))
+evaluateGDD cfg tracer getHandles curChain immutableLedgerSt = do
     (states, candidates, candidateSuffixes, handles, loeFrag) <- atomically $ do
       handles <- getHandles
       states <- traverse (readTVar . cschState) handles
