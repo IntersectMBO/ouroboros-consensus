@@ -66,11 +66,8 @@ tests =
     -- See Note [Leashing attacks]
     testProperty "stalling leashing attack" prop_leashingAttackStalling,
     testProperty "time limited leashing attack" prop_leashingAttackTimeLimited,
-    adjustQuickCheckTests (`div` 10) $
     testProperty "serve adversarial branches" prop_serveAdversarialBranches,
-    adjustQuickCheckTests (`div` 100) $
     testProperty "the LoE stalls the chain, but the immutable tip is honest" prop_loeStalling,
-    adjustQuickCheckTests (`div` 100) $
     -- This is a crude way of ensuring that we don't get chains with more than 100 blocks,
     -- because this test writes the immutable chain to disk and `instance Binary TestBlock`
     -- chokes on long chains.
@@ -357,10 +354,10 @@ prop_loeStalling =
         pure gt {gtChainSyncTimeouts = chainSyncNoTimeouts {canAwaitTimeout = shortWait}}
     )
 
-    (defaultSchedulerConfig {
+    defaultSchedulerConfig {
       scEnableLoE = True,
-      scEnableChainSyncTimeouts = True
-    })
+      scEnableCSJ = True
+    }
 
     shrinkPeerSchedules
 
@@ -395,8 +392,12 @@ prop_downtime = forAllGenesisTest
     (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
       ensureScheduleDuration gt <$> stToGen (uniformPointsWithDowntime (gtSecurityParam gt) (gtBlockTree gt)))
 
-    (defaultSchedulerConfig
-       {scEnableLoE = True, scEnableLoP = True, scDowntime = Just 11})
+    defaultSchedulerConfig
+      { scEnableLoE = True
+      , scEnableLoP = True
+      , scDowntime = Just 11
+      , scEnableCSJ = True
+      }
 
     shrinkPeerSchedules
 
