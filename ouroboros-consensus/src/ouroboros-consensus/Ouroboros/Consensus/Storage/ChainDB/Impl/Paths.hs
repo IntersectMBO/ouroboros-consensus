@@ -71,7 +71,7 @@ maximalCandidates ::
      forall blk.
      (ChainHash blk -> Set (HeaderHash blk))
      -- ^ @filterByPredecessor@
-  -> LoELimit -- ^ Max length of any candidate
+  -> LoE Word64 -- ^ Max length of any candidate
   -> Point blk -- ^ @B@
   -> [NonEmpty (HeaderHash blk)]
      -- ^ Each element in the list is a list of hashes from which we can
@@ -86,7 +86,7 @@ maximalCandidates succsOf loeLimit b = mapMaybe (NE.nonEmpty . applyLoE) $ go (p
                , candidate <- go (BlockHash next)
                ]
     applyLoE
-      | LoELimit limit <- loeLimit
+      | LoEEnabled limit <- loeLimit
       = take (fromIntegral limit)
       | otherwise
       = id
@@ -105,7 +105,7 @@ extendWithSuccessors ::
      forall blk. HasHeader blk
   => (ChainHash blk -> Set (HeaderHash blk))
   -> LookupBlockInfo blk
-  -> LoELimit -- ^ Max extra length for any suffix
+  -> LoE Word64 -- ^ Max extra length for any suffix
   -> ChainDiff (HeaderFields blk)
   -> NonEmpty (ChainDiff (HeaderFields blk))
 extendWithSuccessors succsOf lookupBlockInfo loeLimit diff =

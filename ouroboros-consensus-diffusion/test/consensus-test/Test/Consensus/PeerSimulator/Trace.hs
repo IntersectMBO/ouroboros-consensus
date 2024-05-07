@@ -483,7 +483,7 @@ terseGDDEvent :: TraceGDDEvent PeerId TestBlock -> String
 terseGDDEvent = \case
   TraceGDDEvent {sgen = GenesisWindow sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead} ->
     unlines $ [
-      "GDG | Window: " ++ window sgen loeHead,
+      "GDD | Window: " ++ window sgen loeHead,
       "      Selection: " ++ terseHFragment curChain,
       "      Candidates:"
       ] ++
