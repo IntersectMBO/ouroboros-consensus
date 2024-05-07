@@ -67,12 +67,10 @@ module Ouroboros.Consensus.Storage.ChainDB.API (
     -- * Genesis
   , GetLoEFragment
   , LoE (..)
-  , LoELimit (..)
   ) where
 
 import           Control.Monad (void)
 import           Data.Typeable (Typeable)
-import           Data.Word (Word64)
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderStateHistory
@@ -895,8 +893,3 @@ data LoE a =
   deriving (Eq, Show, Generic, NoThunks, Functor, Foldable, Traversable)
 
 type GetLoEFragment m blk = LoE (m (AnchoredFragment (Header blk)))
-
-data LoELimit =
-  LoELimit Word64
-  |
-  LoEUnlimited
