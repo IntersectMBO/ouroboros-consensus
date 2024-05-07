@@ -73,3 +73,7 @@ Also, the `Kcp+1=2`nd honest asai might be as late as the `2Scg`th sai, so the u
 Thus `2Scg + max (Del+2) 3` sais would suffice to ensure there are at least `Kcp=1` unstable slot before the end of the schema.
 
 Since the genesis block can always be chosen as the intersection (as long as the first honest active slot is at most the `Scg`th slot), the above sai counts are also the minimum bound for `Len` in order to ensure at least `Kcp+1` asais for both honest and alternative.
+
+-----
+
+TODO some of the above may be stale: after writing, we received the go-ahead to rephrase the Chain Growth assumption as Kcp+1 blocks in Scg slots, which could simplify much of the above.
