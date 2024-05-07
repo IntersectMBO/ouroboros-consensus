@@ -23,7 +23,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
-import           Ouroboros.Consensus.Genesis.Governor (runGdd,
+import           Ouroboros.Consensus.Genesis.Governor (runGDDGovernor,
                      updateLoEFragGenesis)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
@@ -372,7 +372,7 @@ startNode schedulerConfig genesisTest interval = do
       gddTrigger = viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
   for_ lrLoEVar $ \ var -> do
       forkLinkedThread lrRegistry "LoE updater background" $
-        void $ runGdd gdd var lnChainDb gddTrigger
+        void $ runGDDGovernor gdd var lnChainDb gddTrigger
   where
     LiveResources {lrRegistry, lrTracer, lrConfig, lrPeerSim, lrLoEVar} = resources
 

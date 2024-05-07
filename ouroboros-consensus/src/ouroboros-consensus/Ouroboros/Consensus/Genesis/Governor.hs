@@ -20,7 +20,7 @@
 -- effect of unblocking the Limit on Eagerness, since removing disagreeing
 -- peers allows the current selection to advance.
 --
--- The GDD governor, invoked with 'runGdd', is supposed to run in a background
+-- The GDD governor, invoked with 'runGDDGovernor', is supposed to run in a background
 -- thread. It evaluates candidate chains whenever they change, or whenever a
 -- peer claims to have no more headers, or whenever a peer starts sending
 -- headers beyond the forecast horizon.
@@ -32,7 +32,7 @@ module Ouroboros.Consensus.Genesis.Governor (
   , TraceGDDEvent (..)
   , UpdateLoEFrag (..)
   , densityDisconnect
-  , runGdd
+  , runGDDGovernor
   , sharedCandidatePrefix
   , updateLoEFragGenesis
   , updateLoEFragUnconditional
@@ -130,14 +130,14 @@ sharedCandidatePrefix curChain candidates =
 -- computed by @loEUpdater@ to @varLoEFrag@, and then triggering
 -- ChainSel to reprocess all blocks that had previously been
 -- postponed by the LoE.
-runGdd ::
+runGDDGovernor ::
   (Monoid a, Eq a, IOLike m, LedgerSupportsProtocol blk) =>
   UpdateLoEFrag m blk ->
   StrictTVar m (AnchoredFragment (Header blk)) ->
   ChainDB m blk ->
   STM m a ->
   m Void
-runGdd loEUpdater varLoEFrag chainDb getTrigger =
+runGDDGovernor loEUpdater varLoEFrag chainDb getTrigger =
   spin mempty
   where
     spin oldTrigger = do
