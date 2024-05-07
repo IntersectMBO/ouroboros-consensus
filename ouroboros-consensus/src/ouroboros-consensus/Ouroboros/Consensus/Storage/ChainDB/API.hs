@@ -866,29 +866,28 @@ instance (Typeable blk, StandardHash blk) => Exception (ChainDbError blk) where
     InvalidIteratorRange {} ->
       "An invalid range of blocks was requested"
 
--- | The Limit on Eagerness is a mechanism for keeping ChainSel from advancing
--- the current selection in the case of competing chains.
+-- | The Limit on Eagerness (LoE) is a mechanism for keeping ChainSel from
+-- advancing the current selection in the case of competing chains.
 --
--- The Limit on Eagerness prevents the selection of the node from extending
--- more than k blocks after the youngest block that is present on all candidate
--- fragments.
+-- The LoE tip is the youngest header that is present on all candidate
+-- fragments. Thus, after the LoE tip, peers either disagree on how the chain
+-- follows, or they do not offer more headers.
+--
+-- The LoE restrains the current selection of the node to be on the same chain
+-- as the LoE tip, and to not extend more than k blocks from it.
 --
 -- It requires a resolution mechanism to prevent indefinite stalling, which
 -- is implemented by the Genesis Density Disconnection governor, a component
--- that implements an 'UpdateLoEFrag' that disconnects from peers with forks
--- it considers inferior.
+-- that disconnects from peers with forks it considers inferior.
+-- See "Ouroboros.Consensus.Genesis.Governor" for details.
 --
--- This type indicates whether the feature is enabled, and contains a value
--- if it is.
+-- This type indicates whether LoE is enabled, and contains a value if it is.
 data LoE a =
   -- | The LoE is disabled, so ChainSel will not keep the selection from
   -- advancing.
   LoEDisabled
   |
-  -- | The LoE is enabled, using the security parameter @k@ as the limit.
-  -- When the selection's tip is @k@ blocks after the earliest intersection of
-  -- of all candidate fragments, ChainSel will not add new blocks to the
-  -- selection.
+  -- | The LoE is enabled.
   LoEEnabled a
   deriving (Eq, Show, Generic, NoThunks, Functor, Foldable, Traversable)
 

@@ -18,14 +18,16 @@
 -- The GDD governor is the component responsible for identifying and
 -- disconnecting peers offering sparser chains than the best. This has the
 -- effect of unblocking the Limit on Eagerness, since removing disagreeing
--- peers allows the current selection to advance.
+-- peers allows the current selection to advance. See
+-- 'Ouroboros.Consensus.Storage.ChainDB.API.LoE' for more details.
 --
 -- The GDD governor, invoked with 'runGdd', is supposed to run in a background
 -- thread. It evaluates candidate chains whenever they change, or whenever a
 -- peer claims to have no more headers, or whenever a peer starts sending
 -- headers beyond the forecast horizon.
 --
--- Whenever GDD disconnects peers, the chain selection is updated.
+-- Whenever GDD disconnects peers, and as a result the youngest header present
+-- in all candidate fragments changes, the chain selection is updated.
 --
 module Ouroboros.Consensus.Genesis.Governor (
     DensityBounds (..)
