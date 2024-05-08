@@ -10,6 +10,7 @@
 {-# LANGUAGE StandaloneDeriving      #-}
 {-# LANGUAGE TypeApplications        #-}
 {-# LANGUAGE TypeFamilies            #-}
+{-# LANGUAGE TypeOperators           #-}
 {-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE ViewPatterns            #-}
@@ -38,6 +39,7 @@ import           Cardano.Crypto.VRF (hashVerKeyVRF)
 import qualified Cardano.Crypto.VRF as VRF
 import           Cardano.Ledger.BaseTypes (ActiveSlotCoeff, Nonce, (⭒))
 import qualified Cardano.Ledger.BaseTypes as SL
+import qualified Cardano.Ledger.Chain as SL
 import           Cardano.Ledger.Crypto (Crypto, DSIGN, KES, StandardCrypto, VRF)
 import           Cardano.Ledger.Hashes (EraIndependentTxBody)
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer),
@@ -45,13 +47,16 @@ import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer),
 import qualified Cardano.Ledger.Keys as SL
 import           Cardano.Ledger.PoolDistr
                      (IndividualPoolStake (IndividualPoolStake))
-import qualified Cardano.Ledger.Shelley.API as SL
+import qualified Cardano.Ledger.PoolDistr as SL
 import           Cardano.Ledger.Slot (Duration (Duration), (+*))
+import qualified Cardano.Protocol.TPraos.API as SL
 import           Cardano.Protocol.TPraos.BHeader (BoundedNatural (bvValue),
                      checkLeaderNatValue, prevHashToNonce)
 import           Cardano.Protocol.TPraos.OCert (KESPeriod (KESPeriod),
                      OCert (OCert), OCertSignable)
 import qualified Cardano.Protocol.TPraos.OCert as OCert
+import qualified Cardano.Protocol.TPraos.Rules.Prtcl as SL
+import qualified Cardano.Protocol.TPraos.Rules.Tickn as SL
 import           Cardano.Slotting.EpochInfo (EpochInfo, epochInfoEpoch,
                      epochInfoFirst, hoistEpochInfo)
 import           Cardano.Slotting.Slot (EpochNo (EpochNo), SlotNo (SlotNo),
@@ -84,7 +89,9 @@ import qualified Ouroboros.Consensus.Protocol.Praos.Views as Views
 import           Ouroboros.Consensus.Protocol.Praos.VRF (InputVRF, mkInputVRF,
                      vrfLeaderValue, vrfNonceValue)
 import           Ouroboros.Consensus.Protocol.TPraos
-                     (ConsensusConfig (TPraosConfig, tpraosEpochInfo, tpraosParams))
+                     (ConsensusConfig (TPraosConfig, tpraosEpochInfo, tpraosParams),
+                     TPraos,
+                     TPraosState (tpraosStateChainDepState, tpraosStateLastSlot))
 import           Ouroboros.Consensus.Ticked (Ticked)
 import           Ouroboros.Consensus.Util.Versioned (VersionDecoder (Decode),
                      decodeVersion, encodeVersion)
@@ -680,6 +687,54 @@ instance PraosCrypto c => PraosProtocolSupportsNode (Praos c) where
       PraosState {
           praosStateOCertCounters
         } = cdst
+
+{-------------------------------------------------------------------------------
+  Translation from transitional Praos
+-------------------------------------------------------------------------------}
+
+-- | We can translate between TPraos and Praos, provided:
+--
+-- - They share the same HASH algorithm
+-- - They share the same ADDRHASH algorithm
+-- - They share the same DSIGN verification keys
+-- - They share the same VRF verification keys
+instance
+  ( c1 ~ c2 ) =>
+  TranslateProto (TPraos c1) (Praos c2)
+  where
+  translateLedgerView _ SL.LedgerView {SL.lvPoolDistr, SL.lvChainChecks} =
+      Views.LedgerView
+        { Views.lvPoolDistr = coercePoolDistr lvPoolDistr,
+          Views.lvMaxHeaderSize = SL.ccMaxBHSize lvChainChecks,
+          Views.lvMaxBodySize = SL.ccMaxBBSize lvChainChecks,
+          Views.lvProtocolVersion = SL.ccProtocolVersion lvChainChecks
+        }
+      where
+        coercePoolDistr :: SL.PoolDistr c1 -> SL.PoolDistr c2
+        coercePoolDistr (SL.PoolDistr m) =
+          SL.PoolDistr
+            . Map.mapKeysMonotonic coerce
+            . Map.map coerceIndividualPoolStake
+            $ m
+        coerceIndividualPoolStake :: SL.IndividualPoolStake c1 -> SL.IndividualPoolStake c2
+        coerceIndividualPoolStake (SL.IndividualPoolStake stake vrf) =
+          SL.IndividualPoolStake stake $ coerce vrf
+
+  translateChainDepState _ tpState =
+    PraosState
+      { praosStateLastSlot = tpraosStateLastSlot tpState,
+        praosStateOCertCounters = Map.mapKeysMonotonic coerce certCounters,
+        praosStateEvolvingNonce = evolvingNonce,
+        praosStateCandidateNonce = candidateNonce,
+        praosStateEpochNonce = SL.ticknStateEpochNonce csTickn,
+        praosStateLabNonce = csLabNonce,
+        praosStateLastEpochBlockNonce = SL.ticknStatePrevHashNonce csTickn
+      }
+    where
+      SL.ChainDepState {SL.csProtocol, SL.csTickn, SL.csLabNonce} =
+        tpraosStateChainDepState tpState
+      SL.PrtclState certCounters evolvingNonce candidateNonce =
+        csProtocol
 
 {-------------------------------------------------------------------------------
   Util

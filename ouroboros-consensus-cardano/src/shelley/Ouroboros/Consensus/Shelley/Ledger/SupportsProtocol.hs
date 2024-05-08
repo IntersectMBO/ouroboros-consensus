@@ -34,11 +34,11 @@ import           Ouroboros.Consensus.HardFork.History.Util
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol (..))
+import           Ouroboros.Consensus.Protocol.Abstract (TranslateProto,
+                     translateLedgerView)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import qualified Ouroboros.Consensus.Protocol.Praos.Views as Praos
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
-import           Ouroboros.Consensus.Protocol.Translate (TranslateProto,
-                     translateLedgerView)
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger.Block
 import           Ouroboros.Consensus.Shelley.Ledger.Ledger
@@ -113,7 +113,7 @@ instance
   -- ledger view. Ultimately, we will want to liberalise the ledger code
   -- slightly.
   ledgerViewForecastAt cfg st =
-    mapForecast (translateLedgerView @(TPraos crypto) @(Praos crypto)) $
+    mapForecast (translateLedgerView (Proxy @(TPraos crypto, Praos crypto))) $
       ledgerViewForecastAt @(ShelleyBlock (TPraos crypto) era) cfg st'
     where
       st' :: LedgerState (ShelleyBlock (TPraos crypto) era)

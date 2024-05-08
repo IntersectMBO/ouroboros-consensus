@@ -30,15 +30,14 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Extended
 import           Ouroboros.Consensus.Ledger.SupportsMempool
+import           Ouroboros.Consensus.Protocol.Abstract (TranslateProto,
+                     translateChainDepState)
 import           Ouroboros.Consensus.Protocol.Praos (Praos)
 import           Ouroboros.Consensus.Protocol.Praos.Header
                      (HeaderBody (HeaderBody))
 import qualified Ouroboros.Consensus.Protocol.Praos.Header as Praos
-import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos,
                      TPraosState (TPraosState))
-import           Ouroboros.Consensus.Protocol.Translate (TranslateProto,
-                     translateChainDepState)
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.HFEras
 import           Ouroboros.Consensus.Shelley.Ledger
@@ -229,7 +228,7 @@ fromShelleyLedgerExamplesPraos ShelleyLedgerExamples {
     , shelleyLedgerState      = sleNewEpochState
     , shelleyLedgerTransition = ShelleyTransitionInfo {shelleyAfterVoting = 0}
     }
-    chainDepState = translateChainDepState @(TPraos (EraCrypto era)) @(Praos (EraCrypto era))
+    chainDepState = translateChainDepState (Proxy @(TPraos (EraCrypto era), Praos (EraCrypto era)))
       $ TPraosState (NotOrigin 1) sleChainDepState
     extLedgerState = ExtLedgerState
                        ledgerState
