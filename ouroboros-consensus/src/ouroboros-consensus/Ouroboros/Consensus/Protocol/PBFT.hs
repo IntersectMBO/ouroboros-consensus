@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                       #-}
 {-# LANGUAGE DeriveAnyClass            #-}
 {-# LANGUAGE DeriveGeneric             #-}
 {-# LANGUAGE DerivingVia               #-}
@@ -14,7 +15,12 @@
 {-# LANGUAGE TypeFamilyDependencies    #-}
 {-# LANGUAGE TypeOperators             #-}
 {-# LANGUAGE UndecidableInstances      #-}
-{-# OPTIONS_GHC -Wno-orphans           #-}
+
+#if __GLASGOW_HASKELL__ >= 908
+-- GHC is a bit pickier for data family instances, but trying to remove this
+-- one forces us to reorganize the Protocol.* modules. TODO eventually.
+{-# OPTIONS_GHC -Wno-orphans #-}
+#endif
 
 module Ouroboros.Consensus.Protocol.PBFT (
     PBft

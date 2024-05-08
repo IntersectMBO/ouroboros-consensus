@@ -11,6 +11,7 @@ module Ouroboros.Consensus.Ticked (Ticked (..)) where
 import           Data.Kind (Type)
 import           Data.SOP.BasicFunctors
 import           NoThunks.Class (NoThunks)
+import           Ouroboros.Consensus.Block.Abstract
 
 {-------------------------------------------------------------------------------
   Ticked state
@@ -45,6 +46,8 @@ data family Ticked st :: Type
 
 data instance Ticked () = TickedTrivial
   deriving (Show)
+
+type instance HeaderHash (Ticked l) = HeaderHash l
 
 {-------------------------------------------------------------------------------
   Forwarding type class instances

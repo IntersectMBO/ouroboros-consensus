@@ -25,9 +25,7 @@ import           Cardano.Crypto.KES (MockKES, NeverKES, SigKES, SignedKES (..),
                      pattern SigSingleKES, pattern SigSumKES,
                      pattern SignKeyMockKES, pattern VerKeyMockKES,
                      pattern VerKeySingleKES, pattern VerKeySumKES)
-import           Cardano.Slotting.Block (BlockNo (..))
-import           Cardano.Slotting.Slot (EpochNo (..), SlotNo (..),
-                     WithOrigin (..))
+import           Cardano.Slotting.Slot (EpochNo (..), WithOrigin (..))
 import           Control.Monad.Class.MonadTime.SI (Time (..))
 import qualified Data.ByteString as BS.Strict
 import qualified Data.ByteString.Lazy as BS.Lazy
@@ -44,7 +42,10 @@ import           Data.Word
 import           Numeric.Natural
 import           Ouroboros.Consensus.Util.HList (All, HList (..))
 import qualified Ouroboros.Consensus.Util.HList as HList
-import           Ouroboros.Network.Block (ChainHash (..), HeaderHash, Tip (..))
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
+import qualified Ouroboros.Network.AnchoredFragment as AF
+import           Ouroboros.Network.Block
+import           Ouroboros.Network.Mock.Chain hiding (length)
 import           Text.Printf (printf)
 
 {-------------------------------------------------------------------------------
@@ -168,7 +169,7 @@ instance All Condense as => Condense (HList as) where
   condense as = "(" ++ intercalate "," (HList.collapse (Proxy @Condense) condense as) ++ ")"
 
 {-------------------------------------------------------------------------------
-  Orphans for ouroboros-network
+  Instances for ouroboros-network
 -------------------------------------------------------------------------------}
 
 instance Condense BlockNo where
@@ -193,8 +194,21 @@ instance Condense a => Condense (WithOrigin a) where
   condense Origin = "origin"
   condense (At a) = condense a
 
+instance Condense (HeaderHash block) => Condense (Point block) where
+    condense GenesisPoint     = "Origin"
+    condense (BlockPoint s h) = "(Point " <> condense s <> ", " <> condense h <> ")"
+
+instance Condense block => Condense (Chain block) where
+    condense Genesis   = "Genesis"
+    condense (cs :> b) = condense cs <> " :> " <> condense b
+
+instance (Condense block, HasHeader block, Condense (HeaderHash block))
+    => Condense (AnchoredFragment block) where
+    condense (AF.Empty pt) = "EmptyAnchor " <> condense (AF.anchorToPoint pt)
+    condense (cs AF.:> b)  = condense cs <> " :> " <> condense b
+
 {-------------------------------------------------------------------------------
-  Orphans for cardano-crypto-classes
+  Instances for cardano-crypto-classes
 -------------------------------------------------------------------------------}
 
 instance Condense (SigDSIGN v) => Condense (SignedDSIGN v a) where

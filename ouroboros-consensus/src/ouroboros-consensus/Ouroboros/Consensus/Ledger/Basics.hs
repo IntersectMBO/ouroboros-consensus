@@ -4,7 +4,6 @@
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE TypeFamilies      #-}
 {-# LANGUAGE TypeOperators     #-}
-{-# OPTIONS_GHC -Wno-orphans   #-}
 
 -- | Definition is 'IsLedger'
 --
@@ -47,8 +46,6 @@ class GetTip l where
   --
   -- Should be 'GenesisPoint' when no blocks have been applied yet
   getTip :: l -> Point l
-
-type instance HeaderHash (Ticked l) = HeaderHash l
 
 getTipHash :: GetTip l => l -> ChainHash l
 getTipHash = pointHash . getTip

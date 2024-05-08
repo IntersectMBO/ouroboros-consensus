@@ -15,7 +15,6 @@
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{-# OPTIONS_GHC -Wno-orphans #-}
 module Ouroboros.Consensus.Storage.ChainDB.API (
     -- * Main ChainDB API
     ChainDB (..)
