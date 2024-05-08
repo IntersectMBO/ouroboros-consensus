@@ -1,6 +1,5 @@
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
 {-# LANGUAGE TypeFamilies      #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -68,9 +67,9 @@ aBlockOrBoundary fromBoundary fromRegular blk = case blk of
       -> fromRegular regularBlk
 
 countTxOutputsByron :: Chain.ABlock ByteString -> Int
-countTxOutputsByron Chain.ABlock{ blockBody } = countTxPayload bodyTxPayload
+countTxOutputsByron Chain.ABlock{ Chain.blockBody } = countTxPayload bodyTxPayload
   where
-    Chain.ABody{ bodyTxPayload } = blockBody
+    Chain.ABody{ Chain.bodyTxPayload } = blockBody
 
     countTxPayload :: Chain.ATxPayload a -> Int
     countTxPayload = sum
@@ -84,9 +83,9 @@ blockTxSizesByron :: Chain.ABlock ByteString -> [SizeInBytes]
 blockTxSizesByron block =
     map (fromIntegral . BL.length . BL.fromStrict . Chain.aTaAnnotation) blockTxAuxs
   where
-    Chain.ABlock{ blockBody } = block
-    Chain.ABody{ bodyTxPayload } = blockBody
-    Chain.ATxPayload{ aUnTxPayload = blockTxAuxs } = bodyTxPayload
+    Chain.ABlock{ Chain.blockBody } = block
+    Chain.ABody{ Chain.bodyTxPayload } = blockBody
+    Chain.ATxPayload{ Chain.aUnTxPayload = blockTxAuxs } = bodyTxPayload
 
 openGenesisByron ::
      FilePath

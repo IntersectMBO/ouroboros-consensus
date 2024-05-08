@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE PolyKinds     #-}
 {-# LANGUAGE TypeFamilies  #-}
+
 -- | Utilities for arguments record with defaults
 --
 -- Useful for when you want to define a default value of an arguments record

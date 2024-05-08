@@ -1,7 +1,5 @@
 {-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 
@@ -321,14 +319,14 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
     snapshotStateView stateViewTracers chainDb
   where
     GenesisTest {
-        gtSecurityParam = k
-      , gtBlockTree
-      , gtSchedule
-      , gtChainSyncTimeouts
-      , gtBlockFetchTimeouts
-      , gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
-      , gtForecastRange
-      , gtGenesisWindow
+        PointSchedule.gtSecurityParam = k
+      , PointSchedule.gtBlockTree
+      , PointSchedule.gtSchedule
+      , PointSchedule.gtChainSyncTimeouts
+      , PointSchedule.gtBlockFetchTimeouts
+      , PointSchedule.gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
+      , PointSchedule.gtForecastRange
+      , PointSchedule.gtGenesisWindow
       } = genesisTest
 
     config = defaultCfg k gtForecastRange gtGenesisWindow
@@ -374,7 +372,7 @@ mkChainDb tracer nodeCfg registry cdbsLoE = do
               }
             )
       pure $ args { ChainDB.Impl.cdbsArgs = (ChainDB.Impl.cdbsArgs args) { cdbsLoE } }
-    (_, (chainDB, ChainDB.Impl.Internal{intAddBlockRunner})) <-
+    (_, (chainDB, ChainDB.Impl.Internal{ChainDB.Impl.intAddBlockRunner})) <-
       allocate
         registry
         (\_ -> ChainDB.Impl.openDBInternal chainDbArgs False)

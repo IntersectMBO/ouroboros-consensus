@@ -13,6 +13,7 @@
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE UndecidableInstances     #-}
+
 -- | NP with optional values
 --
 -- Intended for qualified import

@@ -5,6 +5,7 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE ViewPatterns             #-}
+
 module Ouroboros.Consensus.Cardano.Block (
     -- * Eras
     CardanoEras

@@ -4,6 +4,7 @@
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
+
 -- | Intended for qualified import
 --
 -- > import Ouroboros.Consensus.Fragment.Diff (ChainDiff (..))

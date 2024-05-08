@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+
 module Test.Util.Time (dawnOfTime) where
 
 import           Data.Time (UTCTime (..), fromGregorian)

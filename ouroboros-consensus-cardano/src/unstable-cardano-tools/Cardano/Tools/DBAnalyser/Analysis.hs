@@ -5,11 +5,10 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE PatternSynonyms            #-}
-{-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE TupleSections              #-}
 {-# LANGUAGE TypeApplications           #-}
+
 module Cardano.Tools.DBAnalyser.Analysis (
     AnalysisEnv (..)
   , AnalysisName (..)
@@ -551,20 +550,20 @@ benchmarkLedgerOps mOutfile AnalysisEnv {db, registry, initLedger, cfg, limit} =
           major_gcs              = currentMinusPrevious GC.major_gcs
           slotDataPoint =
             DP.SlotDataPoint
-            { slot            = realPointSlot rp
-            , slotGap         = slot `slotCount` getTipSlot prevLedgerState
-            , totalTime       = currentMinusPrevious GC.elapsed_ns          `div` 1000
-            , mut             = currentMinusPrevious GC.mutator_elapsed_ns  `div` 1000
-            , gc              = currentMinusPrevious GC.gc_elapsed_ns       `div` 1000
-            , majGcCount      = major_gcs
-            , minGcCount      = currentMinusPrevious GC.gcs - major_gcs
-            , allocatedBytes  = currentMinusPrevious GC.allocated_bytes
-            , mut_forecast    = tForecast `div` 1000
-            , mut_headerTick  = tHdrTick  `div` 1000
-            , mut_headerApply = tHdrApp   `div` 1000
-            , mut_blockTick   = tBlkTick  `div` 1000
-            , mut_blockApply  = tBlkApp   `div` 1000
-            , blockStats      = DP.BlockStats $ HasAnalysis.blockStats blk
+            { DP.slot            = realPointSlot rp
+            , DP.slotGap         = slot `slotCount` getTipSlot prevLedgerState
+            , DP.totalTime       = currentMinusPrevious GC.elapsed_ns          `div` 1000
+            , DP.mut             = currentMinusPrevious GC.mutator_elapsed_ns  `div` 1000
+            , DP.gc              = currentMinusPrevious GC.gc_elapsed_ns       `div` 1000
+            , DP.majGcCount      = major_gcs
+            , DP.minGcCount      = currentMinusPrevious GC.gcs - major_gcs
+            , DP.allocatedBytes  = currentMinusPrevious GC.allocated_bytes
+            , DP.mut_forecast    = tForecast `div` 1000
+            , DP.mut_headerTick  = tHdrTick  `div` 1000
+            , DP.mut_headerApply = tHdrApp   `div` 1000
+            , DP.mut_blockTick   = tBlkTick  `div` 1000
+            , DP.mut_blockApply  = tBlkApp   `div` 1000
+            , DP.blockStats      = DP.BlockStats $ HasAnalysis.blockStats blk
             }
 
           slotCount (SlotNo i) = \case
@@ -690,7 +689,7 @@ reproMempoolForge numBlks env = do
     ref <- IOLike.newTVarIO initLedger
     mempool <- Mempool.openMempoolWithoutSyncThread
       Mempool.LedgerInterface {
-        getCurrentLedgerState = ledgerState <$> IOLike.readTVar ref
+        Mempool.getCurrentLedgerState = ledgerState <$> IOLike.readTVar ref
       }
       lCfg
       -- one megabyte should generously accomodate two blocks' worth of txs

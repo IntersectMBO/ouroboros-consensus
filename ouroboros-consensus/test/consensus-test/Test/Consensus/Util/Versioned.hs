@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE RankNTypes            #-}
+
 -- | Tests for versioned serialisation.
 --
 -- Some of our serialization code supports some limited migration capability.

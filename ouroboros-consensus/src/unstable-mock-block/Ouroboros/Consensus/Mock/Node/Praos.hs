@@ -1,9 +1,9 @@
 {-# LANGUAGE BangPatterns      #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Mock.Node.Praos (
     MockPraosBlock
   , blockForgingPraos

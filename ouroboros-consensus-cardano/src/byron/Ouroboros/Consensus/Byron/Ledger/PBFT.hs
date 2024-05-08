@@ -1,10 +1,10 @@
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards       #-}
-{-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE TypeFamilies          #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 -- | Instances required to support PBFT
 module Ouroboros.Consensus.Byron.Ledger.PBFT (
     decodeByronChainDepState

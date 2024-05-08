@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Util.Orphans.IOLike () where
 
 import           Control.Monad.IOSim

@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass     #-}
 {-# LANGUAGE DeriveGeneric      #-}
 {-# LANGUAGE StandaloneDeriving #-}
+
 module Ouroboros.Consensus.Storage.VolatileDB.Impl.Types (
     -- * Blocks per file
     mkBlocksPerFile

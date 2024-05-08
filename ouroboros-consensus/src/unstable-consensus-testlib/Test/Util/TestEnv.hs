@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase      #-}
 {-# LANGUAGE RecordWildCards #-}
+
 -- | A @tasty@ command-line option for enabling nightly tests
 module Test.Util.TestEnv (
     TestEnv (..)

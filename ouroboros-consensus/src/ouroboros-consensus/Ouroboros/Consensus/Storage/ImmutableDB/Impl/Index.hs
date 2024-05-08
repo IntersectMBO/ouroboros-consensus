@@ -2,7 +2,6 @@
 {-# LANGUAGE DerivingVia         #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Index (
     -- * Index

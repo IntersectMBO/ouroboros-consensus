@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass    #-}
 {-# LANGUAGE DeriveGeneric     #-}
 {-# LANGUAGE DeriveTraversable #-}
+
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Types (
     -- * Misc types
     BlockOrEBB (..)

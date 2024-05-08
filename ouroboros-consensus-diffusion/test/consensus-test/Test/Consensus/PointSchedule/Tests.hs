@@ -1,6 +1,6 @@
 {-# LANGUAGE LambdaCase       #-}
-{-# LANGUAGE NamedFieldPuns   #-}
 {-# LANGUAGE TypeApplications #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Consensus.PointSchedule.Tests (tests) where

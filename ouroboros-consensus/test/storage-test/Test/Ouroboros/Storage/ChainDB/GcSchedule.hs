@@ -1,8 +1,8 @@
 {-# LANGUAGE DerivingStrategies         #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE RecordWildCards            #-}
+
 -- | Tests for the garbage collection schedule.
 --
 -- The real implementation of course is stateful, running some code at various

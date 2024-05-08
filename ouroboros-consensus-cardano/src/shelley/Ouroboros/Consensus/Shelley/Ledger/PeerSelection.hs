@@ -6,6 +6,7 @@
 {-# LANGUAGE TypeOperators       #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Shelley.Ledger.PeerSelection () where
 
 import           Cardano.Ledger.BaseTypes

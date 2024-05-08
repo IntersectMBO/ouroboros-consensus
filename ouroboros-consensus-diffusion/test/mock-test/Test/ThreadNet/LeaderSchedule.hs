@@ -1,5 +1,4 @@
 {-# LANGUAGE NamedFieldPuns   #-}
-{-# LANGUAGE RecordWildCards  #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Test.ThreadNet.LeaderSchedule (tests) where

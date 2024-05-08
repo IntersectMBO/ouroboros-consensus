@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.HardFork.Combinator.Ledger.PeerSelection () where
 
 import           Data.SOP.BasicFunctors

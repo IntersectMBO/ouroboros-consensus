@@ -1,5 +1,6 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
 -- | Schedule generators for a single peer
 --
 -- These functions generate schedules for the tip points, the header points and

@@ -1,8 +1,8 @@
 {-# LANGUAGE GADTs               #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+
 module Test.Consensus.Shelley.Serialisation (tests) where
 
 import           Cardano.Crypto.Hash (ShortHash)

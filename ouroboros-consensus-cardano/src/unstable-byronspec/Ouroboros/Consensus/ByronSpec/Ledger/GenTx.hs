@@ -1,6 +1,5 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric  #-}
-{-# LANGUAGE LambdaCase     #-}
 
 -- | Combine all Byron transaction types into single union type
 --

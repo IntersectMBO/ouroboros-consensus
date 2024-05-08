@@ -1,7 +1,9 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
+
 -- | Tests for the chain DB iterator.
 --
 -- This is a set of unit tests that check for specific bugs discovered during

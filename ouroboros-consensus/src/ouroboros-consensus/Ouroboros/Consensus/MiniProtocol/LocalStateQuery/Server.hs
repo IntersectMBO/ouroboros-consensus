@@ -1,6 +1,6 @@
-{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections       #-}
+
 module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryServer) where
 
 import           Ouroboros.Consensus.Block
@@ -52,8 +52,8 @@ localStateQueryServer cfg getTipPoint getPastLedger getImmutablePoint =
 
     acquired :: ExtLedgerState blk
              -> ServerStAcquired blk (Point blk) (Query blk) m ()
-    acquired ledgerState = ServerStAcquired {
-          recvMsgQuery     = handleQuery ledgerState
+    acquired st = ServerStAcquired {
+          recvMsgQuery     = handleQuery st
         , recvMsgReAcquire = handleAcquire
         , recvMsgRelease   = return idle
         }
@@ -62,7 +62,7 @@ localStateQueryServer cfg getTipPoint getPastLedger getImmutablePoint =
          ExtLedgerState blk
       -> Query blk result
       -> m (ServerStQuerying blk (Point blk) (Query blk) m () result)
-    handleQuery ledgerState query = return $
+    handleQuery st query = return $
         SendMsgResult
-          (answerQuery cfg query ledgerState)
-          (acquired ledgerState)
+          (answerQuery cfg query st)
+          (acquired st)

@@ -1,7 +1,9 @@
 {-# LANGUAGE FlexibleInstances   #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.ThreadNet.TxGen.Mock () where
 
 import           Control.Monad (replicateM)

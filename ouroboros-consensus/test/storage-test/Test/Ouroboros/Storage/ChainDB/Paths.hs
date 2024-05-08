@@ -1,12 +1,10 @@
-{-# LANGUAGE DisambiguateRecordFields   #-}
-{-# LANGUAGE FlexibleContexts           #-}
-{-# LANGUAGE FlexibleInstances          #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE LambdaCase                 #-}
-{-# LANGUAGE NamedFieldPuns             #-}
-{-# LANGUAGE StandaloneDeriving         #-}
-{-# LANGUAGE TupleSections              #-}
-{-# LANGUAGE UndecidableInstances       #-}
+{-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE FlexibleContexts         #-}
+{-# LANGUAGE FlexibleInstances        #-}
+{-# LANGUAGE NamedFieldPuns           #-}
+{-# LANGUAGE StandaloneDeriving       #-}
+{-# LANGUAGE TupleSections            #-}
+{-# LANGUAGE UndecidableInstances     #-}
 
 module Test.Ouroboros.Storage.ChainDB.Paths (tests) where
 

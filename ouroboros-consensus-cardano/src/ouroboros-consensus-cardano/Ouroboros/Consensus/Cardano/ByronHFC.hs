@@ -1,7 +1,9 @@
 {-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeApplications  #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Cardano.ByronHFC (ByronBlockHFC) where
 
 import qualified Data.Map.Strict as Map

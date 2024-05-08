@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase     #-}
 {-# LANGUAGE NamedFieldPuns #-}
 
 -- | This module contains code that is generic to any “scheduled server” (think

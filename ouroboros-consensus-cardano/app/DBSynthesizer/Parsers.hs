@@ -1,4 +1,3 @@
-
 module DBSynthesizer.Parsers (parseCommandLine) where
 
 import           Cardano.Tools.DBSynthesizer.Types

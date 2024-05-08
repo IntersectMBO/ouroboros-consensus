@@ -5,11 +5,11 @@
 {-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE NamedFieldPuns           #-}
 {-# LANGUAGE OverloadedStrings        #-}
-{-# LANGUAGE PatternSynonyms          #-}
 {-# LANGUAGE PolyKinds                #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE TypeApplications         #-}
 {-# LANGUAGE TypeFamilies             #-}
+
 module Test.ThreadNet.Infra.Shelley (
     CoreNode (..)
   , CoreNodeKeyInfo (..)

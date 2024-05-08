@@ -3,6 +3,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 -- | Tests for the local state query server.
 --
 -- The local state query protocol allows clients such as wallets to query the

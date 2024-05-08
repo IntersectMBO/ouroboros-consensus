@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.ThreadNet.Util.HasCreator.Mock () where
 
 import           Cardano.Crypto.DSIGN

@@ -2,7 +2,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell   #-}
 {-# LANGUAGE TypeFamilies      #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Consensus.Cardano.Golden (tests) where
 
 import           Ouroboros.Consensus.Cardano.Block

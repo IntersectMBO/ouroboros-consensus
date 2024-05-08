@@ -1,4 +1,3 @@
-
 module Cardano.Tools.DBAnalyser.Types (
     module AnalysisTypes
   , module Cardano.Tools.DBAnalyser.Types

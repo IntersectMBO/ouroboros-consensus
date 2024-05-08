@@ -2,7 +2,9 @@
 {-# LANGUAGE FlexibleInstances  #-}
 {-# LANGUAGE NamedFieldPuns     #-}
 {-# LANGUAGE StandaloneDeriving #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Util.Orphans.NoThunks () where
 
 import           Control.Concurrent.Class.MonadMVar

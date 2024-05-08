@@ -5,7 +5,6 @@
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeFamilies          #-}
 
-
 module Cardano.Api.Any (
     module Cardano.Api.Any
   , module Cbor

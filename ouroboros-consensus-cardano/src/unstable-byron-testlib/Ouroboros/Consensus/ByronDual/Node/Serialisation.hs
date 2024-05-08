@@ -3,7 +3,9 @@
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies          #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.ByronDual.Node.Serialisation () where
 
 import           Cardano.Chain.Slotting (EpochSlots)

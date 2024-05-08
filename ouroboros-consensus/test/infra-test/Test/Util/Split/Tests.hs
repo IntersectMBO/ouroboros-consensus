@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+
 module Test.Util.Split.Tests (tests) where
 
 import           Data.Either (isLeft, isRight)

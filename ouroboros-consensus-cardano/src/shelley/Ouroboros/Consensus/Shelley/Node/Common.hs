@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds               #-}
-{-# LANGUAGE DeriveGeneric           #-}
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}
 {-# LANGUAGE GADTs                   #-}
@@ -9,6 +8,7 @@
 {-# LANGUAGE TypeOperators           #-}
 {-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Node configuration common to all (era, protocol) combinations deriving from

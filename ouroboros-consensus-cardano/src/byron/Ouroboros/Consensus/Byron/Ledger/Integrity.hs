@@ -1,4 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
+
 module Ouroboros.Consensus.Byron.Ledger.Integrity (
     verifyBlockIntegrity
   , verifyHeaderIntegrity

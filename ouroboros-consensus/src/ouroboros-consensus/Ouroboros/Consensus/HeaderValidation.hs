@@ -15,6 +15,7 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
 {-# LANGUAGE UndecidableInstances  #-}
+
 -- | Header validation
 module Ouroboros.Consensus.HeaderValidation (
     revalidateHeader

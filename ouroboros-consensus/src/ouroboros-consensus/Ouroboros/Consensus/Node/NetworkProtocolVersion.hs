@@ -1,6 +1,5 @@
-{-# LANGUAGE DefaultSignatures #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE TypeFamilies      #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies     #-}
 
 module Ouroboros.Consensus.Node.NetworkProtocolVersion (
     HasNetworkProtocolVersion (..)

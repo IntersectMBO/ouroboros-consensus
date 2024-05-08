@@ -14,7 +14,6 @@
 {-# LANGUAGE UndecidableInstances    #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 {-# LANGUAGE ViewPatterns            #-}
-{-# OPTIONS_GHC -Wno-unticked-promoted-constructors #-}
 
 module Ouroboros.Consensus.Protocol.Praos (
     ConsensusConfig (..)

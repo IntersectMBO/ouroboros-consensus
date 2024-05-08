@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeFamilies      #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.ThreadNet.TxGen.Allegra () where
 
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos)
