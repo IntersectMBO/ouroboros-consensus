@@ -12,31 +12,47 @@ The following state machine depicts the desired behavior of the node.
 
 ```mermaid
 graph
-    OnlyBootstrap[OnlyBootstrap]
-    CaughtUp[CaughtUp]
+    subgraph OnlyBootstrap
+        direction TB
+        PreSyncing[PreSyncing]
+        Syncing[Syncing]
+        PreSyncing -- "Honest Availability Assumption\nis satisfied" --> Syncing
+        Syncing -- "Honest Availability Assumption\nis no longer satisfied" --> PreSyncing
+    end
 
-    OnlyBootstrap -- "no peers claim to have\nsubsequent headers,\nand its selection is ≥\nthe best header" --> CaughtUp
-    CaughtUp -- "vol tip became older than X" --> OnlyBootstrap
+    CaughtUp[CaughtUp]
+    Syncing -- "no peers claim to have\nsubsequent headers,\nand its selection is ≥\nthe best header" --> CaughtUp
+    CaughtUp -- "vol tip became older than X" ----> PreSyncing
 
     StartUp[[Node start-up]]
     StartUp -- "node was most recently in CaughtUp\nand vol tip is younger than X" --> CaughtUp
-    StartUp -- "otherwise" --> OnlyBootstrap
+    StartUp -- "otherwise" --> PreSyncing
 ```
 
-- `OnlyBootstrap` state - All upstream peers must reside in a centralized set of trusted _bootstrap peers_.
+- `OnlyBootstrap` - All upstream peers must be trusted.
+
+   In the context of bootstrap peers, as all peers are trusted, the _Honest Availability Assumption_ is satisfied in the following cases:
+
+    - The node is configured to connect to bootstrap peers, and it has established a connection to a bootstrap peer.
+
+    - The node is not configured to connect to bootstrap peers. This is the case for eg block producers and hidden relays. They will only be connected to trusted local root peers (eg the relays for a block-producing node).
 
 - `CaughtUp` state - The peers are chosen according to the P2P design, including the _ledger peers_ etc.
 
 **Desideratum 2.**
 In particular, the transitions should happen promptly.
 
-- `CaughtUp -> OnlyBootstrap` should be prompt in order to minimize the duration that the node is exposed to untrusted peers (aka non-bootstrap peers) while its stale volatile tip is making it vulnerable.
+- `CaughtUp -> PreSyncing` should be prompt in order to minimize the duration that the node is exposed to untrusted peers (aka non-bootstrap peers) while its stale volatile tip is making it vulnerable.
   Delays here would directly threaten the security of the node.
 
-- `OnlyBootstrap -> CaughtUp` should be prompt so that the centralized, relatively-few bootstrap peers are relieved of load as soon as possible.
+- `Syncing -> CaughtUp` should be prompt so that the centralized, relatively-few bootstrap peers are relieved of load as soon as possible.
   Delays here would not directly threaten the security of the node.
   However, wasting the centralized resources would threaten the ability of nodes to join the net, ie the availability of the whole net.
   Determining the exact load constraints for the bootstrap peers is not yet finalized.
+
+- `PreSyncing -> Syncing` should be prompt to allow the node to conclude that is is caught up as a follow-up.
+
+- `Syncing -> PreSyncing` should be prompt to prevent the node from concluding that it is caught up while it is not actually connected to a bootstrap peers.
 
 **Desideratum 3.**
 The node should not return to `OnlyBootstrap` every time it restarts/briefly loses network/etc.
@@ -59,11 +75,11 @@ This is the point of the "Node start-up" pseudo state in the diagram above.
 
   As the volatile tip age approaches X, the Consensus Layer could forewarn the Diffusion Layer, eg "it seems like the transition back to OnlyBootstrap will be necessary soon; please prepare", if that would be helpful.
 
-- For similar reasons, the Diffusion Layer should also manage the disconections from all peers upon the `OnlyBootstrap -> CaughtUp` transition.
+- For similar reasons, the Diffusion Layer should also manage the disconections from all (bootstrap) peers upon the `OnlyBootstrap -> CaughtUp` transition.
 
 ## Anticipated Interface
 
-See [IntersectMBO/ouroboros-network#4555](https://github.com/IntersectMBO/ouroboros-network/pull/4555) for the definition/implementation of this interface on the Network side.
+See [IntersectMBO/ouroboros-network#4555](https://github.com/IntersectMBO/ouroboros-network/pull/4555) and [IntersectMBO/ouroboros-network#4846](https://github.com/IntersectMBO/ouroboros-network/pull/4846) for the definition/implementation of this interface on the Network side.
 
 - The Diffusion Layer should monitor a `TVar State` (maybe via a `STM State` action).
   The Consensus Layer will update that state promptly.
@@ -74,6 +90,12 @@ See [IntersectMBO/ouroboros-network#4555](https://github.com/IntersectMBO/ourobo
   ```
   Here, `YoungEnough` signals that the ledger state's distribution among stake relays is sufficiently close to that of the actual real world.
   For now, we conservatively return `YoungEnough` only when the node concludes it has fully caught-up, and `TooOld` otherwise.
+
+- The Diffusion Layer will inform the Consensus Layer whether the Honest Availability Assumption is satisfied.
+  ```haskell
+  data OutboundConnectionsState = TrustedStateWithExternalPeers | UntrustedState
+  daUpdateOutboundConnectionsState :: OutboundConnectionsState -> STM m ()
+  ```
 
 - Whenever necessary, the Diffusion Layer can ask the Consensus Layer for the ledger peer information, eg
   ```haskell
