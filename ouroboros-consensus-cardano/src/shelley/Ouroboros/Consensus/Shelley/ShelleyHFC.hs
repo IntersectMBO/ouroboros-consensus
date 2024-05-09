@@ -32,13 +32,13 @@ import           Cardano.Slotting.EpochInfo (hoistEpochInfo)
 import           Control.Monad (guard)
 import           Control.Monad.Except (runExcept, throwError, withExceptT)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe
 import           Data.SOP.BasicFunctors
 import           Data.SOP.InPairs (RequiringBoth (..), ignoringBoth)
 import qualified Data.Text as T (pack)
 import           Data.Void (Void)
 import           Data.Word
 import           GHC.Generics (Generic)
+import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -137,9 +137,8 @@ shelleyTransition ::
 shelleyTransition ShelleyPartialLedgerConfig{..}
                   transitionMajorVersionRaw
                   state =
-      takeAny
-    . mapMaybe isTransition
-    . Shelley.Inspect.protocolUpdates genesis
+      isTransition
+    . Shelley.Inspect.pparamsUpdate
     $ state
   where
     ShelleyTransitionInfo{..} = shelleyLedgerTransition state
@@ -152,24 +151,14 @@ shelleyTransition ShelleyPartialLedgerConfig{..}
     k :: Word64
     k = SL.sgSecurityParam genesis
 
-    isTransition :: Shelley.Inspect.ProtocolUpdate era -> Maybe EpochNo
-    isTransition Shelley.Inspect.ProtocolUpdate{..} = do
-         SL.ProtVer major _minor <- proposalVersion
+    isTransition :: ShelleyLedgerUpdate era -> Maybe EpochNo
+    isTransition (ShelleyUpdatedPParams maybePParams newPParamsEpochNo) = do
+         SL.SJust pp <- Just maybePParams
+         let protVer = pp ^. SL.ppProtocolVersionL
          transitionMajorVersion <- SL.mkVersion transitionMajorVersionRaw
-         guard $ major == transitionMajorVersion
-         guard $ proposalReachedQuorum
+         guard $ SL.pvMajor protVer == transitionMajorVersion
          guard $ shelleyAfterVoting >= fromIntegral k
-         return proposalEpoch
-       where
-         Shelley.Inspect.UpdateProposal{..} = protocolUpdateProposal
-         Shelley.Inspect.UpdateState{..}    = protocolUpdateState
-
-    -- In principle there could be multiple proposals that all change the
-    -- major protocol version. In practice this can't happen because each
-    -- delegate can only vote for one proposal, but the types don't guarantee
-    -- this. We don't need to worry about this, and just pick any of them.
-    takeAny :: [a] -> Maybe a
-    takeAny = listToMaybe
+         return newPParamsEpochNo
 
 instance
   ( ShelleyCompatible proto era,
