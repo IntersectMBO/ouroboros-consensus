@@ -100,7 +100,13 @@ sampleLedgerConfig =
   Payload semantics
 -------------------------------------------------------------------------------}
 
-newtype TxApplicationError =
+data TestLedgerState = TestLedgerState {
+    availableTokens :: !(Set Token)
+  }
+  deriving stock (Generic, Eq, Show)
+  deriving anyclass (NoThunks, ToExpr, Serialise)
+
+data TxApplicationError =
     -- | The transaction could not be applied due to the given unavailable tokens.
     TxApplicationError { unavailable :: Set Token }
   deriving stock (Generic, Eq, Show)
