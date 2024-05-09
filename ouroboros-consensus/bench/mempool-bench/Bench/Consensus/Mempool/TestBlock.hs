@@ -28,7 +28,6 @@ import           Control.Monad.Trans.Except (except)
 import           Data.Set (Set, (\\))
 import qualified Data.Set as Set
 import           Data.TreeDiff (ToExpr)
-import           Data.Word (Word8)
 import           GHC.Generics (Generic)
 import           NoThunks.Class (NoThunks)
 import qualified Ouroboros.Consensus.Block as Block
@@ -56,7 +55,7 @@ data Tx = Tx {
   deriving stock (Eq, Ord, Generic, Show)
   deriving anyclass (NoThunks, NFData)
 
-newtype Token = Token { unToken :: Word8  }
+newtype Token = Token { unToken :: Int  }
   deriving stock (Show, Eq, Ord, Generic)
   deriving anyclass (NoThunks, ToExpr, Serialise, NFData)
 
@@ -81,7 +80,7 @@ sampleLedgerConfig = testBlockLedgerConfigFrom $
 -------------------------------------------------------------------------------}
 
 data TestLedgerState = TestLedgerState {
-    availableTokens :: Set Token
+    availableTokens :: !(Set Token)
   }
   deriving stock (Generic, Eq, Show)
   deriving anyclass (NoThunks, ToExpr, Serialise)

@@ -11,7 +11,8 @@ import           Bench.Consensus.Mempool
 import           Bench.Consensus.Mempool.TestBlock (TestBlock)
 import qualified Bench.Consensus.Mempool.TestBlock as TestBlock
 import           Control.Arrow (first)
-import           Control.Monad (unless, void)
+import           Control.DeepSeq
+import           Control.Monad (unless)
 import qualified Control.Tracer as Tracer
 import           Data.Aeson
 import qualified Data.ByteString.Lazy as BL
@@ -27,7 +28,7 @@ import qualified Test.Consensus.Mempool.Mocked as Mocked
 import           Test.Consensus.Mempool.Mocked (MockedMempool)
 import           Test.Tasty (withResource)
 import           Test.Tasty.Bench (CsvPath (CsvPath), bench, benchIngredients,
-                     bgroup, nfIO)
+                     bgroup, whnfIO)
 import           Test.Tasty.HUnit (testCase, (@?=))
 import           Test.Tasty.Options (changeOption)
 import           Test.Tasty.Runners (parseOptions, tryIngredients)
@@ -50,24 +51,27 @@ main = withStdTerminalHandles $ do
       where
         benchmarkJustAddingTransactions =
             bgroup "Just adding" $
-                fmap benchAddNTxs [10_000, 1_000_000]
+                fmap benchAddNTxs [10_000, 20_000]
           where
             benchAddNTxs n =
                 withResource
-                  (let txs = mkNTryAddTxs n in fmap (, txs) (openMempoolWithCapacityFor txs))
+                  (pure $!! mkNTryAddTxs n)
                   (\_ -> pure ())
-                  (\getAcquiredRes -> do
-                      let withAcquiredMempool act = do
-                            (mempool, txs) <- getAcquiredRes
-                            void $ act mempool txs
-                            -- TODO: consider adding a 'reset' command to the mempool to make sure its state is not tainted.
-                            Mocked.removeTxs mempool $ getCmdsTxIds txs
+                  (\getTxs -> do
                       bgroup (show n <> " transactions") [
-                          bench "benchmark" $ nfIO $ withAcquiredMempool $ \mempool txs -> do
+                          bench "setup mempool" $ whnfIO $ do
+                            txs <- getTxs
+                            openMempoolWithCapacityFor txs
+                        , bench "setup mempool + benchmark" $ whnfIO $ do
+                            txs <- getTxs
+                            mempool <- openMempoolWithCapacityFor txs
                             run mempool txs
-                        , testCase "test" $ withAcquiredMempool $ \mempool txs ->
+                        , testCase "test" $ do
+                            txs <- getTxs
+                            mempool <- openMempoolWithCapacityFor txs
                             testAddTxs mempool txs
-                        , testCase "txs length" $ withAcquiredMempool $ \_mempool txs -> do
+                        , testCase "txs length" $ do
+                            txs <- getTxs
                             length txs @?= n
                         ]
                   )
