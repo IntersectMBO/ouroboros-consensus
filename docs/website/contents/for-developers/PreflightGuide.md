@@ -233,7 +233,7 @@ An extremely conservative upper bound for how many nonces an attacker can choose
 The mainnet parameters of Cardano (in particular the security parameter) were chosen with resistance against grinding in mind.
 
 Concretely, an attacker with $\alpha$ stake that can choose out of $N$ epoch nonces can ensure that it leads any specific slot with probability $1-{(1-\phi(\alpha))}^N$, which is a huge advantage compared to $\phi(\alpha)$.
-For example, an attacker with $N=10^{20}$ with even a very small amount of stake has a chance of close to 100% to cause themselves to be elected in any specific slot.
+For example, an attacker with $N=10^{20}$ with even a very small amount of stake has a chance of close to 100% to cause themselves to be elected in any single specific slot.
 
 Usually, an attacker wants to maximize their total number of active slots within a larger number of slots, like in an entire epoch.
 For this, the impact of grinding is smaller (but still large), as every epoch nonce affects the entire leader schedule of the epoch, and the attacker can not choose different epoch nonces for different slots.
