@@ -214,7 +214,7 @@ In particular, we can calculate the probability that a slot is an active multi l
   = f + \sigma \cdot {(1-f)}^\sigma \cdot \log(1-f)
 ```
 via the definition of the Poisson distribution and $L \sim \mathop{\mathrm{Pois}}(-\sigma\log(1-f))$.
-For $f=1/20$ and $\sigma =1$, we get $\mathop{\mathrm{Pr}}(L \ge 2) = 0.127\%$, ie 0.127% of all slots are multi leader slots in the worst case.
+For $f=1/20$ and $\sigma =1$, we get $\mathop{\mathrm{Pr}}(L \ge 2) = 0.00127$, ie 0.127% of all slots are multi leader slots in the worst case.
 In that case, we would expect to see $10k/f \cdot 0.00127 \approx 549$ multi leader slots per epoch.
 
 On the community-maintained [pooltool.io](https://pooltool.io/networkhealth), we can observe the number of "slot battles" per epoch, ie the number of times the nodes reporting to pooltool.io observed two blocks in the same slot.
