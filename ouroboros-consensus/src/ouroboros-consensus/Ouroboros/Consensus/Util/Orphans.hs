@@ -27,32 +27,10 @@ import           Data.SOP.BasicFunctors
 import           NoThunks.Class (InspectHeap (..), InspectHeapNamed (..),
                      NoThunks (..), OnlyCheckWhnfNamed (..), allNoThunks,
                      noThunksInKeysAndValues)
-import           Ouroboros.Consensus.Block.Abstract
-import           Ouroboros.Consensus.Util.Condense
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
-import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Mock.Chain (Chain (..))
 import           Ouroboros.Network.Util.ShowProxy
 import           System.FS.API (SomeHasFS)
 import           System.FS.API.Types (FsPath, Handle)
 import           System.FS.CRC (CRC (CRC))
-
-{-------------------------------------------------------------------------------
-  Condense
--------------------------------------------------------------------------------}
-
-instance Condense (HeaderHash block) => Condense (Point block) where
-    condense GenesisPoint     = "Origin"
-    condense (BlockPoint s h) = "(Point " <> condense s <> ", " <> condense h <> ")"
-
-instance Condense block => Condense (Chain block) where
-    condense Genesis   = "Genesis"
-    condense (cs :> b) = condense cs <> " :> " <> condense b
-
-instance (Condense block, HasHeader block, Condense (HeaderHash block))
-    => Condense (AnchoredFragment block) where
-    condense (AF.Empty pt) = "EmptyAnchor " <> condense (AF.anchorToPoint pt)
-    condense (cs AF.:> b)  = condense cs <> " :> " <> condense b
 
 {-------------------------------------------------------------------------------
   Serialise
@@ -63,12 +41,6 @@ instance Serialise (Hash h a) where
 instance Serialise (VerKeyDSIGN MockDSIGN) where
   encode = encodeVerKeyDSIGN
   decode = decodeVerKeyDSIGN
-
-{-------------------------------------------------------------------------------
-  ShowProxy
--------------------------------------------------------------------------------}
-
-instance ShowProxy SlotNo where
 
 {-------------------------------------------------------------------------------
   NoThunks
@@ -105,9 +77,10 @@ instance NoThunks a => NoThunks (Sum a)
   fs-api
 -------------------------------------------------------------------------------}
 
+deriving via InspectHeap FsPath instance NoThunks FsPath
+deriving newtype instance NoThunks CRC
 deriving via InspectHeapNamed "Handle" (Handle h)
     instance NoThunks (Handle h)
-deriving via InspectHeap FsPath instance NoThunks FsPath
 deriving via OnlyCheckWhnfNamed "SomeHasFS" (SomeHasFS m)
     instance NoThunks (SomeHasFS m)
-deriving newtype instance NoThunks CRC
+
