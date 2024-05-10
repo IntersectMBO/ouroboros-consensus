@@ -143,7 +143,7 @@ The elections for different slots are independent of each other; leading in one 
  - Most slots are *inactive*, ie there are no leaders for these slots.[^praos-origin]
  - Some slots are *active*. The probability of a slot to be active is determined by the *active slot coefficient* $f$. On Cardano mainnet, $f = 1/20$.
     - Most active slots are *single leader slots*.
-    - Some active slots are *multi leader slots*. As the slot numbers on a chain have to strictly increase, at most one of the blocks forged by the elected stake pools will end up on the honest chain eventually.[^ssle]
+    - Some active slots are *multi leader slots*. As the slot numbers on a chain have to strictly increase, at most one of the blocks minted by the elected stake pools will end up on the honest chain eventually.[^ssle]
 
 The leader schedule of Cardano is *private* due to the usage of *verifiable random functions* (VRFs):
 Nodes only know their own leader schedule for one epoch[^glossary] in advance, and nobody can know whether some pool is elected in a slot until they reveal this themselves by minting a block in that slot.
@@ -185,7 +185,7 @@ Let us apply some common probability distributions to this scenario.
 
 ### Multi leader slots
 
-The probability that a pool with relative stake $\sigma$ is elected in any specific slot is given by $ \phi_f(\sigma) = \phi(\sigma) = 1-{(1-f)}^\sigma $.
+The probability that a pool with relative stake $\sigma$ is elected in any specific slot is given by $\phi_f(\sigma) = \phi(\sigma) = 1-{(1-f)}^\sigma$.
 We have $\phi(\sigma) \ge f\phi(\sigma)$, ie a pool with stake $\sigma$ will be elected in an active slot with probability somewhat higher than $\sigma$.
 For small $\sigma$, $\phi(\sigma) \approx f\phi(\sigma)$ is a fine approximation.
 
@@ -235,7 +235,7 @@ The mainnet parameters of Cardano (in particular the security parameter) were ch
 Concretely, an attacker with $\alpha$ stake that can choose out of $N$ epoch nonces can ensure that it leads any specific slot with probability $1-{(1-\phi(\alpha))}^N$, which is a huge advantage compared to $\phi(\alpha)$.
 For example, an attacker with $N=10^{20}$ with even a very small amount of stake has a chance of close to 100% to cause themselves to be elected in any specific slot.
 
-Usually, an attacker wants to maximize their total number of active slots within an epoch.
+Usually, an attacker wants to maximize their total number of active slots within a larger number of slots, like in an entire epoch.
 For this, the impact of grinding is smaller (but still large), as every epoch nonce affects the entire leader schedule of the epoch, and the attacker can not choose different epoch nonces for different slots.
 Calculations in this area make use of the [largest order statistic][order statistic].
 Here, we plot the cumulative distribution function of the number of active slots without and with different levels of grinding.
