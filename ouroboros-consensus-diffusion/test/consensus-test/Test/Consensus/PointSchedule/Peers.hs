@@ -35,6 +35,7 @@ module Test.Consensus.PointSchedule.Peers (
   , peersOnlyHonest
   , toMap
   , toMap'
+  , unionWithKey
   , updatePeer
   ) where
 
@@ -203,6 +204,13 @@ peersFromPeerList peers =
             AdversarialPeer n -> (hs, (n, v) : as)
         )
         ([], [])
+
+unionWithKey :: (PeerId -> a -> a -> a) -> Peers a -> Peers a -> Peers a
+unionWithKey f peers1 peers2 =
+  Peers
+    { honestPeers = Map.unionWithKey (f . HonestPeer) (honestPeers peers1) (honestPeers peers2),
+      adversarialPeers = Map.unionWithKey (f . AdversarialPeer) (adversarialPeers peers1) (adversarialPeers peers2)
+    }
 
 -- | Make a 'Peers' structure from a list of peer ids and a default value.
 peersFromPeerIdList :: [PeerId] -> a -> Peers a
