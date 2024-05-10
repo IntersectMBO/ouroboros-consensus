@@ -186,8 +186,8 @@ Let us apply some common probability distributions to this scenario.
 ### Multi leader slots
 
 The probability that a pool with relative stake $\sigma$ is elected in any specific slot is given by $\phi_f(\sigma) = \phi(\sigma) = 1-{(1-f)}^\sigma$.
-We have $\phi(\sigma) \ge f\phi(\sigma)$, ie a pool with stake $\sigma$ will be elected in an active slot with probability somewhat higher than $\sigma$.
-For small $\sigma$, $\phi(\sigma) \approx f\phi(\sigma)$ is a fine approximation.
+We have $\phi(\sigma) \ge f\sigma$, ie a pool with stake $\sigma$ will be elected in an active slot with probability somewhat higher than $\sigma$.
+For small $\sigma$, $\phi(\sigma) \approx f\sigma$ is a fine approximation.
 
 The motivation for choosing $\phi$ like this is the *independent aggregation* property
 ```math
