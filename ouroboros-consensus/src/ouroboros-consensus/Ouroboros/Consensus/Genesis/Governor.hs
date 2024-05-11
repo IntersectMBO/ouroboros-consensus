@@ -335,6 +335,9 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       guard $ AF.lastPoint frag0 /= AF.lastPoint frag1
       -- peer1 offers more than k blocks or peer0 has sent all headers in the
       -- genesis window after the intersection (idling or not)
+      --
+      -- Checking for offersMoreThanK is important to avoid disconnecting
+      -- competing honest peers when the syncing node is nearly caught up.
       guard $ offersMoreThanK || lb0 == ub0
       -- peer1 has the same or better density than peer0
       -- If peer0 is idling, we assume no more headers will be sent.
@@ -347,14 +350,14 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- objector could offer chains of equal density.
       guard $ lb1 >= (if idling0 then lb0 else ub0)
 
-      -- Conjecture 1: All of the guards above imply that peer0 is not aware of
-      -- the best chain up to the last slot of the genesis window anchored at
-      -- the oldest intersection.
+      -- We disconnect peer0 if there is at least another peer peer1 with a
+      -- chain which is at least as good, and peer0 is either idling or there is
+      -- no extension to peer0's chain that can make it better than peer1's, and
+      -- peer1's has more than k headers or peer0 has sent all its headers in
+      -- the genesis window anchored at the intersection.
       --
-      -- Conjecture 2: If peer0 is not aware of the best chain up to the last
-      -- slot of the genesis window anchored at the oldest intersection, and
-      -- there is no peer with an older intersection, then all of the guards
-      -- above should be true.
+      -- A chain is "as good as another" if it has at least as many headers in
+      -- the genesis window anchored at the intersection.
       pure peer0
 
     loeIntersectionSlot = AF.headSlot loeFrag
