@@ -12,7 +12,7 @@ import           Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
 import           Test.Consensus.PointSchedule (PeerSchedule, PeersSchedule,
                      prettyPeersSchedule)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
-import           Test.Consensus.PointSchedule.Shrinking (shrinkHonestPeer)
+import           Test.Consensus.PointSchedule.Shrinking (shrinkHonestPeers)
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
 import           Test.QuickCheck (Property, conjoin, counterexample)
 import           Test.Tasty
@@ -25,7 +25,6 @@ tests =
     [ testGroup "honest peer shrinking"
       [ testProperty "actually shortens the schedule" prop_shortens
       , testProperty "preserves the final state all peers" prop_preservesFinalStates
-      , testProperty "doesn't remove points of the adversarial schedule" prop_preserversAdversarial
       ]
     ]
 
@@ -34,9 +33,6 @@ prop_shortens = checkShrinkProperty isShorterThan
 
 prop_preservesFinalStates :: Property
 prop_preservesFinalStates = checkShrinkProperty doesNotChangeFinalState
-
-prop_preserversAdversarial :: Property
-prop_preserversAdversarial = checkShrinkProperty doesNotRemoveAdversarialPoints
 
 -- | Apparently, `unsnoc` hasn't been invented yet, so we'll do this manually
 lastM :: [a] -> Maybe a
@@ -79,15 +75,6 @@ doesNotChangeFinalState original shrunk =
     lastBP :: PeerSchedule blk -> Maybe (SchedulePoint blk)
     lastBP sch = lastM $ mapMaybe (\case (_, p@(ScheduleBlockPoint  _)) -> Just p ; _ -> Nothing) sch
 
-doesNotRemoveAdversarialPoints :: Eq blk => PeersSchedule blk -> PeersSchedule blk -> Bool
-doesNotRemoveAdversarialPoints original shrunk =
-  samePeers original shrunk
-  && (and $ zipWith
-    (\oldSch newSch -> fmap snd oldSch == fmap snd newSch)
-    (toList $ adversarialPeers original)
-    (toList $ adversarialPeers shrunk)
-  )
-
 checkShrinkProperty :: (PeersSchedule TestBlock -> PeersSchedule TestBlock -> Bool) -> Property
 checkShrinkProperty prop =
   forAllBlind
@@ -103,5 +90,5 @@ checkShrinkProperty prop =
           )
           (prop schedule shrunk)
       )
-      (shrinkHonestPeer schedule)
+      (shrinkHonestPeers schedule)
     )

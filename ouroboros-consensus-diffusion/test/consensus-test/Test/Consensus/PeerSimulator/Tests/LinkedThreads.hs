@@ -44,6 +44,7 @@ prop_chainSyncKillsBlockFetch = do
         pure $ gt $> schedule
     )
     defaultSchedulerConfig
+    -- No shrinking because the schedule is tiny and hand-crafted
     (\_ _ -> [])
     ( \_ stateView@StateView {svTipBlock} ->
         svTipBlock == Nothing

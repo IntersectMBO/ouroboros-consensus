@@ -22,6 +22,7 @@ import           Test.Consensus.PeerSimulator.Trace (TraceEvent (..))
 import           Test.Consensus.PointSchedule
 import qualified Test.Consensus.PointSchedule.Peers as Peers
 import           Test.Consensus.PointSchedule.Peers (Peers (..), peers')
+import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.IOLike ()
@@ -88,11 +89,7 @@ prop_CSJ happy synchronized =
       , scEnableLoP = True
       }
     )
-    ( -- NOTE: Shrinking makes the tests fail because the peers reject jumps
-      -- because their TP is G. This makes them into objectors and they then
-      -- start serving headers.
-      \_ _ -> []
-    )
+    shrinkPeerSchedules
     ( \gt StateView{svTrace} ->
         let
           -- The list of 'TraceDownloadedHeader' events that are not newer than
