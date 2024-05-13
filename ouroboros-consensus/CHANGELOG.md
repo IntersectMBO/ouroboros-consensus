@@ -2,6 +2,83 @@
 
 # Changelog entries
 
+<a id='changelog-0.18.0.0'></a>
+## 0.18.0.0 — 2024-05-13
+
+### Non-Breaking
+
+- Fixed LoE implementation. (still disabled by default)
+
+- ChainSync client: removed redundant intersection check with selection (we
+  already do that on every RollForward).
+
+- Un-orphan instances for `Condense` and `HeaderHash (Ticked l)`.
+
+- Provide `NoThunks` instances for:
+  - `Sum a`,
+  - `RAWLock m st`,
+  - `StrictTVar (WithEarlyExit m) a`,
+  - `StrictSVar (WithEarlyExit m) a`
+- Added `Complete` and `Incomplete` type aliases for arguments.
+- Implement `HTrans` instance for `HardForkState`
+- `SomeSecond` became poly-kinded.
+
+### Breaking
+
+- Added new `BlockSupportsDiffusionPipelining` class (as well as supporting data
+  types), which is a superclass constraint of `SingleEraBlock` and `RunNode`.
+  Added the new necessary instances.
+
+- Update BlockFetch punishment logic for `BlockSupportsDiffusionPipelining`.
+
+- Update ChainSel tentative header logic for `BlockSupportsDiffusionPipelining`.
+
+- Remove now-obsolete `Ouroboros.Consensus.Util.TentativeState` module.
+
+- Added the `eraGenesisWin` to `EraParams` and adapted serialisation for
+  backwards-compatibility. Also added corresponding support to the HFC
+  interpreter.
+
+- Implemented a first version of the GDD (Genesis Density Disconnect) governor.
+  (disabled by default)
+
+- Refactored ChainSync client argument passing.
+
+- Introduced new `ChainOrder` (with `preferCandidate`) class for `SelectView`s,
+  and add necessary instances. Adapted `preferAnchoredCandidate` to use
+  `preferCandidate` instead of relying on `preferAnchoredFragment`.
+
+- Tweak the ChainDB arguments:
+  - Remove unused fields in `CDB`:
+    - `cdbTraceLedger` this was *always* set to nullTracer, furthermore it would trace the whole LedgerDB.
+    - `cdbChunkInfo` was never accessed from the ChainDB.
+    - `cdbCheckIntegrity` was never accessed from the ChainDB.
+  - Transform `ChainDbArgs` into an isomorphic product of the different arguments of the inner databases.
+  - Define most common operations on `ChainDbArgs` as separate functions: `ensureValidateAll`, `updateTracer` and `updateDiskPolicyArgs`
+- Tweak the LgrDB arguments:
+  - `LgrDB.cfg` and `LgrDbArgs.lgrConfig` are now `LedgerDbCfg (ExtLedgerState blk)` instead of `TopLevelConfig blk`.
+  - `defaultArgs` no longer expects a filesystem.
+- Tweak the ImmutableDB arguments:
+  - `defaultArgs` no longer expects a filesystem.
+- Tweak the VolatileDB arguments:
+  - `defaultArgs` no longer expects a filesystem.
+- Hide the `Identity`/`Defaults` types in `Ouroboros.Consensus.Util.Args` in favor of `Complete`/`Incomplete`.
+- Expose `noDefault` to replace `NoDefault`.
+
+- New `TranslateProto` class moved from `ouroboros-consensus-protocol`.
+
+- Renamed `QueryLedger` class to `BlockSupportsLedgerQuery`.
+- `StreamAPI` was moved to the new `Ouroboros.Consensus.Storage.ImmutableDB.Stream` module.
+   - A `StreamAPI` now can stream specific block components.
+   - `NextBlock` was renamed to `NextItem`.
+- Removed unused `Ouroboros.Consensus.Util.TraceSize`.
+- Removed unused `assertEqWithMessage` function.
+- `Mempool.removeTxs` now expects a `NonEmpty (GenTxId blk)` as an argument.
+- VolatileDB traces were tweaked
+    - `VolatileDB.OpenedVolatileDB` trace message now includes the maximum slot seen.
+    - Added `VolatileDB.ClosedDB`.
+- Deleted `Ouroboros.Consensus.Util.Some` in favour of `Ouroboros.Network.Protocol.LocalStateQuery.Codec.Some`.
+
 <a id='changelog-0.17.0.0'></a>
 ## 0.17.0.0 - 2024-04-03
 

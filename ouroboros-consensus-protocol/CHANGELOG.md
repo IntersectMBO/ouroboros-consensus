@@ -2,6 +2,31 @@
 
 # Changelog entries
 
+<a id='changelog-0.9.0.0'></a>
+## 0.9.0.0 — 2024-05-13
+
+### Non-Breaking
+
+- Adapted to introduction of new `ChainOrder` type class.
+
+- Changed the Praos chain order such that for two blocks `A` and `B` by the same
+  issuer with the same block number, `A` is now preferred over `B` only if `A`
+  has a higher issue number *and* (new) `A` and `B` are in the same slot.
+
+  This is in line with the motiviation for the issue number tiebreaker, and
+  fixes the transitivity of the `Ord PraosChainSelectView` instance in a special
+  case.
+
+### Breaking
+
+- Allowed to configure Praos chain order to restrict the VRF tiebreaker based on
+  slot distance.
+
+- Delete `Ouroboros.Consensus.Protocol.Praos.Translate`, moving the orphan
+  instance to `Ouroboros.Consensus.Protocol.Praos`.
+- Delete `Ouroboros.Consensus.Protocol.Translate`, moving `TranslateProto`
+  to `Ouroboros.Consensus.Protocol.Abstract`.
+
 <a id='changelog-0.8.0.0'></a>
 ## 0.8.0.0 — 2024-04-03
 
