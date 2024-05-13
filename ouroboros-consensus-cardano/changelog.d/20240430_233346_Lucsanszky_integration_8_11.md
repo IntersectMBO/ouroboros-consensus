@@ -12,9 +12,3 @@
   - `cardano-ledger-core`: `^>=1.12`
   - `cardano-ledger-mary`: `^>=1.6`
   - `cardano-ledger-shelley`: `^>=1.11`
-
-### Breaking
-
-- Add `c ~ StandardCrypto` constraint to:
-  - `mkSimpleTestProtocolInfo`
-  - `mkTestProtocolInfo`
