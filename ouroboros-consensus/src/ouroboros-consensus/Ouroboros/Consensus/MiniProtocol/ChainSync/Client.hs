@@ -1099,7 +1099,6 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
     InternalEnv {
         drainThePipe
       , headerInFutureCheck
-      , intersectsWithCurrentChain
       , terminateAfterDrain
       , traceException
       } = intEnv
@@ -1108,13 +1107,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
         recordHeaderArrival
       } = headerInFutureCheck
 
-    -- Request the next message (roll forward or backward), unless our chain
-    -- has changed such that it no longer intersects with the candidate, in
-    -- which case we initiate the intersection finding part of the protocol.
-    --
-    -- This is the main place we check whether our current chain has changed.
-    -- We also check it in 'rollForward' to make sure we have an up-to-date
-    -- intersection before calling 'getLedgerView'.
+    -- Request the next message (roll forward or backward).
     --
     -- This is also the place where we checked whether we're asked to terminate
     -- by the mux layer.
@@ -1129,36 +1122,14 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
         atomically controlMessageSTM >>= \case
             -- We have been asked to terminate the client
             Terminate -> terminateAfterDrain n $ AskedToTerminate
-            _continue -> do
-                atomically (intersectsWithCurrentChain kis) >>= \case
-                    -- Our chain (tip) didn't change or if it did, it still
-                    -- intersects with the candidate fragment, so we can
-                    -- continue requesting the next block.
-                    StillIntersects () kis' -> do
-                        let KnownIntersectionState {
-                                theirFrag
-                              } = kis'
-                        atomically $ do
-                          setCandidate theirFrag
-                        return $
-                            requestNext
-                                kis'
-                                mkPipelineDecision
-                                n
-                                theirTip
-                                (AF.headBlockNo theirFrag)
-                    -- Our chain (tip) has changed and it no longer intersects
-                    -- with the candidate fragment, so we have to find a new
-                    -- intersection, but first drain the pipe.
-                    NoLongerIntersects ->
-                        continueWithState ()
-                      $ drainThePipe n
-                      $ findIntersectionTop
-                          cfgEnv
-                          dynEnv
-                          intEnv
-                          (kBestBlockNo kis)
-                          NoMoreIntersection
+            _continue ->
+                return $
+                    requestNext
+                        kis
+                        mkPipelineDecision
+                        n
+                        theirTip
+                        (AF.headBlockNo (theirFrag kis))
 
     requestNext ::
         KnownIntersectionState blk
@@ -1247,6 +1218,13 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
                     (Their theirTip)
       }
 
+    -- Process a new header.
+    --
+    -- This is also the place where we check whether their chain still
+    -- intersects with ours. We have to do this in order to get a ledger state
+    -- to forecast from. It is also sufficient to do this just here, and not on
+    -- MsgRollBack or MsgAwaitReply as these do not induce significant work in
+    -- the context of ChainSync.
     rollForward ::
         MkPipelineDecision
      -> Nat n
