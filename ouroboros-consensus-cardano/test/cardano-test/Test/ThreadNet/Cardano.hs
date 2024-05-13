@@ -5,6 +5,7 @@
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeOperators       #-}
 
 module Test.ThreadNet.Cardano (tests) where
 
@@ -46,7 +47,6 @@ import           Ouroboros.Consensus.Protocol.PBFT
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
-import           Test.Consensus.Cardano.MockCrypto (MockCryptoCompatByron)
 import           Test.Consensus.Cardano.ProtocolInfo (HardForkSpec (..),
                      mkTestProtocolInfo)
 import           Test.QuickCheck
@@ -72,7 +72,7 @@ import           Test.Util.TestEnv
 
 -- | Use 'MockCryptoCompatByron' so that bootstrap addresses and
 -- bootstrap witnesses are supported.
-type Crypto = MockCryptoCompatByron
+type Crypto = StandardCrypto
 
 -- | The varying data of this test
 --
@@ -427,7 +427,7 @@ prop_simple_cardano_convergence TestSetup
         property $ maxRollbacks setupK >= finalIntersectionDepth
 
 mkProtocolCardanoAndHardForkTxs ::
-     forall c m. (IOLike m, CardanoHardForkConstraints c)
+     forall c m. (IOLike m, c ~ StandardCrypto)
      -- Byron
   => PBftParams
   -> CoreNodeId

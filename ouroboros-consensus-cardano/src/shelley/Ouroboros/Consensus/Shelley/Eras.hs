@@ -72,7 +72,6 @@ import           Control.Monad.Except
 import           Control.State.Transition (PredicateFailure)
 import           Data.Data (Proxy (Proxy))
 import           Data.List.NonEmpty (NonEmpty ((:|)))
-import           Lens.Micro ((^.))
 import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Ledger.SupportsMempool
                      (WhetherToIntervene (..))
@@ -159,14 +158,6 @@ class ( Core.EraSegWits era
          , SL.Validated (Core.Tx era)
          )
 
-  -- | Get the protocol version out of a 'Core.PParamsUpdate', used to detect
-  -- whether we should perform a HF. This will likely be removed/changed once we
-  -- implement HF enactment in Conway (see
-  -- <https://github.com/IntersectMBO/ouroboros-consensus/issues/61>).
-  --
-  -- For now, this always returns 'Nothing' for Conway (see the instance below).
-  getProposedProtocolVersion :: Core.PParamsUpdate era -> Maybe ProtVer
-
   -- | Whether the era has an instance of 'CG.ConwayEraGov'
   getConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 
@@ -194,13 +185,6 @@ defaultApplyShelleyBasedTx globals ledgerEnv mempoolState _wti tx =
       mempoolState
       tx
 
-defaultGetProposedProtocolVersion ::
-     (EraPParams era, ProtVerAtMost era 8)
-  => Core.PParamsUpdate era
-  -> Maybe ProtVer
-defaultGetProposedProtocolVersion proposal =
-    strictMaybeToMaybe $ proposal ^. ppuProtocolVersionL
-
 defaultGetConwayEraGovDict :: proxy era -> Maybe (ConwayEraGovDict era)
 defaultGetConwayEraGovDict _ = Nothing
 
@@ -208,15 +192,11 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (ShelleyEra c) where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
-  getProposedProtocolVersion = defaultGetProposedProtocolVersion
-
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AllegraEra c) where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
-
-  getProposedProtocolVersion = defaultGetProposedProtocolVersion
 
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
@@ -224,28 +204,22 @@ instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (MaryEra c) where
   applyShelleyBasedTx = defaultApplyShelleyBasedTx
 
-  getProposedProtocolVersion = defaultGetProposedProtocolVersion
-
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
 instance (SL.PraosCrypto c, DSignable c (Hash c EraIndependentTxBody))
   => ShelleyBasedEra (AlonzoEra c) where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
-  getProposedProtocolVersion = defaultGetProposedProtocolVersion
-
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (BabbageEra c) where
   applyShelleyBasedTx = applyAlonzoBasedTx
 
-  getProposedProtocolVersion = defaultGetProposedProtocolVersion
-
   getConwayEraGovDict = defaultGetConwayEraGovDict
 
 instance (Praos.PraosCrypto c) => ShelleyBasedEra (ConwayEra c) where
   applyShelleyBasedTx = applyAlonzoBasedTx
-  getProposedProtocolVersion _ = Nothing
+
   getConwayEraGovDict _ = Just ConwayEraGovDict
 
 applyAlonzoBasedTx :: forall era.
@@ -353,30 +327,13 @@ instance SupportsTwoPhaseValidation (BabbageEra c) where
 instance SupportsTwoPhaseValidation (ConwayEra c) where
   isIncorrectClaimedFlag _ = \case
     SL.ConwayUtxowFailure
-      ( Babbage.AlonzoInBabbageUtxowPredFailure
-          ( Alonzo.ShelleyInAlonzoUtxowPredFailure
-              ( SL.UtxoFailure
-                  ( Babbage.AlonzoInBabbageUtxoPredFailure
-                      ( Alonzo.UtxosFailure
-                          ( Conway.ValidationTagMismatch
-                              (Alonzo.IsValid _claimedFlag)
-                              _validationErrs
-                            )
-                        )
-                    )
-                )
-            )
-        ) -> True
-    SL.ConwayUtxowFailure
-      ( Babbage.UtxoFailure
-          ( Babbage.AlonzoInBabbageUtxoPredFailure
-              ( Alonzo.UtxosFailure
+      ( Conway.UtxoFailure
+              ( Conway.UtxosFailure
                   ( Conway.ValidationTagMismatch
                       (Alonzo.IsValid _claimedFlag)
                       _validationErrs
                   )
               )
-          )
       ) -> True
     _ -> False
 

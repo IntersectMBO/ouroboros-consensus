@@ -229,9 +229,10 @@ newtype ShelleyTransition = ShelleyTransitionInfo {
       -- 3. If we count how many blocks we have seen post deadline, and we have
       --    reached k of them, we know that that last pre-deadline block won't
       --    be rolled back anymore.
-      -- 4. At this point we can look at the ledger state and see which
-      --    proposals we accepted in the voting period, if any, and notify the
-      --    HFC is one of them indicates a transition.
+      -- 4. At this point we can look at the ledger state and see if there is
+      --    a new protocol version update scheduled on the next epoch boundary,
+      --    and notify the HFC that we need to transition into a new era at that
+      --    point.
       shelleyAfterVoting :: Word32
     }
   deriving stock   (Eq, Show, Generic)
