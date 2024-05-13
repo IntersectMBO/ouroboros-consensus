@@ -92,7 +92,7 @@ comparePraos ::
   -> Ordering
 comparePraos tiebreakerFlavor =
        (compare `on` csvChainLength)
-    <> when' ((==) `on` csvIssuer) (compare `on` csvIssueNo)
+    <> when' issueNoArmed (compare `on` csvIssueNo)
     <> when' vrfArmed (compare `on` Down . csvTieBreakVRF)
   where
     -- When the predicate @p@ returns 'True', use the given comparison function,
@@ -103,6 +103,12 @@ comparePraos tiebreakerFlavor =
       -> (a -> a -> Ordering)
     when' p comp a1 a2 =
         if p a1 a2 then comp a1 a2 else EQ
+
+    -- Only compare the issue numbers when the issuers and slots are identical.
+    -- Note that this case implies the VRFs also coincide.
+    issueNoArmed v1 v2 =
+           csvSlotNo v1 == csvSlotNo v2
+        && csvIssuer v1 == csvIssuer v2
 
     -- Whether to do a VRF comparison.
     vrfArmed v1 v2 = case tiebreakerFlavor of
@@ -120,8 +126,9 @@ comparePraos tiebreakerFlavor =
 --
 -- 1. By chain length, with longer chains always preferred.
 --
--- 2. If the tip of each chain was issued by the same agent, then we prefer
---    the chain whose tip has the highest ocert issue number.
+-- 2. If the tip of each chain was issued by the same agent and they have the
+--    same slot number, prefer the chain whose tip has the highest ocert issue
+--    number.
 --
 -- 3. By a VRF value from the chain tip, with lower values preferred. See
 --    @pTieBreakVRFValue@ for which one is used.
@@ -142,8 +149,13 @@ instance Crypto c => Ord (PraosChainSelectView c) where
 --
 -- 1. Chain length, with longer chains always preferred.
 --
--- 2. If the tip of each chain was issued by the same agent, then we prefer the
---    candidate if it has a higher ocert issue number.
+-- 2. If the tip of each chain was issued by the same agent and had the same
+--    slot number, then we prefer the candidate if it has a higher ocert issue
+--    number.
+--
+--     Note that this condition is equivalent to the VRFs being identical, as
+--     the VRF is a deterministic function of the issuer VRF key, the slot and
+--     the epoch nonce, and VRFs are collision-resistant.
 --
 -- 3. Depending on the 'VRFTiebreakerFlavor':
 --
@@ -182,7 +194,8 @@ instance Crypto c => Ord (PraosChainSelectView c) where
 --    block issuer can use their cold key to issue a new hot key with a higher
 --    opcert issue number and set up a new pool. Due to this tiebreaker rule,
 --    the blocks minted by that pool will take precedence (allowing the actual
---    block issuer to decide on eg the block contents and the predecessor), and
+--    block issuer to decide on eg the block contents and the predecessor) over
+--    blocks with the same block and slot number minted by the attacker, and
 --    they will end up on the honest chain quickly, which means that the
 --    adversary can't extend any chain containing such a block as it would
 --    violate the monotonicity requirement on opcert issue numbers.

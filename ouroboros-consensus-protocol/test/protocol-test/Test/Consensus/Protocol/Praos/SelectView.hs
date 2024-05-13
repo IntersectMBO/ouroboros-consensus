@@ -43,7 +43,7 @@ instance Crypto c => Arbitrary (PraosChainSelectView c) where
       csvChainLength <- BlockNo <$> choose (1, size)
       csvSlotNo      <- SlotNo  <$> choose (1, size)
       csvIssuer      <- elements knownIssuers
-      csvIssueNo     <- genIssueNo
+      csvIssueNo     <- choose (1, 10)
       pure PraosChainSelectView {
           csvChainLength
         , csvSlotNo
@@ -62,20 +62,6 @@ instance Crypto c => Arbitrary (PraosChainSelectView c) where
        where
          randomSeed = mkQCGen 4 -- chosen by fair dice roll
          numIssuers = 10
-
-     -- TODO Actually randomize this once the issue number tiebreaker has been
-     -- fixed to be transitive. See the document in
-     -- https://github.com/IntersectMBO/ouroboros-consensus/pull/891 for
-     -- details.
-     --
-     -- TL;DR: In an edge case, the issue number tiebreaker prevents the
-     -- chain order from being transitive. This could be fixed relatively
-     -- easily, namely by swapping the issue number tiebreaker and the VRF
-     -- tiebreaker. However, this is technically not backwards-compatible,
-     -- impacting the current pre-Conway diffusion pipelining scheme.
-     --
-     -- See https://github.com/IntersectMBO/ouroboros-consensus/issues/1075.
-     genIssueNo = pure 1
 
      -- The header VRF is a deterministic function of the issuer VRF key, the
      -- slot and the epoch nonce. Additionally, for any particular chain, the
