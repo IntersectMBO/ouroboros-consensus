@@ -2,6 +2,49 @@
 
 # Changelog entries
 
+<a id='changelog-0.16.0.0'></a>
+## 0.16.0.0 — 2024-05-13
+
+### Patch
+
+- Update `SupportsTwoPhaseValidation` instance for `Conway`:
+  `ConwayUtxowFailure` was changed upstream
+
+- Adapt to `Ouroboros.Consensus.Protocol.Praos.Translate` removal.
+
+### Non-Breaking
+
+- Added instances for `BlockSupportsDiffusionPipelining`.
+
+- Use new issuer-based diffusion pipelining criterion starting in Conway.
+
+- Set Genesis window for Byron and Shelley.
+
+- Bump to `HardForkSpecificNodeToClientVersion3` for
+  `CardanoNodeToClientVersion12` to account for serialisation change of
+  `EraParams`.
+
+- Update ledger packages:
+  - `cardano-ledger-alonzo`: `^>=1.8`
+  - `cardano-ledger-babbage`: `^>=1.8`
+  - `cardano-ledger-conway`: `^>=1.14`
+  - `cardano-ledger-core`: `^>=1.12`
+  - `cardano-ledger-mary`: `^>=1.6`
+  - `cardano-ledger-shelley`: `^>=1.11`
+
+- Adapt `QueryLedger` instances to the renaming to `BlockSupportsLedgerQuery`.
+
+### Breaking
+
+- Restricted the VRF tiebreaker based on slot distance starting in Conway.
+
+- Add `GetAccountState` query
+
+- Remove `getProposedProtocolVersion` and `defaultGetProposedProtocolVersion`
+- Remove `ProtocolUpdate`, `UpdateProposal`, `UpdateState` and `protocolUpdates`
+- Add `pparamsUpdate`
+- Change `ShelleyLedgerUpdate` by replacing `ShelleyUpdatedProtocolUpdates` with `ShelleyUpdatedPParams`
+
 <a id='changelog-0.15.0.0'></a>
 ## 0.15.0.0 — 2024-04-03
 

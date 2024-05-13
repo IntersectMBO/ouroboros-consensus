@@ -2,7 +2,7 @@ cabal-version: 3.0
 name: strict-sop-core
 synopsis: Strict replacement for NS and NP.
 description: Strict replacement for NS and NP from @sop-core@.
-version: 0.1.0.0
+version: 0.1.1.0
 license: Apache-2.0
 license-files:
   LICENSE

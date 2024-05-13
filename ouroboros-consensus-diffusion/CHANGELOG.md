@@ -2,6 +2,31 @@
 
 # Changelog entries
 
+<a id='changelog-0.16.0.0'></a>
+## 0.16.0.0 — 2024-05-13
+
+### Patch
+
+- Internal changes in tests.
+
+### Non-Breaking
+
+- Implemented the Honest Availability Assumption properly (both for
+  Praos/"Genesis Lite" and Genesis) based on newly exposed state by the
+  diffusion layer.
+
+- Upgraded to `ouroboros-network-0.16`
+
+### Breaking
+
+- Accounted for a refactoring of the ChainSync client parameters.
+
+- `ChainDbArgs` re-exported by `Ouroboros.Consensus.Node` had breaking changes upstream. See `ouroboros-consensus`' changelog for details.
+- Removed `mkChainDbArgs`.
+- New `llrnMkHasFS` field in `LowLevelRunNodeArgs`
+
+- Removed `llrnRunDataDiffusion`'s unused `ResourceRegistry` argument.
+
 <a id='changelog-0.15.0.0'></a>
 ## 0.15.0.0 — 2024-04-03
 
