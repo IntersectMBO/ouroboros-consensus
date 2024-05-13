@@ -54,7 +54,7 @@ import           Ouroboros.Consensus.HardFork.Combinator.Protocol.LedgerView
 import           Ouroboros.Consensus.HardFork.Combinator.State (HardForkState,
                      Translate (..))
 import qualified Ouroboros.Consensus.HardFork.Combinator.State as State
-import           Ouroboros.Consensus.HardFork.Combinator.Translation
+import           Ouroboros.Consensus.HardFork.Combinator.Translation as HFTranslation
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.TypeFamilyWrappers
 import           Ouroboros.Consensus.Util ((.:))
@@ -374,7 +374,7 @@ translateConsensus :: forall xs. CanHardFork xs
                    -> InPairs (Translate WrapChainDepState) xs
 translateConsensus ei HardForkConsensusConfig{..} =
     InPairs.requiringBoth cfgs $
-       translateChainDepState hardForkEraTranslation
+       HFTranslation.translateChainDepState hardForkEraTranslation
   where
     pcfgs = getPerEraConsensusConfig hardForkConsensusConfigPerEra
     cfgs  = hcmap proxySingle (completeConsensusConfig'' ei) pcfgs

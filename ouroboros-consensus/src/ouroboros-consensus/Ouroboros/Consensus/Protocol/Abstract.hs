@@ -1,7 +1,9 @@
 {-# LANGUAGE DefaultSignatures          #-}
 {-# LANGUAGE DerivingVia                #-}
 {-# LANGUAGE FlexibleContexts           #-}
+{-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
@@ -15,12 +17,15 @@ module Ouroboros.Consensus.Protocol.Abstract (
     -- * Chain order
   , ChainOrder (..)
   , SimpleChainOrder (..)
+    -- * Translation
+  , TranslateProto (..)
     -- * Convenience re-exports
   , SecurityParam (..)
   ) where
 
 import           Control.Monad.Except
 import           Data.Kind (Type)
+import           Data.Proxy (Proxy)
 import           Data.Typeable (Typeable)
 import           GHC.Stack
 import           NoThunks.Class (NoThunks)
@@ -175,6 +180,20 @@ class ( Show (ChainDepState   p)
 
   -- | We require that protocols support a @k@ security parameter
   protocolSecurityParam :: ConsensusConfig p -> SecurityParam
+
+-- | Translate across protocols
+class TranslateProto protoFrom protoTo where
+  -- | Translate the ledger view.
+  translateLedgerView ::
+    Proxy (protoFrom, protoTo) -> LedgerView protoFrom    -> LedgerView protoTo
+  translateChainDepState ::
+    Proxy (protoFrom, protoTo) -> ChainDepState protoFrom -> ChainDepState protoTo
+
+-- | Degenerate instance - we may always translate from a protocol to itself.
+instance TranslateProto singleProto singleProto
+  where
+  translateLedgerView _ = id
+  translateChainDepState _ = id
 
 -- | The chain order of some type; in the Consensus layer, this will always be
 -- the 'SelectView' of some 'ConsensusProtocol'.

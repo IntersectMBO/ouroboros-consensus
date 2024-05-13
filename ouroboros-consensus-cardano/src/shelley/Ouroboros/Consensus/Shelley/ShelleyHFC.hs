@@ -44,7 +44,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
 import qualified Ouroboros.Consensus.Forecast as Forecast
-import           Ouroboros.Consensus.HardFork.Combinator
+import           Ouroboros.Consensus.HardFork.Combinator hiding
+                     (translateChainDepState)
 import           Ouroboros.Consensus.HardFork.Combinator.Serialisation.Common
 import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.HardFork.History (Bound (boundSlot))
@@ -53,10 +54,9 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol, ledgerViewForecastAt)
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
+import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.TPraos hiding (PraosCrypto)
-import           Ouroboros.Consensus.Protocol.Translate (TranslateProto)
-import qualified Ouroboros.Consensus.Protocol.Translate as Proto
 import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect as Shelley.Inspect
@@ -269,7 +269,7 @@ forecastAcrossShelley cfgFrom cfgTo transition forecastFor ledgerStateFrom
           WrapLedgerView
         . either
             (\e -> error ("futureLedgerView failed: " <> show e))
-            (Proto.translateLedgerView @protoFrom @protoTo)
+            (translateLedgerView (Proxy @(protoFrom, protoTo)))
         . runExcept
         . Forecast.forecastFor (ledgerViewForecastAt cfgFrom ledgerStateFrom)
 
@@ -296,7 +296,7 @@ translateChainDepStateAcrossShelley =
         -- Same protocol, same 'ChainDepState'. Note that we don't have to apply
         -- any changes related to an epoch transition, this is already done when
         -- ticking the state.
-        WrapChainDepState $ Proto.translateChainDepState @protoFrom @protoTo chainDepState
+        WrapChainDepState $ translateChainDepState (Proxy @(protoFrom, protoTo)) chainDepState
 
 crossEraForecastAcrossShelley ::
      forall eraFrom eraTo protoFrom protoTo.

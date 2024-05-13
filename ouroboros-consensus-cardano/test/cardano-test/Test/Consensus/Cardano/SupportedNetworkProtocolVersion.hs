@@ -5,7 +5,6 @@ module Test.Consensus.Cardano.SupportedNetworkProtocolVersion (tests) where
 import           Data.Proxy
 import           Ouroboros.Consensus.Cardano
 import           Ouroboros.Consensus.Cardano.Block
-import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Test.Tasty
 import           Test.Tasty.HUnit

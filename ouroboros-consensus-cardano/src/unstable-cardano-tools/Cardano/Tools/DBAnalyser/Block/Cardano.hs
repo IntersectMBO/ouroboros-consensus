@@ -73,7 +73,6 @@ import           Ouroboros.Consensus.HeaderValidation (HasAnnTip)
 import           Ouroboros.Consensus.Ledger.Abstract
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Protocol.Praos.Translate ()
 import           Ouroboros.Consensus.Shelley.HFEras ()
 import qualified Ouroboros.Consensus.Shelley.Ledger as Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
