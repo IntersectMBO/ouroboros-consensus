@@ -35,6 +35,8 @@ module Ouroboros.Consensus.Shelley.Eras (
   , WrapTx (..)
     -- * Type synonyms for convenience
   , EraCrypto
+    -- * Convenience functions
+  , isBeforeConway
     -- * Re-exports
   , StandardCrypto
   ) where
@@ -45,6 +47,7 @@ import           Cardano.Ledger.Alonzo (AlonzoEra)
 import qualified Cardano.Ledger.Alonzo.Rules as Alonzo
 import qualified Cardano.Ledger.Alonzo.Translation as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
+import qualified Cardano.Ledger.Api.Era as L
 import           Cardano.Ledger.Babbage (BabbageEra)
 import qualified Cardano.Ledger.Babbage.Rules as Babbage
 import qualified Cardano.Ledger.Babbage.Translation as Babbage
@@ -163,6 +166,10 @@ class ( Core.EraSegWits era
 
 data ConwayEraGovDict era where
     ConwayEraGovDict :: CG.ConwayEraGov era => ConwayEraGovDict era
+
+isBeforeConway :: forall era. L.Era era => Proxy era -> Bool
+isBeforeConway _ =
+    L.eraProtVerLow @era < L.eraProtVerLow @(L.ConwayEra (L.EraCrypto era))
 
 -- | The default implementation of 'applyShelleyBasedTx', a thin wrapper around
 -- 'SL.applyTx'

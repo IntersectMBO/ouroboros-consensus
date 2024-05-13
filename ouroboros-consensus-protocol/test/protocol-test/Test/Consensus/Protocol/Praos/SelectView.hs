@@ -89,3 +89,18 @@ instance Crypto c => Arbitrary (PraosChainSelectView c) where
          $ Crypto.hashWithSerialiser encode slot
        where
          SL.KeyHash issuerHash = SL.hashKey issuer
+
+-- | 'ChainOrderConfig' 'PraosChainSelectView'
+instance Arbitrary VRFTiebreakerFlavor where
+  arbitrary = oneof
+      [ pure UnrestrictedVRFTiebreaker
+      , do
+          size <- max 1 . fromIntegral <$> getSize
+          RestrictedVRFTiebreaker . SlotNo <$> choose (1, size)
+      ]
+
+  shrink = \case
+      UnrestrictedVRFTiebreaker       -> []
+      RestrictedVRFTiebreaker maxDist ->
+          UnrestrictedVRFTiebreaker
+        : (RestrictedVRFTiebreaker <$> shrink maxDist)

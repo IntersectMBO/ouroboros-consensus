@@ -10,7 +10,6 @@
 
 module Test.Consensus.Cardano.DiffusionPipelining (tests) where
 
-import           Cardano.Ledger.Crypto (StandardCrypto)
 import           Control.Monad (replicateM)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.List (sort)
@@ -25,6 +24,7 @@ import           Ouroboros.Consensus.Cardano (CardanoBlock)
 import           Ouroboros.Consensus.HardFork.Combinator
 import           Ouroboros.Consensus.HardFork.Combinator.AcrossEras
 import           Ouroboros.Consensus.Protocol.PBFT
+import           Ouroboros.Consensus.Shelley.Eras
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible)
 import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
