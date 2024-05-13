@@ -181,6 +181,9 @@ prop_serve mustTimeout =
 -- NOTE: Same as 'LoE.prop_adversaryHitsTimeouts' with LoP instead of timeouts.
 prop_delayAttack :: Bool -> Property
 prop_delayAttack lopEnabled =
+  -- Here we can't shrink because we exploit the properties of the point schedule to wait
+  -- at the end of the test for the adversaries to get disconnected, by adding an extra point.
+  -- If this point gets removed by the shrinker, we lose that property and the test becomes useless.
   noShrinking $
     forAllGenesisTest
       ( do

@@ -44,6 +44,9 @@ prop_timeouts mustTimeout = do
     -- Timeouts are enabled by default
     defaultSchedulerConfig
 
+    -- Here we can't shrink because we exploit the properties of the point schedule to wait
+    -- at the end of the test for the adversaries to get disconnected, by adding an extra point.
+    -- If this point gets removed by the shrinker, we lose that property and the test becomes useless.
     (\_ _ -> [])
 
     (\_ stateView ->
