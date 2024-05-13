@@ -27,16 +27,19 @@ version for packages. It is fine if dependencies disappear.
 ... running cabal-plan-diff.sh ...
 "
 
+
 if [[ -d "./tmp" ]]; then
   rm -r tmp
 fi
 mkdir tmp
-trap rm -r ./tmp EXIT
+trap 'rm -r ./tmp' EXIT
 
 cabal update &>/dev/null
 
 cabal build all --dry-run --minimize-conflict-set
 cp ./dist-newstyle/cache/plan.json ./tmp/plan-full.json
+
+GHC_BIN=$(readlink $(which ghc) | rev | cut -d'/' -f1 | rev)
 
 touch ./tmp/cabal.project
 echo -e "
@@ -55,7 +58,7 @@ index-state:
   , hackage.haskell.org HEAD
   , cardano-haskell-packages HEAD
 
-with-compiler: ghc-9.2.8
+with-compiler: $GHC_BIN
 
 tests: False
 benchmarks: False
@@ -86,20 +89,20 @@ else
 
   awk '/^$/{f=!f} f' ./tmp/the-diff-1 > ./tmp/the-diff
 
-  grep "^\-" ./tmp/the-diff | cut -d'-' -f2- | cut -d' ' -f1 > ./tmp/only-in-full
-  grep "^\+" ./tmp/the-diff | cut -d'+' -f2- | cut -d' ' -f1 > ./tmp/only-in-libs
+  grep "^\-" ./tmp/the-diff | cut -d'-' -f2- | cut -d' ' -f1 | sort -u > ./tmp/only-in-full
+  grep "^\+" ./tmp/the-diff | cut -d'+' -f2- | cut -d' ' -f1 | sort -u > ./tmp/only-in-libs
 
   echo -e "\n=== TEST ONLY DEPENDENCIES"
 
-  comm -2 -3 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | uniq) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | uniq)
+  comm -2 -3 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | sort -u) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | sort -u)
 
   echo -e "\n=== FULL-BUILD ONLY DEPENDENCIES"
 
-  comm -1 -3 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | uniq) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | uniq)
+  comm -1 -3 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | sort -u) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | sort -u)
 
   echo -e "\n=== VERSION BUMPS FROM TESTS ONLY TO FULL-BUILD"
 
-  common=$(comm -1 -2 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | uniq) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | uniq))
+  common=$(comm -1 -2 <(rev ./tmp/only-in-full | cut -d'-' -f2- | rev | sort -u) <(rev ./tmp/only-in-libs | cut -d'-' -f2- | rev | sort -u))
 
   major=()
   minor=()
