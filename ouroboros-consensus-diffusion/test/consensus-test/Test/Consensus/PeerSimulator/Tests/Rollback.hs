@@ -57,6 +57,7 @@ prop_rollback = do
 
     defaultSchedulerConfig
 
+    -- No shrinking because the schedule is tiny and hand-crafted
     (\_ _ -> [])
 
     (\_ -> not . hashOnTrunk . AF.headHash . svSelectedChain)
@@ -73,6 +74,7 @@ prop_cannotRollback =
 
     defaultSchedulerConfig
 
+    -- No shrinking because the schedule is tiny and hand-crafted
     (\_ _ -> [])
 
     (\_ -> hashOnTrunk . AF.headHash . svSelectedChain)
