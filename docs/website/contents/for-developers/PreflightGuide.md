@@ -128,6 +128,124 @@ Use a ledger snapshot of your local node (make sure to add the `_db-analyser` su
  - Comparing the benchmarking results for block validation times, you should see that validating a typical block takes much longer today.
    This is mainly due to larger allowed block sizes and this size being actually used, as well as more complex ledger rules (most prominently, Plutus smart contracts).
 
+## Dynamics of the leader schedule
+
+This section focuses on high-level statistical properties of the *leader schedule*[^glossary].
+The definitions and most of the basic properties come from the [Ouroboros Praos paper][], eg section 3.3 and 4.4.
+
+### Active slots
+
+In our context, time is discretized into slots of a specific slot length.
+(For Praos on Cardano mainnet, a slot lasts for one second.)
+Every slot has a specific number of *leaders*, ie stake pools that are allowed to mint a block in this slot.
+The elections for different slots are independent of each other; leading in one slot does not make it more/less likely to lead in another.
+
+ - Most slots are *inactive*, ie there are no leaders for these slots.[^praos-origin]
+ - Some slots are *active*. The probability of a slot to be active is determined by the *active slot coefficient* $f$. On Cardano mainnet, $f = 1/20$.
+    - Most active slots are *single leader slots*.
+    - Some active slots are *multi leader slots*. As the slot numbers on a chain have to strictly increase, at most one of the blocks minted by the elected stake pools will end up on the honest chain eventually.[^ssle]
+
+The leader schedule of Cardano is *private* due to the usage of *verifiable random functions* (VRFs):
+Nodes only know their own leader schedule for one epoch[^glossary] in advance, and nobody can know whether some pool is elected in a slot until they reveal this themselves by minting a block in that slot.
+The advantage of this approach is that eg targeted DoS attacks against slot leaders are impossible.
+However, it also means that it is generally impossible to retroactively distinguish inactive slots from active slots where nobody minted a block for some reason.
+
+Let us apply some common probability distributions to this scenario.
+
+ - The number of active slots out of a number of slots $n$ follows a binomial distribution $\mathop{\mathrm{B}}(n,f)$.
+   This number is often of interest as it bounds by how many blocks any chain can grow in that period.
+
+   For example, consider the number of active slots on Cardano mainnet within 12h (43200 slots), with the probability mass function also depicted below.
+   The mean is $43200 \cdot f = 43200 / 20 = 2160$, note that this is the *security parameter*[^glossary] $k$ that comes up in many places.
+   Importantly, the number of active slots is rather strongly concentrated around the mean, which justifies common statements like "Usually, there are $k$ active slots within 12h.".
+
+ - The number of slots until a slot is active (including that slot) follows a geometric distribution $\mathop{\mathrm{Geo}}(f)$.
+
+   For Cardano mainnet, the probability mass function is again depicted below.
+   The mean here is $1/f = 20$ slots, the median however is only $14$ slots, ie in ~50% of all cases, it takes at most 14 slots until a slot is active.
+   On the other hand, there is a non-negligible ~0.2% chance that it takes more than 120 slots (2 minutes) until there is an active slot.
+   Concretely, this means that an interval of 2 minutes without any blocks on Cardano mainnet does not mean that anything went wrong; the randomness of the leader schedule means that intervals of inactive slots of this or even somewhat larger duration are bound to happen from time to time.
+
+   As a generalization, the number of slots until a given number (potentially larger than one) of slots have been active follows a negative binomial distribution.
+
+![](./PreflightGuide/plot-active-slots.png)
+
+> A useful library for various calculations in this areas is [scipy.stats][] (in particular available in sagemath).
+> For example, we can calculate the probability that at most 2000 slots are active within 12h
+> ```python
+> from scipy import stats
+> stats.binom(43200,1/20).cdf(2000)
+> ```
+> which yields 0.0185%, or the probability that it takes more than one minute until a slot is active
+> ```python
+> stats.geom(1/20).sf(60)
+> ```
+> which yields 4.6%.
+> Calculate some other probabilities that seem interesting to you, maybe inspired by some of the empirical data gathered via db-analyser.
+
+### Multi leader slots
+
+The probability that a pool with relative stake $\sigma$ is elected in any specific slot is given by $\phi_f(\sigma) = \phi(\sigma) = 1-{(1-f)}^\sigma$.
+We have $\phi(\sigma) \ge f\sigma$, ie a pool with stake $\sigma$ will be elected in an active slot with probability somewhat higher than $\sigma$.
+For small $\sigma$, $\phi(\sigma) \approx f\sigma$ is a fine approximation.
+
+The motivation for choosing $\phi$ like this is the *independent aggregation* property
+```math
+\phi\left(\sum_{\sigma\in S} \sigma\right) = 1-\prod_{\sigma\in S}(1-\phi(\sigma))
+```
+for any set $S$ of relative stake quantities.
+Intuitively, this means that for a party with $\sum_{\sigma\in S} \sigma$ total relative stake, no matter how they distribute their stake across different pools, they always have the same probability to be elected with at least one pool in any given slot.
+
+Unless there is just a single pool with all of the stake (which is heavily disincentivized by the Cardano reward structure), there is a chance that an active slot will in fact have *multiple* slot leaders.
+The exact probabilities depend on the stake distribution.
+In general, the more equally the stake is distributed across many pools, the more likely are slots with more slot leaders.
+In the extreme case, which one can think of as the stake $\sigma$ being distributed evenly across infinitely many pools, the number of slot leaders $L$ of a single slot is given by a Poisson distribution $\mathop{\mathrm{Pois}}(-\sigma\log(1-f))$.
+
+For example, consider $\sigma = 1$:
+
+![](./PreflightGuide/plot-single-slot-leaders.png)
+
+We see that having three or more leaders per slot quickly becomes very (exponentially) unlikely.
+
+In particular, we can calculate the probability that a slot is an active multi leader slot
+```math
+\mathop{\mathrm{Pr}}(L \ge 2)
+  = 1-\mathop{\mathrm{Pr}}(L = 0)-\mathop{\mathrm{Pr}}(L=1)
+  = f + \sigma \cdot {(1-f)}^\sigma \cdot \log(1-f)
+```
+via the definition of the Poisson distribution and $L \sim \mathop{\mathrm{Pois}}(-\sigma\log(1-f))$.
+For $f=1/20$ and $\sigma =1$, we get $\mathop{\mathrm{Pr}}(L \ge 2) = 0.00127$, ie 0.127% of all slots are multi leader slots in the worst case.
+In that case, we would expect to see $10k/f \cdot 0.00127 \approx 549$ multi leader slots per epoch.
+
+On the community-maintained [pooltool.io](https://pooltool.io/networkhealth), we can observe the number of "slot battles" per epoch, ie the number of times the nodes reporting to pooltool.io observed two blocks in the same slot.
+
+![](./PreflightGuide/plot-pooltool-slot-battles.png)
+
+As the stake on mainnet is "only" distributed across a few thousand pools (and not completely evenly), we are not in the extreme case modeled by the Poisson described above.
+And indeed, we usually see even less than 500 slot battles per epoch.
+
+### Grinding
+
+The discussion above completely ignored *grinding*.
+In the context of the leader schedule, this refers to an adversarial influence on the nonce that is used as a seed for all of the VRF computations for slot election within a specific epoch.
+The exact mechanism is out-of-scope for this section, but it should be said that such an attack requires both a considerable amount of stake and computational resources, and it allows an adversary to choose the best out of multiple epoch nonces.
+An extremely conservative upper bound for how many nonces an attacker can choose from is $10^{20}$ (based on the computational resources required to even compute all of these nonces).
+The mainnet parameters of Cardano (in particular the security parameter) were chosen with resistance against grinding in mind.
+
+Concretely, an attacker with $\alpha$ stake that can choose out of $N$ epoch nonces can ensure that it leads any specific slot with probability $1-{(1-\phi(\alpha))}^N$, which is a huge advantage compared to $\phi(\alpha)$.
+For example, an attacker with $N=10^{20}$ with even a very small amount of stake has a chance of close to 100% to cause themselves to be elected in any single specific slot.
+
+Usually, an attacker wants to maximize their total number of active slots within a larger number of slots, like in an entire epoch.
+For this, the impact of grinding is smaller (but still large), as every epoch nonce affects the entire leader schedule of the epoch, and the attacker can not choose different epoch nonces for different slots.
+Calculations in this area make use of the [largest order statistic][order statistic].
+Here, we plot the cumulative distribution function of the number of active slots without and with different levels of grinding.
+
+![](./PreflightGuide/plot-grinding.png)
+
+Grinding does *not* impact the number of elections by any honest party, as an attacker can't observe what the leader schedule of honest nodes would be for different nonces (privacy of the leader schedule).
+
+Finally, we shall note that there are various ideas of how to eliminate grinding, for example by making the epoch nonce "difficult" to calculate[^nonce-difficult] or by replacing the current source of the nonce with a special protocol[^nonce-protocol].
+
 <!-- Footnotes -->
 
 [^other-consensus-consumers]: Other important consumers include:
@@ -162,6 +280,15 @@ This means that certain checks (in particular, evaluating smart contracts) are s
 The node itself will create snapshots without a suffix (eg `4492800`), but can also read snapshots with any suffix.
 Crucially, the node won't ever *delete* snapshots with a suffix, as opposed to unsuffixed ones, which are periodically garbage-collected, as well as deleted if the node can't decode them.
 
+[^praos-origin]: The fact that most slots are empty (such that there often are periods of "silence" in the network) motivated the name "Praos", meaning "mellow", or "gentle".
+
+[^ssle]: With more sophisticated cryptography, one can avoid multi leader slots and the wasted work they cause, see ["Single Secret Leader election" by Boneh et al](https://eprint.iacr.org/2020/025).
+
+[^nonce-difficult]: The core idea is for example described in the abstract of [the paper introducing *Verifiable Delay Functions* (VDF) by Boneh et al](https://eprint.iacr.org/2018/601.pdf).
+
+[^nonce-protocol]: See [the paper "Efficient Random Beacons with Adaptive Security
+for Ungrindable Blockchains" by Kiayias et al](https://eprint.iacr.org/2021/1698.pdf).
+
 [cardano-node]: https://github.com/IntersectMBO/cardano-node
 [cardano-cli]: https://github.com/IntersectMBO/cardano-cli
 [cardano-db-sync]: https://github.com/IntersectMBO/cardano-db-sync
@@ -179,3 +306,6 @@ Crucially, the node won't ever *delete* snapshots with a suffix, as opposed to u
 [Glossary]: https://ouroboros-consensus.cardano.intersectmbo.org/docs/for-developers/Glossary
 [db-analyser snapshot]: https://github.com/IntersectMBO/ouroboros-consensus/blob/main/ouroboros-consensus-cardano/README.md#saving-a-snapshot
 [preflight epic]: https://github.com/IntersectMBO/ouroboros-consensus/issues/887
+[Ouroboros Praos paper]: https://iohk.io/en/research/library/papers/ouroboros-praos-an-adaptively-secure-semi-synchronous-proof-of-stake-protocol/
+[scipy.stats]: https://docs.scipy.org/doc/scipy/reference/stats.html
+[order statistic]: https://en.wikipedia.org/wiki/Order_statistic
