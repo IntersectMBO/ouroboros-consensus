@@ -151,11 +151,19 @@ prop_serveAdversarialBranches = forAllGenesisTest
        , scTrace = False
        , scEnableLoE = True
        , scEnableCSJ = True
+       , scEnableLoP = False
+       , scEnableChainSyncTimeouts = False
+       , scEnableBlockFetchTimeouts = False
        })
 
     -- We cannot shrink by removing points from the adversarial schedules.
-    -- Otherwise, the immutable tip could get stuck because a peer doesn't
-    -- send any blocks or headers.
+    -- Removing ticks could make an adversary unable to serve any blocks or headers.
+    -- Because LoP and timeouts are disabled, this would cause the immutable tip
+    -- to get stuck indefinitely, as the adversary wouldn't get disconnected.
+    --
+    -- We don't enable timeouts in this test and we don't wait long enough for
+    -- timeouts to expire. The leashing attack tests are testing the timeouts
+    -- together with LoP.
     shrinkByRemovingAdversaries
 
     theProperty
