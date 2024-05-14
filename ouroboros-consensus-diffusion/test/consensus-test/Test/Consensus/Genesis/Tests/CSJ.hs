@@ -77,10 +77,10 @@ prop_CSJ :: Bool -> Bool -> Property
 prop_CSJ happy synchronized =
   forAllGenesisTest
     ( if synchronized
-        then genChainsWithExtraHonestPeers (choose (2, 4)) (if happy then pure 0 else choose (2, 4))
-          `enrichedWith` genUniformSchedulePoints
-        else genChains (if happy then pure 0 else choose (2, 4))
+        then genChains (if happy then pure 0 else choose (2, 4))
           `enrichedWith` genDuplicatedHonestSchedule
+        else genChainsWithExtraHonestPeers (choose (2, 4)) (if happy then pure 0 else choose (2, 4))
+          `enrichedWith` genUniformSchedulePoints
     )
     ( defaultSchedulerConfig
       { scEnableCSJ = True
