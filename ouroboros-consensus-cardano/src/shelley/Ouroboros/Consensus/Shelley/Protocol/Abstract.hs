@@ -32,6 +32,7 @@ import           Cardano.Crypto.VRF (OutputVRF)
 import           Cardano.Ledger.BaseTypes (ProtVer)
 import           Cardano.Ledger.BHeaderView (BHeaderView)
 import           Cardano.Ledger.Crypto (Crypto, VRF)
+import           Cardano.Protocol.TPraos.OCert (OCert)
 import           Cardano.Ledger.Hashes (EraIndependentBlockBody,
                      EraIndependentBlockHeader)
 import           Cardano.Ledger.Keys (Hash, KeyRole (BlockIssuer), VKey)
@@ -145,6 +146,7 @@ class ProtocolHeaderSupportsKES proto where
     forall crypto m.
     (Crypto crypto, Monad m, crypto ~ ProtoCrypto proto) =>
     HotKey crypto m ->
+    OCert crypto ->
     CanBeLeader proto ->
     IsLeader proto ->
     -- | Slot no

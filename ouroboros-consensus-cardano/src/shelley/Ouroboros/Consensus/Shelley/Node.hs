@@ -22,6 +22,7 @@ module Ouroboros.Consensus.Shelley.Node (
   , SL.ShelleyGenesisStaking (..)
   , SL.emptyGenesisStaking
   , ShelleyLeaderCredentials (..)
+  , ShelleyKeyBundle (..)
   , protocolClientInfoShelley
   , protocolInfoShelley
   , protocolInfoTPraosShelleyBased
@@ -42,6 +43,7 @@ import           Ouroboros.Consensus.Shelley.Ledger
 import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import           Ouroboros.Consensus.Shelley.Node.DiffusionPipelining ()
+import           Ouroboros.Consensus.Shelley.Node.Common
 import           Ouroboros.Consensus.Shelley.Node.Praos
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Node.TPraos

@@ -36,7 +36,7 @@ module Ouroboros.Consensus.Cardano.Node (
   , CardanoHardForkTriggers (.., CardanoHardForkTriggers', triggerHardForkShelley, triggerHardForkAllegra, triggerHardForkMary, triggerHardForkAlonzo, triggerHardForkBabbage, triggerHardForkConway)
   , CardanoProtocolParams
   , MaxMajorProtVer (..)
-  , ProtocolParams (.., CardanoProtocolParams, paramsByron, paramsShelleyBased, paramsShelley, paramsAllegra, paramsMary, paramsAlonzo, paramsBabbage, paramsConway, hardForkTriggers, ledgerTransitionConfig, checkpoints)
+  , ProtocolParams (.., CardanoProtocolParams, paramsByron, paramsShelley, paramsAllegra, paramsMary, paramsAlonzo, paramsBabbage, paramsConway, hardForkTriggers, ledgerTransitionConfig, checkpoints)
   , TriggerHardFork (..)
   , protocolClientInfoCardano
   , protocolInfoCardano
@@ -59,7 +59,6 @@ module Ouroboros.Consensus.Cardano.Node (
 
 import           Cardano.Binary (DecoderError (..), enforceSize)
 import           Cardano.Chain.Slotting (EpochSlots)
-import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.BaseTypes as SL
@@ -107,8 +106,6 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Node.Run
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..))
-import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (praosCanBeLeaderOpCert)
 import           Ouroboros.Consensus.Protocol.TPraos (TPraos, TPraosParams (..))
 import qualified Ouroboros.Consensus.Protocol.TPraos as Shelley
 import           Ouroboros.Consensus.Shelley.HFEras ()
@@ -119,6 +116,7 @@ import           Ouroboros.Consensus.Shelley.Ledger.Block (IsShelleyBlock,
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion
 import           Ouroboros.Consensus.Shelley.Node
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
+                     ShelleyKeyBundle (..),
                      shelleyBlockIssuerVKey)
 import qualified Ouroboros.Consensus.Shelley.Node.Praos as Praos
 import qualified Ouroboros.Consensus.Shelley.Node.TPraos as TPraos
@@ -525,7 +523,7 @@ pattern CardanoHardForkTriggers' {
 -- | Parameters needed to run Cardano.
 data instance ProtocolParams (CardanoBlock c) = ProtocolParamsCardano {
     cardanoProtocolParamsPerEra   :: PerEraProtocolParams (CardanoEras c)
-  , shelleyBasedProtocolParams    :: ProtocolParamsShelleyBased c
+  -- , shelleyBasedProtocolParams    :: ProtocolParamsShelleyBased c m
   , cardanoHardForkTriggers       :: CardanoHardForkTriggers
   , cardanoLedgerTransitionConfig :: L.TransitionConfig (L.LatestKnownEra c)
   , cardanoCheckpoints            :: CheckpointsMap (CardanoBlock c)
@@ -535,7 +533,7 @@ type CardanoProtocolParams c = ProtocolParams (CardanoBlock c)
 
 pattern CardanoProtocolParams ::
      ProtocolParams ByronBlock
-  -> ProtocolParamsShelleyBased c
+  -- -> ProtocolParamsShelleyBased c m
   -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
   -> ProtocolParams (ShelleyBlock (TPraos c) (AllegraEra c))
   -> ProtocolParams (ShelleyBlock (TPraos c) (MaryEra    c))
@@ -548,7 +546,7 @@ pattern CardanoProtocolParams ::
   -> CardanoProtocolParams c
 pattern CardanoProtocolParams {
         paramsByron
-      , paramsShelleyBased
+      -- , paramsShelleyBased
       , paramsShelley
       , paramsAllegra
       , paramsMary
@@ -570,7 +568,7 @@ pattern CardanoProtocolParams {
           :* paramsConway
           :* Nil
           )
-      , shelleyBasedProtocolParams = paramsShelleyBased
+      -- , shelleyBasedProtocolParams = paramsShelleyBased
       , cardanoHardForkTriggers = hardForkTriggers
       , cardanoLedgerTransitionConfig = ledgerTransitionConfig
       , cardanoCheckpoints = checkpoints
@@ -591,11 +589,12 @@ pattern CardanoProtocolParams {
 -- for mainnet (check against @'SL.gNetworkId' == 'SL.Mainnet'@).
 protocolInfoCardano ::
      forall c m. (IOLike m, CardanoHardForkConstraints c)
-  => CardanoProtocolParams c
+  => ProtocolParamsShelleyBased c m
+  -> CardanoProtocolParams c
   -> ( ProtocolInfo      (CardanoBlock c)
      , m [BlockForging m (CardanoBlock c)]
      )
-protocolInfoCardano paramsCardano
+protocolInfoCardano paramsShelleyBased paramsCardano 
   | SL.Mainnet <- SL.sgNetworkId genesisShelley
   , length credssShelleyBased > 1
   = error "Multiple Shelley-based credentials not allowed for mainnet"
@@ -610,7 +609,7 @@ protocolInfoCardano paramsCardano
   where
     CardanoProtocolParams {
         paramsByron
-      , paramsShelleyBased
+      -- , paramsShelleyBased
       , paramsShelley
       , paramsAllegra
       , paramsMary
@@ -1037,22 +1036,25 @@ protocolInfoCardano paramsCardano
         return $ byronBlockForging maxTxCapacityOverridesByron creds `OptNP.at` IZ
 
     blockForgingShelleyBased ::
-         ShelleyLeaderCredentials c
+         ShelleyLeaderCredentials c m
       -> m (NonEmptyOptNP (BlockForging m) (CardanoEras c))
     blockForgingShelleyBased credentials = do
         let ShelleyLeaderCredentials
-              { shelleyLeaderCredentialsInitSignKey = initSignKey
-              , shelleyLeaderCredentialsCanBeLeader = canBeLeader
+              { shelleyLeaderCredentialsGetSignKeyBundle = getSignKeyBundle
               } = credentials
+
+        ShelleyKeyBundle
+              { shelleyKeyBundleSignKeyKES = skSound
+              , shelleyKeyBundleOpCert = ocert
+              } <- getSignKeyBundle
 
         hotKey <- do
           let maxKESEvo :: Word64
               maxKESEvo = assert (tpraosMaxKESEvo == praosMaxKESEvo) praosMaxKESEvo
 
               startPeriod :: Absolute.KESPeriod
-              startPeriod = Absolute.ocertKESPeriod $ praosCanBeLeaderOpCert canBeLeader
+              startPeriod = Absolute.ocertKESPeriod ocert
 
-          skSound <- KES.unsoundPureSignKeyKESToSoundSignKeyKES initSignKey
           HotKey.mkHotKey @m @c skSound startPeriod maxKESEvo
 
         let slotToPeriod :: SlotNo -> Absolute.KESPeriod
@@ -1064,14 +1066,14 @@ protocolInfoCardano paramsCardano
               => Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
               -> BlockForging m      (ShelleyBlock (TPraos c) era)
             tpraos maxTxCapacityOverrides =
-              TPraos.shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
+              TPraos.shelleySharedBlockForging hotKey ocert slotToPeriod credentials maxTxCapacityOverrides
 
         let praos :: forall era.
                  ShelleyEraWithCrypto c (Praos c) era
               => Mempool.TxOverrides (ShelleyBlock (Praos c) era)
               -> BlockForging m      (ShelleyBlock (Praos c) era)
             praos maxTxCapacityOverrides =
-              Praos.praosSharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
+              Praos.praosSharedBlockForging hotKey ocert slotToPeriod credentials maxTxCapacityOverrides
 
         pure
           $ OptSkip    -- Byron

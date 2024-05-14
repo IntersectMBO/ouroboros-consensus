@@ -151,16 +151,17 @@ forgePraosFields ::
     Monad m
   ) =>
   HotKey c m ->
+  OCert.OCert c ->
   CanBeLeader (Praos c) ->
   IsLeader (Praos c) ->
   (PraosToSign c -> toSign) ->
   m (PraosFields c toSign)
 forgePraosFields
   hotKey
+  ocert
   PraosCanBeLeader
     { praosCanBeLeaderColdVerKey,
-      praosCanBeLeaderSignKeyVRF,
-      praosCanBeLeaderOpCert
+      praosCanBeLeaderSignKeyVRF
     }
   PraosIsLeader {praosIsLeaderVrfRes}
   mkToSign = do
@@ -178,7 +179,7 @@ forgePraosFields
           { praosToSignIssuerVK = praosCanBeLeaderColdVerKey,
             praosToSignVrfVK = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF,
             praosToSignVrfRes = praosIsLeaderVrfRes,
-            praosToSignOCert = praosCanBeLeaderOpCert
+            praosToSignOCert = ocert
           }
 
 {-------------------------------------------------------------------------------

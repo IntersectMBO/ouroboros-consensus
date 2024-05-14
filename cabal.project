@@ -66,13 +66,13 @@ source-repository-package
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/cardano-ledger-executable-spec.git
-  tag: ddfb7f4a311dcc52971b3bb847ba52b68d0b0a3f
-  --sha256: sha256-dQVyvzVhVUOsLUuX8XQvN/wPGmbIvYeAmX7RpnT1gk8=
+  tag: 81b976c40c2726998a4828220231acf75b3a685e
+  --sha256: sha256-1CiTiLzROoHz8GxVPCouofUFzwzWUclQUq5AthtwPz4=
 
 source-repository-package
   type: git
   location: https://github.com/input-output-hk/cardano-ledger
-  tag: 29a979239cc6b55cd2f7dc3b34f27312254b4a59
+  tag: fb32d59b15972056f32ad7b937b9b01b49687370
   --sha256: 0944wg2nqazmhlmsynwgdwxxj6ay0hb9qig9l128isb2cjia0hlp
   subdir:
       eras/allegra/impl

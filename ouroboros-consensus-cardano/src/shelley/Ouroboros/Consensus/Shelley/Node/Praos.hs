@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Shelley.Node.Praos (
   , ProtocolParams (..)
   ) where
 
-import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Shelley.API as SL
 import qualified Cardano.Protocol.TPraos.OCert as Absolute
@@ -33,14 +32,12 @@ import           Ouroboros.Consensus.Node.ProtocolInfo
 import qualified Ouroboros.Consensus.Protocol.Ledger.HotKey as HotKey
 import           Ouroboros.Consensus.Protocol.Praos (Praos, PraosParams (..),
                      praosCheckCanForge)
-import           Ouroboros.Consensus.Protocol.Praos.Common
-                     (PraosCanBeLeader (praosCanBeLeaderOpCert))
 import           Ouroboros.Consensus.Shelley.Eras (BabbageEra, ConwayEra,
                      EraCrypto)
 import           Ouroboros.Consensus.Shelley.Ledger (ShelleyBlock,
                      ShelleyCompatible, forgeShelleyBlock)
 import           Ouroboros.Consensus.Shelley.Node.Common (ShelleyEraWithCrypto,
-                     ShelleyLeaderCredentials (..))
+                     ShelleyKeyBundle (..), ShelleyLeaderCredentials (..))
 import           Ouroboros.Consensus.Shelley.Protocol.Praos ()
 import           Ouroboros.Consensus.Util.IOLike (IOLike)
 
@@ -58,26 +55,25 @@ praosBlockForging ::
      )
   => PraosParams
   -> Mempool.TxOverrides (ShelleyBlock (Praos c) era)
-  -> ShelleyLeaderCredentials (EraCrypto era)
+  -> ShelleyLeaderCredentials (EraCrypto era) m
   -> m (BlockForging m (ShelleyBlock (Praos c) era))
 praosBlockForging praosParams maxTxCapacityOverrides credentials = do
-    skSound <- KES.unsoundPureSignKeyKESToSoundSignKeyKES initSignKey
+    ShelleyKeyBundle
+          { shelleyKeyBundleSignKeyKES = skSound
+          , shelleyKeyBundleOpCert = ocert
+          } <- shelleyLeaderCredentialsGetSignKeyBundle credentials
+
+    let startPeriod :: Absolute.KESPeriod
+        startPeriod = SL.ocertKESPeriod ocert
+
+        slotToPeriod :: SlotNo -> Absolute.KESPeriod
+        slotToPeriod (SlotNo slot) =
+          SL.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
+
     hotKey <- HotKey.mkHotKey @m @c skSound startPeriod praosMaxKESEvo
-    pure $ praosSharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
+    pure $ praosSharedBlockForging hotKey ocert slotToPeriod credentials maxTxCapacityOverrides
   where
     PraosParams {praosMaxKESEvo, praosSlotsPerKESPeriod} = praosParams
-
-    ShelleyLeaderCredentials {
-        shelleyLeaderCredentialsInitSignKey = initSignKey
-      , shelleyLeaderCredentialsCanBeLeader = canBeLeader
-      } = credentials
-
-    startPeriod :: Absolute.KESPeriod
-    startPeriod = SL.ocertKESPeriod $ praosCanBeLeaderOpCert canBeLeader
-
-    slotToPeriod :: SlotNo -> Absolute.KESPeriod
-    slotToPeriod (SlotNo slot) =
-      SL.KESPeriod $ fromIntegral $ slot `div` praosSlotsPerKESPeriod
 
 -- | Create a 'BlockForging' record safely using the given 'Hotkey'.
 --
@@ -89,12 +85,14 @@ praosSharedBlockForging ::
      , IOLike m
      )
   => HotKey.HotKey c m
+  -> SL.OCert c
   -> (SlotNo -> Absolute.KESPeriod)
-  -> ShelleyLeaderCredentials c
+  -> ShelleyLeaderCredentials c m
   -> Mempool.TxOverrides (ShelleyBlock (Praos c) era)
   -> BlockForging m     (ShelleyBlock (Praos c) era)
 praosSharedBlockForging
   hotKey
+  ocert
   slotToPeriod
   ShelleyLeaderCredentials {
       shelleyLeaderCredentialsCanBeLeader = canBeLeader
@@ -114,6 +112,7 @@ praosSharedBlockForging
         forgeBlock = \cfg ->
           forgeShelleyBlock
             hotKey
+            ocert
             canBeLeader
             cfg
             maxTxCapacityOverrides

@@ -12,6 +12,7 @@ import qualified Cardano.Ledger.Era as SL (hashTxSeq, toTxSeq)
 import qualified Cardano.Ledger.Shelley.API as SL (Block (..), extractTx)
 import qualified Cardano.Ledger.Shelley.BlockChain as SL (bBodySize)
 import qualified Cardano.Protocol.TPraos.BHeader as SL
+import           Cardano.Protocol.TPraos.OCert (OCert)
 import           Control.Exception
 import           Control.Monad.Except
 import           Data.List (foldl')
@@ -43,6 +44,7 @@ forgeShelleyBlock ::
      forall m era proto.
       (ShelleyCompatible proto era, TxLimits (ShelleyBlock proto era), Monad m)
   => HotKey (EraCrypto era) m
+  -> OCert (EraCrypto era)
   -> CanBeLeader proto
   -> TopLevelConfig (ShelleyBlock proto era)
   -> Mempool.TxOverrides (ShelleyBlock proto era) -- ^ How to override max tx
@@ -55,6 +57,7 @@ forgeShelleyBlock ::
   -> m (ShelleyBlock proto era)
 forgeShelleyBlock
   hotKey
+  ocert
   cbl
   cfg
   maxTxCapacityOverrides
@@ -63,7 +66,7 @@ forgeShelleyBlock
   tickedLedger
   txs
   isLeader = do
-    hdr <- mkHeader @_ @(ProtoCrypto proto) hotKey cbl isLeader
+    hdr <- mkHeader @_ @(ProtoCrypto proto) hotKey ocert cbl isLeader
       curSlot curNo prevHash (SL.hashTxSeq @era body) actualBodySize protocolVersion
     let blk = mkShelleyBlock $ SL.Block hdr body
     return $

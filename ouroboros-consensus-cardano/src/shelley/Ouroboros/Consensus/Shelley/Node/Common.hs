@@ -16,6 +16,7 @@
 module Ouroboros.Consensus.Shelley.Node.Common (
     ProtocolParamsShelleyBased (..)
   , ShelleyEraWithCrypto
+  , ShelleyKeyBundle (..)
   , ShelleyLeaderCredentials (..)
   , shelleyBlockIssuerVKey
   ) where
@@ -23,6 +24,7 @@ module Ouroboros.Consensus.Shelley.Node.Common (
 import qualified Cardano.Ledger.Keys as SL
 import qualified Cardano.Ledger.Shelley.API as SL
 import           Cardano.Ledger.Slot
+import qualified Cardano.Protocol.TPraos.OCert as OCert
 import           Data.Text (Text)
 import           Ouroboros.Consensus.Block (CannotForge, ForgeStateInfo,
                      ForgeStateUpdateError)
@@ -44,10 +46,19 @@ import           Ouroboros.Consensus.Shelley.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ImmutableDB
 
 {-------------------------------------------------------------------------------
+  Key bundle
+-------------------------------------------------------------------------------}
+
+data ShelleyKeyBundle c = ShelleyKeyBundle
+  { shelleyKeyBundleSignKeyKES :: !(SL.SignKeyKES c)
+  , shelleyKeyBundleOpCert :: !(OCert.OCert c)
+  }
+
+{-------------------------------------------------------------------------------
   Credentials
 -------------------------------------------------------------------------------}
 
-data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
+data ShelleyLeaderCredentials c m = ShelleyLeaderCredentials
   { -- | The unevolved signing KES key (at evolution 0).
     --
     -- Note that this is not inside 'ShelleyCanBeLeader' since it gets evolved
@@ -57,7 +68,7 @@ data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
     -- field should be removed entirely, and the KES sign key acquired through
     -- different means, ensuring a fully mlocked in-memory chain from key
     -- generation to block forging.
-    shelleyLeaderCredentialsInitSignKey :: SL.UnsoundPureSignKeyKES c,
+    shelleyLeaderCredentialsGetSignKeyBundle :: m (ShelleyKeyBundle c),
     shelleyLeaderCredentialsCanBeLeader :: PraosCanBeLeader c,
     -- | Identifier for this set of credentials.
     --
@@ -66,7 +77,7 @@ data ShelleyLeaderCredentials c = ShelleyLeaderCredentials
   }
 
 shelleyBlockIssuerVKey ::
-  ShelleyLeaderCredentials c -> SL.VKey 'SL.BlockIssuer c
+  ShelleyLeaderCredentials c m -> SL.VKey 'SL.BlockIssuer c
 shelleyBlockIssuerVKey =
   praosCanBeLeaderColdVerKey . shelleyLeaderCredentialsCanBeLeader
 
@@ -125,12 +136,12 @@ instance ShelleyCompatible proto era => NodeInitStorage (ShelleyBlock proto era)
 -- When running a chain with multiple Shelley-based eras, in addition to the
 -- per-era protocol parameters, one value of 'ProtocolParamsShelleyBased' will
 -- be needed, which is shared among all Shelley-based eras.
-data ProtocolParamsShelleyBased c = ProtocolParamsShelleyBased
+data ProtocolParamsShelleyBased c m = ProtocolParamsShelleyBased
   { -- | The initial nonce, typically derived from the hash of Genesis
     -- config JSON file.
     --
     -- WARNING: chains using different values of this parameter will be
     -- mutually incompatible.
     shelleyBasedInitialNonce      :: SL.Nonce,
-    shelleyBasedLeaderCredentials :: [ShelleyLeaderCredentials c]
+    shelleyBasedLeaderCredentials :: [ShelleyLeaderCredentials c m]
   }

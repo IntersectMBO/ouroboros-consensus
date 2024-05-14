@@ -142,6 +142,11 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
     -- It could and should all be automated and these config entries eliminated.
     return $!
       SomeConsensusProtocol CardanoBlockType $ ProtocolInfoArgsCardano
+        Consensus.ProtocolParamsShelleyBased {
+          shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
+                                            shelleyGenesisHash,
+          shelleyBasedLeaderCredentials = shelleyLeaderCredentials
+        }
         (CardanoProtocolParams
           Consensus.ProtocolParamsByron {
             byronGenesis = byronGenesis,
@@ -169,11 +174,6 @@ mkSomeConsensusProtocolCardano NodeByronProtocolConfiguration {
               byronLeaderCredentials,
             byronMaxTxCapacityOverrides =
               Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-          Consensus.ProtocolParamsShelleyBased {
-            shelleyBasedInitialNonce      = Shelley.genesisHashToPraosNonce
-                                              shelleyGenesisHash,
-            shelleyBasedLeaderCredentials = shelleyLeaderCredentials
           }
           Consensus.ProtocolParamsShelley {
             -- This is /not/ the Shelley protocol version. It is the protocol

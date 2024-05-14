@@ -141,8 +141,8 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (Praos c) where
             currentKesPeriod - startOfKesPeriod
         | otherwise =
             0
-  mkHeader hk cbl il slotNo blockNo prevHash bbHash sz protVer = do
-    PraosFields {praosSignature, praosToSign} <- forgePraosFields hk cbl il mkBhBodyBytes
+  mkHeader hk ocert cbl il slotNo blockNo prevHash bbHash sz protVer = do
+    PraosFields {praosSignature, praosToSign} <- forgePraosFields hk ocert cbl il mkBhBodyBytes
     pure $ Header praosToSign praosSignature
     where
       mkBhBodyBytes

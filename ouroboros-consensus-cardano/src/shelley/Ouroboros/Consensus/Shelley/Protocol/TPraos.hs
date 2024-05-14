@@ -77,9 +77,9 @@ instance PraosCrypto c => ProtocolHeaderSupportsKES (TPraos c) where
           currentKesPeriod - startOfKesPeriod
         | otherwise =
           0
-  mkHeader hotKey canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer = do
+  mkHeader hotKey ocert canBeLeader isLeader curSlot curNo prevHash bbHash actualBodySize protVer = do
     TPraosFields {tpraosSignature, tpraosToSign} <-
-      forgeTPraosFields hotKey canBeLeader isLeader mkBhBody
+      forgeTPraosFields hotKey ocert canBeLeader isLeader mkBhBody
     pure $ SL.BHeader tpraosToSign tpraosSignature
     where
       mkBhBody toSign =

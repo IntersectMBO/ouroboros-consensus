@@ -37,7 +37,7 @@ module Test.ThreadNet.Infra.Shelley (
 
 import           Cardano.Crypto.DSIGN (DSIGNAlgorithm (..), seedSizeDSIGN)
 import           Cardano.Crypto.Hash (Hash, HashAlgorithm)
-import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureKESAlgorithm (..), seedSizeKES)
+import           Cardano.Crypto.KES (KESAlgorithm (..), UnsoundPureKESAlgorithm (..), seedSizeKES, unsoundPureSignKeyKESToSoundSignKeyKES)
 import           Cardano.Crypto.Seed (mkSeedFromBytes)
 import qualified Cardano.Crypto.Seed as Cardano.Crypto
 import           Cardano.Crypto.VRF (SignKeyVRF, VRFAlgorithm, VerKeyVRF,
@@ -79,7 +79,7 @@ import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
 import           Ouroboros.Consensus.Protocol.Praos.Common
                      (PraosCanBeLeader (PraosCanBeLeader),
-                     praosCanBeLeaderColdVerKey, praosCanBeLeaderOpCert,
+                     praosCanBeLeaderColdVerKey,
                      praosCanBeLeaderSignKeyVRF)
 import           Ouroboros.Consensus.Protocol.TPraos
 import           Ouroboros.Consensus.Shelley.Eras (EraCrypto, ShelleyEra)
@@ -210,13 +210,17 @@ genCoreNode startKESPeriod = do
     genSeed :: Integral a => a -> Gen Cardano.Crypto.Seed
     genSeed = fmap mkSeedFromBytes . genBytes
 
-mkLeaderCredentials :: PraosCrypto c => CoreNode c -> ShelleyLeaderCredentials c
+mkLeaderCredentials :: (MonadST m, MonadThrow m, PraosCrypto c)
+                    => CoreNode c
+                    -> ShelleyLeaderCredentials c m
 mkLeaderCredentials CoreNode { cnDelegateKey, cnVRF, cnKES, cnOCert } =
     ShelleyLeaderCredentials {
-        shelleyLeaderCredentialsInitSignKey = cnKES
+        shelleyLeaderCredentialsGetSignKeyBundle =
+          ShelleyKeyBundle
+            <$> unsoundPureSignKeyKESToSoundSignKeyKES cnKES
+            <*> pure cnOCert
       , shelleyLeaderCredentialsCanBeLeader = PraosCanBeLeader {
-          praosCanBeLeaderOpCert     = cnOCert
-        , praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
+          praosCanBeLeaderColdVerKey = SL.VKey $ deriveVerKeyDSIGN cnDelegateKey
         , praosCanBeLeaderSignKeyVRF = cnVRF
         }
       , shelleyLeaderCredentialsLabel       = "ThreadNet"

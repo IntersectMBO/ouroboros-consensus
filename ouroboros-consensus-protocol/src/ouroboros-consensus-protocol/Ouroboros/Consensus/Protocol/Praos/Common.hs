@@ -22,7 +22,6 @@ import           Cardano.Ledger.BaseTypes (Nonce, Version)
 import           Cardano.Ledger.Crypto (Crypto, VRF)
 import           Cardano.Ledger.Keys (KeyHash, KeyRole (BlockIssuer))
 import qualified Cardano.Ledger.Shelley.API as SL
-import qualified Cardano.Protocol.TPraos.OCert as OCert
 import           Cardano.Slotting.Block (BlockNo)
 import           Cardano.Slotting.Slot (SlotNo)
 import           Data.Function (on)
@@ -228,10 +227,7 @@ instance Crypto c => ChainOrder (PraosChainSelectView c) where
   preferCandidate cfg ours cand = comparePraos cfg ours cand == LT
 
 data PraosCanBeLeader c = PraosCanBeLeader
-  { -- | Certificate delegating rights from the stake pool cold key (or
-    -- genesis stakeholder delegate cold key) to the online KES key.
-    praosCanBeLeaderOpCert     :: !(OCert.OCert c),
-    -- | Stake pool cold key or genesis stakeholder delegate cold key.
+  { -- | Stake pool cold key or genesis stakeholder delegate cold key.
     praosCanBeLeaderColdVerKey :: !(SL.VKey 'SL.BlockIssuer c),
     praosCanBeLeaderSignKeyVRF :: !(SL.SignKeyVRF c)
   }

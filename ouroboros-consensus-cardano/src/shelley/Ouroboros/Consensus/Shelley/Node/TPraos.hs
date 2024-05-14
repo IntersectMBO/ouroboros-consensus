@@ -34,7 +34,6 @@ module Ouroboros.Consensus.Shelley.Node.TPraos (
   ) where
 
 import qualified Cardano.Crypto.VRF as VRF
-import qualified Cardano.Crypto.KES as KES
 import qualified Cardano.Ledger.Api.Era as L
 import qualified Cardano.Ledger.Api.Transition as L
 import qualified Cardano.Ledger.Shelley.API as SL
@@ -68,7 +67,8 @@ import           Ouroboros.Consensus.Shelley.Ledger.Inspect ()
 import           Ouroboros.Consensus.Shelley.Ledger.NetworkProtocolVersion ()
 import           Ouroboros.Consensus.Shelley.Node.Common
                      (ProtocolParamsShelleyBased (..), ShelleyEraWithCrypto,
-                     ShelleyLeaderCredentials (..), shelleyBlockIssuerVKey)
+                     ShelleyKeyBundle (..), ShelleyLeaderCredentials (..),
+                     shelleyBlockIssuerVKey)
 import           Ouroboros.Consensus.Shelley.Node.Serialisation ()
 import           Ouroboros.Consensus.Shelley.Protocol.TPraos ()
 import           Ouroboros.Consensus.Util.Assert
@@ -92,26 +92,25 @@ shelleyBlockForging ::
       )
   => TPraosParams
   -> Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
-  -> ShelleyLeaderCredentials (EraCrypto era)
+  -> ShelleyLeaderCredentials (EraCrypto era) m
   -> m (BlockForging m (ShelleyBlock (TPraos c) era))
 shelleyBlockForging tpraosParams maxTxCapacityOverrides credentials = do
-    skSound <- KES.unsoundPureSignKeyKESToSoundSignKeyKES initSignKey
+    ShelleyKeyBundle
+          { shelleyKeyBundleSignKeyKES = skSound
+          , shelleyKeyBundleOpCert = ocert
+          } <- shelleyLeaderCredentialsGetSignKeyBundle credentials
+
+    let startPeriod :: Absolute.KESPeriod
+        startPeriod = SL.ocertKESPeriod ocert
+
+        slotToPeriod :: SlotNo -> Absolute.KESPeriod
+        slotToPeriod (SlotNo slot) =
+          SL.KESPeriod $ fromIntegral $ slot `div` tpraosSlotsPerKESPeriod
+
     hotKey <- HotKey.mkHotKey @m @c skSound startPeriod tpraosMaxKESEvo
-    pure $ shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
+    pure $ shelleySharedBlockForging hotKey ocert slotToPeriod credentials maxTxCapacityOverrides
   where
     TPraosParams {tpraosMaxKESEvo, tpraosSlotsPerKESPeriod} = tpraosParams
-
-    ShelleyLeaderCredentials {
-        shelleyLeaderCredentialsInitSignKey = initSignKey
-      , shelleyLeaderCredentialsCanBeLeader = canBeLeader
-      } = credentials
-
-    startPeriod :: Absolute.KESPeriod
-    startPeriod = SL.ocertKESPeriod $ praosCanBeLeaderOpCert canBeLeader
-
-    slotToPeriod :: SlotNo -> Absolute.KESPeriod
-    slotToPeriod (SlotNo slot) =
-      SL.KESPeriod $ fromIntegral $ slot `div` tpraosSlotsPerKESPeriod
 
 -- | Create a 'BlockForging' record safely using a given 'Hotkey'.
 --
@@ -124,11 +123,12 @@ shelleySharedBlockForging ::
      , IOLike m
      )
   => HotKey c m
+  -> SL.OCert c
   -> (SlotNo -> Absolute.KESPeriod)
-  -> ShelleyLeaderCredentials c
+  -> ShelleyLeaderCredentials c m
   -> Mempool.TxOverrides (ShelleyBlock (TPraos c) era)
   -> BlockForging m     (ShelleyBlock (TPraos c) era)
-shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides =
+shelleySharedBlockForging hotKey ocert slotToPeriod credentials maxTxCapacityOverrides =
     BlockForging {
         forgeLabel       = label <> "_" <> T.pack (L.eraName @era)
       , canBeLeader      = canBeLeader
@@ -143,6 +143,7 @@ shelleySharedBlockForging hotKey slotToPeriod credentials maxTxCapacityOverrides
       , forgeBlock       = \cfg ->
           forgeShelleyBlock
             hotKey
+            ocert
             canBeLeader
             cfg
             maxTxCapacityOverrides
@@ -241,7 +242,7 @@ protocolInfoShelley ::
       , TxLimits (ShelleyBlock (TPraos c) (ShelleyEra c))
       )
   => SL.ShelleyGenesis c
-  -> ProtocolParamsShelleyBased c
+  -> ProtocolParamsShelleyBased c m
   -> ProtocolParams (ShelleyBlock (TPraos c) (ShelleyEra c))
   -> ( ProtocolInfo (ShelleyBlock (TPraos c) (ShelleyEra c) )
      , m [BlockForging m (ShelleyBlock (TPraos c) (ShelleyEra c))]
@@ -266,7 +267,7 @@ protocolInfoTPraosShelleyBased ::
       , TxLimits (ShelleyBlock (TPraos c) era)
       , c ~ EraCrypto era
       )
-  => ProtocolParamsShelleyBased c
+  => ProtocolParamsShelleyBased c m
   -> L.TransitionConfig era
   -> SL.ProtVer
      -- ^ see 'shelleyProtVer', mutatis mutandi

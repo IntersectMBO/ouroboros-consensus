@@ -124,11 +124,12 @@ forgeTPraosFields ::
      , Monad m
      )
   => HotKey c m
+  -> SL.OCert c
   -> CanBeLeader (TPraos c)
   -> IsLeader (TPraos c)
   -> (TPraosToSign c -> toSign)
   -> m (TPraosFields c toSign)
-forgeTPraosFields hotKey PraosCanBeLeader{..} TPraosIsLeader{..} mkToSign = do
+forgeTPraosFields hotKey ocert PraosCanBeLeader{..} TPraosIsLeader{..} mkToSign = do
     signature <- HotKey.sign hotKey toSign
     return TPraosFields {
         tpraosSignature = signature
@@ -142,7 +143,7 @@ forgeTPraosFields hotKey PraosCanBeLeader{..} TPraosIsLeader{..} mkToSign = do
       , tpraosToSignVrfVK    = VRF.deriveVerKeyVRF praosCanBeLeaderSignKeyVRF
       , tpraosToSignEta      = tpraosIsLeaderEta
       , tpraosToSignLeader   = tpraosIsLeaderProof
-      , tpraosToSignOCert    = praosCanBeLeaderOpCert
+      , tpraosToSignOCert    = ocert
       }
 
 -- | Because we are using the executable spec, rather than implementing the

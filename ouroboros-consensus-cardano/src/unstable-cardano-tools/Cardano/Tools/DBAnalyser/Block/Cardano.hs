@@ -369,6 +369,10 @@ mkCardanoProtocolInfo ::
   -> ProtocolInfo (CardanoBlock StandardCrypto)
 mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNonce triggers =
     fst $ protocolInfoCardano @_ @IO
+      ProtocolParamsShelleyBased {
+          shelleyBasedInitialNonce      = initialNonce
+        , shelleyBasedLeaderCredentials = []
+        }
       (CardanoProtocolParams
         ProtocolParamsByron {
             byronGenesis                = genesisByron
@@ -377,10 +381,6 @@ mkCardanoProtocolInfo genesisByron signatureThreshold transitionConfig initialNo
           , byronSoftwareVersion        = Byron.Update.SoftwareVersion (Byron.Update.ApplicationName "db-analyser") 2
           , byronLeaderCredentials      = Nothing
           , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-          }
-        ProtocolParamsShelleyBased {
-            shelleyBasedInitialNonce      = initialNonce
-          , shelleyBasedLeaderCredentials = []
           }
         ProtocolParamsShelley {
             -- Note that this is /not/ the Shelley protocol version, see

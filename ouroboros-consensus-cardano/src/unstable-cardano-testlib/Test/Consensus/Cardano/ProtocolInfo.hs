@@ -270,6 +270,10 @@ mkTestProtocolInfo
     aByronPbftSignatureThreshold
     hardForkSpec
   = protocolInfoCardano
+        ProtocolParamsShelleyBased {
+            shelleyBasedInitialNonce      = initialNonce
+          , shelleyBasedLeaderCredentials = [leaderCredentialsShelley]
+          }
         (CardanoProtocolParams
           ProtocolParamsByron {
               byronGenesis                = genesisByron
@@ -278,10 +282,6 @@ mkTestProtocolInfo
             , byronSoftwareVersion        = softVerByron
             , byronLeaderCredentials      = Just leaderCredentialsByron
             , byronMaxTxCapacityOverrides = Mempool.mkOverrides Mempool.noOverridesMeasure
-            }
-          ProtocolParamsShelleyBased {
-              shelleyBasedInitialNonce      = initialNonce
-            , shelleyBasedLeaderCredentials = [leaderCredentialsShelley]
             }
           ProtocolParamsShelley {
               shelleyProtVer                = hfSpecProtVer Shelley hardForkSpec
@@ -338,7 +338,7 @@ mkTestProtocolInfo
           generatedSecretsByron
           coreNodeId
 
-    leaderCredentialsShelley :: ShelleyLeaderCredentials c
+    leaderCredentialsShelley :: ShelleyLeaderCredentials c m
     leaderCredentialsShelley = Shelley.mkLeaderCredentials coreNode
 
     -- This sets a vestigial header field which is not actually used for anything.
