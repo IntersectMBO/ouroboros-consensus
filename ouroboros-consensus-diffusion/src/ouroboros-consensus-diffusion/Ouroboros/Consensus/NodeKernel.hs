@@ -53,7 +53,7 @@ import qualified Ouroboros.Consensus.Block as Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Forecast
-import           Ouroboros.Consensus.Genesis.Governor (runGDDGovernor)
+import           Ouroboros.Consensus.Genesis.Governor (gddWatcher)
 import           Ouroboros.Consensus.HeaderValidation
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
@@ -274,25 +274,15 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           (readTVar varLoEFragment)
           ctx
 
-        let -- Trigger the GDD only when we are currently syncing, and if so, on every
-            -- relevant change to the ChainSync states.
-            --
-            --  TODO GDD should only consider (big) ledger peers
-            gddTrigger = readTVar varGsmState >>= \case
-              GSM.PreSyncing -> pure mempty
-              GSM.CaughtUp   -> pure mempty
-              GSM.Syncing    ->
-                viewChainSyncState varChainSyncHandles $ \s ->
-                  (csLatestSlot s, csIdling s)
-
-        void $ forkLinkedThread registry "NodeKernel.GDD" $
-          runGDDGovernor
+        void $ forkLinkedWatcher registry "NodeKernel.GDD" $
+          gddWatcher
             cfg
             nullTracer -- TODO don't use nullTracer
+            chainDB
+            (readTVar varGsmState)
+            -- TODO GDD should only consider (big) ledger peers
             (readTVar varChainSyncHandles)
             varLoEFragment
-            chainDB
-            gddTrigger
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
                             blockForgingController st (LazySTM.takeTMVar blockForgingVar)
