@@ -30,7 +30,7 @@ module Test.Consensus.PointSchedule (
   , GenesisWindow (..)
   , LoPBucketParams (..)
   , PeerSchedule
-  , PointSchedule
+  , PointSchedule (..)
   , PointsGeneratorParams (..)
   , RunGenesisTestResult (..)
   , enrichedWith
@@ -99,8 +99,8 @@ prettyPointSchedule ::
   PointSchedule blk ->
   [String]
 prettyPointSchedule peers =
-  [ "honest peers: " ++ show (Map.size (honestPeers peers))
-  , "adversaries: " ++ show (Map.size (adversarialPeers peers))
+  [ "honest peers: " ++ show (Map.size (honestPeers $ unPointSchedule peers))
+  , "adversaries: " ++ show (Map.size (adversarialPeers $ unPointSchedule peers))
   ] ++
   zipWith3
     (\number time peerState ->
@@ -157,7 +157,7 @@ peerStates Peer {name, value = schedulePoints} =
 --
 -- The resulting schedule contains all the peers. Items are sorted by time.
 peersStates :: PointSchedule blk -> [(Time, Peer (NodeState blk))]
-peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
+peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList $ unPointSchedule peers))
 
 -- | Same as 'peersStates' but returns the duration of a state instead of the
 -- absolute time at which it starts holding.
@@ -173,11 +173,13 @@ type PeerSchedule blk = [(Time, SchedulePoint blk)]
 peerScheduleBlocks :: (PeerSchedule blk) -> [blk]
 peerScheduleBlocks = mapMaybe (withOriginToMaybe . schedulePointToBlock . snd)
 
-type PointSchedule blk = Peers (PeerSchedule blk)
+newtype PointSchedule blk = PointSchedule {
+  unPointSchedule :: Peers (PeerSchedule blk)
+  }
 
 -- | List of all blocks appearing in the schedules.
 peerSchedulesBlocks :: PointSchedule blk -> [blk]
-peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList
+peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList . unPointSchedule
 
 ----------------------------------------------------------------------------------------------------
 -- Schedule generators
@@ -197,7 +199,7 @@ longRangeAttack ::
 longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
   adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
-  pure (peers' [honest] [adv])
+  pure $ PointSchedule $ peers' [honest] [adv]
   where
     honParams = defaultPeerScheduleParams {pspHeaderDelayInterval = (0.3, 0.4)}
     advParams = defaultPeerScheduleParams {pspTipDelayInterval = (0, 0.1)}
@@ -243,7 +245,7 @@ uniformPointsWithExtraHonestPeers
   honests <- replicateM (extraHonestPeers + 1) $
     mkSchedule [(IsTrunk, [honestTip0 .. AF.length btTrunk - 1])] []
   advs <- takeBranches btBranches
-  pure (peers' honests advs)
+  pure $ PointSchedule $ peers' honests advs
   where
     takeBranches = \case
         [] -> pure []
@@ -372,7 +374,7 @@ uniformPointsWithExtraHonestPeersAndDowntime
     mkSchedule [(IsTrunk, [honestTip0, minusClamp (AF.length btTrunk) 1])] []
   advs <- takeBranches pauseSlot btBranches
   let (honests', advs') = syncTips honests advs
-  pure (peers' honests' advs')
+  pure $ PointSchedule $ peers' honests' advs'
   where
     takeBranches pause = \case
         [] -> pure []
@@ -541,8 +543,8 @@ duplicateLastPoint d xs =
     in xs ++ [(addTime d t, p)]
 
 ensureScheduleDuration :: GenesisTest blk a -> PointSchedule blk -> PointSchedule blk
-ensureScheduleDuration gt peers =
-    duplicateLastPoint endingDelay <$> peers
+ensureScheduleDuration gt ps =
+    PointSchedule $ duplicateLastPoint endingDelay <$> unPointSchedule ps
   where
     endingDelay =
      let cst = gtChainSyncTimeouts gt
@@ -553,4 +555,4 @@ ensureScheduleDuration gt peers =
            , busyTimeout bft
            , streamingTimeout bft
            ])
-    peerCount = length (peersList peers)
+    peerCount = length (peersList $ unPointSchedule ps)

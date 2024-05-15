@@ -63,7 +63,7 @@ prop_timeouts mustTimeout = do
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
-       in peersOnlyHonest $ [
+       in PointSchedule $ peersOnlyHonest $ [
             (Time 0, scheduleTipPoint tipBlock),
             (Time 0, scheduleHeaderPoint tipBlock),
             (Time 0, scheduleBlockPoint tipBlock),

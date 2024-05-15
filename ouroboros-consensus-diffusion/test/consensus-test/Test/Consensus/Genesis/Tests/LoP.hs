@@ -78,7 +78,7 @@ prop_wait mustTimeout =
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
-       in peersOnlyHonest $
+       in PointSchedule $ peersOnlyHonest $
             [ (Time 0, scheduleTipPoint tipBlock),
               -- This last point does not matter, it is only here to leave the
               -- connection open (aka. keep the test running) long enough to
@@ -108,7 +108,7 @@ prop_waitBehindForecastHorizon =
     dullSchedule :: (HasHeader blk) => AnchoredFragment blk -> PointSchedule blk
     dullSchedule (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule (_ AF.:> tipBlock) =
-      peersOnlyHonest $
+      PointSchedule $ peersOnlyHonest $
         [ (Time 0, scheduleTipPoint tipBlock),
           (Time 0, scheduleHeaderPoint tipBlock),
           (Time 11, scheduleBlockPoint tipBlock)
@@ -169,7 +169,7 @@ prop_serve mustTimeout =
     makeSchedule :: (HasHeader blk) => AnchoredFragment blk -> PointSchedule blk
     makeSchedule (AF.Empty _) = error "fragment must have at least one block"
     makeSchedule fragment@(_ AF.:> tipBlock) =
-      peersOnlyHonest $
+      PointSchedule $ peersOnlyHonest $
         (Time 0, scheduleTipPoint tipBlock)
           : ( flip concatMap (zip [1 ..] (AF.toOldestFirst fragment)) $ \(i, block) ->
                 [ (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleHeaderPoint block),
@@ -224,7 +224,7 @@ prop_delayAttack lopEnabled =
             (AF.Empty _)       -> Nothing
             (_ AF.:> tipBlock) -> Just tipBlock
           branchTip = getOnlyBranchTip tree
-       in peers'
+       in PointSchedule $ peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain.
             [ (Time 0, scheduleTipPoint trunkTip) : case intersectM of

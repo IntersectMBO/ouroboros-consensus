@@ -123,15 +123,17 @@ prop_CSJ happy synchronized =
   where
     genDuplicatedHonestSchedule :: GenesisTest TestBlock () -> Gen (PointSchedule TestBlock)
     genDuplicatedHonestSchedule gt@GenesisTest {gtExtraHonestPeers} = do
-      Peers {honestPeers, adversarialPeers} <- genUniformSchedulePoints gt
-      pure $
-        Peers.unionWithKey
-          (\_ _ _ -> error "should not happen")
-          ( peers'
-              (replicate (fromIntegral gtExtraHonestPeers + 1) (getHonestPeer honestPeers))
-              []
-          )
-          (Peers Map.empty adversarialPeers)
+      ps <- genUniformSchedulePoints gt
+      pure $ ps {
+        unPointSchedule =
+          Peers.unionWithKey
+            (\_ _ _ -> error "should not happen")
+            ( peers'
+                (replicate (fromIntegral gtExtraHonestPeers + 1) (getHonestPeer (honestPeers (unPointSchedule ps))))
+                []
+            )
+            (Peers Map.empty (adversarialPeers (unPointSchedule ps)))
+        }
 
     isNewerThanJumpSizeFromTip :: GenesisTestFull TestBlock -> Header TestBlock -> Bool
     isNewerThanJumpSizeFromTip gt hdr =

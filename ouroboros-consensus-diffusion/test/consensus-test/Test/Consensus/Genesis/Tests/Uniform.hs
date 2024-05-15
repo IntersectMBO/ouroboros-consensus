@@ -95,7 +95,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
     immutableTipIsRecent
   ]
   where
-    advCount = Map.size (adversarialPeers (gtSchedule genesisTest))
+    advCount = Map.size (adversarialPeers (unPointSchedule $ gtSchedule genesisTest))
 
     immutableTipIsRecent =
       counterexample ("Age of the immutable tip: " ++ show immutableTipAge) $
@@ -129,7 +129,7 @@ theProperty genesisTest stateView@StateView{svSelectedChain} =
       [] -> "No peers were disconnected"
       peers -> "Some peers were disconnected: " ++ intercalate ", " (condense <$> peers)
 
-    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ getHonestPeer $ honestPeers $ gtSchedule genesisTest
+    honestTipSlot = At $ blockSlot $ snd $ last $ mapMaybe fromBlockPoint $ getHonestPeer $ honestPeers $ unPointSchedule $ gtSchedule genesisTest
 
     GenesisTest {gtBlockTree, gtGenesisWindow = GenesisWindow s, gtDelay = Delta d} = genesisTest
 
@@ -224,9 +224,9 @@ prop_leashingAttackStalling =
     -- timeouts to disconnect adversaries.
     genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
     genLeashingSchedule genesisTest = do
-      Peers honest advs0 <- ensureScheduleDuration genesisTest <$> genUniformSchedulePoints genesisTest
+      Peers honest advs0 <- unPointSchedule . ensureScheduleDuration genesisTest <$> genUniformSchedulePoints genesisTest
       advs <- mapM dropRandomPoints advs0
-      pure $ Peers honest advs
+      pure $ PointSchedule $ Peers honest advs
 
     disableBoringTimeouts gt =
       gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
@@ -279,7 +279,7 @@ prop_leashingAttackTimeLimited =
     -- | A schedule which doesn't run past the last event of the honest peer
     genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
     genTimeLimitedSchedule genesisTest = do
-      Peers honests advs0 <- genUniformSchedulePoints genesisTest
+      Peers honests advs0 <- unPointSchedule <$> genUniformSchedulePoints genesisTest
       let timeLimit = estimateTimeBound
             (gtChainSyncTimeouts genesisTest)
             (gtLoPBucketParams genesisTest)
@@ -287,7 +287,7 @@ prop_leashingAttackTimeLimited =
             (Map.elems advs0)
           advs = fmap (takePointsUntil timeLimit) advs0
           extendedHonests = extendScheduleUntil timeLimit <$> honests
-      pure $ Peers extendedHonests advs
+      pure $ PointSchedule $ Peers extendedHonests advs
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 

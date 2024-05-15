@@ -21,7 +21,7 @@ import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule (GenesisTest (..),
-                     GenesisTestFull, PeerSchedule, PointSchedule,
+                     GenesisTestFull, PeerSchedule, PointSchedule (..),
                      peerSchedulesBlocks)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
@@ -40,11 +40,11 @@ shrinkPeerSchedules ::
 shrinkPeerSchedules genesisTest _stateView =
   let trimmedBlockTree sch = trimBlockTree' sch (gtBlockTree genesisTest)
       shrunkAdversarialPeers =
-        shrinkAdversarialPeers shrinkAdversarialPeer (gtSchedule genesisTest)
+        shrinkAdversarialPeers shrinkAdversarialPeer (unPointSchedule $ gtSchedule genesisTest)
           <&> \shrunkSchedule ->
             genesisTest
-              { gtSchedule = shrunkSchedule,
-                gtBlockTree = trimmedBlockTree shrunkSchedule
+              { gtSchedule = PointSchedule shrunkSchedule,
+                gtBlockTree = trimmedBlockTree $ PointSchedule shrunkSchedule
               }
       shrunkHonestPeers =
         shrinkHonestPeers
@@ -61,13 +61,13 @@ shrinkByRemovingAdversaries ::
   StateView TestBlock ->
   [GenesisTestFull TestBlock]
 shrinkByRemovingAdversaries genesisTest _stateView =
-  shrinkAdversarialPeers (const []) (gtSchedule genesisTest) <&> \shrunkSchedule ->
-    let trimmedBlockTree = trimBlockTree' shrunkSchedule (gtBlockTree genesisTest)
-     in (genesisTest{gtSchedule = shrunkSchedule, gtBlockTree = trimmedBlockTree})
+  shrinkAdversarialPeers (const []) (unPointSchedule $ gtSchedule genesisTest) <&> \shrunkSchedule ->
+    let trimmedBlockTree = trimBlockTree' (PointSchedule shrunkSchedule) (gtBlockTree genesisTest)
+     in (genesisTest{gtSchedule = PointSchedule shrunkSchedule, gtBlockTree = trimmedBlockTree})
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
 -- unchanged.
-shrinkAdversarialPeer :: (PeerSchedule blk) -> [PeerSchedule blk]
+shrinkAdversarialPeer :: PeerSchedule blk -> [PeerSchedule blk]
 shrinkAdversarialPeer = shrinkList (const [])
 
 -- | Shrink the 'others' field of a 'Peers' structure by attempting to remove
@@ -89,11 +89,11 @@ shrinkAdversarialPeers shrink Peers {honestPeers, adversarialPeers} =
 -- trigger disconnections when the timeout for MsgAwaitReply is reached. In those cases,
 -- it is probably more pertinent to disable this timeout in tests than to disable shrinking.
 shrinkHonestPeers :: PointSchedule blk -> [PointSchedule blk]
-shrinkHonestPeers Peers {honestPeers, adversarialPeers} = do
+shrinkHonestPeers PointSchedule {unPointSchedule = Peers {honestPeers, adversarialPeers}} = do
   (k, honestSch) <- Map.toList honestPeers
   let (lastHonest, _) = last honestSch
   shrunk <- shrinkHonestPeer honestSch
-  pure $ Peers
+  pure $ PointSchedule $ Peers
     { honestPeers = Map.insert k shrunk honestPeers
     , adversarialPeers = fmap (extendAdversary lastHonest) adversarialPeers
     }

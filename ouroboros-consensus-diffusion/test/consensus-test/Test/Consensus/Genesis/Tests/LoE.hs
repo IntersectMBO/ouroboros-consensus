@@ -89,7 +89,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
             (AF.Empty _)       -> Nothing
             (_ AF.:> tipBlock) -> Just tipBlock
           branchTip = getOnlyBranchTip tree
-       in peers'
+       in PointSchedule $ peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain.
             [ (Time 0, scheduleTipPoint trunkTip) : case intersectM of

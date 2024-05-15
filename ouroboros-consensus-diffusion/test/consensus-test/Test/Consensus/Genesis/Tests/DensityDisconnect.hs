@@ -470,7 +470,7 @@ prop_densityDisconnectTriggersChainSel =
 
     ( \GenesisTest {gtBlockTree, gtSchedule} stateView@StateView {svTipBlock} ->
         let
-          othersCount = Map.size (adversarialPeers gtSchedule)
+          othersCount = Map.size (adversarialPeers $ unPointSchedule gtSchedule)
           exnCorrect = case exceptionsByComponent ChainSyncClient stateView of
             [fromException -> Just DensityTooLow] -> True
             []                 | othersCount == 0 -> True
@@ -497,7 +497,7 @@ prop_densityDisconnectTriggersChainSel =
             (AF.Empty _)       -> Origin
             (_ AF.:> tipBlock) -> At tipBlock
           advTip = getOnlyBranchTip tree
-       in peers'
+       in PointSchedule $ peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain up to the intersection.
             [[(Time 0, scheduleTipPoint trunkTip),
