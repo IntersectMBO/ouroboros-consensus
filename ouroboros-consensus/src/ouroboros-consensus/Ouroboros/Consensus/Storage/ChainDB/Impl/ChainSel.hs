@@ -109,7 +109,7 @@ initialChainSelection ::
   -> StrictTVar m (WithFingerprint (InvalidBlocks blk))
   -> StrictTVar m (FutureBlocks m blk)
   -> CheckInFuture m blk
-  -> LoE (m (AnchoredFragment (Header blk)))
+  -> LoE ()
   -> m (ChainAndLedger blk)
 initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
                       varFutureBlocks futureCheck loE = do
@@ -303,10 +303,9 @@ chainSelSync ::
 -- 'ChainSelReprocessLoEBlocks' whenever we receive a new header or lose a
 -- peer.
 -- If 'cdbLoE' is 'LoEDisabled', this task is skipped.
-chainSelSync cdb@CDB{..} ChainSelReprocessLoEBlocks
-  | LoEDisabled <- cdbLoE = pure ()
-
-  | otherwise = do
+chainSelSync cdb@CDB{..} ChainSelReprocessLoEBlocks = lift cdbLoE >>= \case
+  LoEDisabled  -> pure ()
+  LoEEnabled _ -> do
     (succsOf, chain) <- lift $ atomically $ do
       invalid <- forgetFingerprint <$> readTVar cdbInvalid
       (,)
@@ -552,7 +551,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
             -- on the implementation of @processLoE@.
             Nothing        -> AF.Empty (AF.anchor curChain)
 
-    loeFrag <- traverse (fmap sanitizeLoEFrag) cdbLoE
+    loeFrag <- fmap sanitizeLoEFrag <$> cdbLoE
 
     traceWith addBlockTracer (ChainSelectionLoEDebug curChain loeFrag)
 

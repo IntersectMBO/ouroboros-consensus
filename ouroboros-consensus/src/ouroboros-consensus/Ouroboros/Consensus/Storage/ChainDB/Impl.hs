@@ -39,7 +39,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl (
 import           Control.Monad (when)
 import           Control.Monad.Trans.Class (lift)
 import           Control.Tracer
-import           Data.Functor ((<&>))
+import           Data.Functor (void, (<&>))
 import           Data.Functor.Identity (Identity)
 import qualified Data.Map.Strict as Map
 import           Data.Maybe.Strict (StrictMaybe (..))
@@ -150,6 +150,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
       let initChainSelTracer = contramap TraceInitChainSelEvent tracer
 
       traceWith initChainSelTracer StartedInitChainSelection
+      initialLoE     <- Args.cdbsLoE cdbSpecificArgs
       chainAndLedger <- ChainSel.initialChainSelection
                           immutableDB
                           volatileDB
@@ -159,7 +160,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
                           varInvalid
                           varFutureBlocks
                           (Args.cdbsCheckInFuture cdbSpecificArgs)
-                          (Args.cdbsLoE cdbSpecificArgs)
+                          (void initialLoE)
       traceWith initChainSelTracer InitialChainSelected
 
       let chain  = VF.validatedFragment chainAndLedger

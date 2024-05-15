@@ -135,7 +135,7 @@ mkChainDb resources = do
             , mcdbNodeDBs        = lrCdb
             })
       pure $ args { ChainDB.cdbsArgs = (ChainDB.cdbsArgs args) {
-        cdbsLoE = readTVarIO <$> lrLoEVar
+        cdbsLoE = traverse readTVarIO lrLoEVar
         } }
     (_, (chainDB, internal)) <- allocate
         lrRegistry

@@ -130,6 +130,6 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , cdbsRegistry        = mcdbRegistry
         , cdbsTracer          = nullTracer
         , cdbsTopLevelConfig  = mcdbTopLevelConfig
-        , cdbsLoE             = LoEDisabled
+        , cdbsLoE             = pure LoEDisabled
         }
     }

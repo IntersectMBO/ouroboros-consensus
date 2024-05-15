@@ -891,4 +891,4 @@ data LoE a =
   LoEEnabled !a
   deriving (Eq, Show, Generic, NoThunks, Functor, Foldable, Traversable)
 
-type GetLoEFragment m blk = LoE (m (AnchoredFragment (Header blk)))
+type GetLoEFragment m blk = m (LoE (AnchoredFragment (Header blk)))
