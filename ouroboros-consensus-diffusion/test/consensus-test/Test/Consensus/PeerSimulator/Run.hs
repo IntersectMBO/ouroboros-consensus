@@ -56,7 +56,8 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import           Test.Consensus.PointSchedule (BlockFetchTimeout,
                      CSJParams (..), GenesisTest (..), GenesisTestFull,
-                     LoPBucketParams (..), PeersSchedule, peersStatesRelative)
+                     LoPBucketParams (..), PointSchedule (..),
+                     peersStatesRelative)
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
@@ -268,7 +269,7 @@ runScheduler ::
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
-  PeersSchedule blk ->
+  PointSchedule blk ->
   Map PeerId (PeerResources m blk) ->
   NodeLifecycle blk m ->
   m (ChainDB m blk, StateViewTracers blk m)
@@ -467,7 +468,7 @@ runPointSchedule ::
   m (StateView TestBlock)
 runPointSchedule schedulerConfig genesisTest tracer0 =
   withRegistry $ \registry -> do
-    peerSim <- makePeerSimulatorResources tracer gtBlockTree (NonEmpty.fromList $ getPeerIds gtSchedule)
+    peerSim <- makePeerSimulatorResources tracer gtBlockTree (NonEmpty.fromList $ getPeerIds $ unPointSchedule gtSchedule)
     lifecycle <- nodeLifecycle schedulerConfig genesisTest tracer registry peerSim
     (chainDb, stateViewTracers) <- runScheduler
       (Tracer $ traceWith tracer . TraceSchedulerEvent)
