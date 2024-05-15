@@ -121,7 +121,7 @@ prop_CSJ happy synchronized =
           receivedHeadersAtMostOnceFromHonestPeers
     )
   where
-    genDuplicatedHonestSchedule :: GenesisTest TestBlock () -> Gen (PeersSchedule TestBlock)
+    genDuplicatedHonestSchedule :: GenesisTest TestBlock () -> Gen (PointSchedule TestBlock)
     genDuplicatedHonestSchedule gt@GenesisTest {gtExtraHonestPeers} = do
       Peers {honestPeers, adversarialPeers} <- genUniformSchedulePoints gt
       pure $

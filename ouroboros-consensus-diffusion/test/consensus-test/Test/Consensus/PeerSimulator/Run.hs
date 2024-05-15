@@ -59,7 +59,7 @@ import           Test.Consensus.PeerSimulator.Trace
 import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (BlockFetchTimeout,
                      CSJParams (..), GenesisTest (GenesisTest), GenesisTestFull,
-                     LoPBucketParams (..), PeersSchedule, peersStatesRelative)
+                     LoPBucketParams (..), PointSchedule, peersStatesRelative)
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
@@ -271,7 +271,7 @@ runScheduler ::
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
-  PeersSchedule blk ->
+  PointSchedule blk ->
   Map PeerId (PeerResources m blk) ->
   NodeLifecycle blk m ->
   m (ChainDB m blk, StateViewTracers blk m)

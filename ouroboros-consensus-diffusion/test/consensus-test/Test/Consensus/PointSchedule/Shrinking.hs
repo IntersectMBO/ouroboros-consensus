@@ -21,7 +21,7 @@ import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      addBranch', mkTrunk)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
 import           Test.Consensus.PointSchedule (GenesisTest (..),
-                     GenesisTestFull, PeerSchedule, PeersSchedule,
+                     GenesisTestFull, PeerSchedule, PointSchedule,
                      peerSchedulesBlocks)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
@@ -29,7 +29,7 @@ import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock, isAncestorOf,
                      isStrictAncestorOf)
 
--- | Shrink a 'Peers PeerSchedule'. This does not affect the honest peer; it
+-- | Shrink a 'PointSchedule'. This does not affect the honest peer; it
 -- does, however, attempt to remove other peers or ticks of other peers. The
 -- block tree is trimmed to keep only parts that are necessary for the shrunk
 -- schedule.
@@ -53,7 +53,7 @@ shrinkPeerSchedules genesisTest _stateView =
           <&> \shrunkSchedule -> genesisTest {gtSchedule = shrunkSchedule}
    in shrunkAdversarialPeers ++ shrunkHonestPeers
 
--- | Shrink a 'Peers PeerSchedule' by removing adversaries. This does not affect
+-- | Shrink a 'PointSchedule' by removing adversaries. This does not affect
 -- the honest peer; and it does not remove ticks from the schedules of the
 -- remaining adversaries.
 shrinkByRemovingAdversaries ::
@@ -88,7 +88,7 @@ shrinkAdversarialPeers shrink Peers {honestPeers, adversarialPeers} =
 -- NOTE: This operation makes the honest peer to end its schedule sooner, which *may*
 -- trigger disconnections when the timeout for MsgAwaitReply is reached. In those cases,
 -- it is probably more pertinent to disable this timeout in tests than to disable shrinking.
-shrinkHonestPeers :: Peers (PeerSchedule blk) -> [Peers (PeerSchedule blk)]
+shrinkHonestPeers :: PointSchedule blk -> [PointSchedule blk]
 shrinkHonestPeers Peers {honestPeers, adversarialPeers} = do
   (k, honestSch) <- Map.toList honestPeers
   let (lastHonest, _) = last honestSch
@@ -147,7 +147,7 @@ speedUpTheSchedule sch (at, speedUpBy) =
 -- | Remove blocks from the given block tree that are not necessary for the
 -- given peer schedules. If entire branches are unused, they are removed. If the
 -- trunk is unused, then it remains as an empty anchored fragment.
-trimBlockTree' :: PeersSchedule TestBlock -> BlockTree TestBlock -> BlockTree TestBlock
+trimBlockTree' :: PointSchedule TestBlock -> BlockTree TestBlock -> BlockTree TestBlock
 trimBlockTree' = keepOnlyAncestorsOf . peerSchedulesBlocks
 
 -- | Given some blocks and a block tree, keep only the prefix of the block tree

@@ -20,7 +20,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers, peers')
+import           Test.Consensus.PointSchedule.Peers (peers')
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
@@ -81,7 +81,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
            in selectedCorrect && exceptionsCorrect
       )
   where
-    delaySchedule :: HasHeader blk => BlockTree blk -> Peers (PeerSchedule blk)
+    delaySchedule :: HasHeader blk => BlockTree blk -> PointSchedule blk
     delaySchedule tree =
       let trunkTip = getTrunkTip tree
           branch = getOnlyBranch tree

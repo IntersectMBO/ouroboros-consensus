@@ -30,7 +30,7 @@ module Test.Consensus.PointSchedule (
   , GenesisWindow (..)
   , LoPBucketParams (..)
   , PeerSchedule
-  , PeersSchedule
+  , PointSchedule
   , PointsGeneratorParams (..)
   , RunGenesisTestResult (..)
   , enrichedWith
@@ -42,7 +42,7 @@ module Test.Consensus.PointSchedule (
   , peersStates
   , peersStatesRelative
   , prettyGenesisTest
-  , prettyPeersSchedule
+  , prettyPointSchedule
   , stToGen
   , uniformPoints
   ) where
@@ -93,12 +93,12 @@ import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
 
-prettyPeersSchedule ::
+prettyPointSchedule ::
   forall blk.
   (CondenseList (NodeState blk)) =>
-  PeersSchedule blk ->
+  PointSchedule blk ->
   [String]
-prettyPeersSchedule peers =
+prettyPointSchedule peers =
   [ "honest peers: " ++ show (Map.size (honestPeers peers))
   , "adversaries: " ++ show (Map.size (adversarialPeers peers))
   ] ++
@@ -156,12 +156,12 @@ peerStates Peer {name, value = schedulePoints} =
 -- | Convert several @SinglePeer@ schedules to a common 'NodeState' schedule.
 --
 -- The resulting schedule contains all the peers. Items are sorted by time.
-peersStates :: PeersSchedule blk -> [(Time, Peer (NodeState blk))]
+peersStates :: PointSchedule blk -> [(Time, Peer (NodeState blk))]
 peersStates peers = foldr (mergeOn fst) [] (peerStates <$> toList (peersList peers))
 
 -- | Same as 'peersStates' but returns the duration of a state instead of the
 -- absolute time at which it starts holding.
-peersStatesRelative :: PeersSchedule blk -> [(DiffTime, Peer (NodeState blk))]
+peersStatesRelative :: PointSchedule blk -> [(DiffTime, Peer (NodeState blk))]
 peersStatesRelative peers =
   let (starts, states) = unzip $ peersStates peers
       durations = snd (mapAccumL (\ prev start -> (start, diffTime start prev)) (Time 0) (drop 1 starts)) ++ [0.1]
@@ -173,10 +173,10 @@ type PeerSchedule blk = [(Time, SchedulePoint blk)]
 peerScheduleBlocks :: (PeerSchedule blk) -> [blk]
 peerScheduleBlocks = mapMaybe (withOriginToMaybe . schedulePointToBlock . snd)
 
-type PeersSchedule blk = Peers (PeerSchedule blk)
+type PointSchedule blk = Peers (PeerSchedule blk)
 
 -- | List of all blocks appearing in the schedules.
-peerSchedulesBlocks :: PeersSchedule blk -> [blk]
+peerSchedulesBlocks :: PointSchedule blk -> [blk]
 peerSchedulesBlocks = concatMap (peerScheduleBlocks . value) . toList . peersList
 
 ----------------------------------------------------------------------------------------------------
@@ -193,7 +193,7 @@ longRangeAttack ::
   (StatefulGen g m, AF.HasHeader blk) =>
   BlockTree blk ->
   g ->
-  m (PeersSchedule blk)
+  m (PointSchedule blk)
 longRangeAttack BlockTree {btTrunk, btBranches = [branch]} g = do
   honest <- peerScheduleFromTipPoints g honParams [(IsTrunk, [AF.length btTrunk - 1])] btTrunk []
   adv <- peerScheduleFromTipPoints g advParams [(IsBranch, [AF.length (btbFull branch) - 1])] btTrunk [btbFull branch]
@@ -217,7 +217,7 @@ uniformPoints ::
   PointsGeneratorParams ->
   BlockTree blk ->
   g ->
-  m (PeersSchedule blk)
+  m (PointSchedule blk)
 uniformPoints PointsGeneratorParams {pgpExtraHonestPeers, pgpDowntime} = case pgpDowntime of
   NoDowntime                  -> uniformPointsWithExtraHonestPeers pgpExtraHonestPeers
   DowntimeWithSecurityParam k -> uniformPointsWithExtraHonestPeersAndDowntime pgpExtraHonestPeers k
@@ -233,7 +233,7 @@ uniformPointsWithExtraHonestPeers ::
   Int ->
   BlockTree blk ->
   g ->
-  m (PeersSchedule blk)
+  m (PointSchedule blk)
 uniformPointsWithExtraHonestPeers
     extraHonestPeers
     BlockTree {btTrunk, btBranches}
@@ -355,7 +355,7 @@ uniformPointsWithExtraHonestPeersAndDowntime ::
   SecurityParam ->
   BlockTree blk ->
   g ->
-  m (PeersSchedule blk)
+  m (PointSchedule blk)
 uniformPointsWithExtraHonestPeersAndDowntime
     extraHonestPeers
     (SecurityParam k)
@@ -470,7 +470,7 @@ data GenesisTest blk schedule = GenesisTest
     gtSchedule           :: schedule
   }
 
-type GenesisTestFull blk = GenesisTest blk (PeersSchedule blk)
+type GenesisTestFull blk = GenesisTest blk (PointSchedule blk)
 
 -- | All the data describing the result of a test
 data RunGenesisTestResult = RunGenesisTestResult
@@ -540,7 +540,7 @@ duplicateLastPoint d xs =
   let (t, p) = last xs
     in xs ++ [(addTime d t, p)]
 
-ensureScheduleDuration :: GenesisTest blk a -> PeersSchedule blk -> PeersSchedule blk
+ensureScheduleDuration :: GenesisTest blk a -> PointSchedule blk -> PointSchedule blk
 ensureScheduleDuration gt peers =
     duplicateLastPoint endingDelay <$> peers
   where

@@ -489,7 +489,7 @@ prop_densityDisconnectTriggersChainSel =
     --    which should allow the GDD to realize that the chain
     --    is not dense enough, and that the whole of the honest
     --    chain should be selected.
-    lowDensitySchedule :: HasHeader blk => BlockTree blk -> Peers (PeerSchedule blk)
+    lowDensitySchedule :: HasHeader blk => BlockTree blk -> PointSchedule blk
     lowDensitySchedule tree =
       let trunkTip = getTrunkTip tree
           branch = getOnlyBranch tree

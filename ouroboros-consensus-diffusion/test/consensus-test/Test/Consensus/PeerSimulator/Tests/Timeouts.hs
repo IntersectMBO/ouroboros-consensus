@@ -59,7 +59,7 @@ prop_timeouts mustTimeout = do
     )
 
   where
-    dullSchedule :: AF.HasHeader blk => DiffTime -> AF.AnchoredFragment blk -> PeersSchedule blk
+    dullSchedule :: AF.HasHeader blk => DiffTime -> AF.AnchoredFragment blk -> PointSchedule blk
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1

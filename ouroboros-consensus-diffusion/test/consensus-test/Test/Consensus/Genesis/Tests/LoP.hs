@@ -23,8 +23,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers, peers',
-                     peersOnlyHonest)
+import           Test.Consensus.PointSchedule.Peers (peers', peersOnlyHonest)
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
@@ -75,7 +74,7 @@ prop_wait mustTimeout =
           _                                            -> False
     )
   where
-    dullSchedule :: (HasHeader blk) => DiffTime -> AnchoredFragment blk -> Peers (PeerSchedule blk)
+    dullSchedule :: (HasHeader blk) => DiffTime -> AnchoredFragment blk -> PointSchedule blk
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
@@ -106,7 +105,7 @@ prop_waitBehindForecastHorizon =
           _  -> False
     )
   where
-    dullSchedule :: (HasHeader blk) => AnchoredFragment blk -> Peers (PeerSchedule blk)
+    dullSchedule :: (HasHeader blk) => AnchoredFragment blk -> PointSchedule blk
     dullSchedule (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule (_ AF.:> tipBlock) =
       peersOnlyHonest $
@@ -167,7 +166,7 @@ prop_serve mustTimeout =
     -- \| Make a schedule serving the given fragment with regularity, one block
     -- every 'timeBetweenBlocks'. NOTE: We must do something at @Time 0@
     -- otherwise the others times will be shifted such that the first one is 0.
-    makeSchedule :: (HasHeader blk) => AnchoredFragment blk -> Peers (PeerSchedule blk)
+    makeSchedule :: (HasHeader blk) => AnchoredFragment blk -> PointSchedule blk
     makeSchedule (AF.Empty _) = error "fragment must have at least one block"
     makeSchedule fragment@(_ AF.:> tipBlock) =
       peersOnlyHonest $
@@ -217,7 +216,7 @@ prop_delayAttack lopEnabled =
            in selectedCorrect && exceptionsCorrect
       )
   where
-    delaySchedule :: (HasHeader blk) => BlockTree blk -> Peers (PeerSchedule blk)
+    delaySchedule :: (HasHeader blk) => BlockTree blk -> PointSchedule blk
     delaySchedule tree =
       let trunkTip = getTrunkTip tree
           branch = getOnlyBranch tree

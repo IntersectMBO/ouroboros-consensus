@@ -168,7 +168,7 @@ prop_serveAdversarialBranches = forAllGenesisTest
 
     theProperty
 
-genUniformSchedulePoints :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
+genUniformSchedulePoints :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
 genUniformSchedulePoints gt = stToGen (uniformPoints pointsGeneratorParams (gtBlockTree gt))
   where
     pointsGeneratorParams = PointsGeneratorParams
@@ -222,7 +222,7 @@ prop_leashingAttackStalling =
     -- This is achieved by dropping random points from the schedule of each peer
     -- and by adding sufficient time at the end of a test to allow LoP and
     -- timeouts to disconnect adversaries.
-    genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
+    genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
     genLeashingSchedule genesisTest = do
       Peers honest advs0 <- ensureScheduleDuration genesisTest <$> genUniformSchedulePoints genesisTest
       advs <- mapM dropRandomPoints advs0
@@ -277,7 +277,7 @@ prop_leashingAttackTimeLimited =
 
   where
     -- | A schedule which doesn't run past the last event of the honest peer
-    genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
+    genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (PointSchedule TestBlock)
     genTimeLimitedSchedule genesisTest = do
       Peers honests advs0 <- genUniformSchedulePoints genesisTest
       let timeLimit = estimateTimeBound

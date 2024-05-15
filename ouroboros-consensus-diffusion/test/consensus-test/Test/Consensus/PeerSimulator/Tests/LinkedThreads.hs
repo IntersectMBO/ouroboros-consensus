@@ -62,7 +62,7 @@ prop_chainSyncKillsBlockFetch = do
             _                                      -> False
     )
   where
-    dullSchedule :: GenesisTest blk () -> DiffTime -> PeersSchedule blk
+    dullSchedule :: GenesisTest blk () -> DiffTime -> PointSchedule blk
     dullSchedule GenesisTest {gtBlockTree} timeout =
       let (firstBlock, secondBlock) = case AF.toOldestFirst $ btTrunk gtBlockTree of
             b1 : b2 : _ -> (b1, b2)
