@@ -1,5 +1,5 @@
-{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Ouroboros.Storage.LedgerDB.OrphanArbitrary () where
 
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))

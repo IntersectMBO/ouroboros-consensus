@@ -7,6 +7,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Shelley.Ledger.Protocol () where
 
 import qualified Cardano.Ledger.Shelley.API as SL

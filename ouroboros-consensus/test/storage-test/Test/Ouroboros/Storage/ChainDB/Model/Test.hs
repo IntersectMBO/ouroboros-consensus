@@ -1,11 +1,11 @@
 {-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE FlexibleInstances     #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE PatternSynonyms       #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeFamilies          #-}
 
 {-# OPTIONS_GHC -Wno-orphans -Wno-incomplete-uni-patterns #-}
+
 -- | Tests of properties of the chain DB model
 --
 -- The model for the chain DB (@Test.Ouroboros.Storage.ChainDB.Model@) contains

@@ -6,6 +6,7 @@
 {-# LANGUAGE TypeOperators         #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Shelley.Node.Serialisation () where
 
 import           Cardano.Ledger.Binary (fromCBOR, toCBOR)

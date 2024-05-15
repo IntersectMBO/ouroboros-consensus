@@ -1,9 +1,6 @@
 {-# LANGUAGE DerivingVia          #-}
-{-# LANGUAGE EmptyCase            #-}
 {-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
-{-# LANGUAGE LambdaCase           #-}
-{-# LANGUAGE NamedFieldPuns       #-}
 {-# LANGUAGE OverloadedStrings    #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE StandaloneDeriving   #-}
@@ -13,6 +10,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Mock.Node (
     CodecConfig (..)
   , simpleBlockForging
@@ -86,15 +84,15 @@ simpleBlockForging ::
   => CanBeLeader (BlockProtocol (SimpleBlock c ext))
   -> ForgeExt c ext
   -> BlockForging m (SimpleBlock c ext)
-simpleBlockForging canBeLeader forgeExt = BlockForging {
+simpleBlockForging aCanBeLeader aForgeExt = BlockForging {
       forgeLabel       = "simpleBlockForging"
-    , canBeLeader      = canBeLeader
+    , canBeLeader      = aCanBeLeader
     , updateForgeState = \_ _ _ -> return $ ForgeStateUpdated ()
     , checkCanForge    = \_ _ _ _ _ -> return ()
     , forgeBlock       = \cfg bno slot lst txs proof ->
         return
           $ forgeSimple
-              forgeExt
+              aForgeExt
               cfg
               bno
               slot

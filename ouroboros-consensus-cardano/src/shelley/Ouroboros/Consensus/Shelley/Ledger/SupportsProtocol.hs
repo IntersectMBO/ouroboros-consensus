@@ -14,6 +14,7 @@
 {-# LANGUAGE TypeFamilies             #-}
 {-# LANGUAGE TypeOperators            #-}
 {-# LANGUAGE UndecidableInstances     #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | This module contains 'SupportsProtocol' instances tying the ledger and

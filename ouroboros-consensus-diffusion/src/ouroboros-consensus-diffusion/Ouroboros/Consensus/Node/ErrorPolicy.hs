@@ -1,6 +1,4 @@
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-
 
 module Ouroboros.Consensus.Node.ErrorPolicy (consensusErrorPolicy) where
 

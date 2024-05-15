@@ -6,6 +6,7 @@
 {-# LANGUAGE LambdaCase                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
+
 -- | A writer-biased Read-Append-Write (RAW) lock
 --
 -- Intended for qualified import

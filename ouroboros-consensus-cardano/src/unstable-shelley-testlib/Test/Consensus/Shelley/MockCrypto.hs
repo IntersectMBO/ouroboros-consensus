@@ -4,7 +4,9 @@
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE TypeFamilies         #-}
 {-# LANGUAGE UndecidableInstances #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Consensus.Shelley.MockCrypto (
     Block
   , CanMock

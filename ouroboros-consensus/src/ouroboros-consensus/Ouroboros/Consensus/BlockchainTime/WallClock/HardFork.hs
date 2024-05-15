@@ -1,7 +1,5 @@
-{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 
 module Ouroboros.Consensus.BlockchainTime.WallClock.HardFork (
     BackoffDelay (..)

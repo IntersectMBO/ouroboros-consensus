@@ -1,6 +1,8 @@
 {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE OverloadedStrings        #-}
+
 {-# OPTIONS_GHC -Wno-incomplete-uni-patterns #-}
+
 module Test.Consensus.Byron.Examples (
     -- * Setup
     cfg

@@ -10,6 +10,7 @@
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
+
 -- | Tests for the resource registry
 --
 -- The resource registry is a component throughout the consensus layer that

@@ -1,6 +1,5 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia        #-}
-{-# LANGUAGE RecordWildCards    #-}
+{-# LANGUAGE DerivingVia     #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- | Genesis config for the spec
 --

@@ -3,7 +3,7 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneDeriving  #-}
+
 module Ouroboros.Consensus.Storage.VolatileDB.Impl.Parser (
     ParseError (..)
   , ParsedBlockInfo (..)

@@ -10,7 +10,9 @@
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 -- | 'Arbitrary' instances intended for serialisation roundtrip tests for
 -- 'CardanoBlock' and its related types.
 --

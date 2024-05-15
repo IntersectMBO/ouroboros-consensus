@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeApplications #-}
+
 -- | Seed used for the ThreadNet tests
 module Test.ThreadNet.Util.Seed (
     Seed (..)

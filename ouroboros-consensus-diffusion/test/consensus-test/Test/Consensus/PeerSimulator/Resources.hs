@@ -1,6 +1,4 @@
-{-# LANGUAGE LambdaCase      #-}
-{-# LANGUAGE NamedFieldPuns  #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 -- | Data types and resource allocating constructors for the concurrency
 -- primitives used by ChainSync and BlockFetch in the handlers that implement

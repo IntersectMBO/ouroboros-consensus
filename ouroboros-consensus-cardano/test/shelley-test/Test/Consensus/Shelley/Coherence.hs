@@ -1,5 +1,3 @@
-{-# LANGUAGE TypeApplications #-}
-
 module Test.Consensus.Shelley.Coherence (tests) where
 
 import           Cardano.Ledger.Alonzo.Scripts (ExUnits, pointWiseExUnits)

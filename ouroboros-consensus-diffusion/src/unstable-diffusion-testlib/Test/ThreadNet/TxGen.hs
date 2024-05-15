@@ -2,8 +2,8 @@
 {-# LANGUAGE ScopedTypeVariables  #-}
 {-# LANGUAGE TypeApplications     #-}
 {-# LANGUAGE TypeFamilies         #-}
-{-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
+
 -- | Transaction generator for testing
 module Test.ThreadNet.TxGen (
     TxGen (..)

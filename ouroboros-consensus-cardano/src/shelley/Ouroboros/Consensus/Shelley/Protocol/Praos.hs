@@ -2,10 +2,11 @@
 {-# LANGUAGE NamedFieldPuns   #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies     #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
 -- See https://gitlab.haskell.org/ghc/ghc/-/issues/14630. GHC currently warns
 -- (erroneously) about name shadowing for record field selectors defined by
--- pattern synonyms.
+-- pattern synonyms. This can be deleted once GHC 8.10.7 is gone.
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 module Ouroboros.Consensus.Shelley.Protocol.Praos (PraosEnvelopeError (..)) where

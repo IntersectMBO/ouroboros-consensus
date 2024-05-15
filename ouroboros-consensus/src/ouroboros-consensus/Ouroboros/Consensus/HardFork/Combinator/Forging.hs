@@ -1,13 +1,13 @@
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE GADTs               #-}
-{-# LANGUAGE LambdaCase          #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving  #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
+
 {-# OPTIONS_GHC -Wno-orphans     #-}
+
 module Ouroboros.Consensus.HardFork.Combinator.Forging (
     HardForkCannotForge
   , HardForkForgeStateInfo (..)
@@ -83,9 +83,9 @@ hardForkBlockForging ::
      -- be ignored.
   -> NonEmptyOptNP (BlockForging m) xs
   -> BlockForging m (HardForkBlock xs)
-hardForkBlockForging forgeLabel blockForging =
+hardForkBlockForging label blockForging =
     BlockForging {
-        forgeLabel       = forgeLabel
+        forgeLabel       = label
       , canBeLeader      = hardForkCanBeLeader               blockForging
       , updateForgeState = hardForkUpdateForgeState          blockForging
       , checkCanForge    = hardForkCheckCanForge             blockForging

@@ -7,6 +7,7 @@
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE PatternSynonyms            #-}
 {-# LANGUAGE ViewPatterns               #-}
+
 -- | Intended for qualified import.
 --
 -- > import           Ouroboros.Consensus.Mempool.TxSeq (TxSeq (..))

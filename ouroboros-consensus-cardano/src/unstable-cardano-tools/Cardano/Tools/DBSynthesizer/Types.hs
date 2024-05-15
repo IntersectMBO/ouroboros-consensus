@@ -1,4 +1,3 @@
-
 module Cardano.Tools.DBSynthesizer.Types (module Cardano.Tools.DBSynthesizer.Types) where
 
 import           Cardano.Ledger.Crypto (StandardCrypto)

@@ -1,9 +1,8 @@
-{-# LANGUAGE EmptyCase           #-}
 {-# LANGUAGE GADTs               #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
+
 module Test.Consensus.Cardano.Serialisation (tests) where
 
 import qualified Codec.CBOR.Write as CBOR

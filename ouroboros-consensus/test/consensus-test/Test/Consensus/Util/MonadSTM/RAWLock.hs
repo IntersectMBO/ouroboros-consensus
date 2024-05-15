@@ -4,6 +4,7 @@
 {-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
 -- | Tests for the RAW lock mechanism.
 --
 -- The volatile DB uses an abstraction we call a @RAWLock@, a lock that allows

@@ -1,5 +1,4 @@
-{-# LANGUAGE DeriveFunctor   #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE DeriveFunctor #-}
 
 -- | Support for defining 'BlockchainTime' instances
 module Ouroboros.Consensus.BlockchainTime.WallClock.Util (

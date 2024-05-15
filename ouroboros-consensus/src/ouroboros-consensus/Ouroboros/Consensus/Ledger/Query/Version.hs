@@ -1,4 +1,3 @@
-
 module Ouroboros.Consensus.Ledger.Query.Version (
     QueryVersion (..)
   , nodeToClientVersionToQueryVersion

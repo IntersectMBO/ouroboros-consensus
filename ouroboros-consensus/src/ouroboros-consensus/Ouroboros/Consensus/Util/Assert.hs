@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP              #-}
 {-# LANGUAGE TypeApplications #-}
+
 module Ouroboros.Consensus.Util.Assert (assertWithMsg) where
 
 import           GHC.Stack (HasCallStack)

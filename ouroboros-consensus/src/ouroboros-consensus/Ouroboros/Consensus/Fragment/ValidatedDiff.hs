@@ -2,6 +2,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
+
 -- | Intended for qualified import
 --
 -- > import Ouroboros.Consensus.Fragment.ValidatedDiff (ValidatedChainDiff (..))

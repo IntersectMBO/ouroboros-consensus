@@ -1,6 +1,5 @@
 {-# LANGUAGE ApplicativeDo           #-}
 {-# LANGUAGE DataKinds               #-}
-{-# LANGUAGE EmptyCase               #-}
 {-# LANGUAGE FlexibleContexts        #-}
 {-# LANGUAGE FlexibleInstances       #-}
 {-# LANGUAGE GADTs                   #-}

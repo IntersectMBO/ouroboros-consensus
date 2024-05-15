@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeFamilies     #-}
+
 module Ouroboros.Consensus.Ledger.SupportsMempool (
     ApplyTxErr
   , ConvertRawTxId (..)

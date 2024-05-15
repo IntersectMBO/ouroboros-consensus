@@ -12,12 +12,13 @@
     turtle ^>=1.6.0,
     with-utf8,
 -}
-{-# OPTIONS_GHC -Wall -Wextra #-}
+
 {-# LANGUAGE BlockArguments      #-}
 {-# LANGUAGE GHC2021             #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
+{-# OPTIONS_GHC -Wall -Wextra #-}
 
 module Main where
 

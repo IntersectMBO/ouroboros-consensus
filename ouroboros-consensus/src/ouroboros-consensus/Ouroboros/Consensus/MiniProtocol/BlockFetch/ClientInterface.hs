@@ -2,7 +2,6 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 
 -- | Initialization of the 'BlockFetchConsensusInterface'
 module Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface (

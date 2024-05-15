@@ -1,6 +1,8 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TemplateHaskell   #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.Consensus.Shelley.Golden (tests) where
 
 import           Ouroboros.Consensus.Ledger.Query (QueryVersion)

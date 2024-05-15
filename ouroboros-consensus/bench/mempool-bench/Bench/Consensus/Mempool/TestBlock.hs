@@ -8,6 +8,7 @@
 {-# LANGUAGE TypeFamilies               #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Bench.Consensus.Mempool.TestBlock (
     -- * Test block
     TestBlock

@@ -3,7 +3,6 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE NumericUnderscores        #-}
-{-# LANGUAGE RecordWildCards           #-}
 {-# LANGUAGE ScopedTypeVariables       #-}
 
 module Test.Consensus.Genesis.Setup.GenChains (

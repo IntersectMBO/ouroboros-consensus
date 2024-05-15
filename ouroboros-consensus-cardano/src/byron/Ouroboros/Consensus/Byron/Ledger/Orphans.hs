@@ -5,6 +5,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Ouroboros.Consensus.Byron.Ledger.Orphans () where
 
 import qualified Cardano.Chain.Block as CC

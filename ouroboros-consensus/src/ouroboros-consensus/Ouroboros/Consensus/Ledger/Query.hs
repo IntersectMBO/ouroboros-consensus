@@ -9,6 +9,7 @@
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE UndecidableInstances  #-}
+
 module Ouroboros.Consensus.Ledger.Query (
     BlockQuery
   , BlockSupportsLedgerQuery (..)

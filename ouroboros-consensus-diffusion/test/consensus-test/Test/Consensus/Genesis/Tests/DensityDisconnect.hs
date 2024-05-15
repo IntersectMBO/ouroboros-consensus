@@ -1,6 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE NamedFieldPuns        #-}
+
 module Test.Consensus.Genesis.Tests.DensityDisconnect (tests) where
 
 import           Cardano.Slotting.Slot (WithOrigin (..), unSlotNo)

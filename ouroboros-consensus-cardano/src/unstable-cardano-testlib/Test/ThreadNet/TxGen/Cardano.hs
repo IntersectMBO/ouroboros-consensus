@@ -4,9 +4,10 @@
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
+
 module Test.ThreadNet.TxGen.Cardano (CardanoTxGenExtra (..)) where
 
 import qualified Cardano.Chain.Common as Byron

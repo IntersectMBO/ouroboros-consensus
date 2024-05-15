@@ -1,9 +1,9 @@
-{-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
 -- | Tests for the DB marker and DB lock.
 --
 -- When the consensus layer is integrated into the main node, it provides two

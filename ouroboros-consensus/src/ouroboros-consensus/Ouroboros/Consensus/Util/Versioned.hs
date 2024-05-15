@@ -6,6 +6,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
+
 module Ouroboros.Consensus.Util.Versioned (
     VersionDecoder (..)
   , VersionError (..)

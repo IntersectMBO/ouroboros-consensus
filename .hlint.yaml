@@ -13,3 +13,4 @@
 
 - warn: {name: Ouroboros.Consensus.MiniProtocol.ChainSync.Client should be imported qualified or with an explicit import list}
 - error: {name: Data.SOP.Dict should be imported qualified or with an explicit import list}
+- warn: {name: Unused LANGUAGE pragma}

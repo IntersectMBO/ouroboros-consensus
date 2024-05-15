@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
 module Test.Ouroboros.Storage.ImmutableDB.Mock (openDBMock) where
 
 import           Data.Bifunctor (first)

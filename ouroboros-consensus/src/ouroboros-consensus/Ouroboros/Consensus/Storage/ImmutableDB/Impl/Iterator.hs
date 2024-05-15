@@ -7,6 +7,7 @@
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving  #-}
+
 module Ouroboros.Consensus.Storage.ImmutableDB.Impl.Iterator (
     CurrentChunkInfo (..)
   , extractBlockComponent

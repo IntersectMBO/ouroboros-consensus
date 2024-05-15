@@ -3,7 +3,6 @@
 {-# LANGUAGE PolyKinds           #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
-
 {- | These functions iteratively produce all race windows in a slot vector.
 
 The first window is produced by 'init', which unconditionally starts the window at the first slot.
