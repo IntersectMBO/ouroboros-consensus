@@ -36,3 +36,12 @@ import: ./asserts.cabal
 if(os(windows))
   constraints:
     bitvec -simd
+
+source-repository-package
+  type: git
+  location: https://github.com/IntersectMBO/ouroboros-network
+  tag: 431bb599940d2947b2cb99d3ae29b7f2c4cdd36d
+  --sha256: 1a62hqddpnc0j5r7nl54q79nrxyw77dphpsgp68hxij210dkpvca
+  subdir:
+    ouroboros-network-api
+    ouroboros-network-protocols
