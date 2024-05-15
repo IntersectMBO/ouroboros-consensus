@@ -10,6 +10,7 @@
 {-# LANGUAGE RankNTypes           #-}
 {-# LANGUAGE RecordWildCards      #-}
 {-# LANGUAGE ScopedTypeVariables  #-}
+{-# LANGUAGE StandaloneDeriving   #-}
 {-# LANGUAGE TypeOperators        #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -262,6 +263,8 @@ data DensityBounds blk =
     idling          :: Bool
   }
 
+deriving stock instance (Show (Header blk), GetHeader blk) => Show (DensityBounds blk)
+
 -- | @densityDisconnect genWin k states candidateSuffixes loeFrag@
 -- yields the list of peers which are known to lose the density comparison with
 -- any other peer, when looking at the genesis window after @loeFrag@.
@@ -437,3 +440,7 @@ data TraceGDDEvent peer blk =
     loeHead           :: AF.Anchor (Header blk),
     sgen              :: GenesisWindow
   }
+
+deriving stock instance
+  ( GetHeader blk, Show (Header blk), Show peer
+  ) => Show (TraceGDDEvent peer blk)

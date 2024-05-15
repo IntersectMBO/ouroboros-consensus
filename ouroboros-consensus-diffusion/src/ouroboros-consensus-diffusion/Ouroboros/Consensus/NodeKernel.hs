@@ -277,7 +277,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
         void $ forkLinkedWatcher registry "NodeKernel.GDD" $
           gddWatcher
             cfg
-            nullTracer -- TODO don't use nullTracer
+            (gddTracer tracers)
             chainDB
             (readTVar varGsmState)
             -- TODO GDD should only consider (big) ledger peers
