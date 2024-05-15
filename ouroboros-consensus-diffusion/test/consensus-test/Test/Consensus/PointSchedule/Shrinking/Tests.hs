@@ -9,8 +9,8 @@ import           Data.Map (keys)
 import           Data.Maybe (mapMaybe)
 import           Test.Consensus.Genesis.Setup (genChains)
 import           Test.Consensus.Genesis.Tests.Uniform (genUniformSchedulePoints)
-import           Test.Consensus.PointSchedule (PeerSchedule, PeersSchedule,
-                     prettyPeersSchedule)
+import           Test.Consensus.PointSchedule (PeerSchedule, PointSchedule (..),
+                     prettyPointSchedule)
 import           Test.Consensus.PointSchedule.Peers (Peers (..))
 import           Test.Consensus.PointSchedule.Shrinking (shrinkHonestPeers)
 import           Test.Consensus.PointSchedule.SinglePeer (SchedulePoint (..))
@@ -40,22 +40,24 @@ lastM []     = Nothing
 lastM [a]    = Just a
 lastM (_:ps) = lastM ps
 
-samePeers :: PeersSchedule blk -> PeersSchedule blk -> Bool
-samePeers sch1 sch2 = (keys $ adversarialPeers sch1) == (keys $ adversarialPeers sch2)
+samePeers :: PointSchedule blk -> PointSchedule blk -> Bool
+samePeers sch1 sch2 =
+  (keys $ adversarialPeers $ unPointSchedule sch1)
+    == (keys $ adversarialPeers $ unPointSchedule sch2)
 
 -- | Checks whether at least one peer schedule in the second given peers schedule
 -- is shorter than its corresponding one in the fist given peers schedule. “Shorter”
 -- here means that it executes in less time.
-isShorterThan :: PeersSchedule blk -> PeersSchedule blk -> Bool
+isShorterThan :: PointSchedule blk -> PointSchedule blk -> Bool
 isShorterThan original shrunk =
   samePeers original shrunk
   && (or $ zipWith
     (\oldSch newSch -> (fst <$> lastM newSch) < (fst <$> lastM oldSch))
-    (toList original)
-    (toList shrunk)
+    (toList $ unPointSchedule original)
+    (toList $ unPointSchedule shrunk)
   )
 
-doesNotChangeFinalState :: Eq blk => PeersSchedule blk -> PeersSchedule blk -> Bool
+doesNotChangeFinalState :: Eq blk => PointSchedule blk -> PointSchedule blk -> Bool
 doesNotChangeFinalState original shrunk =
   samePeers original shrunk
   && (and $ zipWith
@@ -64,8 +66,8 @@ doesNotChangeFinalState original shrunk =
       lastHP oldSch == lastHP newSch &&
       lastBP oldSch == lastBP newSch
     )
-    (toList original)
-    (toList shrunk)
+    (toList $ unPointSchedule original)
+    (toList $ unPointSchedule shrunk)
   )
   where
     lastTP :: PeerSchedule blk -> Maybe (SchedulePoint blk)
@@ -75,7 +77,7 @@ doesNotChangeFinalState original shrunk =
     lastBP :: PeerSchedule blk -> Maybe (SchedulePoint blk)
     lastBP sch = lastM $ mapMaybe (\case (_, p@(ScheduleBlockPoint  _)) -> Just p ; _ -> Nothing) sch
 
-checkShrinkProperty :: (PeersSchedule TestBlock -> PeersSchedule TestBlock -> Bool) -> Property
+checkShrinkProperty :: (PointSchedule TestBlock -> PointSchedule TestBlock -> Bool) -> Property
 checkShrinkProperty prop =
   forAllBlind
     (genChains (choose (1, 4)) >>= genUniformSchedulePoints)
@@ -84,9 +86,9 @@ checkShrinkProperty prop =
       (\shrunk ->
           counterexample
           (  "Original schedule:\n"
-          ++ unlines (map ("    " ++) $ prettyPeersSchedule schedule)
+          ++ unlines (map ("    " ++) $ prettyPointSchedule schedule)
           ++ "\nShrunk schedule:\n"
-          ++ unlines (map ("    " ++) $ prettyPeersSchedule shrunk)
+          ++ unlines (map ("    " ++) $ prettyPointSchedule shrunk)
           )
           (prop schedule shrunk)
       )

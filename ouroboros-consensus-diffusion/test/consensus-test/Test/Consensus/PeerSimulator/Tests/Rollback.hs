@@ -84,7 +84,7 @@ prop_cannotRollback =
 -- chain of the given block tree.
 --
 -- PRECONDITION: Block tree with at least one alternative chain.
-rollbackSchedule :: AF.HasHeader blk => Int -> BlockTree blk -> PeersSchedule blk
+rollbackSchedule :: AF.HasHeader blk => Int -> BlockTree blk -> PointSchedule blk
 rollbackSchedule n blockTree =
     let branch = case btBranches blockTree of
           [b] -> b
@@ -95,7 +95,7 @@ rollbackSchedule n blockTree =
           , banalSchedulePoints trunkSuffix
           , banalSchedulePoints (btbSuffix branch)
           ]
-    in peersOnlyHonest $ zip (map (Time . (/30)) [0..]) schedulePoints
+    in PointSchedule $ peersOnlyHonest $ zip (map (Time . (/30)) [0..]) schedulePoints
   where
     banalSchedulePoints :: AnchoredFragment blk -> [SchedulePoint blk]
     banalSchedulePoints = concatMap banalSchedulePoints' . toOldestFirst

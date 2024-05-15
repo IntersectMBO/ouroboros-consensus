@@ -164,7 +164,7 @@ resultClassifiers GenesisTest{gtSchedule} RunGenesisTestResult{rgtrStateView} =
     StateView{svPeerSimulatorResults} = rgtrStateView
 
     adversaries :: [PeerId]
-    adversaries = fmap AdversarialPeer $ Map.keys $ adversarialPeers gtSchedule
+    adversaries = fmap AdversarialPeer $ Map.keys $ adversarialPeers $ unPointSchedule gtSchedule
 
     adversariesCount = fromIntegral $ length adversaries
 
@@ -248,19 +248,19 @@ scheduleClassifiers GenesisTest{gtSchedule = schedule} =
           peerSch
 
     rollbacks :: Peers Bool
-    rollbacks = hasRollback <$> schedule
+    rollbacks = hasRollback <$> unPointSchedule schedule
 
     adversaryRollback = any id $ adversarialPeers rollbacks
     honestRollback = any id $ honestPeers rollbacks
 
-    allAdversariesEmpty = all id $ adversarialPeers $ null <$> schedule
+    allAdversariesEmpty = all id $ adversarialPeers $ null <$> unPointSchedule schedule
 
     isTrivial :: PeerSchedule TestBlock -> Bool
     isTrivial = \case
       []             -> True
       (t0, _):points -> all ((== t0) . fst) points
 
-    allAdversariesTrivial = all id $ adversarialPeers $ isTrivial <$> schedule
+    allAdversariesTrivial = all id $ adversarialPeers $ isTrivial <$> unPointSchedule schedule
 
 simpleHash ::
   HeaderHash block ~ TestHash =>

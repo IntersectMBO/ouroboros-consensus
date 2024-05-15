@@ -19,7 +19,7 @@ import           Test.Consensus.PeerSimulator.Run (SchedulerConfig (..),
                      defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
-import           Test.Consensus.PointSchedule.Peers (Peers, peers')
+import           Test.Consensus.PointSchedule.Peers (peers')
 import           Test.Consensus.PointSchedule.Shrinking (shrinkPeerSchedules)
 import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
                      scheduleHeaderPoint, scheduleTipPoint)
@@ -80,7 +80,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
            in selectedCorrect && exceptionsCorrect
       )
   where
-    delaySchedule :: HasHeader blk => BlockTree blk -> Peers (PeerSchedule blk)
+    delaySchedule :: HasHeader blk => BlockTree blk -> PointSchedule blk
     delaySchedule tree =
       let trunkTip = getTrunkTip tree
           branch = getOnlyBranch tree
@@ -88,7 +88,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
             (AF.Empty _)       -> Nothing
             (_ AF.:> tipBlock) -> Just tipBlock
           branchTip = getOnlyBranchTip tree
-       in peers'
+       in PointSchedule $ peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain.
             [ (Time 0, scheduleTipPoint trunkTip) : case intersectM of
