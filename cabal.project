@@ -19,6 +19,7 @@ index-state:
   , cardano-haskell-packages 2024-05-13T13:19:15Z
 
 packages:
+  cabal-lint
   ouroboros-consensus
   ouroboros-consensus-cardano
   ouroboros-consensus-protocol
