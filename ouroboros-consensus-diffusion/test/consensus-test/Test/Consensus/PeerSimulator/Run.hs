@@ -10,7 +10,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
-import           Control.Monad (foldM, forM)
+import           Control.Monad (foldM, forM, void)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
@@ -47,6 +47,7 @@ import           Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import qualified Test.Consensus.PeerSimulator.BlockFetch as BlockFetch
 import qualified Test.Consensus.PeerSimulator.ChainSync as ChainSync
 import           Test.Consensus.PeerSimulator.Config
+import qualified Test.Consensus.PeerSimulator.CSJInvariants as CSJInvariants
 import           Test.Consensus.PeerSimulator.NodeLifecycle
 import           Test.Consensus.PeerSimulator.Resources
 import           Test.Consensus.PeerSimulator.StateDiagram
@@ -373,6 +374,8 @@ startNode schedulerConfig genesisTest interval = do
           (pure GSM.Syncing) -- TODO actually run GSM
           (readTVar handles)
           var
+
+  void $ forkLinkedWatcher lrRegistry "CSJ invariants watcher" $ CSJInvariants.watcher handles
   where
     LiveResources {lrRegistry, lrTracer, lrConfig, lrPeerSim, lrLoEVar} = resources
 
