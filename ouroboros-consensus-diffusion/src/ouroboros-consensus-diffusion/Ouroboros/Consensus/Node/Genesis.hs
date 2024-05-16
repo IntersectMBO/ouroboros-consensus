@@ -46,7 +46,7 @@ defaultGenesisConfig :: GenesisConfig
 defaultGenesisConfig = GenesisConfig {
       gcsChainSyncLoPBucketConfig = ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig {
           csbcCapacity = 100_000 -- number of tokens
-        , csbcRate     = 500 -- tokens per second leaking, 2/ms
+        , csbcRate     = 500 -- tokens per second leaking, 1/2ms
         }
     , gcsCSJConfig = CSJEnabled CSJEnabledConfig {
           csjcJumpSize = 3 * 2160 * 20 -- mainnet forecast range
