@@ -130,7 +130,7 @@ import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike hiding (invariant)
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment, Anchor (AnchorGenesis))
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (ChainUpdate, MaxSlotNo)
 import qualified Ouroboros.Network.Mock.Chain as Chain
@@ -359,6 +359,7 @@ data ChainDBEnv m blk = ChainDBEnv {
   , varVolatileDbFs :: StrictTVar m MockFS
   , args            :: ChainDbArgs Identity m blk
     -- ^ Needed to reopen a ChainDB, i.e., open a new one.
+  , varLoEFragment  :: StrictTVar m (AnchoredFragment (Header blk))
   }
 
 open ::
@@ -1492,6 +1493,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       varCurSlot         <- uncheckedNewTVarM 0
       varNextId          <- uncheckedNewTVarM 0
       nodeDBs            <- emptyNodeDBs
+      varLoEFragment     <- newTVarIO $ AF.Empty AF.AnchorGenesis
       let args = mkArgs
                    testCfg
                    chunkInfo
@@ -1501,6 +1503,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                    tracer
                    maxClockSkew
                    varCurSlot
+                   varLoEFragment
 
       (hist, model, res, trace) <- bracket
         (open args >>= newTVarIO)
@@ -1516,6 +1519,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                 , varCurSlot
                 , varNextId
                 , varVolatileDbFs = nodeDBsVol nodeDBs
+                , varLoEFragment
                 , args
                 }
               sm' = sm env (genBlk chunkInfo) testCfg testInitExtLedger maxClockSkew
@@ -1644,8 +1648,9 @@ mkArgs :: IOLike m
        -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
+       -> StrictTVar m (AnchoredFragment (Header Blk))
        -> ChainDbArgs Identity m Blk
-mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot =
+mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot varLoEFragment =
   let args = fromMinimalChainDbArgs MinimalChainDbArgs {
             mcdbTopLevelConfig = cfg
           , mcdbChunkInfo = chunkInfo
@@ -1657,7 +1662,7 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
       args { cdbsArgs = (cdbsArgs args) {
                ChainDB.cdbsCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
              , ChainDB.cdbsBlocksToAddSize = 2
-             , ChainDB.cdbsLoE = pure $ LoEEnabled $ AF.Empty AnchorGenesis -- FIXME
+             , ChainDB.cdbsLoE = LoEEnabled <$> atomically (readTVar varLoEFragment)
              }
            , cdbImmDbArgs = (cdbImmDbArgs args) {
                ImmutableDB.immCheckIntegrity = testBlockIsValid

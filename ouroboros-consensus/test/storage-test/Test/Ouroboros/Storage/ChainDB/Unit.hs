@@ -42,6 +42,7 @@ import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks as ImmutableDB
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry (closeRegistry,
                      unsafeNewRegistry)
+import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.Block (ChainUpdate (..), Point, blockPoint)
 import qualified Ouroboros.Network.Mock.Chain as Mock
 import qualified Test.Ouroboros.Storage.ChainDB.Model as Model
@@ -408,6 +409,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
       iteratorRegistry <- unsafeNewRegistry
       varCurSlot <- uncheckedNewTVarM 0
       varNextId <- uncheckedNewTVarM 0
+      varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
       nodeDbs <- emptyNodeDBs
       (tracer, getTrace) <- recordingTracerTVar
       let args = chainDbArgs threadRegistry nodeDbs tracer
@@ -419,6 +421,7 @@ withTestChainDbEnv topLevelConfig chunkInfo extLedgerState cont
             , varNextId
             , varVolatileDbFs = nodeDBsVol nodeDbs
             , args
+            , varLoEFragment
             }
       pure (env, getTrace)
 
