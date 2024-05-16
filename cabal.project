@@ -36,3 +36,10 @@ import: ./asserts.cabal
 if(os(windows))
   constraints:
     bitvec -simd
+
+source-repository-package
+  type: git
+  location: https://github.com/UnkindPartition/tasty
+  tag: dcbf32078133aa2b569774c417cc49a49f5c573b
+  subdir: quickcheck
+  --sha256: 0rwfcv0iq50ckzdgdssgkil6g9n76w1k6yxs0q4fdrkf5nlh4vv5
