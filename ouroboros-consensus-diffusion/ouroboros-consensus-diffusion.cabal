@@ -245,6 +245,7 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.BlockFetch
     Test.Consensus.PeerSimulator.ChainSync
     Test.Consensus.PeerSimulator.Config
+    Test.Consensus.PeerSimulator.CSJInvariants
     Test.Consensus.PeerSimulator.Handlers
     Test.Consensus.PeerSimulator.NodeLifecycle
     Test.Consensus.PeerSimulator.Resources
