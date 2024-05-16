@@ -1545,6 +1545,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
       let
           modelChain = Model.currentChain $ dbModel model
           prop =
+            counterexample (show (configSecurityParam testCfg))          $
             counterexample ("Model chain: " <> condense modelChain)      $
             counterexample ("TraceEvents: " <> unlines (map show trace)) $
             tabulate "Chain length" [show (Chain.length modelChain)]     $
