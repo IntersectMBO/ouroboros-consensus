@@ -210,6 +210,7 @@ openDBInternal args launchBgTasks = runWithTempRegistry $ do
             , getTipBlock           = getEnv     h Query.getTipBlock
             , getTipHeader          = getEnv     h Query.getTipHeader
             , getTipPoint           = getEnvSTM  h Query.getTipPoint
+            , getLoEFragment        = getEnv     h Query.getLoEFragment
             , getBlockComponent     = getEnv2    h Query.getBlockComponent
             , getIsFetched          = getEnvSTM  h Query.getIsFetched
             , getIsValid            = getEnvSTM  h Query.getIsValid
