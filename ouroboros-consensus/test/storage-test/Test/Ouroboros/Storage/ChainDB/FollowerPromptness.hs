@@ -41,7 +41,6 @@ import           Ouroboros.Consensus.Util.Enclose
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
 import qualified Ouroboros.Network.Mock.Chain as Chain
-import qualified System.FS.Sim.MockFS as Mock
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -175,7 +174,6 @@ runFollowerPromptnessTest FollowerPromptnessTestSetup{..} = withRegistry \regist
               mcdbInitLedger           = testInitExtLedger
               mcdbRegistry             = registry
           mcdbNodeDBs <- emptyNodeDBs
-          mcdbGSMHasFS <- atomically $ newTVar Mock.empty
           let cdbArgs = fromMinimalChainDbArgs MinimalChainDbArgs{..}
           pure $ updateTracer cdbTracer cdbArgs
         (_, (chainDB, ChainDBImpl.Internal{intAddBlockRunner})) <-
