@@ -1,19 +1,24 @@
 {-# LANGUAGE DeriveTraversable   #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Ouroboros.Consensus.Node.Genesis (
+    -- * 'GenesisConfig'
     GenesisConfig (..)
+  , LoEAndGDDConfig (..)
+  , disableGenesisConfig
+  , enableGenesisConfigDefault
+    -- * NodeKernel helpers
   , GenesisNodeKernelArgs (..)
-  , GenesisSwitch (..)
-  , defaultGenesisConfig
   , mkGenesisNodeKernelArgs
   , setGetLoEFragment
   ) where
 
 import           Control.Monad (join)
+import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      (CSJConfig (..), CSJEnabledConfig (..),
@@ -28,29 +33,39 @@ import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 
--- We have multiple other Genesis-related types of a similar shape ('LoE', LoP
--- and CSJ configs), maybe unify?
-data GenesisSwitch a =
-    GenesisDisabled
-  | GenesisEnabled !a
+-- | Whether to en-/disable the Limit on Eagerness and the Genesis Density
+-- Disconnector.
+data LoEAndGDDConfig a =
+    LoEAndGDDEnabled !a
+  | LoEAndGDDDisabled
   deriving stock (Show, Functor, Foldable, Traversable)
 
 -- | Aggregating the various configs for Genesis-related subcomponents.
 data GenesisConfig = GenesisConfig {
-    gcsChainSyncLoPBucketConfig :: !ChainSyncLoPBucketConfig
-  , gcsCSJConfig                :: !CSJConfig
+    gcChainSyncLoPBucketConfig :: !ChainSyncLoPBucketConfig
+  , gcCSJConfig                :: !CSJConfig
+  , gcLoEAndGDDConfig          :: !(LoEAndGDDConfig ())
   }
 
 -- TODO justification/derivation from other parameters
-defaultGenesisConfig :: GenesisConfig
-defaultGenesisConfig = GenesisConfig {
-      gcsChainSyncLoPBucketConfig = ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig {
+enableGenesisConfigDefault :: GenesisConfig
+enableGenesisConfigDefault = GenesisConfig {
+      gcChainSyncLoPBucketConfig = ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig {
           csbcCapacity = 100_000 -- number of tokens
         , csbcRate     = 500 -- tokens per second leaking, 1/2ms
         }
-    , gcsCSJConfig = CSJEnabled CSJEnabledConfig {
+    , gcCSJConfig = CSJEnabled CSJEnabledConfig {
           csjcJumpSize = 3 * 2160 * 20 -- mainnet forecast range
         }
+    , gcLoEAndGDDConfig = LoEAndGDDEnabled ()
+    }
+
+-- | Disable all Genesis components, yielding Praos behavior.
+disableGenesisConfig :: GenesisConfig
+disableGenesisConfig = GenesisConfig {
+      gcChainSyncLoPBucketConfig = ChainSyncLoPBucketDisabled
+    , gcCSJConfig                = CSJDisabled
+    , gcLoEAndGDDConfig          = LoEAndGDDDisabled
     }
 
 -- | Genesis-related arguments needed by the NodeKernel initialization logic.
@@ -59,31 +74,33 @@ data GenesisNodeKernelArgs m blk = GenesisNodeKernelArgs {
     -- action. We use this extra indirection to update this action after we
     -- opened the ChainDB (which happens before we initialize the NodeKernel).
     -- After that, this TVar will not be modified again.
-    gnkaGetLoEFragment :: !(StrictTVar m (ChainDB.GetLoEFragment m blk))
+    gnkaGetLoEFragment :: !(LoEAndGDDConfig (StrictTVar m (ChainDB.GetLoEFragment m blk)))
   }
 
 -- | Create the initial 'GenesisNodeKernelArgs" (with a temporary
 -- 'ChainDB.GetLoEFragment' that will be replaced via 'setGetLoEFragment') and a
 -- function to update the 'ChainDbArgs' accordingly.
 mkGenesisNodeKernelArgs ::
-     forall m blk a. (IOLike m, GetHeader blk)
-  => GenesisSwitch a
-  -> m ( GenesisSwitch (GenesisNodeKernelArgs m blk)
+     forall m blk. (IOLike m, GetHeader blk)
+  => GenesisConfig
+  -> m ( GenesisNodeKernelArgs m blk
        , Complete ChainDbArgs m blk -> Complete ChainDbArgs m blk
        )
-mkGenesisNodeKernelArgs = \case
-    GenesisDisabled  -> pure (GenesisDisabled, id)
-    GenesisEnabled{} -> do
-      varGetLoEFragment <- newTVarIO $ pure $
-        -- Use the most conservative LoE fragment until 'setGetLoEFragment' is
-        -- called.
-        ChainDB.LoEEnabled $ AF.Empty AF.AnchorGenesis
-      let getLoEFragment        = join $ readTVarIO varGetLoEFragment
-          updateChainDbArgs cfg = cfg { ChainDB.cdbsArgs =
-               (ChainDB.cdbsArgs cfg) { ChainDB.cdbsLoE = getLoEFragment }
-            }
-          gnka = GenesisEnabled $ GenesisNodeKernelArgs varGetLoEFragment
-      pure (gnka, updateChainDbArgs)
+mkGenesisNodeKernelArgs gcfg = do
+    gnkaGetLoEFragment <- for (gcLoEAndGDDConfig gcfg) $ \() ->
+        newTVarIO $ pure $
+          -- Use the most conservative LoE fragment until 'setGetLoEFragment'
+          -- is called.
+          ChainDB.LoEEnabled $ AF.Empty AF.AnchorGenesis
+    let updateChainDbArgs = case gnkaGetLoEFragment of
+          LoEAndGDDDisabled -> id
+          LoEAndGDDEnabled varGetLoEFragment -> \cfg ->
+            cfg { ChainDB.cdbsArgs =
+                  (ChainDB.cdbsArgs cfg) { ChainDB.cdbsLoE = getLoEFragment }
+                }
+            where
+              getLoEFragment = join $ readTVarIO varGetLoEFragment
+    pure (GenesisNodeKernelArgs {gnkaGetLoEFragment}, updateChainDbArgs)
 
 -- | Set 'gnkaGetLoEFragment' to the actual logic for determining the current
 -- LoE fragment.
@@ -92,10 +109,10 @@ setGetLoEFragment ::
   => STM m GSM.GsmState
   -> STM m (AnchoredFragment (Header blk))
      -- ^ The LoE fragment.
-  -> GenesisNodeKernelArgs m blk
+  -> StrictTVar m (ChainDB.GetLoEFragment m blk)
   -> m ()
-setGetLoEFragment readGsmState readLoEFragment ctx =
-    atomically $ writeTVar (gnkaGetLoEFragment ctx) getLoEFragment
+setGetLoEFragment readGsmState readLoEFragment varGetLoEFragment =
+    atomically $ writeTVar varGetLoEFragment getLoEFragment
   where
     getLoEFragment :: ChainDB.GetLoEFragment m blk
     getLoEFragment = atomically $ readGsmState >>= \case
