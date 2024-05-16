@@ -67,8 +67,8 @@ import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
                      viewChainSyncState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
                      (SomeHeaderInFutureCheck)
-import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs,
-                     GenesisSwitch (..), setGetLoEFragment)
+import           Ouroboros.Consensus.Node.Genesis (GenesisNodeKernelArgs (..),
+                     LoEAndGDDConfig (..), setGetLoEFragment)
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.Run
@@ -182,7 +182,7 @@ data NodeKernelArgs m addrNTN addrNTC blk = NodeKernelArgs {
     , peerSharingRng          :: StdGen
     , publicPeerSelectionStateVar
                               :: StrictSTM.StrictTVar m (PublicPeerSelectionState addrNTN)
-    , genesisArgs             :: GenesisSwitch (GenesisNodeKernelArgs m blk)
+    , genesisArgs             :: GenesisNodeKernelArgs m blk
     }
 
 initNodeKernel ::
@@ -275,14 +275,14 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                                         ps_POLICY_PEER_SHARE_STICKY_TIME
                                         ps_POLICY_PEER_SHARE_MAX_PEERS
 
-    case genesisArgs of
-      GenesisDisabled    -> pure ()
-      GenesisEnabled ctx -> do
+    case gnkaGetLoEFragment genesisArgs of
+      LoEAndGDDDisabled                  -> pure ()
+      LoEAndGDDEnabled varGetLoEFragment -> do
         varLoEFragment <- newTVarIO $ AF.Empty AF.AnchorGenesis
         setGetLoEFragment
           (readTVar varGsmState)
           (readTVar varLoEFragment)
-          ctx
+          varGetLoEFragment
 
         void $ forkLinkedWatcher registry "NodeKernel.GDD" $
           gddWatcher

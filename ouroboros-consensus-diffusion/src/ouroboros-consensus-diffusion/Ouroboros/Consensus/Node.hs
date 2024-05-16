@@ -80,8 +80,6 @@ import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture,
                      ClockSkew)
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState (..))
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (CSJConfig (..), ChainSyncLoPBucketConfig (..))
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import qualified Ouroboros.Consensus.Network.NodeToClient as NTC
 import qualified Ouroboros.Consensus.Network.NodeToNode as NTN
@@ -90,8 +88,7 @@ import           Ouroboros.Consensus.Node.DbMarker
 import           Ouroboros.Consensus.Node.ErrorPolicy
 import           Ouroboros.Consensus.Node.ExitPolicy
 import           Ouroboros.Consensus.Node.Genesis (GenesisConfig (..),
-                     GenesisNodeKernelArgs, GenesisSwitch (..),
-                     mkGenesisNodeKernelArgs)
+                     GenesisNodeKernelArgs, mkGenesisNodeKernelArgs)
 import           Ouroboros.Consensus.Node.GSM (GsmNodeKernelArgs (..))
 import qualified Ouroboros.Consensus.Node.GSM as GSM
 import           Ouroboros.Consensus.Node.InitStorage
@@ -197,7 +194,7 @@ data RunNodeArgs m addrNTN addrNTC blk (p2p :: Diffusion.P2P) = RunNodeArgs {
 
     , rnGetUseBootstrapPeers :: STM m UseBootstrapPeers
 
-    , rnGenesisConfig :: GenesisSwitch GenesisConfig
+    , rnGenesisConfig :: GenesisConfig
     }
 
 
@@ -254,7 +251,7 @@ data LowLevelRunNodeArgs m addrNTN addrNTC versionDataNTN versionDataNTC blk
       -- | See 'NTN.ChainSyncTimeout'
     , llrnChainSyncTimeout :: m NTN.ChainSyncTimeout
 
-    , llrnGenesisConfig :: GenesisSwitch GenesisConfig
+    , llrnGenesisConfig :: GenesisConfig
 
       -- | How to run the data diffusion applications
       --
@@ -527,12 +524,8 @@ runWith RunNodeArgs{..} encAddrNtN decAddrNtN LowLevelRunNodeArgs{..} =
           (NTN.defaultCodecs codecConfig version encAddrNTN decAddrNTN)
           NTN.byteLimits
           llrnChainSyncTimeout
-          (case llrnGenesisConfig of
-             GenesisEnabled gcfg -> gcsChainSyncLoPBucketConfig gcfg
-             GenesisDisabled     -> ChainSyncLoPBucketDisabled)
-          (case llrnGenesisConfig of
-             GenesisEnabled gcfg -> gcsCSJConfig gcfg
-             GenesisDisabled     -> CSJDisabled)
+          (gcChainSyncLoPBucketConfig llrnGenesisConfig)
+          (gcCSJConfig llrnGenesisConfig)
           (reportMetric Diffusion.peerMetricsConfiguration peerMetrics)
           (NTN.mkHandlers nodeKernelArgs nodeKernel)
 
@@ -721,7 +714,7 @@ mkNodeKernelArgs ::
   -> GSM.MarkerFileView m
   -> STM m UseBootstrapPeers
   -> StrictSTM.StrictTVar m (Diffusion.PublicPeerSelectionState addrNTN)
-  -> GenesisSwitch (GenesisNodeKernelArgs m blk)
+  -> GenesisNodeKernelArgs m blk
   -> m (NodeKernelArgs m addrNTN (ConnectionId addrNTC) blk)
 mkNodeKernelArgs
   registry
