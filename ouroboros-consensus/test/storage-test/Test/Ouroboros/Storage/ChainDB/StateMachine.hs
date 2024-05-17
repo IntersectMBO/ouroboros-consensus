@@ -87,6 +87,7 @@ import           Data.Bifunctor
 import qualified Data.Bifunctor.TH as TH
 import           Data.Bitraversable
 import           Data.ByteString.Lazy (ByteString)
+import           Data.Functor (($>))
 import           Data.Functor.Classes (Eq1, Show1)
 import           Data.Functor.Identity (Identity)
 import           Data.List (sortOn)
@@ -187,7 +188,7 @@ data Cmd blk it flr
   | GetMaxSlotNo
   | GetIsValid            (RealPoint blk)
   | Stream                (StreamFrom blk) (StreamTo blk)
-  | UpdateLoE -- FIXME: or @EvaluateGDD@?
+  | UpdateLoE             (RealPoint blk)
   | IteratorNext          it
   | IteratorNextGCed      it
     -- ^ Only for blocks that may have been garbage collected.
@@ -402,7 +403,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       GetGCedBlockComponent pt -> mbGCedAllComponents <$> getBlockComponent allComponents pt
       GetIsValid pt            -> isValidResult       <$> ($ pt) <$> atomically getIsValid
       GetMaxSlotNo             -> MaxSlot             <$> atomically getMaxSlotNo
-      UpdateLoE                -> undefined -- FIXME
+      UpdateLoE _pt            -> undefined -- FIXME
       Stream from to           -> iter                =<< stream registry allComponents from to
       IteratorNext  it         -> IterResult          <$> iteratorNext (unWithEq it)
       IteratorNextGCed  it     -> iterResultGCed      <$> iteratorNext (unWithEq it)
@@ -638,7 +639,7 @@ runPure cfg = \case
     GetGCedBlockComponent pt -> err mbGCedAllComponents $ query   (Model.getBlockComponentByPoint allComponents pt)
     GetMaxSlotNo             -> ok  MaxSlot             $ query    Model.getMaxSlotNo
     GetIsValid pt            -> ok  isValidResult       $ query   (Model.isValid pt)
-    UpdateLoE                -> ok  Unit                $ update_  undefined -- FIXME
+    UpdateLoE _pt            -> ok  Unit                $ update_  undefined -- FIXME
     Stream from to           -> err iter                $ updateE (Model.stream k from to)
     IteratorNext  it         -> ok  IterResult          $ update  (Model.iteratorNext it allComponents)
     IteratorNextGCed it      -> ok  iterResultGCed      $ update  (Model.iteratorNext it allComponents)
@@ -893,6 +894,7 @@ generator genBlock m@Model {..} = At <$> frequency
     , (10, genGetBlockComponent)
     , (if empty then 1 else 10, return GetMaxSlotNo)
     , (if empty then 1 else 10, genGetIsValid)
+    -- , (if empty then 1 else 10, UpdateLoE <$> genPointInDB) -- FIXME: anchor on “old” immutable tip, and sometimes generate fragments that exit the ChainDB.
 
     -- Iterators
     , (if empty then 1 else 10, uncurry Stream <$> genBounds)
@@ -940,13 +942,16 @@ generator genBlock m@Model {..} = At <$> frequency
     pointsInDB :: [RealPoint blk]
     pointsInDB = blockRealPoint <$> Map.elems (Model.blocks dbModel)
 
+    genPointInDB :: Gen (RealPoint blk)
+    genPointInDB = elements pointsInDB
+
     empty :: Bool
     empty = null pointsInDB
 
     genRealPoint :: Gen (RealPoint blk)
     genRealPoint = frequency
       [ (1, genRandomPoint)
-      , (if empty then 0 else 7, elements pointsInDB)
+      , (if empty then 0 else 7, genPointInDB)
       ]
 
     genPoint :: Gen (Point blk)
@@ -1453,17 +1458,18 @@ smUnused maxClockSkew chunkInfo =
       testInitExtLedger
       maxClockSkew
 
-prop_sequential :: MaxClockSkew -> SmallChunkInfo -> Property
-prop_sequential maxClockSkew smallChunkInfo@(SmallChunkInfo chunkInfo)  =
+prop_sequential :: LoE () -> MaxClockSkew -> SmallChunkInfo -> Property
+prop_sequential loe maxClockSkew smallChunkInfo@(SmallChunkInfo chunkInfo)  =
     forAllCommands (smUnused maxClockSkew chunkInfo) Nothing $
-      runCmdsLockstep maxClockSkew smallChunkInfo
+      runCmdsLockstep loe maxClockSkew smallChunkInfo
 
 runCmdsLockstep ::
-     MaxClockSkew
+     LoE ()
+  -> MaxClockSkew
   -> SmallChunkInfo
   -> QSM.Commands (At Cmd Blk IO) (At Resp Blk IO)
   -> Property
-runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
+runCmdsLockstep loe maxClockSkew (SmallChunkInfo chunkInfo) cmds =
     QC.monadicIO $ do
         let
           -- Current test case command names.
@@ -1503,7 +1509,7 @@ runCmdsLockstep maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                    tracer
                    maxClockSkew
                    varCurSlot
-                   varLoEFragment
+                   (loe $> varLoEFragment)
 
       (hist, model, res, trace) <- bracket
         (open args >>= newTVarIO)
@@ -1649,7 +1655,7 @@ mkArgs :: IOLike m
        -> CT.Tracer m (TraceEvent Blk)
        -> MaxClockSkew
        -> StrictTVar m SlotNo
-       -> StrictTVar m (AnchoredFragment (Header Blk))
+       -> LoE (StrictTVar m (AnchoredFragment (Header Blk)))
        -> ChainDbArgs Identity m Blk
 mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSkew) varCurSlot varLoEFragment =
   let args = fromMinimalChainDbArgs MinimalChainDbArgs {
@@ -1663,7 +1669,7 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
       args { cdbsArgs = (cdbsArgs args) {
                ChainDB.cdbsCheckInFuture = InFuture.miracle (readTVar varCurSlot) maxClockSkew
              , ChainDB.cdbsBlocksToAddSize = 2
-             , ChainDB.cdbsLoE = LoEEnabled <$> atomically (readTVar varLoEFragment)
+             , ChainDB.cdbsLoE = traverse (atomically . readTVar) varLoEFragment
              }
            , cdbImmDbArgs = (cdbImmDbArgs args) {
                ImmutableDB.immCheckIntegrity = testBlockIsValid
@@ -1675,5 +1681,8 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
 
 tests :: TestTree
 tests = testGroup "ChainDB q-s-m"
-    [ adjustQuickCheckTests (* 100) $ testProperty "sequential" prop_sequential
+    [ testGroup "sequential"
+      [ adjustQuickCheckTests (* 100) $ testProperty "with LoE" (prop_sequential (LoEEnabled ()))
+      , adjustQuickCheckTests (* 100) $ testProperty "without LoE" (prop_sequential LoEDisabled)
+      ]
     ]
