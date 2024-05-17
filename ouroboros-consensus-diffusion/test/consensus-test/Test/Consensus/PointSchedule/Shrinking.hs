@@ -74,8 +74,8 @@ shrinkOtherPeers shrink Peers{honest, others} =
     shrinkList (traverse (traverse shrink)) $ Map.toList others
 
 -- | Shrinks an honest peer by removing ticks.
--- Because we are manipulating `PeerSchedule` at that point, there is no proper
--- notion of a tick. Instead, we remove points of the honest `PeerSchedule`,
+-- Because we are manipulating 'PeerSchedule' at that point, there is no proper
+-- notion of a tick. Instead, we remove points of the honest 'PeerSchedule',
 -- and move all other points sooner, including those on the adversarial schedule.
 -- We check that this operation neither changes the final state of the honest peer,
 -- nor that it removes points from the adversarial schedules.
@@ -99,7 +99,7 @@ shrinkHonestPeer Peers{honest, others} = do
       (zip (value honest) (drop 1 $ value honest))
 
 -- | Speeds up an honest schedule after `at` time, by `speedUpBy`.
--- This "speeding up" is done by removing `speedUpBy` to all points after `at`,
+-- This “speeding up” is done by subtracting @speedUpBy@ to all points after @at@,
 -- and removing those points if they fall before `at`. We check that the operation
 -- doesn't change the final state of the peer, i.e. it doesn't remove all TP, HP, and BP
 -- in the sped up part.

@@ -202,7 +202,7 @@ data ScheduleClassifiers =
     adversaryRollback     :: Bool,
     -- | The honest peer did a rollback
     honestRollback        :: Bool,
-        -- | All adversaries have an empty schedule: the only way to disconnect them are
+    -- | All adversaries have an empty schedule: the only way to disconnect them are
     -- network timeouts.
     allAdversariesEmpty   :: Bool,
     -- | All adversaries have trivial schedules: they only have an initial state, and

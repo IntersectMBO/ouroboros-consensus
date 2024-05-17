@@ -173,14 +173,14 @@ data ChainSyncLoPBucketConfig
 -- | Configuration of ChainSync Jumping
 data CSJConfig
   =
-    -- Disable ChainSync Jumping. All clients will fully synchronize with
+    -- | Disable ChainSync Jumping. All clients will fully synchronize with
     -- the chain of its peer.
     CSJDisabled
   |
     -- | Enable ChainSync Jumping
     CSJEnabled CSJEnabledConfig
 
-data CSJEnabledConfig = CSJEnabledConfig {
+newtype CSJEnabledConfig = CSJEnabledConfig {
   -- | The _ideal_ size for ChainSync jumps. Note that the algorithm
   -- is best-effort: there might not be exactly `csjcJumpSize` slots between two
   -- jumps, depending on the chain.
@@ -1150,7 +1150,7 @@ knownIntersectionStateTop cfgEnv dynEnv intEnv =
             Terminate -> terminateAfterDrain n $ AskedToTerminate
             _continue -> do
                 -- Wait until next jumping instruction, which can be either to
-                -- jumap, to run normal ChainSync, or to restart the ChainSync
+                -- jump, to run normal ChainSync, or to restart the ChainSync
                 -- client.
                 -- Pause LoP while waiting, we'll resume it if we get `RunNormally`
                 -- or `Restart`.

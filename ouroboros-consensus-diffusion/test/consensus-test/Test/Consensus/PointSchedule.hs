@@ -267,7 +267,7 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
 
 minusClamp :: (Ord a, Num a) => a -> a -> a
 minusClamp a b | a <= b = 0
-             | otherwise = a - b
+               | otherwise = a - b
 
 zipPadN :: forall a . [[a]] -> [[Maybe a]]
 zipPadN =
