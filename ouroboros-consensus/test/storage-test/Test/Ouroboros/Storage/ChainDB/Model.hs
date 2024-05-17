@@ -73,6 +73,7 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , immutableDbChain
   , initLedger
   , reopen
+  , updateLoE
   , validChains
   , volatileDbBlocks
   , wipeVolatileDB
@@ -81,12 +82,14 @@ module Test.Ouroboros.Storage.ChainDB.Model (
 import           Codec.Serialise (Serialise, serialise)
 import           Control.Monad (unless)
 import           Control.Monad.Except (runExcept)
+import           Data.Bifunctor (first)
 import qualified Data.ByteString.Lazy as Lazy
-import           Data.Function (on)
+import           Data.Function (on, (&))
+import           Data.Functor (($>))
 import           Data.List (isInfixOf, isPrefixOf, sortBy)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, isJust)
+import           Data.Maybe (fromJust, fromMaybe, isJust)
 import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -104,8 +107,8 @@ import           Ouroboros.Consensus.Protocol.MockChainSel
 import           Ouroboros.Consensus.Storage.ChainDB.API (AddBlockPromise (..),
                      AddBlockResult (..), BlockComponent (..),
                      ChainDbError (..), InvalidBlockReason (..),
-                     IteratorResult (..), StreamFrom (..), StreamTo (..),
-                     UnknownRange (..), validBounds)
+                     IteratorResult (..), LoE (..), StreamFrom (..),
+                     StreamTo (..), UnknownRange (..), validBounds)
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.ChainSel (olderThanK)
 import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util (repeatedly)
@@ -136,6 +139,7 @@ data Model blk = Model {
     , valid            :: Set (HeaderHash blk)
     , invalid          :: InvalidBlocks blk
     , currentSlot      :: SlotNo
+    , loeFragment      :: LoE (Fragment.Anchor blk, [blk])
     , maxClockSkew     :: Word64
       -- ^ Max clock skew in terms of slots. A static configuration parameter.
     , isOpen           :: Bool
@@ -364,10 +368,11 @@ getLedgerDB cfg m@Model{..} =
 -------------------------------------------------------------------------------}
 
 empty ::
-     ExtLedgerState blk
+     LoE ()
+  -> ExtLedgerState blk
   -> Word64   -- ^ Max clock skew in number of blocks
   -> Model blk
-empty initLedger maxClockSkew = Model {
+empty loe initLedger maxClockSkew = Model {
       volatileDbBlocks = Map.empty
     , immutableDbChain = Chain.Genesis
     , cps              = CPS.initChainProducerState Chain.Genesis
@@ -379,6 +384,7 @@ empty initLedger maxClockSkew = Model {
     , currentSlot      = 0
     , maxClockSkew     = maxClockSkew
     , isOpen           = True
+    , loeFragment      = loe $> (Fragment.AnchorGenesis, [])
     }
 
 -- | Advance the 'currentSlot' of the model to the given 'SlotNo' if the
@@ -404,6 +410,7 @@ addBlock cfg blk m = Model {
     , currentSlot      = currentSlot  m
     , maxClockSkew     = maxClockSkew m
     , isOpen           = True
+    , loeFragment      = loeFragment m
     }
   where
     secParam = configSecurityParam cfg
@@ -446,7 +453,19 @@ addBlock cfg blk m = Model {
 
     -- Note that this includes the currently selected chain, but that does not
     -- influence chain selection via 'selectChain'.
-    consideredCandidates = filter (extendsImmutableChain . fst) candidates
+    consideredCandidates =
+      candidates
+        & filter (extendsImmutableChain . fst)
+        & map (first trimToLoE)
+
+    trimToLoE :: Chain blk -> Chain blk
+    trimToLoE chain =
+      case loeFragment m of
+        LoEDisabled -> chain
+        LoEEnabled (loeAnchor, loeBlocks) ->
+          let (chainPrefix, _, chainSuffix, _) =
+                fromJust $ Fragment.intersect (Chain.toAnchoredFragment chain) (Fragment.fromOldestFirst loeAnchor loeBlocks)
+          in fromJust $ Chain.fromAnchoredFragment $ fromJust $ Fragment.join chainPrefix chainSuffix
 
     newChain  :: Chain blk
     newLedger :: ExtLedgerState blk
@@ -490,6 +509,9 @@ addBlockPromise cfg blk m = (result, m')
       { blockWrittenToDisk = return blockWritten
       , blockProcessed     = return $ SuccesfullyAddedBlock $ tipPoint m'
       }
+
+updateLoE :: Model blk -> AnchoredFragment blk -> Model blk
+updateLoE m f = m {loeFragment = loeFragment m $> (Fragment.anchor f, Fragment.toOldestFirst f)}
 
 {-------------------------------------------------------------------------------
   Iterators

@@ -758,12 +758,13 @@ data Model blk m r = Model
 deriving instance (TestConstraints blk, Show1 r) => Show (Model blk m r)
 
 -- | Initial model
-initModel :: TopLevelConfig blk
+initModel :: LoE ()
+          -> TopLevelConfig blk
           -> ExtLedgerState blk
           -> MaxClockSkew
           -> Model blk m r
-initModel cfg initLedger (MaxClockSkew maxClockSkew) = Model
-  { dbModel        = Model.empty initLedger maxClockSkew
+initModel loe cfg initLedger (MaxClockSkew maxClockSkew) = Model
+  { dbModel        = Model.empty loe initLedger maxClockSkew
   , knownIters     = RE.empty
   , knownFollowers = RE.empty
   , modelConfig    = QSM.Opaque cfg
@@ -1189,7 +1190,8 @@ semantics env (At cmd) =
 
 -- | The state machine proper
 sm :: TestConstraints blk
-   => ChainDBEnv IO blk
+   => LoE ()
+   -> ChainDBEnv IO blk
    -> BlockGen                  blk IO
    -> TopLevelConfig            blk
    -> ExtLedgerState            blk
@@ -1198,8 +1200,8 @@ sm :: TestConstraints blk
                    (At Cmd      blk IO)
                                     IO
                    (At Resp     blk IO)
-sm env genBlock cfg initLedger maxClockSkew = StateMachine
-  { initModel     = initModel cfg initLedger maxClockSkew
+sm loe env genBlock cfg initLedger maxClockSkew = StateMachine
+  { initModel     = initModel loe cfg initLedger maxClockSkew
   , transition    = transition
   , precondition  = precondition
   , postcondition = postcondition
@@ -1230,6 +1232,11 @@ deriving instance ( ToExpr blk
                   , ToExpr (ExtValidationError blk)
                   )
                  => ToExpr (Model blk IO Concrete)
+deriving instance ToExpr a => ToExpr (LoE a)
+deriving instance ( ToExpr blk
+                  , ToExpr (HeaderHash blk)
+                  )
+                 => ToExpr (AF.Anchor blk)
 
 {-------------------------------------------------------------------------------
   Labelling
@@ -1447,11 +1454,13 @@ mkTestCfg (ImmutableDB.UniformChunkSize chunkSize) =
 envUnused :: ChainDBEnv m blk
 envUnused = error "ChainDBEnv used during command generation"
 
-smUnused :: MaxClockSkew
+smUnused :: LoE ()
+         -> MaxClockSkew
          -> ImmutableDB.ChunkInfo
          -> StateMachine (Model Blk IO) (At Cmd Blk IO) IO (At Resp Blk IO)
-smUnused maxClockSkew chunkInfo =
+smUnused loe maxClockSkew chunkInfo =
     sm
+      loe
       envUnused
       (genBlk chunkInfo)
       (mkTestCfg chunkInfo)
@@ -1460,7 +1469,7 @@ smUnused maxClockSkew chunkInfo =
 
 prop_sequential :: LoE () -> MaxClockSkew -> SmallChunkInfo -> Property
 prop_sequential loe maxClockSkew smallChunkInfo@(SmallChunkInfo chunkInfo)  =
-    forAllCommands (smUnused maxClockSkew chunkInfo) Nothing $
+    forAllCommands (smUnused loe maxClockSkew chunkInfo) Nothing $
       runCmdsLockstep loe maxClockSkew smallChunkInfo
 
 runCmdsLockstep ::
@@ -1477,10 +1486,10 @@ runCmdsLockstep loe maxClockSkew (SmallChunkInfo chunkInfo) cmds =
           ctcCmdNames = fmap (show . cmdName . QSM.getCommand) $ QSM.unCommands cmds
 
         (hist, prop) <- QC.run $ test cmds
-        prettyCommands (smUnused maxClockSkew chunkInfo) hist
+        prettyCommands (smUnused loe maxClockSkew chunkInfo) hist
           $ tabulate
               "Tags"
-              (map show $ tag (execCmds (QSM.initModel (smUnused maxClockSkew chunkInfo)) cmds))
+              (map show $ tag (execCmds (QSM.initModel (smUnused loe maxClockSkew chunkInfo)) cmds))
           $ tabulate "Command sequence length" [show $ length ctcCmdNames]
           $ tabulate "Commands"                ctcCmdNames
           $ prop
@@ -1528,7 +1537,7 @@ runCmdsLockstep loe maxClockSkew (SmallChunkInfo chunkInfo) cmds =
                 , varLoEFragment
                 , args
                 }
-              sm' = sm env (genBlk chunkInfo) testCfg testInitExtLedger maxClockSkew
+              sm' = sm loe env (genBlk chunkInfo) testCfg testInitExtLedger maxClockSkew
           (hist, model, res) <- QSM.runCommands' (pure sm') cmds'
           trace <- getTrace
           return (hist, model, res, trace)
