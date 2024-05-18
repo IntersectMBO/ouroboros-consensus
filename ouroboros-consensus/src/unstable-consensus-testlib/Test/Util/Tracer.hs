@@ -38,15 +38,13 @@ recordingTracerM = do
   where
     liftIOtoM :: IO a -> m a
     liftIOtoM m = do
-      -- The ficticious state is only used to force unsafePerformIO to run @m@
+      -- The fictitious state is only used to force @unsafePerformIO@ to run @m@
       -- every time @liftIOtoM m@ is evaluated.
       s <- getStateM
-      pure $! snd $ unsafePerformIO $ do
-        r <- m
-        pure (s, r)
+      case unsafePerformIO $ (,) s <$> m of
+        (_, r) -> pure r
 
     -- We mark this function as NOINLINE to ensure the compiler cannot reason
     -- that two calls of @getStateM@ might yield the same value.
     {-# NOINLINE getStateM #-}
-    getStateM :: m Int
-    getStateM = pure 0
+    getStateM = pure True
