@@ -21,8 +21,8 @@ module Test.Consensus.PeerSimulator.Trace (
   ) where
 
 import           Control.Tracer (Tracer (Tracer), contramap, traceWith)
+import           Data.Bifunctor (second)
 import           Data.List (intersperse)
-import qualified Data.Map as Map
 import           Data.Time.Clock (DiffTime, diffTimeToPicoseconds)
 import           Ouroboros.Consensus.Block (GenesisWindow (..), Header, Point,
                      WithOrigin (NotOrigin, Origin), succWithOrigin)
@@ -448,9 +448,9 @@ traceBlockFetchClientTerminationEventTestBlockWith pid tracer = \case
   where
     trace = traceUnitWith tracer ("BlockFetchClient " ++ condense pid)
 
-prettyDensityBounds :: Map.Map PeerId (DensityBounds TestBlock) -> [String]
+prettyDensityBounds :: [(PeerId, DensityBounds TestBlock)] -> [String]
 prettyDensityBounds bounds =
-  showPeers (showBounds <$> bounds)
+  showPeers (second showBounds <$> bounds)
   where
     showBounds DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling} =
       show lowerBound ++ "/" ++ show upperBound ++ "[" ++ more ++ "], " ++
@@ -475,8 +475,8 @@ prettyDensityBounds bounds =
         showIdling | idling = ", idling"
                    | otherwise = ""
 
-    showPeers :: Map.Map PeerId String -> [String]
-    showPeers = fmap (\ (peer, v) -> "        " ++ condense peer ++ ": " ++ v) . Map.toList
+showPeers :: [(PeerId, String)] -> [String]
+showPeers = map (\ (peer, v) -> "        " ++ condense peer ++ ": " ++ v)
 
 -- * Other utilities
 terseGDDEvent :: TraceGDDEvent PeerId TestBlock -> String
@@ -487,15 +487,15 @@ terseGDDEvent = \case
       "      Selection: " ++ terseHFragment curChain,
       "      Candidates:"
       ] ++
-      showPeers (tersePoint . castPoint . AF.headPoint <$> candidates) ++
+      showPeers (second (tersePoint . castPoint . AF.headPoint) <$> candidates) ++
       [
       "      Candidate suffixes (bounds):"
       ] ++
-      showPeers (terseHFragment . clippedFragment <$> bounds) ++
+      showPeers (second (terseHFragment . clippedFragment) <$> bounds) ++
       ["      Density bounds:"] ++
       prettyDensityBounds bounds ++
       ["      New candidate tips:"] ++
-      showPeers (tersePoint . castPoint <$> Map.map AF.headPoint candidateSuffixes) ++
+      showPeers (second (tersePoint . castPoint . AF.headPoint) <$> candidateSuffixes) ++
       [
         "      Losing peers: " ++ show losingPeers,
       "      Setting loeFrag: " ++ terseAnchor (AF.castAnchor loeHead)
@@ -507,9 +507,6 @@ terseGDDEvent = \case
       where
         winEnd = winStart + sgen - 1
         SlotNo winStart = succWithOrigin (AF.anchorToSlotNo loeHead)
-
-    showPeers :: Map.Map PeerId String -> [String]
-    showPeers = fmap (\ (peer, v) -> "        " ++ condense peer ++ ": " ++ v) . Map.toList
 
 prettyTime :: Time -> String
 prettyTime (Time time) =
