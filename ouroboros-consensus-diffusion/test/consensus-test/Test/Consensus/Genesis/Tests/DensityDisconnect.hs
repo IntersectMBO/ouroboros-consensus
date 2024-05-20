@@ -29,8 +29,8 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.Genesis.Governor (DensityBounds,
                      densityDisconnect, sharedCandidatePrefix)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientException (DensityTooLow),
-                     ChainSyncState (..))
+                     (ChainSyncClientException (DensityTooLow))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import           Ouroboros.Consensus.Util.Condense (condense)
 import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -110,7 +110,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
       }
       where
         (loeFrag, suffixes) =
-          sharedCandidatePrefix curChain (toHeaders <$> candidates)
+          sharedCandidatePrefix curChain ((\c -> (toHeaders c, Disengaged DisengagedDone)) <$> candidates)
 
     selections = selection <$> branches
 
@@ -380,7 +380,7 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
               csLatestSlot = Just (AF.headSlot csCandidate)
             }
         -- Run GDD.
-        (loeFrag, suffixes) = sharedCandidatePrefix curChain candidates
+        (loeFrag, suffixes) = sharedCandidatePrefix curChain ((\c -> (c, Disengaged DisengagedDone)) <$> candidates)
         (killedNow, boundsList) = first Set.fromList $ densityDisconnect sgen k states suffixes loeFrag
         event = UpdateEvent {
           target,

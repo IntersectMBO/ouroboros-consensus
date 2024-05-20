@@ -41,11 +41,13 @@ module Ouroboros.Consensus.Genesis.Governor (
 
 import           Control.Monad (guard, when)
 import           Control.Tracer (Tracer, traceWith)
-import           Data.Bifunctor (second)
-import           Data.Foldable (for_)
+import           Data.Bifunctor (first, second)
+import           Data.Foldable (find, for_, minimumBy)
+import           Data.Function (on)
+import           Data.Functor.Compose (Compose (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (maybeToList)
+import           Data.Maybe (mapMaybe, maybeToList)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
@@ -59,8 +61,7 @@ import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
                      ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientHandle (..), ChainSyncState (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
 import           Ouroboros.Consensus.Node.GsmState
 import           Ouroboros.Consensus.Storage.ChainDB.API (ChainDB)
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
@@ -112,7 +113,8 @@ gddWatcher cfg tracer chainDb getGsmState getHandles varLoEFrag =
         curChain          <- ChainDB.getCurrentChain chainDb
         immutableLedgerSt <- ChainDB.getImmutableLedger chainDb
         handles           <- getHandles
-        states            <- traverse (readTVar . cschState) handles
+        states            <-
+          traverse (\h -> (,) <$> readTVar (cschState h) <*> readTVar (cschJumping h)) handles
         pure GDDStateView {
             gddCtxCurChain          = curChain
           , gddCtxImmutableLedgerSt = immutableLedgerSt
@@ -131,7 +133,7 @@ gddWatcher cfg tracer chainDb getGsmState getHandles varLoEFrag =
         CaughtUp   -> Map.empty
         -- When syncing, wake up on every change to any candidate fragment.
         Syncing    ->
-          Map.map (\css -> (csLatestSlot css, csIdling css)) gddCtxStates
+          Map.map (\(css, _) -> (csLatestSlot css, csIdling css)) gddCtxStates
 
     wNotify :: (GsmState, GDDStateView m blk peer) -> m ()
     wNotify (_gsmState, stateView) = do
@@ -147,7 +149,7 @@ data GDDStateView m blk peer = GDDStateView {
     gddCtxCurChain          :: AnchoredFragment (Header blk)
   , gddCtxImmutableLedgerSt :: ExtLedgerState blk
   , gddCtxKillActions       :: Map peer (m ())
-  , gddCtxStates            :: Map peer (ChainSyncState blk)
+  , gddCtxStates            :: Map peer (ChainSyncState blk, ChainSyncJumpingState m blk)
   }
 
 -- | Disconnect peers that lose density comparisons and recompute the LoE fragment.
@@ -185,8 +187,8 @@ evaluateGDD cfg tracer stateView = do
           } = stateView
 
         (loeFrag, candidateSuffixesList) =
-          sharedCandidatePrefix curChain candidates
-        candidates = csCandidate <$> states
+          sharedCandidatePrefix curChain candidatesFragState
+        candidatesFragState = first csCandidate <$> states
 
         msgen :: Maybe GenesisWindow
         -- This could also use 'runWithCachedSummary' if deemed desirable.
@@ -214,10 +216,11 @@ evaluateGDD cfg tracer stateView = do
     whenJust msgen $ \sgen -> do
       let
         (losingPeers, boundsList) =
-          densityDisconnect sgen (configSecurityParam cfg) states candidateSuffixesList loeFrag
+          densityDisconnect sgen (configSecurityParam cfg) (fst <$> states) candidateSuffixesList loeFrag
         loeHead = AF.headAnchor loeFrag
         candidateSuffixes = Map.fromList candidateSuffixesList
         bounds = Map.fromList boundsList
+        candidates = csCandidate . fst <$> states
 
       traceWith tracer TraceGDDEvent {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
 
@@ -233,18 +236,32 @@ evaluateGDD cfg tracer stateView = do
 -- The function also yields the suffixes of the intersection of @loeFrag@ with
 -- every candidate fragment.
 sharedCandidatePrefix ::
-  GetHeader blk =>
+  (GetHeader blk) =>
   AnchoredFragment (Header blk) ->
-  Map peer (AnchoredFragment (Header blk)) ->
+  Map peer (AnchoredFragment (Header blk), ChainSyncJumpingState m blk) ->
   (AnchoredFragment (Header blk), [(peer, AnchoredFragment (Header blk))])
 sharedCandidatePrefix curChain candidates =
-  second Map.toList $
-  stripCommonPrefix (AF.anchor curChain) immutableTipSuffixes
+    -- we compute first the intersection of the non-disengaged peers in
+    -- @maybeCSJLoeFrag@, then we compute the intersection with the
+    -- disengaged peers in @stripCommonPrefix@, and finally we add the suffixes
+    -- of the dynamo and objector candidate fragments.
+    addCSJCandidateSuffix maybeDynamo .
+    addCSJCandidateSuffix maybeObjector .
+    second getCompose $
+    stripCommonPrefix (AF.anchor curChain) maybeCSJLoeFrag $
+    Compose immutableTipSuffixes
   where
+    candidatesList = Map.toList candidates
+    disengagedCandidates = filter (isDisengaged . snd . snd) candidatesList
+    maybeDynamo = find (isDynamo . snd . snd) candidatesList
+    maybeObjector = find (isObjector . snd . snd) candidatesList
+    maybeCSJLoeFrag = maybeDynamo >>= \(_, (dynamoFrag, _)) ->
+      getCSJLoeFrag immutableTip dynamoFrag (snd . snd <$> candidatesList)
+
     immutableTip = AF.anchorPoint curChain
 
-    splitAfterImmutableTip frag =
-      snd <$> AF.splitAfterPoint frag immutableTip
+    splitAfterImmutableTip (peer, (frag, _)) =
+      (,) peer . snd <$> AF.splitAfterPoint frag immutableTip
 
     immutableTipSuffixes =
       -- If a ChainSync client's candidate forks off before the
@@ -253,7 +270,55 @@ sharedCandidatePrefix curChain candidates =
       -- 'InvalidIntersection' within that ChainSync client, so it's
       -- sound to pre-emptively discard their candidate from this
       -- 'Map' via 'mapMaybe'.
-      Map.mapMaybe splitAfterImmutableTip candidates
+      mapMaybe splitAfterImmutableTip disengagedCandidates
+
+    addCSJCandidateSuffix maybePeer (loeFrag, candidateSuffixes) = case maybePeer of
+      Nothing -> (loeFrag, candidateSuffixes)
+      Just (peer, (frag, _)) ->
+        case AF.splitAfterPoint frag (AF.headPoint loeFrag) of
+          Just (_, suffixFrag) -> (loeFrag, (peer, suffixFrag) : candidateSuffixes)
+          -- If the peer's fragment doesn intersect with the current selection,
+          -- the loeFrag won't intersect with it either.
+          Nothing              -> (loeFrag, candidateSuffixes)
+
+    isObjector = \case
+      Objector{} -> True
+      _          -> False
+
+    isDisengaged = \case
+      Disengaged{} -> True
+      _            -> False
+
+    isDynamo = \case
+      Dynamo{} -> True
+      _        -> False
+
+-- | Given the immutable tip and the dynamo fragment, find the youngest common
+-- intersection between the dynamo fragment, the objector fragment, and all of
+-- the jumper fragments.
+getCSJLoeFrag ::
+  (GetHeader blk) =>
+  Point (Header blk) ->
+  AnchoredFragment (Header blk) ->
+  [(ChainSyncJumpingState m blk)] ->
+  Maybe (AnchoredFragment (Header blk))
+getCSJLoeFrag immutableTip dynamoFrag csjStates =
+    let frags = mapMaybe maybeJumperOrObjectorFragment csjStates
+        splitFrags = filter (\frag -> AF.headSlot frag >= pointSlot immutableTip) frags
+        loeFrag = case splitFrags of
+          [] -> dynamoFrag
+          _  -> minimumBy (compare `on` AF.headSlot) splitFrags
+     in snd <$> AF.splitAfterPoint loeFrag immutableTip
+  where
+    maybeJumperOrObjectorFragment = \case
+      Jumper _ st -> Just $ case st of
+        Happy _ (Just ji)                 -> jTheirFragment ji
+        Happy _ Nothing                   -> AF.Empty (AF.anchor dynamoFrag)
+        LookingForIntersection jumpInfo _ -> jTheirFragment jumpInfo
+        FoundIntersection _ jumpInfo _    -> jTheirFragment jumpInfo
+      Objector _ jumpInfo _ ->
+        Just (jTheirFragment jumpInfo)
+      _                 -> Nothing
 
 data DensityBounds blk =
   DensityBounds {

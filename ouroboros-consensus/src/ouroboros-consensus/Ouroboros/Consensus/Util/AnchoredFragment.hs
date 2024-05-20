@@ -164,14 +164,18 @@ stripCommonPrefix ::
      forall f blk.
      (Functor f, Foldable f, HasHeader blk) -- TODO: this uses the lazy 'map' for 'Map'...
   => AF.Anchor blk
+     -- | An initial fragment to calculate the common prefix with.
+  -> Maybe (AnchoredFragment blk)
   -> f (AnchoredFragment blk)
   -> (AnchoredFragment blk, f (AnchoredFragment blk))
-stripCommonPrefix sharedAnchor frags
-  | all ((sharedAnchor ==) . AF.anchor) frags
+stripCommonPrefix sharedAnchor initIntersection frags
+  | all anchoredAtSharedAnchor frags && maybe True anchoredAtSharedAnchor initIntersection
   = (commonPrefix, splitAfterCommonPrefix <$> frags)
   | otherwise
   = error "Not all fragments are anchored in the given anchor"
   where
+    anchoredAtSharedAnchor frag = AF.anchor frag == sharedAnchor
+
     -- Return the common prefix of two fragments with the same anchor
     -- 'sharedAnchor'.
     computeCommonPrefix ::
@@ -182,10 +186,12 @@ stripCommonPrefix sharedAnchor frags
       Just (cp, _, _, _) -> cp
       Nothing            -> error "unreachable"
 
-    commonPrefix
-      | null frags = AF.Empty sharedAnchor
-      -- TODO use Foldable1 once all our GHCs support it
-      | otherwise = L.foldl1' computeCommonPrefix (toList frags)
+    commonPrefix =
+       case initIntersection of
+         Nothing
+           | null frags -> AF.Empty sharedAnchor
+           | otherwise  -> L.foldl1' computeCommonPrefix (toList frags)
+         Just initFrag -> L.foldl' computeCommonPrefix initFrag (toList frags)
 
     splitAfterCommonPrefix frag =
       case AF.splitAfterPoint frag (AF.headPoint commonPrefix) of
