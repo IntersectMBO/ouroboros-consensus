@@ -85,7 +85,7 @@ data StaticCandidates =
   StaticCandidates {
     k        :: SecurityParam,
     sgen     :: GenesisWindow,
-    suffixes :: Map PeerId (AnchoredFragment (Header TestBlock)),
+    suffixes :: [(PeerId, AnchoredFragment (Header TestBlock))],
     tips     :: Map PeerId (Tip TestBlock),
     loeFrag  :: AnchoredFragment (Header TestBlock)
   }
@@ -131,7 +131,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
 prop_densityDisconnectStatic :: Property
 prop_densityDisconnectStatic =
   forAll gen $ \ StaticCandidates {k, sgen, suffixes, loeFrag} -> do
-    let (disconnect, _) = densityDisconnect sgen k (mkState <$> suffixes) suffixes loeFrag
+    let (disconnect, _) = densityDisconnect sgen k (mkState <$> Map.fromList suffixes) suffixes loeFrag
     counterexample "it should disconnect some node" (not (null disconnect))
       .&&.
      counterexample "it should not disconnect the honest peers"
@@ -381,12 +381,12 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
             }
         -- Run GDD.
         (loeFrag, suffixes) = sharedCandidatePrefix curChain candidates
-        (killedNow, bounds) = first Set.fromList $ densityDisconnect sgen k states suffixes loeFrag
+        (killedNow, boundsList) = first Set.fromList $ densityDisconnect sgen k states suffixes loeFrag
         event = UpdateEvent {
           target,
           added,
           killed = killedNow,
-          bounds,
+          bounds = Map.fromList boundsList,
           tree = snapshotTree nextPeers,
           loeFrag,
           curChain

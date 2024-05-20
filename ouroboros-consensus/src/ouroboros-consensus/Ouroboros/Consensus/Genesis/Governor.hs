@@ -41,7 +41,7 @@ module Ouroboros.Consensus.Genesis.Governor (
 
 import           Control.Monad (guard, when)
 import           Control.Tracer (Tracer, traceWith)
-import           Data.Containers.ListUtils (nubOrd)
+import           Data.Bifunctor (second)
 import           Data.Foldable (for_)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -184,7 +184,7 @@ evaluateGDD cfg tracer stateView = do
           , gddCtxStates            = states
           } = stateView
 
-        (loeFrag, candidateSuffixes) =
+        (loeFrag, candidateSuffixesList) =
           sharedCandidatePrefix curChain candidates
         candidates = csCandidate <$> states
 
@@ -213,9 +213,11 @@ evaluateGDD cfg tracer stateView = do
 
     whenJust msgen $ \sgen -> do
       let
-        (losingPeers, bounds) =
-          densityDisconnect sgen (configSecurityParam cfg) states candidateSuffixes loeFrag
+        (losingPeers, boundsList) =
+          densityDisconnect sgen (configSecurityParam cfg) states candidateSuffixesList loeFrag
         loeHead = AF.headAnchor loeFrag
+        candidateSuffixes = Map.fromList candidateSuffixesList
+        bounds = Map.fromList boundsList
 
       traceWith tracer TraceGDDEvent {sgen, curChain, bounds, candidates, candidateSuffixes, losingPeers, loeHead}
 
@@ -234,8 +236,9 @@ sharedCandidatePrefix ::
   GetHeader blk =>
   AnchoredFragment (Header blk) ->
   Map peer (AnchoredFragment (Header blk)) ->
-  (AnchoredFragment (Header blk), Map peer (AnchoredFragment (Header blk)))
+  (AnchoredFragment (Header blk), [(peer, AnchoredFragment (Header blk))])
 sharedCandidatePrefix curChain candidates =
+  second Map.toList $
   stripCommonPrefix (AF.anchor curChain) immutableTipSuffixes
   where
     immutableTip = AF.anchorPoint curChain
@@ -294,21 +297,20 @@ densityDisconnect ::
   => GenesisWindow
   -> SecurityParam
   -> Map peer (ChainSyncState blk)
-  -> Map peer (AnchoredFragment (Header blk))
+  -> [(peer, AnchoredFragment (Header blk))]
   -> AnchoredFragment (Header blk)
-  -> ([peer], Map peer (DensityBounds blk))
+  -> ([peer], [(peer, DensityBounds blk)])
 densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixes loeFrag =
   (losingPeers, densityBounds)
   where
-    densityBounds = Map.fromList $ do
-      (peer, clippedFragment) <- Map.toList clippedFrags
+    densityBounds = do
+      (peer, candidateSuffix) <- candidateSuffixes
+      let clippedFragment = dropBeyondGenesisWindow candidateSuffix
       state <- maybeToList (states Map.!? peer)
       -- Skip peers that haven't sent any headers yet.
       -- They should be disconnected by timeouts instead.
       latestSlot <- maybeToList (csLatestSlot state)
-      let candidateSuffix = candidateSuffixes Map.! peer
-
-          idling = csIdling state
+      let idling = csIdling state
 
           -- Is there a block after the end of the Genesis window?
           hasBlockAfter =
@@ -345,7 +347,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 
       pure (peer, DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 
-    losingPeers = nubOrd $ Map.toList densityBounds >>= \
+    losingPeers = densityBounds >>= \
       (peer0 , DensityBounds { clippedFragment = frag0
                              , lowerBound = lb0
                              , upperBound = ub0
@@ -357,7 +359,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- from happening.
       if ub0 == 0 then pure peer0 else do
       (_peer1, DensityBounds {clippedFragment = frag1, offersMoreThanK, lowerBound = lb1 }) <-
-        Map.toList densityBounds
+        densityBounds
       -- Don't disconnect peer0 if it sent no headers after the intersection yet
       -- and it is not idling.
       --
@@ -403,9 +405,6 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 
     dropBeyondGenesisWindow =
       AF.takeWhileOldest ((< firstSlotAfterGenesisWindow) . blockSlot)
-
-    clippedFrags =
-      Map.map dropBeyondGenesisWindow candidateSuffixes
 
 -- Note [Chain disagreement]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~
