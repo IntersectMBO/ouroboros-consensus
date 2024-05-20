@@ -85,7 +85,7 @@ data StaticCandidates =
   StaticCandidates {
     k        :: SecurityParam,
     sgen     :: GenesisWindow,
-    suffixes :: Map PeerId (AnchoredFragment (Header TestBlock)),
+    suffixes :: [(PeerId, AnchoredFragment (Header TestBlock))],
     tips     :: Map PeerId (Tip TestBlock),
     loeFrag  :: AnchoredFragment (Header TestBlock)
   }
@@ -110,17 +110,17 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
       }
       where
         (loeFrag, suffixes) =
-          sharedCandidatePrefix curChain (toHeaders <$> candidates)
+          sharedCandidatePrefix curChain (second toHeaders <$> candidates)
 
     selections = selection <$> branches
 
     selection branch =
       AF.takeOldest (AF.length (btbPrefix branch) + fromIntegral (maxRollbacks gtSecurityParam)) (btbFull branch)
 
-    tips = branchTip <$> candidates
+    tips = branchTip <$> Map.fromList candidates
 
-    candidates :: Map PeerId (AnchoredFragment TestBlock)
-    candidates = Map.fromList (zip (HonestPeer 1 : enumerateAdversaries) chains)
+    candidates :: [(PeerId, AnchoredFragment TestBlock)]
+    candidates = zip (HonestPeer 1 : enumerateAdversaries) chains
 
     chains = btTrunk gtBlockTree : (btbFull <$> branches)
 
@@ -131,7 +131,7 @@ staticCandidates GenesisTest {gtSecurityParam, gtGenesisWindow, gtBlockTree} =
 prop_densityDisconnectStatic :: Property
 prop_densityDisconnectStatic =
   forAll gen $ \ StaticCandidates {k, sgen, suffixes, loeFrag} -> do
-    let (disconnect, _) = densityDisconnect sgen k (mkState <$> suffixes) suffixes loeFrag
+    let (disconnect, _) = densityDisconnect sgen k (mkState <$> Map.fromList suffixes) suffixes loeFrag
     counterexample "it should disconnect some node" (not (null disconnect))
       .&&.
      counterexample "it should not disconnect the honest peers"
@@ -222,7 +222,7 @@ data UpdateEvent = UpdateEvent {
     -- | Peers that have been disconnected in the current step
   , killed   :: Set PeerId
     -- | The GDD data
-  , bounds   :: Map PeerId (DensityBounds TestBlock)
+  , bounds   :: [(PeerId, DensityBounds TestBlock)]
     -- | The current chains
   , tree     :: BlockTree (Header TestBlock)
   , loeFrag  :: AnchoredFragment (Header TestBlock)
@@ -380,7 +380,7 @@ evolveBranches EvolvingPeers {k, sgen, peers = initialPeers, fullTree} =
               csLatestSlot = Just (AF.headSlot csCandidate)
             }
         -- Run GDD.
-        (loeFrag, suffixes) = sharedCandidatePrefix curChain candidates
+        (loeFrag, suffixes) = sharedCandidatePrefix curChain (Map.toList candidates)
         (killedNow, bounds) = first Set.fromList $ densityDisconnect sgen k states suffixes loeFrag
         event = UpdateEvent {
           target,

@@ -41,11 +41,13 @@ module Ouroboros.Consensus.Genesis.Governor (
 
 import           Control.Monad (guard, when)
 import           Control.Tracer (Tracer, traceWith)
+import           Data.Bifunctor (second)
 import           Data.Containers.ListUtils (nubOrd)
 import           Data.Foldable (for_)
+import           Data.Functor.Compose (Compose (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (maybeToList)
+import           Data.Maybe (mapMaybe, maybeToList)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig, configLedger,
@@ -186,7 +188,7 @@ evaluateGDD cfg tracer stateView = do
 
         (loeFrag, candidateSuffixes) =
           sharedCandidatePrefix curChain candidates
-        candidates = csCandidate <$> states
+        candidates = Map.toList (csCandidate <$> states)
 
         msgen :: Maybe GenesisWindow
         -- This could also use 'runWithCachedSummary' if deemed desirable.
@@ -233,15 +235,17 @@ evaluateGDD cfg tracer stateView = do
 sharedCandidatePrefix ::
   GetHeader blk =>
   AnchoredFragment (Header blk) ->
-  Map peer (AnchoredFragment (Header blk)) ->
-  (AnchoredFragment (Header blk), Map peer (AnchoredFragment (Header blk)))
+  [(peer, AnchoredFragment (Header blk))] ->
+  (AnchoredFragment (Header blk), [(peer, AnchoredFragment (Header blk))])
 sharedCandidatePrefix curChain candidates =
-  stripCommonPrefix (AF.anchor curChain) immutableTipSuffixes
+  second getCompose $
+  stripCommonPrefix (AF.anchor curChain) $
+  Compose immutableTipSuffixes
   where
     immutableTip = AF.anchorPoint curChain
 
-    splitAfterImmutableTip frag =
-      snd <$> AF.splitAfterPoint frag immutableTip
+    splitAfterImmutableTip (peer, frag) =
+      (,) peer . snd <$> AF.splitAfterPoint frag immutableTip
 
     immutableTipSuffixes =
       -- If a ChainSync client's candidate forks off before the
@@ -250,7 +254,7 @@ sharedCandidatePrefix curChain candidates =
       -- 'InvalidIntersection' within that ChainSync client, so it's
       -- sound to pre-emptively discard their candidate from this
       -- 'Map' via 'mapMaybe'.
-      Map.mapMaybe splitAfterImmutableTip candidates
+      mapMaybe splitAfterImmutableTip candidates
 
 data DensityBounds blk =
   DensityBounds {
@@ -294,21 +298,20 @@ densityDisconnect ::
   => GenesisWindow
   -> SecurityParam
   -> Map peer (ChainSyncState blk)
-  -> Map peer (AnchoredFragment (Header blk))
+  -> [(peer, AnchoredFragment (Header blk))]
   -> AnchoredFragment (Header blk)
-  -> ([peer], Map peer (DensityBounds blk))
+  -> ([peer], [(peer, DensityBounds blk)])
 densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixes loeFrag =
   (losingPeers, densityBounds)
   where
-    densityBounds = Map.fromList $ do
-      (peer, clippedFragment) <- Map.toList clippedFrags
+    densityBounds = do
+      (peer, candidateSuffix) <- candidateSuffixes
+      let clippedFragment = dropBeyondGenesisWindow candidateSuffix
       state <- maybeToList (states Map.!? peer)
       -- Skip peers that haven't sent any headers yet.
       -- They should be disconnected by timeouts instead.
       latestSlot <- maybeToList (csLatestSlot state)
-      let candidateSuffix = candidateSuffixes Map.! peer
-
-          idling = csIdling state
+      let idling = csIdling state
 
           -- Is there a block after the end of the Genesis window?
           hasBlockAfter =
@@ -345,7 +348,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 
       pure (peer, DensityBounds {clippedFragment, offersMoreThanK, lowerBound, upperBound, hasBlockAfter, latestSlot, idling})
 
-    losingPeers = nubOrd $ Map.toList densityBounds >>= \
+    losingPeers = nubOrd $ densityBounds >>= \
       (peer0 , DensityBounds { clippedFragment = frag0
                              , lowerBound = lb0
                              , upperBound = ub0
@@ -357,7 +360,7 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
       -- from happening.
       if ub0 == 0 then pure peer0 else do
       (_peer1, DensityBounds {clippedFragment = frag1, offersMoreThanK, lowerBound = lb1 }) <-
-        Map.toList densityBounds
+        densityBounds
       -- Don't disconnect peer0 if it sent no headers after the intersection yet
       -- and it is not idling.
       --
@@ -404,9 +407,6 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
     dropBeyondGenesisWindow =
       AF.takeWhileOldest ((< firstSlotAfterGenesisWindow) . blockSlot)
 
-    clippedFrags =
-      Map.map dropBeyondGenesisWindow candidateSuffixes
-
 -- Note [Chain disagreement]
 -- ~~~~~~~~~~~~~~~~~~~~~~~~~
 --
@@ -432,10 +432,10 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
 
 data TraceGDDEvent peer blk =
   TraceGDDEvent {
-    bounds            :: Map peer (DensityBounds blk),
+    bounds            :: [(peer, DensityBounds blk)],
     curChain          :: AnchoredFragment (Header blk),
-    candidates        :: Map peer (AnchoredFragment (Header blk)),
-    candidateSuffixes :: Map peer (AnchoredFragment (Header blk)),
+    candidates        :: [(peer, AnchoredFragment (Header blk))],
+    candidateSuffixes :: [(peer, AnchoredFragment (Header blk))],
     losingPeers       :: [peer],
     loeHead           :: AF.Anchor (Header blk),
     sgen              :: GenesisWindow
