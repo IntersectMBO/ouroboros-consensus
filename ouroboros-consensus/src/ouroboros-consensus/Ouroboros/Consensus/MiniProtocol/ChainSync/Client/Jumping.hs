@@ -21,9 +21,9 @@
 -- they agree with the dynamo's chain.
 --
 -- When the jumpers disagree with the dynamo, the jumper with the oldest
--- intersection is asked to compete with the dynamo in the GDD logic. If the
--- dynamo is disconnected, a new dynamo is elected and the objector is demoted
--- to a jumper.
+-- intersection is asked to compete with the dynamo in the GDD logic (becoming
+-- an objector). If the dynamo is disconnected, a new dynamo is elected and the
+-- objector is demoted to a jumper.
 --
 -- If the objector is disconnected, the syncing process continues with the
 -- dynamo and the remaining jumpers.
