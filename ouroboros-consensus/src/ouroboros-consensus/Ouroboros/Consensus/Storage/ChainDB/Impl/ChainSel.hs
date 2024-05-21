@@ -675,8 +675,8 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
               return $ AF.fromOldestFirst curHead (hdr : hdrs)
 
         let chainDiffs = NE.nonEmpty
+              $ filter (followsLoEFrag loeFrag curChainAndLedger)
               $ map Diff.extend
-              $ filter (followsLoEFrag loeFrag)
               $ NE.filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain)
                 candidates
         -- All candidates are longer than the current chain, so they will be
@@ -709,16 +709,23 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         curTip      = castPoint $ AF.headPoint curChain
         curHead     = AF.headAnchor curChain
 
-    -- Either frag extends loe or loe extends frag
-    --
-    -- PRECONDITION: @AF.withinFragmentBounds (AF.anchorPoint frag) loe@
+    -- Either frag extends loe or loe extends frag. The fragment is represented
+    -- by the current chain and a diff with that current chain. It is tempting
+    -- to only consider the suffix of the diff, but that would be incorrect,
+    -- because the diff might not intersect with the LoE fragment, because the
+    -- diff suffix is anchored somewhere on the current chain and LoE frag's tip
+    -- might be older than that anchor.
     followsLoEFrag :: LoE (AnchoredFragment (Header blk))
-                   -> AnchoredFragment (Header blk)
+                   -> ChainAndLedger blk
+                   -> ChainDiff (Header blk)
                    -> Bool
-    followsLoEFrag LoEDisabled _ = True
-    followsLoEFrag (LoEEnabled loe) frag =
-         AF.withinFragmentBounds (AF.headPoint loe) frag
-      || AF.withinFragmentBounds (AF.headPoint frag) loe
+    followsLoEFrag LoEDisabled _ _ = True
+    followsLoEFrag (LoEEnabled loe) curChain diff =
+      case Diff.apply (VF.validatedFragment curChain) diff of
+        Nothing -> False
+        Just frag ->
+             AF.withinFragmentBounds (AF.headPoint loe) frag
+          || AF.withinFragmentBounds (AF.headPoint frag) loe
 
     -- | We have found a 'ChainDiff' through the VolatileDB connecting the new
     -- block to the current chain. We'll call the intersection/anchor @x@.
@@ -744,7 +751,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         -- times in case they're part of multiple forks that go through @b@.
         let initCache = Map.singleton (headerHash hdr) hdr
         chainDiffs <-
-            fmap (filter (followsLoEFrag loeFrag . Diff.getSuffix))
+            fmap (filter (followsLoEFrag loeFrag curChainAndLedger))
 
           -- 4. Filter out candidates that are not preferred over the current
           -- chain.
