@@ -223,6 +223,10 @@ prop_leashingAttackStalling =
             { mustReplyTimeout = Nothing
             , idleTimeout = Nothing
             }
+         , gtBlockFetchTimeouts = (gtBlockFetchTimeouts gt)
+            { busyTimeout = Nothing
+            , streamingTimeout = Nothing
+            }
          }
 
     dropRandomPoints :: [(Time, SchedulePoint blk)] -> QC.Gen [(Time, SchedulePoint blk)]
