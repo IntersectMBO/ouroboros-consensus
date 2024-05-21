@@ -81,18 +81,31 @@ shrinkAdversarialPeers shrink Peers {honestPeers, adversarialPeers} =
 -- | Shrinks honest peers by removing ticks. Because we are manipulating
 -- 'PeerSchedule' at this point, there is no proper notion of a tick. Instead,
 -- we remove points from the honest 'PeerSchedule', and move all other points sooner.
--- We check that this operation does not changes the final state of the honest peer.
+--
+-- We check that this operation does not changes the final state of the honest peer,
+-- that is, it keeps the same final tip point, header point, and block point.
+--
 -- NOTE: This operation makes the honest peer to end its schedule sooner, which *may*
 -- trigger disconnections when the timeout for MsgAwaitReply is reached. In those cases,
--- it is probably more pertinent to disable this timeout in tests than disabling shrinking.
+-- it is probably more pertinent to disable this timeout in tests than to disable shrinking.
 shrinkHonestPeers :: Peers (PeerSchedule blk) -> [Peers (PeerSchedule blk)]
 shrinkHonestPeers Peers {honestPeers, adversarialPeers} = do
   (k, honestSch) <- Map.toList honestPeers
+  let (lastHonest, _) = last honestSch
   shrunk <- shrinkHonestPeer honestSch
   pure $ Peers
     { honestPeers = Map.insert k shrunk honestPeers
-    , adversarialPeers
+    , adversarialPeers = fmap (extendAdversary lastHonest) adversarialPeers
     }
+  where
+    -- Add an extra point at the end of the adversarial schedule if the honest one
+    -- was longer than it. Preserves the total duration of the simulation, so that
+    -- timeouts/LoP disconnections can still happen.
+    extendAdversary tLast = \case
+      [] -> []
+      ps -> case last ps of
+        (t, p) | t < tLast -> ps ++ [(tLast, p)]
+        _                  -> ps
 
 shrinkHonestPeer :: PeerSchedule blk -> [PeerSchedule blk]
 shrinkHonestPeer sch =
