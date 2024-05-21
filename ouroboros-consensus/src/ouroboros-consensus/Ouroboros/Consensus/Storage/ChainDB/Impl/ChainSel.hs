@@ -268,7 +268,7 @@ triggerChainSelectionAsync ::
   forall m blk.
   IOLike m =>
   ChainDbEnv m blk ->
-  m ()
+  m (ChainSelectionPromise m)
 triggerChainSelectionAsync CDB {cdbTracer, cdbChainSelQueue} =
   addReprocessLoEBlocks (TraceAddBlockEvent >$< cdbTracer) cdbChainSelQueue
 
@@ -304,8 +304,8 @@ chainSelSync ::
 -- 'ChainSelReprocessLoEBlocks' whenever we receive a new header or lose a
 -- peer.
 -- If 'cdbLoE' is 'LoEDisabled', this task is skipped.
-chainSelSync cdb@CDB{..} ChainSelReprocessLoEBlocks = lift cdbLoE >>= \case
-  LoEDisabled  -> pure ()
+chainSelSync cdb@CDB{..} (ChainSelReprocessLoEBlocks done) = lift cdbLoE >>= \case
+  LoEDisabled  -> lift done
   LoEEnabled _ -> do
     (succsOf, chain) <- lift $ atomically $ do
       invalid <- forgetFingerprint <$> readTVar cdbInvalid
@@ -325,6 +325,7 @@ chainSelSync cdb@CDB{..} ChainSelReprocessLoEBlocks = lift cdbLoE >>= \case
     loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
     for_ loeHeaders $ \hdr ->
       void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
+    lift done
 
 chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) = do
     (isMember, invalid, curChain) <- lift $ atomically $ (,,)
