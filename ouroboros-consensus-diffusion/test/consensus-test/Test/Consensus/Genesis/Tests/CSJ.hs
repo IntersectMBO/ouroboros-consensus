@@ -85,6 +85,9 @@ prop_happyPath synchronized =
     )
     ( \gt StateView{svTrace} ->
         let
+          -- The list of 'TraceDownloadedHeader' events that are not newer than
+          -- jumpSize from the tip of the chain. These are the ones that we
+          -- expect to see only once per header if CSJ works properly.
           headerDownloadEvents =
             mapMaybe
               (\case
@@ -102,7 +105,7 @@ prop_happyPath synchronized =
         in
           tabulate ""
             [ if headerDownloadEvents == []
-                then "All headers may be downloaded twice"
+                then "All headers may be downloaded twice (uninteresting test)"
                 else "There exist headers that have to be downloaded exactly once"
             ] $
           counterexample
