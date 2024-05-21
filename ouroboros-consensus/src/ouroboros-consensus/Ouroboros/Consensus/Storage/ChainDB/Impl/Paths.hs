@@ -64,19 +64,18 @@ type LookupBlockInfo blk = HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)
 -- NOTE: it is possible that no candidates are found, but don't forget that
 -- the chain (fragment) ending with @B@ is also a potential candidate.
 --
--- If ChainSel is using the LoE, the value passed in @lenLimit@ will be used
--- to truncate the candidates so that no more than @k@ blocks can be selected
--- beyond the LoE fragment.
 maximalCandidates ::
      forall blk.
      (ChainHash blk -> Set (HeaderHash blk))
      -- ^ @filterByPredecessor@
-  -> LoE Word64 -- ^ Max length of any candidate
+  -> Maybe Word64 -- ^ Optional max length of any candidate, used during initial
+                  -- chain selection when LoE is enabled.
   -> Point blk -- ^ @B@
   -> [NonEmpty (HeaderHash blk)]
      -- ^ Each element in the list is a list of hashes from which we can
      -- construct a fragment anchored at the point @B@.
-maximalCandidates succsOf loeLimit b = mapMaybe (NE.nonEmpty . applyLoE) $ go (pointHash b)
+maximalCandidates succsOf sizeLimit b =
+    mapMaybe (NE.nonEmpty . trimToSizeLimit) $ go (pointHash b)
   where
     go :: ChainHash blk -> [[HeaderHash blk]]
     go mbHash = case Set.toList $ succsOf mbHash of
@@ -85,11 +84,9 @@ maximalCandidates succsOf loeLimit b = mapMaybe (NE.nonEmpty . applyLoE) $ go (p
                | next <- succs
                , candidate <- go (BlockHash next)
                ]
-    applyLoE
-      | LoEEnabled limit <- loeLimit
-      = take (fromIntegral limit)
-      | otherwise
-      = id
+    trimToSizeLimit = case sizeLimit of
+      Just limit -> take (fromIntegral limit)
+      Nothing    -> id
 
 -- | Extend the 'ChainDiff' with the successors found by 'maximalCandidates'.
 --
@@ -105,17 +102,16 @@ extendWithSuccessors ::
      forall blk. HasHeader blk
   => (ChainHash blk -> Set (HeaderHash blk))
   -> LookupBlockInfo blk
-  -> LoE Word64 -- ^ Max extra length for any suffix
   -> ChainDiff (HeaderFields blk)
   -> NonEmpty (ChainDiff (HeaderFields blk))
-extendWithSuccessors succsOf lookupBlockInfo loeLimit diff =
+extendWithSuccessors succsOf lookupBlockInfo diff =
     case NE.nonEmpty extensions of
       Nothing          -> diff NE.:| []
       Just extensions' -> extensions'
   where
     extensions =
         [ foldl' Diff.append diff (lookupHeaderFields <$> candHashes)
-        | candHashes <- maximalCandidates succsOf loeLimit (castPoint (Diff.getTip diff))
+        | candHashes <- maximalCandidates succsOf Nothing (castPoint (Diff.getTip diff))
         ]
 
     lookupHeaderFields :: HeaderHash blk -> HeaderFields blk

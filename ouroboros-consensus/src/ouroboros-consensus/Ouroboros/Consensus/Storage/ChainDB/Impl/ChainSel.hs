@@ -35,11 +35,10 @@ import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (isJust, isNothing)
+import           Data.Maybe (fromJust, isJust, isNothing)
 import           Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -176,7 +175,9 @@ initialChainSelection immutableDB volatileDB lgrDB tracer cfg varInvalid
         suffixesAfterI :: [NonEmpty (HeaderHash blk)]
         suffixesAfterI = Paths.maximalCandidates succsOf limit (AF.anchorToPoint i)
           where
-            limit = k <$ loE
+            limit = case loE of
+              LoEDisabled   -> Nothing
+              LoEEnabled () -> Just k
 
         constructChain ::
              NonEmpty (HeaderHash blk)
@@ -579,25 +580,17 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         return tipPoint
 
       -- The block fits onto the end of our current chain
-      | pointHash tipPoint == headerPrevHash hdr
-        -- TODO could be optimized if necessary/easy enough
-      , let newBlockFrag = curChain AF.:> hdr
-      , Just maxExtra <- computeLoEMaxExtra loeFrag newBlockFrag -> do
+      | pointHash tipPoint == headerPrevHash hdr -> do
         -- ### Add to current chain
         traceWith addBlockTracer (TryAddToCurrentChain p)
-        addToCurrentChain succsOf' curChainAndLedger loeFrag maxExtra
+        addToCurrentChain succsOf' curChainAndLedger loeFrag
 
       -- The block is reachable from the current selection
       -- and it doesn't fit after the current selection
-      | Just diff <- Paths.isReachable lookupBlockInfo' curChain p
-        -- TODO could be optimized if necessary/easy enough
-      , let curChain' =
-              AF.mapAnchoredFragment (castHeaderFields . getHeaderFields) curChain
-      , Just newBlockFrag <- Diff.apply curChain' diff
-      , Just maxExtra <- computeLoEMaxExtra loeFrag newBlockFrag -> do
+      | Just diff <- Paths.isReachable lookupBlockInfo' curChain p -> do
         -- ### Switch to a fork
         traceWith addBlockTracer (TrySwitchToAFork p diff)
-        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger loeFrag maxExtra diff
+        switchToAFork succsOf' lookupBlockInfo' curChainAndLedger loeFrag diff
 
       -- We cannot reach the block from the current selection
       | otherwise -> do
@@ -651,12 +644,10 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ The current chain and ledger
       -> LoE (AnchoredFragment (Header blk))
          -- ^ LoE fragment
-      -> LoE Word64
-         -- ^ How many extra blocks to select after @b@ at most.
       -> m (Point blk)
-    addToCurrentChain succsOf curChainAndLedger loeFrag maxExtra = do
+    addToCurrentChain succsOf curChainAndLedger loeFrag = do
         -- Extensions of @B@ that do not exceed the LoE
-        let suffixesAfterB = Paths.maximalCandidates succsOf maxExtra (realPointToPoint p)
+        let suffixesAfterB = Paths.maximalCandidates succsOf Nothing (realPointToPoint p)
 
         -- Fragments that are anchored at @curHead@, i.e. suffixes of the
         -- current chain.
@@ -675,10 +666,10 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
               return $ AF.fromOldestFirst curHead (hdr : hdrs)
 
         let chainDiffs = NE.nonEmpty
-              $ map Diff.extend
-              $ filter (followsLoEFrag loeFrag)
-              $ NE.filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain)
-                candidates
+              $ filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain . Diff.getSuffix)
+              $ fmap (trimToLoE loeFrag curChainAndLedger)
+              $ fmap Diff.extend
+              $ NE.toList candidates
         -- All candidates are longer than the current chain, so they will be
         -- preferred over it, /unless/ the block we just added is an EBB,
         -- which has the same 'BlockNo' as the block before it, so when
@@ -709,16 +700,45 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         curTip      = castPoint $ AF.headPoint curChain
         curHead     = AF.headAnchor curChain
 
-    -- Either frag extends loe or loe extends frag
+    -- | Trim the given candidate fragment to respect the LoE.
     --
-    -- PRECONDITION: @AF.withinFragmentBounds (AF.anchorPoint frag) loe@
-    followsLoEFrag :: LoE (AnchoredFragment (Header blk))
-                   -> AnchoredFragment (Header blk)
-                   -> Bool
-    followsLoEFrag LoEDisabled _ = True
-    followsLoEFrag (LoEEnabled loe) frag =
-         AF.withinFragmentBounds (AF.headPoint loe) frag
-      || AF.withinFragmentBounds (AF.headPoint frag) loe
+    -- The returned fragment is such that:
+    --
+    -- - It is a prefix of the given fragment.
+    -- - If it contains the tip of the LoE fragment, then it contains at most
+    --   @k@ block after it.
+    -- - If it does not contain the tip of the LoE fragment, then it is included
+    --   in the LoE fragment.
+    --
+    -- The fragment is represented by the current chain and a diff with that
+    -- current chain. It is tempting to only consider the suffix of the diff,
+    -- but that would be incorrect, because the diff might not intersect with
+    -- the LoE fragment, because the diff suffix is anchored somewhere on the
+    -- current chain and LoE frag's tip might be older than that anchor.
+    --
+    -- PRECONDITIONS:
+    --
+    -- 1. The given 'ChainDiff' can apply on top of the given 'ChainAndLedger'.
+    -- 2. The LoE fragment intersects with the current selection.
+    trimToLoE ::
+      LoE (AnchoredFragment (Header blk)) ->
+      ChainAndLedger blk ->
+      ChainDiff (Header blk) ->
+      ChainDiff (Header blk)
+    trimToLoE LoEDisabled _ diff = diff
+    trimToLoE (LoEEnabled loe) curChain diff =
+      case Diff.apply (VF.validatedFragment curChain) diff of
+        Nothing -> error "trimToLoE: precondition 1 violated: the given 'ChainDiff' must apply on top of the given 'ChainAndLedger'"
+        Just cand ->
+          case AF.intersect cand loe of
+            Nothing -> error "trimToLoE: precondition 2 violated: the LoE fragment must intersect with the current selection"
+            Just (candPrefix, _, candSuffix, loeSuffix) ->
+              let trimmedCandSuffix = AF.takeOldest (fromIntegral k) candSuffix
+                  trimmedCand =
+                    if AF.null loeSuffix
+                      then fromJust $ AF.join candPrefix trimmedCandSuffix
+                      else candPrefix
+              in Diff.diff (VF.validatedFragment curChain) trimmedCand
 
     -- | We have found a 'ChainDiff' through the VolatileDB connecting the new
     -- block to the current chain. We'll call the intersection/anchor @x@.
@@ -734,29 +754,29 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
          -- ^ The current chain (anchored at @i@) and ledger
       -> LoE (AnchoredFragment (Header blk))
          -- ^ LoE fragment
-      -> LoE Word64
-         -- ^ How many extra blocks to select after @b@ at most.
       -> ChainDiff (HeaderFields blk)
          -- ^ Header fields for @(x,b]@
       -> m (Point blk)
-    switchToAFork succsOf lookupBlockInfo curChainAndLedger loeFrag maxExtra diff = do
+    switchToAFork succsOf lookupBlockInfo curChainAndLedger loeFrag diff = do
         -- We use a cache to avoid reading the headers from disk multiple
         -- times in case they're part of multiple forks that go through @b@.
         let initCache = Map.singleton (headerHash hdr) hdr
         chainDiffs <-
-            fmap (filter (followsLoEFrag loeFrag . Diff.getSuffix))
-
-          -- 4. Filter out candidates that are not preferred over the current
+          -- 5. Filter out candidates that are not preferred over the current
           -- chain.
           --
           -- The suffixes all fork off from the current chain within @k@
           -- blocks, so it satisfies the precondition of 'preferCandidate'.
-          . fmap
+            fmap
               ( filter
                   ( preferAnchoredCandidate (bcfg chainSelEnv) curChain
                   . Diff.getSuffix
                   )
               )
+            -- 4. Trim fragments so that they follow the LoE, that is, they
+            -- extend the LoE or are extended by the LoE. Filter them out
+            -- otherwise.
+          . fmap (fmap (trimToLoE loeFrag curChainAndLedger))
             -- 3. Translate the 'HeaderFields' to 'Header' by reading the
             -- headers from disk.
           . flip evalStateT initCache
@@ -766,7 +786,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
             -- for those candidates.
           . NE.filter (not . Diff.rollbackExceedsSuffix)
             -- 1. Extend the diff with candidates fitting on @B@ and not exceeding the LoE
-          . Paths.extendWithSuccessors succsOf lookupBlockInfo maxExtra
+          . Paths.extendWithSuccessors succsOf lookupBlockInfo
           $ diff
 
         case NE.nonEmpty chainDiffs of
@@ -785,45 +805,6 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         chainSelEnv = mkChainSelEnv curChainAndLedger
         curChain    = VF.validatedFragment curChainAndLedger
         curTip      = castPoint $ AF.headPoint curChain
-
-    -- | How many extra blocks to select at most after the tip of @newBlockFrag@
-    -- according to the LoE.
-    --
-    -- There are two cases to consider:
-    --
-    -- 1. If @newBlockFrag@ and @loeFrag@ are on the same chain, then we cannot
-    --    select more than @loeLimit@ blocks after @loeFrag@.
-    --
-    -- 2. If @newBlockFrag@ and @loeFrag@ are on different chains, then we
-    --   cannot select more than @loeLimit@ blocks after their intersection.
-    --
-    -- In any case, 'Nothing' is returned if @newBlockFrag@ extends beyond
-    -- what LoE allows.
-    computeLoEMaxExtra ::
-         (HasHeader x, HeaderHash x ~ HeaderHash blk)
-      => LoE (AnchoredFragment (Header blk))
-         -- ^ The fragment with the LoE as its tip, with the same anchor as
-         -- @curChain@.
-      -> AnchoredFragment x
-         -- ^ The fragment with the new block @b@ as its tip, with the same
-         -- anchor as @curChain@.
-      -> Maybe (LoE Word64)
-    computeLoEMaxExtra (LoEEnabled loeFrag) newBlockFrag =
-        -- Both fragments are on the same chain
-        if loeSuffixLength == 0 || rollback == 0 then
-          if rollback > k + loeSuffixLength
-            then Nothing
-            else Just $ LoEEnabled $ k + loeSuffixLength - rollback
-        else
-          if rollback > k
-            then Nothing
-            else Just $ LoEEnabled $ k - rollback
-      where
-        d = Diff.diff newBlockFrag loeFrag
-        rollback = Diff.getRollback d
-        loeSuffixLength = fromIntegral $ AF.length (Diff.getSuffix d)
-    computeLoEMaxExtra LoEDisabled _ =
-        Just LoEDisabled
 
     mkSelectionChangedInfo ::
          AnchoredFragment (Header blk) -- ^ old chain
