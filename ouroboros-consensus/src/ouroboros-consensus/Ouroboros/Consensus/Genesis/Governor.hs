@@ -404,8 +404,10 @@ densityDisconnect (GenesisWindow sgen) (SecurityParam k) states candidateSuffixe
     firstSlotAfterGenesisWindow =
         succWithOrigin loeIntersectionSlot + SlotNo sgen
 
+    -- This is performance sensitive. We used to call @takeWhileOldest@ here,
+    -- which would reconstruct much of the original fragment.
     dropBeyondGenesisWindow =
-      AF.takeWhileOldest ((< firstSlotAfterGenesisWindow) . blockSlot)
+      AF.dropWhileNewest ((>= firstSlotAfterGenesisWindow) . blockSlot)
 
     clippedFrags =
       Map.map dropBeyondGenesisWindow candidateSuffixes
