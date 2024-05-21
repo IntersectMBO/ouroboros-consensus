@@ -431,6 +431,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       atomically $ modifyTVar varCurSlot (max newCurSlot)
       -- `blockProcessed` always returns 'Just'
       res <- addBlock chainDB InvalidBlockPunishment.noPunishment blk
+      ChainDB.triggerChainSelection chainDB
       return $ case res of
         FailedToAddBlock f       -> error $ "advanceAndAdd: block not added - " ++ f
         SuccesfullyAddedBlock pt -> pt
