@@ -815,6 +815,9 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
             then Nothing
             else Just $ LoEEnabled $ k + loeSuffixLength - rollback
         else
+          -- REVIEW: Since we filter out candidates that fork off the LoE later,
+          -- it does not really seem to matter what we return here and we could
+          -- maybe just return @Nothing@ or merge it in the previous case?
           if rollback > k
             then Nothing
             else Just $ LoEEnabled $ k - rollback
