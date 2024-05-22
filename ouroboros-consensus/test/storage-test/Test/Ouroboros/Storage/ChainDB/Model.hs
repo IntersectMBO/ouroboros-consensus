@@ -89,7 +89,7 @@ import           Data.Functor (($>))
 import           Data.List (isInfixOf, isPrefixOf, sortBy)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromJust, fromMaybe, isJust)
+import           Data.Maybe (fromMaybe, isJust)
 import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -458,14 +458,26 @@ addBlock cfg blk m = Model {
         & filter (extendsImmutableChain . fst)
         & map (first trimToLoE)
 
+    -- REVIEW: This might lead to 'consideredCandidates' containing duplicates;
+    -- is this a problem?
+    --
+    -- REVIEW: Should we avoid considering candidates that fork off the LoE
+    -- fragment? (see followsLoEFrag)
     trimToLoE :: Chain blk -> Chain blk
     trimToLoE chain =
       case loeFragment m of
         LoEDisabled -> chain
         LoEEnabled (loeAnchor, loeBlocks) ->
-          let (chainPrefix, _, chainSuffix, _) =
-                fromJust $ Fragment.intersect (Chain.toAnchoredFragment chain) (Fragment.fromOldestFirst loeAnchor loeBlocks)
-          in fromJust $ Chain.fromAnchoredFragment $ fromJust $ Fragment.join chainPrefix chainSuffix
+          case Fragment.intersect (Chain.toAnchoredFragment chain) (Fragment.fromOldestFirst loeAnchor loeBlocks) of
+            Nothing -> error "trimToLoE: chain does not intersect with LoE fragment"
+            Just (chainPrefix, _, chainSuffix, _) ->
+              let trimmedSuffix = Fragment.takeOldest (fromIntegral $ maxRollbacks secParam) chainSuffix in
+              case Fragment.join chainPrefix trimmedSuffix of
+                Nothing -> error "trimToLoE: chainPrefix and chainSuffix do not join, violating the postcondition of AnchoredFragment.intersect"
+                Just trimmedChain ->
+                  case Chain.fromAnchoredFragment trimmedChain of
+                    Nothing -> error "trimToLoE: trimmedChain is not anchored at Origin"
+                    Just trimmedChain' -> trimmedChain'
 
     newChain  :: Chain blk
     newLedger :: ExtLedgerState blk
