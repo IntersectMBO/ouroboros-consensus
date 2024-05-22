@@ -70,6 +70,7 @@ module Test.Ouroboros.Storage.ChainDB.Model (
   , garbageCollectable
   , garbageCollectableIteratorNext
   , garbageCollectablePoint
+  , getFragmentBetween
   , immutableDbChain
   , initLedger
   , reopen
@@ -1074,3 +1075,22 @@ wipeVolatileDB cfg m =
         -> error "Did not select the ImmutableDB's chain"
 
     toHashes = map blockHash . Chain.toOldestFirst
+
+getFragmentBetween ::
+  forall blk.
+  GetPrevHash blk =>
+  ChainHash blk ->
+  ChainHash blk ->
+  Map (HeaderHash blk) blk ->
+  Maybe (AnchoredFragment blk)
+getFragmentBetween hash1 hash2' bs = go hash2'
+  where
+    go :: ChainHash blk -> Maybe (AnchoredFragment blk)
+    go hash2 | hash2 == hash1 =
+      Just $ Fragment.Empty Fragment.AnchorGenesis
+    go GenesisHash =
+      Nothing
+    go (BlockHash hash2) = do
+      block2 <- Map.lookup hash2 bs
+      prevFragment <- go $ blockPrevHash block2
+      Just $ prevFragment Fragment.:> block2
