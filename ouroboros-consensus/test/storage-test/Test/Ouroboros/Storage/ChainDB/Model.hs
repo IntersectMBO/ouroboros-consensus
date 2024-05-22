@@ -140,7 +140,7 @@ data Model blk = Model {
     , valid            :: Set (HeaderHash blk)
     , invalid          :: InvalidBlocks blk
     , currentSlot      :: SlotNo
-    , loeFragment      :: LoE (Fragment.Anchor blk, [blk])
+    , loeFragment      :: LoE (Fragment.Anchor blk, [blk]) -- FIXME: AnchoredFragment blk
     , maxClockSkew     :: Word64
       -- ^ Max clock skew in terms of slots. A static configuration parameter.
     , isOpen           :: Bool
