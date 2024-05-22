@@ -87,13 +87,14 @@ import           Data.Bifunctor
 import qualified Data.Bifunctor.TH as TH
 import           Data.Bitraversable
 import           Data.ByteString.Lazy (ByteString)
+import           Data.Function ((&))
 import           Data.Functor (($>))
 import           Data.Functor.Classes (Eq1, Show1)
 import           Data.Functor.Identity (Identity)
-import           Data.List (sortOn)
+import           Data.List (inits, sortOn)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, mapMaybe)
 import           Data.Ord (Down (..))
 import           Data.Proxy
 import           Data.TreeDiff
@@ -946,6 +947,43 @@ generator genBlock m@Model {..} = At <$> frequency
 
     genPointInDB :: Gen (RealPoint blk)
     genPointInDB = elements pointsInDB
+
+    -- TODO: sometimes generate fragments that connect to a disconnected block of the ChainDB
+    -- TODO: sometimes generate fragments that exit the ChainDB
+    genLoEFragment :: Gen (AnchoredFragment blk)
+    genLoEFragment = do
+      let immutableChain = Model.immutableChain secParam dbModel
+      -- Immutable part of the fragment. This can be the empty fragment
+      -- containing only the immutable tip, but it can also contain up to k
+      -- blocks and be anchored at an old immutable tip.
+      immutableFragment <-
+        case Chain.toNewestFirst immutableChain of
+          [] -> return $ AF.Empty AF.AnchorGenesis
+          newestImmutableBlocks ->
+            uncurry AF.fromOldestFirst
+              <$> ( elements $
+                      newestImmutableBlocks -- immutable blocks, from immutable tip to Origin
+                        & inits -- prefixes of that, that is suffixes of the immutable chain
+                        & mapMaybe NE.nonEmpty -- drop the empty prefix/suffix
+                        & take (1 + fromIntegral (maxRollbacks secParam)) -- up to k blocks in addition to the imm. tip
+                        & map (first AF.anchorFromBlock . neUncons . NE.reverse) -- as a pair (anchor, blocks)
+                  )
+      -- Volatile part of the fragment. This is a fragment anchored at the
+      -- immutable tip and going to a random point in the ChainDB. We run with
+      -- reject, because blocks in the ChainDB might not be connected.
+      let immutableTipHash = Chain.headHash immutableChain
+          blocksInDb = Model.volatileDbBlocks dbModel
+          hashesInDb = immutableTipHash : map BlockHash (Map.keys blocksInDb)
+      volatileFragment <- untilJustM $ do
+        targetHash <- elements hashesInDb
+        pure $ Model.getFragmentBetween immutableTipHash targetHash blocksInDb
+      -- The result is the concatenation of both fragments.
+      case AF.join immutableFragment volatileFragment of
+        Nothing -> error "bug in genLoEFragment: fragments could not be joined"
+        Just fragment -> return fragment
+      where
+        neUncons (x NE.:| xs) = (x, xs)
+        untilJustM a = maybe (untilJustM a) return =<< a
 
     empty :: Bool
     empty = null pointsInDB
