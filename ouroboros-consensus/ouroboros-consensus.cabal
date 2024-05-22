@@ -535,6 +535,7 @@ test-suite consensus-test
     Test.Consensus.HardFork.History
     Test.Consensus.HardFork.Infra
     Test.Consensus.HardFork.Summary
+    Test.Consensus.Ledger.Tables.Diff
     Test.Consensus.Ledger.Tables.DiffSeq
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Fairness
