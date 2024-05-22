@@ -189,7 +189,7 @@ data Cmd blk it flr
   | GetMaxSlotNo
   | GetIsValid            (RealPoint blk)
   | Stream                (StreamFrom blk) (StreamTo blk)
-  | UpdateLoE             (RealPoint blk)
+  | UpdateLoE             (AnchoredFragment blk)
   | IteratorNext          it
   | IteratorNextGCed      it
     -- ^ Only for blocks that may have been garbage collected.
@@ -404,7 +404,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       GetGCedBlockComponent pt -> mbGCedAllComponents <$> getBlockComponent allComponents pt
       GetIsValid pt            -> isValidResult       <$> ($ pt) <$> atomically getIsValid
       GetMaxSlotNo             -> MaxSlot             <$> atomically getMaxSlotNo
-      UpdateLoE _pt            -> undefined -- FIXME
+      UpdateLoE frag           -> Unit                <$> updateLoE frag
       Stream from to           -> iter                =<< stream registry allComponents from to
       IteratorNext  it         -> IterResult          <$> iteratorNext (unWithEq it)
       IteratorNextGCed  it     -> iterResultGCed      <$> iteratorNext (unWithEq it)
@@ -436,6 +436,11 @@ run env@ChainDBEnv { varDB, .. } cmd =
       return $ case res of
         FailedToAddBlock f       -> error $ "advanceAndAdd: block not added - " ++ f
         SuccesfullyAddedBlock pt -> pt
+
+    updateLoE :: AnchoredFragment blk -> m ()
+    updateLoE frag =
+      let headersFrag = AF.mapAnchoredFragment getHeader frag
+       in atomically $ writeTVar varLoEFragment headersFrag
 
     wipeVolatileDB :: ChainDBState m blk -> m (Point blk)
     wipeVolatileDB st = do
@@ -641,7 +646,7 @@ runPure cfg = \case
     GetGCedBlockComponent pt -> err mbGCedAllComponents $ query   (Model.getBlockComponentByPoint allComponents pt)
     GetMaxSlotNo             -> ok  MaxSlot             $ query    Model.getMaxSlotNo
     GetIsValid pt            -> ok  isValidResult       $ query   (Model.isValid pt)
-    UpdateLoE _pt            -> ok  Unit                $ update_  undefined -- FIXME
+    UpdateLoE frag           -> openOrClosed            $ update_ (Model.updateLoE frag)
     Stream from to           -> err iter                $ updateE (Model.stream k from to)
     IteratorNext  it         -> ok  IterResult          $ update  (Model.iteratorNext it allComponents)
     IteratorNextGCed it      -> ok  iterResultGCed      $ update  (Model.iteratorNext it allComponents)
@@ -897,7 +902,8 @@ generator genBlock m@Model {..} = At <$> frequency
     , (10, genGetBlockComponent)
     , (if empty then 1 else 10, return GetMaxSlotNo)
     , (if empty then 1 else 10, genGetIsValid)
-    -- , (if empty then 1 else 10, UpdateLoE <$> genPointInDB) -- FIXME: anchor on “old” immutable tip, and sometimes generate fragments that exit the ChainDB.
+
+    , (if empty then 1 else 10, UpdateLoE <$> genLoEFragment)
 
     -- Iterators
     , (if empty then 1 else 10, uncurry Stream <$> genBounds)
