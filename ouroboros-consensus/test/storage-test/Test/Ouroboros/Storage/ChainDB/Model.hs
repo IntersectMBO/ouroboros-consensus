@@ -83,14 +83,14 @@ module Test.Ouroboros.Storage.ChainDB.Model (
 import           Codec.Serialise (Serialise, serialise)
 import           Control.Monad (unless)
 import           Control.Monad.Except (runExcept)
-import           Data.Bifunctor (first)
+import           Data.Bitraversable (bimapM)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Function (on, (&))
 import           Data.Functor (($>))
 import           Data.List (isInfixOf, isPrefixOf, sortBy)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromMaybe, isJust)
+import           Data.Maybe (fromMaybe, isJust, mapMaybe)
 import           Data.Proxy
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -457,20 +457,23 @@ addBlock cfg blk m = Model {
     consideredCandidates =
       candidates
         & filter (extendsImmutableChain . fst)
-        & map (first trimToLoE)
+        & mapMaybe (bimapM trimToLoE pure)
 
     -- REVIEW: This might lead to 'consideredCandidates' containing duplicates;
     -- is this a problem?
     --
     -- REVIEW: Should we avoid considering candidates that fork off the LoE
     -- fragment? (see followsLoEFrag)
-    trimToLoE :: Chain blk -> Chain blk
+    trimToLoE :: Chain blk -> Maybe (Chain blk)
     trimToLoE chain =
       case loeFragment m of
-        LoEDisabled -> chain
+        LoEDisabled -> Just chain
         LoEEnabled (loeAnchor, loeBlocks) ->
           case Fragment.intersect (Chain.toAnchoredFragment chain) (Fragment.fromOldestFirst loeAnchor loeBlocks) of
             Nothing -> error "trimToLoE: chain does not intersect with LoE fragment"
+            Just (_, _, chainSuffix, loeSuffix)
+              | not (Fragment.null chainSuffix) && not (Fragment.null loeSuffix) ->
+                  Nothing
             Just (chainPrefix, _, chainSuffix, _) ->
               let trimmedSuffix = Fragment.takeOldest (fromIntegral $ maxRollbacks secParam) chainSuffix in
               case Fragment.join chainPrefix trimmedSuffix of
@@ -478,7 +481,7 @@ addBlock cfg blk m = Model {
                 Just trimmedChain ->
                   case Chain.fromAnchoredFragment trimmedChain of
                     Nothing -> error "trimToLoE: trimmedChain is not anchored at Origin"
-                    Just trimmedChain' -> trimmedChain'
+                    Just trimmedChain' -> Just trimmedChain'
 
     newChain  :: Chain blk
     newLedger :: ExtLedgerState blk
