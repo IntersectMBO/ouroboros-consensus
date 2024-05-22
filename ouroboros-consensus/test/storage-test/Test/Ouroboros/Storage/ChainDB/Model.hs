@@ -522,8 +522,8 @@ addBlockPromise cfg blk m = (result, m')
       , blockProcessed     = return $ SuccesfullyAddedBlock $ tipPoint m'
       }
 
-updateLoE :: Model blk -> AnchoredFragment blk -> Model blk
-updateLoE m f = m {loeFragment = loeFragment m $> (Fragment.anchor f, Fragment.toOldestFirst f)}
+updateLoE :: AnchoredFragment blk -> Model blk -> Model blk
+updateLoE f m = m {loeFragment = loeFragment m $> (Fragment.anchor f, Fragment.toOldestFirst f)}
 
 {-------------------------------------------------------------------------------
   Iterators
@@ -789,7 +789,6 @@ validate cfg Model { currentSlot, maxClockSkew, initLedger, invalid } chain =
              findInvalidBlockInTheFuture ledger' bs'
           | otherwise
           -> findInvalidBlockInTheFuture ledger' bs'
-
 
 chains :: forall blk. (GetPrevHash blk)
        => Map (HeaderHash blk) blk -> [Chain blk]
