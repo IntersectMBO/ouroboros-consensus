@@ -404,7 +404,7 @@ run env@ChainDBEnv { varDB, .. } cmd =
       GetGCedBlockComponent pt -> mbGCedAllComponents <$> getBlockComponent allComponents pt
       GetIsValid pt            -> isValidResult       <$> ($ pt) <$> atomically getIsValid
       GetMaxSlotNo             -> MaxSlot             <$> atomically getMaxSlotNo
-      UpdateLoE frag           -> Unit                <$> updateLoE frag
+      UpdateLoE frag           -> Unit                <$> updateLoE st frag
       Stream from to           -> iter                =<< stream registry allComponents from to
       IteratorNext  it         -> IterResult          <$> iteratorNext (unWithEq it)
       IteratorNextGCed  it     -> iterResultGCed      <$> iteratorNext (unWithEq it)
@@ -437,10 +437,11 @@ run env@ChainDBEnv { varDB, .. } cmd =
         FailedToAddBlock f       -> error $ "advanceAndAdd: block not added - " ++ f
         SuccesfullyAddedBlock pt -> pt
 
-    updateLoE :: AnchoredFragment blk -> m ()
-    updateLoE frag =
+    updateLoE :: ChainDBState m blk -> AnchoredFragment blk -> m ()
+    updateLoE ChainDBState { chainDB } frag = do
       let headersFrag = AF.mapAnchoredFragment getHeader frag
-       in atomically $ writeTVar varLoEFragment headersFrag
+      atomically $ writeTVar varLoEFragment headersFrag
+      ChainDB.triggerChainSelection chainDB
 
     wipeVolatileDB :: ChainDBState m blk -> m (Point blk)
     wipeVolatileDB st = do
@@ -646,7 +647,7 @@ runPure cfg = \case
     GetGCedBlockComponent pt -> err mbGCedAllComponents $ query   (Model.getBlockComponentByPoint allComponents pt)
     GetMaxSlotNo             -> ok  MaxSlot             $ query    Model.getMaxSlotNo
     GetIsValid pt            -> ok  isValidResult       $ query   (Model.isValid pt)
-    UpdateLoE frag           -> openOrClosed            $ update_ (Model.updateLoE frag)
+    UpdateLoE frag           -> ok  Unit                $ update_ (Model.updateLoE frag)
     Stream from to           -> err iter                $ updateE (Model.stream k from to)
     IteratorNext  it         -> ok  IterResult          $ update  (Model.iteratorNext it allComponents)
     IteratorNextGCed it      -> ok  iterResultGCed      $ update  (Model.iteratorNext it allComponents)
