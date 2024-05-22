@@ -28,16 +28,12 @@ import           Control.Monad.Class.MonadThrow (Handler (..), catches)
 import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.IOSim
 import           Control.Monad.Reader (runReaderT)
-import qualified Data.Map.Diff.Strict as Diff
-import qualified Data.Map.Diff.Strict.Internal as Diff
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (mapMaybe)
-import           Data.Sequence.NonEmpty (NESeq (..))
-import qualified Data.Sequence.NonEmpty as NESeq
 import qualified Data.Set as Set
-import           Data.SOP.Dict
+import qualified Data.SOP.Dict as Dict
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables
+import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
@@ -89,7 +85,7 @@ tests = testGroup "BackingStore" [
   , adjustOption (scaleQuickCheckTests 2) $
       testProperty "LMDB IO IOHasFS" $ testWithIO $ do
         (fp, cleanup) <- setupTempDir
-        setupBSEnv (BS.LMDBBackingStoreArgs testLMDBLimits Dict) (setupIOHasFS fp) cleanup
+        setupBSEnv (BS.LMDBBackingStoreArgs testLMDBLimits Dict.Dict) (setupIOHasFS fp) cleanup
   ]
 
 scaleQuickCheckTests :: Int -> QuickCheckTests -> QuickCheckTests
@@ -332,18 +328,17 @@ instance (Ord k, QC.Arbitrary k, QC.Arbitrary v)
 deriving newtype instance (Ord k, QC.Arbitrary k, QC.Arbitrary v)
                        => QC.Arbitrary (Diff.Diff k v)
 
-instance QC.Arbitrary v => QC.Arbitrary (Diff.DeltaHistory v) where
+{- instance QC.Arbitrary v => QC.Arbitrary (Diff.DeltaHistory v) where
   arbitrary = Diff.DeltaHistory <$> ((:<||) <$> QC.arbitrary <*> QC.arbitrary)
   shrink (Diff.DeltaHistory h) =
     fmap Diff.DeltaHistory $ mapMaybe NESeq.nonEmptySeq $ QC.shrink (NESeq.toSeq h)
-
+ -}
 instance QC.Arbitrary v => QC.Arbitrary (Diff.Delta v) where
-  arbitrary = do
-    constr <- QC.elements [
-        Diff.Insert
-      , Diff.Delete
+  arbitrary =
+    QC.oneof [
+        Diff.Insert <$> QC.arbitrary
+      , pure Diff.Delete
       ]
-    constr <$> QC.arbitrary
 
 instance QC.Arbitrary ks => QC.Arbitrary (BS.RangeQuery ks) where
   arbitrary = BS.RangeQuery <$> QC.arbitrary <*> QC.arbitrary

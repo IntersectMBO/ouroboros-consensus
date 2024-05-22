@@ -29,7 +29,6 @@ import qualified Control.Tracer as Trace
 import           Data.Functor (($>), (<&>))
 import           Data.Functor.Contravariant ((>$<))
 import           Data.Map (Map)
-import           Data.Map.Diff.Strict
 import qualified Data.Map.Strict as Map
 import           Data.Monoid (Sum (..))
 import qualified Data.Set as Set
@@ -42,6 +41,7 @@ import qualified Database.LMDB.Simple.TransactionHandle as TrH
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Tables
+import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diffs
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge as Bridge
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
@@ -213,11 +213,11 @@ writeLMDBTable ::
 writeLMDBTable (LMDBMK _ db) codecMK (DiffMK d) =
     EmptyMK <$ lmdbWriteTable
   where
-    lmdbWriteTable = void $ traverseDeltaWithKey_ go d
+    lmdbWriteTable = void $ Diffs.traverseDeltaWithKey_ go d
       where
         go k de = case de of
-          Delete _v -> void $ Bridge.delete codecMK db k
-          Insert v  -> Bridge.put codecMK db k v
+          Diffs.Delete   -> void $ Bridge.delete codecMK db k
+          Diffs.Insert v -> Bridge.put codecMK db k v
 
 {-------------------------------------------------------------------------------
  Db state

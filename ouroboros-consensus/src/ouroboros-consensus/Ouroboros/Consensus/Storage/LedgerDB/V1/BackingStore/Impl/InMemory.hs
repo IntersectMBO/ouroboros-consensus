@@ -27,13 +27,13 @@ import           Control.Monad (join, unless, void, when)
 import           Control.Monad.Class.MonadThrow (catch)
 import           Control.Tracer (Tracer, traceWith)
 import qualified Data.ByteString.Lazy as BSL
-import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Monoid (Sum (..))
 import qualified Data.Set as Set
 import           Data.String (fromString)
 import           GHC.Generics
 import           Ouroboros.Consensus.Ledger.Basics
+import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diff
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API
 import           Ouroboros.Consensus.Util.IOLike (Exception, IOLike,
                      MonadSTM (STM, atomically), MonadThrow (throwIO), NoThunks,

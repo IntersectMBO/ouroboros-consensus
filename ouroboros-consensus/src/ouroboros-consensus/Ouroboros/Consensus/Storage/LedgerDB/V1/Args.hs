@@ -20,7 +20,7 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Args (
   ) where
 
 import           Control.Monad.IO.Class
-import           Data.SOP.Dict
+import qualified Data.SOP.Dict as Dict
 import           Data.Word
 import           GHC.Generics
 import           NoThunks.Class
@@ -89,7 +89,7 @@ data LedgerDbFlavorArgs f m = V1Args {
   }
 
 data BackingStoreArgs f m =
-    LMDBBackingStoreArgs (HKD f LMDBLimits) (Dict MonadIO m)
+    LMDBBackingStoreArgs (HKD f LMDBLimits) (Dict.Dict MonadIO m)
   | InMemoryBackingStoreArgs
 
 defaultLedgerDbFlavorArgs :: Incomplete LedgerDbFlavorArgs  m

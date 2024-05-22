@@ -50,9 +50,9 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
   , rawRestrictValues
   ) where
 
-import           Data.Map.Diff.Strict
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Ledger.Tables
+import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diffs
 
 {-------------------------------------------------------------------------------
   Projection and injection
@@ -148,7 +148,7 @@ rawApplyDiffs ::
   => ValuesMK k v -- ^ Values to which differences are applied
   -> DiffMK   k v -- ^ Differences to apply
   -> ValuesMK k v
-rawApplyDiffs (ValuesMK vals) (DiffMK diffs) = ValuesMK (applyDiff vals diffs)
+rawApplyDiffs (ValuesMK vals) (DiffMK diffs) = ValuesMK (Diffs.applyDiff vals diffs)
 
 -- | Apply diffs from the second ledger state to the values of the first ledger
 -- state. Returns ledger tables.
@@ -173,7 +173,7 @@ rawCalculateDifference ::
   => ValuesMK   k v
   -> ValuesMK   k v
   -> TrackingMK k v
-rawCalculateDifference (ValuesMK before) (ValuesMK after) = TrackingMK after (diff before after)
+rawCalculateDifference (ValuesMK before) (ValuesMK after) = TrackingMK after (Diffs.diff before after)
 
 calculateAdditions ::
      (LedgerTableConstraints l, HasLedgerTables l)
@@ -204,7 +204,7 @@ rawAttachAndApplyDiffs ::
   => DiffMK     k v
   -> ValuesMK   k v
   -> TrackingMK k v
-rawAttachAndApplyDiffs (DiffMK d) (ValuesMK v) = TrackingMK (applyDiff v d) d
+rawAttachAndApplyDiffs (DiffMK d) (ValuesMK v) = TrackingMK (Diffs.applyDiff v d) d
 
 -- | Apply the differences from the first ledger state to the values of the
 -- second ledger state, and returns the resulting values together with the
@@ -270,7 +270,7 @@ rawReapplyTracking ::
   => TrackingMK k v
   -> ValuesMK   k v
   -> TrackingMK k v
-rawReapplyTracking (TrackingMK _v d) (ValuesMK v) = TrackingMK (applyDiff v d) d
+rawReapplyTracking (TrackingMK _v d) (ValuesMK v) = TrackingMK (Diffs.applyDiff v d) d
 
 -- | Replace the tables in the first parameter with the tables of the second
 -- parameter after applying the differences in the first parameter to them

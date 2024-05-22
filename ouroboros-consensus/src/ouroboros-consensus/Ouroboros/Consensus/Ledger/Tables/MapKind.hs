@@ -30,8 +30,6 @@ module Ouroboros.Consensus.Ledger.Tables.MapKind (
 import qualified Codec.CBOR.Decoding as CBOR
 import qualified Codec.CBOR.Encoding as CBOR
 import           Data.Kind (Constraint)
-import           Data.Map.Diff.Strict (Diff)
-import qualified Data.Map.Diff.Strict.Internal as Diff.Internal
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
@@ -39,6 +37,8 @@ import qualified Data.Set as Set
 import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Tables.Basics
+import           Ouroboros.Consensus.Ledger.Tables.Diffs (Diff)
+import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diff
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 
 {-------------------------------------------------------------------------------
@@ -142,7 +142,7 @@ instance ZeroableMK DiffMK where
   emptyMK = DiffMK mempty
 
 instance CanMapKeysMK DiffMK where
-  mapKeysMK f (DiffMK (Diff.Internal.Diff m)) = DiffMK . Diff.Internal.Diff $
+  mapKeysMK f (DiffMK (Diff.Diff m)) = DiffMK . Diff.Diff $
     Map.mapKeys f m
 
 instance CanMapMK DiffMK where

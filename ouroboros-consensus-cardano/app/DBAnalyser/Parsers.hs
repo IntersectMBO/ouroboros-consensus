@@ -15,7 +15,7 @@ import           Cardano.Tools.DBAnalyser.Types
 #if __GLASGOW_HASKELL__ < 900
 import           Data.Foldable (asum)
 #endif
-import           Data.SOP.Dict
+import qualified Data.SOP.Dict as Dict
 import           Options.Applicative
 import           Ouroboros.Consensus.Block (SlotNo (..))
 import           Ouroboros.Consensus.Byron.Node (PBftSignatureThreshold (..))
@@ -65,7 +65,7 @@ parseDBAnalyserConfig = DBAnalyserConfig
                 long "in-mem"
               , help "use in-memory backing store"
               ]
-          , flag' (LMDBBackingStoreArgs defaultLMDBLimits Dict) $ mconcat [
+          , flag' (LMDBBackingStoreArgs defaultLMDBLimits Dict.Dict) $ mconcat [
               long "lmdb"
               , help "use LMDB backing store"
               ]

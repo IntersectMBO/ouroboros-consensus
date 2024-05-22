@@ -50,7 +50,7 @@ import           Control.Tracer (nullTracer)
 import qualified Data.List as L
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.SOP.Dict
+import qualified Data.SOP.Dict as Dict
 import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
@@ -189,7 +189,7 @@ lmdbTestArguments ::
   -> TestArguments IO
 lmdbTestArguments secParam =
   TestArguments {
-      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs testLMDBLimits Dict
+      argFlavorArgs = LedgerDbFlavorArgsV1 $ V1Args DisableFlushing DisableQuerySize $ LMDBBackingStoreArgs testLMDBLimits Dict.Dict
     , argLedgerDbCfg = extLedgerDbConfig secParam
     }
 

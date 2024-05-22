@@ -67,7 +67,7 @@ instance (Arbitrary v) => Arbitrary (DeltaHistory v) where
 instance (Arbitrary v) => Arbitrary (Delta v) where
   arbitrary = oneof [
       Insert <$> arbitrary
-    , Delete <$> arbitrary
+    , pure Delete
     ]
 
 {-------------------------------------------------------------------------------

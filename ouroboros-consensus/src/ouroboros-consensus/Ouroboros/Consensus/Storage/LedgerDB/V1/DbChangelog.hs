@@ -202,6 +202,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Tables.Diffs (fromAntiDiff,
+                     toAntiDiff)
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.LedgerDB.API
@@ -471,7 +473,7 @@ extend newState dblog =
       -> DiffMK    k v
       -> SeqDiffMK k v
     ext (SeqDiffMK sq) (DiffMK d) =
-      SeqDiffMK $ DS.extend sq slot d
+      SeqDiffMK $ DS.extend sq slot $ toAntiDiff d
 
     l'         = forgetLedgerTables  newState
     tablesDiff = projectLedgerTables newState
@@ -761,7 +763,7 @@ splitForFlushing dblog =
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> DiffMK k v
-    prj (SeqDiffMK sq) = DiffMK (DS.cumulativeDiff sq)
+    prj (SeqDiffMK sq) = DiffMK (fromAntiDiff $ DS.cumulativeDiff sq)
 
     ldblog = DiffsToFlush {
         toFlushDiffs = ltmap prj l

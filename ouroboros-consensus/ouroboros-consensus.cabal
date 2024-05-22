@@ -147,6 +147,7 @@ library
     Ouroboros.Consensus.Ledger.Tables
     Ouroboros.Consensus.Ledger.Tables.Basics
     Ouroboros.Consensus.Ledger.Tables.Combinators
+    Ouroboros.Consensus.Ledger.Tables.Diffs
     Ouroboros.Consensus.Ledger.Tables.DiffSeq
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
@@ -692,7 +693,6 @@ test-suite storage-test
     , io-classes
     , io-sim
     , mtl
-    , nonempty-containers
     , nothunks
     , ouroboros-consensus
     , ouroboros-network-api
@@ -738,7 +738,6 @@ benchmark mempool-bench
     , containers
     , contra-tracer
     , deepseq
-    , diff-containers              >=1.1
     , nothunks
     , ouroboros-consensus
     , serialise
@@ -783,7 +782,6 @@ benchmark backingstore-bench
     , cardano-slotting
     , containers
     , deepseq
-    , diff-containers             >=1.1
     , directory
     , fs-api
     , io-classes

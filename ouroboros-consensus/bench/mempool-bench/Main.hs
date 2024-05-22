@@ -17,7 +17,6 @@ import qualified Control.Tracer as Tracer
 import           Data.Aeson
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.Csv as Csv
-import qualified Data.List.NonEmpty as NE
 import           Data.Maybe (fromMaybe)
 import qualified Data.Text as Text
 import qualified Data.Text.Read as Text.Read
