@@ -517,6 +517,8 @@ data TraceEventMempool blk
       -- ^ The size of the Mempool before adding the transaction.
       MempoolSize
       -- ^ The size of the Mempool after adding the transaction.
+      DiffTime
+      -- ^ Time it took to add Tx
   | TraceMempoolRejectedTx
       (GenTx blk)
       -- ^ New, invalid transaction thas was rejected and thus not added to
@@ -525,6 +527,8 @@ data TraceEventMempool blk
       -- ^ The reason for rejecting the transaction.
       MempoolSize
       -- ^ The current size of the Mempool.
+      DiffTime
+      -- ^ Time it took to add Tx
   | TraceMempoolRemoveTxs
       [(Validated (GenTx blk), ApplyTxErr blk)]
       -- ^ Previously valid transactions that are no longer valid because of

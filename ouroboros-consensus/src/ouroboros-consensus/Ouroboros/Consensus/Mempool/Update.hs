@@ -33,7 +33,7 @@ import           Ouroboros.Consensus.Util.IOLike hiding (withMVar)
 --
 implAddTx ::
      ( MonadSTM m
-     , MonadMVar m
+     , IOLike m
      , LedgerSupportsMempool blk
      , HasTxId (GenTx blk)
      )
@@ -74,31 +74,47 @@ implAddTx istate remoteFifo allFifo cfg txSize trcr onbehalf tx =
     case onbehalf of
       AddTxForRemotePeer ->
         withMVar remoteFifo $ \() ->
-        withMVar allFifo $ \() ->
+        withMVar allFifo $ \() -> do
           -- This action can also block. Holding the MVars means
           -- there is only a single such thread blocking at once.
-          implAddTx'
+          implAddTx''
 
       AddTxForLocalClient ->
         withMVar allFifo $ \() ->
-          -- As above but skip the first MVar fifo so we will get
+          -- As above but skip the first MVar fifo so we will g
           -- service sooner if there's lots of other remote
           -- threads waiting.
-          implAddTx'
+          implAddTx''
   where
-    implAddTx' = do
-      (result, ev) <- atomically $ do
+    addDelay (TraceMempoolAddedTx t ns os _) start end =
+      TraceMempoolAddedTx t ns os (diffTime end start)
+    addDelay (TraceMempoolRejectedTx t r s _) start end =
+      TraceMempoolRejectedTx t r s (diffTime end start)
+    addDelay t _ _ = t
+
+    implAddTx'' = do
+      start <- getMonotonicTime
+      r_m <- implAddTx'
+      case r_m of
+        Just (result, ev) -> do
+          end <- getMonotonicTime
+          traceWith trcr $ addDelay ev start end
+          return result
+        Nothing -> do
+          threadDelay 0.05
+          implAddTx''
+
+    implAddTx' =
+      atomically $ do
         outcome <- implTryAddTx istate cfg txSize
                                 (whetherToIntervene onbehalf)
                                 tx
         case outcome of
-          TryAddTx _ result ev -> do return (result, ev)
+          TryAddTx _ result ev -> do return $ Just (result, ev)
 
           -- or block until space is available to fit the next transaction
-          NoSpaceLeft          -> retry
+          NoSpaceLeft          -> return Nothing
 
-      traceWith trcr ev
-      return result
 
     whetherToIntervene :: AddTxOnBehalfOf -> WhetherToIntervene
     whetherToIntervene AddTxForRemotePeer  = DoNotIntervene
@@ -197,6 +213,7 @@ pureTryAddTx cfg txSize wti tx is
               vtx
               (isMempoolSize is)
               (isMempoolSize is')
+              0
             )
       Left err ->
         assert (isNothing (vrNewValid vr))  $
@@ -208,6 +225,7 @@ pureTryAddTx cfg txSize wti tx is
                tx
                err
                (isMempoolSize is)
+               0
               )
   | otherwise
   = NoSpaceLeft
