@@ -63,12 +63,11 @@ prop_timeouts mustTimeout = do
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
-       in PointSchedule $ peersOnlyHonest $ [
-            (Time 0, scheduleTipPoint tipBlock),
-            (Time 0, scheduleHeaderPoint tipBlock),
-            (Time 0, scheduleBlockPoint tipBlock),
-            -- This last point does not matter, it is only here to leave the
-            -- connection open (aka. keep the test running) long enough to
-            -- pass the timeout by 'offset'.
-            (Time (timeout + offset), scheduleTipPoint tipBlock)
+          psSchedule = peersOnlyHonest $ [
+              (Time 0, scheduleTipPoint tipBlock),
+              (Time 0, scheduleHeaderPoint tipBlock),
+              (Time 0, scheduleBlockPoint tipBlock)
             ]
+          -- This keeps the test running long enough to pass the timeout by 'offset'.
+          psMinEndTime = Time $ timeout + offset
+       in PointSchedule {psSchedule, psMinEndTime}

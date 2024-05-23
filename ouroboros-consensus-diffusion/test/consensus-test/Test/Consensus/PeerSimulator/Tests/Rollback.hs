@@ -95,7 +95,7 @@ rollbackSchedule n blockTree =
           , banalSchedulePoints trunkSuffix
           , banalSchedulePoints (btbSuffix branch)
           ]
-    in PointSchedule $ peersOnlyHonest $ zip (map (Time . (/30)) [0..]) schedulePoints
+    in mkPointSchedule $ peersOnlyHonest $ zip (map (Time . (/30)) [0..]) schedulePoints
   where
     banalSchedulePoints :: AnchoredFragment blk -> [SchedulePoint blk]
     banalSchedulePoints = concatMap banalSchedulePoints' . toOldestFirst

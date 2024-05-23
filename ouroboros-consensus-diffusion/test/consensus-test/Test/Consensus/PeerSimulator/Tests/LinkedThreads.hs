@@ -21,8 +21,8 @@ import           Test.Consensus.PeerSimulator.Run (defaultSchedulerConfig)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PointSchedule
 import           Test.Consensus.PointSchedule.Peers (peersOnlyHonest)
-import           Test.Consensus.PointSchedule.SinglePeer (scheduleBlockPoint,
-                     scheduleHeaderPoint, scheduleTipPoint)
+import           Test.Consensus.PointSchedule.SinglePeer (scheduleHeaderPoint,
+                     scheduleTipPoint)
 import           Test.QuickCheck
 import           Test.Tasty
 import           Test.Tasty.QuickCheck
@@ -67,8 +67,9 @@ prop_chainSyncKillsBlockFetch = do
       let (firstBlock, secondBlock) = case AF.toOldestFirst $ btTrunk gtBlockTree of
             b1 : b2 : _ -> (b1, b2)
             _           -> error "block tree must have two blocks"
-       in PointSchedule $ peersOnlyHonest $
+          psSchedule = peersOnlyHonest $
             [ (Time 0, scheduleTipPoint secondBlock),
-              (Time 0, scheduleHeaderPoint firstBlock),
-              (Time (timeout + 1), scheduleBlockPoint firstBlock)
+              (Time 0, scheduleHeaderPoint firstBlock)
             ]
+          psMinEndTime = Time $ timeout + 1
+       in PointSchedule {psSchedule, psMinEndTime}

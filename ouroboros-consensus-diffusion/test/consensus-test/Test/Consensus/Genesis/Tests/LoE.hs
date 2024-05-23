@@ -88,7 +88,7 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
             (AF.Empty _)       -> Nothing
             (_ AF.:> tipBlock) -> Just tipBlock
           branchTip = getOnlyBranchTip tree
-       in PointSchedule $ peers'
+          psSchedule = peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain.
             [ (Time 0, scheduleTipPoint trunkTip) : case intersectM of
@@ -107,11 +107,13 @@ prop_adversaryHitsTimeouts timeoutsEnabled =
             -- intersection early, then waits more than the short wait timeout.
             [ (Time 0, scheduleTipPoint branchTip) : case intersectM of
                 -- the alternate branch forks from `Origin`
-                Nothing -> [(Time 11, scheduleTipPoint branchTip)]
+                Nothing -> []
                 -- the alternate branch forks from `intersect`
                 Just intersect ->
                   [ (Time 0, scheduleHeaderPoint intersect),
-                    (Time 0, scheduleBlockPoint intersect),
-                    (Time 11, scheduleBlockPoint intersect)
+                    (Time 0, scheduleBlockPoint intersect)
                   ]
             ]
+          -- We want to wait more than the short wait timeout
+          psMinEndTime = Time 11
+       in PointSchedule {psSchedule, psMinEndTime}
