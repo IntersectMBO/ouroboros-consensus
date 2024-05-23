@@ -982,12 +982,11 @@ generator loe genBlock m@Model {..} = At <$> frequency
       -- Volatile part of the fragment. This is a fragment anchored at the
       -- immutable tip and going to a random point in the ChainDB. We run with
       -- reject, because blocks in the ChainDB might not be connected.
-      let immutableTipHash = Chain.headHash immutableChain
-          blocksInDb = Model.volatileDbBlocks dbModel
-          hashesInDb = immutableTipHash : map BlockHash (Map.keys blocksInDb)
+      let blocksInDb = Model.volatileDbBlocks dbModel
+          hashesInDb = Chain.headHash immutableChain : map BlockHash (Map.keys blocksInDb)
       volatileFragment <- untilJustM $ do
         targetHash <- elements hashesInDb
-        pure $ Model.getFragmentBetween immutableTipHash targetHash blocksInDb
+        pure $ Model.getFragmentBetween blocksInDb (Chain.headAnchor immutableChain) targetHash
       -- The result is the concatenation of both fragments.
       case AF.join immutableFragment volatileFragment of
         Nothing -> error "bug in genLoEFragment: fragments could not be joined"

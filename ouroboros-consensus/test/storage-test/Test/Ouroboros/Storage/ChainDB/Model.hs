@@ -1093,21 +1093,31 @@ wipeVolatileDB cfg m =
 
     toHashes = map blockHash . Chain.toOldestFirst
 
+-- | Look in the given blocks database for a fragment spanning from the given
+-- anchor to the given hash, and return the fragment in question, or @Nothing@.
 getFragmentBetween ::
   forall blk.
-  GetPrevHash blk =>
-  ChainHash blk ->
-  ChainHash blk ->
+  (GetPrevHash blk) =>
+  -- | A map of blocks; usually the 'volatileDbBlocks' of a 'Model'.
   Map (HeaderHash blk) blk ->
+  -- | The anchor of the fragment to get.
+  Fragment.Anchor blk ->
+  -- | The hash of the block to get the fragment up to.
+  ChainHash blk ->
   Maybe (AnchoredFragment blk)
-getFragmentBetween hash1 hash2' bs = go hash2'
+getFragmentBetween bs anchor = go
   where
+    anchorHash :: ChainHash blk
+    anchorHash = case anchor of
+      Fragment.AnchorGenesis -> GenesisHash
+      Fragment.Anchor _ anchorHash' _ -> BlockHash anchorHash'
+
     go :: ChainHash blk -> Maybe (AnchoredFragment blk)
-    go hash2 | hash2 == hash1 =
-      Just $ Fragment.Empty Fragment.AnchorGenesis
+    go hash | hash == anchorHash =
+      Just $ Fragment.Empty $ anchor
     go GenesisHash =
       Nothing
-    go (BlockHash hash2) = do
-      block2 <- Map.lookup hash2 bs
-      prevFragment <- go $ blockPrevHash block2
-      Just $ prevFragment Fragment.:> block2
+    go (BlockHash hash) = do
+      block <- Map.lookup hash bs
+      prevFragment <- go $ blockPrevHash block
+      Just $ prevFragment Fragment.:> block
