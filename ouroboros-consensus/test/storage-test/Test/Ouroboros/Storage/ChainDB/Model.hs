@@ -86,7 +86,7 @@ import           Control.Monad.Except (runExcept)
 import           Data.Bitraversable (bimapM)
 import qualified Data.ByteString.Lazy as Lazy
 import           Data.Function (on, (&))
-import           Data.Functor (($>))
+import           Data.Functor (($>), (<&>))
 import           Data.List (isInfixOf, isPrefixOf, sortBy)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -465,14 +465,25 @@ chainSelection cfg m = Model {
         & filter (extendsImmutableChain . fst)
         & mapMaybe (bimapM trimToLoE pure)
 
+    currentChain' = currentChain m
+
+    -- If the LoE fragment does not intersect with the current selection, then
+    -- we use the empty fragment anchored at the immutable tip instead.
+    loeFragment' =
+      loeFragment m <&> \(loeAnchor, loeBlocks) ->
+        let loeFragment'' = Fragment.fromOldestFirst loeAnchor loeBlocks
+        in case Fragment.intersect (Chain.toAnchoredFragment currentChain') loeFragment'' of
+              Just _ -> loeFragment''
+              Nothing -> Fragment.Empty $ Chain.headAnchor $ immutableChain secParam m
+
     -- REVIEW: This might lead to 'consideredCandidates' containing duplicates;
     -- is this a problem?
     trimToLoE :: Chain blk -> Maybe (Chain blk)
     trimToLoE chain =
-      case loeFragment m of
+      case loeFragment' of
         LoEDisabled -> Just chain
-        LoEEnabled (loeAnchor, loeBlocks) ->
-          case Fragment.intersect (Chain.toAnchoredFragment chain) (Fragment.fromOldestFirst loeAnchor loeBlocks) of
+        LoEEnabled loeFragment'' ->
+          case Fragment.intersect (Chain.toAnchoredFragment chain) loeFragment'' of
             -- NOTE: There needs to be an intersection, but not any kind of
             -- intersection: we accept only fragments that extend the LoE.
             -- Although not strictly necessary, this prevents some peculiar
