@@ -891,10 +891,11 @@ type BlockGen blk m = Model blk m Symbolic -> Gen blk
 -- | Generate a 'Cmd'
 generator ::
      forall blk m. TestConstraints blk
-  => BlockGen     blk m
+  => LoE ()
+  -> BlockGen     blk m
   -> Model        blk m Symbolic
   -> Gen (At Cmd  blk m Symbolic)
-generator genBlock m@Model {..} = At <$> frequency
+generator loe genBlock m@Model {..} = At <$> frequency
     [ (30, genAddBlock)
     , (if empty then 1 else 10, return GetCurrentChain)
     , (if empty then 1 else 10, return GetLedgerDB)
@@ -905,7 +906,9 @@ generator genBlock m@Model {..} = At <$> frequency
     , (if empty then 1 else 10, return GetMaxSlotNo)
     , (if empty then 1 else 10, genGetIsValid)
 
-    , (if empty then 1 else 10, UpdateLoE <$> genLoEFragment)
+    , (case loe of
+         LoEDisabled -> (0, return $ UpdateLoE $ AF.Empty AF.AnchorGenesis)
+         LoEEnabled () -> (if empty then 1 else 10, UpdateLoE <$> genLoEFragment))
 
     -- Iterators
     , (if empty then 1 else 10, uncurry Stream <$> genBounds)
@@ -1252,7 +1255,7 @@ sm loe env genBlock cfg initLedger maxClockSkew = StateMachine
   , transition    = transition
   , precondition  = precondition
   , postcondition = postcondition
-  , generator     = Just . generator genBlock
+  , generator     = Just . generator loe genBlock
   , shrinker      = shrinker
   , semantics     = semantics env
   , mock          = mock
