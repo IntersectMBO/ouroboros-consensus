@@ -14,6 +14,7 @@ import           Control.Monad (foldM, forM, void)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
+import           Data.Coerce (coerce)
 import           Data.Foldable (for_)
 import qualified Data.List.NonEmpty as NonEmpty
 import           Data.Map.Strict (Map)
@@ -56,7 +57,7 @@ import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
 import           Test.Consensus.PointSchedule (BlockFetchTimeout,
                      CSJParams (..), GenesisTest (..), GenesisTestFull,
-                     LoPBucketParams (..), PointSchedule (..),
+                     LoPBucketParams (..), PointSchedule (..), peersStates,
                      peersStatesRelative)
 import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
@@ -203,6 +204,23 @@ startBlockFetchConnectionThread
         BlockFetch.runBlockFetchServer tracer srPeerId tracers bfrServer serverChannel
     pure (clientThread, serverThread)
 
+-- | Wait for the given duration, but if the duration is longer than the minimum
+-- duration in the live cycle, shutdown the node and restart it after the delay.
+smartDelay ::
+  (MonadDelay m) =>
+  NodeLifecycle blk m ->
+  LiveNode blk m ->
+  DiffTime ->
+  m (LiveNode blk m)
+smartDelay NodeLifecycle {nlMinDuration, nlStart, nlShutdown} node duration
+  | Just minInterval <- nlMinDuration, duration > minInterval = do
+    results <- nlShutdown node
+    threadDelay duration
+    nlStart results
+smartDelay _ node duration = do
+  threadDelay duration
+  pure node
+
 -- | The 'Tick' contains a state update for a specific peer.
 -- If the peer has not terminated by protocol rules, this will update its TMVar
 -- with the new state, thereby unblocking the handler that's currently waiting
@@ -223,25 +241,11 @@ dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid
     Just PeerResources {prUpdateState} -> do
       traceNewTick
       atomically (prUpdateState state)
-      newNode <- checkDowntime
+      newNode <- smartDelay lifecycle node duration
       traceWith (lnStateTracer newNode) ()
       pure newNode
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
-    checkDowntime
-      | Just minInterval <- nlMinDuration
-      , duration > minInterval
-      = do
-        results <- nlShutdown node
-        threadDelay duration
-        nlStart results
-      | otherwise
-      = do
-        threadDelay duration
-        pure node
-
-    NodeLifecycle {nlMinDuration, nlStart, nlShutdown} = lifecycle
-
     traceNewTick :: m ()
     traceNewTick = do
       currentChain <- atomically $ ChainDB.getCurrentChain (lnChainDb node)
@@ -273,10 +277,17 @@ runScheduler ::
   Map PeerId (PeerResources m blk) ->
   NodeLifecycle blk m ->
   m (ChainDB m blk, StateViewTracers blk m)
-runScheduler tracer varHandles ps peers lifecycle@NodeLifecycle {nlStart} = do
+runScheduler tracer varHandles ps@PointSchedule{psMinEndTime} peers lifecycle@NodeLifecycle {nlStart} = do
   node0 <- nlStart LiveIntervalResult {lirActive = Map.keysSet peers, lirPeerResults = []}
   traceWith tracer TraceBeginningOfTime
-  LiveNode {lnChainDb, lnStateViewTracers} <- foldM tick node0 (zip [0..] (peersStatesRelative ps))
+  nodeEnd <- foldM tick node0 (zip [0..] (peersStatesRelative ps))
+  let extraDelay = case take 1 $ reverse $ peersStates ps of
+        [(t, _)] -> if t < psMinEndTime
+            then Just $ diffTime psMinEndTime t
+            else Nothing
+        _        -> Just $ coerce psMinEndTime
+  LiveNode{lnChainDb, lnStateViewTracers} <-
+    maybe (pure nodeEnd) (smartDelay lifecycle nodeEnd) extraDelay
   traceWith tracer TraceEndOfTime
   pure (lnChainDb, lnStateViewTracers)
   where
@@ -468,7 +479,7 @@ runPointSchedule ::
   m (StateView TestBlock)
 runPointSchedule schedulerConfig genesisTest tracer0 =
   withRegistry $ \registry -> do
-    peerSim <- makePeerSimulatorResources tracer gtBlockTree (NonEmpty.fromList $ getPeerIds $ unPointSchedule gtSchedule)
+    peerSim <- makePeerSimulatorResources tracer gtBlockTree (NonEmpty.fromList $ getPeerIds $ psSchedule gtSchedule)
     lifecycle <- nodeLifecycle schedulerConfig genesisTest tracer registry peerSim
     (chainDb, stateViewTracers) <- runScheduler
       (Tracer $ traceWith tracer . TraceSchedulerEvent)

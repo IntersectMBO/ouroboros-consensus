@@ -12,6 +12,7 @@ module Test.Consensus.PointSchedule.Shrinking (
 import           Control.Monad.Class.MonadTime.SI (DiffTime, Time, addTime,
                      diffTime)
 import           Data.Containers.ListUtils (nubOrd)
+import           Data.Foldable (toList)
 import           Data.Functor ((<&>))
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (mapMaybe)
@@ -29,41 +30,65 @@ import           Test.QuickCheck (shrinkList)
 import           Test.Util.TestBlock (TestBlock, isAncestorOf,
                      isStrictAncestorOf)
 
--- | Shrink a 'PointSchedule'. This does not affect the honest peer; it
--- does, however, attempt to remove other peers or ticks of other peers. The
--- block tree is trimmed to keep only parts that are necessary for the shrunk
--- schedule.
+-- | Shrink a 'PointSchedule'. We use a different logic to shrink honest and
+-- adversarial peers. For adversarial peers, we just remove arbitrary points,
+-- or peers altogether. For honest peers, we "speed up" the schedule by merging
+-- adjacent points.
+-- The block tree is trimmed to keep only parts that are necessary for the shrunk
+-- schedules.
 shrinkPeerSchedules ::
   GenesisTestFull TestBlock ->
   StateView TestBlock ->
   [GenesisTestFull TestBlock]
-shrinkPeerSchedules genesisTest _stateView =
-  let trimmedBlockTree sch = trimBlockTree' sch (gtBlockTree genesisTest)
+shrinkPeerSchedules genesisTest@GenesisTest{gtBlockTree, gtSchedule} _stateView =
+  let PointSchedule {psSchedule} = gtSchedule
+      simulationDuration = duration gtSchedule
+      trimmedBlockTree sch = trimBlockTree' sch gtBlockTree
       shrunkAdversarialPeers =
-        shrinkAdversarialPeers shrinkAdversarialPeer (unPointSchedule $ gtSchedule genesisTest)
+        shrinkAdversarialPeers shrinkAdversarialPeer psSchedule
           <&> \shrunkSchedule ->
             genesisTest
-              { gtSchedule = PointSchedule shrunkSchedule,
-                gtBlockTree = trimmedBlockTree $ PointSchedule shrunkSchedule
+              { gtSchedule = PointSchedule
+                  { psSchedule = shrunkSchedule
+                  , psMinEndTime = simulationDuration
+                  }
+              , gtBlockTree = trimmedBlockTree shrunkSchedule
               }
       shrunkHonestPeers =
         shrinkHonestPeers
-          (gtSchedule genesisTest)
-          -- No need to update the tree here, shrinking the honest peers never discards blocks
-          <&> \shrunkSchedule -> genesisTest {gtSchedule = shrunkSchedule}
+          psSchedule
+        -- No need to update the tree here, shrinking the honest peers never discards blocks
+        <&> \shrunkSchedule -> genesisTest
+          { gtSchedule = PointSchedule
+            { psSchedule = shrunkSchedule
+            , psMinEndTime = simulationDuration
+            }
+          }
    in shrunkAdversarialPeers ++ shrunkHonestPeers
 
 -- | Shrink a 'PointSchedule' by removing adversaries. This does not affect
--- the honest peer; and it does not remove ticks from the schedules of the
+-- the honest peers; and it does not remove ticks from the schedules of the
 -- remaining adversaries.
 shrinkByRemovingAdversaries ::
   GenesisTestFull TestBlock ->
   StateView TestBlock ->
   [GenesisTestFull TestBlock]
-shrinkByRemovingAdversaries genesisTest _stateView =
-  shrinkAdversarialPeers (const []) (unPointSchedule $ gtSchedule genesisTest) <&> \shrunkSchedule ->
-    let trimmedBlockTree = trimBlockTree' (PointSchedule shrunkSchedule) (gtBlockTree genesisTest)
-     in (genesisTest{gtSchedule = PointSchedule shrunkSchedule, gtBlockTree = trimmedBlockTree})
+shrinkByRemovingAdversaries genesisTest@GenesisTest{gtSchedule, gtBlockTree} _stateView =
+  shrinkAdversarialPeers (const []) (psSchedule gtSchedule) <&> \shrunkSchedule ->
+    let
+      trimmedBlockTree = trimBlockTree' shrunkSchedule gtBlockTree
+      simulationDuration = duration gtSchedule
+     in genesisTest
+      { gtSchedule = PointSchedule
+        { psSchedule = shrunkSchedule
+        , psMinEndTime = simulationDuration
+        }
+      , gtBlockTree = trimmedBlockTree
+      }
+
+duration :: PointSchedule blk -> Time
+duration PointSchedule {psSchedule, psMinEndTime} =
+  maximum $ psMinEndTime : [ t | sch <- toList psSchedule, (t, _) <- take 1 (reverse sch) ]
 
 -- | Shrink a 'PeerSchedule' by removing ticks from it. The other ticks are kept
 -- unchanged.
@@ -82,30 +107,20 @@ shrinkAdversarialPeers shrink Peers {honestPeers, adversarialPeers} =
 -- 'PeerSchedule' at this point, there is no proper notion of a tick. Instead,
 -- we remove points from the honest 'PeerSchedule', and move all other points sooner.
 --
--- We check that this operation does not changes the final state of the honest peer,
+-- We check that this operation does not changes the final state of the honest peers,
 -- that is, it keeps the same final tip point, header point, and block point.
 --
--- NOTE: This operation makes the honest peer to end its schedule sooner, which *may*
+-- NOTE: This operation makes the honest peers end their schedule sooner, which *may*
 -- trigger disconnections when the timeout for MsgAwaitReply is reached. In those cases,
 -- it is probably more pertinent to disable this timeout in tests than to disable shrinking.
-shrinkHonestPeers :: PointSchedule blk -> [PointSchedule blk]
-shrinkHonestPeers PointSchedule {unPointSchedule = Peers {honestPeers, adversarialPeers}} = do
+shrinkHonestPeers :: Peers (PeerSchedule blk) -> [Peers (PeerSchedule blk)]
+shrinkHonestPeers Peers {honestPeers, adversarialPeers} = do
   (k, honestSch) <- Map.toList honestPeers
-  let (lastHonest, _) = last honestSch
   shrunk <- shrinkHonestPeer honestSch
-  pure $ PointSchedule $ Peers
+  pure $ Peers
     { honestPeers = Map.insert k shrunk honestPeers
-    , adversarialPeers = fmap (extendAdversary lastHonest) adversarialPeers
+    , adversarialPeers
     }
-  where
-    -- Add an extra point at the end of the adversarial schedule if the honest one
-    -- was longer than it. Preserves the total duration of the simulation, so that
-    -- timeouts/LoP disconnections can still happen.
-    extendAdversary tLast = \case
-      [] -> []
-      ps -> case last ps of
-        (t, p) | t < tLast -> ps ++ [(tLast, p)]
-        _                  -> ps
 
 shrinkHonestPeer :: PeerSchedule blk -> [PeerSchedule blk]
 shrinkHonestPeer sch =
@@ -147,7 +162,7 @@ speedUpTheSchedule sch (at, speedUpBy) =
 -- | Remove blocks from the given block tree that are not necessary for the
 -- given peer schedules. If entire branches are unused, they are removed. If the
 -- trunk is unused, then it remains as an empty anchored fragment.
-trimBlockTree' :: PointSchedule TestBlock -> BlockTree TestBlock -> BlockTree TestBlock
+trimBlockTree' :: Peers (PeerSchedule TestBlock) -> BlockTree TestBlock -> BlockTree TestBlock
 trimBlockTree' = keepOnlyAncestorsOf . peerSchedulesBlocks
 
 -- | Given some blocks and a block tree, keep only the prefix of the block tree

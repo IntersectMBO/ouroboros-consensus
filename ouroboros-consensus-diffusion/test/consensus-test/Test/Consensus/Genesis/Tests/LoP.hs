@@ -77,14 +77,10 @@ prop_wait mustTimeout =
     dullSchedule _ (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule timeout (_ AF.:> tipBlock) =
       let offset :: DiffTime = if mustTimeout then 1 else -1
-       in PointSchedule $ peersOnlyHonest $
-            [ (Time 0, scheduleTipPoint tipBlock),
-              -- This last point does not matter, it is only here to leave the
-              -- connection open (aka. keep the test running) long enough to
-              -- pass the timeout by 'offset'.
-              (Time (timeout + offset), scheduleHeaderPoint tipBlock),
-              (Time (timeout + offset), scheduleBlockPoint tipBlock)
-            ]
+       in PointSchedule
+            { psSchedule = peersOnlyHonest [(Time 0, scheduleTipPoint tipBlock)]
+            , psMinEndTime = Time $ timeout + offset
+            }
 
 prop_waitBehindForecastHorizon :: Property
 prop_waitBehindForecastHorizon =
@@ -107,11 +103,13 @@ prop_waitBehindForecastHorizon =
     dullSchedule :: (HasHeader blk) => AnchoredFragment blk -> PointSchedule blk
     dullSchedule (AF.Empty _) = error "requires a non-empty block tree"
     dullSchedule (_ AF.:> tipBlock) =
-      PointSchedule $ peersOnlyHonest $
-        [ (Time 0, scheduleTipPoint tipBlock),
-          (Time 0, scheduleHeaderPoint tipBlock),
-          (Time 11, scheduleBlockPoint tipBlock)
-        ]
+      PointSchedule
+        { psSchedule = peersOnlyHonest $
+            [ (Time 0, scheduleTipPoint tipBlock)
+            , (Time 0, scheduleHeaderPoint tipBlock)
+            ]
+        , psMinEndTime = Time 11
+        }
 
 -- | Simple test where we serve all the chain at regular intervals, but just
 -- slow enough to lose against the LoP bucket.
@@ -168,7 +166,7 @@ prop_serve mustTimeout =
     makeSchedule :: (HasHeader blk) => AnchoredFragment blk -> PointSchedule blk
     makeSchedule (AF.Empty _) = error "fragment must have at least one block"
     makeSchedule fragment@(_ AF.:> tipBlock) =
-      PointSchedule $ peersOnlyHonest $
+      mkPointSchedule $ peersOnlyHonest $
         (Time 0, scheduleTipPoint tipBlock)
           : ( flip concatMap (zip [1 ..] (AF.toOldestFirst fragment)) $ \(i, block) ->
                 [ (Time (secondsRationalToDiffTime (i * timeBetweenBlocks)), scheduleHeaderPoint block),
@@ -223,7 +221,7 @@ prop_delayAttack lopEnabled =
             (AF.Empty _)       -> Nothing
             (_ AF.:> tipBlock) -> Just tipBlock
           branchTip = getOnlyBranchTip tree
-       in PointSchedule $ peers'
+          psSchedule = peers'
             -- Eagerly serve the honest tree, but after the adversary has
             -- advertised its chain.
             [ (Time 0, scheduleTipPoint trunkTip) : case intersectM of
@@ -242,11 +240,13 @@ prop_delayAttack lopEnabled =
             -- past the intersection, and wait for LoP bucket.
             [ (Time 0, scheduleTipPoint branchTip) : case intersectM of
                 -- the alternate branch forks from `Origin`
-                Nothing -> [(Time 11, scheduleTipPoint branchTip)]
+                Nothing -> []
                 -- the alternate branch forks from `intersect`
                 Just intersect ->
                   [ (Time 0, scheduleHeaderPoint intersect),
-                    (Time 0, scheduleBlockPoint intersect),
-                    (Time 11, scheduleBlockPoint intersect)
+                    (Time 0, scheduleBlockPoint intersect)
                   ]
             ]
+          -- Wait for LoP bucket to empty
+          psMinEndTime = Time 11
+       in PointSchedule {psSchedule, psMinEndTime}

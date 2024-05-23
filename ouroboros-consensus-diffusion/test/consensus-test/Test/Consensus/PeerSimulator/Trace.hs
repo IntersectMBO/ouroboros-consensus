@@ -64,6 +64,8 @@ data TraceSchedulerEvent blk
     TraceBeginningOfTime
   | -- | Right after running the last tick of the schedule.
     TraceEndOfTime
+  | -- | An extra optional delay to keep the simulation running
+    TraceExtraDelay DiffTime
   | -- | When beginning a new tick. Contains the tick number (counting from
     -- @0@), the duration of the tick, the states, the current chain, the
     -- candidate fragment, and the jumping states.
@@ -195,6 +197,13 @@ traceSchedulerEventTestBlockWith setTickTime tracer0 _tracer = \case
       traceLinesWith tracer0
         [ "╶──────────────────────────────────────────────────────────────────────────────╴",
           "Finished running point schedule"
+        ]
+    TraceExtraDelay delay -> do
+      time <- getMonotonicTime
+      traceLinesWith tracer0
+        [ "┌──────────────────────────────────────────────────────────────────────────────┐",
+          "└─ " ++ prettyTime time,
+          "Waiting an extra delay to keep the simulation running for: " ++ prettyTime (Time delay)
         ]
     TraceNewTick number duration (Peer pid state) currentChain mCandidateFrag jumpingStates -> do
       time <- getMonotonicTime

@@ -126,9 +126,9 @@ prop_CSJ happy synchronized =
   where
     genDuplicatedHonestSchedule :: GenesisTest TestBlock () -> Gen (PointSchedule TestBlock)
     genDuplicatedHonestSchedule gt@GenesisTest {gtExtraHonestPeers} = do
-      ps@PointSchedule {unPointSchedule = Peers {honestPeers, adversarialPeers}} <- genUniformSchedulePoints gt
+      ps@PointSchedule {psSchedule = Peers {honestPeers, adversarialPeers}} <- genUniformSchedulePoints gt
       pure $ ps {
-        unPointSchedule =
+        psSchedule =
           Peers.unionWithKey
             (\_ _ _ -> error "should not happen")
             ( peers'
