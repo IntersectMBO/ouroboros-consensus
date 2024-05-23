@@ -399,8 +399,33 @@ addBlock :: forall blk. LedgerSupportsProtocol blk
          => TopLevelConfig blk
          -> blk
          -> Model blk -> Model blk
-addBlock cfg blk m = Model {
-      volatileDbBlocks = volatileDbBlocks'
+addBlock cfg blk m =
+  if ignoreBlock
+    then m
+    else
+      chainSelection cfg $
+        m
+          { volatileDbBlocks =
+              Map.insert (blockHash blk) blk (volatileDbBlocks m)
+          }
+  where
+    secParam = configSecurityParam cfg
+    immBlockNo = immutableBlockNo secParam m
+
+    hdr = getHeader blk
+
+    ignoreBlock =
+        -- If the block is as old as the tip of the ImmutableDB, i.e. older
+        -- than @k@, we ignore it, as we can never switch to it.
+        olderThanK hdr (headerToIsEBB hdr) immBlockNo ||
+        -- If it's an invalid block we've seen before, ignore it.
+        Map.member (blockHash blk) (invalid m)
+
+chainSelection :: forall blk. LedgerSupportsProtocol blk
+         => TopLevelConfig blk
+         -> Model blk -> Model blk
+chainSelection cfg m = Model {
+      volatileDbBlocks = volatileDbBlocks m
     , immutableDbChain = immutableDbChain m
     , cps              = CPS.switchFork newChain (cps m)
     , currentLedger    = newLedger
@@ -416,30 +441,11 @@ addBlock cfg blk m = Model {
   where
     secParam = configSecurityParam cfg
 
-    immBlockNo = immutableBlockNo secParam m
-
-    hdr = getHeader blk
-
-    ignoreBlock =
-        -- If the block is as old as the tip of the ImmutableDB, i.e. older
-        -- than @k@, we ignore it, as we can never switch to it.
-        olderThanK hdr (headerToIsEBB hdr) immBlockNo ||
-        -- If it's an invalid block we've seen before, ignore it.
-        Map.member (blockHash blk) (invalid m)
-
-    volatileDbBlocks' :: Map (HeaderHash blk) blk
-    volatileDbBlocks'
-        | ignoreBlock
-        = volatileDbBlocks m
-        | otherwise
-        = Map.insert (blockHash blk) blk (volatileDbBlocks m)
-
     -- @invalid'@ will be a (non-strict) superset of the previous value of
     -- @invalid@, see 'validChains', thus no need to union.
     invalid'   :: InvalidBlocks blk
     candidates :: [(Chain blk, ExtLedgerState blk)]
-    (invalid', candidates) =
-        validChains cfg m (immutableDbBlocks m <> volatileDbBlocks')
+    (invalid', candidates) = validChains cfg m (blocks m)
 
     immutableChainHashes =
         map blockHash
@@ -526,8 +532,16 @@ addBlockPromise cfg blk m = (result, m')
       , blockProcessed     = return $ SuccesfullyAddedBlock $ tipPoint m'
       }
 
-updateLoE :: AnchoredFragment blk -> Model blk -> Model blk
-updateLoE f m = m {loeFragment = loeFragment m $> (Fragment.anchor f, Fragment.toOldestFirst f)}
+updateLoE ::
+  forall blk.
+  LedgerSupportsProtocol blk =>
+  TopLevelConfig blk ->
+  AnchoredFragment blk ->
+  Model blk ->
+  Model blk
+updateLoE cfg f m =
+  chainSelection cfg $
+    m {loeFragment = loeFragment m $> (Fragment.anchor f, Fragment.toOldestFirst f)}
 
 {-------------------------------------------------------------------------------
   Iterators

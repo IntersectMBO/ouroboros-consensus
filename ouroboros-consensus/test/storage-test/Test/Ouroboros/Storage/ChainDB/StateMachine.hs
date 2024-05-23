@@ -173,7 +173,7 @@ import           Test.Util.WithEq
 data Cmd blk it flr
   = AddBlock       blk
     -- ^ Advance the current slot to the block's slot (unless smaller than the
-    -- current slot) and add the block.
+    -- current slot), add the block and run chain selection.
   | AddFutureBlock blk SlotNo
     -- ^ Advance the current slot to the given slot, which is guaranteed to be
     -- smaller than the block's slot number (such that the block is from the
@@ -190,6 +190,7 @@ data Cmd blk it flr
   | GetIsValid            (RealPoint blk)
   | Stream                (StreamFrom blk) (StreamTo blk)
   | UpdateLoE             (AnchoredFragment blk)
+    -- ^ Update the LoE fragment and run chain selection.
   | IteratorNext          it
   | IteratorNextGCed      it
     -- ^ Only for blocks that may have been garbage collected.
@@ -647,7 +648,7 @@ runPure cfg = \case
     GetGCedBlockComponent pt -> err mbGCedAllComponents $ query   (Model.getBlockComponentByPoint allComponents pt)
     GetMaxSlotNo             -> ok  MaxSlot             $ query    Model.getMaxSlotNo
     GetIsValid pt            -> ok  isValidResult       $ query   (Model.isValid pt)
-    UpdateLoE frag           -> ok  Unit                $ update_ (Model.updateLoE frag)
+    UpdateLoE frag           -> ok  Unit                $ update_ (Model.updateLoE cfg frag)
     Stream from to           -> err iter                $ updateE (Model.stream k from to)
     IteratorNext  it         -> ok  IterResult          $ update  (Model.iteratorNext it allComponents)
     IteratorNextGCed it      -> ok  iterResultGCed      $ update  (Model.iteratorNext it allComponents)
