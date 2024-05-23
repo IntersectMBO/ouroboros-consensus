@@ -1,0 +1,37 @@
+\begin{thebibliography}{DGKR17}
+\expandafter\ifx\csname url\endcsname\relax
+  \def\url#1{\texttt{#1}}\fi
+\expandafter\ifx\csname doi\endcsname\relax
+  \def\doi#1{\burlalt{doi:#1}{http://dx.doi.org/#1}}\fi
+\expandafter\ifx\csname urlprefix\endcsname\relax\def\urlprefix{URL }\fi
+\expandafter\ifx\csname href\endcsname\relax
+  \def\href#1#2{#2}\fi
+\expandafter\ifx\csname burlalt\endcsname\relax
+  \def\burlalt#1#2{\href{#2}{#1}}\fi
+
+\bibitem[BC-D1]{byron_chain_spec}
+{IOHK Formal Methods Team}.
+\newblock {Byron Blockchain Specification, IOHK Deliverable BC-D1}, 2019.
+\newblock
+  \urlprefix\url{https://github.com/intersectmbo/cardano-ledger/tree/master/docs/}.
+
+\bibitem[SL-D5]{shelley_chain_spec}
+{IOHK Formal Methods Team}.
+\newblock {A Formal Specification of the Cardano Ledger}, 2019.
+\newblock
+  \urlprefix\url{https://github.com/intersectmbo/cardano-ledger/releases/latest/download/shelley-ledger.pdf}
+
+\bibitem[DGKR17]{ouroboros_praos}
+B.~M. David, P.~Gazi, A.~Kiayias, and A.~Russell.
+\newblock Ouroboros praos: An adaptively-secure, semi-synchronous
+  proof-of-stake protocol.
+\newblock {\em IACR Cryptology ePrint Archive}, 2017:573, 2017.
+
+\bibitem[SL-D1]{delegation_design}
+{IOHK Formal Methods Team}.
+\newblock {Design Specification for Delegation and Incentives in Cardano, IOHK
+  Deliverable SL-D1}, 2018.
+\newblock
+  \urlprefix\url{https://github.com/intersectmbo/cardano-ledger/releases/latest/download/shelley-delegation.pdf}.
+
+\end{thebibliography}
