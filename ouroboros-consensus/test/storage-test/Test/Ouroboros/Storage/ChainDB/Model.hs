@@ -467,27 +467,26 @@ chainSelection cfg m = Model {
 
     -- REVIEW: This might lead to 'consideredCandidates' containing duplicates;
     -- is this a problem?
-    --
-    -- REVIEW: Should we avoid considering candidates that fork off the LoE
-    -- fragment? (see followsLoEFrag)
     trimToLoE :: Chain blk -> Maybe (Chain blk)
     trimToLoE chain =
       case loeFragment m of
         LoEDisabled -> Just chain
         LoEEnabled (loeAnchor, loeBlocks) ->
           case Fragment.intersect (Chain.toAnchoredFragment chain) (Fragment.fromOldestFirst loeAnchor loeBlocks) of
-            Nothing -> error "trimToLoE: chain does not intersect with LoE fragment"
-            Just (_, _, chainSuffix, loeSuffix)
-              | not (Fragment.null chainSuffix) && not (Fragment.null loeSuffix) ->
-                  Nothing
-            Just (chainPrefix, _, chainSuffix, _) ->
-              let trimmedSuffix = Fragment.takeOldest (fromIntegral $ maxRollbacks secParam) chainSuffix in
-              case Fragment.join chainPrefix trimmedSuffix of
-                Nothing -> error "trimToLoE: chainPrefix and chainSuffix do not join, violating the postcondition of AnchoredFragment.intersect"
-                Just trimmedChain ->
-                  case Chain.fromAnchoredFragment trimmedChain of
-                    Nothing -> error "trimToLoE: trimmedChain is not anchored at Origin"
-                    Just trimmedChain' -> Just trimmedChain'
+            -- NOTE: There needs to be an intersection, but not any kind of
+            -- intersection: we accept only fragments that extend the LoE.
+            -- Although not strictly necessary, this prevents some peculiar
+            -- transient states.
+            Just (chainPrefix, _, chainSuffix, loeSuffix)
+              | Fragment.null chainSuffix || Fragment.null loeSuffix ->
+                  let trimmedSuffix = Fragment.takeOldest (fromIntegral $ maxRollbacks secParam) chainSuffix
+                  in case Fragment.join chainPrefix trimmedSuffix of
+                        Nothing -> error "bug in trimToLoE: chainPrefix and chainSuffix do not join, violating the postcondition of AnchoredFragment.intersect"
+                        Just trimmedChain ->
+                          case Chain.fromAnchoredFragment trimmedChain of
+                            Nothing -> error "bug in trimToLoE: trimmedChain is not anchored at Origin"
+                            Just trimmedChain' -> Just trimmedChain'
+            _ -> Nothing
 
     newChain  :: Chain blk
     newLedger :: ExtLedgerState blk
