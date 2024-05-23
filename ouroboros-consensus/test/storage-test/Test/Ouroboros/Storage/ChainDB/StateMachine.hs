@@ -961,6 +961,7 @@ generator loe genBlock m@Model {..} = At <$> frequency
 
     -- TODO: sometimes generate fragments that connect to a disconnected block of the ChainDB
     -- TODO: sometimes generate fragments that exit the ChainDB
+    -- TODO: sometimes generate fragments that do not contain the immutable tip
     genLoEFragment :: Gen (AnchoredFragment blk)
     genLoEFragment = do
       let immutableChain = Model.immutableChain secParam dbModel
