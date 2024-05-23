@@ -7,7 +7,7 @@
 {-# LANGUAGE InstanceSigs               #-}
 {-# LANGUAGE LambdaCase                 #-}
 
-module Ouroboros.Consensus.Ledger.Tables.Diffs (
+module Ouroboros.Consensus.Ledger.Tables.Diff (
     -- * Types
     Delta (..)
   , Diff (..)
@@ -212,7 +212,11 @@ toAntiDiff (Diff d) = Anti.Diff (Map.map f d)
     f (Insert v) = Anti.singletonInsert v
     f Delete     = Anti.singletonDelete undefined
 
--- | Traversal with keys over the last delta in each delta history.
+{-------------------------------------------------------------------------------
+  Traversals and folds
+-------------------------------------------------------------------------------}
+
+-- | Traversal with keys over the deltas.
 traverseDeltaWithKey_ ::
      Applicative t
   => (k -> Delta v -> t a)
@@ -220,6 +224,6 @@ traverseDeltaWithKey_ ::
   -> t ()
 traverseDeltaWithKey_ f (Diff m) = void $ Map.traverseWithKey f m
 
--- | @'foldMap'@ over the last delta in each delta history.
-foldMapDelta :: (Monoid m) => (Delta v -> m) -> Diff k v -> m
+-- | @'foldMap'@ over the deltas.
+foldMapDelta :: Monoid m => (Delta v -> m) -> Diff k v -> m
 foldMapDelta f (Diff m) = foldMap f m

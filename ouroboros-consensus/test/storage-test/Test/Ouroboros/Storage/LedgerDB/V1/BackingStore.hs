@@ -33,7 +33,7 @@ import qualified Data.Set as Set
 import qualified Data.SOP.Dict as Dict
 import           Data.Typeable
 import           Ouroboros.Consensus.Ledger.Tables
-import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diff
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as BS
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
@@ -327,12 +327,6 @@ instance (Ord k, QC.Arbitrary k, QC.Arbitrary v)
 
 deriving newtype instance (Ord k, QC.Arbitrary k, QC.Arbitrary v)
                        => QC.Arbitrary (Diff.Diff k v)
-
-{- instance QC.Arbitrary v => QC.Arbitrary (Diff.DeltaHistory v) where
-  arbitrary = Diff.DeltaHistory <$> ((:<||) <$> QC.arbitrary <*> QC.arbitrary)
-  shrink (Diff.DeltaHistory h) =
-    fmap Diff.DeltaHistory $ mapMaybe NESeq.nonEmptySeq $ QC.shrink (NESeq.toSeq h)
- -}
 instance QC.Arbitrary v => QC.Arbitrary (Diff.Delta v) where
   arbitrary =
     QC.oneof [

@@ -41,7 +41,7 @@ import qualified Database.LMDB.Simple.TransactionHandle as TrH
 import           GHC.Generics (Generic)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Ledger.Tables
-import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diffs
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.API as API
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Bridge as Bridge
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore.Impl.LMDB.Status
@@ -213,11 +213,11 @@ writeLMDBTable ::
 writeLMDBTable (LMDBMK _ db) codecMK (DiffMK d) =
     EmptyMK <$ lmdbWriteTable
   where
-    lmdbWriteTable = void $ Diffs.traverseDeltaWithKey_ go d
+    lmdbWriteTable = void $ Diff.traverseDeltaWithKey_ go d
       where
         go k de = case de of
-          Diffs.Delete   -> void $ Bridge.delete codecMK db k
-          Diffs.Insert v -> Bridge.put codecMK db k v
+          Diff.Delete   -> void $ Bridge.delete codecMK db k
+          Diff.Insert v -> Bridge.put codecMK db k v
 
 {-------------------------------------------------------------------------------
  Db state

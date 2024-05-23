@@ -51,7 +51,8 @@ import           Ouroboros.Consensus.HardFork.Combinator.State.Types
 import           Ouroboros.Consensus.Ledger.Basics (LedgerCfg, LedgerConfig,
                      LedgerState)
 import           Ouroboros.Consensus.Ledger.Tables
-import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diff
+import           Ouroboros.Consensus.Ledger.Tables.Diff (Diff)
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Praos
 import           Ouroboros.Consensus.Protocol.Praos.Common
@@ -272,9 +273,7 @@ shelleyAvvmAddressesAreDeletesInUtxoDiff srcLedgerState destLedgerState =
       :: LedgerState (ShelleyBlock Proto (ShelleyEra Crypto)) EmptyMK
       -> Diff.Diff (TxIn Crypto) (Core.TxOut (AllegraEra Crypto))
     toNextUtxoDiff = avvmAddressesToUtxoDiff . stashedAVVMAddresses . shelleyLedgerState
-    avvmAddressesToUtxoDiff (UTxO m) =
-      let func _txOut = Diff.Delete -- (Core.translateEra' () txOut)
-      in Diff.Diff $ dimap id func m
+    avvmAddressesToUtxoDiff (UTxO m) = Diff.Diff $ dimap id (\_ -> Diff.Delete) m
 
 utxoTablesAreEmpty
   :: LedgerState (ShelleyBlock srcProto srcEra) EmptyMK
@@ -303,7 +302,7 @@ nonEmptyAvvmAddresses ledgerState =
 
 extractUtxoDiff
   :: LedgerState (ShelleyBlock proto era) DiffMK
-  -> Diff.Diff (TxIn (EraCrypto era)) (Core.TxOut era)
+  -> Diff (TxIn (EraCrypto era)) (Core.TxOut era)
 extractUtxoDiff shelleyLedgerState =
   let DiffMK tables = getLedgerTables $ shelleyLedgerTables shelleyLedgerState
   in tables

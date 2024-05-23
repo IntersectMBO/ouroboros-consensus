@@ -27,7 +27,7 @@ import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
-import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diffs
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (numDeletes,
                      numInserts)
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
@@ -325,7 +325,7 @@ implForkerRangeReadTables env rq0 = do
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> DiffMK k v
-    prj (SeqDiffMK sq) = DiffMK (Diffs.fromAntiDiff $ DS.cumulativeDiff sq)
+    prj (SeqDiffMK sq) = DiffMK (Diff.fromAntiDiff $ DS.cumulativeDiff sq)
 
     -- Remove all diff elements that are <= to the greatest given key
     doDropLTE ::
@@ -337,16 +337,16 @@ implForkerRangeReadTables env rq0 = do
         DiffMK
       $ case Set.lookupMax ks of
           Nothing -> ds
-          Just k  -> Diffs.filterOnlyKey (> k) ds
+          Just k  -> Diff.filterOnlyKey (> k) ds
 
     -- NOTE: this is counting the deletions wrt disk.
     numDeletesDiffMK :: DiffMK k v -> Int
     numDeletesDiffMK (DiffMK d) =
-      getSum $ Diffs.foldMapDelta (Sum . oneIfDel) d
+      getSum $ Diff.foldMapDelta (Sum . oneIfDel) d
       where
         oneIfDel x = case x of
-          Diffs.Delete   -> 1
-          Diffs.Insert _ -> 0
+          Diff.Delete   -> 1
+          Diff.Insert _ -> 0
 
     -- INVARIANT: nrequested > 0
     --
@@ -380,7 +380,7 @@ implForkerRangeReadTables env rq0 = do
       (DiffMK ds)
       (ValuesMK vs) =
         let includingAllKeys        =
-              Diffs.applyDiff vs ds
+              Diff.applyDiff vs ds
             definitelyNoMoreToFetch = Map.size vs < nrequested
         in
         ValuesMK
@@ -391,9 +391,9 @@ implForkerRangeReadTables env rq0 = do
               else error $ "Size of values " <> show (Map.size vs) <> ", nrequested " <> show nrequested
           Just ((k, _v), vs') ->
             if definitelyNoMoreToFetch then includingAllKeys else
-            Diffs.applyDiff
+            Diff.applyDiff
               vs'
-               (Diffs.filterOnlyKey (< k) ds)
+               (Diff.filterOnlyKey (< k) ds)
 
 implForkerGetLedgerState ::
      (MonadSTM m, GetTip l)

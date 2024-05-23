@@ -42,7 +42,7 @@ import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
                      CanStowLedgerTables, DiffMK (..), EmptyMK, EqMK,
                      HasLedgerTables, Key, KeysMK (..), LedgerTables (..),
                      NoThunksMK, ShowMK, Value, ValuesMK (..))
-import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diffs
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Test.Util.TestBlock (LedgerState (TestLedger),
@@ -129,9 +129,9 @@ instance PayloadSemantics Tx where
       TestPLDS toks@(ValuesMK tokMap) = plds
       Tx {consumed, produced}         = tx
 
-      consumedDiff, producedDiff :: Diffs.Diff Token ()
-      consumedDiff = Diffs.fromListDeletes [(t, ()) | t <- Set.toList consumed]
-      producedDiff = Diffs.fromListInserts [(t, ()) | t <- Set.toList produced]
+      consumedDiff, producedDiff :: Diff.Diff Token ()
+      consumedDiff = Diff.fromListDeletes [(t, ()) | t <- Set.toList consumed]
+      producedDiff = Diff.fromListInserts [(t, ()) | t <- Set.toList produced]
 
       fullDiff :: DiffMK Token ()
       fullDiff = DiffMK $ consumedDiff <> producedDiff

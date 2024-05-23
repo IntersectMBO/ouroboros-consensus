@@ -13,7 +13,7 @@ import           Data.SOP.Dict (Dict (..))
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Ledger.Tables (DiffMK (..), KeysMK (..),
                      LedgerTables (..), ValuesMK)
-import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diffs
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
@@ -146,7 +146,7 @@ oneWritePer100Reads n = concat [
     -- the block.
     mkWrite :: [(SlotNo, Word64)] -> Cmd K V D
     mkWrite block = BSWrite (fst $ last block) $
-        mkDiffs $ Diffs.fromListInserts [(x,x) | (_sl, x) <- block]
+        mkDiffs $ Diff.fromListInserts [(x,x) | (_sl, x) <- block]
 
     -- Each value is read once.
     mkReads :: [(SlotNo, Word64)] -> [Cmd K V D]
@@ -175,7 +175,7 @@ mkKey = mkKeys . Set.singleton
 mkKeys :: Set k -> OTLedgerTables k v KeysMK
 mkKeys = LedgerTables . KeysMK
 
-mkDiffs :: Diffs.Diff k v -> OTLedgerTables k v DiffMK
+mkDiffs :: Diff.Diff k v -> OTLedgerTables k v DiffMK
 mkDiffs = LedgerTables . DiffMK
 
 groupsOfN :: Int -> [a] -> [[a]]

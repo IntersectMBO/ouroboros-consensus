@@ -29,7 +29,7 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import           Ouroboros.Consensus.Ledger.Basics hiding (Key, LedgerState)
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
-import           Ouroboros.Consensus.Ledger.Tables.Diffs (fromAntiDiff)
+import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff)
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
                      (DbChangelog (..))

@@ -16,7 +16,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import           Data.Typeable
-import           Ouroboros.Consensus.Ledger.Tables.Diffs
+import           Ouroboros.Consensus.Ledger.Tables.Diff
 import           Test.QuickCheck.Classes
 import           Test.Tasty (TestTree, testGroup)
 import           Test.Tasty.QuickCheck hiding (Negative, Positive)

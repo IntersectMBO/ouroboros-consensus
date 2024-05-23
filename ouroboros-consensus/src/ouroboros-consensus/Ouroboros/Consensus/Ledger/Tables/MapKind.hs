@@ -37,8 +37,7 @@ import qualified Data.Set as Set
 import           GHC.Generics (Generic)
 import           NoThunks.Class
 import           Ouroboros.Consensus.Ledger.Tables.Basics
-import           Ouroboros.Consensus.Ledger.Tables.Diffs (Diff)
-import qualified Ouroboros.Consensus.Ledger.Tables.Diffs as Diff
+import           Ouroboros.Consensus.Ledger.Tables.Diff (Diff(..))
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq
 
 {-------------------------------------------------------------------------------
@@ -142,7 +141,7 @@ instance ZeroableMK DiffMK where
   emptyMK = DiffMK mempty
 
 instance CanMapKeysMK DiffMK where
-  mapKeysMK f (DiffMK (Diff.Diff m)) = DiffMK . Diff.Diff $
+  mapKeysMK f (DiffMK (Diff m)) = DiffMK . Diff $
     Map.mapKeys f m
 
 instance CanMapMK DiffMK where

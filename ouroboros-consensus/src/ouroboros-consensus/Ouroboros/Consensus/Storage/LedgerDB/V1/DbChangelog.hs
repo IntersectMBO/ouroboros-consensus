@@ -192,7 +192,7 @@ import           Cardano.Slotting.Slot
 import           Control.Exception as Exn
 import           Data.Bifunctor (bimap)
 import           Data.Functor.Identity
-import           Data.Map.Diff.Strict (applyDiffForKeys)
+import           Data.Map.Diff.Strict as AntiDiff (applyDiffForKeys)
 import           Data.Monoid (Sum (..))
 import           Data.SOP (K, unK)
 import           Data.SOP.Functors
@@ -202,7 +202,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Tables.Diffs (fromAntiDiff,
+import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff,
                      toAntiDiff)
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
@@ -618,7 +618,7 @@ forwardTableKeySets' seqNo chdiffs = \(UnforwardedReadSets seqNo' values keys) -
       -> SeqDiffMK k v
       -> ValuesMK  k v
     forward (ValuesMK values) (KeysMK keys) (SeqDiffMK diffs) =
-      ValuesMK $ applyDiffForKeys values keys (DS.cumulativeDiff diffs)
+      ValuesMK $ AntiDiff.applyDiffForKeys values keys (DS.cumulativeDiff diffs)
 
 forwardTableKeySets ::
      HasLedgerTables l
