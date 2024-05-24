@@ -147,6 +147,7 @@ library
     Ouroboros.Consensus.Ledger.Tables
     Ouroboros.Consensus.Ledger.Tables.Basics
     Ouroboros.Consensus.Ledger.Tables.Combinators
+    Ouroboros.Consensus.Ledger.Tables.Diff
     Ouroboros.Consensus.Ledger.Tables.DiffSeq
     Ouroboros.Consensus.Ledger.Tables.MapKind
     Ouroboros.Consensus.Ledger.Tables.Utils
@@ -296,7 +297,7 @@ library
     , containers                   >=0.5    && <0.7
     , contra-tracer
     , deepseq
-    , diff-containers              >=1.1
+    , diff-containers              >=1.2
     , filelock
     , fingertree-rm                >=1.0
     , fs-api                       ^>=0.2
@@ -534,6 +535,7 @@ test-suite consensus-test
     Test.Consensus.HardFork.History
     Test.Consensus.HardFork.Infra
     Test.Consensus.HardFork.Summary
+    Test.Consensus.Ledger.Tables.Diff
     Test.Consensus.Ledger.Tables.DiffSeq
     Test.Consensus.Mempool
     Test.Consensus.Mempool.Fairness
@@ -561,8 +563,8 @@ test-suite consensus-test
     , containers
     , contra-tracer
     , deepseq
-    , diff-containers                                                     >=1.1
-    , fingertree-rm                                                       >=1.0
+    , diff-containers
+    , fingertree-rm
     , fs-api                                                              ^>=0.2
     , fs-sim
     , generics-sop
@@ -683,7 +685,7 @@ test-suite storage-test
     , constraints
     , containers
     , contra-tracer
-    , diff-containers                                >=1.1
+    , diff-containers
     , directory
     , fs-api                                         ^>=0.2
     , fs-sim                                         ^>=0.2
@@ -692,7 +694,6 @@ test-suite storage-test
     , io-classes
     , io-sim
     , mtl
-    , nonempty-containers
     , nothunks
     , ouroboros-consensus
     , ouroboros-network-api
@@ -738,7 +739,6 @@ benchmark mempool-bench
     , containers
     , contra-tracer
     , deepseq
-    , diff-containers              >=1.1
     , nothunks
     , ouroboros-consensus
     , serialise
@@ -783,7 +783,6 @@ benchmark backingstore-bench
     , cardano-slotting
     , containers
     , deepseq
-    , diff-containers             >=1.1
     , directory
     , fs-api
     , io-classes

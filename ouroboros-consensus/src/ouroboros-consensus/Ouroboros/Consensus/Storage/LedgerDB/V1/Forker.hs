@@ -20,7 +20,6 @@ module Ouroboros.Consensus.Storage.LedgerDB.V1.Forker (
 
 import           Control.Tracer
 import           Data.Functor.Contravariant ((>$<))
-import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Semigroup
 import qualified Data.Set as Set
@@ -28,6 +27,7 @@ import           Data.Word
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq (numDeletes,
                      numInserts)
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
@@ -325,7 +325,7 @@ implForkerRangeReadTables env rq0 = do
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> DiffMK k v
-    prj (SeqDiffMK sq) = DiffMK (DS.cumulativeDiff sq)
+    prj (SeqDiffMK sq) = DiffMK (Diff.fromAntiDiff $ DS.cumulativeDiff sq)
 
     -- Remove all diff elements that are <= to the greatest given key
     doDropLTE ::
@@ -345,7 +345,7 @@ implForkerRangeReadTables env rq0 = do
       getSum $ Diff.foldMapDelta (Sum . oneIfDel) d
       where
         oneIfDel x = case x of
-          Diff.Delete _ -> 1
+          Diff.Delete   -> 1
           Diff.Insert _ -> 0
 
     -- INVARIANT: nrequested > 0

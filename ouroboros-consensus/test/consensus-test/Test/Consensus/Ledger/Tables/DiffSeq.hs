@@ -23,7 +23,7 @@ import           Test.Tasty.QuickCheck
 import           Test.Util.Orphans.Arbitrary ()
 
 tests :: TestTree
-tests = testGroup "DiffSeq" [
+tests = testGroup "Test.Consensus.Ledger.Tables.DiffSeq" [
     lawsTestOne (Proxy @(RootMeasure Key Val)) [
         semigroupLaws
       , monoidLaws
@@ -67,7 +67,7 @@ instance (Arbitrary v) => Arbitrary (DeltaHistory v) where
 instance (Arbitrary v) => Arbitrary (Delta v) where
   arbitrary = oneof [
       Insert <$> arbitrary
-    , Delete <$> arbitrary
+    , pure Delete
     ]
 
 {-------------------------------------------------------------------------------

@@ -59,7 +59,6 @@ import           Control.Monad.Except (runExcept, throwError)
 import qualified Control.State.Transition as STS
 import           Data.Coerce (coerce)
 import           Data.Functor.Identity
-import qualified Data.Map.Diff.Strict.Internal as Diff.Internal
 import qualified Data.Map.Strict as Map
 import           Data.Maybe (listToMaybe, mapMaybe)
 import           Data.Proxy
@@ -89,6 +88,7 @@ import           Ouroboros.Consensus.HardFork.Simple
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Protocol.PBFT (PBft, PBftCrypto)
@@ -593,7 +593,7 @@ translateLedgerStateShelleyToAllegraWrapper =
                   -- differences, we will have to revisit this.
                   avvmsAsDeletions = LedgerTables
                                    . DiffMK
-                                   . Diff.Internal.fromMapDeletes
+                                   . Diff.fromMapDeletes
                                    . Map.map Core.upgradeTxOut
                                    $ avvms
 

@@ -27,8 +27,6 @@ import qualified Cardano.Slotting.Time as Time
 import           Codec.Serialise (Serialise (..))
 import           Control.DeepSeq (NFData)
 import           Control.Monad.Trans.Except (except)
-import           Data.Map.Diff.Strict (Diff)
-import qualified Data.Map.Diff.Strict as Diff
 import qualified Data.Map.Strict as Map
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -44,6 +42,7 @@ import           Ouroboros.Consensus.Ledger.Tables (CanSerializeLedgerTables,
                      CanStowLedgerTables, DiffMK (..), EmptyMK, EqMK,
                      HasLedgerTables, Key, KeysMK (..), LedgerTables (..),
                      NoThunksMK, ShowMK, Value, ValuesMK (..))
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import qualified Ouroboros.Consensus.Ledger.Tables.Utils as Ledger
 import qualified Ouroboros.Consensus.Mempool as Mempool
 import           Test.Util.TestBlock (LedgerState (TestLedger),
@@ -100,7 +99,13 @@ sampleLedgerConfig =
   Payload semantics
 -------------------------------------------------------------------------------}
 
-newtype TxApplicationError =
+data TestLedgerState = TestLedgerState {
+    availableTokens :: !(Set Token)
+  }
+  deriving stock (Generic, Eq, Show)
+  deriving anyclass (NoThunks, ToExpr, Serialise)
+
+data TxApplicationError =
     -- | The transaction could not be applied due to the given unavailable tokens.
     TxApplicationError { unavailable :: Set Token }
   deriving stock (Generic, Eq, Show)
@@ -124,7 +129,7 @@ instance PayloadSemantics Tx where
       TestPLDS toks@(ValuesMK tokMap) = plds
       Tx {consumed, produced}         = tx
 
-      consumedDiff, producedDiff :: Diff Token ()
+      consumedDiff, producedDiff :: Diff.Diff Token ()
       consumedDiff = Diff.fromListDeletes [(t, ()) | t <- Set.toList consumed]
       producedDiff = Diff.fromListInserts [(t, ()) | t <- Set.toList produced]
 

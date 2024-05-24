@@ -4,6 +4,7 @@ import qualified Test.Consensus.BlockchainTime.Simple (tests)
 import qualified Test.Consensus.HardFork.Forecast (tests)
 import qualified Test.Consensus.HardFork.History (tests)
 import qualified Test.Consensus.HardFork.Summary (tests)
+import qualified Test.Consensus.Ledger.Tables.Diff (tests)
 import qualified Test.Consensus.Ledger.Tables.DiffSeq (tests)
 import qualified Test.Consensus.Mempool (tests)
 import qualified Test.Consensus.Mempool.Fairness (tests)
@@ -47,5 +48,6 @@ tests =
             Test.Consensus.HardFork.Forecast.tests
           ]
       ]
+  , Test.Consensus.Ledger.Tables.Diff.tests
   , Test.Consensus.Ledger.Tables.DiffSeq.tests
   ]

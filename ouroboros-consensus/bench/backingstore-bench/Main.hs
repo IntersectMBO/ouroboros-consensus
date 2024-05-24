@@ -7,14 +7,13 @@ import           Bench.Commands (BackingStoreInitialiser, Cmd (..), run)
 import           Cardano.Slotting.Slot (SlotNo, WithOrigin (..))
 import           Control.DeepSeq (NFData (..), rwhnf)
 import           Control.Monad.Class.MonadThrow (MonadThrow)
-import           Data.Map.Diff.Strict (Diff)
-import qualified Data.Map.Diff.Strict as Diff
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.SOP.Dict (Dict (..))
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Ledger.Tables (DiffMK (..), KeysMK (..),
                      LedgerTables (..), ValuesMK)
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 import           Ouroboros.Consensus.Ledger.Tables.Utils (emptyLedgerTables)
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.BackingStore as BS
@@ -176,7 +175,7 @@ mkKey = mkKeys . Set.singleton
 mkKeys :: Set k -> OTLedgerTables k v KeysMK
 mkKeys = LedgerTables . KeysMK
 
-mkDiffs :: Diff k v -> OTLedgerTables k v DiffMK
+mkDiffs :: Diff.Diff k v -> OTLedgerTables k v DiffMK
 mkDiffs = LedgerTables . DiffMK
 
 groupsOfN :: Int -> [a] -> [[a]]

@@ -17,6 +17,8 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
     ltprj
   , over
     -- * Utils aliases: tables
+  , applyDiffForKeys
+  , applyDiffForKeysOnTables
   , applyDiffs
   , applyDiffs'
   , attachAndApplyDiffs
@@ -50,9 +52,9 @@ module Ouroboros.Consensus.Ledger.Tables.Utils (
   , rawRestrictValues
   ) where
 
-import           Data.Map.Diff.Strict
 import qualified Data.Map.Strict as Map
 import           Ouroboros.Consensus.Ledger.Tables
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 
 {-------------------------------------------------------------------------------
   Projection and injection
@@ -148,7 +150,7 @@ rawApplyDiffs ::
   => ValuesMK k v -- ^ Values to which differences are applied
   -> DiffMK   k v -- ^ Differences to apply
   -> ValuesMK k v
-rawApplyDiffs (ValuesMK vals) (DiffMK diffs) = ValuesMK (applyDiff vals diffs)
+rawApplyDiffs (ValuesMK vals) (DiffMK diffs) = ValuesMK (Diff.applyDiff vals diffs)
 
 -- | Apply diffs from the second ledger state to the values of the first ledger
 -- state. Returns ledger tables.
@@ -164,6 +166,35 @@ applyDiffs ::
   => l ValuesMK -> l' DiffMK -> l' ValuesMK
 applyDiffs l1 l2 = over l2 $ applyDiffs' l1 l2
 
+rawApplyDiffForKeys ::
+     Ord k
+  => ValuesMK k v
+  -> KeysMK k v
+  -> DiffMK k v
+  -> ValuesMK k v
+rawApplyDiffForKeys (ValuesMK vals) (KeysMK keys) (DiffMK diffs) =
+  ValuesMK (Diff.applyDiffForKeys vals keys diffs)
+
+applyDiffForKeys' ::
+     (Castable l l'', Castable l l', HasLedgerTables l, HasLedgerTables l')
+  => l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> LedgerTables l'' ValuesMK
+applyDiffForKeys' l1 l2 l3 = ltliftA3 rawApplyDiffForKeys (ltprj l1) (castLedgerTables l2) (ltprj l3)
+
+applyDiffForKeys ::
+     (Castable l l', HasLedgerTables l, HasLedgerTables l')
+  => l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> l' ValuesMK
+applyDiffForKeys l1 l2 l3 = over l3 $ applyDiffForKeys' l1 l2 l3
+
+applyDiffForKeys'onTables ::
+     (Castable l l'', Castable l l', HasLedgerTables l, HasLedgerTables l')
+  => LedgerTables l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> LedgerTables l'' ValuesMK
+applyDiffForKeys'onTables l1 l2 l3 = ltliftA3 rawApplyDiffForKeys (castLedgerTables l1) (castLedgerTables l2) (ltprj l3)
+
+applyDiffForKeysOnTables ::
+     (Castable l l', HasLedgerTables l, HasLedgerTables l')
+  => LedgerTables l ValuesMK -> LedgerTables l KeysMK -> l' DiffMK -> l' ValuesMK
+applyDiffForKeysOnTables l1 l2 l3 = over l3 $ applyDiffForKeys'onTables l1 l2 l3
+
 --
 -- Calculate differences
 --
@@ -173,7 +204,7 @@ rawCalculateDifference ::
   => ValuesMK   k v
   -> ValuesMK   k v
   -> TrackingMK k v
-rawCalculateDifference (ValuesMK before) (ValuesMK after) = TrackingMK after (diff before after)
+rawCalculateDifference (ValuesMK before) (ValuesMK after) = TrackingMK after (Diff.diff before after)
 
 calculateAdditions ::
      (LedgerTableConstraints l, HasLedgerTables l)
@@ -204,7 +235,7 @@ rawAttachAndApplyDiffs ::
   => DiffMK     k v
   -> ValuesMK   k v
   -> TrackingMK k v
-rawAttachAndApplyDiffs (DiffMK d) (ValuesMK v) = TrackingMK (applyDiff v d) d
+rawAttachAndApplyDiffs (DiffMK d) (ValuesMK v) = TrackingMK (Diff.applyDiff v d) d
 
 -- | Apply the differences from the first ledger state to the values of the
 -- second ledger state, and returns the resulting values together with the
@@ -270,7 +301,7 @@ rawReapplyTracking ::
   => TrackingMK k v
   -> ValuesMK   k v
   -> TrackingMK k v
-rawReapplyTracking (TrackingMK _v d) (ValuesMK v) = TrackingMK (applyDiff v d) d
+rawReapplyTracking (TrackingMK _v d) (ValuesMK v) = TrackingMK (Diff.applyDiff v d) d
 
 -- | Replace the tables in the first parameter with the tables of the second
 -- parameter after applying the differences in the first parameter to them

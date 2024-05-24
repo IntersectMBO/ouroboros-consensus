@@ -29,6 +29,7 @@ import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Config.SecurityParam (SecurityParam (..))
 import           Ouroboros.Consensus.Ledger.Basics hiding (Key, LedgerState)
 import qualified Ouroboros.Consensus.Ledger.Basics as Ledger
+import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff)
 import           Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Storage.LedgerDB.V1.DbChangelog
                      (DbChangelog (..))
@@ -185,7 +186,7 @@ applyOperations ops dblog = foldr' apply' dblog ops
 prop_flushingSplitsTheChangelog :: DbChangelogTestSetup -> Property
 prop_flushingSplitsTheChangelog setup = isNothing toFlush .||.
     (    toKeepTip            === At toFlushTip
-    .&&. cumulativeDiff diffs === toFlushDiffs <> cumulativeDiff toKeepDiffs
+    .&&. fromAntiDiff (cumulativeDiff diffs) === toFlushDiffs <> fromAntiDiff (cumulativeDiff toKeepDiffs)
     )
   where
     dblog                                    = resultingDbChangelog setup
@@ -291,7 +292,7 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
     genExtend = do
       nextSlotNo <- advanceSlotNo =<< lift (chooseEnum (1, 5))
       d <- genUtxoDiff
-      pure $ Extend $ TestLedger (DiffMK d) (castPoint $ pointAtSlot nextSlotNo)
+      pure $ Extend $ TestLedger (DiffMK $ fromAntiDiff d) (castPoint $ pointAtSlot nextSlotNo)
 
     advanceSlotNo :: SlotNo -> StateT GenOperationsState Gen (WithOrigin SlotNo)
     advanceSlotNo by = do
@@ -318,11 +319,11 @@ genOperations slotNo nOps = gosOps <$> execStateT (replicateM_ nOps genOperation
     genDelEntry activeUtxos =
       if Map.null activeUtxos then Nothing
       else Just $ do
-        (k, v) <- lift $ elements (Map.toList activeUtxos)
+        (k, _) <- lift $ elements (Map.toList activeUtxos)
         modify' $ \st -> st
           { gosActiveUtxos = Map.delete k (gosActiveUtxos st)
           }
-        pure (k, Diff.Delete v )
+        pure (k, Diff.Delete)
 
     genInsertEntry :: Set Key -> Maybe (StateT GenOperationsState Gen (Key, Diff.Delta Int))
     genInsertEntry consumedUtxos = Just $ do

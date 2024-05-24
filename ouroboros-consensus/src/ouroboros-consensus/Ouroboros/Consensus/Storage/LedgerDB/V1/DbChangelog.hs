@@ -192,7 +192,7 @@ import           Cardano.Slotting.Slot
 import           Control.Exception as Exn
 import           Data.Bifunctor (bimap)
 import           Data.Functor.Identity
-import           Data.Map.Diff.Strict (applyDiffForKeys)
+import           Data.Map.Diff.Strict as AntiDiff (applyDiffForKeys)
 import           Data.Monoid (Sum (..))
 import           Data.SOP (K, unK)
 import           Data.SOP.Functors
@@ -202,6 +202,8 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Tables.Diff (fromAntiDiff,
+                     toAntiDiff)
 import qualified Ouroboros.Consensus.Ledger.Tables.DiffSeq as DS
 import           Ouroboros.Consensus.Ledger.Tables.Utils
 import           Ouroboros.Consensus.Storage.LedgerDB.API
@@ -471,7 +473,7 @@ extend newState dblog =
       -> DiffMK    k v
       -> SeqDiffMK k v
     ext (SeqDiffMK sq) (DiffMK d) =
-      SeqDiffMK $ DS.extend sq slot d
+      SeqDiffMK $ DS.extend sq slot $ toAntiDiff d
 
     l'         = forgetLedgerTables  newState
     tablesDiff = projectLedgerTables newState
@@ -616,7 +618,7 @@ forwardTableKeySets' seqNo chdiffs = \(UnforwardedReadSets seqNo' values keys) -
       -> SeqDiffMK k v
       -> ValuesMK  k v
     forward (ValuesMK values) (KeysMK keys) (SeqDiffMK diffs) =
-      ValuesMK $ applyDiffForKeys values keys (DS.cumulativeDiff diffs)
+      ValuesMK $ AntiDiff.applyDiffForKeys values keys (DS.cumulativeDiff diffs)
 
 forwardTableKeySets ::
      HasLedgerTables l
@@ -761,7 +763,7 @@ splitForFlushing dblog =
          (Ord k, Eq v)
       => SeqDiffMK k v
       -> DiffMK k v
-    prj (SeqDiffMK sq) = DiffMK (DS.cumulativeDiff sq)
+    prj (SeqDiffMK sq) = DiffMK (fromAntiDiff $ DS.cumulativeDiff sq)
 
     ldblog = DiffsToFlush {
         toFlushDiffs = ltmap prj l

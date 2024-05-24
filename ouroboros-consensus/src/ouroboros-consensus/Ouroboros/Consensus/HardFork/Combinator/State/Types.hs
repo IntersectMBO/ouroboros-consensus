@@ -22,7 +22,6 @@ module Ouroboros.Consensus.HardFork.Combinator.State.Types (
   ) where
 
 import           Control.Monad.Except
-import qualified Data.Map.Diff.Strict.Internal as Diff
 import qualified Data.Map.Strict as Map
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
@@ -35,7 +34,7 @@ import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Forecast
 import           Ouroboros.Consensus.HardFork.History (Bound)
 import           Ouroboros.Consensus.Ledger.Basics
-import           Prelude
+import qualified Ouroboros.Consensus.Ledger.Tables.Diff as Diff
 
 {-------------------------------------------------------------------------------
   Types

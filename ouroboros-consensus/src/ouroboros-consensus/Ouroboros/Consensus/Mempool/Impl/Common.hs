@@ -273,7 +273,9 @@ validateNewTransaction
      , InternalState blk
      )
 validateNewTransaction cfg txSize wti tx values is =
-    case runExcept (applyTx cfg wti isSlotNo tx $ applyDiffs values isLedgerState) of
+    case runExcept (applyTx cfg wti isSlotNo tx
+                   $ applyDiffForKeysOnTables values (getTransactionKeySets tx) isLedgerState
+                   ) of
       Left err         -> ( Left err, is )
       Right (st', vtx) ->
         ( Right vtx
@@ -314,8 +316,13 @@ revalidateTxsFor
   -> [TxTicket (Validated (GenTx blk))]
   -> RevalidateTxsResult blk
 revalidateTxsFor capacityOverride cfg slot st values lastTicketNo txTickets =
-  let ReapplyTxsResult err val st' =
-        reapplyTxs cfg slot (map txTicketTx txTickets) (values `applyDiffs` st)
+  let theTxs = map txTicketTx txTickets
+      ReapplyTxsResult err val st' =
+        reapplyTxs cfg slot theTxs
+        $ applyDiffForKeysOnTables
+              values
+              (foldl (<>) emptyLedgerTables $ map (getTransactionKeySets . txForgetValidated) theTxs)
+              st
 
       -- TODO: This is ugly, but I couldn't find a way to sneak the 'TxTicket' into
       -- 'reapplyTxs'.

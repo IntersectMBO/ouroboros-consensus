@@ -146,7 +146,7 @@ tickThenApplyLedgerResult ::
   -> Except (LedgerErr l) (LedgerResult l (l DiffMK))
 tickThenApplyLedgerResult cfg blk l = do
   let lrTick = applyChainTickLedgerResult cfg (blockSlot blk) (forgetLedgerTables l)
-  lrBlock <-   applyBlockLedgerResult     cfg            blk  (applyDiffs l (lrResult lrTick))
+  lrBlock <-   applyBlockLedgerResult     cfg            blk  (applyDiffForKeys l (getBlockKeySets blk) (lrResult lrTick))
   pure LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = prependDiffs (lrResult lrTick) (lrResult lrBlock)
@@ -160,7 +160,7 @@ tickThenReapplyLedgerResult ::
   -> LedgerResult l (l DiffMK)
 tickThenReapplyLedgerResult cfg blk l =
   let lrTick  = applyChainTickLedgerResult cfg (blockSlot blk) (forgetLedgerTables l)
-      lrBlock = reapplyBlockLedgerResult   cfg            blk  (applyDiffs l (lrResult lrTick))
+      lrBlock = reapplyBlockLedgerResult   cfg            blk  (applyDiffForKeys l (getBlockKeySets blk) (lrResult lrTick))
   in LedgerResult {
       lrEvents = lrEvents lrTick <> lrEvents lrBlock
     , lrResult = prependDiffs (lrResult lrTick) (lrResult lrBlock)
@@ -185,12 +185,12 @@ tickThenReapply = lrResult ..: tickThenReapplyLedgerResult
 foldLedger ::
      ApplyBlock l blk
   => LedgerCfg l -> [blk] -> l ValuesMK -> Except (LedgerErr l) (l ValuesMK)
-foldLedger cfg = repeatedlyM (\blk state -> applyDiffs state <$> tickThenApply cfg blk state)
+foldLedger cfg = repeatedlyM (\blk state -> applyDiffForKeys state (getBlockKeySets blk) <$> tickThenApply cfg blk state)
 
 refoldLedger ::
      ApplyBlock l blk
   => LedgerCfg l -> [blk] -> l ValuesMK -> l ValuesMK
-refoldLedger cfg = repeatedly (\blk state -> applyDiffs state $ tickThenReapply cfg blk state)
+refoldLedger cfg = repeatedly (\blk state -> applyDiffForKeys state (getBlockKeySets blk) $ tickThenReapply cfg blk state)
 
 {-------------------------------------------------------------------------------
   Short-hand
