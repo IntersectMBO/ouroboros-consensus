@@ -63,6 +63,7 @@ module Ouroboros.Consensus.Storage.ChainDB.Impl.Types (
   , TraceValidationEvent (..)
   ) where
 
+import           Control.Monad (when)
 import           Control.Tracer
 import           Data.Foldable (traverse_)
 import           Data.Map.Strict (Map)
@@ -442,7 +443,13 @@ type FutureBlocks m blk = Map (HeaderHash blk) (Header blk, InvalidBlockPunishme
 -- | FIFO queue used to add blocks asynchronously to the ChainDB. Blocks are
 -- read from this queue by a background thread, which processes the blocks
 -- synchronously.
-newtype ChainSelQueue m blk = ChainSelQueue (TBQueue m (ChainSelMessage m blk))
+--
+-- We also use the queue to signal to chain selection that it should reprocess
+-- blocks that have been postponed by the LoE. For performance reasons we don't
+-- allow more than one reprocess request to sit in the queue at the same time.
+data ChainSelQueue m blk = ChainSelQueue
+    !(TBQueue m (ChainSelMessage m blk))
+    !(StrictTVar m Bool) -- ^ 'True' if reprocessing LoE blocks has been requested
   deriving NoThunks via OnlyCheckWhnfNamed "ChainSelQueue" (ChainSelQueue m blk)
 
 -- | Entry in the 'ChainSelQueue' queue: a block together with the 'TMVar's used
@@ -468,7 +475,8 @@ data ChainSelMessage m blk
 -- | Create a new 'ChainSelQueue' with the given size.
 newChainSelQueue :: IOLike m => Word -> m (ChainSelQueue m blk)
 newChainSelQueue queueSize = ChainSelQueue <$>
-    atomically (newTBQueue (fromIntegral queueSize))
+    atomically (newTBQueue (fromIntegral queueSize)) <*>
+    newTVarIO False
 
 -- | Add a block to the 'ChainSelQueue' queue. Can block when the queue is full.
 addBlockToAdd ::
@@ -478,7 +486,7 @@ addBlockToAdd ::
   -> InvalidBlockPunishment m
   -> blk
   -> m (AddBlockPromise m blk)
-addBlockToAdd tracer (ChainSelQueue queue) punish blk = do
+addBlockToAdd tracer (ChainSelQueue queue _) punish blk = do
     varBlockWrittenToDisk <- newEmptyTMVarIO
     varBlockProcessed     <- newEmptyTMVarIO
     let !toAdd = BlockToAdd
@@ -504,19 +512,29 @@ addReprocessLoEBlocks
   => Tracer m (TraceAddBlockEvent blk)
   -> ChainSelQueue m blk
   -> m ()
-addReprocessLoEBlocks tracer (ChainSelQueue queue) = do
+addReprocessLoEBlocks tracer (ChainSelQueue queue reprocessLoEBlocks) = do
   traceWith tracer $ AddedReprocessLoEBlocksToQueue
-  atomically $ writeTBQueue queue ChainSelReprocessLoEBlocks
+  atomically $ do
+    reprocess <- swapTVar reprocessLoEBlocks True
+    when (not reprocess) $
+      writeTBQueue queue ChainSelReprocessLoEBlocks
 
 -- | Get the oldest message from the 'ChainSelQueue' queue. Can block when the
 -- queue is empty.
 getChainSelMessage :: IOLike m => ChainSelQueue m blk -> m (ChainSelMessage m blk)
-getChainSelMessage (ChainSelQueue queue) = atomically $ readTBQueue queue
+getChainSelMessage (ChainSelQueue queue reprocessLoEBlocks) = do
+  atomically $ do
+    m <- readTBQueue queue
+    case m of
+      ChainSelReprocessLoEBlocks -> do
+        writeTVar reprocessLoEBlocks False
+        return m
+      _ -> return m
 
 -- | Flush the 'ChainSelQueue' queue and notify the waiting threads.
 --
 closeChainSelQueue :: IOLike m => ChainSelQueue m blk -> STM m ()
-closeChainSelQueue (ChainSelQueue queue) = do
+closeChainSelQueue (ChainSelQueue queue _) = do
   as <- mapMaybe blockAdd <$> flushTBQueue queue
   traverse_ (\a -> tryPutTMVar (varBlockProcessed a)
                               (FailedToAddBlock "Queue flushed"))
