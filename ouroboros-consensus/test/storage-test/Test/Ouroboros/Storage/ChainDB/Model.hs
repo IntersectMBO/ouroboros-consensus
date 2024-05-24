@@ -548,10 +548,12 @@ updateLoE ::
   TopLevelConfig blk ->
   AnchoredFragment blk ->
   Model blk ->
-  Model blk
+  (Point blk, Model blk)
 updateLoE cfg f m =
-  chainSelection cfg $
-    m {loeFragment = loeFragment m $> (Fragment.anchor f, Fragment.toOldestFirst f)}
+  let m' =
+        chainSelection cfg $
+          m {loeFragment = loeFragment m $> (Fragment.anchor f, Fragment.toOldestFirst f)}
+   in (tipPoint m', m')
 
 {-------------------------------------------------------------------------------
   Iterators
