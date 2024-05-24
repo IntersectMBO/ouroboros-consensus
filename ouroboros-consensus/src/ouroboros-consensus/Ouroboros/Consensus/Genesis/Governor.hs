@@ -137,11 +137,18 @@ gddWatcher cfg tracer chainDb getGsmState getHandles varLoEFrag =
 
     wNotify :: (GsmState, GDDStateView m blk peer) -> m ()
     wNotify (_gsmState, stateView) = do
-        loeFrag <- evaluateGDD cfg tracer stateView
+        (loeFrag, msgen) <- evaluateGDD cfg tracer stateView
         oldLoEFrag <- atomically $ swapTVar varLoEFrag loeFrag
         -- The chain selection only depends on the LoE tip, so there
         -- is no point in retriggering it if the LoE tip hasn't changed.
-        when (AF.headHash oldLoEFrag /= AF.headHash loeFrag) $
+        let loeTipChanged = AF.headHash oldLoEFrag /= AF.headHash loeFrag
+            onePeerAdvancedSgen =
+              case msgen of
+                Nothing -> False
+                Just (GenesisWindow sgen) ->
+                   Map.size (gddCtxStates stateView) == 1 &&
+                   ((+ fromIntegral sgen) <$> AF.headSlot loeFrag) > AF.headSlot oldLoEFrag
+        when (loeTipChanged || onePeerAdvancedSgen) $
           ChainDB.triggerChainSelectionAsync chainDb
 
 -- | Pure snapshot of the dynamic data the GDD operates on.
@@ -165,7 +172,7 @@ data GDDStateView m blk peer = GDDStateView {
 --
 -- @immutableLedgerSt@ is the current ledger state.
 --
--- Yields the new LoE fragment.
+-- Yields the new LoE fragment and the size of the genesis window if known.
 --
 evaluateGDD ::
      forall m blk peer.
@@ -177,7 +184,7 @@ evaluateGDD ::
   => TopLevelConfig blk
   -> Tracer m (TraceGDDEvent peer blk)
   -> GDDStateView m blk peer
-  -> m (AnchoredFragment (Header blk))
+  -> m (AnchoredFragment (Header blk), Maybe GenesisWindow)
 evaluateGDD cfg tracer stateView = do
     let GDDStateView {
             gddCtxCurChain          = curChain
@@ -223,7 +230,7 @@ evaluateGDD cfg tracer stateView = do
 
       for_ losingPeers $ \peer -> killActions Map.! peer
 
-    pure loeFrag
+    pure (loeFrag, msgen)
 
 -- | Compute the fragment @loeFrag@ between the immutable tip and the
 -- earliest intersection between @curChain@ and any of the @candidates@.
