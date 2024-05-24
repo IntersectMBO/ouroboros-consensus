@@ -57,6 +57,7 @@ import           Ouroboros.Consensus.Config.SecurityParam
 import           Ouroboros.Consensus.HardFork.Abstract (HasHardForkHistory (..))
 import           Ouroboros.Consensus.HardFork.History.Qry (qryFromExpr,
                      runQuery, slotToGenesisWindow)
+import           Ouroboros.Consensus.Ledger.Basics (EmptyMK)
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState,
                      ledgerState)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
@@ -83,7 +84,7 @@ import qualified Ouroboros.Network.AnchoredFragment as AF
 data UpdateLoEFrag m blk = UpdateLoEFrag {
     updateLoEFrag ::
          AnchoredFragment (Header blk)
-      -> ExtLedgerState blk
+      -> ExtLedgerState blk EmptyMK
       -> m (AnchoredFragment (Header blk))
   }
   deriving stock (Generic)
@@ -152,7 +153,7 @@ updateLoEFragStall getCandidates =
 -- ChainSel to reprocess all blocks that had previously been
 -- postponed by the LoE.
 runGdd ::
-  (Monoid a, Eq a, IOLike m, LedgerSupportsProtocol blk) =>
+  (Monoid a, Eq a, IOLike m) =>
   UpdateLoEFrag m blk ->
   StrictTVar m (AnchoredFragment (Header blk)) ->
   ChainDB m blk ->

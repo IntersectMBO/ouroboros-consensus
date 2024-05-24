@@ -20,16 +20,18 @@ import           Ouroboros.Consensus.Config
 import           Ouroboros.Consensus.Fragment.InFuture (CheckInFuture (..))
 import qualified Ouroboros.Consensus.Fragment.Validated as VF
 import           Ouroboros.Consensus.HardFork.History.EraParams (eraEpochSize)
+import           Ouroboros.Consensus.Ledger.Basics
 import           Ouroboros.Consensus.Ledger.Extended (ExtLedgerState)
 import           Ouroboros.Consensus.Protocol.Abstract
 import           Ouroboros.Consensus.Storage.ChainDB hiding
                      (TraceFollowerEvent (..))
 import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB
 import           Ouroboros.Consensus.Storage.ImmutableDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
 import           Ouroboros.Consensus.Storage.LedgerDB (configLedgerDb)
-import qualified Ouroboros.Consensus.Storage.LedgerDB.DiskPolicy as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.Impl.Args
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Snapshots as LedgerDB
+import           Ouroboros.Consensus.Storage.LedgerDB.V1.Args
 import           Ouroboros.Consensus.Storage.VolatileDB
 import qualified Ouroboros.Consensus.Storage.VolatileDB as VolatileDB
 import           Ouroboros.Consensus.Util.Args
@@ -47,26 +49,28 @@ import           Test.Util.TestBlock (TestBlock, TestBlockLedgerConfig (..))
 -- The @db@ type parameter is instantiated by this module at types for mock
 -- filesystems; either the 'MockFS' type or reference cells thereof.
 data NodeDBs db = NodeDBs {
-    nodeDBsImm :: db
-  , nodeDBsVol :: db
-  , nodeDBsLgr :: db
-  , nodeDBsGsm :: db
+    nodeDBsImm    :: db
+  , nodeDBsVol    :: db
+  , nodeDBsLgr    :: db
+  , nodeDBsLgrSSD :: db
+  , nodeDBsGsm    :: db
   }
   deriving (Functor, Foldable, Traversable)
 
 emptyNodeDBs :: MonadSTM m => m (NodeDBs (StrictTVar m MockFS))
-emptyNodeDBs = NodeDBs
-  <$> uncheckedNewTVarM Mock.empty
-  <*> uncheckedNewTVarM Mock.empty
-  <*> uncheckedNewTVarM Mock.empty
-  <*> uncheckedNewTVarM Mock.empty
+emptyNodeDBs = atomically $ NodeDBs
+  <$> newTVar Mock.empty
+  <*> newTVar Mock.empty
+  <*> newTVar Mock.empty
+  <*> newTVar Mock.empty
+  <*> newTVar Mock.empty
 
 -- | Minimal set of arguments for creating a ChainDB instance for testing purposes.
 data MinimalChainDbArgs m blk = MinimalChainDbArgs {
     mcdbTopLevelConfig :: TopLevelConfig blk
   , mcdbChunkInfo      :: ImmutableDB.ChunkInfo
   -- ^ Specifies the layout of the ImmutableDB on disk.
-  , mcdbInitLedger     :: ExtLedgerState blk
+  , mcdbInitLedger     :: ExtLedgerState blk ValuesMK
   -- ^ The initial ledger state.
   , mcdbRegistry       :: ResourceRegistry m
   -- ^ Keeps track of non-lexically scoped resources.
@@ -111,21 +115,29 @@ fromMinimalChainDbArgs MinimalChainDbArgs {..} = ChainDbArgs {
         , volTracer           = nullTracer
         , volValidationPolicy = VolatileDB.ValidateAll
         }
-    , cdbLgrDbArgs = LgrDbArgs {
-          lgrDiskPolicyArgs   = LedgerDB.DiskPolicyArgs LedgerDB.DefaultSnapshotInterval LedgerDB.DefaultNumOfDiskSnapshots
+    , cdbLgrDbArgs = LedgerDbArgs {
+          lgrSnapshotPolicyArgs = LedgerDB.SnapshotPolicyArgs LedgerDB.DefaultSnapshotInterval LedgerDB.DefaultNumOfDiskSnapshots
           -- Keep 2 ledger snapshots, and take a new snapshot at least every 2 *
           -- k seconds, where k is the security parameter.
-        , lgrGenesis          = return mcdbInitLedger
-        , lgrHasFS            = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgr mcdbNodeDBs)
-        , lgrTracer           = nullTracer
-        , lgrConfig           = configLedgerDb mcdbTopLevelConfig
+        , lgrGenesis            = return mcdbInitLedger
+        , lgrHasFS              = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgr mcdbNodeDBs)
+        , lgrSSDHasFS           = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsLgrSSD mcdbNodeDBs)
+        , lgrSnapshotTablesSSD  = False
+        , lgrSnapshotStateSSD   = False
+        , lgrTracer             = nullTracer
+        , lgrRegistry           = mcdbRegistry
+        , lgrConfig             = configLedgerDb mcdbTopLevelConfig
+        , lgrFlavorArgs         =
+            LedgerDbFlavorArgsV1
+              (V1Args DefaultFlushFrequency DefaultQueryBatchSize InMemoryBackingStoreArgs)
+        , lgrStartSnapshot      = Nothing
         }
     , cdbsArgs = ChainDbSpecificArgs {
           cdbsBlocksToAddSize = 1
         , cdbsCheckInFuture   = CheckInFuture $ \vf -> pure (VF.validatedFragment vf, [])
           -- Blocks are never in the future
         , cdbsGcDelay         = 1
-        , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS (unsafeToUncheckedStrictTVar $ nodeDBsGsm mcdbNodeDBs)
+        , cdbsHasFSGsmDB      = SomeHasFS $ simHasFS $ unsafeToUncheckedStrictTVar $ nodeDBsGsm mcdbNodeDBs
         , cdbsGcInterval      = 1
         , cdbsRegistry        = mcdbRegistry
         , cdbsTracer          = nullTracer

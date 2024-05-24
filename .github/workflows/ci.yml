@@ -21,11 +21,11 @@ jobs:
        fail-fast: false
        matrix:
          ghc: ["8.10.7", "9.6.4", "9.8.1"]
-         cabal: ["3.10.2.1"]
+         cabal: ["3.10.3.0"]
          os: [ubuntu-latest]
     env:
       # Modify this value to "invalidate" the Cabal cache.
-      CABAL_CACHE_VERSION: "2024-01-29"
+      CABAL_CACHE_VERSION: "2024-03-22"
 
     steps:
     - uses: actions/checkout@v4
@@ -50,6 +50,11 @@ jobs:
       run: |
         cabal clean
         cabal update
+
+    - name: Install lmdb
+      run: |
+        sudo apt update
+        sudo apt install liblmdb-dev
 
     # We create a `dependencies.txt` file that can be used to index the cabal
     # store cache.

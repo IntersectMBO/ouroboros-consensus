@@ -27,4 +27,4 @@ $fdcmd --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-co
 # We don't want these deprecation warnings to be removed accidentally
 grep "#if __GLASGOW_HASKELL__ < 900
 import           Data.Foldable (asum)
-#endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs                           >/dev/null 2>&1
+#endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs >/dev/null 2>&1

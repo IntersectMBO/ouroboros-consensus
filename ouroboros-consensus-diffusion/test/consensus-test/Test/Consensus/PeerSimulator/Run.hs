@@ -12,6 +12,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
+import           Control.Monad.Base
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
@@ -261,7 +262,7 @@ mkLoEVar SchedulerConfig {scEnableLoE}
 -- send all ticks in a 'PointSchedule' to all given peers in turn.
 runPointSchedule ::
   forall m.
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m, MonadBase m m) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
   Tracer m (TraceEvent TestBlock) ->
@@ -354,7 +355,7 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
 -- | Create a ChainDB and start a BlockRunner that operate on the peers'
 -- candidate fragments.
 mkChainDb ::
-  IOLike m =>
+  (IOLike m, MonadBase m m) =>
   Tracer m (TraceEvent TestBlock) ->
   TopLevelConfig TestBlock ->
   ResourceRegistry m ->

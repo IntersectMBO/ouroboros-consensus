@@ -157,6 +157,9 @@ data VolatileDbArgs f m blk = VolatileDbArgs {
       -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
       -- extracting them from the VolatileDB.
       volCheckIntegrity   :: HKD f (blk -> Bool)
+      -- ^ Predicate to check for integrity of
+      -- 'Ouroboros.Consensus.Storage.Common.GetVerifiedBlock' components when
+      -- extracting them from the VolatileDB.
     , volCodecConfig      :: HKD f (CodecConfig blk)
     , volHasFS            :: HKD f (SomeHasFS m)
     , volMaxBlocksPerFile :: BlocksPerFile
@@ -164,6 +167,8 @@ data VolatileDbArgs f m blk = VolatileDbArgs {
       -- | Should the parser for the VolatileDB fail when it encounters a
       -- corrupt/invalid block?
     , volValidationPolicy :: BlockValidationPolicy
+      -- ^ Should the parser for the VolatileDB fail when it encounters a
+      -- corrupt/invalid block?
     }
 
 -- | Default arguments

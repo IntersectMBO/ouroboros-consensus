@@ -147,6 +147,9 @@ class ( Core.EraSegWits era
       , NoThunks (PredicateFailure (Core.EraRule "BBODY" era))
       , NoThunks (Core.TranslationContext era)
 
+      , DecCBOR (SL.TxIn (EraCrypto era))
+      , EncCBOR (SL.TxIn (EraCrypto era))
+
       ) => ShelleyBasedEra era where
 
   applyShelleyBasedTx ::

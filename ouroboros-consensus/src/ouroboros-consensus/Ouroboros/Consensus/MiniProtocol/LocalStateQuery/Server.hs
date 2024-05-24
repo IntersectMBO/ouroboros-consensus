@@ -1,28 +1,36 @@
-{-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE RankNTypes          #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections       #-}
 module Ouroboros.Consensus.MiniProtocol.LocalStateQuery.Server (localStateQueryServer) where
 
+
+import           Data.Functor ((<&>))
 import           Ouroboros.Consensus.Block
-import           Ouroboros.Consensus.HeaderValidation (HasAnnTip (..))
 import           Ouroboros.Consensus.Ledger.Extended
-import           Ouroboros.Consensus.Ledger.Query
+import           Ouroboros.Consensus.Ledger.Query (BlockSupportsLedgerQuery,
+                     Query)
+import qualified Ouroboros.Consensus.Ledger.Query as Query
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
+                     (LedgerSupportsProtocol)
+import           Ouroboros.Consensus.Storage.LedgerDB
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Network.Protocol.LocalStateQuery.Server
 import           Ouroboros.Network.Protocol.LocalStateQuery.Type
                      (AcquireFailure (..), Target (..))
 
 localStateQueryServer ::
-     forall m blk. (IOLike m, BlockSupportsLedgerQuery blk, ConfigSupportsNode blk, HasAnnTip blk)
+     forall m blk.
+     ( IOLike m
+     , BlockSupportsLedgerQuery blk
+     , Query.ConfigSupportsNode blk
+     , LedgerSupportsProtocol blk
+     )
   => ExtLedgerCfg blk
-  -> STM m (Point blk)
-     -- ^ Get tip point
-  -> (Point blk -> STM m (Maybe (ExtLedgerState blk)))
-     -- ^ Get a past ledger
-  -> STM m (Point blk)
-     -- ^ Get the immutable point
+  -> (   Target (Point blk)
+      -> m (Either GetForkerError (ReadOnlyForker' m blk))
+     )
   -> LocalStateQueryServer blk (Point blk) (Query blk) m ()
-localStateQueryServer cfg getTipPoint getPastLedger getImmutablePoint =
+localStateQueryServer cfg getView =
     LocalStateQueryServer $ return idle
   where
     idle :: ServerStIdle blk (Point blk) (Query blk) m ()
@@ -33,36 +41,29 @@ localStateQueryServer cfg getTipPoint getPastLedger getImmutablePoint =
 
     handleAcquire :: Target (Point blk)
                   -> m (ServerStAcquiring blk (Point blk) (Query blk) m ())
-    handleAcquire tpt = do
-        (pt, mPastLedger, immutablePoint) <- atomically $ do
-          pt <- case tpt of
-                  VolatileTip         -> getTipPoint
-                  SpecificPoint point -> pure point
-                  ImmutableTip        -> getImmutablePoint
-          (pt,,) <$> getPastLedger pt <*> getImmutablePoint
+    handleAcquire mpt = do
+        getView mpt <&> \case
+          Right forker -> SendMsgAcquired $ acquired forker
+          Left e -> case e of
+            PointTooOld ->
+              SendMsgFailure AcquireFailurePointTooOld idle
+            PointNotOnChain ->
+              SendMsgFailure AcquireFailurePointNotOnChain idle
 
-        return $ case mPastLedger of
-          Just pastLedger
-            -> SendMsgAcquired $ acquired pastLedger
-          Nothing
-            | pointSlot pt < pointSlot immutablePoint
-            -> SendMsgFailure AcquireFailurePointTooOld idle
-            | otherwise
-            -> SendMsgFailure AcquireFailurePointNotOnChain idle
-
-    acquired :: ExtLedgerState blk
+    acquired :: ReadOnlyForker' m blk
              -> ServerStAcquired blk (Point blk) (Query blk) m ()
-    acquired ledgerState = ServerStAcquired {
-          recvMsgQuery     = handleQuery ledgerState
-        , recvMsgReAcquire = handleAcquire
-        , recvMsgRelease   = return idle
+    acquired forker = ServerStAcquired {
+          recvMsgQuery     = handleQuery forker
+        , recvMsgReAcquire = \mp -> do close; handleAcquire mp
+        , recvMsgRelease   =        do close; return idle
         }
+      where
+        close = roforkerClose forker
 
     handleQuery ::
-         ExtLedgerState blk
+         ReadOnlyForker' m blk
       -> Query blk result
       -> m (ServerStQuerying blk (Point blk) (Query blk) m () result)
-    handleQuery ledgerState query = return $
-        SendMsgResult
-          (answerQuery cfg query ledgerState)
-          (acquired ledgerState)
+    handleQuery forker query = do
+      result <- Query.answerQuery cfg forker query
+      return $ SendMsgResult result (acquired forker)

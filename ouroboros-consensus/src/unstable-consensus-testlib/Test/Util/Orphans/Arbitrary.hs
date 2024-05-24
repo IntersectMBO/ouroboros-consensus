@@ -4,13 +4,16 @@
 {-# LANGUAGE FlexibleInstances          #-}
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralisedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures             #-}
 {-# LANGUAGE NamedFieldPuns             #-}
 {-# LANGUAGE NumericUnderscores         #-}
+{-# LANGUAGE PolyKinds                  #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
 {-# LANGUAGE TypeApplications           #-}
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
+
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Util.Orphans.Arbitrary (
@@ -28,6 +31,7 @@ import           Data.Coerce (coerce)
 import           Data.SOP.BasicFunctors
 import           Data.SOP.Constraint
 import           Data.SOP.Dict (Dict (..), all_NP, mapAll)
+import           Data.SOP.Functors (Flip (..))
 import           Data.SOP.NonEmpty (IsNonEmpty, ProofNonEmpty (..),
                      checkIsNonEmpty, isNonEmpty)
 import           Data.SOP.Sing
@@ -51,7 +55,8 @@ import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Query
 import           Ouroboros.Consensus.Ledger.SupportsMempool
 import           Ouroboros.Consensus.Node.ProtocolInfo
-import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState)
+import           Ouroboros.Consensus.Protocol.Abstract (ChainDepState,
+                     SecurityParam (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Internal
                      (ChunkNo (..), ChunkSize (..), RelativeSlot (..))
 import           Ouroboros.Consensus.Storage.ImmutableDB.Chunks.Layout
@@ -266,6 +271,9 @@ instance (All (Arbitrary `Compose` f) xs, IsNonEmpty xs)
   Telescope & HardForkState
 -------------------------------------------------------------------------------}
 
+instance Arbitrary (f y x) => Arbitrary (Flip f (x :: kx) (y :: ky)) where
+  arbitrary = Flip <$> arbitrary
+
 instance Arbitrary Bound where
   arbitrary =
       Bound
@@ -292,25 +300,25 @@ instance ( IsNonEmpty xs
           ]
   shrink = hctraverse' (Proxy @(Arbitrary `Compose` f)) shrink
 
-instance (IsNonEmpty xs, SListI xs, All (Arbitrary `Compose` LedgerState) xs)
-      => Arbitrary (LedgerState (HardForkBlock xs)) where
+instance (IsNonEmpty xs, SListI xs, All (Arbitrary `Compose` Flip LedgerState mk) xs)
+      => Arbitrary (LedgerState (HardForkBlock xs) mk) where
   arbitrary = case (dictKPast, dictCurrentLedgerState) of
       (Dict, Dict) -> inj <$> arbitrary
     where
       inj ::
-           Telescope (K Past) (Current LedgerState) xs
-        -> LedgerState (HardForkBlock xs)
+           Telescope (K Past) (Current (Flip LedgerState mk)) xs
+        -> LedgerState (HardForkBlock xs) mk
       inj = coerce
 
       dictKPast :: Dict (All (Arbitrary `Compose` (K Past))) xs
       dictKPast = all_NP $ hpure Dict
 
       dictCurrentLedgerState ::
-           Dict (All (Arbitrary `Compose` (Current LedgerState))) xs
+           Dict (All (Arbitrary `Compose` (Current (Flip LedgerState mk)))) xs
       dictCurrentLedgerState =
           mapAll
-            @(Arbitrary `Compose` LedgerState)
-            @(Arbitrary `Compose` Current LedgerState)
+            @(Arbitrary `Compose` Flip LedgerState mk)
+            @(Arbitrary `Compose` Current (Flip LedgerState mk))
             (\Dict -> Dict)
             Dict
 
@@ -388,12 +396,11 @@ instance Arbitrary QueryVersion where
   arbitrary = arbitraryBoundedEnum
   shrink v = if v == minBound then [] else [pred v]
 
-instance Arbitrary (SomeSecond BlockQuery blk)
+instance Arbitrary (SomeBlockQuery (BlockQuery blk))
       => Arbitrary (SomeSecond Query blk) where
   arbitrary = do
-    SomeSecond someBlockQuery <- arbitrary
+    SomeBlockQuery someBlockQuery <- arbitrary
     return (SomeSecond (BlockQuery someBlockQuery))
-
 
 instance Arbitrary Index.CacheConfig where
   arbitrary = do
@@ -406,3 +413,11 @@ instance Arbitrary Index.CacheConfig where
     -- TODO create a Cmd that advances time, so this is being exercised too.
     expireUnusedAfter <- (fromIntegral :: Int -> DiffTime) <$> choose (1, 100)
     return Index.CacheConfig {Index.pastChunksToCache, Index.expireUnusedAfter}
+
+{-------------------------------------------------------------------------------
+  SecurityParam
+-------------------------------------------------------------------------------}
+
+instance Arbitrary SecurityParam where
+  arbitrary = SecurityParam <$> choose (0, 6)
+  shrink (SecurityParam k) = SecurityParam <$> shrink k
