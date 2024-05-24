@@ -314,12 +314,10 @@ chainSelSync cdb@CDB{..} ChainSelReprocessLoEBlocks = lift cdbLoE >>= \case
         <*> Query.getCurrentChain cdb
     let
         succsOf' = Set.toList . succsOf . pointHash . castPoint
-        chainPoints = AF.anchorPoint chain : (blockPoint <$> AF.toOldestFirst chain)
-        loeHashes = succsOf' =<< chainPoints
+        loeHashes = succsOf' (AF.anchorPoint chain)
     loeHeaders <- lift (mapM (VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader) loeHashes)
     for_ loeHeaders $ \hdr ->
-      unless (AF.withinFragmentBounds (blockPoint hdr) chain) $ do
-        void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
+      void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
 
 chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) = do
     (isMember, invalid, curChain) <- lift $ atomically $ (,,)
