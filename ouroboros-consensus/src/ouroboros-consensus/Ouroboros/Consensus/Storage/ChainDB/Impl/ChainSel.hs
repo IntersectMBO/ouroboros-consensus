@@ -314,12 +314,16 @@ chainSelSync cdb@CDB{..} ChainSelReprocessLoEBlocks = lift cdbLoE >>= \case
         <*> Query.getCurrentChain cdb
     let
         succsOf' = Set.toList . succsOf . pointHash . castPoint
-        chainPoints = AF.anchorPoint chain : (blockPoint <$> AF.toOldestFirst chain)
-        loeHashes = succsOf' =<< chainPoints
-    loeHeaders <- lift (mapM (VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader) loeHashes)
+        loeHashes = succsOf' (AF.anchorPoint chain)
+        firstHeader = either (const Nothing) Just $ AF.last chain
+        -- We avoid the VolatileDB for the headers we already have in the chain
+        getHeaderFromHash hash =
+          case firstHeader of
+            Just header | headerHash header == hash -> pure header
+            _ -> VolatileDB.getKnownBlockComponent cdbVolatileDB GetHeader hash
+    loeHeaders <- lift (mapM getHeaderFromHash loeHashes)
     for_ loeHeaders $ \hdr ->
-      unless (AF.withinFragmentBounds (blockPoint hdr) chain) $ do
-        void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
+      void (chainSelectionForBlock cdb BlockCache.empty hdr noPunishment)
 
 chainSelSync cdb@CDB {..} (ChainSelAddBlock BlockToAdd { blockToAdd = b, .. }) = do
     (isMember, invalid, curChain) <- lift $ atomically $ (,,)
