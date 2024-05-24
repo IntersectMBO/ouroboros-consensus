@@ -131,7 +131,13 @@ gddWatcher cfg tracer chainDb getGsmState getHandles varLoEFrag =
         -- (Maybe we want to do it in 'PreSycing'?)
         PreSyncing -> Map.empty
         CaughtUp   -> Map.empty
-        -- When syncing, wake up on every change to any candidate fragment.
+        -- When syncing, wake up regularly while headers are sent.
+        -- Watching csLatestSlot ensures that GDD is woken up when a peer is
+        -- sending headers even if they are after the forecast horizon. Note
+        -- that there can be some delay between the header being validated and
+        -- it becoming visible to GDD. It will be visible only when csLatestSlot
+        -- changes again or when csIdling changes, which is guaranteed to happen
+        -- eventually.
         Syncing    ->
           Map.map (\css -> (csLatestSlot css, csIdling css)) gddCtxStates
 
