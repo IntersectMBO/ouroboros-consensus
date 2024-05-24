@@ -18,7 +18,13 @@ if ! command -v "$fdcmd" &> /dev/null; then
         exit 1
     fi
 fi
-$fdcmd --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-core)" \
+
+case "$(uname -s)" in
+    MINGW*)     path="$(pwd -W | sed 's_/_\\\\_g')\\\\(ouroboros-consensus|sop-extras|strict-sop-core)";;
+    *)          path="$(pwd)/(ouroboros-consensus|sop-extras|strict-sop-core)";;
+esac
+
+$fdcmd --full-path "$path" \
        --extension hs \
        --exclude Setup.hs \
        --exclude ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs \
@@ -27,4 +33,9 @@ $fdcmd --full-path "$(pwd)/(ouroboros-consensus|scripts|sop-extras|strict-sop-co
 # We don't want these deprecation warnings to be removed accidentally
 grep "#if __GLASGOW_HASKELL__ < 900
 import           Data.Foldable (asum)
-#endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs                           >/dev/null 2>&1
+#endif" ouroboros-consensus-cardano/app/DBAnalyser/Parsers.hs >/dev/null 2>&1
+
+case "$(uname -s)" in
+    MINGW*) git ls-files --eol | grep "w/crlf" | awk '{print $4}' | xargs dos2unix;;
+    *) ;;
+esac

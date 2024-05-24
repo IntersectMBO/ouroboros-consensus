@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP                 #-}
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -11,6 +12,7 @@ module Test.Consensus.PeerSimulator.Run (
   ) where
 
 import           Control.Monad (foldM, forM)
+import           Control.Monad.Base
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
@@ -314,7 +316,13 @@ mkStateTracer schedulerConfig GenesisTest {gtBlockTree} PeerSimulatorResources {
 -- provided by 'LiveIntervalResult'.
 startNode ::
   forall m.
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  ( IOLike m
+  , MonadTime m
+  , MonadTimer m
+#if __GLASGOW_HASKELL__ >= 900
+  , MonadBase m m
+#endif
+  ) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
   LiveInterval TestBlock m ->
@@ -421,7 +429,7 @@ startNode schedulerConfig genesisTest interval = do
 
 -- | Set up all resources related to node start/shutdown.
 nodeLifecycle ::
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m, MonadBase m m) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
   Tracer m (TraceEvent TestBlock) ->
@@ -460,7 +468,7 @@ nodeLifecycle schedulerConfig genesisTest lrTracer lrRegistry lrPeerSim = do
 -- send all ticks in a 'PointSchedule' to all given peers in turn.
 runPointSchedule ::
   forall m.
-  (IOLike m, MonadTime m, MonadTimer m) =>
+  (IOLike m, MonadTime m, MonadTimer m, MonadBase m m) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
   Tracer m (TraceEvent TestBlock) ->

@@ -64,7 +64,7 @@ import           System.Random (getStdRandom, randomR)
 import           Test.Ouroboros.Storage.Orphans ()
 import           Test.Ouroboros.Storage.TestBlock
 import           Test.Ouroboros.Storage.VolatileDB.Model
-import           Test.QuickCheck hiding (elements)
+import           Test.QuickCheck hiding (elements, forAll)
 import           Test.QuickCheck.Monadic
 import           Test.QuickCheck.Random (mkQCGen)
 import           Test.StateMachine hiding (showLabelledExamples,
@@ -285,7 +285,7 @@ preconditionImpl :: Model Symbolic -> At CmdErr Symbolic -> Logic
 preconditionImpl Model{..} (At (CmdErr cmd mbErrors)) =
     compatibleWithError .&& case cmd of
       Corruption cors ->
-        forall (corruptionFiles cors) (`member` getDBFiles dbModel)
+        forAll (corruptionFiles cors) (`member` getDBFiles dbModel)
 
       -- When duplicating a block by appending it to some other file, make
       -- sure that both the file and the block exists, and that we're adding
@@ -585,7 +585,7 @@ test cmds = do
       $ \varDB -> do
         let env = VolatileDBEnv { varErrors, varDB, args }
             sm' = sm env dbm
-        (hist, _model, res) <- QSM.runCommands' (pure sm') cmds
+        (hist, _model, res) <- QSM.runCommands' sm' cmds
         trace <- getTrace
         return (hist, res, trace)
 

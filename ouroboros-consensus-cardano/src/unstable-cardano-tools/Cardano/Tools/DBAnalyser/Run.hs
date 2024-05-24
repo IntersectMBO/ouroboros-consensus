@@ -10,36 +10,66 @@ module Cardano.Tools.DBAnalyser.Run (analyse) where
 import           Cardano.Tools.DBAnalyser.Analysis
 import           Cardano.Tools.DBAnalyser.HasAnalysis
 import           Cardano.Tools.DBAnalyser.Types
-import           Codec.Serialise (Serialise (decode))
-import           Control.Monad.Except (runExceptT)
 import           Control.Tracer (Tracer (..), nullTracer)
 import           Data.Singletons (Sing, SingI (..))
 import qualified Debug.Trace as Debug
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config
 import qualified Ouroboros.Consensus.Fragment.InFuture as InFuture
-import           Ouroboros.Consensus.Ledger.Extended
+import           Ouroboros.Consensus.Ledger.Basics
+import           Ouroboros.Consensus.Ledger.Inspect
 import qualified Ouroboros.Consensus.Ledger.SupportsMempool as LedgerSupportsMempool
                      (HasTxs)
+import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import qualified Ouroboros.Consensus.Node as Node
 import qualified Ouroboros.Consensus.Node.InitStorage as Node
 import           Ouroboros.Consensus.Node.ProtocolInfo (ProtocolInfo (..))
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.LgrDB (lgrHasFS)
+import qualified Ouroboros.Consensus.Storage.ChainDB.Impl.Args as ChainDB
 import qualified Ouroboros.Consensus.Storage.ImmutableDB as ImmutableDB
-import           Ouroboros.Consensus.Storage.LedgerDB (DiskSnapshot (..),
-                     readSnapshot)
+import qualified Ouroboros.Consensus.Storage.ImmutableDB.Impl.Stream as ImmutableDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Args as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.Impl.Init as LedgerDB
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Args as LedgerDB.V1
+import qualified Ouroboros.Consensus.Storage.LedgerDB.V1.Init as LedgerDB.V1
+import           Ouroboros.Consensus.Util.Args
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.Orphans ()
 import           Ouroboros.Consensus.Util.ResourceRegistry
+import           Ouroboros.Network.Block (genesisPoint)
 import           System.IO
 import           Text.Printf (printf)
-
 
 {-------------------------------------------------------------------------------
   Analyse
 -------------------------------------------------------------------------------}
+
+openLedgerDB ::
+     ( LedgerSupportsProtocol blk
+     , InspectLedger blk
+     , LedgerDB.LedgerDbSerialiseConstraints blk
+     )
+  => Complete LedgerDB.LedgerDbArgs IO blk
+  -> IO ( LedgerDB.LedgerDB' IO blk
+        , LedgerDB.TestInternals' IO blk
+        )
+openLedgerDB lgrDbArgs@LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs=LedgerDB.LedgerDbFlavorArgsV1 bss} = do
+  (ledgerDB, _, intLedgerDB) <-
+    LedgerDB.openDBInternal
+      lgrDbArgs
+      (LedgerDB.V1.mkInitDb
+        lgrDbArgs
+        bss
+        (\_ -> error "no replay"))
+      emptyStream
+      genesisPoint
+  pure (ledgerDB, intLedgerDB)
+openLedgerDB LedgerDB.LedgerDbArgs{LedgerDB.lgrFlavorArgs=LedgerDB.LedgerDbFlavorArgsV2{}} =
+  error "not defined for v2, use v1 instead for now!"
+
+emptyStream :: Applicative m => ImmutableDB.StreamAPI m blk a
+emptyStream = ImmutableDB.StreamAPI $ \_ k -> k $ Right $ pure ImmutableDB.NoMoreItems
 
 analyse ::
      forall blk .
@@ -48,32 +78,38 @@ analyse ::
      , HasAnalysis blk
      , HasProtocolInfo blk
      , LedgerSupportsMempool.HasTxs blk
+     , CanStowLedgerTables (LedgerState blk)
      )
   => DBAnalyserConfig
   -> Args blk
   -> IO (Maybe AnalysisResult)
-analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbose} args =
+analyse DBAnalyserConfig{analysis, confLimit, ssdDir, {- stateInSSD, tablesInSSD,  -}dbDir, selectDB, validation, verbose, bsArgs} args =
     withRegistry $ \registry -> do
       lock           <- newMVar ()
       chainDBTracer  <- mkTracer lock verbose
       analysisTracer <- mkTracer lock True
       ProtocolInfo { pInfoInitLedger = genesisLedger, pInfoConfig = cfg } <-
         mkProtocolInfo args
-      let chunkInfo   = Node.nodeImmutableDbChunkInfo (configStorage cfg)
-          chainDbArgs =
-                maybeValidateAll
-              $ updateTracer chainDBTracer
-              $ completeChainDbArgs
-                  registry
-                  InFuture.dontCheck
-                  cfg
-                  genesisLedger
-                  chunkInfo
-                  (const True)
-                  (Node.stdMkChainDbHasFS dbDir)
-              $ defaultArgs
+      let chunkInfo  = Node.nodeImmutableDbChunkInfo (configStorage cfg)
+          bss = LedgerDB.V1.V1Args LedgerDB.V1.DisableFlushing LedgerDB.V1.DisableQuerySize $ bsArgs
+          flavargs = LedgerDB.LedgerDbFlavorArgsV1 bss
+          args' =
+            ChainDB.completeChainDbArgs
+              registry
+              InFuture.dontCheck
+              cfg
+              genesisLedger
+              chunkInfo
+              (const True)
+              (Node.stdMkChainDbHasFS dbDir)
+              (Node.stdMkChainDbHasFS ssdDir)
+              flavargs $
+            ChainDB.defaultArgs
+          chainDbArgs = maybeValidateAll $ ChainDB.updateTracer chainDBTracer args'
           immutableDbArgs = ChainDB.cdbImmDbArgs chainDbArgs
-          ledgerDbFS = lgrHasFS $ ChainDB.cdbLgrDbArgs chainDbArgs
+{-           normalFs = SomeHasFS $ ioHasFS $ MountPoint (dbDir  </> "ledger")
+          ssdFs    = SomeHasFS $ ioHasFS $ MountPoint (ssdDir </> "ledger") -}
+          ldbArgs = ChainDB.cdbLgrDbArgs args'
 
       withImmutableDB immutableDbArgs $ \(immutableDB, internal) -> do
         SomeAnalysis (Proxy :: Proxy startFrom) ana <- pure $ runAnalysis analysis
@@ -84,35 +120,19 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
               Just hash -> pure $ BlockPoint slot hash
               Nothing   -> fail $ "No block with given slot in the ImmutableDB: " <> show slot
           SStartFromLedgerState -> do
-            -- TODO we need to check if the snapshot exists. If not, print an
-            -- error and ask the user if she wanted to create a snapshot first and
-            -- how to do it.
-            initLedgerErr <- runExceptT $ case startSlot of
-              Origin                  -> pure genesisLedger
-              NotOrigin (SlotNo slot) -> readSnapshot
-                ledgerDbFS
-                (decodeDiskExtLedgerState $ configCodec cfg)
-                decode
-                (DiskSnapshot slot (Just "db-analyser"))
-                -- TODO @readSnapshot@ has type @ExceptT ReadIncrementalErr m
-                -- (ExtLedgerState blk)@ but it also throws exceptions! This makes
-                -- error handling more challenging than it ought to be. Maybe we
-                -- can enrich the error that @readSnapthot@ return, so that it can
-                -- contain the @HasFS@ errors as well.
-            initLedger <- either (error . show) pure initLedgerErr
+            (ledgerDB, intLedgerDB) <- openLedgerDB ldbArgs
             -- This marker divides the "loading" phase of the program, where the
             -- system is principally occupied with reading snapshot data from
             -- disk, from the "processing" phase, where we are streaming blocks
             -- and running the ledger processing on them.
             Debug.traceMarkerIO "SNAPSHOT_LOADED"
-            pure $ FromLedgerState initLedger
+            pure $ FromLedgerState ledgerDB intLedgerDB
 
         result <- ana AnalysisEnv {
             cfg
           , startFrom
           , db = immutableDB
           , registry
-          , ledgerDbFS = ledgerDbFS
           , limit = confLimit
           , tracer = analysisTracer
           }
@@ -139,7 +159,7 @@ analyse DBAnalyserConfig{analysis, confLimit, dbDir, selectDB, validation, verbo
         withLock = bracket_ (takeMVar lock) (putMVar lock ())
 
     maybeValidateAll = case (analysis, validation) of
-      (_, Just ValidateAllBlocks)      -> ensureValidateAll
+      (_, Just ValidateAllBlocks)      -> ChainDB.ensureValidateAll
       (_, Just MinimumBlockValidation) -> id
-      (OnlyValidation, _ )             -> ensureValidateAll
+      (OnlyValidation, _ )             -> ChainDB.ensureValidateAll
       _                                -> id

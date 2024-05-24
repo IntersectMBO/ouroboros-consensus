@@ -17,6 +17,9 @@ module Test.Util.QuickCheck (
   , le
   , lt
   , strictlyIncreasing
+    -- * Gen variants that allow transformers
+  , frequency'
+  , oneof'
     -- * Comparing maps
   , isSubmapOfBy
     -- * Improved variants
@@ -33,7 +36,8 @@ module Test.Util.QuickCheck (
   , prop_lawfulEqAndTotalOrd
   ) where
 
-import           Control.Monad.Except
+import           Control.Monad.Except (Except, runExcept)
+import           Control.Monad.Trans (MonadTrans (..))
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.Proxy
@@ -267,3 +271,23 @@ prop_lawfulEqAndTotalOrd a b c = conjoin
     , counterexample "max a b == if a >= b then a else b VIOLATED" $
         max a b === if a >= b then a else b
     ]
+
+{-------------------------------------------------------------------------------
+  Generator variants that allow for transformers
+-------------------------------------------------------------------------------}
+
+-- | Variant of 'frequency' that allows for transformers of 'Gen'
+frequency' :: (MonadTrans t, Monad (t Gen)) => [(Int, t Gen a)] -> t Gen a
+frequency' [] = error "frequency' used with empty list"
+frequency' xs0 = lift (choose (1, tot)) >>= (`pick` xs0)
+  where
+    tot = sum (map fst xs0)
+
+    pick n ((k,x):xs)
+      | n <= k    = x
+      | otherwise = pick (n-k) xs
+    pick _ _  = error "pick used with empty list"
+
+oneof' :: (MonadTrans t, Monad (t Gen)) => [t Gen a] -> t Gen a
+oneof' [] = error "QuickCheck.oneof used with empty list"
+oneof' gs = lift (chooseInt (0,length gs - 1)) >>= (gs !!)

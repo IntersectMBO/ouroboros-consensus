@@ -101,6 +101,7 @@ library
     text,
     time,
     transformers,
+    transformers-base,
     typed-protocols,
 
   -- GHC 8.10.7 on aarch64-darwin cannot use text-2
@@ -152,6 +153,7 @@ library unstable-diffusion-testlib
     sop-extras ^>=0.2,
     strict-sop-core ^>=0.1,
     text,
+    transformers-base,
     typed-protocols,
 
 library unstable-mock-testlib
@@ -196,6 +198,7 @@ test-suite mock-test
   main-is: Main.hs
   other-modules:
     Test.Consensus.Ledger.Mock
+    Test.Consensus.Ledger.Mock.LedgerTables
     Test.ThreadNet.BFT
     Test.ThreadNet.LeaderSchedule
     Test.ThreadNet.PBFT
@@ -273,6 +276,7 @@ test-suite consensus-test
     base,
     binary,
     bytestring,
+    cardano-binary,
     cardano-crypto-class,
     cardano-slotting:{cardano-slotting, testlib},
     containers,
@@ -307,6 +311,7 @@ test-suite consensus-test
     tasty-quickcheck,
     temporary,
     time,
+    transformers-base,
     tree-diff,
     typed-protocols,
     unstable-diffusion-testlib,
