@@ -62,8 +62,9 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
 import           Ouroboros.Consensus.Mempool
 import qualified Ouroboros.Consensus.MiniProtocol.BlockFetch.ClientInterface as BlockFetchClientInterface
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientHandle (..), ChainSyncState (..),
-                     viewChainSyncState)
+                     (ChainSyncClientHandle (..),
+                     ChainSyncClientHandleCollection (..), ChainSyncState (..),
+                     newChainSyncClientHandleCollection, viewChainSyncState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.HistoricityCheck
                      (HistoricityCheck)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck
@@ -143,7 +144,7 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
     , getGsmState             :: STM m GSM.GsmState
 
       -- | The kill handle and exposed state for each ChainSync client.
-    , getChainSyncHandles     :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
+    , getChainSyncHandles     :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
 
       -- | Read the current peer sharing registry, used for interacting with
       -- the PeerSharing protocol
@@ -252,7 +253,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                   <&> \wd (_headers, lst) ->
                         GSM.getDurationUntilTooOld wd (getTipSlot lst)
               , GSM.equivalent                = (==) `on` (AF.headPoint . fst)
-              , GSM.getChainSyncStates        = fmap cschState <$> readTVar varChainSyncHandles
+              , GSM.getChainSyncStates        = fmap cschState <$> cschcMap varChainSyncHandles
               , GSM.getCurrentSelection       = do
                   headers        <- ChainDB.getCurrentChain  chainDB
                   extLedgerState <- ChainDB.getCurrentLedger chainDB
@@ -264,7 +265,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
               , GSM.writeGsmState = \gsmState ->
                   atomicallyWithMonotonicTime $ \time -> do
                     writeTVar varGsmState gsmState
-                    handles <- readTVar varChainSyncHandles
+                    handles <- cschcMap varChainSyncHandles
                     traverse_ (($ time) . ($ gsmState) . cschOnGsmStateChanged) handles
               , GSM.isHaaSatisfied            = do
                   readTVar varOutboundConnectionsState <&> \case
@@ -299,7 +300,7 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
             chainDB
             (readTVar varGsmState)
             -- TODO GDD should only consider (big) ledger peers
-            (readTVar varChainSyncHandles)
+            (cschcMap varChainSyncHandles)
             varLoEFragment
 
     void $ forkLinkedThread registry "NodeKernel.blockForging" $
@@ -356,7 +357,7 @@ data InternalState m addrNTN addrNTC blk = IS {
     , chainDB             :: ChainDB m blk
     , blockFetchInterface :: BlockFetchConsensusInterface (ConnectionId addrNTN) (Header blk) blk m
     , fetchClientRegistry :: FetchClientRegistry (ConnectionId addrNTN) (Header blk) blk m
-    , varChainSyncHandles :: StrictTVar m (Map (ConnectionId addrNTN) (ChainSyncClientHandle m blk))
+    , varChainSyncHandles :: ChainSyncClientHandleCollection (ConnectionId addrNTN) m blk
     , varGsmState         :: StrictTVar m GSM.GsmState
     , mempool             :: Mempool m blk
     , peerSharingRegistry :: PeerSharingRegistry addrNTN m
@@ -385,7 +386,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
         gsmMarkerFileView
       newTVarIO gsmState
 
-    varChainSyncHandles <- newTVarIO mempty
+    varChainSyncHandles <- atomically newChainSyncClientHandleCollection
     mempool       <- openMempool registry
                                  (chainDBLedgerInterface chainDB)
                                  (configLedger cfg)
@@ -395,7 +396,7 @@ initInternalState NodeKernelArgs { tracers, chainDB, registry, cfg
     fetchClientRegistry <- newFetchClientRegistry
 
     let getCandidates :: STM m (Map (ConnectionId addrNTN) (AnchoredFragment (Header blk)))
-        getCandidates = viewChainSyncState varChainSyncHandles csCandidate
+        getCandidates = viewChainSyncState (cschcMap varChainSyncHandles) csCandidate
 
     slotForgeTimeOracle <- BlockFetchClientInterface.initSlotForgeTimeOracle cfg chainDB
     let readFetchMode = BlockFetchClientInterface.readFetchModeDefault
