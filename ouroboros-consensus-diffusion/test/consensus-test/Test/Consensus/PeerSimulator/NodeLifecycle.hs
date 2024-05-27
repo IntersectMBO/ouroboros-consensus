@@ -20,6 +20,8 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (ChainSyncClientHandleCollection (..))
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
 import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB
@@ -204,7 +206,7 @@ lifecycleStop resources LiveNode {lnStateViewTracers, lnCopyToImmDb, lnPeers} = 
   releaseAll lrRegistry
   -- Reset the resources in TVars that were allocated by the simulator
   atomically $ do
-    modifyTVar psrHandles (const mempty)
+    cschcRemoveAllHandles psrHandles
     case lrLoEVar of
       LoEEnabled var -> modifyTVar var (const (AF.Empty AF.AnchorGenesis))
       LoEDisabled    -> pure ()

@@ -63,10 +63,12 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client (
   , TraceChainSyncClientEvent (..)
     -- * State shared with other components
   , ChainSyncClientHandle (..)
+  , ChainSyncClientHandleCollection (..)
   , ChainSyncState (..)
   , ChainSyncStateView (..)
   , Jumping.noJumping
   , chainSyncStateFor
+  , newChainSyncClientHandleCollection
   , noIdling
   , noLoPBucket
   , viewChainSyncState
@@ -231,11 +233,11 @@ newtype Our a = Our { unOur :: a }
 -- data from 'ChainSyncState'.
 viewChainSyncState ::
   IOLike m =>
-  StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
+  STM m (Map peer (ChainSyncClientHandle m blk)) ->
   (ChainSyncState blk -> a) ->
   STM m (Map peer a)
-viewChainSyncState varHandles f =
-  Map.map f <$> (traverse (readTVar . cschState) =<< readTVar varHandles)
+viewChainSyncState readHandles f =
+  Map.map f <$> (traverse (readTVar . cschState) =<< readHandles)
 
 -- | Convenience function for reading the 'ChainSyncState' for a single peer
 -- from a nested set of TVars.
@@ -329,7 +331,7 @@ bracketChainSyncClient ::
     )
  => Tracer m (TraceChainSyncClientEvent blk)
  -> ChainDbView m blk
- -> StrictTVar m (Map peer (ChainSyncClientHandle m blk))
+ -> ChainSyncClientHandleCollection peer m blk
     -- ^ The kill handle and states for each peer, we need the whole map because we
     -- (de)register nodes (@peer@).
  -> STM m GsmState
@@ -404,8 +406,8 @@ bracketChainSyncClient
           insertHandle = atomicallyWithMonotonicTime $ \time -> do
             initialGsmState <- getGsmState
             updateLopBucketConfig lopBucket initialGsmState time
-            modifyTVar varHandles $ Map.insert peer handle
-          deleteHandle = atomically $ modifyTVar varHandles $ Map.delete peer
+            cschcAddHandle varHandles peer handle
+          deleteHandle = atomically $ cschcRemoveHandle varHandles peer
       bracket_ insertHandle deleteHandle $ f Jumping.noJumping
 
     withCSJCallbacks lopBucket csHandleState (CSJEnabled csjEnabledConfig) f =
