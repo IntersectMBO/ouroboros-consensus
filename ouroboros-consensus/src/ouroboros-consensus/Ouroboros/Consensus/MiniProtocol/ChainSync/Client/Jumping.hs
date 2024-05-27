@@ -164,10 +164,10 @@ module Ouroboros.Consensus.MiniProtocol.ChainSync.Client.Jumping (
 
 import           Cardano.Slotting.Slot (SlotNo (..), WithOrigin (..))
 import           Control.Monad (forM, forM_, when)
+import           Data.Foldable (toList)
 import           Data.List (sortOn)
-import           Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import           Data.Maybe (catMaybes, fromMaybe)
+import qualified Data.Sequence.Strict as Seq
 import           GHC.Generics (Generic)
 import           Ouroboros.Consensus.Block (HasHeader (getHeaderFields), Header,
                      Point (..), castPoint, pointSlot, succWithOrigin)
@@ -175,6 +175,7 @@ import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client.State
                      (ChainSyncClientHandle (..),
+                     ChainSyncClientHandleCollection (..),
                      ChainSyncJumpingJumperState (..),
                      ChainSyncJumpingState (..), ChainSyncState (..),
                      DisengagedInitState (..), DynamoInitState (..),
@@ -257,16 +258,16 @@ mkJumping peerContext = Jumping
 --
 -- Invariants:
 --
--- - If 'handlesVar' is not empty, then there is exactly one dynamo in it.
--- - There is at most one objector in 'handlesVar'.
--- - If there exist 'FoundIntersection' jumpers in 'handlesVar', then there
+-- - If 'handlesCol is not empty, then there is exactly one dynamo in it.
+-- - There is at most one objector in 'handlesCol.
+-- - If there exist 'FoundIntersection' jumpers in 'handlesCol, then there
 --   is an objector and the intersection of the objector with the dynamo is
 --   at least as old as the oldest intersection of the `FoundIntersection` jumpers
 --   with the dynamo.
 data ContextWith peerField handleField m peer blk = Context
   { peer       :: !peerField,
     handle     :: !handleField,
-    handlesVar :: !(StrictTVar m (Map peer (ChainSyncClientHandle m blk))),
+    handlesCol :: !(ChainSyncClientHandleCollection peer m blk),
     jumpSize   :: !SlotNo
   }
 
@@ -276,12 +277,12 @@ type Context = ContextWith () ()
 -- | A peer-specific context for ChainSync jumping. This is a 'ContextWith'
 -- pointing on the handler of the peer in question.
 --
--- Invariant: The binding from 'peer' to 'handle' is present in 'handlesVar'.
+-- Invariant: The binding from 'peer' to 'handle' is present in 'handlesCol'.
 type PeerContext m peer blk = ContextWith peer (ChainSyncClientHandle m blk) m peer blk
 
 makeContext ::
   MonadSTM m =>
-  StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
+  ChainSyncClientHandleCollection peer m blk ->
   SlotNo ->
   -- ^ The size of jumps, in number of slots.
   STM m (Context m peer blk)
@@ -427,8 +428,8 @@ onRollForward context point =
     setJumps (Just jumpInfo) = do
         writeTVar (cschJumping (handle context)) $
           Dynamo DynamoStarted $ pointSlot $ AF.headPoint $ jTheirFragment jumpInfo
-        handles <- readTVar (handlesVar context)
-        forM_ (Map.elems handles) $ \h ->
+        handles <- cschcSeq (handlesCol context)
+        forM_ handles $ \(_, h) ->
           readTVar (cschJumping h) >>= \case
             Jumper nextJumpVar Happy{} -> writeTVar nextJumpVar (Just jumpInfo)
             _ -> pure ()
@@ -660,11 +661,11 @@ updateJumpInfo context jumpInfo =
 -- of the dynamo, or 'Nothing' if there is none.
 getDynamo ::
   (MonadSTM m) =>
-  StrictTVar m (Map peer (ChainSyncClientHandle m blk)) ->
+  ChainSyncClientHandleCollection peer m blk ->
   STM m (Maybe (ChainSyncClientHandle m blk))
-getDynamo handlesVar = do
-  handles <- Map.elems <$> readTVar handlesVar
-  findM (\handle -> isDynamo <$> readTVar (cschJumping handle)) handles
+getDynamo handlesCol = do
+  handles <- cschcSeq handlesCol
+  fmap snd <$> findM (\(_, handle) -> isDynamo <$> readTVar (cschJumping handle)) handles
   where
     isDynamo Dynamo{} = True
     isDynamo _        = False
@@ -705,8 +706,7 @@ newJumper jumpInfo jumperState = do
 -- that peer. If there is no dynamo, the peer starts as dynamo; otherwise, it
 -- starts as a jumper.
 registerClient ::
-  ( Ord peer,
-    LedgerSupportsProtocol blk,
+  ( LedgerSupportsProtocol blk,
     IOLike m
   ) =>
   Context m peer blk ->
@@ -716,7 +716,7 @@ registerClient ::
   (StrictTVar m (ChainSyncJumpingState m blk) -> ChainSyncClientHandle m blk) ->
   STM m (PeerContext m peer blk)
 registerClient context peer csState mkHandle = do
-  csjState <- getDynamo (handlesVar context) >>= \case
+  csjState <- getDynamo (handlesCol context) >>= \case
     Nothing -> do
       fragment <- csCandidate <$> readTVar csState
       pure $ Dynamo DynamoStarted $ pointSlot $ AF.anchorPoint fragment
@@ -725,7 +725,7 @@ registerClient context peer csState mkHandle = do
       newJumper mJustInfo (Happy FreshJumper Nothing)
   cschJumping <- newTVar csjState
   let handle = mkHandle cschJumping
-  modifyTVar (handlesVar context) $ Map.insert peer handle
+  cschcAddHandle (handlesCol context) peer handle
   pure $ context {peer, handle}
 
 -- | Unregister a client from a 'PeerContext'; this might trigger the election
@@ -738,7 +738,7 @@ unregisterClient ::
   PeerContext m peer blk ->
   STM m ()
 unregisterClient context = do
-  modifyTVar (handlesVar context) $ Map.delete (peer context)
+  cschcRemoveHandle (handlesCol context) (peer context)
   let context' = stripContext context
   readTVar (cschJumping (handle context)) >>= \case
     Disengaged{} -> pure ()
@@ -756,7 +756,7 @@ electNewDynamo ::
   Context m peer blk ->
   STM m ()
 electNewDynamo context = do
-  peerStates <- Map.toList <$> readTVar (handlesVar context)
+  peerStates <- cschcSeq (handlesCol context)
   mDynamo <- findNonDisengaged peerStates
   case mDynamo of
     Nothing -> pure ()
@@ -781,22 +781,20 @@ electNewDynamo context = do
     isDisengaged Disengaged{} = True
     isDisengaged _            = False
 
-findM :: Monad m => (a -> m Bool) -> [a] -> m (Maybe a)
-findM _ [] = pure Nothing
-findM p (x : xs) = p x >>= \case
-  True -> pure (Just x)
-  False -> findM p xs
+findM :: (Foldable f, Monad m) => (a -> m Bool) -> f a -> m (Maybe a)
+findM p =
+  foldr (\x mb -> p x >>= \case True -> pure (Just x); False -> mb) (pure Nothing)
 
 -- | Find the objector in a context, if there is one.
 findObjector ::
   (MonadSTM m) =>
   Context m peer blk ->
   STM m (Maybe (ObjectorInitState, JumpInfo blk, Point (Header blk), ChainSyncClientHandle m blk))
-findObjector context = do
-  readTVar (handlesVar context) >>= go . Map.toList
+findObjector context =
+  cschcSeq (handlesCol context) >>= go
   where
-    go [] = pure Nothing
-    go ((_, handle):xs) =
+    go Seq.Empty = pure Nothing
+    go ((_, handle) Seq.:<| xs) =
       readTVar (cschJumping handle) >>= \case
         Objector initState goodJump badPoint ->
           pure $ Just (initState, goodJump, badPoint, handle)
@@ -809,7 +807,7 @@ electNewObjector ::
   Context m peer blk ->
   STM m ()
 electNewObjector context = do
-  peerStates <- Map.toList <$> readTVar (handlesVar context)
+  peerStates <- toList <$> cschcSeq (handlesCol context)
   dissentingJumpers <- collectDissentingJumpers peerStates
   let sortedJumpers = sortOn (pointSlot . fst) dissentingJumpers
   case sortedJumpers of
