@@ -25,7 +25,8 @@ import           Data.Traversable (for)
 import           Ouroboros.Consensus.Block (WithOrigin (Origin))
 import           Ouroboros.Consensus.Block.Abstract (Header, Point (..))
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainSyncClientHandle)
+                     (ChainSyncClientHandleCollection,
+                     newChainSyncClientHandleCollection)
 import           Ouroboros.Consensus.Util.IOLike (IOLike, MonadSTM (STM),
                      StrictTVar, readTVar, uncheckedNewTVarM, writeTVar)
 import qualified Ouroboros.Network.AnchoredFragment as AF
@@ -115,7 +116,7 @@ data PeerSimulatorResources m blk =
 
     -- | Handles to interact with the ChainSync client of each peer.
     -- See 'ChainSyncClientHandle' for more details.
-    psrHandles :: StrictTVar m (Map PeerId (ChainSyncClientHandle m TestBlock))
+    psrHandles :: ChainSyncClientHandleCollection PeerId m TestBlock
   }
 
 -- | Create 'ChainSyncServerHandlers' for our default implementation using 'NodeState'.
@@ -233,5 +234,5 @@ makePeerSimulatorResources tracer blockTree peers = do
   resources <- for peers $ \ peerId -> do
     peerResources <- makePeerResources tracer blockTree peerId
     pure (peerId, peerResources)
-  psrHandles <- uncheckedNewTVarM mempty
+  psrHandles <- atomically newChainSyncClientHandleCollection
   pure PeerSimulatorResources {psrPeers = Map.fromList $ toList resources, psrHandles}
