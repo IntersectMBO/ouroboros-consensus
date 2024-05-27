@@ -1121,7 +1121,7 @@ getFragmentBetween bs anchor = go
   where
     anchorHash :: ChainHash blk
     anchorHash = case anchor of
-      Fragment.AnchorGenesis -> GenesisHash
+      Fragment.AnchorGenesis          -> GenesisHash
       Fragment.Anchor _ anchorHash' _ -> BlockHash anchorHash'
 
     go :: ChainHash blk -> Maybe (AnchoredFragment blk)
