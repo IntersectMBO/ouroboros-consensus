@@ -487,7 +487,9 @@ chainSelection cfg m = Model {
             -- NOTE: There needs to be an intersection, but not any kind of
             -- intersection: we accept only fragments that extend the LoE.
             -- Although not strictly necessary, this prevents some peculiar
-            -- transient states.
+            -- transient states. The fragments that do not extend the LoE are
+            -- trimmed to have their tip point on the LoE. The others may have k
+            -- blocks past the tip of the LoE.
             Just (chainPrefix, _, chainSuffix, loeSuffix)
               | Fragment.null chainSuffix || Fragment.null loeSuffix ->
                   let trimmedSuffix = Fragment.takeOldest (fromIntegral $ maxRollbacks secParam) chainSuffix
@@ -497,6 +499,10 @@ chainSelection cfg m = Model {
                           case Chain.fromAnchoredFragment trimmedChain of
                             Nothing -> error "bug in trimToLoE: trimmedChain is not anchored at Origin"
                             Just trimmedChain' -> Just trimmedChain'
+              | otherwise ->
+                case Chain.fromAnchoredFragment chainPrefix of
+                  Nothing -> error "bug in trimToLoE: chainPrefix is not anchored at Origin"
+                  Just chainPrefix' -> Just chainPrefix'
             _ -> Nothing
 
     newChain  :: Chain blk
