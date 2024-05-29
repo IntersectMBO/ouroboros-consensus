@@ -957,9 +957,6 @@ generator loe genBlock m@Model {..} = At <$> frequency
     pointsInDB :: [RealPoint blk]
     pointsInDB = blockRealPoint <$> Map.elems (Model.blocks dbModel)
 
-    genPointInDB :: Gen (RealPoint blk)
-    genPointInDB = elements pointsInDB
-
     -- TODO: sometimes generate fragments that connect to a disconnected block of the ChainDB
     -- TODO: sometimes generate fragments that exit the ChainDB
     -- TODO: sometimes generate fragments that do not contain the immutable tip
@@ -1003,7 +1000,7 @@ generator loe genBlock m@Model {..} = At <$> frequency
     genRealPoint :: Gen (RealPoint blk)
     genRealPoint = frequency
       [ (1, genRandomPoint)
-      , (if empty then 0 else 7, genPointInDB)
+      , (if empty then 0 else 7, elements pointsInDB)
       ]
 
     genPoint :: Gen (Point blk)
