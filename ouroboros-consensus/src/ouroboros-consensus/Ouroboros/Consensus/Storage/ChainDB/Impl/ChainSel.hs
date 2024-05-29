@@ -35,7 +35,7 @@ import           Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (fromJust, isJust, isNothing, mapMaybe)
+import           Data.Maybe (fromJust, isJust, isNothing)
 import           Data.Maybe.Strict (StrictMaybe (..), strictMaybeToMaybe)
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -676,7 +676,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         let chainDiffs = NE.nonEmpty
               $ filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain . Diff.getSuffix)
-              $ mapMaybe (followsLoEFrag loeFrag curChainAndLedger)
+              $ fmap (followsLoEFrag loeFrag curChainAndLedger)
               $ fmap Diff.extend
               $ NE.toList candidates
         -- All candidates are longer than the current chain, so they will be
@@ -715,20 +715,25 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     -- because the diff might not intersect with the LoE fragment, because the
     -- diff suffix is anchored somewhere on the current chain and LoE frag's tip
     -- might be older than that anchor.
+    --
+    -- PRECONDITIONS:
+    --
+    -- 1. The given 'ChainDiff' can apply on top of the given 'ChainAndLedger'.
+    -- 2. The LoE fragment intersects with the current selection.
     followsLoEFrag :: LoE (AnchoredFragment (Header blk))
                    -> ChainAndLedger blk
                    -> ChainDiff (Header blk)
-                   -> Maybe (ChainDiff (Header blk))
-    followsLoEFrag LoEDisabled _ diff = Just diff
-    followsLoEFrag (LoEEnabled loe) curChain diff = do
-      cand <- Diff.apply (VF.validatedFragment curChain) diff
-      (candPrefix, _, candSuffix, loeSuffix) <- AF.intersect cand loe
-      let trimmedCandSuffix = AF.takeOldest (fromIntegral k) candSuffix
+                   -> ChainDiff (Header blk)
+    followsLoEFrag LoEDisabled _ diff = diff
+    followsLoEFrag (LoEEnabled loe) curChain diff =
+      let cand = fromJust $ Diff.apply (VF.validatedFragment curChain) diff
+          (candPrefix, _, candSuffix, loeSuffix) = fromJust $ AF.intersect cand loe
+          trimmedCandSuffix = AF.takeOldest (fromIntegral k) candSuffix
           trimmedCand =
             if AF.null loeSuffix
               then fromJust $ AF.join candPrefix trimmedCandSuffix
               else candPrefix
-      Just $ Diff.diff (VF.validatedFragment curChain) trimmedCand
+       in Diff.diff (VF.validatedFragment curChain) trimmedCand
 
     -- | We have found a 'ChainDiff' through the VolatileDB connecting the new
     -- block to the current chain. We'll call the intersection/anchor @x@.
@@ -768,7 +773,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
             -- 4. Trim fragments so that they follow the LoE, that is, they
             -- extend the LoE or are extended by the LoE. Filter them out
             -- otherwise.
-          . fmap (mapMaybe (followsLoEFrag loeFrag curChainAndLedger))
+          . fmap (fmap (followsLoEFrag loeFrag curChainAndLedger))
             -- 3. Translate the 'HeaderFields' to 'Header' by reading the
             -- headers from disk.
           . flip evalStateT initCache
