@@ -26,10 +26,9 @@ jobs:
          ghc: ["8.10.7", "9.6.5", "9.8.2"]
          cabal: ["3.10.3.0"]
          os: [ubuntu-latest]
-         variant: [default, no-thunks]
          exclude:
-          variant:
-            ${{ github.event_name == 'schedule' ? 'no-thunks' : 'default' }}
+           - variant:
+             ${{ github.event.type == 'schedule' && 'default' || 'no-thunks' }}
     env:
       # Modify this value to "invalidate" the Cabal cache.
       CABAL_CACHE_VERSION: "2024-01-29"

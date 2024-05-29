@@ -1,4 +1,4 @@
-import: ./cabal.project.default.local
+import: .github/workflows/cabal.project.default.local
 
 package strict-checked-vars
   flags: +checktvarinvariants +checkmvarinvariants
