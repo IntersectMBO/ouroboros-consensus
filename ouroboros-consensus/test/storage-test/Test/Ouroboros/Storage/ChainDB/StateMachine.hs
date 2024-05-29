@@ -1741,8 +1741,14 @@ mkArgs cfg chunkInfo initLedger registry nodeDBs tracer (MaxClockSkew maxClockSk
 -- shrinking could try disabling the LoE.
 tests :: TestTree
 tests = testGroup "ChainDB q-s-m"
-    [ testGroup "sequential"
-      [ adjustQuickCheckTests (* 100) $ testProperty "with LoE" (prop_sequential (LoEEnabled ()))
-      , adjustQuickCheckTests (* 100) $ testProperty "without LoE" (prop_sequential LoEDisabled)
-      ]
+    [ adjustQuickCheckTests (* 100) $ testProperty "sequential" prop_sequential
     ]
+
+{-------------------------------------------------------------------------------
+  Orphan instances
+-------------------------------------------------------------------------------}
+
+instance (Arbitrary a) => Arbitrary (LoE a) where
+  arbitrary = oneof [pure LoEDisabled, LoEEnabled <$> arbitrary]
+  shrink LoEDisabled    = []
+  shrink (LoEEnabled x) = LoEDisabled : map LoEEnabled (shrink x)
