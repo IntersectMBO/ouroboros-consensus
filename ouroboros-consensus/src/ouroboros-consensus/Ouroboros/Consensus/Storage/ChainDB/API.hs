@@ -474,11 +474,16 @@ addBlock_  = void ..: addBlock
 triggerChainSelectionAsync :: ChainDB m blk -> m (ChainSelectionPromise m)
 triggerChainSelectionAsync = chainSelAsync
 
+-- | A promise that the chain selection will be performed. It is returned by
+-- 'triggerChainSelectionAsync' and contains a monadic action that waits until
+-- the corresponding run of Chain Selection is done.
 newtype ChainSelectionPromise m = ChainSelectionPromise {
+  -- NOTE: We might want a mechanism similar to 'AddBlockPromise' and
+  -- 'AddBlockResult', in case the background ChainDB thread dies.
   waitChainSelectionPromise :: m ()
   }
 
--- | rigger selection synchronously: wait until the chain selection has been
+-- | Trigger selection synchronously: wait until the chain selection has been
 -- performed. This is a partial function, only to support tests.
 triggerChainSelection :: IOLike m => ChainDB m blk -> m ()
 triggerChainSelection chainDB =
