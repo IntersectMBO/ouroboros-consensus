@@ -1,8 +1,4 @@
-package cardano-crypto-praos
-  flags: -external-libsodium-vrf
+import: ./cabal.project.default.local
 
 package strict-checked-vars
   flags: +checktvarinvariants +checkmvarinvariants
-
-program-options
-  ghc-options: -Werror
