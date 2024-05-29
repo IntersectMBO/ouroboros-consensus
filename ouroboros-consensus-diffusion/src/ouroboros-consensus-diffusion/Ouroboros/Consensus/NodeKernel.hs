@@ -94,8 +94,6 @@ import           Ouroboros.Network.NodeToNode (ConnectionId,
 import           Ouroboros.Network.PeerSelection.Bootstrap (UseBootstrapPeers)
 import           Ouroboros.Network.PeerSelection.LedgerPeers.Type
                      (LedgerStateJudgement (..))
-import           Ouroboros.Network.PeerSelection.LocalRootPeers
-                     (OutboundConnectionsState (..))
 import           Ouroboros.Network.PeerSharing (PeerSharingAPI,
                      PeerSharingRegistry, newPeerSharingAPI,
                      newPeerSharingRegistry, ps_POLICY_PEER_SHARE_MAX_PEERS,
@@ -151,9 +149,6 @@ data NodeKernel m addrNTN addrNTC blk = NodeKernel {
     , setBlockForging        :: [BlockForging m blk] -> m ()
 
     , getPeerSharingAPI      :: PeerSharingAPI addrNTN StdGen m
-
-    , getOutboundConnectionsState
-                             :: StrictTVar m OutboundConnectionsState
     }
 
 -- | Arguments required when initializing a node
@@ -209,8 +204,6 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
           , varLedgerJudgement
           } = st
 
-    varOutboundConnectionsState <- newTVarIO UntrustedState
-
     do  let GsmNodeKernelArgs {..} = gsmArgs
             gsmTracerArgs          =
               ( castTip . either AF.anchorToTip tipFromHeader . AF.head . fst
@@ -246,12 +239,9 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
                     gsmMarkerFileView
               , GSM.writeGsmState = \x -> atomically $ do
                   writeTVar varLedgerJudgement $ GSM.gsmStateToLedgerJudgement x
-              , GSM.isHaaSatisfied            = do
-                  readTVar varOutboundConnectionsState <&> \case
-                    -- See the upstream Haddocks for the exact conditions under
-                    -- which the diffusion layer is in this state.
-                    TrustedStateWithExternalPeers -> True
-                    UntrustedState                -> False
+              , -- In the context of bootstrap peers, it is fine to always
+                -- return 'True' as all peers are trusted during syncing.
+                GSM.isHaaSatisfied            = pure True
               }
         judgment <- readTVarIO varLedgerJudgement
         void $ forkLinkedThread registry "NodeKernel.GSM" $ case judgment of
@@ -288,8 +278,6 @@ initNodeKernel args@NodeKernelArgs { registry, cfg, tracers
       , getTracers              = tracers
       , setBlockForging         = \a -> atomically . LazySTM.putTMVar blockForgingVar $! a
       , getPeerSharingAPI       = peerSharingAPI
-      , getOutboundConnectionsState
-                                = varOutboundConnectionsState
       }
   where
     blockForgingController :: InternalState m remotePeer localPeer blk
