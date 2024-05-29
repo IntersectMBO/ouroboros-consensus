@@ -1,9 +1,11 @@
 {-# LANGUAGE BangPatterns             #-}
 {-# LANGUAGE DisambiguateRecordFields #-}
+{-# LANGUAGE FlexibleContexts         #-}
 {-# LANGUAGE LambdaCase               #-}
 {-# LANGUAGE NamedFieldPuns           #-}
 {-# LANGUAGE ScopedTypeVariables      #-}
 {-# LANGUAGE StandaloneDeriving       #-}
+{-# LANGUAGE TypeOperators            #-}
 module Ouroboros.Consensus.Storage.ChainDB.Impl.Paths (
     -- * LookupBlockInfo
     LookupBlockInfo
@@ -63,32 +65,77 @@ type LookupBlockInfo blk = HeaderHash blk -> Maybe (VolatileDB.BlockInfo blk)
 -- NOTE: it is possible that no candidates are found, but don't forget that
 -- the chain (fragment) ending with @B@ is also a potential candidate.
 --
--- If ChainSel is using the LoE, the value passed in @lenLimit@ will be used
+-- If ChainSel is using the LoE, the value passed in @loeFrag@ will be used
 -- to truncate the candidates so that no more than @k@ blocks can be selected
--- beyond the LoE fragment.
+-- beyond the LoE fragment, and no candidate will be produced that is not on
+-- the same chain as the LoE fragment.
 maximalCandidates ::
-     forall blk.
-     (ChainHash blk -> Set (HeaderHash blk))
+     forall blk blk2.
+     (HasHeader blk, HasHeader (Header blk), HeaderHash blk ~ HeaderHash blk2, HasHeader blk2)
+  => (ChainHash blk -> Set (HeaderHash blk))
      -- ^ @filterByPredecessor@
-  -> LoE Word64 -- ^ Max length of any candidate
-  -> Point blk -- ^ @B@
+  -> Word64 -- ^ Security parameter @k@
+  -> LoE (AnchoredFragment (Header blk)) -- ^ LoE fragment
+  -> AnchoredFragment blk2 -- ^ Fragment from immutable tip to @b@
+  -> Point blk -- ^ @b@, passed separately to avoid computing the previous
+               -- fragment unless strictly necessary
   -> [NonEmpty (HeaderHash blk)]
      -- ^ Each element in the list is a list of hashes from which we can
-     -- construct a fragment anchored at the point @B@.
-maximalCandidates succsOf loeLimit b = mapMaybe (NE.nonEmpty . applyLoE) $ go (pointHash b)
+     -- construct a fragment anchored at @b@.
+maximalCandidates succsOf k loeFrag frag b =
+    case loeFrag of
+      LoEDisabled ->
+        mapMaybe NE.nonEmpty $ go (pointHash b) LoEUnlimited
+      LoEEnabled loeF -> case AF.splitAfterPoint loeF b of
+        Nothing ->
+          let diff = Diff.diff frag loeF
+           in if AF.null (Diff.getSuffix diff) then
+                -- The candidate extends the LoE fragment
+                if Diff.getRollback diff > k then
+                  -- The point is beyond what LoE allows
+                  []
+                else
+                  mapMaybe NE.nonEmpty $
+                    go (pointHash b) $
+                      LoEAfterLoEFragment (k - Diff.getRollback diff)
+              else
+                -- The candidate does not extend the LoE fragment
+                []
+        Just (_, loeSuffix) ->
+          mapMaybe NE.nonEmpty $
+            go (pointHash b) $
+              LoEBeforeLoEFragment (blockHash <$> AF.toOldestFirst loeSuffix)
   where
-    go :: ChainHash blk -> [[HeaderHash blk]]
-    go mbHash = case Set.toList $ succsOf mbHash of
+    go :: ChainHash blk -> LoECandidateState blk -> [[HeaderHash blk]]
+    go mbHash s = case Set.toList $ succsOf mbHash of
       []    -> [[]]
       succs -> [ next : candidate
                | next <- succs
-               , candidate <- go (BlockHash next)
+               , Just s' <- [loeNextState s next]
+               , candidate <- go (BlockHash next) s'
                ]
-    applyLoE
-      | LoEEnabled limit <- loeLimit
-      = take (fromIntegral limit)
-      | otherwise
-      = id
+
+    loeNextState ::
+         LoECandidateState blk
+      -> HeaderHash blk
+      -> Maybe (LoECandidateState blk)
+    loeNextState (LoEAfterLoEFragment 0) _ = Nothing
+    loeNextState (LoEAfterLoEFragment i) _ = Just (LoEAfterLoEFragment (i - 1))
+    loeNextState (LoEBeforeLoEFragment []) _ =
+      if k == 0 then Nothing else Just (LoEAfterLoEFragment (k - 1))
+    loeNextState (LoEBeforeLoEFragment (h:hs)) next
+      | h == next = Just (LoEBeforeLoEFragment hs)
+      | otherwise = Nothing
+    loeNextState LoEUnlimited _ = Just LoEUnlimited
+
+-- | The state of generation of a candidate constrained by the LoE.
+data LoECandidateState blk =
+      -- | There are no constraints on the length of the candidate
+      LoEUnlimited
+      -- | The candidate can have at most the given amount of blocks
+    | LoEAfterLoEFragment Word64
+      -- | The candidate must contain a prefix with the given headers
+    | LoEBeforeLoEFragment [HeaderHash blk]
 
 -- | Extend the 'ChainDiff' with the successors found by 'maximalCandidates'.
 --
@@ -101,20 +148,25 @@ maximalCandidates succsOf loeLimit b = mapMaybe (NE.nonEmpty . applyLoE) $ go (p
 -- Only the longest possible extensions are returned, no intermediary prefixes
 -- of extensions.
 extendWithSuccessors ::
-     forall blk. HasHeader blk
+     forall blk.
+     (HasHeader blk, HasHeader (Header blk))
   => (ChainHash blk -> Set (HeaderHash blk))
   -> LookupBlockInfo blk
-  -> LoE Word64 -- ^ Max extra length for any suffix
+  -> Word64 -- ^ Security parameter @k@
+  -> LoE (AnchoredFragment (Header blk)) -- ^ LoE fragment
+  -> AnchoredFragment (Header blk) -- ^ Current selection
   -> ChainDiff (HeaderFields blk)
   -> NonEmpty (ChainDiff (HeaderFields blk))
-extendWithSuccessors succsOf lookupBlockInfo loeLimit diff =
+extendWithSuccessors succsOf lookupBlockInfo k loeFrag curChain diff =
     case NE.nonEmpty extensions of
       Nothing          -> diff NE.:| []
       Just extensions' -> extensions'
   where
     extensions =
         [ foldl' Diff.append diff (lookupHeaderFields <$> candHashes)
-        | candHashes <- maximalCandidates succsOf loeLimit (castPoint (Diff.getTip diff))
+        | Just frag <- [Diff.apply (AF.mapAnchoredFragment (castHeaderFields . getHeaderFields) curChain) diff]
+        , candHashes <-
+            maximalCandidates succsOf k loeFrag frag (castPoint (Diff.getTip diff))
         ]
 
     lookupHeaderFields :: HeaderHash blk -> HeaderFields blk
