@@ -35,7 +35,7 @@ import           Test.QuickCheck
 import           Test.Util.Orphans.IOLike ()
 import           Test.Util.QuickCheck (forAllGenRunShrinkCheck)
 import           Test.Util.TestBlock (TestBlock)
-import           Test.Util.Tracer (recordingTracerTVar)
+import           Test.Util.Tracer (recordingTracerM)
 import           Text.Printf (printf)
 
 
@@ -56,7 +56,7 @@ runGenesisTest ::
   RunGenesisTestResult
 runGenesisTest schedulerConfig genesisTest =
   runSimStrictShutdownOrThrow $ do
-    (recordingTracer, getTrace) <- recordingTracerTVar
+    (recordingTracer, getTrace) <- recordingTracerM
     let tracer = if scDebug schedulerConfig then debugTracer else recordingTracer
 
     traceLinesWith tracer $ prettyGenesisTest prettyPeersSchedule genesisTest
@@ -104,6 +104,8 @@ forAllGenesisTest generator schedulerConfig shrinker mkProperty =
         classify (genesisWindowAfterIntersection cls) "Full genesis window after intersection" $
         classify (adversaryRollback schCls) "An adversary did a rollback" $
         classify (honestRollback schCls) "The honest peer did a rollback" $
+        classify (allAdversariesEmpty schCls) "All adversaries have empty schedules" $
+        classify (allAdversariesTrivial schCls) "All adversaries have trivial schedules" $
         tabulate "Adversaries killed by LoP" [printf "%.1f%%" $ adversariesKilledByLoP resCls] $
         tabulate "Adversaries killed by GDD" [printf "%.1f%%" $ adversariesKilledByGDD resCls] $
         tabulate "Adversaries killed by Timeout" [printf "%.1f%%" $ adversariesKilledByTimeout resCls] $

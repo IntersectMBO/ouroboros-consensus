@@ -27,7 +27,7 @@ import           Test.Consensus.PeerSimulator.ScheduledServer
 import           Test.Consensus.PeerSimulator.Trace
                      (TraceEvent (TraceScheduledChainSyncServerEvent),
                      TraceScheduledChainSyncServerEvent (..))
-import           Test.Consensus.PointSchedule (NodeState)
+import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (PeerId)
 
 -- | Pure representation of the messages produced by the handler for the @StNext@

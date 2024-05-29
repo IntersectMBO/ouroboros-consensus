@@ -80,13 +80,13 @@ import qualified Ouroboros.Consensus.HeaderStateHistory as HeaderStateHistory
 import           Ouroboros.Consensus.Ledger.Abstract
 import           Ouroboros.Consensus.Ledger.Extended hiding (ledgerState)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
-                     (ChainDbView (..), ChainSyncClientException,
-                     ChainSyncClientResult (..), ChainSyncLoPBucketConfig (..),
-                     ChainSyncState (..), ChainSyncStateView (..),
-                     ConfigEnv (..), Consensus, DynamicEnv (..), Our (..),
-                     Their (..), TraceChainSyncClientEvent (..),
-                     bracketChainSyncClient, chainSyncClient, chainSyncStateFor,
-                     viewChainSyncState)
+                     (CSJConfig (..), ChainDbView (..),
+                     ChainSyncClientException, ChainSyncClientResult (..),
+                     ChainSyncLoPBucketConfig (..), ChainSyncState (..),
+                     ChainSyncStateView (..), ConfigEnv (..), Consensus,
+                     DynamicEnv (..), Our (..), Their (..),
+                     TraceChainSyncClientEvent (..), bracketChainSyncClient,
+                     chainSyncClient, chainSyncStateFor, viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client.InFutureCheck as InFutureCheck
 import           Ouroboros.Consensus.Node.NetworkProtocolVersion
                      (NodeToNodeVersion)
@@ -404,11 +404,14 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
         lopBucketConfig :: ChainSyncLoPBucketConfig
         lopBucketConfig = ChainSyncLoPBucketDisabled
 
+        csjConfig :: CSJConfig
+        csjConfig = CSJDisabled
+
         client :: ChainSyncStateView m TestBlock
                -> Consensus ChainSyncClientPipelined
                     TestBlock
                     m
-        client ChainSyncStateView {csvSetCandidate, csvSetLatestSlot, csvIdling, csvLoPBucket} =
+        client ChainSyncStateView {csvSetCandidate, csvSetLatestSlot, csvIdling, csvLoPBucket, csvJumping} =
             chainSyncClient
               ConfigEnv {
                   chainDbView
@@ -426,6 +429,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                 , idling = csvIdling
                 , loPBucket = csvLoPBucket
                 , setLatestSlot = csvSetLatestSlot
+                , jumping = csvJumping
                 }
 
     -- Set up the server
@@ -499,6 +503,7 @@ runChainSync skew securityParam (ClientUpdates clientUpdates)
                  serverId
                  maxBound
                  lopBucketConfig
+                 csjConfig
                  $ \csState -> do
                    atomically $ do
                      handles <- readTVar varHandles

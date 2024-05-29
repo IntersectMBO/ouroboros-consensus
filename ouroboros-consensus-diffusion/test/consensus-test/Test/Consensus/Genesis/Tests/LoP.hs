@@ -2,6 +2,7 @@
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 module Test.Consensus.Genesis.Tests.LoP (tests) where
 
@@ -67,12 +68,9 @@ prop_wait mustTimeout =
     shrinkPeerSchedules
     ( \_ stateView ->
         case exceptionsByComponent ChainSyncClient stateView of
-          [] -> not mustTimeout
-          [exn] ->
-            case fromException exn of
-              Just CSClient.EmptyBucket -> mustTimeout
-              _                         -> False
-          _ -> False
+          []                                           -> not mustTimeout
+          [fromException -> Just CSClient.EmptyBucket] -> mustTimeout
+          _                                            -> False
     )
   where
     dullSchedule :: (HasHeader blk) => DiffTime -> AnchoredFragment blk -> Peers (PeerSchedule blk)
@@ -147,12 +145,9 @@ prop_serve mustTimeout =
     shrinkPeerSchedules
     ( \_ stateView ->
         case exceptionsByComponent ChainSyncClient stateView of
-          [] -> not mustTimeout
-          [exn] ->
-            case fromException exn of
-              Just CSClient.EmptyBucket -> mustTimeout
-              _                         -> False
-          _ -> False
+          []                                           -> not mustTimeout
+          [fromException -> Just CSClient.EmptyBucket] -> mustTimeout
+          _                                            -> False
     )
   where
     lbpCapacity :: Integer = 10
@@ -211,10 +206,9 @@ prop_delayAttack lopEnabled =
               -- If LoP is enabled, then we expect exactly one `EmptyBucket`
               -- exception in the adversary's ChainSync.
               exceptionsCorrect = case exceptionsByComponent ChainSyncClient stateView of
-                [] -> not lopEnabled
-                [exn] ->
-                  lopEnabled == (fromException exn == Just CSClient.EmptyBucket)
-                _ -> False
+                []                                           -> not lopEnabled
+                [fromException -> Just CSClient.EmptyBucket] -> lopEnabled
+                _                                            -> False
            in selectedCorrect && exceptionsCorrect
       )
   where

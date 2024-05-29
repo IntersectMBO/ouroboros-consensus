@@ -11,16 +11,18 @@
 -- block tree with the right age (roughly @k@ blocks from the tip). Contrary to
 -- other tests cases (eg. long range attack), the schedules are not particularly
 -- biased towards a specific situation.
-module Test.Consensus.Genesis.Tests.Uniform (tests) where
+module Test.Consensus.Genesis.Tests.Uniform (
+    genUniformSchedulePoints
+  , tests
+  ) where
 
 import           Cardano.Slotting.Slot (SlotNo (SlotNo), WithOrigin (..))
 import           Control.Monad (replicateM)
-import           Control.Monad.Class.MonadTime.SI (DiffTime, Time (Time),
-                     addTime)
+import           Control.Monad.Class.MonadTime.SI (Time, addTime)
 import           Data.List (intercalate, sort)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
-import           Data.Maybe (catMaybes, mapMaybe)
+import           Data.Maybe (fromMaybe, mapMaybe)
 import           Data.Word (Word64)
 import           GHC.Stack (HasCallStack)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (NotOrigin))
@@ -67,7 +69,13 @@ tests =
     adjustQuickCheckTests (`div` 10) $
     testProperty "serve adversarial branches" prop_serveAdversarialBranches,
     adjustQuickCheckTests (`div` 100) $
-    testProperty "the LoE stalls the chain, but the immutable tip is honest" prop_loeStalling
+    testProperty "the LoE stalls the chain, but the immutable tip is honest" prop_loeStalling,
+    adjustQuickCheckTests (`div` 100) $
+    -- This is a crude way of ensuring that we don't get chains with more than 100 blocks,
+    -- because this test writes the immutable chain to disk and `instance Binary TestBlock`
+    -- chokes on long chains.
+    adjustQuickCheckMaxSize (const 10) $
+    testProperty "the node is shut down and restarted after some time" prop_downtime
     ]
 
 theProperty ::
@@ -142,7 +150,11 @@ prop_serveAdversarialBranches = forAllGenesisTest
     (genChains (QC.choose (1, 4)) `enrichedWith` genUniformSchedulePoints)
 
     (defaultSchedulerConfig
-       {scTraceState = False, scTrace = False, scEnableLoE = True})
+       { scTraceState = False
+       , scTrace = False
+       , scEnableLoE = True
+       , scEnableCSJ = True
+       })
 
     -- We cannot shrink by removing points from the adversarial schedules.
     -- Otherwise, the immutable tip could get stuck because a peer doesn't
@@ -187,6 +199,7 @@ prop_leashingAttackStalling =
       { scTrace = False
       , scEnableLoE = True
       , scEnableLoP = True
+      , scEnableCSJ = True
       }
 
     shrinkPeerSchedules
@@ -201,22 +214,9 @@ prop_leashingAttackStalling =
     -- timeouts to disconnect adversaries.
     genLeashingSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genLeashingSchedule genesisTest = do
-      Peers honest advs0 <- genUniformSchedulePoints genesisTest
-      let peerCount = 1 + length advs0
-          extendedHonest =
-            duplicateLastPoint (endingDelay peerCount genesisTest) <$> honest
+      Peers honest advs0 <- ensureScheduleDuration genesisTest <$> genUniformSchedulePoints genesisTest
       advs <- mapM (mapM dropRandomPoints) advs0
-      pure $ Peers extendedHonest advs
-
-    endingDelay peerCount gt =
-     let cst = gtChainSyncTimeouts gt
-         bft = gtBlockFetchTimeouts gt
-      in 1 + fromIntegral peerCount * maximum (0 : catMaybes
-           [ canAwaitTimeout cst
-           , intersectTimeout cst
-           , busyTimeout bft
-           , streamingTimeout bft
-           ])
+      pure $ Peers honest advs
 
     disableBoringTimeouts gt =
       gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
@@ -239,13 +239,6 @@ prop_leashingAttackStalling =
       let (ys, zs) = splitAt i xs
        in ys ++ dropElemsAt (drop 1 zs) is
 
-    duplicateLastPoint
-      :: DiffTime -> [(Time, SchedulePoint TestBlock)] -> [(Time, SchedulePoint TestBlock)]
-    duplicateLastPoint d [] = [(Time d, ScheduleTipPoint Origin)]
-    duplicateLastPoint d xs =
-      let (t, p) = last xs
-       in xs ++ [(addTime d t, p)]
-
 -- | Test that the leashing attacks do not delay the immutable tip after. The
 -- immutable tip needs to be advanced enough when the honest peer has offered
 -- all of its ticks.
@@ -256,11 +249,17 @@ prop_leashingAttackStalling =
 -- See Note [Leashing attacks]
 prop_leashingAttackTimeLimited :: Property
 prop_leashingAttackTimeLimited =
-  expectFailure $ forAllGenesisTest
+  forAllGenesisTest
 
-    (genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
+    (disableBoringTimeouts <$> genChains (QC.choose (1, 4)) `enrichedWith` genTimeLimitedSchedule)
 
-    (defaultSchedulerConfig {scTrace = False})
+    defaultSchedulerConfig
+      { scTrace = False
+      , scEnableLoE = True
+      , scEnableLoP = True
+      , scEnableBlockFetchTimeouts = False
+      , scEnableCSJ = True
+      }
 
     shrinkPeerSchedules
 
@@ -271,34 +270,64 @@ prop_leashingAttackTimeLimited =
     genTimeLimitedSchedule :: GenesisTest TestBlock () -> QC.Gen (PeersSchedule TestBlock)
     genTimeLimitedSchedule genesisTest = do
       Peers honest advs0 <- genUniformSchedulePoints genesisTest
-      let timeLimit = estimateTimeBound (value honest) (map value $ Map.elems advs0)
+      let timeLimit = estimateTimeBound
+            (gtChainSyncTimeouts genesisTest)
+            (gtLoPBucketParams genesisTest)
+            (value honest)
+            (map value $ Map.elems advs0)
           advs = fmap (fmap (takePointsUntil timeLimit)) advs0
-      pure $ Peers honest advs
+          extendedHonest = extendScheduleUntil timeLimit <$> honest
+      pure $ Peers extendedHonest advs
 
     takePointsUntil limit = takeWhile ((<= limit) . fst)
 
-    estimateTimeBound :: AF.HasHeader blk => PeerSchedule blk -> [PeerSchedule blk] -> Time
-    estimateTimeBound honest advs =
-      let firstTipPointBlock = headCallStack (mapMaybe fromTipPoint honest)
+    extendScheduleUntil
+      :: Time -> [(Time, SchedulePoint TestBlock)] -> [(Time, SchedulePoint TestBlock)]
+    extendScheduleUntil t [] = [(t, ScheduleTipPoint Origin)]
+    extendScheduleUntil t xs =
+        let (t', p) = last xs
+         in if t < t' then xs
+            else xs ++ [(t, p)]
+
+    disableBoringTimeouts gt =
+      gt { gtChainSyncTimeouts = (gtChainSyncTimeouts gt)
+            { canAwaitTimeout = Nothing
+            , mustReplyTimeout = Nothing
+            , idleTimeout = Nothing
+            }
+         }
+
+    estimateTimeBound
+      :: AF.HasHeader blk
+      => ChainSyncTimeout
+      -> LoPBucketParams
+      -> PeerSchedule blk
+      -> [PeerSchedule blk]
+      -> Time
+    estimateTimeBound cst LoPBucketParams{lbpCapacity, lbpRate} honest advs =
+      let firstTipPointTime = fst $ headCallStack (mapMaybe fromTipPoint honest)
           lastBlockPoint = last (mapMaybe fromBlockPoint honest)
-          peerCount = length advs + 1
-          maxBlockNo = maximum $ 0 : blockPointNos honest ++ concatMap blockPointNos advs
-          -- 0.020s is the amount of time LoP grants per interesting header
-          -- 5s is the initial fill of the LoP bucket
+          peerCount = fromIntegral $ length advs + 1
+          maxBlockNo = fromIntegral $ maximum $ 0 : blockPointNos honest ++ concatMap blockPointNos advs
+          timeCapacity = fromRational $ (fromIntegral lbpCapacity) / lbpRate
+          timePerToken = fromRational $ 1 / lbpRate
+          intersectDiffTime = fromMaybe (error "no intersect timeout") (intersectTimeout cst)
+          -- Since the moment a peer offers the first tip, LoP should
+          -- start ticking for it. This can be no later than what the intersect
+          -- timeout allows for all peers.
           --
-          -- Since the moment the honest peer offers the first tip, LoP should
-          -- start ticking. Syncing all the blocks might take longer than it
-          -- takes to dispatch all ticks to the honest peer. In this case
-          -- the syncing time is the time bound for the test. If dispatching
-          -- all the ticks takes longer, then the dispatching time becomes
-          -- the time bound.
+          -- Additionally, the actual delay might be greater if the honest peer
+          -- has its last tick dispatched later.
           --
           -- Adversarial peers might cause more ticks to be sent as well. We
           -- bound it all by considering the highest block number that is ever
           -- sent.
-      in max
+      in addTime 1 $ max
           (fst lastBlockPoint)
-          (addTime (0.020 * fromIntegral maxBlockNo + 5 * fromIntegral peerCount) (fst firstTipPointBlock))
+          (addTime
+            (intersectDiffTime + timePerToken * maxBlockNo + timeCapacity * peerCount)
+            firstTipPointTime
+          )
 
     blockPointNos :: AF.HasHeader blk => [(Time, SchedulePoint blk)] -> [Word64]
     blockPointNos =
@@ -355,3 +384,20 @@ prop_loeStalling =
         allTips = simpleHash . AF.headHash <$> (btTrunk : suffixes)
 
         suffixes = btbSuffix <$> btBranches
+
+-- | This test sets 'scDowntime', which instructs the scheduler to shut all components down whenever a tick's duration
+-- is greater than 11 seconds, and restarts it while only preserving the immutable DB after advancing the time.
+--
+-- This ensures that a user may shut down their machine while syncing without additional vulnerabilities.
+prop_downtime :: Property
+prop_downtime = forAllGenesisTest
+
+    (genChains (QC.choose (1, 4)) `enrichedWith` \ gt ->
+      ensureScheduleDuration gt <$> stToGen (uniformPointsWithDowntime (gtSecurityParam gt) (gtBlockTree gt)))
+
+    (defaultSchedulerConfig
+       {scEnableLoE = True, scEnableLoP = True, scDowntime = Just 11})
+
+    shrinkPeerSchedules
+
+    theProperty

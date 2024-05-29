@@ -229,6 +229,7 @@ test-suite consensus-test
     Test.Consensus.Genesis.Setup.Classifiers
     Test.Consensus.Genesis.Setup.GenChains
     Test.Consensus.Genesis.Tests
+    Test.Consensus.Genesis.Tests.CSJ
     Test.Consensus.Genesis.Tests.DensityDisconnect
     Test.Consensus.Genesis.Tests.LoE
     Test.Consensus.Genesis.Tests.LoP
@@ -244,6 +245,7 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.ChainSync
     Test.Consensus.PeerSimulator.Config
     Test.Consensus.PeerSimulator.Handlers
+    Test.Consensus.PeerSimulator.NodeLifecycle
     Test.Consensus.PeerSimulator.Resources
     Test.Consensus.PeerSimulator.Run
     Test.Consensus.PeerSimulator.ScheduledBlockFetchServer
@@ -257,8 +259,10 @@ test-suite consensus-test
     Test.Consensus.PeerSimulator.Tests.Timeouts
     Test.Consensus.PeerSimulator.Trace
     Test.Consensus.PointSchedule
+    Test.Consensus.PointSchedule.NodeState
     Test.Consensus.PointSchedule.Peers
     Test.Consensus.PointSchedule.Shrinking
+    Test.Consensus.PointSchedule.Shrinking.Tests
     Test.Consensus.PointSchedule.SinglePeer
     Test.Consensus.PointSchedule.SinglePeer.Indices
     Test.Consensus.PointSchedule.Tests

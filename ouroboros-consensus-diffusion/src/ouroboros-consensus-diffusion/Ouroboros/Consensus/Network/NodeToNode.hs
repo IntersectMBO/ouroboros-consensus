@@ -540,10 +540,11 @@ mkApps ::
   -> ByteLimits bCS bBF bTX bKA
   -> m ChainSyncTimeout
   -> CsClient.ChainSyncLoPBucketConfig
+  -> CsClient.CSJConfig
   -> ReportPeerMetrics m (ConnectionId addrNTN)
   -> Handlers m addrNTN blk
   -> Apps m addrNTN bCS bBF bTX bKA bPS NodeToNodeInitiatorResult ()
-mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucketConfig ReportPeerMetrics {..} Handlers {..} =
+mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucketConfig csjConfig ReportPeerMetrics {..} Handlers {..} =
     Apps {..}
   where
     aChainSyncClient
@@ -572,6 +573,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
             them
             version
             lopBucketConfig
+            csjConfig
             $ \csState -> do
               chainSyncTimeout <- genChainSyncTimeout
               (r, trailing) <-
@@ -593,6 +595,7 @@ mkApps kernel Tracers {..} mkCodecs ByteLimits {..} genChainSyncTimeout lopBucke
                         , CsClient.idling = csvIdling csState
                         , CsClient.loPBucket = csvLoPBucket csState
                         , CsClient.setLatestSlot = csvSetLatestSlot csState
+                        , CsClient.jumping = csvJumping csState
                         }
               return (ChainSyncInitiatorResult r, trailing)
 

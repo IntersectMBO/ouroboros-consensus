@@ -22,19 +22,19 @@
 -- who then activates the next tick's peer.
 module Test.Consensus.PointSchedule (
     BlockFetchTimeout (..)
+  , CSJParams (..)
   , ForecastRange (..)
   , GenesisTest (..)
   , GenesisTestFull
   , GenesisWindow (..)
   , LoPBucketParams (..)
-  , NodeState (..)
   , PeerSchedule
   , PeersSchedule
   , RunGenesisTestResult (..)
   , enrichedWith
+  , ensureScheduleDuration
   , genesisNodeState
   , longRangeAttack
-  , nsTipTip
   , peerSchedulesBlocks
   , peerStates
   , peersStates
@@ -43,6 +43,7 @@ module Test.Consensus.PointSchedule (
   , prettyPeersSchedule
   , stToGen
   , uniformPoints
+  , uniformPointsWithDowntime
   ) where
 
 import           Cardano.Slotting.Time (SlotLength)
@@ -52,7 +53,7 @@ import           Control.Monad.ST (ST)
 import           Data.Foldable (toList)
 import           Data.Functor (($>))
 import           Data.List (mapAccumL, partition, scanl')
-import           Data.Maybe (mapMaybe)
+import           Data.Maybe (catMaybes, fromMaybe, mapMaybe)
 import           Data.Time (DiffTime)
 import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..),
@@ -60,19 +61,20 @@ import           Ouroboros.Consensus.Block.Abstract (WithOrigin (..),
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (GenesisWindow (..))
 import           Ouroboros.Consensus.Network.NodeToNode (ChainSyncTimeout (..))
-import           Ouroboros.Consensus.Protocol.Abstract (SecurityParam,
-                     maxRollbacks)
-import           Ouroboros.Consensus.Util.Condense (Condense (..),
-                     CondenseList (..), PaddingDirection (..),
-                     condenseListWithPadding, padListWith)
+import           Ouroboros.Consensus.Protocol.Abstract
+                     (SecurityParam (SecurityParam), maxRollbacks)
+import           Ouroboros.Consensus.Util.Condense (CondenseList (..),
+                     PaddingDirection (..), condenseListWithPadding)
 import qualified Ouroboros.Network.AnchoredFragment as AF
-import           Ouroboros.Network.Block (Tip (..), tipFromHeader)
+import           Ouroboros.Network.Block (SlotNo (..), blockSlot)
 import           Ouroboros.Network.Point (withOrigin)
 import qualified System.Random.Stateful as Random
 import           System.Random.Stateful (STGenM, StatefulGen, runSTGen_)
 import           Test.Consensus.BlockTree (BlockTree (..), BlockTreeBranch (..),
                      allFragments, prettyBlockTree)
 import           Test.Consensus.PeerSimulator.StateView (StateView)
+import           Test.Consensus.PointSchedule.NodeState (NodeState (..),
+                     genesisNodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), Peers (..),
                      mkPeers, peersList)
 import           Test.Consensus.PointSchedule.SinglePeer
@@ -84,52 +86,9 @@ import           Test.Consensus.PointSchedule.SinglePeer.Indices
 import           Test.Ouroboros.Consensus.ChainGenerator.Params (Delta (Delta))
 import           Test.QuickCheck (Gen, arbitrary)
 import           Test.QuickCheck.Random (QCGen)
-import           Test.Util.TersePrinting (terseBlock, terseFragment,
-                     terseWithOrigin)
+import           Test.Util.TersePrinting (terseFragment)
 import           Test.Util.TestBlock (TestBlock)
 import           Text.Printf (printf)
-
-----------------------------------------------------------------------------------------------------
--- Data types
-----------------------------------------------------------------------------------------------------
-
--- | The state of a peer at a given point in time.
-data NodeState blk =
-  NodeState {
-    nsTip    :: WithOrigin blk,
-    nsHeader :: WithOrigin blk,
-    nsBlock  :: WithOrigin blk
-  }
-  deriving (Eq, Show)
-
-nsTipTip :: AF.HasHeader blk => NodeState blk -> Tip blk
-nsTipTip = withOrigin TipGenesis tipFromHeader . nsTip
-
-instance Condense (NodeState TestBlock) where
-  condense NodeState {nsTip, nsHeader, nsBlock} =
-    "TP " ++ terseWithOrigin terseBlock nsTip ++
-    " | HP " ++ terseWithOrigin terseBlock nsHeader ++
-    " | BP " ++ terseWithOrigin terseBlock nsBlock
-
-instance CondenseList (NodeState TestBlock) where
-  condenseList points =
-    zipWith3
-      (\tip header block ->
-        "TP " ++ tip ++
-          " | HP " ++ header ++
-          " | BP " ++ block
-      )
-      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsTip) points)
-      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsHeader) points)
-      (padListWith PadRight $ map (terseWithOrigin terseBlock . nsBlock) points)
-
-genesisNodeState :: NodeState blk
-genesisNodeState =
-  NodeState {
-    nsTip = Origin,
-    nsHeader = Origin,
-    nsBlock = Origin
-  }
 
 prettyPeersSchedule ::
   forall blk.
@@ -306,6 +265,132 @@ uniformPoints BlockTree {btTrunk, btBranches} g = do
 
     rollbackProb = 0.2
 
+minusClamp :: (Ord a, Num a) => a -> a -> a
+minusClamp a b | a <= b = 0
+               | otherwise = a - b
+
+zipPadN :: forall a . [[a]] -> [[Maybe a]]
+zipPadN =
+  spin []
+  where
+    spin acc as
+      | all null as
+      = reverse acc
+      | let (h, t) = unzip (takeNext <$> as)
+      = spin (h : acc) t
+
+    takeNext = \case
+      [] -> (Nothing, [])
+      h : t -> (Just h, t)
+
+isTip :: SchedulePoint blk -> Bool
+isTip = \case
+  ScheduleTipPoint _ -> True
+  _ -> False
+
+tipTimes :: [(Time, SchedulePoint blk)] -> [Time]
+tipTimes =
+  fmap fst . filter (isTip . snd)
+
+bumpTips :: [Time] -> [(Time, SchedulePoint blk)] -> [(Time, SchedulePoint blk)]
+bumpTips tips =
+  snd . mapAccumL step tips
+  where
+    step (t0 : tn) (_, p)
+      | isTip p
+      = (tn, (t0, p))
+    step ts a = (ts, a)
+
+syncTips :: [(Time, SchedulePoint blk)] -> [[(Time, SchedulePoint blk)]] -> ([(Time, SchedulePoint blk)], [[(Time, SchedulePoint blk)]])
+syncTips honest advs =
+  (bump honest, bump <$> advs)
+  where
+    bump = bumpTips earliestTips
+    earliestTips = chooseEarliest <$> zipPadN (tipTimes <$> scheds)
+    scheds = honest : advs
+    chooseEarliest times = minimum (fromMaybe (Time 0) <$> times)
+
+-- | This is a variant of 'uniformPoints' that uses multiple tip points, used to simulate node downtimes.
+-- Ultimately, this should be replaced by a redesign of the peer schedule generator that is aware of node liveness
+-- intervals.
+--
+-- Chooses the first tip points somewhere in the middle of the honest chain:
+-- The "pause slot" is half of the honest head slot, or the slot of the kth block, whichever is greater.
+-- The last block smaller than the pause slot is then used as the first tip for each branch.
+-- The second tip is the last block of each branch.
+--
+-- Includes rollbacks in some schedules.
+uniformPointsWithDowntime ::
+  (StatefulGen g m, AF.HasHeader blk) =>
+  SecurityParam ->
+  BlockTree blk ->
+  g ->
+  m (PeersSchedule blk)
+uniformPointsWithDowntime (SecurityParam k) BlockTree {btTrunk, btBranches} g = do
+  let
+    kSlot = withOrigin 0 (fromIntegral . unSlotNo) (AF.headSlot (AF.takeOldest (fromIntegral k) btTrunk))
+    midSlot = (AF.length btTrunk) `div` 2
+    lowerBound = max kSlot midSlot
+  pauseSlot <- SlotNo . fromIntegral <$> Random.uniformRM (lowerBound, AF.length btTrunk - 1) g
+  honestTip0 <- firstTip pauseSlot btTrunk
+  honest <- mkSchedule [(IsTrunk, [honestTip0, minusClamp (AF.length btTrunk) 1])] []
+  advs <- takeBranches pauseSlot btBranches
+  let (honest', advs') = syncTips honest advs
+  pure (mkPeers honest' advs')
+  where
+    takeBranches pause = \case
+        [] -> pure []
+        [b] -> pure <$> withoutRollback pause b
+        b1 : b2 : branches -> do
+          a <- Random.uniformDouble01M g
+          if a < rollbackProb
+          then do
+            this <- withRollback pause b1 b2
+            rest <- takeBranches pause branches
+            pure (this : rest)
+          else do
+            this <- withoutRollback pause b1
+            rest <- takeBranches pause (b2 : branches)
+            pure (this : rest)
+
+    withoutRollback pause branch = do
+      tips <- mkTips pause branch
+      mkSchedule tips [btbSuffix branch]
+
+    withRollback pause b1 b2 = do
+      firstTips <- mkTips pause b1
+      let secondTips = [minusClamp (AF.length (btbSuffix b2)) 1]
+      mkSchedule (firstTips ++ [(IsBranch, secondTips)]) [btbSuffix b1, btbSuffix b2]
+
+    mkSchedule tips branches = do
+      params <- mkParams
+      peerScheduleFromTipPoints g params tips btTrunk branches
+
+    mkTips pause branch
+      | AF.length full == 0 =
+        error "empty branch"
+      | otherwise = do
+      tip0 <- firstTip pause (btbFull branch)
+      let (pre, post) = partition (< firstSuffixBlock) [tip0, fullLen - 1]
+      pure ((if null pre then [] else [(IsTrunk, pre)]) ++ [(IsBranch, shift <$> post)])
+      where
+        shift i = i - firstSuffixBlock
+        firstSuffixBlock = fullLen - AF.length (btbSuffix branch)
+        fullLen = AF.length full
+        full = btbFull branch
+
+    firstTip pause frag = pure (minusClamp (AF.length (AF.dropWhileNewest (\ b -> blockSlot b > pause) frag)) 1)
+
+    mkParams = do
+      -- These values appear to be large enough to create pauses of 100 seconds and more.
+      tipL <- uniformRMDiffTime (0.5, 1) g
+      tipU <- uniformRMDiffTime (1, 2) g
+      headerL <- uniformRMDiffTime (0.018, 0.03) g
+      headerU <- uniformRMDiffTime (0.021, 0.04) g
+      pure defaultPeerScheduleParams {pspTipDelayInterval = (tipL, tipU), pspHeaderDelayInterval = (headerL, headerU)}
+
+    rollbackProb = 0.2
+
 
 newtype ForecastRange = ForecastRange { unForecastRange :: Word64 }
   deriving (Show)
@@ -314,6 +399,11 @@ data LoPBucketParams = LoPBucketParams {
   lbpCapacity :: Integer,
   lbpRate     :: Rational
   }
+
+data CSJParams = CSJParams {
+    csjpJumpSize :: SlotNo
+  }
+  deriving Show
 
 -- | Similar to 'ChainSyncTimeout' for BlockFetch. Only the states in which the
 -- server has agency are specified. REVIEW: Should it be upstreamed to
@@ -333,6 +423,7 @@ data GenesisTest blk schedule = GenesisTest
     gtChainSyncTimeouts  :: ChainSyncTimeout,
     gtBlockFetchTimeouts :: BlockFetchTimeout,
     gtLoPBucketParams    :: LoPBucketParams,
+    gtCSJParams          :: CSJParams,
     gtSlotLength         :: SlotLength,
     gtSchedule           :: schedule
   }
@@ -353,6 +444,7 @@ prettyGenesisTest prettySchedule genesisTest =
   , "  gtForecastRange: " ++ show (unForecastRange gtForecastRange)
   , "  gtDelay: " ++ show delta
   , "  gtSlotLength: " ++ show gtSlotLength
+  , "  gtCSJParams: " ++ show gtCSJParams
   , "  gtChainSyncTimeouts: "
   , "    canAwait = " ++ show canAwaitTimeout
   , "    intersect = " ++ show intersectTimeout
@@ -381,6 +473,7 @@ prettyGenesisTest prettySchedule genesisTest =
       , gtBlockFetchTimeouts = BlockFetchTimeout{busyTimeout, streamingTimeout}
       , gtLoPBucketParams = LoPBucketParams{lbpCapacity, lbpRate}
       , gtSlotLength
+      , gtCSJParams
       , gtSchedule
       } = genesisTest
 
@@ -397,3 +490,28 @@ stToGen ::
 stToGen gen = do
   seed :: QCGen <- arbitrary
   pure (runSTGen_ seed gen)
+
+duplicateLastPoint
+  :: DiffTime -> [(Time, SchedulePoint blk)] -> [(Time, SchedulePoint blk)]
+duplicateLastPoint d [] = [(Time d, ScheduleTipPoint Origin)]
+duplicateLastPoint d xs =
+  let (t, p) = last xs
+    in xs ++ [(addTime d t, p)]
+
+ensureScheduleDuration :: GenesisTest blk a -> PeersSchedule blk -> PeersSchedule blk
+ensureScheduleDuration gt Peers {honest, others} =
+  Peers {honest = extendHonest, others}
+  where
+    extendHonest = duplicateLastPoint endingDelay <$> honest
+
+    endingDelay =
+     let cst = gtChainSyncTimeouts gt
+         bft = gtBlockFetchTimeouts gt
+      in 1 + fromIntegral peerCount * maximum (0 : catMaybes
+           [ canAwaitTimeout cst
+           , intersectTimeout cst
+           , busyTimeout bft
+           , streamingTimeout bft
+           ])
+
+    peerCount = 1 + length others

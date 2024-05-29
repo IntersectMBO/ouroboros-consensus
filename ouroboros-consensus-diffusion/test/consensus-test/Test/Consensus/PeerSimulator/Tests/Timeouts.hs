@@ -1,5 +1,6 @@
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ViewPatterns        #-}
 
 module Test.Consensus.PeerSimulator.Tests.Timeouts (tests) where
 
@@ -49,10 +50,7 @@ prop_timeouts mustTimeout = do
       case exceptionsByComponent ChainSyncClient stateView of
         [] ->
           counterexample ("result: " ++ condense (svSelectedChain stateView)) (not mustTimeout)
-        [exn] ->
-          case fromException exn of
-            Just (ExceededTimeLimit _) -> property mustTimeout
-            _ -> counterexample ("exception: " ++ show exn) False
+        [fromException -> Just (ExceededTimeLimit _)] -> property mustTimeout
         exns ->
           counterexample ("exceptions: " ++ show exns) False
     )

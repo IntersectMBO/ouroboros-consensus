@@ -199,9 +199,15 @@ resultClassifiers GenesisTest{gtSchedule} RunGenesisTestResult{rgtrStateView} =
 data ScheduleClassifiers =
   ScheduleClassifiers{
     -- | There is an adversary that did a rollback
-    adversaryRollback :: Bool,
+    adversaryRollback     :: Bool,
     -- | The honest peer did a rollback
-    honestRollback    :: Bool
+    honestRollback        :: Bool,
+    -- | All adversaries have an empty schedule: the only way to disconnect them are
+    -- network timeouts.
+    allAdversariesEmpty   :: Bool,
+    -- | All adversaries have trivial schedules: they only have an initial state, and
+    -- do nothing afterwards.
+    allAdversariesTrivial :: Bool
   }
 
 scheduleClassifiers :: GenesisTestFull TestBlock -> ScheduleClassifiers
@@ -209,6 +215,8 @@ scheduleClassifiers GenesisTest{gtSchedule = schedule} =
   ScheduleClassifiers
     { adversaryRollback
     , honestRollback
+    , allAdversariesEmpty
+    , allAdversariesTrivial
     }
   where
     hasRollback :: PeerSchedule TestBlock -> Bool
@@ -246,6 +254,15 @@ scheduleClassifiers GenesisTest{gtSchedule = schedule} =
     adversaryRollback = any value $ others rollbacks
 
     honestRollback = value $ honest rollbacks
+
+    allAdversariesEmpty = all value $ others $ null <$> schedule
+
+    isTrivial :: PeerSchedule TestBlock -> Bool
+    isTrivial = \case
+      []             -> True
+      (t0, _):points -> all ((== t0) . fst) points
+
+    allAdversariesTrivial = all value $ others $ isTrivial <$> schedule
 
 simpleHash ::
   HeaderHash block ~ TestHash =>

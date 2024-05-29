@@ -138,6 +138,7 @@ oneBenchRun
               , CSClient.setLatestSlot       = \_ -> pure ()
               , CSClient.idling              = CSClient.noIdling
               , CSClient.loPBucket           = CSClient.noLoPBucket
+              , CSClient.jumping             = CSClient.noJumping
               }
 
     server :: ChainSyncServer H (Point B) (Tip B) IO ()

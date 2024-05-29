@@ -10,6 +10,7 @@ module Test.Consensus.PeerSimulator.Run (
   , runPointSchedule
   ) where
 
+import           Control.Monad (foldM, forM)
 import           Control.Monad.Class.MonadTime (MonadTime)
 import           Control.Monad.Class.MonadTimer.SI (MonadTimer)
 import           Control.Tracer (Tracer (..), nullTracer, traceWith)
@@ -17,26 +18,24 @@ import           Data.Foldable (for_)
 import           Data.Functor (void)
 import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.Config (TopLevelConfig (..))
 import           Ouroboros.Consensus.Genesis.Governor (runGdd,
                      updateLoEFragGenesis)
 import           Ouroboros.Consensus.Ledger.SupportsProtocol
                      (LedgerSupportsProtocol)
-import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (ChainDbView,
+import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client
+                     (CSJConfig (..), CSJEnabledConfig (..), ChainDbView,
                      ChainSyncClientHandle, ChainSyncLoPBucketConfig (..),
                      ChainSyncLoPBucketEnabledConfig (..), ChainSyncState (..),
                      viewChainSyncState)
 import qualified Ouroboros.Consensus.MiniProtocol.ChainSync.Client as CSClient
 import           Ouroboros.Consensus.Storage.ChainDB.API
 import qualified Ouroboros.Consensus.Storage.ChainDB.API as ChainDB
-import qualified Ouroboros.Consensus.Storage.ChainDB.Impl as ChainDB.Impl
-import           Ouroboros.Consensus.Storage.ChainDB.Impl.Args
-                     (ChainDbSpecificArgs (cdbsLoE), updateTracer)
 import           Ouroboros.Consensus.Util.Condense (Condense (..))
 import           Ouroboros.Consensus.Util.IOLike
 import           Ouroboros.Consensus.Util.ResourceRegistry
-import           Ouroboros.Network.AnchoredFragment (AnchoredFragment,
-                     HasHeader)
+import           Ouroboros.Network.AnchoredFragment (AnchoredFragment)
 import qualified Ouroboros.Network.AnchoredFragment as AF
 import           Ouroboros.Network.BlockFetch (FetchClientRegistry,
                      bracketSyncWithFetchClient, newFetchClientRegistry)
@@ -48,21 +47,21 @@ import           Ouroboros.Network.Util.ShowProxy (ShowProxy)
 import qualified Test.Consensus.PeerSimulator.BlockFetch as BlockFetch
 import qualified Test.Consensus.PeerSimulator.ChainSync as ChainSync
 import           Test.Consensus.PeerSimulator.Config
+import           Test.Consensus.PeerSimulator.NodeLifecycle
 import           Test.Consensus.PeerSimulator.Resources
 import           Test.Consensus.PeerSimulator.StateDiagram
                      (peerSimStateDiagramSTMTracerDebug)
 import           Test.Consensus.PeerSimulator.StateView
 import           Test.Consensus.PeerSimulator.Trace
-import qualified Test.Consensus.PointSchedule as PointSchedule
 import           Test.Consensus.PointSchedule (BlockFetchTimeout,
-                     GenesisTest (GenesisTest), GenesisTestFull,
-                     LoPBucketParams (..), NodeState, PeersSchedule,
-                     peersStatesRelative)
+                     CSJParams (..), GenesisTest (..), GenesisTestFull,
+                     LoPBucketParams (..), PeersSchedule, peersStatesRelative)
+import           Test.Consensus.PointSchedule.NodeState (NodeState)
 import           Test.Consensus.PointSchedule.Peers (Peer (..), PeerId,
                      getPeerIds)
 import           Test.Util.ChainDB
 import           Test.Util.Orphans.IOLike ()
-import           Test.Util.TestBlock (Header (..), TestBlock, testInitExtLedger)
+import           Test.Util.TestBlock (TestBlock)
 
 -- | Behavior config for the scheduler.
 data SchedulerConfig =
@@ -92,9 +91,17 @@ data SchedulerConfig =
     -- governor (GDD).
     , scEnableLoE                :: Bool
 
-    -- | Whether to enable to LoP. The parameters of the LoP come from
+    -- | Whether to enable the LoP. The parameters of the LoP come from
     -- 'GenesisTest'.
     , scEnableLoP                :: Bool
+
+    -- | Enable node downtime if this is 'Just', using the value as minimum tick
+    -- duration to trigger it.
+    , scDowntime                 :: Maybe DiffTime
+
+    -- | Whether to enable ChainSync Jumping. The parameters come from
+    -- 'GenesisTest'.
+    , scEnableCSJ                :: Bool
   }
 
 -- | Default scheduler config
@@ -107,7 +114,9 @@ defaultSchedulerConfig =
     scTrace = True,
     scTraceState = False,
     scEnableLoE = False,
-    scEnableLoP = False
+    scEnableLoP = False,
+    scDowntime = Nothing,
+    scEnableCSJ = False
   }
 
 -- | Enable debug tracing during a scheduler test.
@@ -133,6 +142,7 @@ startChainSyncConnectionThread ::
   ChainSyncResources m blk ->
   ChainSyncTimeout ->
   ChainSyncLoPBucketConfig ->
+  CSJConfig ->
   StateViewTracers blk m ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   m (Thread m (), Thread m ())
@@ -146,6 +156,7 @@ startChainSyncConnectionThread
   ChainSyncResources {csrServer}
   chainSyncTimeouts_
   chainSyncLoPBucketConfig
+  csjConfig
   tracers
   varHandles
   = do
@@ -153,7 +164,7 @@ startChainSyncConnectionThread
     clientThread <-
       forkLinkedThread registry ("ChainSyncClient" <> condense srPeerId) $
         bracketSyncWithFetchClient fetchClientRegistry srPeerId $
-          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig tracers varHandles clientChannel
+          ChainSync.runChainSyncClient tracer cfg chainDbView srPeerId chainSyncTimeouts_ chainSyncLoPBucketConfig csjConfig tracers varHandles clientChannel
     serverThread <-
       forkLinkedThread registry ("ChainSyncServer" <> condense srPeerId) $
         ChainSync.runChainSyncServer tracer srPeerId tracers csrServer serverChannel
@@ -199,28 +210,53 @@ startBlockFetchConnectionThread
 dispatchTick :: forall m blk.
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
-  Tracer m () ->
-  ChainDB m blk ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   Map PeerId (PeerResources m blk) ->
+  NodeLifecycle blk m ->
+  LiveNode blk m ->
   (Int, (DiffTime, Peer (NodeState blk))) ->
-  m ()
-dispatchTick tracer stateTracer chainDb varHandles peers (number, (duration, Peer pid state)) =
+  m (LiveNode blk m)
+dispatchTick tracer varHandles peers lifecycle node (number, (duration, Peer pid state)) =
   case peers Map.!? pid of
     Just PeerResources {prUpdateState} -> do
       traceNewTick
       atomically (prUpdateState state)
-      threadDelay duration
-      traceWith stateTracer ()
+      newNode <- checkDowntime
+      traceWith (lnStateTracer newNode) ()
+      pure newNode
     Nothing -> error "“The impossible happened,” as GHC would say."
   where
+    checkDowntime
+      | Just minInterval <- nlMinDuration
+      , duration > minInterval
+      = do
+        results <- nlShutdown node
+        threadDelay duration
+        nlStart results
+      | otherwise
+      = do
+        threadDelay duration
+        pure node
+
+    NodeLifecycle {nlMinDuration, nlStart, nlShutdown} = lifecycle
+
     traceNewTick :: m ()
     traceNewTick = do
-      currentChain <- atomically $ ChainDB.getCurrentChain chainDb
-      csState <- atomically $ do
+      currentChain <- atomically $ ChainDB.getCurrentChain (lnChainDb node)
+      (csState, jumpingStates) <- atomically $ do
          m <- readTVar varHandles
-         traverse (readTVar . CSClient.cschState) (m Map.!? pid)
-      traceWith tracer $ TraceNewTick number duration (Peer pid state) currentChain (CSClient.csCandidate <$> csState)
+         csState <- traverse (readTVar . CSClient.cschState) (m Map.!? pid)
+         jumpingStates <- forM (Map.toList m) $ \(peer, h) -> do
+           st <- readTVar (CSClient.cschJumping h)
+           pure (peer, st)
+         pure (csState, jumpingStates)
+      traceWith tracer $ TraceNewTick
+        number
+        duration
+        (Peer pid state)
+        currentChain
+        (CSClient.csCandidate <$> csState)
+        jumpingStates
 
 -- | Iterate over a 'PointSchedule', sending each tick to the associated peer in turn,
 -- giving each peer a chunk of computation time, sequentially, until it satisfies the
@@ -230,18 +266,19 @@ dispatchTick tracer stateTracer chainDb varHandles peers (number, (duration, Pee
 runScheduler ::
   IOLike m =>
   Tracer m (TraceSchedulerEvent blk) ->
-  Tracer m () ->
-  ChainDB m blk ->
   StrictTVar m (Map PeerId (ChainSyncClientHandle m blk)) ->
   PeersSchedule blk ->
   Map PeerId (PeerResources m blk) ->
-  m ()
-runScheduler tracer stateTracer chainDb varHandles ps peers = do
+  NodeLifecycle blk m ->
+  m (ChainDB m blk, StateViewTracers blk m)
+runScheduler tracer varHandles ps peers lifecycle@NodeLifecycle {nlStart} = do
+  node0 <- nlStart LiveIntervalResult {lirActive = Map.keysSet peers, lirPeerResults = []}
   traceWith tracer TraceBeginningOfTime
-  mapM_
-    (dispatchTick tracer stateTracer chainDb varHandles peers)
-    (zip [0..] (peersStatesRelative ps))
+  LiveNode {lnChainDb, lnStateViewTracers} <- foldM tick node0 (zip [0..] (peersStatesRelative ps))
   traceWith tracer TraceEndOfTime
+  pure (lnChainDb, lnStateViewTracers)
+  where
+    tick = dispatchTick tracer varHandles peers lifecycle
 
 -- | Create the shared resource for the LoE if the feature is enabled in the config.
 -- This is used by the ChainDB and the GDD governor.
@@ -255,84 +292,112 @@ mkLoEVar SchedulerConfig {scEnableLoE}
   | otherwise
   = pure LoEDisabled
 
--- | Construct STM resources, set up ChainSync and BlockFetch threads, and
--- send all ticks in a 'PointSchedule' to all given peers in turn.
-runPointSchedule ::
+mkStateTracer ::
+  IOLike m =>
+  SchedulerConfig ->
+  GenesisTest TestBlock s ->
+  PeerSimulatorResources m TestBlock ->
+  ChainDB m TestBlock ->
+  m (Tracer m ())
+mkStateTracer schedulerConfig GenesisTest {gtBlockTree} PeerSimulatorResources {psrHandles, psrPeers} chainDb
+  | scTraceState schedulerConfig
+  , let getCandidates = viewChainSyncState psrHandles CSClient.csCandidate
+        getCurrentChain = ChainDB.getCurrentChain chainDb
+        getPoints = traverse readTVar (srCurrentState . prShared <$> psrPeers)
+  = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates getPoints
+  | otherwise
+  = pure nullTracer
+
+-- | Start all threads for ChainSync, BlockFetch and GDD, using the resources
+-- for a single live interval.
+-- Only start peers that haven't been disconnected in a previous interval,
+-- provided by 'LiveIntervalResult'.
+startNode ::
   forall m.
   (IOLike m, MonadTime m, MonadTimer m) =>
   SchedulerConfig ->
   GenesisTestFull TestBlock ->
-  Tracer m (TraceEvent TestBlock) ->
-  m (StateView TestBlock)
-runPointSchedule schedulerConfig genesisTest tracer0 =
-  withRegistry $ \registry -> do
-    stateViewTracers <- defaultStateViewTracers
-    resources <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
-    let
-        handles = psrHandles resources
-        getCandidates = viewChainSyncState handles CSClient.csCandidate
-    loEVar <- mkLoEVar schedulerConfig
-    chainDb <- mkChainDb tracer config registry (readTVarIO <$> loEVar)
-    fetchClientRegistry <- newFetchClientRegistry
-    let chainDbView = CSClient.defaultChainDbView chainDb
-    for_ (psrPeers resources) $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
-      forkLinkedThread registry ("Peer overview " ++ (show $ srPeerId prShared)) $
-        -- The peerRegistry helps ensuring that if any thread fails, then
-        -- the registry is closed and all threads related to the peer are
-        -- killed.
-        withRegistry $ \peerRegistry -> do
-          (csClient, csServer) <- startChainSyncConnectionThread peerRegistry tracer config chainDbView fetchClientRegistry prShared prChainSync chainSyncTimeouts_ chainSyncLoPBucketConfig stateViewTracers (psrHandles resources)
-          BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry (srPeerId prShared)
-          (bfClient, bfServer) <- startBlockFetchConnectionThread peerRegistry tracer stateViewTracers fetchClientRegistry (pure Continue) prShared prBlockFetch blockFetchTimeouts_
-          waitAnyThread [csClient, csServer, bfClient, bfServer]
-    -- The block fetch logic needs to be started after the block fetch clients
-    -- otherwise, an internal assertion fails because getCandidates yields more
-    -- peer fragments than registered clients.
-    let getCurrentChain = ChainDB.getCurrentChain chainDb
-        getPoints = traverse readTVar (srCurrentState . prShared <$> psrPeers resources)
-        mkStateTracer
-          | scTraceState schedulerConfig
-          = peerSimStateDiagramSTMTracerDebug gtBlockTree getCurrentChain getCandidates getPoints
-          | otherwise
-          = pure nullTracer
+  LiveInterval TestBlock m ->
+  m ()
+startNode schedulerConfig genesisTest interval = do
+  let
+      handles = psrHandles lrPeerSim
+      getCandidates = viewChainSyncState handles CSClient.csCandidate
+  fetchClientRegistry <- newFetchClientRegistry
+  let chainDbView = CSClient.defaultChainDbView lnChainDb
+      activePeers = Map.restrictKeys (psrPeers lrPeerSim) (lirActive liveResult)
+  for_ activePeers $ \PeerResources {prShared, prChainSync, prBlockFetch} -> do
+    let pid = srPeerId prShared
+    forkLinkedThread lrRegistry ("Peer overview " ++ show pid) $
+      -- The peerRegistry helps ensuring that if any thread fails, then
+      -- the registry is closed and all threads related to the peer are
+      -- killed.
+      withRegistry $ \peerRegistry -> do
+        (csClient, csServer) <-
+          startChainSyncConnectionThread
+          peerRegistry
+          tracer
+          lrConfig
+          chainDbView
+          fetchClientRegistry
+          prShared
+          prChainSync
+          chainSyncTimeouts_
+          chainSyncLoPBucketConfig
+          csjConfig
+          lnStateViewTracers
+          handles
+        BlockFetch.startKeepAliveThread peerRegistry fetchClientRegistry pid
+        (bfClient, bfServer) <-
+          startBlockFetchConnectionThread
+          peerRegistry
+          tracer
+          lnStateViewTracers
+          fetchClientRegistry
+          (pure Continue)
+          prShared
+          prBlockFetch
+          blockFetchTimeouts_
+        waitAnyThread [csClient, csServer, bfClient, bfServer]
+  -- The block fetch logic needs to be started after the block fetch clients
+  -- otherwise, an internal assertion fails because getCandidates yields more
+  -- peer fragments than registered clients.
+  let getCurrentChain = ChainDB.getCurrentChain lnChainDb
 
-        gdd = updateLoEFragGenesis config (mkGDDTracerTestBlock tracer) (readTVar handles)
-        -- We make GDD rerun every time the anchor or the blocks of the
-        -- selection change.
-        gddTrigger = do
-          s <- viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
-          c <- getCurrentChain
-          return (s, [AF.anchorToHash $ AF.headAnchor c])
+      gdd = updateLoEFragGenesis lrConfig (mkGDDTracerTestBlock lrTracer) (readTVar handles)
+      -- We make GDD rerun every time the anchor or the blocks of the
+      -- selection change.
+      gddTrigger = do
+        s <- viewChainSyncState handles (\ s -> (csLatestSlot s, csIdling s))
+        c <- getCurrentChain
+        return (s, [AF.anchorToHash $ AF.headAnchor c])
 
-    stateTracer <- mkStateTracer
-    BlockFetch.startBlockFetchLogic registry tracer chainDb fetchClientRegistry getCandidates
-    for_ loEVar $ \ var ->
-        void $ forkLinkedThread registry "LoE updater background" $
-          runGdd gdd var chainDb gddTrigger
-    runScheduler
-      (Tracer $ traceWith tracer . TraceSchedulerEvent)
-      stateTracer
-      chainDb
-      handles
-      gtSchedule
-      (psrPeers resources)
-    snapshotStateView stateViewTracers chainDb
+  BlockFetch.startBlockFetchLogic lrRegistry lrTracer lnChainDb fetchClientRegistry getCandidates
+  for_ lrLoEVar $ \ var -> do
+      forkLinkedThread lrRegistry "LoE updater background" $
+        void $ runGdd gdd var lnChainDb gddTrigger
   where
-    GenesisTest {
-        PointSchedule.gtSecurityParam = k
-      , PointSchedule.gtBlockTree
-      , PointSchedule.gtSchedule
-      , PointSchedule.gtChainSyncTimeouts
-      , PointSchedule.gtBlockFetchTimeouts
-      , PointSchedule.gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
-      , PointSchedule.gtForecastRange
-      , PointSchedule.gtGenesisWindow
+    LiveResources {lrRegistry, lrTracer, lrConfig, lrPeerSim, lrLoEVar} = resources
+
+    LiveInterval {
+        liResources = resources
+      , liResult = liveResult
+      , liNode = LiveNode {lnChainDb, lnStateViewTracers}
+      } = interval
+
+    GenesisTest
+      { gtChainSyncTimeouts
+      , gtBlockFetchTimeouts
+      , gtLoPBucketParams = LoPBucketParams { lbpCapacity, lbpRate }
+      , gtCSJParams = CSJParams { csjpJumpSize }
       } = genesisTest
 
-    config = defaultCfg k gtForecastRange gtGenesisWindow
+    StateViewTracers{svtTraceTracer} = lnStateViewTracers
 
     -- FIXME: This type of configuration should move to `Trace.mkTracer`.
-    tracer = if scTrace schedulerConfig then tracer0 else nullTracer
+    tracer = if scTrace schedulerConfig
+      then Tracer (\evt -> traceWith lrTracer evt >> traceWith svtTraceTracer evt)
+      else svtTraceTracer
 
     chainSyncTimeouts_ =
       if scEnableChainSyncTimeouts schedulerConfig
@@ -344,38 +409,79 @@ runPointSchedule schedulerConfig genesisTest tracer0 =
         then ChainSyncLoPBucketEnabled ChainSyncLoPBucketEnabledConfig { csbcCapacity = lbpCapacity, csbcRate = lbpRate }
         else ChainSyncLoPBucketDisabled
 
+    csjConfig =
+      if scEnableCSJ schedulerConfig
+        then CSJEnabled CSJEnabledConfig { csjcJumpSize = csjpJumpSize }
+        else CSJDisabled
+
     blockFetchTimeouts_ =
       if scEnableBlockFetchTimeouts schedulerConfig
         then gtBlockFetchTimeouts
         else BlockFetch.blockFetchNoTimeouts
 
--- | Create a ChainDB and start a BlockRunner that operate on the peers'
--- candidate fragments.
-mkChainDb ::
-  IOLike m =>
+-- | Set up all resources related to node start/shutdown.
+nodeLifecycle ::
+  (IOLike m, MonadTime m, MonadTimer m) =>
+  SchedulerConfig ->
+  GenesisTestFull TestBlock ->
   Tracer m (TraceEvent TestBlock) ->
-  TopLevelConfig TestBlock ->
   ResourceRegistry m ->
-  GetLoEFragment m TestBlock ->
-  m (ChainDB m TestBlock)
-mkChainDb tracer nodeCfg registry cdbsLoE = do
-    chainDbArgs <- do
-      mcdbNodeDBs  <- emptyNodeDBs
-      let args = updateTracer
-            (Tracer (traceWith tracer . TraceChainDBEvent))
-            (fromMinimalChainDbArgs MinimalChainDbArgs {
-                mcdbTopLevelConfig = nodeCfg
-              , mcdbChunkInfo      = mkTestChunkInfo nodeCfg
-              , mcdbInitLedger     = testInitExtLedger
-              , mcdbRegistry       = registry
-              , mcdbNodeDBs
-              }
-            )
-      pure $ args { ChainDB.Impl.cdbsArgs = (ChainDB.Impl.cdbsArgs args) { cdbsLoE } }
-    (_, (chainDB, ChainDB.Impl.Internal{ChainDB.Impl.intAddBlockRunner})) <-
-      allocate
-        registry
-        (\_ -> ChainDB.Impl.openDBInternal chainDbArgs False)
-        (ChainDB.closeDB . fst)
-    _ <- forkLinkedThread registry "AddBlockRunner" intAddBlockRunner
-    pure chainDB
+  PeerSimulatorResources m TestBlock ->
+  m (NodeLifecycle TestBlock m)
+nodeLifecycle schedulerConfig genesisTest lrTracer lrRegistry lrPeerSim = do
+  lrCdb <- emptyNodeDBs
+  lrLoEVar <- mkLoEVar schedulerConfig
+  let
+    resources =
+      LiveResources {
+          lrRegistry
+        , lrTracer
+        , lrSTracer = mkStateTracer schedulerConfig genesisTest lrPeerSim
+        , lrConfig
+        , lrPeerSim
+        , lrCdb
+        , lrLoEVar
+        }
+  pure NodeLifecycle {
+      nlMinDuration = scDowntime schedulerConfig
+    , nlStart = lifecycleStart (startNode schedulerConfig genesisTest) resources
+    , nlShutdown = lifecycleStop resources
+    }
+  where
+    lrConfig = defaultCfg k gtForecastRange gtGenesisWindow
+
+    GenesisTest {
+        gtSecurityParam = k
+      , gtForecastRange
+      , gtGenesisWindow
+      } = genesisTest
+
+-- | Construct STM resources, set up ChainSync and BlockFetch threads, and
+-- send all ticks in a 'PointSchedule' to all given peers in turn.
+runPointSchedule ::
+  forall m.
+  (IOLike m, MonadTime m, MonadTimer m) =>
+  SchedulerConfig ->
+  GenesisTestFull TestBlock ->
+  Tracer m (TraceEvent TestBlock) ->
+  m (StateView TestBlock)
+runPointSchedule schedulerConfig genesisTest tracer0 =
+  withRegistry $ \registry -> do
+    peerSim <- makePeerSimulatorResources tracer gtBlockTree (getPeerIds gtSchedule)
+    lifecycle <- nodeLifecycle schedulerConfig genesisTest tracer registry peerSim
+    (chainDb, stateViewTracers) <- runScheduler
+      (Tracer $ traceWith tracer . TraceSchedulerEvent)
+      (psrHandles peerSim)
+      gtSchedule
+      (psrPeers peerSim)
+      lifecycle
+    snapshotStateView stateViewTracers chainDb
+  where
+
+    GenesisTest {
+        gtBlockTree
+      , gtSchedule
+      } = genesisTest
+
+    -- FIXME: This type of configuration should move to `Trace.mkTracer`.
+    tracer = if scTrace schedulerConfig then tracer0 else nullTracer

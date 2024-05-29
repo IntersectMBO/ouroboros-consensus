@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveAnyClass        #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE FlexibleContexts      #-}
@@ -38,6 +39,7 @@ import           Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import           Data.String (IsString (fromString))
 import           GHC.Generics (Generic)
+import           NoThunks.Class (NoThunks)
 import           Ouroboros.Consensus.Util.Condense (Condense (..),
                      CondenseList (..), PaddingDirection (..),
                      condenseListWithPadding)
@@ -47,7 +49,7 @@ data PeerId =
   HonestPeer
   |
   PeerId String
-  deriving (Eq, Generic, Show, Ord)
+  deriving (Eq, Generic, Show, Ord, NoThunks)
 
 instance IsString PeerId where
   fromString "honest" = HonestPeer
@@ -108,6 +110,9 @@ data Peers a =
 instance Functor Peers where
   fmap f Peers {honest, others} = Peers {honest = f <$> honest, others = fmap f <$> others}
 
+instance Foldable Peers where
+  foldMap f Peers {honest, others} = (f . value) honest <> foldMap (f . value) others
+
 -- | A set of peers with only one honest peer carrying the given value.
 peersOnlyHonest :: a -> Peers a
 peersOnlyHonest value =
@@ -127,12 +132,15 @@ getPeer pid peers
   | otherwise
   = others peers Map.! pid
 
-updatePeer :: (a -> a) -> PeerId -> Peers a -> Peers a
+updatePeer :: (a -> (a, b)) -> PeerId -> Peers a -> (Peers a, b)
 updatePeer f pid Peers {honest, others}
   | HonestPeer <- pid
-  = Peers {honest = f <$> honest, others}
+  , let (a, b) = f (value honest)
+  = (Peers {honest = a <$ honest, others}, b)
   | otherwise
-  = Peers {honest, others = Map.adjust (fmap f) pid others}
+  , let p = others Map.! pid
+        (a, b) = f (value p)
+  = (Peers {honest, others = Map.adjust (a <$) pid others}, b)
 
 -- | Convert 'Peers' to a list of 'Peer'.
 peersList :: Peers a -> NonEmpty (Peer a)
