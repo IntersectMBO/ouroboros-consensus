@@ -709,12 +709,21 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
         curTip      = castPoint $ AF.headPoint curChain
         curHead     = AF.headAnchor curChain
 
-    -- Either frag extends loe or loe extends frag. The fragment is represented
-    -- by the current chain and a diff with that current chain. It is tempting
-    -- to only consider the suffix of the diff, but that would be incorrect,
-    -- because the diff might not intersect with the LoE fragment, because the
-    -- diff suffix is anchored somewhere on the current chain and LoE frag's tip
-    -- might be older than that anchor.
+    -- | Trim the given candidate fragment to respect the LoE.
+    --
+    -- The returned fragment is such that:
+    --
+    -- - It is a prefix of the given fragment.
+    -- - If it contains the tip of the LoE fragment, then it contains at most
+    --   @k@ block after it.
+    -- - If it does not contain the tip of the LoE fragment, then it is included
+    --   in the LoE fragment.
+    --
+    -- The fragment is represented by the current chain and a diff with that
+    -- current chain. It is tempting to only consider the suffix of the diff,
+    -- but that would be incorrect, because the diff might not intersect with
+    -- the LoE fragment, because the diff suffix is anchored somewhere on the
+    -- current chain and LoE frag's tip might be older than that anchor.
     --
     -- PRECONDITIONS:
     --
