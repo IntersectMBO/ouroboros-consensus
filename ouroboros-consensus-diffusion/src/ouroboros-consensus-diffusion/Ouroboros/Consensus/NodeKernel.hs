@@ -32,6 +32,7 @@ import qualified Control.Concurrent.Class.MonadSTM as LazySTM
 import qualified Control.Concurrent.Class.MonadSTM.Strict as StrictSTM
 import           Control.DeepSeq (force)
 import           Control.Monad
+import           Control.Monad.Class.MonadTime (getMonotonicTimeNSec)
 import qualified Control.Monad.Class.MonadTimer.SI as SI
 import           Control.Monad.Except
 import           Control.Tracer
@@ -399,6 +400,7 @@ forkBlockForging IS{..} blockForging =
         --
         -- Normally this will be the current block at the tip, but it may
         -- be the /previous/ block, if there were multiple slot leaders
+        startBC <- getMonotonicTimeNSec
         BlockContext{bcBlockNo, bcPrevPoint} <- do
           eBlkCtx <- lift $ atomically $
             mkCurrentBlockContext currentSlot
@@ -408,8 +410,9 @@ forkBlockForging IS{..} blockForging =
             Left failure -> do
               trace failure
               exitEarly
+        endBC <- getMonotonicTimeNSec
 
-        trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint
+        trace $ TraceBlockContext currentSlot bcBlockNo bcPrevPoint (endBC - startBC)
 
         -- Get ledger state corresponding to bcPrevPoint
         --

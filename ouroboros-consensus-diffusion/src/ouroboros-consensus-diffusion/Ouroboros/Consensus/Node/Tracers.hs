@@ -20,6 +20,7 @@ import           Control.Exception (SomeException)
 import           Control.Tracer (Tracer, nullTracer, showTracing)
 import           Data.Text (Text)
 import           Data.Time (UTCTime)
+import           Data.Word (Word64)
 import           Ouroboros.Consensus.Block
 import           Ouroboros.Consensus.BlockchainTime
 import           Ouroboros.Consensus.Forecast (OutsideForecastRange)
@@ -228,11 +229,12 @@ data TraceForgeEvent blk
     -- to forge.
     --
     -- We record the current slot number, the block number of the block to
-    -- connect to and its point.
+    -- connect to, its point, and the observed duration of the related
+    -- computation (as nanoseconds on the monotonic clock).
     --
     -- Note that block number of the block we will try to forge is one more than
     -- the recorded block number.
-  | TraceBlockContext SlotNo BlockNo (Point blk)
+  | TraceBlockContext SlotNo BlockNo (Point blk) Word64
 
     -- | Leadership check failed: we were unable to get the ledger state for the
     -- point of the block we want to connect to
