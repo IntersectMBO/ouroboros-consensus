@@ -195,10 +195,10 @@ data ChainDB m blk = ChainDB {
       -- 'getTipPoint' will return the tip of the immutable DB.
     , getTipPoint        :: STM m (Point blk)
 
-      -- | Get LoE fragment. This is a fragment that indicates the latest
-      -- rollback point.
+      -- | Get LoE fragment, or return 'LoEDisabled'.
       --
-      -- Returns 'LoEDisabled' if the LoE is disabled.
+      -- See the documentation of 'LoE' for more information on the Limit on
+      -- Eagerness (LoE).
     , getLoEFragment     :: m (LoE (AnchoredFragment (Header blk)))
 
       -- | Get the given component(s) of the block at the specified point. If
