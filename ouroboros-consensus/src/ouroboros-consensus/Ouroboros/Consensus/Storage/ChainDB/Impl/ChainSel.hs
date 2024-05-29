@@ -676,7 +676,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
 
         let chainDiffs = NE.nonEmpty
               $ filter (preferAnchoredCandidate (bcfg chainSelEnv) curChain . Diff.getSuffix)
-              $ fmap (followsLoEFrag loeFrag curChainAndLedger)
+              $ fmap (trimToLoE loeFrag curChainAndLedger)
               $ fmap Diff.extend
               $ NE.toList candidates
         -- All candidates are longer than the current chain, so they will be
@@ -729,12 +729,12 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
     --
     -- 1. The given 'ChainDiff' can apply on top of the given 'ChainAndLedger'.
     -- 2. The LoE fragment intersects with the current selection.
-    followsLoEFrag :: LoE (AnchoredFragment (Header blk))
-                   -> ChainAndLedger blk
-                   -> ChainDiff (Header blk)
-                   -> ChainDiff (Header blk)
-    followsLoEFrag LoEDisabled _ diff = diff
-    followsLoEFrag (LoEEnabled loe) curChain diff =
+    trimToLoE :: LoE (AnchoredFragment (Header blk))
+              -> ChainAndLedger blk
+              -> ChainDiff (Header blk)
+              -> ChainDiff (Header blk)
+    trimToLoE LoEDisabled _ diff = diff
+    trimToLoE (LoEEnabled loe) curChain diff =
       let cand = fromJust $ Diff.apply (VF.validatedFragment curChain) diff
           (candPrefix, _, candSuffix, loeSuffix) = fromJust $ AF.intersect cand loe
           trimmedCandSuffix = AF.takeOldest (fromIntegral k) candSuffix
@@ -782,7 +782,7 @@ chainSelectionForBlock cdb@CDB{..} blockCache hdr punish = electric $ do
             -- 4. Trim fragments so that they follow the LoE, that is, they
             -- extend the LoE or are extended by the LoE. Filter them out
             -- otherwise.
-          . fmap (fmap (followsLoEFrag loeFrag curChainAndLedger))
+          . fmap (fmap (trimToLoE loeFrag curChainAndLedger))
             -- 3. Translate the 'HeaderFields' to 'Header' by reading the
             -- headers from disk.
           . flip evalStateT initCache
