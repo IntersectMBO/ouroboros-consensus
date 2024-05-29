@@ -65,16 +65,20 @@ prop_getBlock_addBlock loe bt p =
     model = addBlocks loe initBlocks
     secParam = configSecurityParam singleNodeTestConfig
 
-prop_getChain_addChain :: LoE () -> BlockChain -> Property
-prop_getChain_addChain loe bc =
+-- | Test that, for any chain @bc@, adding its blocks to an empty model causes
+-- the selection to be @bc@. This is only true with LoE disabled.
+prop_getChain_addChain :: BlockChain -> Property
+prop_getChain_addChain bc =
     counterexample ("model: " ++ show model) $
     blockChain bc === M.currentChain model
   where
     blocks = chainToBlocks bc
-    model  = addBlocks loe blocks
+    model  = addBlocks LoEDisabled blocks
 
-prop_alwaysPickPreferredChain :: LoE () -> BlockTree -> Permutation -> Property
-prop_alwaysPickPreferredChain loe bt p =
+-- | Test that, no matter in which order we add blocks to the chain DB, we
+-- always pick the most preferred chain. This is only true with LoE disabled.
+prop_alwaysPickPreferredChain :: BlockTree -> Permutation -> Property
+prop_alwaysPickPreferredChain bt p =
     counterexample ("blocks: " ++ show blocks) $
     counterexample ("invalid: " ++ show (M.invalid model)) $
     conjoin [
@@ -83,7 +87,7 @@ prop_alwaysPickPreferredChain loe bt p =
       ]
   where
     blocks  = permute p $ treeToBlocks bt
-    model   = addBlocks loe blocks
+    model   = addBlocks LoEDisabled blocks
     current = M.currentChain model
 
     curFragment = Chain.toAnchoredFragment (getHeader <$> current)
